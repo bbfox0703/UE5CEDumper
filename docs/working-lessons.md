@@ -1044,6 +1044,37 @@ check comes back empty, read `init-0.log` before believing it. `initState` also 
 `INIT_SKIPPED = 4` exists for exactly this case (`Mimic.h`), so a rig can assert
 `initState == INIT_READY` up front rather than discovering it afterwards.
 
+### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
+
+It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
+(clean tree, same `build_number.txt`) produces different bytes — PE timestamp, checksum, embedded
+build date. So the moment you run `build.ps1` for any reason, every deployed proxy on the machine
+flips to `*** STALE ***`:
+
+```
+dist/proxy: version.dll=2,882,560 ...
+  DQ7R      version.dll   2,882,560  *** STALE ***      <- SAME SIZE. Not stale.
+  ... 9 deployed proxy(ies), 9 stale
+```
+
+**The tell is that the sizes match exactly.** A genuinely stale proxy is a *different build* and
+essentially always differs in size too (the 2026-08-19 sweep found six at 2,860,544 / 2,867,712 /
+2,855,936 against a 2,88x,xxx dist).
+
+⛔ **Do not `refresh` on that signal.** It overwrites the genuine artifacts in nine game folders
+with local rebuilds for no functional gain, and burns the detector: once everything has been
+refreshed from a local build, a *real* staleness later has nothing to be compared against.
+
+ℹ️ It does **not** block a run: `PipeClient.assert_build()` compares only the **build NUMBER**
+(`get_pointers.build_number` ends with `dist/build_number.txt`), so a deployed 3263 proxy still
+satisfies it against a locally rebuilt 3263 dist. The two checks disagree by design — one asks
+"same build?", the other "same bytes?".
+
+A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
+predicate here; SHA-256 answers a question nobody asked.
+
+-----
+
 -----
 
 ## 4. UE and CE facts that cost a session each
