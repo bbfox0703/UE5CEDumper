@@ -5668,7 +5668,32 @@ whether the record ends ticked or unticked.*
 > passes *despite* them, because the injection really did work; a user following the on-screen
 > messages would reasonably have concluded the feature was broken.
 >
-> Steps 4-6 remain: 4 needs a spawn, 5 needs a pre-1.2 helper, 6 needs two coexisting freezes.
+> Steps 4-5 remain: 4 needs a spawn, 5 needs a pre-1.2 helper.
+>
+> ### ✅ STEP 6 PASSES 2026-08-20 `[AA12-STEP6-2026-08-20]` — two freezes coexist and are independent
+>
+> Two freezes on the *same class*, deliberately of **different widths** so a shared-state bug could
+> not hide:
+> ```
+> Freeze: DumperTestActor::F32_Ticking = 555.5    (FloatProperty  0x6B0, was 1000.5 and moving)
+> Freeze: DumperTestActor::F64_Ticking = 777.75   (DoubleProperty 0x6B8, was 20024.375 and moving)
+> ```
+>
+> | phase | F32_Ticking | F64_Ticking |
+> |---|---|---|
+> | both ticked, two reads 10 s apart | **555.5** · **555.5** | **777.75** · **777.75** |
+> | **F32 unticked only**, two reads 10 s apart | **969.75 → 877.5** (resumed) | **777.75** · **777.75** (still held) |
+>
+> ⇒ Both hold simultaneously, and unticking one releases **only** that one — the row's assertion that
+> "the keyed-handle table is untouched by this change" survives. The float/double pairing means a
+> single shared write path or a type-confused handle would have shown up as one freeze clobbering
+> the other, and neither happened.
+>
+> ⚠ CE attached to **`UE5DumpUI.exe`** on the first attempt because the process list reorders between
+> openings and the row at the remembered y-coordinate had changed. Caught by reading the title bar
+> (`0000A9AC-DumperTest.exe`) before ticking — worth doing every time, since a freeze against the
+> wrong process fails for a reason that looks like a product defect.
+
 >
 > ### 🟡 STEP 3 ATTEMPTED 2026-08-20 — the fixture was WRONG, and finding out is itself a result
 >
