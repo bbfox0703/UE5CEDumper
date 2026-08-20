@@ -3445,7 +3445,35 @@ treated as a HEURISTIC, not a law.*
 > one OCTOPATH case the step describes.
 > | 3 | on OCTOPATH, switch to the `winmm` flavour, deploy, launch, Refresh | **Loaded?** → "loaded" (winmm proxy works per `[OCTOPATH-G2T3]`) even though winmm may also be imported | proves the warning is a heuristic and the load signal, not the import table, is the source of truth |
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
+### ✅ VERIFIED 2026-08-20 `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
+
+> ### ✅ STEP 3 (THE NON-REGRESSION) PASSES 12/12 2026-08-20 `[SLOTSYM-GWORLD-2026-08-20]`
+>
+> Steps 1–2 were closed under `[SLOTSYM-LUA-2026-08-20]` on the **Get GameEngine** record — the one
+> the defect was in. Step 3 asks the opposite question about **Get GWorld**, which always unregistered
+> correctly: *did fixing the broken end break the working one?*
+>
+> ⭐ **That is not a formality here, and the reason is in the fix itself.** Both ends were moved onto
+> the **same** shared emitters (`CeLuaHygiene.AppendSlotSymbolRegister` / `AppendSlotSymbolRelease`)
+> precisely so they cannot drift — which is exactly what turns one regression into two. The working
+> end had to be re-run.
+>
+> New rig `scripts/tests/slotsym_gworld_test.lua`, same method as its sibling (working-lessons §2.5):
+> the **script the shipping UI emitted today**, captured from Teleport → Global Pointers →
+> **Get GWorld** with AOBMaker offline, `<AssemblerScript>` extracted to
+> `out/slotsym/get_gworld.lua.txt` (8,150 chars), then both `{$lua}` blocks executed over stubbed CE
+> globals.
+>
+> | case | result |
+> |---|---|
+> | **1. enable → disable** | `UE_GWorld` registered, refcount 1; **one** DISABLE leaves `getAddressSafe('UE_GWorld')` **nil** and logs `UE_GWorld unregistered` |
+> | **2. two ticked records** | refcount 2; the first DISABLE **keeps** the symbol and says `still held by 1 other record(s) -- left registered`; the second releases it |
+> | **3. HONESTY (unregister neutered)** | reports `could NOT be unregistered after 8 attempt(s)`, does **not** claim success, and the retry loop is **bounded at 8** |
+>
+> **12 checks, 0 failures** — and the whole Lua suite is green alongside it: `contract_check` 15,
+> `dissect` 83, `dll_size_text` 9, `freeze_helper` 154, `invoke_helper` 91, `slotsym_release` 12,
+> `slotsym_gworld` 12.
+
 
 *Was: on the `&GEngine` SLOT path the "Get GameEngine" record took the `mayFallBack` `[DISABLE]`
 branch, where `unregisterSymbol` was nested inside the buffer-only `cur == mem` guard; with no
