@@ -2698,6 +2698,40 @@ LOWERING the cap, not by finding a host*):
 
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ STEPS 1b/2/3 PASS 2026-08-20 `[PEHOOK-LIVE-2026-08-20]` — via the row's own ⭐ preferred route
+>
+> Took the route this row recommends: **temporarily removed the two `kPePat*Sib*` alternates** in
+> `Frieren.cpp`'s `DetectProcessEventVTableOffsetByPattern`, rebuilt, and drove the **real current
+> code** down the version-table path. Source reverted and rebuilt afterwards; `git status` clean.
+>
+> **The contrast is the whole verification, and it is one variable:**
+>
+> | DLL | detection path | offset | validation failures |
+> |---|---|---|---|
+> | SIB alternates removed | `pattern scan missed, falling back to UE=504 version-table primary=0x220` | `vtable+0x220` *(a guess)* | **2** (`failure 1/3`, then `2/3`) |
+> | restored (shipping) | `DetectProcessEvent (pattern): match at vtable+0x268` | **`vtable+0x268`** | **0** |
+>
+> ⭐ **The version table guessed `0x220`; the true offset is `0x268`.** So the slot really was
+> mis-detected — the validator was not firing on a healthy hook, it caught a genuinely wrong virtual.
+>
+> * **Step 2 — PASS, verbatim.** The log carries every element the step names:
+>   `GameThreadDispatch: VALIDATION FAILED — hook at 0x7FF69AB99FC0 (vtable+0x220) fired 0 times in
+>   1500ms, and that offset came from the version TABLE guess, not the pattern scan. Reading this as
+>   a MIS-DETECTED vtable slot (failure 1/3): disabling the hook, refusing the off-thread direct call
+>   for the rest of this process (it would call a known-wrong virtual), and re-arming detection.`
+>   The next line shows the re-arm actually happening (`pattern scan missed, falling back…` again).
+> * **Step 3 — PASS.** The counter is bounded and advancing: `failure 1/3` then `failure 2/3`, never
+>   unbounded.
+> * **Step 1b — PASS.** `re-deploy` appears **twice in the whole log and both are the negation**:
+>   `Re-deploying the DLL will NOT help — the binary is fine, the slot guess is wrong.` No advice
+>   string recommends re-deploying. The message even keeps the honest alternative in view: *"(If the
+>   game was merely idle, the next invoke re-detects and re-installs by itself…)"*.
+> * **Step 5's asymmetry is respected** — with the pattern path restored the hook fired normally and
+>   there were **0** validation failures, so nothing acted on a correct hook.
+> * **Step 1 proper (the UI Self-Test text) not run** — that needs System → Run Self-Test on screen;
+>   what is verified here is the DLL-side verdict and advice the panel now sources from
+>   `get_diagnostics`.
+
 > | 1 | **DumperTest**, SIB alternates temporarily removed → System → **Run Self-Test**, as the **FIRST invoke of a freshly launched process** | `✗ Add_IntInt…`, and the advice names a **mis-detected vtable slot** | ⚠ order-dependent: `HookNeverFired` needs `hook_active == true`, and the validator soft-disables the hook 1500 ms after install. A later click sees the hook DOWN and correctly gets the `HookOff` wording instead — that is not a failure |
 > | 1b | any Self-Test run | no advice string recommends re-deploying without ruling it out | `SelfTestAdviceTests.NoAdviceRecommendsRedeploying` pins the rule offline; this just confirms it reached the UI |
 > | 2 | grep that run's `init-0.log` | `VALIDATION FAILED — … came from the version TABLE … (failure 1/3): … re-arming detection`, then `hook flag cleared` | the verdict is now acted on, and the log names the real cause |
