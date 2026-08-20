@@ -6612,7 +6612,35 @@ Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
 * **4 — not run** (needs a level travel to make a class address go stale; human-gated).
 * **5 — not run** (the cross-tab handoff; nothing pushed a class into Class/Struct in this session).
 
-### ⬜ AE2 / AE3 — original checklist (kept for the steps)
+### ✅ AE2 / AE3 STEPS 1–3 PASS 2026-08-20 `[AE23-UI-2026-08-20]` — the race does not reproduce
+
+> DumperTest + the real UI. The row's own warning is the design constraint: *"a list of only one
+> kind cannot show it — **record what the filter was**"*.
+>
+> **The filter, recorded: `DumperTest` → 22 results**, and it is genuinely mixed —
+> **10 class-like rows** (`Class` ×6, `Enum` ×1, `ScriptStruct` ×3) followed by **12 instance rows**
+> (`Default__DumperTest*` and the live `DumperTestActor` / `GameMode` / `Subsystem`). ⚠ Note the two
+> kinds are **blocked, not alternating**, so the instance→class-like adjacency the old failure needs
+> is crossed by scrolling **UP**, not down. Scrolling down only ever gives class-like→instance.
+>
+> | # | what was done | result |
+> |---|---|---|
+> | **1** regression | clicked the instance row `DumperTestActor / DumperTestActor` | header `DumperTestActor`, `//Script/DumperTest/DumperTestActor`, Super Class `Actor`, **Properties Size 1760**, fields populated |
+> | **2** the race, instance → class-like | **9 rapid ↑** from that row, crossing 7 instance rows into the class-like block | landed on `ScriptStruct DumperTestVec3f`; header reads **`DumperTestVec3f`**, Super Class blank, **Properties Size 12**, fields **X / Y / Z** FloatProperty at `0x0/0x4/0x8` |
+> | **2b** the reverse crossing | **5 rapid ↓** back across the boundary | landed on `DumperTestHUD / Default__DumperTestHUD`; header **`DumperTestHUD`**, Super Class **`HUD`**, **Properties Size 928** |
+> | **3** the spinner | after both bursts | no loading indicator left on; each panel settled with its own content |
+>
+> ⭐ **The three headers are mutually unmistakable — 1760 / 12 / 928 properties, and X-Y-Z vs a
+> replication block** — so "the header matches the highlighted row" is checked against content that
+> could not be confused, not against a name that might coincidentally agree.
+>
+> ⚠ **Scope, stated because the stimulus is not identical:** the fast scroll was a **burst of
+> discrete synthetic key events** (`repeat: 9`), not an OS auto-repeat from a physically held key.
+> It produces the same rapid succession of selection changes and async loads, which is the mechanism
+> the race lives in, but a real held key repeats at the OS rate and this run does not reproduce that
+> timing exactly.
+
+### ✅ AE2 / AE3 — original checklist (kept for the steps; steps 1-3 verified, see the block above)
 
 *Needs a game connected, but nothing else — the Object Tree is a permanent left pane beside the
 Class/Struct panel, so every check is "do the two halves agree". See dev-log builds 3067 / 3068. The
