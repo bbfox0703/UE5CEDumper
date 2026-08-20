@@ -7234,7 +7234,46 @@ field.
 
 -----
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SDKHDR-2026-08-18]` — the exported SDK header COMPILES again
+### ✅ VERIFIED 2026-08-20 `[SDKHDR-2026-08-18]` — the exported SDK header COMPILES again
+
+> ### ✅ STEPS 4 + 5 PASS 2026-08-20 `[SDKHDR-CL-2026-08-20]` — the real export, in front of a real compiler
+>
+> Steps 1–3 were closed under `[SDKHDR-REALEXPORT-2026-08-20]`; these are the last two, and they are
+> the ones that put the artifact through `cl.exe`. Both run on the **real 75,342-line export**
+> `out/DumperTest_SDK.h` (3,476,025 B), not on a fixture.
+>
+> **Step 4 — `rg "\[0x0\];"` → 0 matches.** With both of its own controls holding in the same pass, so
+> the zero is not vacuous: extents *preceding* an identifier = **0** (was **5** pre-fix), and
+> `OptionalProperty` declarations = **5**, all of the fixed shape:
+> ```
+> uint8_t CellBounds[0x40];   // 0x0088 (0x0040) OptionalProperty   (WorldPartitionRuntimeCellData)
+> uint8_t Opt_Int_Set[0x8];   uint8_t Opt_Float_Set[0x8];
+> uint8_t Opt_Str_Set[0x18];  uint8_t Opt_Int_Unset[0x8];           (DumperTestActor)
+> ```
+>
+> **Step 5 — the excerpt compiles.** New rig `tools/verify/sdkhdr_step5.py` (distinct from
+> `compile_sdk_header.py`, which compiles the C#-generated *fixture*): it lifts the **two**
+> OptionalProperty-owning blocks out of the real header **verbatim**, reuses the stub prelude already
+> shipped in `out/sdk-smoke/sdk_smoke.cpp`, adds `struct X {};` forward stubs for the 8 types the
+> excerpt references and the prelude lacks (`Actor`, `Box`, `Object`, `EDumperTestGrade`, …), and runs
+> `cl /Zs /TP /permissive- /utf-8`:
+> ```
+> cl exit code: 0
+> ```
+> The excerpted declarations are never rewritten — only surrounded — so what the compiler sees is the
+> emitter's own text.
+>
+> ⭐ **Negative control (`--negative-control`), and it lands on the documented number.** Rewriting
+> those same declarations back to the pre-fix spelling (extent before the identifier) makes cl reject
+> them with **`error C2059: syntax error: '['` on 5 lines** — the same **5** malformed declarations
+> this row records for the pre-fix export. So the check is demonstrably able to fail, and fails with
+> the exact defect rather than some other error.
+>
+> ⚠ Scope is the excerpt, deliberately — see the row's own warning about `GenerateFullSdkAsync`
+> emitting in GObjects order with no topological sort. A first run of the rig stopped on
+> `EDumperTestGrade Grade;` with `C3646`; that was a gap in the rig's type-scanner (bare enum members
+> carry no `struct`/`class` keyword), **not** a header defect, and is fixed in the rig.
+
 
 *This is the OPEN FIXES INDEX's one **untagged** row ("SDK header does not compile"), surfaced by the
 `[SDKHDR-UI-2026-08-17]` export above and worth more than the step that found it. It now has a tag, a
