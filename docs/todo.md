@@ -3872,7 +3872,7 @@ still repaint, and 274→314 with the Hex column tracking is that, on screen.
 *(The selection half was fixed earlier the same day and is unchanged.)*
 
 
-### ⬜ NEW 2026-08-21 `[TESTFLAKE-2026-08-21]` — an intermittent full-suite failure, named but not explained
+### ✅ FIXED 2026-08-21 `[TESTFLAKE-2026-08-21]` — it was NOT a flaky test. It was a PRODUCT race the test intermittently exposed
 
 *Not a product defect — a test-suite flake, filed so the next person seeing a red run has prior art
 instead of a mystery.*
@@ -3889,6 +3889,71 @@ in `LiveFieldValue`, the CE Lua emitters, or the NumericUpDown façades. The nam
 ⚠ **Two of the three sightings were lost** because the capture grepped the same command that re-ran
 the suite, so the name never reached the log. If it fires again: run
 `dotnet test … > /tmp/r.log 2>&1` and read `^failed ` out of the FILE — do not pipe a re-run.
+
+
+---
+
+#### ⭐ FIXED 2026-08-21 — and the filing was wrong about what it was
+
+**I filed this as "a test-suite flake, not a product defect", on the grounds that the test passed in
+isolation and touched nothing the day's changes had moved. Both observations were true and the
+conclusion was wrong.** Reproducing it turned up a real, user-reachable race in
+`InterestingFunctionsViewModel`.
+
+**Reproducing it first.** The test starts `LoadCommand.ExecuteAsync(null)` and immediately toggles
+`GameplayActions` twice, assuming the load is parked in the window between capturing
+`_scoredWithGameplayActions` and comparing it back. Nothing enforced that: the load's tail resumes
+on a pool thread and can slip **between the two toggles**. Forcing that interleaving —
+toggle on, `await load`, toggle off — failed instantly and repeatably:
+`Assert.Null() Failure: Value is not null`.
+
+⭐ **Then the same repro was pushed one step further, and that is where the product defect
+appeared.** Draining both reconciliation paths and checking the END state gave
+`Assert.DoesNotContain() Failure: Filter matched in collection` — the pack's row still present with
+the CheckBox reading off.
+
+**The race.** Two `RescoreAsync` calls can be in flight at once — the setter starts one per toggle,
+`LoadAsync` starts another to reconcile a toggle that arrived while it was busy. Each captures its
+own mode, then suspends on `await Task.Run(() => ScoreEntries(...))`, then writes `_allRows`. The
+write therefore went to **whichever SCORING finished last — completion order, not request order**.
+
+⚠ **The resulting state is the worst shape available and it conceals itself.** `_allRows` scored
+with the pack ON, `GameplayActions` OFF, and `_scoredWithGameplayActions` also OFF — because the
+superseded run had set that field *before* its await. So the field whose entire job is to detect
+"grid and CheckBox disagree" reads consistent, and **nothing will ever reconcile it**. That is
+audit #5 `Z1`'s permanent-disagreement failure reached by a different route, and the user gets it
+from a double-click on the CheckBox as a load lands.
+
+**The fix** is a generation token: `RescoreAsync` bumps `_rescoreGeneration`, and after scoring
+returns it publishes only if it is still the newest. `_scoredWithGameplayActions` moved to *after*
+that check, so it is written together with the rows it describes rather than ahead of them —
+without that, a superseded run still leaves the field claiming a mode the rows were never in.
+
+**And the test was ALSO wrong**, independently: it raced the window instead of enforcing it. Both
+it and its sibling `GameplayActions_ToggledWhileLoadIsBusy_IsNotSwallowed` (same latent race — it
+simply never went red) now park the load with a `GatedEntryList`.
+
+⚠ **The seam is worth understanding before touching these tests.** The window is bounded by the
+capture and the comparison, with exactly one suspension between them —
+`await Task.Run(() => ScoreEntries(...))` — and `ScoreEntries` reaches its entries by `foreach`.
+Blocking that enumeration is the only hook that lands inside. The existing
+`FakeAobMakerBridge.Gate` cannot: that probe is deliberately fire-and-forget and never holds the
+load up at all. Gating the dump service cannot either: it parks *before* the capture, which is a
+different and already-correct scenario, and it would silently invert the sibling's assertion.
+`GatedEntryList` derives from `List<AllFunctionEntry>` and **re-implements**
+`IEnumerable<AllFunctionEntry>`, because `AllFunctionsResult.Functions` is a concrete `List<T>`
+whose `GetEnumerator()` is not virtual — re-naming the interface on a derived type re-maps it, so
+no production type had to be widened for a test.
+
+**Evidence.** ⭐ Shown able to fail: removing the generation guard makes
+`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` — the repro, kept as a permanent
+regression test — fail with the original `Filter matched in collection`. **Ten consecutive
+full-suite runs** are green at 4,605 tests.
+
+⚠ **What ten green runs do and do not prove.** At the observed ~1-in-8 rate, ten clean runs alone
+would happen about a quarter of the time by luck, so they are corroboration, not proof. The load
+is carried by the causal evidence: the exact interleaving was reproduced deterministically, the
+mechanism read out of the code, and the fix shown to flip that reproduction.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
 

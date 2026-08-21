@@ -1,3 +1,6 @@
+using System.Threading;
+using System.Collections.Generic;
+using System.Collections;
 using System.Linq;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
@@ -422,6 +425,62 @@ public class InterestingFunctionsViewModelTests
 
     /// <summary>Stub bridge with a controllable IsAvailable for testing
     /// the VM's wiring without actually opening a pipe.</summary>
+    /// <summary>
+    /// A function list that parks the load INSIDE scoring, so a test can toggle
+    /// GameplayActions at a known point instead of racing it. [TESTFLAKE-2026-08-21]
+    ///
+    /// <para><b>Why a list and not another bridge gate.</b> The window these tests care about opens
+    /// when <c>LoadAsync</c> captures <c>_scoredWithGameplayActions</c> and closes when it compares
+    /// that against <c>GameplayActions</c> to decide on a reconciliation. In between there is
+    /// exactly one suspension — <c>await Task.Run(() =&gt; ScoreEntries(...))</c> — and
+    /// <c>ScoreEntries</c> reaches the entries by <c>foreach</c>. Blocking that enumeration is
+    /// therefore the only seam that lands between the two, and it needs no production change.
+    /// <c>FakeAobMakerBridge.Gate</c> cannot do it: that probe is deliberately fire-and-forget, so
+    /// it never holds the load up at all. Gating the dump service cannot either — that parks
+    /// BEFORE the capture, which is a different (and already-correct) scenario.</para>
+    ///
+    /// <para><b>Why it derives from <c>List&lt;T&gt;</c> and re-implements the interface.</b>
+    /// <c>AllFunctionsResult.Functions</c> is a concrete <c>List&lt;AllFunctionEntry&gt;</c>, and
+    /// <c>List&lt;T&gt;.GetEnumerator()</c> is not virtual — but <c>ScoreEntries</c> iterates
+    /// through <c>IReadOnlyList&lt;T&gt;</c>, so the call goes through
+    /// <c>IEnumerable&lt;T&gt;.GetEnumerator()</c>. Naming the interface again on a derived class
+    /// re-maps it, which is what makes the hook reachable without widening a production type.</para>
+    ///
+    /// <para>⚠ <c>Count</c> is inherited and must NOT block — <c>LoadAsync</c> and
+    /// <c>RescoreAsync</c> both read it outside the window — and the block is ONE-SHOT, because
+    /// <c>RescoreAsync</c> enumerates the same list again and would otherwise deadlock on a gate
+    /// nobody is left to open.</para>
+    /// </summary>
+    private sealed class GatedEntryList : List<AllFunctionEntry>, IEnumerable<AllFunctionEntry>
+    {
+        private readonly TaskCompletionSource<bool> _reached =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new(false);
+        private int _parked;
+
+        public GatedEntryList(IEnumerable<AllFunctionEntry> inner) : base(inner) { }
+
+        /// <summary>Completes once scoring has actually begun — i.e. the load is inside the window.</summary>
+        public Task Reached => _reached.Task;
+
+        /// <summary>Let scoring finish, so the load runs on to the reconciliation check.</summary>
+        public void Release() => _release.Set();
+
+        IEnumerator<AllFunctionEntry> IEnumerable<AllFunctionEntry>.GetEnumerator()
+        {
+            if (Interlocked.Exchange(ref _parked, 1) == 0)
+            {
+                _reached.TrySetResult(true);
+                // Blocks a pool thread on purpose: ScoreEntries is synchronous, so there is
+                // nothing to await here. Bounded, so a wiring mistake fails the test instead of
+                // hanging the suite.
+                if (!_release.Wait(TimeSpan.FromSeconds(30)))
+                    throw new TimeoutException("GatedEntryList was never released");
+            }
+            return GetEnumerator();      // the struct enumerator from List<T>
+        }
+    }
+
     private sealed class FakeAobMakerBridge : IAobMakerBridge
     {
         public bool IsAvailable { get; set; }
@@ -517,17 +576,23 @@ public class InterestingFunctionsViewModelTests
             new() { ClassName="ShopSubsystem", FuncName="OpenShop",
                     FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
         };
+        // Same determinism problem as its sibling, and the same fix: park the load inside the
+        // window rather than assuming ExecuteAsync left it there. This one had the race too — it
+        // just never happened to be the test that went red. [TESTFLAKE-2026-08-21]
+        var gated = new GatedEntryList(entries);
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
         var vm = new InterestingFunctionsViewModel(
-            new FakeDumpService { NextResult = BuildResult(entries) },
+            new FakeDumpService { NextResult = BuildResult(gated) },
             new NoopLogger(), bridge);
 
         var load = vm.LoadCommand.ExecuteAsync(null);
+        await gated.Reached;
 
         // The user ticks the pack. Before the fix this landed while IsLoading
         // was still true and RescoreAsync's guard threw it away.
         vm.GameplayActions = true;
+        gated.Release();
 
         gate.SetResult(false);
         var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
@@ -544,6 +609,52 @@ public class InterestingFunctionsViewModelTests
         Assert.Contains(vm.Results, r => r.FuncName == "OpenShop");
     }
 
+    /// <summary>
+    /// Two re-scores in flight at once must settle on the NEWEST mode, not on whichever finished
+    /// last. [TESTFLAKE-2026-08-21]
+    ///
+    /// <para>⭐ This started life as the reproduction for an intermittent test failure and turned
+    /// out to expose a PRODUCT defect. The interleaving is: tick the pack while the load is busy,
+    /// let the load's reconciliation start a re-score with the pack ON, then untick. Two
+    /// <c>RescoreAsync</c> calls are now racing, each having captured its own mode, and the write
+    /// to <c>_allRows</c> went to whichever SCORING finished last — completion order, not request
+    /// order.</para>
+    ///
+    /// <para>The end state was the worst available and self-concealing: rows scored with the pack
+    /// ON, the CheckBox reading OFF, and <c>_scoredWithGameplayActions</c> also reading OFF — so
+    /// the field that exists to detect exactly this disagreement could not see it, and nothing
+    /// would ever reconcile it. Z1's failure by another route.</para>
+    ///
+    /// <para>Reproduced deterministically before the fix (<c>Assert.DoesNotContain() Failure:
+    /// Filter matched in collection</c>), and it is the interleaving a user gets from a
+    /// double-click on the CheckBox as a load lands.</para>
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish()
+    {
+        var entries = new List<AllFunctionEntry>
+        {
+            new() { ClassName="ShopSubsystem", FuncName="OpenShop",
+                    FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
+        };
+        var vm = new InterestingFunctionsViewModel(
+            new FakeDumpService { NextResult = BuildResult(entries) },
+            new NoopLogger(), new FakeAobMakerBridge { NextCheckResult = false });
+
+        var load = vm.LoadCommand.ExecuteAsync(null);
+        vm.GameplayActions = true;
+        await load;                      // reconciliation runs HERE, while the flag is true
+        vm.GameplayActions = false;
+
+        // Does the PRODUCT still converge under this interleaving, or is there a real bug here
+        // as well as a test one? Drain both reconciliation paths and look at the end state.
+        if (vm.PendingRescore != null) await vm.PendingRescore;
+        if (vm.PendingToggleRescore != null) await vm.PendingToggleRescore;
+
+        Assert.False(vm.GameplayActions);
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");
+    }
+
     /// <summary>Toggling twice inside the window lands back on the mode the
     /// rows were already scored with, so the reconciliation correctly does
     /// nothing — this is why it compares values instead of latching a bool.</summary>
@@ -555,15 +666,24 @@ public class InterestingFunctionsViewModelTests
             new() { ClassName="ShopSubsystem", FuncName="OpenShop",
                     FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
         };
+        // ⚠ The toggles must land INSIDE the window — after LoadAsync captured
+        // _scoredWithGameplayActions and before it compares that against GameplayActions. Firing
+        // them straight after ExecuteAsync only USUALLY hit that window: the load's tail runs on a
+        // pool thread and could slip between the two toggles, at which point the reconciliation
+        // legitimately fires and PendingRescore is not null. That was [TESTFLAKE-2026-08-21],
+        // ~3 red runs in ~15. The gated list parks the load in the window instead of racing it.
+        var gated = new GatedEntryList(entries);
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
         var vm = new InterestingFunctionsViewModel(
-            new FakeDumpService { NextResult = BuildResult(entries) },
+            new FakeDumpService { NextResult = BuildResult(gated) },
             new NoopLogger(), bridge);
 
         var load = vm.LoadCommand.ExecuteAsync(null);
+        await gated.Reached;              // scoring has begun: in the window, deterministically
         vm.GameplayActions = true;
         vm.GameplayActions = false;
+        gated.Release();
 
         gate.SetResult(false);
         var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));

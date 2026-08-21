@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -59,6 +60,26 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// <see cref="RescoreAsync"/>'s busy guard; comparing this against the live
     /// property is how the two are reconciled once the Load finishes.</summary>
     private bool _scoredWithGameplayActions;
+
+    /// <summary>
+    /// Which re-score is the newest. Bumped by every <see cref="RescoreAsync"/>, checked again
+    /// after its scoring completes; a run that is no longer newest throws its rows away.
+    ///
+    /// <para><b>Why this exists.</b> Two re-scores can be in flight at once — the setter starts one
+    /// per toggle, and <see cref="LoadAsync"/> starts another to reconcile a toggle that arrived
+    /// while it was busy. Each captures <c>GameplayActions</c>, then suspends on
+    /// <c>Task.Run(ScoreEntries)</c>. Without this, whichever SCORING finishes last wins the write
+    /// to <c>_allRows</c> — which is completion order, not request order. The UI thread serialises
+    /// the continuations but does not reorder them, so this is not a test-only artefact.</para>
+    ///
+    /// <para>⚠ The failure it prevents is the WORST shape available here, and self-concealing:
+    /// toggle on, let the load reconcile, toggle off — and if the first scoring lands last, the
+    /// grid keeps the pack's rows while the CheckBox reads off AND
+    /// <c>_scoredWithGameplayActions</c> reads off, so the mismatch the field exists to detect is
+    /// invisible and nothing ever reconciles it. That is Z1's "CheckBox and rows disagree,
+    /// permanently, recover by untick+retick" arriving by a different route.</para>
+    /// </summary>
+    private int _rescoreGeneration;
 
     /// <summary>The re-score <see cref="LoadAsync"/> kicked off to reconcile a
     /// toggle that arrived while it was busy, or null when the modes already
@@ -549,8 +570,21 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         if (IsLoading || _entries.Count == 0) return;
         var entries = _entries;
         bool includeActions = GameplayActions;
+        int generation = Interlocked.Increment(ref _rescoreGeneration);
+
+        var rows = await Task.Run(() => ScoreEntries(entries, includeActions));
+
+        // A newer toggle started while this one was scoring, so these rows are already stale.
+        // Drop them: publishing now would overwrite the newer result with the older mode and
+        // leave the grid disagreeing with the CheckBox for good. See _rescoreGeneration.
+        if (generation != Volatile.Read(ref _rescoreGeneration)) return;
+
+        // Published together on purpose — `_scoredWithGameplayActions` means "what `_allRows` is
+        // scored with", so it must not be moved ahead of the rows it describes. It used to be set
+        // before the await, which is what let a superseded run leave the field claiming a mode the
+        // rows had never been scored in.
         _scoredWithGameplayActions = includeActions;
-        _allRows = await Task.Run(() => ScoreEntries(entries, includeActions));
+        _allRows = rows;
         ApplyFilter();
         // Re-scoring MOVES the threshold count — that is the entire point of the
         // Gameplay-Actions pack — so the status line must follow it. It used to be
