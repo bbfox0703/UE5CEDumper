@@ -3012,7 +3012,7 @@ this checkout happened to land, which is exactly why it is asserted. ⭐ **Shown
 reverting the freeze normaliser failed `InjectFreezeHelperLua_SendsLfOnly` at line 232; restoring it
 went green.
 
-### ✅ FIXED 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **32** places, and now the mechanism is known
+### ✅ FIXED + CE-VERIFIED 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **32** places
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
 This is the exact failure mode `AA12`/`AA13` exists to prevent — **"the freeze script must stop
@@ -3219,13 +3219,28 @@ so its defect-reproduction case cannot quietly become a second copy of the fix.
 `EveryEnableUntick_IsDeferred_NotImmediate` and `EveryDeferredUntick_IsTheSharedEmittersText`, each
 naming `Protection`.
 
-⚠ **STILL OWED: re-run in Cheat Engine.** Everything above is a source reading plus a model of that
-source. The model is faithful to CE **7.5** source while the observation was on CE **7.7**, and
-`docs/CE-Bugs-Minesweeper.md` §4 is the standing reminder that the public source lags the release.
-Repeat the original repro — Property Search → `DumperTestActor.TickCount` → **Freeze** without the
-helper injected — and read `getAddressList().getMemoryRecord(0).Active` from CE's **Lua Engine**,
-not from the checkbox icon. Expect `false`, after a ~50 ms tick. Until that is done this is fixed
-in the sense of *mechanism understood and pinned*, not *seen working*.
+**✅ VERIFIED IN CHEAT ENGINE 7.7, 2026-08-21 — the version the defect was observed on, not the
+7.5 source the fix was reasoned from.**
+
+Run as a **two-record A/B inside one CE session**, built and read entirely from CE's own Lua Engine
+(so the verdict comes from `memrec.Active`, never from the checkbox icon — reading that ✗ backwards
+is what would invert the whole result). Both records are `vtAutoAssembler`, attached to DumperTest,
+identical except for the untick shape, and `B_DEFERRED` carries the **byte-identical** line
+`CeLuaHygiene.DeferredUntickLua()` emits:
+
+```
+--- FREEZEUNTICK A/B, CE 7.7 ---
+A_IMMEDIATE   Active=true      <- the defect, reproduced
+B_DEFERRED    Active=false     <- the shipped fix, working
+```
+
+⭐ **The control is what makes this conclusive.** `A_IMMEDIATE` reproducing the defect in the same
+table, same session and same process proves the rig can express the failure — so `B_DEFERRED`
+coming back `false` is the fix working, not the experiment being too weak to fail. It also
+confirms, on the real 7.7 binary, both things the fix was built on: CE's `setActive` really does
+ignore an in-`[ENABLE]` untick, and a deferred one really does land.
+
+Table cleared afterwards (`0 record(s) left`); CE and the game shut down.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 
