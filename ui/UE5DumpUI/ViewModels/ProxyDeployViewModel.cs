@@ -998,14 +998,29 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 // read "Delete checked (1)" — the retry has to be something the user asks for.
                 row.IsSelected = false;
 
+                // ⚠ Counted UNCONDITIONALLY. [ORPHANCANCEL-2026-08-20] These used to be inside
+                // the success branch, so anything a non-successful row had already recycled went
+                // unreported — and the log then showed three "Recycled leftover proxy" lines under
+                // a summary that claimed two. A partly-locked row has the same problem as an
+                // interrupted one: work happened, and the tally has to say so.
+                files += result.FilesRecycled;
+                dirs += result.DirsRemoved;
+
                 if (result.Success)
                 {
                     ok++;
-                    files += result.FilesRecycled;
-                    dirs += result.DirsRemoved;
                     DropOrphanRow(row);
                 }
-                else fail++;
+                else if (!result.Cancelled)
+                {
+                    fail++;
+                }
+
+                // Interrupting is not failing, so the row is neither counted as a failure nor
+                // dropped: its half-pruned chain is precisely what the user needs left on screen.
+                // Rethrow so the outer handler prints the cancelled summary — which now includes
+                // what this row managed to do.
+                if (result.Cancelled) throw new OperationCanceledException(ct);
             }
             NotifyOrphanSelectionChanged();
             SetOperationResult(DescribeCleanup(ok, picked.Count, files, dirs, fail, cancelled: false), fail);

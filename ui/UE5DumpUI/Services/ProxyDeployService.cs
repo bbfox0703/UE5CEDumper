@@ -1794,9 +1794,15 @@ public sealed class ProxyDeployService : IProxyDeployService
             int recycled = 0;
             int vanished = 0;   // already gone before we got to it — not a failure, not a removal
 
+            // ⚠ Cancellation is OBSERVED here, not thrown. [ORPHANCANCEL-2026-08-20]
+            // Throwing out of the middle of a row discarded everything that row had already
+            // done — the file it had just recycled, and the knowledge that its folder chain was
+            // now half-pruned. Breaking out with the counts intact is what lets the caller
+            // report reality instead of a tally computed on a different path.
+            bool cancelled = false;
             foreach (string file in filesToRecycle)   // the CONFIRMED subset, not the fresh plan
             {
-                ct.ThrowIfCancellationRequested();
+                if (ct.IsCancellationRequested) { cancelled = true; break; }
                 try
                 {
                     var fi = new FileInfo(file);
@@ -1865,13 +1871,17 @@ public sealed class ProxyDeployService : IProxyDeployService
             // its folder, or the next scan cannot find it again.
             int dirsRemoved = 0;
             string? pruneStopReason = null;
-            bool allFilesGone = recycled + vanished == filesToRecycle.Count && locked.Count == 0
+            // An interrupted file loop leaves recycled+vanished short of the total, so this is
+            // already false and no folder is pruned under a half-emptied directory. Stated
+            // explicitly rather than relied upon.
+            bool allFilesGone = !cancelled
+                                && recycled + vanished == filesToRecycle.Count && locked.Count == 0
                                 && readOnly.Count == 0 && failed.Count == 0;
             if (allFilesGone)
             {
                 foreach (string dir in dirsToRemove)   // deepest-first, and only what was confirmed
                 {
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested) { cancelled = true; break; }
                     try
                     {
                         // NON-recursive on purpose. This is the kernel-enforced emptiness check:
@@ -1910,6 +1920,16 @@ public sealed class ProxyDeployService : IProxyDeployService
             var (success, message) = ProxyOrphanScanner.ResolveRemovalOutcome(
                 recycled, vanished, dirsRemoved, dirsToRemove.Count, locked, readOnly, failed,
                 pruneStopReason);
+
+            // An interrupted row is never a success, whatever the outcome text would have said:
+            // it is half-done by definition, and the row has to stay on the list.
+            if (cancelled)
+                return new OrphanRemovalResult(
+                    false,
+                    $"Interrupted — {recycled} file(s) recycled, {dirsRemoved} folder(s) removed; "
+                        + "the rest was left in place",
+                    recycled, dirsRemoved, Cancelled: true);
+
             return new OrphanRemovalResult(success, message, recycled, dirsRemoved);
         }, ct);
     }

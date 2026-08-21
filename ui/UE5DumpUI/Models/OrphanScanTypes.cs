@@ -180,8 +180,23 @@ public readonly record struct PrunePlan(
 public readonly record struct OrphanScanProgress(string CurrentPath, int Examined, int Found);
 
 /// <summary>What actually happened when a row was removed. Immutable so it can cross a thread.</summary>
+/// <param name="Cancelled">
+/// The pass was interrupted part-way through THIS row. [ORPHANCANCEL-2026-08-20]
+///
+/// <para>Cancellation used to escape as an <see cref="System.OperationCanceledException"/> from
+/// inside the row, which threw away everything the row had already done: a run that recycled three
+/// files reported two, the interrupted row stayed ticked and still advertised "Recycle version.dll,
+/// then remove up to 4 folder(s)" for a DLL that was already in the Recycle Bin, and the
+/// half-pruned folder chain it left behind was invisible. Returning the partial counts instead of
+/// throwing them away is what lets the caller report what actually happened.</para>
+///
+/// <para>⚠ <see cref="Success"/> stays <c>false</c> when this is set. An interrupted row is not a
+/// completed one — it must not be dropped from the list, because the chain it half-pruned is
+/// exactly what the user needs to still see.</para>
+/// </param>
 public readonly record struct OrphanRemovalResult(
     bool Success,
     string Message,
     int FilesRecycled,
-    int DirsRemoved);
+    int DirsRemoved,
+    bool Cancelled = false);
