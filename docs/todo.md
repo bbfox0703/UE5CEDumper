@@ -2304,6 +2304,37 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
 > | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> ### ✅ 7a HAS FIXTURES — census 2026-08-21 `[L11-7A-CENSUS-2026-08-21]`
+>
+> The row's open half needs a UFunction whose **complex return ends past byte 256**, and the
+> question "does one exist here" is a census, not a judgement. `py tools/verify/l11_7a_ret_census.py`
+> on DumperTest / dist 3308, read-only, two stages:
+>
+> * stage 1 — **9,806** functions over **3,942** classes, `truncated=false aborted=false`. ⚠ That
+>   pair is asserted, not reported: a capped walk can only support "none in the part I looked at",
+>   which is not the claim. **185** functions have `parms_size > 256`, over 45 classes.
+> * stage 2 — `walk_functions` on those 45 → **67 fixtures**.
+>
+> Best candidates for the UI step, all on DumperTest:
+>
+> | class | function | ParmsSize | return |
+> |---|---|---|---|
+> | `KismetAnimationLibrary` | `K2_LookAt` | 288 | `StructProperty@192` size 96 → ends **288** |
+> | `ToolMenuSectionExtensions` | `GetLabel` | 312 | `TextProperty@296` size 16 → ends **312** |
+> | `UserWidget` | `OnPreviewKeyDown` | 304 | `StructProperty@120` size 184 → ends **304** |
+> | `ToolMenuEntryExtensions` | `InitMenuEntry` | 1104 | `StructProperty@80` size 1024 → ends **1104** |
+>
+> ⭐ `K2_LookAt`'s 288 / @192 / 96 is *exactly* the shape the plan predicted for
+> `KismetMathLibrary::ComposeTransforms` — the same numbers on a different class, which is a useful
+> independent confirmation that the shape is what 7a needs rather than a one-off.
+>
+> ⭐ **NEGATIVE CONTROL: 609 complex returns that stay INSIDE the buffer were correctly NOT
+> flagged** — `MakeTransform`-shaped cases ending at 24, 64, 120, 136, 144. Without that count the
+> classifier could be matching "complex" and ignoring the boundary entirely, and all 67 hits would
+> be worthless. 67 flagged against 609 not-flagged is the discrimination.
+>
+> ▶ So 7a is **exercisable here**; what remains is the UI half (Batch 2.3), not a fixture hunt.
+>
 > ### 🟡 Y13 PASSES / Y10's CE HALF IS 3-OF-4 2026-08-20 `[Y10-Y13-CE-2026-08-20]` — and the miss is `[FREEZEUNTICK]` in a SECOND generator
 >
 > Driven end to end in CE for the first time. Subject: **`KismetMathLibrary::MakeTransform`**
@@ -13785,7 +13816,21 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
     symptom (pipe stall / leak under repeated failed invokes). ⬜
-  - **Solide LOWs L2 / L3 / L4** (weak-ptr refusal no longer silent; substring class + fuzzy field
+  - ✅ **Solide LOW L2 — PASS 2026-08-21 `[SOLIDE-L2-2026-08-21]`.** `object_null` on
+    `Actor::ParentComponent` (a `TWeakObjectPtr`, verified `WeakObjectProperty` @0x01C0) returns
+    **`code=-12` (`FR_ERR_WEAK_PTR`), `held=0`, `resolved=false`**, persists **no** job, and starts
+    **no** worker. `tools/verify/solide_l2_weakptr.py`, DumperTest / dist 3308.
+    ⭐ **The reply is only a third of the claim** — a job can be absent from `get_forced_fields` and
+    still have started a re-assert worker, which `get_forced_fields` structurally cannot show. So
+    the rig reproduces the **PRE-FIX shape first**, on purpose: forcing a field that does not exist
+    is accepted (`code=0 held=0`), persists a job, and drives `FindInstancesDerivedFrom base='Actor'`
+    at **3.43/s** forever. Only after watching that counter move does its silence mean anything.
+    ⚠ **The first version of this rig reported a FAIL against correct code**, asserting "zero new
+    scan lines". The refusal legitimately performs **exactly one** `FindInstancesDerivedFrom`, 6 ms
+    after the request, because it must resolve an instance to read the field's TYPE before it can
+    refuse. The honest discriminator is the SUSTAINED rate: **0.00/s over 4 s** against the
+    control's 3.43/s. L3 and L4 are untouched — annotate this bullet, do not tick it.
+  - **Solide LOWs L3 / L4** (substring class + fuzzy field
     match tightened; per-instance restore bases instead of one representative). L4's prune guard was
     touched again in build 2531 — see the Solide pool-truncation entry below, verify them together. ⬜
 
