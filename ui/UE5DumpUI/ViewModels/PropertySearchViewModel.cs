@@ -630,8 +630,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             string advice = "narrow it with a longer property name or a Type filter";
             if (!GameClassesOnly)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
-            if (PropertySearchCap < Constants.MaxSearchCap)
-                advice += $", or raise Max above {PropertySearchCap:N0}";
+            advice += PartialResultNotice.RaiseMaxClause(PropertySearchCap, Constants.MaxSearchCap);
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled()
                 : result.Truncated

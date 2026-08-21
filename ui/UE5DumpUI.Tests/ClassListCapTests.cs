@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using UE5DumpUI;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using Xunit;
 
@@ -111,5 +112,71 @@ public class ClassListCapTests
         // is a reimplementation — if someone reverts the VM but leaves the helper, this catches it.
         string vm = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs"));
         Assert.DoesNotContain("filter to narrow, or raise the cap", vm);
+    }
+}
+
+/// <summary>
+/// The Z10 rule, now in ONE place. Three panels own a Max control and each had written the
+/// "or raise Max" guard separately; the third rewrite in a single day is where a rule stops
+/// being a rule, so it moved into <c>PartialResultNotice.RaiseMaxClause</c> — beside the
+/// sentence it guards rather than beside each control. These pin the clause, and that all
+/// three callers actually go through it.
+/// </summary>
+public class RaiseMaxClauseTests
+{
+    private static string RepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not find {relative}");
+    }
+
+    [Fact]
+    public void ItNamesTheCapBelowTheCeilingAndSaysNothingAtIt()
+    {
+        Assert.Equal(", or raise Max above 200",
+                     PartialResultNotice.RaiseMaxClause(200, Constants.MaxSearchCap));
+        Assert.Equal(", or raise Max above 5,000",
+                     PartialResultNotice.RaiseMaxClause(5000, Constants.MaxSearchCap));
+        // At the ceiling — and, defensively, above it, which a hand-edited settings file can
+        // produce in the window before the load clamp runs.
+        Assert.Equal("", PartialResultNotice.RaiseMaxClause(
+                             Constants.MaxSearchCap, Constants.MaxSearchCap));
+        Assert.Equal("", PartialResultNotice.RaiseMaxClause(
+                             Constants.MaxSearchCap + 1, Constants.MaxSearchCap));
+    }
+
+    [Fact]
+    public void EveryPanelThatOffersRaiseMaxGoesThroughIt()
+    {
+        // ⚠ A panel that re-derives the rule inline is the defect returning: correct on the day
+        // it is written, drifting the next time the ceiling moves. Instance Finder is in this
+        // list because it is where the phrase ORIGINATED and was the last one still saying it
+        // unconditionally — at 50,000 it advised raising a Max already at its maximum.
+        foreach (var vm in new[]
+                 {
+                     @"ui\UE5DumpUI\ViewModels\InstanceFinderViewModel.cs",
+                     @"ui\UE5DumpUI\ViewModels\PropertySearchViewModel.cs",
+                     @"ui\UE5DumpUI\ViewModels\GameClassFilterViewModel.cs",
+                 })
+        {
+            string src = File.ReadAllText(RepoFile(vm));
+
+            // ⚠ The open paren is load-bearing: it distinguishes a CALL from a mention. The
+            // first version of this test asserted on the bare name and was shown, by a negative
+            // control, to pass against a hand-rolled copy — because the comment above that copy
+            // still named the helper. A test for "goes through X" that a comment can satisfy is
+            // not a test.
+            Assert.Contains("PartialResultNotice.RaiseMaxClause(", src);
+
+            // And the sentence itself is built in exactly ONE place. Banning the phrase outright
+            // (not just an interpolated form) is what closes the other half of that control: the
+            // hand-rolled copy used string concatenation and slipped straight past a `{` check.
+            Assert.DoesNotContain("or raise Max above", src);
+        }
     }
 }

@@ -6182,7 +6182,30 @@ before. Persistence and the load clamp were checked the same way as `[PROPSEARCH
 `classListCap: 8000` survived a restart, and a hand-edited `0` in `ui-options.json` came back as
 **100** with the ▼ spinner greyed.
 
-**`ClassListCapTests` (6)**, including one that greps the VM for the exact old sentence. ⚠ That test
+**`ClassListCapTests` (6)**, including one that greps the VM for the exact old sentence.
+
+**⭐ THE SIBLING SWEEP — and the fourth instance.** `grep -rn "raise Max\|raise the cap"` over the
+UI found exactly three panels that offer the advice: Instance Finder, Property Search, Classes.
+Console and Interesting Funcs offer only "tick Game classes only", which they do own; Interesting
+Properties offers nothing. So the *false-lever* form is now gone everywhere — **but Instance
+Finder, the panel the phrase was originally copied FROM, was still saying it unconditionally**, so
+at a cap of 50,000 it advised raising a Max already at its maximum. Same lie, one ceiling later.
+
+The rule now lives in **`PartialResultNotice.RaiseMaxClause(currentCap, ceiling)`** and all three
+call it. ⚠ It is shared rather than repeated because it had been written **three times in one
+day** — the third rewrite is where a rule stops being a rule — and because the Z10 family is
+specifically *advice drifting from the controls a panel has*, so the guard belongs beside the
+sentence, not beside each control. `Constants.MaxPropertySearchCap` became `MaxSearchCap` for the
+same reason.
+
+⚠⚠ **My own test could not fail, and a negative control is what showed it.** The first
+`EveryPanelThatOffersRaiseMaxGoesThroughIt` asserted `Contains("PartialResultNotice.RaiseMaxClause")`
+and `DoesNotContain("or raise Max above {")`. Substituting a hand-rolled copy into Instance Finder
+**passed both**: the comment above the copy still named the helper, and the copy used concatenation
+rather than interpolation so there was no `{`. Now it requires the open **paren** (a call, not a
+mention) and bans the phrase outright. Re-run of the same control: **fails**. The other control —
+making the clause unconditional — fails `ItNamesTheCapBelowTheCeilingAndSaysNothingAtIt`. Both were
+run; neither is assumed. ⚠ That test
 failed on its first run against my own **doc comment**, which quoted the old wording verbatim — the
 comment was reworded rather than the test weakened, and it now says why.
 

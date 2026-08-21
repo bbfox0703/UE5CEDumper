@@ -145,7 +145,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
             // control exists now; at the ceiling the advice would be the same lie in a new place.
             var capNote = result.Truncated
                 ? "  ⚠ STOPPED at the " + result.RequestedLimit.ToString("N0") + "-row cap — filter to narrow"
-                  + (ClassListCap < Constants.MaxSearchCap ? ", or raise Max above " + ClassListCap.ToString("N0") : "")
+                  + PartialResultNotice.RaiseMaxClause(ClassListCap, Constants.MaxSearchCap)
                 : "";
             StatusText = $"{result.Total:N0} classes shown of {result.TotalClasses:N0} total (scanned {result.ScannedObjects:N0} objects){capNote}";
             _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +
