@@ -3242,7 +3242,7 @@ identically, so whatever is wrong here is likely wrong in all of them, and which
 *Not fixed yet — cause not confirmed in source at time of filing.*
 
 
-### ⬜ NEW DEFECT 2026-08-20 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
 
 *Found while building a side-effect rig for `ST1` steps 4 and 6, when
 `invoke_function(SetActorHiddenInGame)` on a `StaticMeshActor` came back **"Function not found"**
@@ -3295,6 +3295,81 @@ remove the dependency for callers that already have one.
 
 *Not fixed — found during a verification pass. Effort S, risk low, but it needs the listing-vs-resolving
 distinction above respected.*
+
+
+**FIXED 2026-08-21, and verified on a running game rather than only in unit tests.**
+
+**The fix respects the listing-vs-resolving distinction this entry insisted on.**
+`Ubel::WalkFunctions` is untouched and still per-class, so the UI keeps attributing each function to
+its declaring class. The climb went into a new header-inline
+`Ubel::ResolveFunctionInChain(classAddr, name, listFuncs, readSuper, out, &levels)`, and the three
+by-name resolvers now share it:
+
+| call site | before | after |
+|---|---|---|
+| `Frieren.cpp` `UE5_FindFunctionByName` | own class only | chain (fixes the pipe `invoke_function` **and** `UE5_SetDebugCamera`) |
+| `Mimic.cpp` `HandleFindFunction` | own class only | chain (fixes the CE Lua `CMD_FIND_FUNCTION`) |
+| `Dunste.cpp` `FindFuncByName` | **already climbed**, privately | folded onto the shared one |
+
+⭐ **`Dunste::FindFuncByName` held the only correct climb in the tree** — depth guard, self-loop
+check and all. As with `ProcessPickerWindow` in `[GRIDRECYCLE]`, the fix was to *match the existing
+sibling*, not to invent a rule; folding it in leaves one copy instead of three. ⚠ One deliberate
+semantic change there: the shared resolver prefers an **exact** match anywhere in the chain over a
+case-insensitive one, where Dunste took the first case-insensitive hit. That differs only when two
+functions in one chain differ purely in case. Its `parmsSize` sanity gate stays with Dunste — it is
+that caller's concern, not the resolver's.
+
+**Why the traversal is in a header.** No test target compiles `Ubel.cpp`, `Frieren.cpp` or
+`Mimic.cpp`, so a rule left in any of them cannot be pinned at all. Taking the per-class listing and
+the super read as callables lets `dll_helpers_test` drive a synthetic class chain with zero memory
+access. **1603 → 1626 assertions.**
+
+⚠ **The ordering rule worth not breaking later:** both passes run over the **whole chain** before
+the other begins. An exact match on a *base* class must beat a case-insensitive match on a *derived*
+one; written as "try both at each level on the way up", the derived near-miss would win.
+`Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive` exists solely to catch that rewrite.
+
+⭐ **Shown able to fail.** Disabling just the climb (one `break;`) failed **exactly 7** assertions —
+`inherited function resolves`, `...to the base class's copy`, `grandparent function resolves`,
+`...to the grandparent's copy`, `the whole chain was searched`, `exact match on the base beat the
+derived near-miss`, `cycle bounded by the depth guard` — while `own function still resolves` and
+`override resolves` stayed **green**, which is right: neither needs the climb. A negative control
+that reddened everything would have proved much less.
+
+**LIVE VERIFICATION — DumperTest (dev), freshly built DLL injected.**
+`tools/verify/invoke_inherited_function.py`, which "exits 1 while the defect stands", **exits 0**:
+
+```
+Actor declares 140 functions; StaticMeshActor declares 1 of its own (['SetMobility'])
+  1  INHERITED on a DERIVED instance   SetActorHiddenInGame   -> ok=True  ProcessEvent OK
+  2  control: DECLARED on own class    SetActorHiddenInGame   -> ok=True  ProcessEvent OK
+  3  control: own function, same inst  SetMobility            -> ok=True  ProcessEvent OK
+PASS: the inherited function resolved — the defect is fixed.
+```
+
+Row 1 was ❌ `Function not found` before; both controls were already green and stayed green, so the
+one variable really is inherited-vs-declared. Four further live calls on the same instance:
+
+| function | case | result |
+|---|---|---|
+| `SetActorHiddenInGame` | inherited, exact | ✅ `ProcessEvent OK` |
+| `setactorhiddeningame` | inherited, **wrong case** | ✅ `ProcessEvent OK` — the CI fallback survived the chain change |
+| `K2_TeleportTo` | inherited, a second one | ✅ `ProcessEvent OK` |
+| `SetMobility` | own | ✅ `ProcessEvent OK` |
+| `NoSuchFunctionAnywhere` | **absent** | ✅ `ok=False, Function not found` |
+
+⭐ **That last row is the one that matters most** — a resolver that climbs must still *fail* on a
+name that exists nowhere, or the fix would trade a false negative for a silent false positive.
+
+⭐ **And listing did NOT inflate**, which was this entry's stated risk. Same session, after the fix:
+`list_all_functions` returns **9,806** with `Actor` declaring **140**, `Pawn` **33**, `Character`
+**48**, and `StaticMeshActor` still **1** — not 141. Had the climb gone into `WalkFunctions`,
+`StaticMeshActor` would read 141 and the total would balloon.
+
+**Not done, deliberately:** the optional `func_addr` input to `invoke_function`. The entry lists it
+as an *independent* improvement, and the resolver fix closes the defect on its own; adding a pipe
+input means a protocol-doc change for a path that now works by name. Filed here rather than done
+silently.
 
 ### ✅ VERIFIED 2026-08-20 — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2 — all five rows PASS, all headless
 

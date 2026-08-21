@@ -251,6 +251,67 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out);
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
 
+// ── Resolving a UFunction BY NAME on a class, INCLUDING inherited ones ──────
+// [INVOKEINHERIT-2026-08-20]
+//
+// WalkFunctions above walks one UClass's OWN UStruct::Children chain and stops there.
+// That is right for LISTING — the UI attributes each function to its declaring class, and
+// inheriting would repeat AActor's 140 entries under every actor class — but it is wrong
+// for RESOLVING, and the by-name resolvers were built straight on top of it. The result:
+// `SetActorHiddenInGame` on a StaticMeshActor came back "Function not found" for a function
+// the tool's own listing had produced, while the same call on an instance whose class IS
+// Actor worked. AActor declares 140 functions, APawn 33, ACharacter 48 — none of them
+// reachable by name on any derived instance, which on a real game means K2_TeleportTo,
+// SetActorLocation and Jump among ~221 others.
+//
+// The traversal lives here, in the header, ON PURPOSE: no test target compiles Ubel.cpp
+// (nor Frieren.cpp / Mimic.cpp, the two call sites), so a rule left in a .cpp could not be
+// pinned at all. Taking the per-class listing and the super read as callables lets a test
+// drive a synthetic class chain and keeps this free of any memory access.
+//
+// ⚠ Both passes run over the WHOLE chain before the other begins. An exact match on a base
+// class must beat a case-insensitive match on a derived one, so this cannot be written as
+// "try both at each level on the way up".
+template <class ListFuncs, class ReadSuper>
+inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
+                                   ListFuncs listFuncs, ReadSuper readSuper,
+                                   FunctionInfo& out, int* levelsWalked = nullptr) {
+    if (levelsWalked) *levelsWalked = 0;
+    if (!classAddr || !funcName || !funcName[0]) return false;
+
+    // Collect the chain first. A malformed/mid-teardown SuperStruct can point at itself or
+    // form a cycle, so bound it the way Dunste::FindFuncByName already does.
+    constexpr int kMaxSuperDepth = 64;
+    std::vector<std::vector<FunctionInfo>> levels;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        levels.push_back(listFuncs(cls));
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == 0 || super == cls) break;
+        cls = super;
+    }
+    if (levelsWalked) *levelsWalked = static_cast<int>(levels.size());
+
+    // Pass 1: exact, most-derived first, so an override beats the base it overrides.
+    for (const auto& level : levels)
+        for (const auto& f : level)
+            if (f.name == funcName) { out = f; return true; }
+
+    // Pass 2: case-insensitive, same order. Kept as a separate sweep — see the note above.
+    std::string want(funcName);
+    std::transform(want.begin(), want.end(), want.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const auto& level : levels) {
+        for (const auto& f : level) {
+            std::string have = f.name;
+            std::transform(have.begin(), have.end(), have.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (have == want) { out = f; return true; }
+        }
+    }
+    return false;
+}
+
 // Resolve a SINGLE UFunction* to its (name, fullName, functionFlags, numParms,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler

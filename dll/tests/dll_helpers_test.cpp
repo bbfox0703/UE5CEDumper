@@ -87,6 +87,159 @@ static int g_fail = 0;
     } \
 } while (0)
 
+// ----- Ubel::ResolveFunctionInChain -----------------------------------------
+// [INVOKEINHERIT-2026-08-20] Resolving a UFunction by name must climb SuperStruct.
+//
+// The traversal lives in Ubel.h precisely so it can be driven here: no test target compiles
+// Ubel.cpp, Frieren.cpp or Mimic.cpp, so a rule left in any of those is untestable. These
+// fakes stand in for a class chain and its per-class function lists, which is the whole of
+// what the resolver is allowed to know.
+
+namespace {
+
+struct FakeChain {
+    // classAddr -> its OWN declared function names
+    std::vector<std::pair<uintptr_t, std::vector<std::string>>> declared;
+    // classAddr -> SuperStruct (absent = read fails, i.e. end of chain)
+    std::vector<std::pair<uintptr_t, uintptr_t>> supers;
+    mutable int listCalls = 0;
+
+    std::vector<FunctionInfo> List(uintptr_t cls) const {
+        ++listCalls;
+        std::vector<FunctionInfo> out;
+        for (const auto& d : declared)
+            if (d.first == cls)
+                for (size_t i = 0; i < d.second.size(); ++i) {
+                    FunctionInfo f;
+                    f.name = d.second[i];
+                    // Address encodes (class, slot) so a test can prove WHICH one was picked.
+                    f.address = cls * 0x100 + i + 1;
+                    f.parmsSize = 8;
+                    out.push_back(f);
+                }
+        return out;
+    }
+
+    bool ReadSuper(uintptr_t cls, uintptr_t& super) const {
+        for (const auto& s : supers)
+            if (s.first == cls) { super = s.second; return true; }
+        return false;
+    }
+};
+
+// StaticMeshActor -> Actor -> Object, mirroring the reported repro.
+static FakeChain MakeActorChain() {
+    FakeChain c;
+    c.declared = {
+        { 0x10, { "SetMobility" } },                              // StaticMeshActor
+        { 0x20, { "SetActorHiddenInGame", "K2_TeleportTo" } },    // Actor
+        { 0x30, { "ExecuteUbergraph" } },                         // Object
+    };
+    c.supers = { { 0x10, 0x20 }, { 0x20, 0x30 } };                // 0x30 has no super
+    return c;
+}
+
+static bool Resolve(const FakeChain& c, const char* name, FunctionInfo& out, int* levels = nullptr) {
+    return Ubel::ResolveFunctionInChain(
+        0x10, name,
+        [&c](uintptr_t cls) { return c.List(cls); },
+        [&c](uintptr_t cls, uintptr_t& super) { return c.ReadSuper(cls, super); },
+        out, levels);
+}
+
+}  // namespace
+
+static void Test_Ubel_ResolveFunctionInChain() {
+    const FakeChain c = MakeActorChain();
+    FunctionInfo hit;
+
+    // THE DEFECT: an inherited function on a derived instance.
+    EXPECT("inherited function resolves", Resolve(c, "SetActorHiddenInGame", hit));
+    EXPECT_EQ_U64("...to the base class's copy", hit.address, 0x20 * 0x100 + 1);
+
+    // The two controls from the field measurement, so the test reproduces its discriminator.
+    EXPECT("own function still resolves", Resolve(c, "SetMobility", hit));
+    EXPECT_EQ_U64("...to the derived class's copy", hit.address, 0x10 * 0x100 + 1);
+
+    // Two levels up, not just one.
+    EXPECT("grandparent function resolves", Resolve(c, "ExecuteUbergraph", hit));
+    EXPECT_EQ_U64("...to the grandparent's copy", hit.address, 0x30 * 0x100 + 1);
+
+    // A genuinely absent name must still fail — otherwise the fix would mask real errors.
+    EXPECT("absent function still fails", !Resolve(c, "NoSuchFunction", hit));
+
+    int levels = 0;
+    Resolve(c, "NoSuchFunction", hit, &levels);
+    EXPECT("the whole chain was searched", levels == 3);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_Overrides() {
+    // An override must beat the base it overrides — the derived copy is the one that runs.
+    FakeChain c;
+    c.declared = { { 0x10, { "Tick" } }, { 0x20, { "Tick" } } };
+    c.supers = { { 0x10, 0x20 } };
+
+    FunctionInfo hit;
+    EXPECT("override resolves", Resolve(c, "Tick", hit));
+    EXPECT_EQ_U64("override wins over the base", hit.address, 0x10 * 0x100 + 1);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive() {
+    // ⚠ The ordering rule this is written to protect: an EXACT match on a BASE class beats a
+    // case-insensitive match on a DERIVED one. Written as "try both at each level going up",
+    // the derived near-miss would win — which is why the implementation runs two full sweeps.
+    FakeChain c;
+    c.declared = { { 0x10, { "sethidden" } }, { 0x20, { "SetHidden" } } };
+    c.supers = { { 0x10, 0x20 } };
+
+    FunctionInfo hit;
+    EXPECT("resolves", Resolve(c, "SetHidden", hit));
+    EXPECT_EQ_U64("exact match on the base beat the derived near-miss", hit.address, 0x20 * 0x100 + 1);
+
+    // And case-insensitive still works when nothing matches exactly.
+    EXPECT("case-insensitive fallback survives", Resolve(c, "SETHIDDEN", hit));
+}
+
+static void Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates() {
+    FunctionInfo hit;
+
+    // Self-loop: SuperStruct pointing at itself must not hang.
+    FakeChain self;
+    self.declared = { { 0x10, { "A" } } };
+    self.supers = { { 0x10, 0x10 } };
+    EXPECT("self-loop terminates and fails cleanly", !Resolve(self, "Missing", hit));
+    EXPECT("self-loop walked one level only", self.listCalls == 1);
+
+    // A cycle that is not a self-loop is bounded by the depth guard rather than detected.
+    FakeChain cyc;
+    cyc.declared = { { 0x10, { "A" } }, { 0x20, { "B" } } };
+    cyc.supers = { { 0x10, 0x20 }, { 0x20, 0x10 } };
+    EXPECT("cycle terminates", !Resolve(cyc, "Missing", hit));
+    EXPECT("cycle bounded by the depth guard", cyc.listCalls == 64);
+
+    // A null super ends the chain.
+    FakeChain nul;
+    nul.declared = { { 0x10, { "A" } } };
+    nul.supers = { { 0x10, 0 } };
+    EXPECT("null super ends the chain", Resolve(nul, "A", hit));
+    EXPECT("null super walked one level", nul.listCalls == 1);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
+    const FakeChain c = MakeActorChain();
+    FunctionInfo hit;
+    int levels = 99;
+
+    EXPECT("null class refused", !Ubel::ResolveFunctionInChain(
+        0, "SetMobility",
+        [&c](uintptr_t cls) { return c.List(cls); },
+        [&c](uintptr_t cls, uintptr_t& s) { return c.ReadSuper(cls, s); }, hit, &levels));
+    EXPECT("...and reports zero levels", levels == 0);
+
+    EXPECT("empty name refused", !Resolve(c, "", hit));
+    EXPECT("null name refused", !Resolve(c, nullptr, hit));
+}
+
 // ----- TryStrToAddr ----------------------------------------------------------
 
 static void Test_TryStrToAddr_AcceptsValidHex() {
@@ -6701,6 +6854,13 @@ int main() {
     RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
     RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
     RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
+
+    // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
+    RUN(Test_Ubel_ResolveFunctionInChain);
+    RUN(Test_Ubel_ResolveFunctionInChain_Overrides);
+    RUN(Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive);
+    RUN(Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates);
+    RUN(Test_Ubel_ResolveFunctionInChain_RejectsBadInput);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

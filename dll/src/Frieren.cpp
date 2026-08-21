@@ -1002,37 +1002,37 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
     return 0;
 }
 
+// Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
+// traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
+static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
+    return Ubel::WalkFunctions(cls);
+}
+static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
+    return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+}
+
+// Resolve a UFunction by name on a class OR ANY OF ITS BASES.
+//
+// ⚠ It used to search only the class's OWN declared functions, which is what
+// [INVOKEINHERIT-2026-08-20] was: `SetActorHiddenInGame` on a StaticMeshActor returned
+// "not found" for a function the tool's own listing had just produced, and every one of
+// AActor's 140 functions was unreachable on every derived instance. Ubel::WalkFunctions is
+// still per-class — that is correct for LISTING, which attributes each function to its
+// declaring class — so the climb belongs here, in the resolver, and NOT in the walker.
 uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
     if (!classAddr || !funcName || !funcName[0]) return 0;
 
-    auto funcs = Ubel::WalkFunctions(classAddr);
-
-    // Exact match
-    for (const auto& f : funcs) {
-        if (f.name == funcName) {
-            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (exact match)",
-                     funcName, (unsigned long long)f.address);
-            return f.address;
-        }
+    FunctionInfo hit;
+    int levels = 0;
+    if (Ubel::ResolveFunctionInChain(classAddr, funcName, ChainListFuncs, ChainReadSuper,
+                                     hit, &levels)) {
+        LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (%d class level(s) searched)",
+                 funcName, (unsigned long long)hit.address, levels);
+        return hit.address;
     }
 
-    // Case-insensitive fallback
-    std::string lower(funcName);
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    for (const auto& f : funcs) {
-        std::string fl = f.name;
-        std::transform(fl.begin(), fl.end(), fl.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (fl == lower) {
-            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (case-insensitive)",
-                     funcName, (unsigned long long)f.address);
-            return f.address;
-        }
-    }
-
-    LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d functions walked)",
-             funcName, (int)funcs.size());
+    LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d class level(s) searched, "
+             "own class + supers)", funcName, levels);
     return 0;
 }
 

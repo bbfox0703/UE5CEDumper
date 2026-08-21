@@ -511,6 +511,15 @@ static void HandleFindInstance() {
     }
 }
 
+// Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
+// traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
+static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
+    return Ubel::WalkFunctions(cls);
+}
+static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
+    return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+}
+
 static void HandleFindFunction() {
     uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
 
@@ -537,43 +546,19 @@ static void HandleFindFunction() {
         return;
     }
 
-    // Walk functions
-    auto funcs = Ubel::WalkFunctions(classAddr);
+    // Search the class AND ITS BASES. Only the class's own declared functions used to be
+    // considered, so every inherited UFunction was unreachable from CE Lua by name —
+    // [INVOKEINHERIT-2026-08-20]. Same resolver as UE5_FindFunctionByName, so the pipe and
+    // the mailbox cannot answer the same question differently.
+    FunctionInfo hit;
+    int levels = 0;
+    const bool found = Ubel::ResolveFunctionInChain(
+        classAddr, funcName, ChainListFuncs, ChainReadSuper, hit, &levels);
 
-    // Exact match
-    uintptr_t ufuncAddr = 0;
-    uint16_t parmsSize = 0;
-    uint16_t numParms = 0;
-    uint32_t funcFlags = 0;
-
-    for (const auto& f : funcs) {
-        if (f.name == funcName) {
-            ufuncAddr = f.address;
-            parmsSize = f.parmsSize;
-            numParms = f.numParms;
-            funcFlags = f.functionFlags;
-            break;
-        }
-    }
-
-    // Case-insensitive fallback
-    if (!ufuncAddr) {
-        std::string lower(funcName);
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        for (const auto& f : funcs) {
-            std::string fl = f.name;
-            std::transform(fl.begin(), fl.end(), fl.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (fl == lower) {
-                ufuncAddr = f.address;
-                parmsSize = f.parmsSize;
-                numParms = f.numParms;
-                funcFlags = f.functionFlags;
-                break;
-            }
-        }
-    }
+    uintptr_t ufuncAddr = found ? hit.address : 0;
+    uint16_t parmsSize = found ? hit.parmsSize : 0;
+    uint16_t numParms = found ? hit.numParms : 0;
+    uint32_t funcFlags = found ? hit.functionFlags : 0;
 
     if (ufuncAddr) {
         g_invokeMailbox.ufuncAddr = ufuncAddr;
@@ -587,8 +572,9 @@ static void HandleFindFunction() {
     } else {
         g_invokeMailbox.ufuncAddr = 0;
         char msg[256];
-        snprintf(msg, sizeof(msg), "Function '%s' not found (%d functions walked)",
-                 funcName, (int)funcs.size());
+        snprintf(msg, sizeof(msg),
+                 "Function '%s' not found (%d class level(s) searched, own class + supers)",
+                 funcName, levels);
         SetError(-3, msg);
     }
 }

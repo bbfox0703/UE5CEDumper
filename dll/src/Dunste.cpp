@@ -165,24 +165,33 @@ bool IEq(const std::string& a, const char* b) {
 // (0xC0000409). Reject it here so InvokeSetCollision is a clean no-op instead.
 constexpr int32_t kMaxSaneParmsSize = 0x4000;
 
-// Find a UFunction by name, walking class → Super (engine setters live on base
-// classes above the concrete pawn). Uses only public Ubel::WalkFunctions.
+// Find a UFunction by name, walking class → Super (engine setters live on base classes
+// above the concrete pawn).
+//
+// This file had the ONLY correct super-chain climb in the tree; the two general resolvers
+// were built straight on the per-class walker and could not see an inherited function at
+// all ([INVOKEINHERIT-2026-08-20]). The climb has moved to Ubel::ResolveFunctionInChain so
+// there is one copy rather than three. ⚠ One deliberate semantic change here: that helper
+// prefers an EXACT name match anywhere in the chain over a case-insensitive one, where this
+// used to take the first case-insensitive hit. It differs only when two functions in one
+// chain have names differing purely in case, and preferring the exact one is the better
+// answer. The parmsSize sanity gate stays — it is this caller's, not the resolver's.
 bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
-    uintptr_t cls = classAddr;
-    for (int guard = 0; cls && guard < 64; ++guard) {
-        for (const auto& f : Ubel::WalkFunctions(cls))
-            if (IEq(f.name, name)) {
-                out = f;
-                if (out.parmsSize < 0 || out.parmsSize > kMaxSaneParmsSize) return false;
-                return true;
-            }
-        uintptr_t super = 0;
-        if (!Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
-            || super == cls)
-            break;
-        cls = super;
-    }
-    return false;
+    FunctionInfo hit;
+    if (!Ubel::ResolveFunctionInChain(
+            classAddr, name,
+            [](uintptr_t cls) { return Ubel::WalkFunctions(cls); },
+            [](uintptr_t cls, uintptr_t& super) {
+                return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+            },
+            hit))
+        return false;
+
+    // A freed/reused UFunction during teardown can read a garbage-huge parmsSize; sizing a
+    // std::vector by it then throws bad_alloc → from the worker thread, std::terminate.
+    if (hit.parmsSize > kMaxSaneParmsSize) return false;
+    out = hit;
+    return true;
 }
 
 // Invoke AActor::SetActorEnableCollision(enable) on the game thread (Stark). Noclip
