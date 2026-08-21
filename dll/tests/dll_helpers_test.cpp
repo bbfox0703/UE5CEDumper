@@ -289,6 +289,47 @@ static void Test_Aura_PreviewSourceSuffix() {
                   Aura::PreviewSourceSuffix(Aura::PreviewSource::ClassDefault), " (CDO default)");
 }
 
+// ----- Voll::DecideStart ------------------------------------------------------
+// [RELAUNCHPIPE-2026-08-19] Who should own the pipe at startup.
+//
+// The old guard asked one question — does the pipe answer? — and skipped FOREVER on a yes.
+// On a self-relaunching title that is a race against the DYING first process: measured on
+// OCTOPATH TRAVELER 3 runs out of 3, the survivor ended up with the DLL mapped, the game
+// running, and no server at all. These pin the three-way decision that replaced it.
+
+static void Test_Voll_DecideStart() {
+    using SA = Voll::StartAction;
+    const DWORD self = 4242;
+
+    // Nobody home — the ordinary single-instance case.
+    EXPECT("free pipe starts now", Voll::DecideStart(false, 0, self) == SA::StartNow);
+    // A stale holderPid must not matter when the pipe does not exist. CreateFileW failing is
+    // the fact; anything else is leftover.
+    EXPECT("free pipe ignores a stale holder",
+           Voll::DecideStart(false, 9999, self) == SA::StartNow);
+
+    // Already ours: CE Lua can call the export by hand after auto-start already ran.
+    EXPECT("our own pipe is a no-op", Voll::DecideStart(true, self, self) == SA::AlreadyOurs);
+
+    // Someone else's — defer, but the caller now WATCHES rather than giving up.
+    EXPECT("another process defers", Voll::DecideStart(true, 1234, self) == SA::DeferAndWatch);
+
+    // ⚠ Unknown holder DEFERS, it does not start. Competing would put two servers on one
+    // name, so a client could be handed the wrong game's DLL — worse than waiting.
+    EXPECT("unknown holder defers rather than competing",
+           Voll::DecideStart(true, 0, self) == SA::DeferAndWatch);
+}
+
+static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
+    using SA = Voll::StartAction;
+    // Guard the guard: "holderPid == selfPid" must be a real comparison, not a stand-in for
+    // "some pid is known". A different known pid has to reach a DIFFERENT answer, or
+    // AlreadyOurs would swallow every held pipe and re-create the original defect.
+    EXPECT("self and other differ", Voll::DecideStart(true, 100, 100) != Voll::DecideStart(true, 101, 100));
+    EXPECT("self is AlreadyOurs", Voll::DecideStart(true, 100, 100) == SA::AlreadyOurs);
+    EXPECT("other is DeferAndWatch", Voll::DecideStart(true, 101, 100) == SA::DeferAndWatch);
+}
+
 // ----- TryStrToAddr ----------------------------------------------------------
 
 static void Test_TryStrToAddr_AcceptsValidHex() {
@@ -6914,6 +6955,10 @@ int main() {
     // [CDOSCOPE-2026-08-20] preview scope must match what the row's actions do
     RUN(Test_Aura_ChoosePreviewSource);
     RUN(Test_Aura_PreviewSourceSuffix);
+
+    // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
+    RUN(Test_Voll_DecideStart);
+    RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

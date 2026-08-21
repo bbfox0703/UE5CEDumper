@@ -105,7 +105,7 @@ Open work only. **Read this when deciding what to do next.**
 > | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
 > | `[VOLUMEROOT-2026-08-19]` | Three sites ask `Path.GetPathRoot` + `DriveInfo` about a path and therefore answer about the **host** volume, not the volume the path actually lives on when that path is a mount point: `WindowsPlatformService.GetFreeDiskSpaceBytes:407`, `GetTotalDiskSpaceBytes:419` (these feed the snapshot disk-space guard, so a game or snapshot folder on a mounted volume is measured against the wrong disk) and `WindowsLogCompressionService.IsSupported:71` (NTFS test; logs are under `%LOCALAPPDATA%`, so this one is near-theoretical). Audit #5 **AC17** fixed exactly this shape in `VolumeHasRecycleBin` using `GetVolumePathNameW` + the new `GetDriveTypeW` import, so the pattern to copy already exists in the same file; the disk-space pair additionally needs `GetDiskFreeSpaceExW` rather than `DriveInfo`. Found by the AC17 sibling-grep, left alone because it is a different feature and only a real mount point can verify it. |
 > | `[PROXYDEPS-2026-08-19]` | **Six proxy objects carry NO recorded header dependencies, so a `.h` edit may not rebuild the four shipped proxy DLLs.** `ninja -C build -t deps` reports `#deps 0` for `Lugner.cpp.obj` / `Lugner_Dinput8.cpp.obj` under `UE5Dumper_Proxy`, `…_ProxyDinput8`, `…_ProxyDxgi`, `…_ProxyWinmm` (the two `.asm.obj` thunks also show 0, which CLAUDE.md says is legitimate — they are **not** the concern). CLAUDE.md's Build section calls a **C++** object at `#deps 0` exactly the broken-`msvc_deps_prefix` state in which "a `.h` edit silently stops triggering a rebuild" — i.e. a proxy could ship built against stale headers. ⚠ **But the simple explanation is already refuted**: all **17** objects in `UE5DumperCommon` record their deps correctly (`Genau.cpp.obj`, `Macht.cpp.obj` … all list `Macht.h`), so this is confined to the proxy targets rather than being a whole-tree console-code-page mismatch. **Do not "fix" it by re-configuring until that is explained.** The real predicate is empirical, not the deps listing: touch a header `Lugner.cpp` includes, rebuild, see whether those objects recompile. Found in passing 2026-08-19 while adding a header-dep guard to `tools/verify/build_dll.py` (which now WARNs on these rather than failing, since they predate the work and would block every build). |
-> | `[RELAUNCHPIPE-2026-08-19]` | ⭐ **A game that RELAUNCHES ITSELF ends up with our DLL mapped and NO pipe server at all** — the proxy is loaded, the game runs fine, and nothing can ever connect. `UE5_StartPipeServer` (`Frieren.cpp:2220`) guards with a **one-shot** `CreateFileW(PIPE_NAME, OPEN_EXISTING)`; if that succeeds it logs `pipe already exists (another instance running) — skipping` and never starts a server. On a self-relaunching title that is a TOCTOU race against the **dying** first process. **Measured on OCTOPATH TRAVELER, reproduced 3 runs out of 3**, whole sequence in the logs: PID 28188 `pipe server started` → PID 65684 (3 s later) `pipe already exists … skipping` → 28188 `PipeServer: Stop entry (process exit — …)` → the survivor sat serverless through 140 s of polling. **Proven by repair, not just by reading**: calling `UE5_StartPipeServer` in the survivor via `tools/verify/call_export.py` logged `PipeServer: Started on the pipe (maxInstances=3)` and the sweep then completed normally (UE 4.18, 273,957 objects, 699 classes). ⚠ **Two things make this nearly invisible.** Each process start **rotates `init-0.log`**, so the two instances write to *different files* and the survivor reads as a single process contradicting itself. And `UE5_StartPipeServer` **returns `true` on the skip path too** — deliberately, "so CE Lua doesn't treat it as failure" — so no caller can distinguish "started" from "declined". Fix shape: have the guard confirm the holder is still alive and/or retry once the pipe frees, and give the skip path a distinguishable return. ⚠ Note `docs/test-games.md` records OCTOPATH as winmm-proxy LIVE-VERIFIED on 2026-08-18, so whatever launch route was used then must sequence differently — the title is not broken, the startup race is. |
+> | `[RELAUNCHPIPE-2026-08-19]` | ✅ **FIXED + LIVE-VERIFIED 2026-08-21** — see the section below. Was: ⭐ **A game that RELAUNCHES ITSELF ends up with our DLL mapped and NO pipe server at all** — the proxy is loaded, the game runs fine, and nothing can ever connect. `UE5_StartPipeServer` (`Frieren.cpp:2220`) guards with a **one-shot** `CreateFileW(PIPE_NAME, OPEN_EXISTING)`; if that succeeds it logs `pipe already exists (another instance running) — skipping` and never starts a server. On a self-relaunching title that is a TOCTOU race against the **dying** first process. **Measured on OCTOPATH TRAVELER, reproduced 3 runs out of 3**, whole sequence in the logs: PID 28188 `pipe server started` → PID 65684 (3 s later) `pipe already exists … skipping` → 28188 `PipeServer: Stop entry (process exit — …)` → the survivor sat serverless through 140 s of polling. **Proven by repair, not just by reading**: calling `UE5_StartPipeServer` in the survivor via `tools/verify/call_export.py` logged `PipeServer: Started on the pipe (maxInstances=3)` and the sweep then completed normally (UE 4.18, 273,957 objects, 699 classes). ⚠ **Two things make this nearly invisible.** Each process start **rotates `init-0.log`**, so the two instances write to *different files* and the survivor reads as a single process contradicting itself. And `UE5_StartPipeServer` **returns `true` on the skip path too** — deliberately, "so CE Lua doesn't treat it as failure" — so no caller can distinguish "started" from "declined". Fix shape: have the guard confirm the holder is still alive and/or retry once the pipe frees, and give the skip path a distinguishable return. ⚠ Note `docs/test-games.md` records OCTOPATH as winmm-proxy LIVE-VERIFIED on 2026-08-18, so whatever launch route was used then must sequence differently — the title is not broken, the startup race is. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -1699,6 +1699,70 @@ the command above. Reconciling the three is a maintainer call, not an agent one.
 `PASTECRASH`, `FREEZESCOPE`, `PEHOOK`, `PEHOOKONCE`, `SDKHDR`, `CONTAINERCAP`. They are **not**
 exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply behind. Mirror each as it is
 picked up.
+
+
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[RELAUNCHPIPE-2026-08-19]` — a deferring instance now WATCHES instead of surrendering
+
+**There were TWO copies of this defect, not one, and the live check is what found the second.**
+
+Both asked the same single question — *does `CreateFileW(PIPE_NAME, OPEN_EXISTING)` succeed?* — and
+on a yes gave up **permanently**. On a title that relaunches itself the holder is the process that
+is busy dying, so the survivor is left with the DLL mapped, the game running fine, and nothing able
+to connect, for the rest of its life.
+
+| copy | entry point | what it skipped | who hits it |
+|---|---|---|---|
+| `Frieren.cpp` `UE5_StartPipeServer` | proxy `ProxyStart`, CE Lua | the pipe server | **the reported OCTOPATH case** — its log line is this one's wording |
+| `Heiter.cpp` `DllMain AutoStart` | CE / manual inject | the **whole** auto-start: `UE5_Init` *and* the server | found 2026-08-21 by running the repro |
+
+⭐ **The second copy was invisible to reading and obvious to running.** Reproducing with two
+DumperTest instances, the second logged
+`DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skipping auto-start`
+— a *different message from a different guard*, reached before `UE5_StartPipeServer` is ever called.
+Fixing only the reported one would have left the manual-inject path exactly as broken.
+
+**The fix.** The three-way decision is `Voll::DecideStart(pipeExists, holderPid, selfPid)` →
+`StartNow` / `AlreadyOurs` / `DeferAndWatch`, with the holder identified by
+`GetNamedPipeServerProcessId` — so "the pipe answers" is no longer conflated with "someone else owns
+it". On `DeferAndWatch` each site starts a bounded watcher (`Voll::kClaimWatch*`, 500 ms × 600 =
+5 min, shared so the two cannot drift) that polls until the pipe is genuinely gone and then does its
+own recovery: Frieren claims the server, Heiter runs the auto-start it deferred.
+
+⚠ **`ERROR_PIPE_BUSY` is not "free"** — it means the holder is alive with every instance in use, so
+the watcher keeps waiting. Only *not found* counts.
+
+⚠ **The return value is deliberately still `true` on the defer path.** The finding asked for a
+distinguishable return, and that is the one part not done: both callers map it straight onto
+`g_invokeMailbox.initState`, so a `false` would publish `INIT_FAILED` for the perfectly ordinary
+case of a second game running — a louder regression than the bug being fixed. What changed is that
+the deferral is no longer permanent.
+
+⚠ **Heiter deliberately does NOT just fall through** to let Frieren's watcher handle the pipe. That
+would make the deferring process pay a full GObjects scan while another instance owns everything,
+which is the cost that guard exists to avoid. It waits first and scans only if the pipe frees.
+
+**LIVE-VERIFIED**, two DumperTest instances, the second injected while the first held the pipe:
+```
+DllMain AutoStart: pipe is held by PID 36448 — deferring auto-start, and watching for it to free
+        …first instance killed…
+AutoStartWatcher: pipe freed by PID 36448 after 63500 ms — running the auto-start that was deferred
+UE5_AutoStart: pipe server started, init complete -> initState=2
+AutoStartWatcher: deferred auto-start returned
+```
+Then proven to actually serve, not merely to log: a pipe client connected to the survivor,
+`ensure_scanned` succeeded and `find_instances` returned **7** `CharacterMovementComponent`
+instances. ⭐ The control is the pre-fix run twenty minutes earlier on the same rig, where that same
+second instance logged `skipping auto-start` and never recovered.
+
+**Pinned by `Test_Voll_DecideStart` + `Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway`**
+(1636 → 1644 assertions). The decision lives in `Voll.h` for the reason that header exists: no test
+target compiles `Fern.cpp`, `Frieren.cpp` or `Heiter.cpp`. ⭐ **Shown able to fail**: restoring the
+old skip-and-forget rule failed exactly the four assertions that distinguish it, while
+`free pipe starts now` and `our own pipe is a no-op` stayed green — they do not depend on the change.
+
+⚠ **Still true, and worth keeping:** each process start rotates `init-0.log`, so two instances write
+to *different files* and a survivor reads as one process contradicting itself. That is why the
+evidence above is quoted from the survivor's own `init-0.log` after the rotation.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 

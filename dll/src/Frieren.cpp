@@ -26,6 +26,8 @@
 #include "Schlacht.h"
 #include "Grausam.h"  // Grausam::SetForegroundLock — soft-disable the foreground lock on shutdown (L10)
 #include "Tot.h"     // Tot::RequestShutdown — enter the shutdown window before joining workers (M5)
+#include "Routine.h" // Routine::SafeThread — the pipe-claim watcher
+#include "Voll.h"    // Voll::DecideStart — who owns the pipe at startup (RELAUNCHPIPE)
 
 #include <string>
 #include <cstring>
@@ -2217,19 +2219,88 @@ uintptr_t UE5_GetMailboxAddr() {
 
 // === Pipe Server ===
 
+// One watcher per process, ever. Re-entering UE5_StartPipeServer (CE Lua can call it by hand)
+// must not stack threads that all race to Start() the same server.
+static std::atomic<bool> s_claimWatcherStarted{false};
+
+// Detach-on-destroy per Routine's contract: at process exit Windows has already stopped
+// every other thread, so there is nothing to join, only a handle to release.
+static Routine::SafeThread s_claimWatcher;
+
+// Wait for whoever holds the pipe to let go, then take it.
+static void WatchForPipeAndClaim(DWORD holderPid) {
+    s_claimWatcher = std::thread([holderPid]() {
+        for (int i = 0; i < Voll::kClaimWatchMaxTries; ++i) {
+            // Shutdown wins over claiming: Tot is how the DLL is told to stop, and a thread
+            // that ignored it would start a server nobody is left to serve.
+            if (Tot::ShutdownRequested()) {
+                LOG_INFO("PipeClaimWatcher: shutdown requested — stopping without claiming");
+                return;
+            }
+            Sleep(Voll::kClaimWatchPollMs);
+
+            HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+                                       OPEN_EXISTING, 0, nullptr);
+            if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
+            // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
+            // theirs. Only "not found" means the pipe is actually gone.
+            if (GetLastError() == ERROR_PIPE_BUSY) continue;
+
+            const bool ok = s_pipeServer.Start();
+            LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
+                     static_cast<unsigned long>(holderPid), (i + 1) * Voll::kClaimWatchPollMs,
+                     ok ? "server started" : "Start() FAILED");
+            return;
+        }
+        LOG_WARN("PipeClaimWatcher: PID %lu still holds the pipe after %d s — giving up. "
+                 "This process has NO pipe server; nothing can connect to it.",
+                 static_cast<unsigned long>(holderPid),
+                 (Voll::kClaimWatchMaxTries * Voll::kClaimWatchPollMs) / 1000);
+    });
+}
+
 bool UE5_StartPipeServer() {
-    // Guard: if another UE5Dumper instance (e.g., proxy DLL) already owns the pipe,
-    // skip starting a competing pipe server to avoid connection failures.
+    // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
+    // skipped for good on a yes — which on a self-relaunching title meant deferring to the
+    // process that was in the middle of dying, and never serving again. [RELAUNCHPIPE-2026-08-19]
     HANDLE testPipe = CreateFileW(
         Grimoire::PIPE_NAME,
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
-    if (testPipe != INVALID_HANDLE_VALUE) {
+
+    const bool exists = (testPipe != INVALID_HANDLE_VALUE);
+    DWORD holderPid = 0;
+    if (exists) {
+        ULONG pid = 0;
+        if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
-        LOG_WARN("UE5_StartPipeServer: pipe already exists (another instance running) — skipping");
-        return true;  // return true so CE Lua doesn't treat it as failure
     }
-    return s_pipeServer.Start();
+
+    switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {
+        case Voll::StartAction::StartNow:
+            return s_pipeServer.Start();
+
+        case Voll::StartAction::AlreadyOurs:
+            LOG_INFO("UE5_StartPipeServer: this process already serves the pipe — nothing to do");
+            return true;
+
+        case Voll::StartAction::DeferAndWatch:
+        default:
+            // ⚠ Still returns TRUE, deliberately. Both callers map this straight onto
+            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED for the
+            // perfectly ordinary case of a second game running — a worse and much more visible
+            // regression than the one being fixed. What changes is that the deferral is no
+            // longer permanent: the watcher claims the pipe as soon as the holder lets go.
+            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu — deferring, and watching for "
+                     "it to free (this process has no server until then)",
+                     static_cast<unsigned long>(holderPid));
+            {
+                bool expected = false;
+                if (s_claimWatcherStarted.compare_exchange_strong(expected, true))
+                    WatchForPipeAndClaim(holderPid);
+            }
+            return true;
+    }
 }
 
 void UE5_StopPipeServer() {

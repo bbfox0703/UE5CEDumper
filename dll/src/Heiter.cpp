@@ -9,6 +9,8 @@
 #include "Sein.h"
 #include "BuildStamp.h"
 #include "Grimoire.h"
+#include "Tot.h"
+#include "Voll.h"
 #include "Utf8Helpers.h"
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 
@@ -30,6 +32,10 @@ extern "C" bool UE5_AutoStart();
 // mangle differently and fail to link.
 extern "C" bool UE5_AutoStartBlocking();
 extern "C" bool UE5_StartPipeServer();
+
+// Detach-on-destroy per Routine's contract. One handle, file-scope: this path runs once, from
+// the single auto-start thread, so there is nothing to serialise against.
+static Routine::SafeThread s_autoStartWatcher;
 extern "C" void UE5_Shutdown();
 
 // Note: the dxgi proxy resolves the real dxgi exports LAZILY, from its asm
@@ -179,18 +185,66 @@ static void AutoStartBody()
         }
     }
 
-    // Check if another UE5Dumper instance is already running (e.g., proxy DLL)
-    // by trying to open the named pipe. If it exists, skip auto-start.
+    // Is another UE5Dumper instance already serving? [RELAUNCHPIPE-2026-08-19]
+    //
+    // ⚠ This is the SECOND copy of that defect, on the CE / manual-inject path. It used to skip
+    // the whole auto-start — init AND pipe server — permanently, on one CreateFileW. On a title
+    // that RELAUNCHES ITSELF the holder is the process that is busy dying, so the survivor was
+    // left un-scanned and unreachable for the rest of its life. Measured with two DumperTest
+    // instances: the second logged `skipping auto-start` and never recovered when the first
+    // exited. (The OCTOPATH report hit the sibling copy in Frieren's UE5_StartPipeServer, which
+    // the proxy path calls directly — same bug, different entry point.)
     HANDLE testPipe = CreateFileW(
         Grimoire::PIPE_NAME,
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
-    if (testPipe != INVALID_HANDLE_VALUE) {
+
+    const bool pipeExists = (testPipe != INVALID_HANDLE_VALUE);
+    DWORD holderPid = 0;
+    if (pipeExists) {
+        ULONG pid = 0;
+        if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
-        LOG_WARN("DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skipping auto-start");
-        // SKIPPED, not FAILED: a pipe server IS up (owned by the other instance),
-        // so a CE Lua poller should proceed to connect rather than report an error.
+    }
+
+    if (Voll::DecideStart(pipeExists, holderPid, GetCurrentProcessId())
+            == Voll::StartAction::DeferAndWatch) {
+        LOG_WARN("DllMain AutoStart: pipe is held by PID %lu — deferring auto-start, and watching "
+                 "for it to free", static_cast<unsigned long>(holderPid));
+        // SKIPPED, not FAILED: a pipe server IS up (owned by the other instance), so a CE Lua
+        // poller should proceed to connect rather than report an error. It stays SKIPPED only
+        // until the watcher below actually runs the auto-start.
         g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
+
+        // Deliberately NOT "just let the normal path run and let Frieren's watcher handle the
+        // pipe". Falling through would make this process pay a full GObjects scan while another
+        // instance owns everything — which is the cost this guard exists to avoid. Waiting first
+        // and scanning only if the pipe actually frees keeps that saving and still recovers.
+        s_autoStartWatcher = std::thread([holderPid]() {
+            for (int i = 0; i < Voll::kClaimWatchMaxTries; ++i) {
+                if (Tot::ShutdownRequested()) return;
+                Sleep(Voll::kClaimWatchPollMs);
+
+                HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+                                           OPEN_EXISTING, 0, nullptr);
+                if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
+                // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
+                // theirs. Only "not found" means the pipe is really gone.
+                if (GetLastError() == ERROR_PIPE_BUSY) continue;
+
+                LOG_WARN("AutoStartWatcher: pipe freed by PID %lu after %d ms — running the "
+                         "auto-start that was deferred",
+                         static_cast<unsigned long>(holderPid),
+                         (i + 1) * Voll::kClaimWatchPollMs);
+                UE5_AutoStartBlocking();
+                LOG_INFO("AutoStartWatcher: deferred auto-start returned");
+                return;
+            }
+            LOG_WARN("AutoStartWatcher: PID %lu still holds the pipe after %d s — giving up. "
+                     "This process is not initialised and nothing can connect to it.",
+                     static_cast<unsigned long>(holderPid),
+                     (Voll::kClaimWatchMaxTries * Voll::kClaimWatchPollMs) / 1000);
+        });
         return;
     }
 

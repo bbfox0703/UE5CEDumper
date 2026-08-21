@@ -57,4 +57,50 @@ inline AcceptLog OnCreateSuccess(bool& atCapacity) noexcept {
     return AcceptLog::None;
 }
 
+
+// ── Who should own the pipe at startup ──────────────────────────────────────
+// [RELAUNCHPIPE-2026-08-19]
+//
+// `UE5_StartPipeServer` used to decide with a single `CreateFileW(OPEN_EXISTING)`: pipe
+// answers => "another instance is running" => skip, permanently. On a title that RELAUNCHES
+// ITSELF that is a TOCTOU race against the DYING first process — measured on OCTOPATH
+// TRAVELER, 3 runs out of 3: PID A logs `pipe server started`, PID B starts 3 s later and
+// logs `pipe already exists — skipping`, then A exits and takes the pipe with it. The
+// survivor is left with our DLL mapped, the game running fine, and NO server at all, so
+// nothing can ever connect. It was proven by repair: calling the export by hand in the
+// survivor started the server and the sweep then completed normally.
+//
+// Splitting the decision out here (Scharf pattern, same reason as the accept policy above)
+// is what makes it testable — no test target compiles Frieren.cpp either.
+// How long a deferring instance keeps watching, and how often it looks. Shared by BOTH
+// watchers — Frieren's (claims the pipe) and Heiter's (re-runs the whole auto-start) — so the
+// two cannot drift apart.
+//
+// The case they exist for, a self-relaunching title, frees the pipe within SECONDS, so this is
+// generous rather than tuned. BOUNDED rather than endless, so an instance deferring to a
+// genuinely long-lived other one does not carry an immortal thread; giving up is logged, and it
+// is never worse than the behaviour it replaces, which gave up instantly and silently.
+inline constexpr int kClaimWatchPollMs   = 500;
+inline constexpr int kClaimWatchMaxTries = 600;   // 600 x 500 ms = 5 minutes
+
+enum class StartAction {
+    StartNow,        // nobody holds the pipe — create the server
+    AlreadyOurs,     // this process already serves it; the call is a no-op, not a conflict
+    DeferAndWatch,   // someone else holds it — do not compete, but WATCH for it to free
+};
+
+// `pipeExists` = CreateFileW(OPEN_EXISTING) succeeded. `holderPid` = the server end's owner
+// from GetNamedPipeServerProcessId, or 0 when that could not be determined.
+//
+// ⚠ An UNKNOWN holder defers rather than starts. Competing would be the worse error: two
+// servers on one name means a client lands on whichever instance Windows hands it, so a
+// connection could reach the wrong game's DLL and answer questions about the wrong process.
+// Deferring merely delays us, and the watcher makes that delay temporary — which is the whole
+// difference between this and the behaviour it replaces.
+inline StartAction DecideStart(bool pipeExists, DWORD holderPid, DWORD selfPid) {
+    if (!pipeExists) return StartAction::StartNow;
+    if (holderPid != 0 && holderPid == selfPid) return StartAction::AlreadyOurs;
+    return StartAction::DeferAndWatch;
+}
+
 } // namespace Voll
