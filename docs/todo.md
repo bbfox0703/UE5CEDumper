@@ -3424,7 +3424,7 @@ the next person seeing an intermittent failure here should know it has been seen
 
 ---
 
-### ✅ FIXED 2026-08-21 `[GRIDRECYCLE-2026-08-21]` — a sorted DataGrid rendered one row's data twice
+### ✅ FIXED + LIVE-CHECKED 2026-08-21 `[GRIDRECYCLE-2026-08-21]` — a sorted DataGrid rendered one row's data twice
 
 **Reported by the maintainer with screenshots** (`AF16–AF23` step 2). Open Interesting Functions →
 **Props**, click a column header a few times: the grid ends up showing **the same row twice**. The
@@ -3462,9 +3462,39 @@ five files found, ≥15 templates seen) so it cannot pass vacuously if the code 
 ⭐ **Shown able to fail**: reintroducing one `true` produced
 `failed … NoFuncDataTemplateClaimsRecycling … Offenders: FunctionPropsDialog.cs:206`.
 
-⚠ **Still owed: `AF16–AF23` step 2 must be re-run on a rebuilt AOT binary.** The fix is unit-pinned
-and the mechanism is understood, but the *symptom* was seen on screen and has not yet been seen to
-go away on screen. Do not mark step 2 ✅ until it has.
+**LIVE-CHECKED 2026-08-21** on the rebuilt AOT binary (v1.0.0.3283), DumperTest.
+
+⚠ **On a SIBLING dialog, not the reported one — and the distinction matters.** The maintainer's
+repro was `FunctionPropsDialog` on a real game. DumperTest **cannot** reach it: the Props and Xref
+dialogs are driven by Blueprint bytecode xrefs, and DumperTest has essentially none — the
+`Interesting Props` grid's **`Funcs` column is empty for every row**, `Find Funcs` on `MaxWalkSpeed`
+returns *"0 function(s) reference this field — scanned 9,807 funcs with bytecode"* (both with and
+without `Game only`), and the one Props dialog that did open showed a single property. So the
+reported dialog is not testable on this fixture at all.
+
+What WAS driven is `ObjectInstancePickerDialog` — **one of the same four dialogs, fixed in the same
+commit, with 4 of the 17 recycling templates and `CanUserSortColumns = true`**. Reached via
+Live Walker → `PlayerController` → Functions → `ClientSetViewTarget` → **PIPE** → the Invoke param
+dialog's **Pick…** for its `UObject*` parameter, giving **253 instances** over Index / Address /
+Class / Name.
+
+**Seven header clicks across all four columns. No duplicate row appeared.** Two checks, because
+"no duplicates" alone is weak:
+* every row kept a **distinct Index and Address** — the repeated `WorldPartitionHLODSource ×3` under
+  a descending Class sort carry indices 20026 / 20025 / 20024 and three different addresses, so they
+  are genuinely three objects, not one rendered thrice;
+* ⭐ every **Class↔Name pair stayed internally consistent** (`ContentBundleTypeFactory` /
+  `ContentBundleTypeFactory`, `InterchangeFactoryBase` / `Default__InterchangeFactoryBase`, …). This
+  is the stronger signal: a recycled cell keeps the *previous* item's baked text, so a stale grid
+  shows one item's Name beside another item's Class. That mismatch is what could not be produced.
+
+The dialog was cancelled rather than confirmed, so no UFunction was actually invoked and no game
+state changed.
+
+⚠ **What this does and does not establish.** It shows the fix works on a real, sortable, code-built
+grid with 253 rows. It does **not** re-run the maintainer's exact `FunctionPropsDialog` case, which
+needs a game with real Blueprint bytecode — `AF16–AF23` step 2 stays owed for that specific dialog,
+and is worth ticking off the next time a real game is up.
 
 ### 🟡 HALF-FIXED 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolls one row short and then selects the wrong field
 
