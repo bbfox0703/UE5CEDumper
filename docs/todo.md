@@ -5527,6 +5527,39 @@ repo's.
 > reporting the cap actually used. The duration also moved (202 → 102 ms), so it re-scanned rather
 > than re-rendering a cached line. The cap has been **restored to 256**.
 >
+> ### ✅ Z12's HIT path now has a FIXTURE SHORTLIST, mined offline 2026-08-21 `[Z12-MINE-2026-08-21]`
+>
+> The blocker was never the check — it was "which live object actually has the nested shape". That
+> is answerable from the SDK export, which is the same walk the DLL does, already written down:
+> **`py tools/verify/z12_mine_deep_containers.py`** → **428 triples over 277 owners** from
+> DumperTest's 7,885 structs, in about a second, with no game running.
+>
+> Runtime-likely owners, in order — each is `owner.field` (a container) whose ELEMENT struct itself
+> declares a container, which is exactly what forces the deep pass:
+>
+> | owner | container field | element struct's own container |
+> |---|---|---|
+> | `CollisionProfile` | `Profiles` / `EditProfiles` | `CollisionResponseTemplate::CustomResponses` / `CustomProfile::CustomResponses` |
+> | `GameEngine` | `StatColorMappings` | `StatColorMapping::ColorMap` |
+> | `InputMappingContext` | `Mappings` | `EnhancedActionKeyMapping::Triggers` |
+> | `EnhancedPlayerInput` | `ActionInstanceData` | `InputActionInstance::Triggers` |
+> | `World` | `LevelCollections` | `LevelCollection::Levels` (Set) |
+> | `SkinnedMeshComponent` | `LODInfo` | `SkelMeshComponentLODInfo::HiddenMaterials` |
+> | `PlayerCameraManager` | `PostProcessBlendCache` | `WeightedBlendables::Array` (depth 2) |
+> | `PlayerController` | `ActiveForceFeedbackEffects` | `ActiveForceFeedbackEffect::ActiveDeviceProperties` (Set) |
+>
+> ⚠ **Depth matters more than expected: 155 of the 428 (36 %) are at nesting depth 2 or 3**, so a
+> top-level-only scan would have missed over a third of the fixtures — including
+> `PlayerCameraManager`, the one owner on this list that is guaranteed to exist in any running game.
+>
+> ⚠ **Three parsing traps are asserted by the tool, not trusted**, because each under-reports
+> silently: 28.1 % of structs are BASE-LESS (a `^struct NAME ` pattern with a trailing space sees
+> only 5,671 of 7,886); the header stores STRIPPED names (`Actor`, not `AActor`); and a TMap's KEY
+> is a payload too. ⭐ The base-less control **failed on its first run for a fourth reason** — it was
+> written `^struct NAME\s+`, and Python's `\s` matches the NEWLINE, so it matched base-less
+> declarations too and discriminated nothing. A literal space fixes it. A control that cannot fail
+> is not a control.
+>
 > 🟡 **Z12's HIT path renders correctly, but a DEEP hit is harder to stage than "pick a nested
 > path" — retried on DQ7R 2026-08-20.** Two container addresses were taken straight out of a Deep
 > Value Search and looked up:
