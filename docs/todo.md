@@ -2304,6 +2304,34 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
 > | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> ### ✅ 7a DETECTOR (i) PASSES 2026-08-21 `[L11-7A-UI-2026-08-21]` — decided from the UI, no CE
+>
+> Driven end to end through the app: Interesting Functions → "Game Only" off, "Show All" on → filter
+> → **AA(B)** → tick **Verify return value** → **Copy AA Script**, then the clipboard asserted
+> programmatically. Eight assertions over two functions, and the second is what makes the first mean
+> anything:
+>
+> | | `ComposeTransforms` — ParmsSize **288**, ret ends 288 | `MakeTransform` — ParmsSize **176**, ret ends 176 |
+> |---|---|---|
+> | `local _DUMP_LEN =` | **256** ✅ | **176** ✅ |
+> | return described | `(fstruct@192, size=96B)` ✅ | `(fstruct@80, size=96B)` ✅ |
+> | `see After: dump above` | **absent** ✅ | **present** ✅ |
+> | `past the … dump window above` | **present**, naming `+192` ✅ | **absent** ✅ |
+>
+> ⭐ **The control is the whole design.** Both rows come from the same dialog, the same defaults and
+> the same Verify tick — the only difference is a function whose return ends inside the dump window
+> instead of past it, and the two emit **opposite** phrasing. Without it, "the >256 case omits the
+> phrase" would be equally consistent with the phrase having been deleted outright.
+>
+> ⚠ The Params cell reads `3 (288B` / `4 (176B` — the row's expected "2 (288B)" was a
+> miscount of the parameters, not of the size; the **288B** is what matters and it matches.
+>
+> ⚠ **Do not conflate this with the pre-zero clamp.** 288 is far below 1024, so the clamp is still
+> unexercised and remains its own open sub-item needing a `ParmsSize > 1024` function —
+> `ToolMenuEntryExtensions::InitMenuEntry` (1104) is on the census shortlist for whoever takes it.
+>
+> Scripts kept at `out/y13b/composetransforms.lua.txt` and `out/y13b/maketransform.lua.txt`.
+>
 > ### ✅ 7a HAS FIXTURES — census 2026-08-21 `[L11-7A-CENSUS-2026-08-21]`
 >
 > The row's open half needs a UFunction whose **complex return ends past byte 256**, and the
@@ -5635,6 +5663,53 @@ repo's.
 > written `^struct NAME\s+`, and Python's `\s` matches the NEWLINE, so it matched base-less
 > declarations too and discriminated nothing. A literal space fixes it. A control that cannot fail
 > is not a control.
+>
+> ### ✅ Z12's DEEP-HIT HALF PASSES 2026-08-21 `[Z12-DEEPHIT-2026-08-21]` — the row is complete
+>
+> The blocker was staging an address that ONLY the deep descent can attribute. `tools/verify/`'s
+> offline miner (0.2) named the shape and `z12_deep_hit.py` found it live:
+> **`CollisionProfile::Profiles[0].CustomResponses`** — a `TArray<ResponseChannel>` living inside an
+> element of a `TArray<CollisionResponseTemplate>`. Its buffer address is not a direct element of
+> anything, so the shallow pass structurally cannot see it.
+>
+> **Phase A, over the pipe** (DumperTest dev, dist 3308):
+>
+> | | result |
+> |---|---|
+> | `container_depth=1` (NEGATIVE CONTROL) | **0 container matches** |
+> | `container_depth=5` | **1 match**, `deep_scan=true`, `nested_chain` present, scanned 22,448/25,179 |
+> | the log | ⭐ **`FindInContainersDeep: hit Default__CollisionProfile.Profiles (…, 2 hop(s) deep)`** |
+>
+> ⭐ **That `hit` line had never appeared in any log on this machine.** ⚠ But the recipe's phrasing —
+> "`FindInContainersDeep` has never fired" — was **not right**, and the difference matters: it has
+> RUN repeatedly (`maxDepth=5, maxElemProbe=256/1024`, DumperTest and DQ7R, 2026-08-20) and always
+> found **0 matches**. It had never **HIT**. A rig watching for the wrong one of those two lines
+> would have reported success on 2026-08-20.
+>
+> ⚠ **The negative control had to be keyed on `container_matches`, not on `found`.** For a heap
+> buffer the OBJECT half of `find_by_address` answers `found=true, match_kind="nearest"` and names
+> `Default__BlueprintExtension` at +0x60 — an object the buffer has nothing to do with — and it does
+> so at **both** depths. Keying the control on `found` fails a correct run. Worth knowing generally:
+> the "nearest" attribution is a heuristic and will confidently name an unrelated object for any
+> heap address.
+>
+> **Phase B, in the UI** (the half no test and no pipe call can reach —
+> `InstanceFinderViewModel.cs:647-651` passes `cs.DeepScan` and `anyContainerMatch`):
+>
+> | address | status suffix |
+> |---|---|
+> | `0x17979478230` — nested, deep-only | `[scanned (incl. deep descent) 20,400/25,179 in 102ms]` |
+> | `0x1796E4A9D30` — a DIRECT element, shallow (CONTROL) | `[scanned 25,179/25,179 in 51ms]` |
+>
+> All three properties hold: the **deep phrasing** appears only for the deep case, the counters are
+> the **deep pass's own** (20,400 of 25,179 — a partial, early-exit walk, not the shallow pass's
+> completed 25,179), and **102 ms ≈ 51 + 51** is the SUMMED duration. Before Z12 a deep success
+> reported the shallow pass's numbers. No element-cap caveat glyph appears, which is correct for a
+> HIT. The panel also renders the nested path itself:
+> `Default__CollisionProfile.Profiles[0].CustomResp… | CollisionProfile | StructProper… | 0x1796E492080`.
+>
+> ℹ️ The full status line is read from the UI's own log (`FindByAddress: '…' -> …`) because the
+> panel's status text runs past the window edge at any width — the log carries it verbatim.
 >
 > 🟡 **Z12's HIT path renders correctly, but a DEEP hit is harder to stage than "pick a nested
 > path" — retried on DQ7R 2026-08-20.** Two container addresses were taken straight out of a Deep

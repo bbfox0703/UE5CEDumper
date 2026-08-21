@@ -103,11 +103,19 @@ def main():
         d1 = r1.get("data", r1)
         say("   found=%s container_matches=%d"
             % (d1.get("found"), len(d1.get("container_matches") or [])))
-        if d1.get("found") or (d1.get("container_matches") or []):
-            fails.append("depth=1 already attributes this address, so it was shallow-reachable "
-                         "and the deep result below proves nothing")
+        # ⚠ Key on container_matches, NOT on `found`. `found` is the OBJECT lookup, and for a
+        # heap buffer it reports match_kind "nearest" — here it names Default__BlueprintExtension
+        # 96 bytes below, an object the buffer has nothing to do with. That is true at BOTH
+        # depths, so using it as the control would fail a correct run. The container half is the
+        # one that answers the question.
+        say("   object half: found=%s match_kind=%s -> %s (%s) +%s"
+            % (d1.get("found"), d1.get("match_kind"), d1.get("name"), d1.get("class"),
+               d1.get("offset_from_base")))
+        if d1.get("container_matches"):
+            fails.append("depth=1 already produces a CONTAINER match, so the address was "
+                         "shallow-reachable and the deep result below proves nothing")
         else:
-            say("   OK: shallow cannot attribute it")
+            say("   OK: shallow produces ZERO container matches")
 
         # ---- the step --------------------------------------------------------
         say("")
