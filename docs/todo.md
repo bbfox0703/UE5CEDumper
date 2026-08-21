@@ -6964,7 +6964,7 @@ almost nothing; re-run it under page heap.**
    stack — now known to be possible (use the **x64** `llvm-symbolizer` under
    `VC\Tools\Llvm\x64\bin`; a recursive search finds the ARM64 copy first and it will not run).
 
-### ⬜ NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome)
+### 🟡 NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome) — **the LYING is fixed and verified; steps 4-5 still need a fixture**
 
 *Needs a **real Cheat Engine** plus a connected game. See dev-log build 3125. The Lua rig stubs every
 CE global, so what is unproven is precisely the CE-side behaviour: whether the window stays up and
@@ -6996,6 +6996,31 @@ whether the record ends ticked or unticked.*
 > messages would reasonably have concluded the feature was broken.
 >
 > Steps 4-5 remain: 4 needs a spawn, 5 needs a pre-1.2 helper.
+>
+> ### ✅ THE BAIL-OUT HALF IS CLOSED 2026-08-21 `[AA12-BAILOUT-2026-08-21]` — the row's actual title
+>
+> Step 1 above proved the **happy** path. This is the **failure** path — which is what
+> "stop lying about success" is about, and the half that was still broken when step 1 ran (the note
+> above says so: *"a user following the on-screen messages would reasonably have concluded the
+> feature was broken"*).
+>
+> **CE 7.7 + DumperTest, on the REAL generated script** (5,495 chars, emitted through
+> `FreezeScriptGenerator.Generate(PropertySearchViewModel.BuildFreezeParams(...))` for the same
+> `DumperTestActor · TickCount · 0x6A8` row, preview **64** — the Freeze *button* is gated on the
+> AOBMaker plugin, which was offline, so the script the button copies was produced directly rather
+> than clicked). Loaded as a `vtAutoAssembler` record and enabled **without** the helper in the table,
+> i.e. deliberately into the bail-out:
+>
+> | what the row asks | result |
+> |---|---|
+> | an accurate message instead of silent false success | ✅ `[Freeze] ue5_freeze_helper.lua not found in this table.` — verbatim |
+> | the record must not claim to be active | ✅ `Freeze: DumperTestActor::TickCount = 9999  ->  Active=false` **(was `true`)** |
+> | nothing may actually be applied | ✅ `TickCount` re-read at **1497**, still climbing from the 64 before the attempt — not held at 9999 |
+>
+> Read from CE's **Lua Engine**, never from the checkbox icon.
+>
+> ⚠ **Both defects the step-1 note said it had to work around are now fixed**:
+> `[FREEZEUNTICK-2026-08-20]` (this run is its proof) and `[FREEZEINJECT-CRLF-2026-08-20]`.
 >
 > ### ✅ STEP 6 PASSES 2026-08-20 `[AA12-STEP6-2026-08-20]` — two freezes coexist and are independent
 >
