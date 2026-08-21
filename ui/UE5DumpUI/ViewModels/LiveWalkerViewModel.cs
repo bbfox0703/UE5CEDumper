@@ -6367,9 +6367,42 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (Fields.Count == newFields.Count && Fields.Count > 0
             && Fields[0].Name == newFields[0].Name)
         {
-            // Same layout — replace in-place (preserves scroll position)
+            // Same layout — copy the fresh values ONTO the existing rows.
+            //
+            // ⚠ This used to be `Fields[i] = newFields[i]` under a comment claiming it
+            // "preserves scroll position". Measured on DumperTest, it does the opposite: the
+            // DataGridCollectionView splits each indexer assignment into Remove+Add and the grid
+            // ends up EXACTLY ONE ROW higher per Refresh, cumulatively — the reported "the match
+            // sits one row below the viewport". [LWREFRESH-2026-08-21]
+            //
+            // Two alternatives were measured and rejected before this one: a single Clear+Add
+            // (one Reset) jumps the grid to the TOP, which is worse; and restoring a captured
+            // anchor afterwards cannot work at all, because ScrollIntoView means "make visible",
+            // not "put at top", and is a no-op for a drift smaller than the viewport.
+            //
+            // The rows keep their identity, so the collection raises nothing and the grid does not
+            // move. LiveFieldValue is observable for exactly the members that can differ between
+            // two walks of the same object, which is what repaints the cells.
             for (int i = 0; i < newFields.Count; i++)
-                Fields[i] = newFields[i];
+                Fields[i].CopyLiveValuesFrom(newFields[i]);
+
+            // The marker above ran over newFields, which are now discarded, so re-run it over the
+            // rows the grid is actually showing. Not optional and not merely tidy: clearing the
+            // keyword marks zero matches on newFields while the surviving rows would keep their
+            // old flags, leaving a highlight on rows that no longer match anything.
+            MarkSearchMatches(Fields, SearchText);
+
+            // The editing latch used to be cleared by the Replace notification this loop no longer
+            // raises. Clearing it here keeps the previous guarantee exactly — a stranded `true`
+            // vetoes every auto-refresh tick for the rest of the session, silently, and that is a
+            // far worse failure than ending an edit a beat early.
+            //
+            // ⚠ It may now be over-cautious rather than necessary: the latch was stranded because
+            // Avalonia tears an open editor down when the ROW OBJECT is replaced without raising
+            // CellEditEnded, and the row object is no longer replaced. Whether the editor survives
+            // a value copy is unverified, so this keeps the old, safe behaviour rather than betting
+            // on the new one.
+            IsEditing = false;
         }
         else
         {

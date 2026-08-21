@@ -536,10 +536,36 @@
               Background="#1E1E1E"
               FontFamily="Consolas" FontSize="12"
               HorizontalScrollBarVisibility="Auto"
-              LoadingRow="FieldGrid_LoadingRow"
               BeginningEdit="FieldGrid_BeginningEdit"
               CellEditEnded="FieldGrid_CellEditEnded"
               SelectionChanged="FieldGrid_SelectionChanged">
+      <!-- Row tint and dimming, bound to the ROW ITEM. [LWREFRESH-2026-08-21]
+
+           This replaces FieldGrid_LoadingRow, which set Row.Background/Foreground imperatively.
+           That handler runs only when a row is REALIZED, which was fine while every refresh
+           replaced the row objects — and stopped being fine the moment the refresh started reusing
+           them so the grid would stop scrolling up a row per Refresh.
+
+           ⚠ The handler could NOT be kept as a fallback: `e.Row.Background = …` writes at
+           LocalValue priority, which outranks a Style setter, so even its Transparent branch would
+           have pinned every non-matching row and this binding would never have shown. It is
+           deleted, not disabled.
+
+           Colours are the same three the handler used: #3CFFC800 tint, #666666 guessed, #D4D4D4
+           normal. Selection still paints over the tint, because the DataGridRow theme drives
+           :selected from its own BackgroundRectangle rather than from Background. -->
+      <DataGrid.Styles>
+        <Style Selector="DataGridRow" x:DataType="m:LiveFieldValue">
+          <Setter Property="Background"
+                  Value="{Binding IsSearchMatch,
+                                  Converter={x:Static conv:BoolToBrushConverter.Instance},
+                                  ConverterParameter=#3CFFC800|none}"/>
+          <Setter Property="Foreground"
+                  Value="{Binding IsGuessed,
+                                  Converter={x:Static conv:BoolToBrushConverter.Instance},
+                                  ConverterParameter=#666666|#D4D4D4}"/>
+        </Style>
+      </DataGrid.Styles>
       <DataGrid.ContextMenu>
         <ContextMenu x:DataType="vm:LiveWalkerViewModel">
           <MenuItem Header="{StaticResource str.Pivot.ThisProperty}"

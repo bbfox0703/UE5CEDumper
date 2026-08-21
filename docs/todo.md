@@ -3643,7 +3643,7 @@ grid with 253 rows. It does **not** re-run the maintainer's exact `FunctionProps
 needs a game with real Blueprint bytecode — `AF16–AF23` step 2 stays owed for that specific dialog,
 and is worth ticking off the next time a real game is up.
 
-### 🟡 HALF-FIXED 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolls one row short and then selects the wrong field
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolled one row short and selected the wrong field
 
 **Reported by the maintainer with screenshots** (`V6 / U8` step 1), on Elliot / `LSPlayerController`.
 
@@ -3744,6 +3744,91 @@ documented at that call site: the search highlight is painted from `LoadingRow` 
 
 **Reproduce it in about two minutes:** Instances → `CharacterMovementComponent` → double-click a row
 → *Open in Live Walker* → scroll down ~8 notches → note the top row → press **Refresh**.
+
+
+---
+
+#### ✅ THE SCROLL HALF IS FIXED, 2026-08-21 — causation measured, two designs killed by measurement
+
+**Causation, by A/B rather than argument.** Same fixture, same start row, same three Refreshes:
+
+| the refresh loop | top row after ×1 / ×2 / ×3 |
+|---|---|
+| `Fields[i] = newFields[i]` (shipped) | `0x8B` → `0x8A` → `0x8A` — drifts one row up each time |
+| **assignment disabled entirely** | `0x8D` → `0x8D` → `0x8D` — **zero drift** |
+
+That is the whole diagnosis: the row *replacement* is the cause, not the restore path, not a
+competing anchor. A second control agrees — at the very **top** of the list (offset 0, nothing to
+scroll up into) three Refreshes move nothing.
+
+⛔ **TWO designs were built or spiked and killed BY MEASUREMENT. Do not re-propose either.**
+1. **Capture-and-restore the top row** (via the existing `CaptureViewAnchor` / `RestoreBookmarkView`
+   pair). Built, unit-pinned with 7 tests and a working negative control, **and changed nothing on
+   screen** — because the restore ends in `grid.ScrollIntoView`, which means *"make visible"*, not
+   *"put at top"*, and is a no-op for a row still inside the viewport. This kills the entire
+   anchor-and-restore family for any drift smaller than one screen.
+2. **A single Reset** (`Clear` + re-`Add` on the same-layout branch). Spiked and measured: it
+   **jumps the grid to the very top** (`0x8D` → `0x30`) and stays there — strictly worse than a
+   one-row drift, and it would make auto-refresh unusable.
+
+**The fix: the row objects survive the refresh.** `UpdateDisplay` now calls
+`Fields[i].CopyLiveValuesFrom(newFields[i])` instead of assigning, so the collection raises nothing
+and the grid never moves. `LiveFieldValue` became `ObservableObject` for **exactly** the members
+that can differ between two walks of the same object — `HexValue`, `TypedValue`, `PtrAddress`,
+`PtrName`, `PtrClassName`, `ArrayCount`, `MapCount`, `SetCount`, `EnumName`, `FieldAddress`,
+`IsSearchMatch` — with `[NotifyPropertyChangedFor]` on the computed `DisplayValue`/`EditableValue`.
+The structural members (`Name`, `Offset`, `TypeName`, the navigability flags) stay `init` **on
+purpose**: they are precisely what the same-layout branch checks before deciding it may reuse rows
+at all, so making them mutable would undermine the guard the fix rests on.
+
+⚠ **The imperative row painter had to be DELETED, not kept as a fallback.**
+`FieldGrid_LoadingRow` set `Row.Background`/`Foreground` on *realization*, which cannot see a
+property change on a row that is never re-realized. It is replaced by a bound
+`<Style Selector="DataGridRow" x:DataType="m:LiveFieldValue">` using a new `BoolToBrushConverter`.
+The reason it could not simply be left in place is a priority rule worth remembering:
+**`e.Row.Background = …` writes at LocalValue priority, which outranks a Style setter**, so even its
+`Transparent` branch would have pinned every non-matching row and the binding would never have
+shown at all.
+
+⚠ **One guarantee was re-established by hand.** The editing latch was cleared by the `Replace`
+notification this loop no longer raises, so the copy path clears `IsEditing` explicitly. It may now
+be over-cautious rather than necessary — the latch was stranded because Avalonia tears an open
+editor down when the *row object* is replaced, and it no longer is — but a stranded `true` vetoes
+every auto-refresh tick for the rest of the session, so the old safe behaviour is kept rather than
+betting on the new one. `RebuildingTheGridClearsAStrandedEditingLatch` caught this.
+
+**LIVE-VERIFIED on the AOT build, four separate checks:**
+
+| check | result |
+|---|---|
+| scroll drift | **5 Refreshes, top row unmoved** at `0x8D CreationMethod` |
+| values still update | `TickCount` **274 → 300 → 307 → 314**, Hex tracking (`2C010000 → 33010000 → 3A010000`) |
+| search highlight | `GravityScale` tinted, **survives two Refreshes** (the U1/V6 guarantee) |
+| no stale highlight | keyword switched to `MaxWalkSpeed` + Refresh → the new row is tinted and `GravityScale` is **not** |
+
+⭐ The value check is the one that matters most: reusing row objects is only correct if the cells
+still repaint, and 274→314 with the Hex column tracking is that, on screen.
+
+*(The selection half was fixed earlier the same day and is unchanged.)*
+
+
+### ⬜ NEW 2026-08-21 `[TESTFLAKE-2026-08-21]` — an intermittent full-suite failure, named but not explained
+
+*Not a product defect — a test-suite flake, filed so the next person seeing a red run has prior art
+instead of a mystery.*
+
+**Seen ~3 times across ~15 full runs on 2026-08-21.** Named once:
+`InterestingFunctionsViewModelTests.GameplayActions_ToggledTwiceWhileBusy_LeavesRowsAlone`. It
+**passed twice in isolation** immediately afterwards, and eight consecutive full runs since have
+been green (4590/4590).
+
+⚠ **It is not caused by the day's changes** — it lives in Interesting Functions and touches nothing
+in `LiveFieldValue`, the CE Lua emitters, or the NumericUpDown façades. The name itself
+("ToggledTwiceWhileBusy") points at a timing/concurrency assertion, which is the usual shape.
+
+⚠ **Two of the three sightings were lost** because the capture grepped the same command that re-ran
+the suite, so the name never reached the log. If it fires again: run
+`dotnet test … > /tmp/r.log 2>&1` and read `^failed ` out of the FILE — do not pipe a re-run.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
 

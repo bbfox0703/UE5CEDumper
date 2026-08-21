@@ -393,14 +393,16 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
-    private void FieldGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
-    {
-        if (e.Row.DataContext is LiveFieldValue field)
-        {
-            e.Row.Background = field.IsSearchMatch ? HighlightBrush : Brushes.Transparent;
-            e.Row.Foreground = field.IsGuessed ? GuessedForeground : NormalForeground;
-        }
-    }
+    // FieldGrid_LoadingRow was HERE and is deliberately gone. [LWREFRESH-2026-08-21]
+    //
+    // It painted Row.Background/Foreground on realization, which cannot react to a property change
+    // on a row that is reused rather than replaced — and reusing rows is what stops the grid
+    // drifting a row upward on every Refresh. The tint now comes from a bound DataGridRow style in
+    // LiveWalkerPanel.axaml.
+    //
+    // ⚠ Do not reinstate it "as a safety net": `e.Row.Background = …` writes at LocalValue
+    // priority, which outranks a Style setter, so its Transparent branch alone would pin every
+    // non-matching row and silently kill the binding.
 
     private void FieldGrid_BeginningEdit(object? sender, DataGridBeginningEditEventArgs e)
     {
