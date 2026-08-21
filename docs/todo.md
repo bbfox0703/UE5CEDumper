@@ -7035,6 +7035,41 @@ controls); the WIRING is not** — no target compiles `Aura.cpp`.*
 > CATEGORY actually routes to — `Sein.cpp`'s table is the authority, and four categories
 > (`SEETHRU`/`Grausam`/`SENSE`/`PROXY`) fall through to `init-0.log` rather than anywhere obvious.
 >
+> ### 🔧 THE MUTATION HARNESS FOR STEPS 2–5 IS BUILT AND VALIDATED `[MUTATEGUARD-2026-08-21]`
+>
+> The blocker on A11 2–5 (and A12 2–4) was never the assertion — it is that nothing on DumperTest
+> changes a container's size on its own and no operator is present. `write_mem` makes the change
+> reachable, so `tools/verify/mutate_guard.py` now owns the risky half: capture → poke → **witness
+> by read-back** → assert nothing else moved → **restore, verified by read-back**.
+>
+> ⚠ **A synthetic mutation is not the same EVENT as the game doing it.** Writing a new
+> `{dataPtr,count}` reproduces what the SCANNER OBSERVES about a realloc, not a realloc — no
+> allocator ran, the old buffer is still mapped, nothing was freed. That is enough for a re-anchor
+> rule that reads the header and compares, and NOT enough for anything depending on the old memory
+> becoming invalid. Each rig must say which it relies on.
+>
+> ⚠ **Restore is load-bearing, not tidiness**: a synthetic `TArray` header left installed makes the
+> destructor call `FMemory::Free` on a pointer it does not own, and the crash lands minutes later
+> looking like the game's fault. `__exit__` restores before anything else and verifies it; a failed
+> restore prints an instruction to KILL the process rather than let it exit cleanly.
+>
+> **Validated against a live DumperTest** (`mutate_guard_selftest.py`, dist 3308) — and the two
+> guards were each shown able to FAIL, which is the only reason the passes mean anything:
+>
+> | check | result |
+> |---|---|
+> | capture → poke → read-back witness | `28000000` → `5A5A5A5A`, witnessed |
+> | collateral guard quiet when nothing else moved | no false alarm |
+> | **collateral guard fires on a deliberate change** | `002EAFA0 → 22222222` caught, then restored |
+> | restore, verified independently of the harness | back to `28000000` |
+> | `assert_channel_carries(offsets-0.log, "[OARR]")` | accepted |
+> | **same call on `scan-0.log`** | **refused** — the check discriminates |
+>
+> ▶ **The six per-step rigs are deliberately NOT written yet.** The plan had them authored up front;
+> an unrunnable rig cannot be shown able to fail, and that exact shape has produced six wrong
+> assertions in this session alone. Each will be written immediately before the session that runs
+> it, on top of this harness.
+>
 > ⚠ **Steps 2–5 remain open and were not silently skipped.** All four require the container to
 > **change size in play** — add entries until it reallocs, remove one before the candidate's index,
 > remove the entry a TSet/TMap candidate points at, append into existing slack. Nothing on DumperTest
