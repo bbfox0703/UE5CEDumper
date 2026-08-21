@@ -41,7 +41,11 @@ public static class HelperLuaResource
                 $"{asm.GetName().Name}. Check UE5DumpUI.csproj " +
                 "<EmbeddedResource> link to scripts/ue5_invoke_helper.lua.");
         using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
+        // Fold to LF: CE stores table files LF-normalised, and the post-write size
+        // check compares against that. See CeLuaHygiene.NormalizeTableFilePayload
+        // -- the working tree's line endings are a property of the checkout, so this
+        // cannot be left to the .lua file. [FREEZEINJECT-CRLF-2026-08-20]
+        return CeLuaHygiene.NormalizeTableFilePayload(reader.ReadToEnd());
     }
 
     /// <summary>

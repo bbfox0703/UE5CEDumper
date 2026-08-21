@@ -5046,7 +5046,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void RestoreSelectedField(string? name, int offset)
     {
-        if (string.IsNullOrEmpty(name)) return;
+        // ⚠ CLEAR, don't just return. Refresh replaces the rows in place
+        // (`Fields[i] = newFields[i]`), which the DataGridCollectionView splits into a
+        // Remove+Add per row; each one nudges CURRENCY, and the TwoWay SelectedItem
+        // binding writes whatever row currency landed on back into SelectedField. So by
+        // the time we get here the grid may already have invented a selection the user
+        // never made — measured against the real DataGrid as ~N CurrentChanged events
+        // with currency settling near the end of the list.
+        //
+        // That is the reported defect: search "RemoteRole", press Refresh, and the UI
+        // selects an unrelated row (0x720 CachedConnectionPlayerId) that is merely near
+        // the bottom of the realized range. `[LWREFRESH-2026-08-21]`
+        //
+        // All three callers are inside RefreshAsync and pass the SAME name captured
+        // before the walk, so an empty name provably means "nothing was selected before"
+        // — and the honest restore of "nothing" is null, not "leave the phantom".
+        if (string.IsNullOrEmpty(name)) { SelectedField = null; return; }
 
         LiveFieldValue? exact = null, byName = null;
         foreach (var f in Fields)
@@ -5057,7 +5072,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
 
         var hit = exact ?? byName;
-        if (hit == null) return;
+        // Same reasoning when the previously-selected field is GONE from the new walk:
+        // we cannot restore what the user had, and a grid-invented row is worse than an
+        // empty selection because the next action (copy address, drill, freeze) would
+        // silently act on it.
+        if (hit == null) { SelectedField = null; return; }
 
         SelectedField = hit;
         ScrollToFieldRequested?.Invoke(hit.Name);

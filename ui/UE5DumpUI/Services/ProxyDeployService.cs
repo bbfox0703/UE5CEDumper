@@ -978,6 +978,42 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Deploy / Undeploy
     // ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// "The target could not be replaced because something else owns it" — the case the user
+    /// can fix by closing the game, as opposed to a genuine fault.
+    ///
+    /// ⚠ This must NOT be an <c>IOException</c> filter, and the reason is a measurement, not a
+    /// preference. The publish path changed from <c>File.Copy</c> to a staged <c>File.Move</c>,
+    /// and the two hit a mapped target through different kernel paths:
+    ///
+    /// <list type="table">
+    ///   <item><description>OLD <c>File.Copy(src, target, overwrite)</c> — opens the target for
+    ///     write → <c>ERROR_SHARING_VIOLATION (32)</c> → <c>IOException</c></description></item>
+    ///   <item><description>NEW <c>File.Move(stage, target, overwrite)</c> — a replacing rename
+    ///     must first DELETE the target, and a file carrying an image section refuses deletion
+    ///     with <c>STATUS_CANNOT_DELETE</c> → <c>ERROR_ACCESS_DENIED (5)</c> →
+    ///     <c>UnauthorizedAccessException</c>, which is NOT an IOException</description></item>
+    /// </list>
+    ///
+    /// So the old filter silently stopped matching the moment the write shape changed, and the
+    /// user got a raw "Access to the path is denied." that does not even name the path
+    /// (<c>[STAGELOCK-2026-08-20]</c>). Measured at the OS level against a really-mapped DLL, with
+    /// a negative control: with nothing mapped, BOTH shapes succeed.
+    ///
+    /// Kept deliberately narrow — a hand-built verification <c>IOException</c> from
+    /// <see cref="CopyProxyStaged"/> is not one of these and must still fall through to
+    /// <c>ErrorOther</c>.
+    /// </summary>
+    internal static bool IsTargetUnreplaceable(Exception ex) => ex switch
+    {
+        // The staged rename's shape on a mapped target.
+        UnauthorizedAccessException => true,
+        // The direct-copy shape, still reachable on other write paths.
+        IOException io => io.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
+                          || io.Message.Contains("being used", StringComparison.OrdinalIgnoreCase),
+        _ => false,
+    };
+
     public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
                                            bool sameVersion, DeployOptions options)
     {
@@ -1149,12 +1185,14 @@ public sealed class ProxyDeployService : IProxyDeployService
                 return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
                     InstalledVersion: GetDllVersion(targetDll), ErrorMessage: riskNote));
             }
-            catch (IOException ex) when (ex.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
-                                      || ex.Message.Contains("being used", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (IsTargetUnreplaceable(ex))
             {
-                _log.Warn("ProxyDeploy", $"Deploy to {game.Name} failed: file locked");
+                _log.Warn("ProxyDeploy",
+                    $"Deploy to {game.Name} failed: target in use or write-protected " +
+                    $"({ex.GetType().Name}) — {Path.Combine(game.BinariesDir, proxyType.GetDllName())}");
                 return (false, new GameStatusUpdate(game, ProxyDeployStatus.ErrorLocked,
-                    ErrorMessage: "File locked (game running?)", SetInstalledVersion: false));
+                    ErrorMessage: "Target in use (game running?) or write-protected",
+                    SetInstalledVersion: false));
             }
             catch (Exception ex)
             {

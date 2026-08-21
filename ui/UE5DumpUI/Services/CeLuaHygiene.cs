@@ -310,6 +310,33 @@ public static class CeLuaHygiene
     /// <c>strlen</c> — so callers must reject it upstream (see
     /// <see cref="Models.CoordText.HasBlockedChars"/>).
     /// </summary>
+    /// <summary>
+    /// Fold a Lua payload to LF before it is handed to CE as a table file.
+    ///
+    /// WHY THIS EXISTS (<c>[FREEZEINJECT-CRLF-2026-08-20]</c>)
+    /// "Inject Freeze Helper" reported
+    /// <c>Stream size mismatch: wrote 58345, stream has 57208</c> — and the write had
+    /// actually SUCCEEDED. The helper is 58,345 bytes with 1,137 CRLF endings, CE stores
+    /// the text LF-normalised, and 58345 − 1137 = 57208 exactly. So the post-write check
+    /// was comparing a CRLF byte count against an LF stream and calling a good write a
+    /// failure. Normalising here makes the two numbers the same thing.
+    ///
+    /// ⚠ It must be done in CODE, not by rewriting the .lua on disk. These files are
+    /// <c>i/lf</c> in the index with <c>core.autocrlf=true</c> and no <c>.gitattributes</c>,
+    /// so the working tree's line endings are a property of the CHECKOUT, not of the repo:
+    /// today the freeze helper happens to be CRLF and the invoke helper LF — which is the
+    /// only reason the invoke helper injects cleanly — and a fresh clone can flip either.
+    /// A fix that depends on what a checkout produced is not a fix.
+    ///
+    /// Lone CR is folded too, so a payload that ever arrives classic-Mac-ended cannot
+    /// reintroduce the mismatch by a different route.
+    /// </summary>
+    public static string NormalizeTableFilePayload(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s!.Replace("\r\n", "\n").Replace('\r', '\n');
+    }
+
     public static string EscapeLuaString(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";

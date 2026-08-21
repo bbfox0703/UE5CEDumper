@@ -1,4 +1,6 @@
-﻿using UE5DumpUI.Core;
+﻿using System;
+using System.IO;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
@@ -1478,5 +1480,47 @@ public class ProxyDeployTests
         {
             try { File.Delete(path); } catch { /* temp file */ }
         }
+    }
+
+    /// <summary>
+    /// [STAGELOCK-2026-08-20] — the staged rename's failure shape is NOT an IOException.
+    ///
+    /// Measured at the OS level against a really-mapped DLL:
+    ///   old File.Copy  -> ERROR_SHARING_VIOLATION (32) -> IOException
+    ///   new File.Move  -> ERROR_ACCESS_DENIED     (5)  -> UnauthorizedAccessException
+    /// because a replacing rename must first DELETE a target that carries an image
+    /// section. The old `catch (IOException) when (...)` therefore stopped matching the
+    /// moment the write shape changed, and the user got a bare
+    /// "Access to the path is denied." with no path in it.
+    /// </summary>
+    [Fact]
+    public void IsTargetUnreplaceable_CatchesBothWriteShapes()
+    {
+        // The staged rename on a mapped target.
+        Assert.True(ProxyDeployService.IsTargetUnreplaceable(
+            new UnauthorizedAccessException("Access to the path is denied.")));
+
+        // The direct copy's shape, still reachable on other write paths.
+        Assert.True(ProxyDeployService.IsTargetUnreplaceable(
+            new IOException("sharing violation") { HResult = unchecked((int)0x80070020) }));
+        Assert.True(ProxyDeployService.IsTargetUnreplaceable(
+            new IOException("The process cannot access the file because it is being used by another process.")));
+    }
+
+    /// <summary>
+    /// The negative half — the filter must stay NARROW. CopyProxyStaged raises a
+    /// hand-built IOException when its own size/product verification fails; that is a
+    /// real fault and must still fall through to ErrorOther rather than being reported
+    /// to the user as "close the game".
+    /// </summary>
+    [Fact]
+    public void IsTargetUnreplaceable_DoesNotSwallowGenuineFaults()
+    {
+        Assert.False(ProxyDeployService.IsTargetUnreplaceable(
+            new IOException("staged copy verification failed: size mismatch")));
+        Assert.False(ProxyDeployService.IsTargetUnreplaceable(
+            new FileNotFoundException("source missing")));
+        Assert.False(ProxyDeployService.IsTargetUnreplaceable(
+            new InvalidOperationException("boom")));
     }
 }

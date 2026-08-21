@@ -522,4 +522,45 @@ public class CeLuaHygieneTests
         // Real errors still surface via showMessage (and skip the close).
         Assert.Contains("showMessage('[Freeze]", s);
     }
+
+    // ── NormalizeTableFilePayload: [FREEZEINJECT-CRLF-2026-08-20] ────────────
+
+    /// <summary>
+    /// CE stores a table file LF-normalised and the post-write check compares against
+    /// that, so a CRLF payload made a SUCCESSFUL write report
+    /// "wrote 58345, stream has 57208" — exactly the 1,137 CRLF endings in the freeze
+    /// helper. Fold before handing it over and the two numbers describe the same thing.
+    /// </summary>
+    [Theory]
+    [InlineData("a\r\nb", "a\nb")]
+    [InlineData("a\nb", "a\nb")]                 // already LF: unchanged
+    [InlineData("a\rb", "a\nb")]                 // lone CR folds too
+    [InlineData("a\r\n\r\nb", "a\n\nb")]
+    [InlineData("", "")]
+    [InlineData(null, "")]
+    public void NormalizeTableFilePayload_FoldsEveryEndingToLf(string? input, string expected)
+        => Assert.Equal(expected, CeLuaHygiene.NormalizeTableFilePayload(input));
+
+    [Fact]
+    public void NormalizeTableFilePayload_LeavesNoCarriageReturn_AndIsIdempotent()
+    {
+        const string mixed = "one\r\ntwo\rthree\nfour\r\n";
+        var once = CeLuaHygiene.NormalizeTableFilePayload(mixed);
+        Assert.DoesNotContain('\r', once);
+        // Idempotent: re-normalising must not change it again, or a double-applied
+        // pipeline would quietly alter the payload.
+        Assert.Equal(once, CeLuaHygiene.NormalizeTableFilePayload(once));
+    }
+
+    /// <summary>
+    /// The byte-count identity the defect was reported as. Guards the ARITHMETIC the
+    /// fix rests on, independently of what the checkout happened to produce.
+    /// </summary>
+    [Fact]
+    public void NormalizeTableFilePayload_LengthDropsByExactlyTheCrlfCount()
+    {
+        var crlf = string.Concat(System.Linq.Enumerable.Repeat("line\r\n", 1137));
+        var lf = CeLuaHygiene.NormalizeTableFilePayload(crlf);
+        Assert.Equal(crlf.Length - 1137, lf.Length);
+    }
 }
