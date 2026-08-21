@@ -48,7 +48,10 @@ def main():
         c.assert_build()
         c.ensure_scanned()
 
-        gw = str((c.request("get_pointers").get("data", {}) or {}).get("gworld") or "0")
+        # ⚠ get_pointers has NO "data" wrapper — the keys are top level. Reading through a
+        # non-existent "data" gave a silent 0 and would have been reported as "no GWorld".
+        _p = c.request("get_pointers")
+        gw = str(_p.get("gworld") or (_p.get("data") or {}).get("gworld") or "0")
         say("gworld = %s" % gw)
 
         # ---- find an Int8Property that actually has live instances ----------
@@ -82,7 +85,7 @@ def main():
         # ---- step 1: a negative value must round-trip ------------------------
         say("")
         say("== step 1: Force -5 and read it back ==")
-        r1 = c.request("force_field", class_name=cls, field_name=fld, kind="number", value=-5)
+        r1 = c.request("force_field", class_name=cls, field_name=fld, kind="numeric", value=-5)
         d1 = r1.get("data", r1)
         say("   force_field: code=%s held=%s resolved=%s"
             % (d1.get("code"), d1.get("held"), d1.get("resolved")))
@@ -114,7 +117,7 @@ def main():
         # ---- step 2: out of range must be REFUSED ----------------------------
         say("")
         say("== step 2: Force 200, which does not fit in an int8 ==")
-        r2 = c.request("force_field", class_name=cls, field_name=fld, kind="number", value=200)
+        r2 = c.request("force_field", class_name=cls, field_name=fld, kind="numeric", value=200)
         d2 = r2.get("data", r2)
         say("   force_field: code=%s held=%s resolved=%s"
             % (d2.get("code"), d2.get("held"), d2.get("resolved")))

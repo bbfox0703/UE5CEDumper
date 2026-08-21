@@ -267,7 +267,14 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
         if (!Macht::ReadSafe(addr, cur)) return false;
         if (cur != 0) {
             uintptr_t z = 0;
-            if (Macht::WriteBytes(addr, &z, sizeof(uintptr_t)) && drifted) *drifted = true;
+            // A FAILED write must not count as held. Discarding this result — using it only
+            // to set `drifted` — is what let an unwritable instance be reported as one of
+            // "N held". [SOLIDEHELD-2026-08-21]
+            if (!Macht::WriteBytes(addr, &z, sizeof(uintptr_t))) {
+                refusal = FR_ERR_WRITE;
+                return false;
+            }
+            if (drifted) *drifted = true;
         }
         return true;
     }
@@ -284,7 +291,22 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     double target = restore ? b->second : job.value;
     double eps = IsFloatType(fi.TypeName) ? (std::max)(1e-4, std::fabs(target) * 1e-5) : 0.5;
     if (std::fabs(cur - target) > eps) {
-        if (WriteNumeric(addr, fi, target) && drifted) *drifted = true;
+        // ⚠ The write RESULT decides whether this instance is held. `WriteNumeric` returns
+        // false when the value does not fit the field's width — an int8 asked to hold 200 —
+        // and the old code used that false only to suppress `drifted`, then returned true
+        // anyway. The range check did its job (nothing was written, and 200 did NOT wrap to
+        // -56), but the caller counted the instance and the UI reported "held on N instances,
+        // value 200". Measured 2026-08-21: byte unchanged at 0x00 while the reply said
+        // code=0 held=145 value=200.0. The report and the reality were computed by different
+        // paths — audit #4's root cause, in a third place. [SOLIDEHELD-2026-08-21]
+        //
+        // K_BOOL already did this correctly (`if (rc < 0) return false;`); this brings the
+        // other two branches into line with it.
+        if (!WriteNumeric(addr, fi, target)) {
+            refusal = FR_ERR_WRITE;
+            return false;
+        }
+        if (drifted) *drifted = true;
     }
     sampleOwner = obj; sampleOffset = fi.Offset;
     return true;

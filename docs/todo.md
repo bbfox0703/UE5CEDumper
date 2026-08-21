@@ -6430,6 +6430,115 @@ two planned steps used caps of 5,000 against pools of 5,102 and 7,409, a 2 % and
 worked on 2026-08-20. Not chased here because injecting the current DLL was the better fixture
 anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLOAD]` is about.
 
+
+
+### ✅ RECOVERED 2026-08-21 `[ZHTW-MARKS-2026-08-21]` — ten results marked outside the repo, six lost silently
+
+**What happened, and it is not what it sounds like.** On 2026-08-21 at 10:08 the maintainer worked
+through the 繁中 checklist on `Y:\pending-verification_zh-TW.md` and marked ten rows — seven ✅, two
+❌ and one free-text note. `Y:\` is **not the repo**. `docs/pending-verification_zh-TW.md` was edited
+a few hours later from the git version, which had never seen those marks.
+
+⚠ **Nothing was overwritten and nothing was reverted.** No git accident happened; the two files were
+simply never connected. Saying so plainly matters, because "my results got written back" sends the
+next person hunting a merge conflict that does not exist.
+
+⭐ **THE ASYMMETRY IS THE WHOLE LESSON. A ❌ survives being lost; a ✅ evaporates.** Both ❌ became
+defect entries with lives of their own (`[GRIDRECYCLE]`, `[LWREFRESH]`, both since fixed) and came
+through untouched. Of the seven ✅, **six vanished without trace** — the row just stays open and
+somebody re-runs it, and nobody ever notices the work was done twice. **The marks most worth
+rescuing are exactly the ones whose loss is invisible.**
+
+**Recovery.** `tools/verify/merge_zhtw_marks.py <copy>` matches rows by their text (ignoring any
+leading mark) and reports every divergence, including free-text notes. It **deliberately does not
+write**: a ✅ recovered this way is a claim with no conditions attached, and this register's own rule
+is that a number without its conditions is not a measurement. Each row was decided individually.
+
+| the lost mark | what was done with it |
+|---|---|
+| int8 Force negative round-trip | ⭐ **re-run, PASS** — and with better evidence than a tick: the actual byte is `0xFB`, positive control `100` → `0x64` |
+| int8 Force out-of-range refused | ⭐ **re-run, FAILED** → became `[SOLIDEHELD-2026-08-21]`, now fixed |
+| AF16–AF23 step 1 (four sort headers) | recorded 🟡 reported-by-maintainer, **queued for re-run** |
+| Force-value dialog wording | 🟡 same |
+| Snapshot ">256 fields" notice | 🟡 same |
+| per-slot cap 1024, snapshot still 256 | 🟡 same |
+| Class Pivot / Snapshot sort headers | row already closed and deleted since — nothing owed |
+| the free-text note | **restored** onto AE4/AE5/AE6/AE7 step 4 |
+
+⭐ **The re-run of the two int8 rows is the argument for re-running rather than transcribing.** One
+confirmed the maintainer and strengthened it; the other **contradicted** them — and the maintainer
+was not careless, they were reading a UI that was itself reporting `held on 145 instances`. A ✅
+carried across on trust would have permanently buried a live defect.
+
+⚠ **The restored free-text note is worth as much as any ✅**: 「執行時間太短無法測試」 on the
+AE4 mutual-exclusion gate means the delete finished before the next click, so the gate was **never
+exercised** — the row's own ⚠ already says that is *not tested*, not a pass. Without the note the
+row looks merely unattempted, and the next person repeats the same too-fast run.
+
+▶ **The durable fix is upstream of all of this**: mark results **in the repo copy**. If a working
+copy elsewhere is unavoidable, run the merge tool before editing `docs/`.
+
+
+### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-21 `[SOLIDEHELD-2026-08-21]` — a refused write was still counted as "held"
+
+⭐ **Found because a maintainer's ✅ and a scripted re-run disagreed** — and the scripted run was
+right, for a reason that matters: **the maintainer only had the UI, and the UI was showing the
+wrong thing.**
+
+**What was happening.** `Solide::ApplyToInstance` returns true when the field RESOLVED on an
+instance — its own comment says so — and two of its three branches then **discarded the write
+result**:
+
+| branch | before | |
+|---|---|---|
+| `K_BOOL` | `int32_t rc = SetActorBool(...); if (rc < 0) return false;` | ✅ already correct |
+| `K_NUMERIC` (`Solide.cpp:287`) | `if (WriteNumeric(...) && drifted) *drifted = true;` … `return true;` | ❌ result used only for the drift flag |
+| `K_OBJECT_NULL` (`:270`) | `if (WriteBytes(...) && drifted) *drifted = true;` … `return true;` | ❌ same shape |
+
+So a write that FAILED still incremented `held`. Measured on DumperTest against
+`PrimitiveComponent::VirtualTextureLodBias` (an `Int8Property`, 145 live instances):
+
+| forced | reply | `get_forced_fields` | **the actual byte** |
+|---|---|---|---|
+| −5 | `code=0 held=145` | `-5.0` | `0xFB` = −5 ✅ |
+| 100 | `code=0 held=145` | `100.0` | `0x64` = 100 ✅ |
+| **200** | `code=0 held=145` | `200.0` | **`0x00` — never written** |
+| **−200** | `code=0 held=145` | `-200.0` | **`0x00` — never written** |
+
+⭐ **The range check was working the whole time.** `Solide.cpp:147`
+(`if (!(value >= lo && value <= hi)) return false;`) genuinely refused the write: 200 did **not**
+land and did **not** wrap to −56, which is the dangerous outcome the step warns about. The memory
+was always safe. What was broken is that **the report and the reality were computed by different
+paths** — audit #4's root cause, in a third place — so the UI said "held on 145 instances, value
+200" about a field holding 0.
+
+⚠ **The two in-range rows are the positive control**, and they are what make the finding solid: the
+same field, the same address, the same call, values that DO land as `0xFB` / `0x64`. Without them,
+`0x00` would be equally consistent with a wrong address or a broken read.
+
+**The fix** brings the other two branches into line with `K_BOOL`: when a write is *attempted* and
+fails, set `refusal = FR_ERR_WRITE` and return false. A write that was never needed (value already
+equals target, pointer already null) still counts as held, which is correct. `held == 0` with a
+refusal then trips the existing L2 erase branch, so the job does not persist either.
+
+**After the fix**, same host, same field:
+
+```
+force -5   ->  code=0   held=146  value=-5.0        (unchanged)
+force 200  ->  code=-10 held=0    resolved=False    and get_forced_fields is EMPTY
+```
+
+⚠ **`K_OBJECT_NULL` is fixed by the same commit but is NOT separately verified** — a failing
+8-byte write into a resolvable strong `ObjectProperty` is not something this host can stage on
+demand. It is the identical shape at the identical call site, changed the same way; recorded as
+fixed-by-inspection, not as measured.
+
+▶ **Follow-up, deliberately not done here**: an out-of-range value is knowable BEFORE touching any
+instance, so the honest thing would be to reject the whole job up front with a dedicated code
+rather than discovering it per instance and reporting `FR_ERR_WRITE`. That is a behaviour change
+with its own wording decision; this commit only makes the count truthful.
+
+
 ### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-21 `[CLASSCAP-2026-08-21]` — the Classes tab said "raise the cap" and had no cap to raise
 
 ⭐ **Found by doing the live check above, not by reading.** `[CLASSTOTAL]`'s pipe half had passed

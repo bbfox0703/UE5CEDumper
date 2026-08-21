@@ -74,7 +74,7 @@
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | 點 Live Funcs 的 **Period**、Detect Stats 的 **✓** 和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
+| 1 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 點 Live Funcs 的 **Period**、Detect Stats 的 **✓** 和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
 | 2 | **要一款有 Blueprint bytecode 的真實遊戲**（DumperTest 測不到，它的 `Funcs` 欄整欄是空的）。從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，挑**列數 ≥ 2** 的，每個欄位標題都連點三、四次。 | 兩邊各 6 個標題都會重排；`Access` / `Refs` 照**數字**排（「12W / 3R」排在「2W / 1R」之上）。**而且每一列的內容都不一樣** —— 尤其不可以出現兩列的 Class / Name 對不起來（那就是 cell 被回收後留著上一筆的字）。 |
 
 > **步驟 3 已完成，整列刪除**（維護者驗過 Class Pivot / Snapshot / SPC group 那批；Invoke 參數挑選
@@ -90,6 +90,7 @@
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 4 | 回歸：Find leftovers → 勾一筆 → Delete；**刪除還在進行中**時嘗試啟動任一掃描，反向再試一次。 | 刪除中掃描被擋、掃描中刪除也被擋，兩邊互斥。<br>⚠ 刪除若在你點下一個動作前就跑完，這步就是「沒測到」，不是通過 —— 先讓待刪清單長一點。<br>⚠ 只看到確認對話框跳出來不算：對話框開啟不等於刪除正在跑。 |
+> ⚠ **2026-08-21 維護者實測回報：「執行時間太短無法測試」** —— 刪除在下一個動作按下去之前就跑完了，所以互斥閘根本沒有被觸發到。這正是上面那條 ⚠ 講的情形，是**沒測到**、不是通過。重跑前要先把待刪清單堆長。（`[ZHTW-MARKS-2026-08-21]`）
 
 -----
 
@@ -103,8 +104,8 @@
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | 用 Property Search 找一個 `Int8Property` 欄位，Force 成**負值**（例如 `-5`），再 `get_forced_fields`。 | 讀回來就是 **-5**。修正前讀回來是 **251**，於是 worker 每個 tick 都重寫同一個 byte，UI 永遠顯示 drift。<br>⚠ 沒有任何遊戲露出 `Int8Property` 的話，這項就是無樣本可測。 |
-| 2 | 同一個欄位改 Force 成 `200`。 | 被**拒絕**（超出 int8 範圍），而不是寫進去變成 -56。 |
+| 1 | ✅ **2026-08-21 腳本重驗通過**（`py tools/verify/solide_int8_signed.py`，DumperTest / dist 3309，`PrimitiveComponent::VirtualTextureLodBias`，146 個 instance）。不只讀回 `-5.0`，**實際 byte 是 `0xFB`**；正對照 `100` → `0x64`。 | 讀回來就是 **-5**。修正前讀回來是 **251**，於是 worker 每個 tick 都重寫同一個 byte，UI 永遠顯示 drift。<br>⚠ 沒有任何遊戲露出 `Int8Property` 的話，這項就是無樣本可測。 |
+| 2 | ⚠→✅ **2026-08-21 重驗時是 FAIL，已修並複驗通過**。記憶體一直是安全的（200 沒寫進去、也沒變成 -56），但 API 回 `code=0 held=145 value=200.0`，**UI 就顯示「held on 145 instances」** —— 只看畫面看不出來，這正是 `[SOLIDEHELD-2026-08-21]`。修好後：`code=-10 held=0`，`get_forced_fields` 為空。 | 被**拒絕**（超出 int8 範圍），而不是寫進去變成 -56。 |
 | 3 | 對一個**原生**（非 Blueprint）UFunction 下 `walk_function_props`，看回覆有沒有 `budget_hit`。 | 這個 key 存在。若為 `true`，Props 對話框狀態列變琥珀色並寫出「hit its instruction budget」，Interesting Functions 批次的 **Uses** 欄顯示 `⚠ partial`。<br>⚠ 要找夠大的原生函式才會觸發 —— 先 grep DLL log 的 `AnalyzeNativeFunctionProps ... BUDGET` 找目標。 |
 
 -----
@@ -115,10 +116,10 @@
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
+| 1 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
 | 2 | 再走一次一般的 **Freeze** 流程。 | 仍然寫「Create freeze script」，也仍然給 CFG block 那段建議（這是上一步的對照組）。 |
-| 3 | Snapshot 分頁 → 用一個夠常見的數值做 Group match，讓某個 slot 在某個物件上配到超過 256 個欄位。 | 狀態列多出「a slot matched more than 256 fields」那段提示（和 live Group Scan 一模一樣的句子）。 |
-| 4 | 把 Value Search 的 per-slot cap 改成 1024，再跑一次**快照**的 Group 查詢。 | 快照這邊仍然顯示 256 —— 這是正確的，重點是現在會講出來而不是讓人以為兩邊同步。 |
+| 3 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 Snapshot 分頁 → 用一個夠常見的數值做 Group match，讓某個 slot 在某個物件上配到超過 256 個欄位。 | 狀態列多出「a slot matched more than 256 fields」那段提示（和 live Group Scan 一模一樣的句子）。 |
+| 4 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 把 Value Search 的 per-slot cap 改成 1024，再跑一次**快照**的 Group 查詢。 | 快照這邊仍然顯示 256 —— 這是正確的，重點是現在會講出來而不是讓人以為兩邊同步。 |
 
 -----
 
