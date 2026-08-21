@@ -8508,7 +8508,7 @@ instances.
 >
 > ⚠ **Which instance it held is the incidental finding below** — not `DumperTestActor_0`.
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too
+### 🟡 STEPS 1-4, 7, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too (5 needs damage, 6 has no fixture, 8 has no old .CT)
 
 *Needs a game with a **player pawn** and any inherited `AActor` bool (`bCanBeDamaged`, `bHidden`,
 `bReplicates`) — i.e. any UE game. Runs in the same sitting as `[FREEZESTUCK-2026-08-18]` above.*
@@ -8619,6 +8619,83 @@ instances.
 > | 8 ⚠ control, backward compatibility | tick an **older saved .CT** whose freeze script predates contract 3 | it still runs and still holds its exact-class pool. The flag defaults off and the handler clears it, so an old script must be unaffected |
 > | 9 ⚠ control, cross-feature | on the same row, use **Force ON/OFF** (Solide) | it reports a comparable instance count to step 4 — Force and Freeze sit on one row and must not scope oppositely, which is what started this |
 
+
+> ### ✅ STEPS 2, 3 AND 7 PASS 2026-08-21 `[FREEZESCOPE-CFG-2026-08-21]` — and step 7 is a clean A/B on one record
+>
+> **Step 2 — the dialog says the scope out loud.** `Actor::bCanBeDamaged` (`BoolProperty`, `0x5A`),
+> Freeze, read before typing:
+> ```
+> Scope:  every live Actor and every subclass (221 inherit this field)
+> ⚠ bCanBeDamaged is declared on Actor, not on one specific object — so this holds the value on
+>   EVERY live Actor and subclass at once, not just the one you were looking at. To target a single
+>   class, edit className in the generated CFG block (or set derived = false for that class only).
+> ```
+> Both the `Scope:` line and the ⚠ line are present, and the ⚠ line names the exact remedy step 7
+> then exercises. **PASS**
+>
+> **Step 3 — the generated CFG.** Read back out of CE with
+> `getAddressList().getMemoryRecord(i).Script`:
+> ```lua
+> local CFG = {
+>   className        = 'Actor',
+>   derived          = true,  -- also hold every SUBCLASS (set false for exact class only)
+> ```
+> `derived = true,` as specified. **PASS**
+>
+> **Step 7 ⭐ — the flag is a real switch.** Same record, same class, same session; the ONLY change
+> was `derived true → false` in the CFG (`gsub`, `substitutions=1`, verified by reading the script
+> back), then re-enabled:
+>
+> | `derived` | log line | returned | `classWitness` |
+> |---|---|---|---|
+> | `true` | `LIST_INSTANCES class='Actor' … scope=derived` | **58/58** | `0x0` |
+> | `false` | `LIST_INSTANCES class='Actor' … scope=exact` | **1/1** | `0x1F4A82BB800` |
+>
+> One variable changed, three observables moved together — scope, pool size, and the witness. **PASS**,
+> and it independently re-confirms `AA2/AA3` step 3's narrowed assertion: `classWitness=0x0` is
+> *correct* on a derived listing and a real pointer on an exact one.
+>
+> ### ⛔ Step 6 has no fixture on DumperTest — measured, not assumed
+>
+> Step 6 needs the log line to end in `CAPPED`, which requires a derived pool larger than the DLL's
+> **1024-entry derived cap** (`ue5_freeze_helper.lua`: *"two result caps … 2000 exact / 8-byte
+> entries, 1024 derived / 16-byte"*). The pools actually measured on this title:
+>
+> | class | derived instances |
+> |---|---|
+> | `Actor` | 58 |
+> | `PrimitiveComponent` | 145 |
+> | `ActorComponent` | 819 *(Solide's earlier sweep, `[DQ7R-CAP-2026-08-20]` era)* |
+>
+> All below 1024. ⚠ `find_instances` cannot be used to look for a bigger one — it is a **name
+> substring** match, not a derived walk (`class_name='ActorComponent'` returns a 3-class histogram of
+> classes whose *names contain* the string, not the subclass pool).
+>
+> **What IS verified about step 6**: the honesty message exists in the emitted script and is an
+> **ungated `print`**, so nothing suppresses it —
+> `print('[Freeze] armed on ' .. tostring(scount) .. ' instance(s) of Actor or a subclass -- CAP
+> REACHED, so that is a floor, not a total: more instances exist and are NOT held. Narrow className
+> in CFG to cover the ones you want.')` — read out of the generated CFG in step 3. Its **runtime
+> firing and the stay-open behaviour were not observed**, and cannot be here.
+>
+> ### ⛔ Step 8 has no fixture either — no pre-contract-3 `.CT` exists on this machine
+>
+> Every `.CT` on disk is current-era (`scripts/UE5CEDumper.CT`, `dist/UE5CEDumper.CT`,
+> `out/teleport_rows.CT`). Backward compatibility against a script predating contract 3 cannot be
+> tested without an old artifact; it would have to be reconstructed, which tests the reconstruction.
+>
+> **Remaining: step 5 only** — `bCanBeDamaged` frozen to `false` and then *taking damage on the player
+> pawn*, which needs someone playing.
+>
+> ⚠ **Incidental — `[FREEZEUNTICK-2026-08-20]` reproduced a THIRD time**, on a fresh CE process and a
+> fresh table: ticking with the helper absent raised the setup message and left the record at red ✗
+> (Active). Three CE sessions, three reproductions.
+>
+> ℹ️ CE's known-harmless `TCustomForm.SetFocus … frmLuaEngine … Can not focus (EInvalidOperation)`
+> fired when the script flipped record state from the Lua console; CE auto-saved the table to
+> `ExceptionAutoSave_DumperTest.ct` **in the repo root**, which was deleted. Worth knowing: driving
+> record state from Lua can litter the working tree.
+
 ### ⬜ SUPERSEDED — original AA1 steps, kept for the method
 
 Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that
@@ -8724,7 +8801,7 @@ Rewrite the step order accordingly: Force first, button only once AOBMaker is up
 generic `9999.0`, i.e. the 255 pre-fill is specific to byte-width targets rather than a blanket
 change.
 
-### ⬜ Y9 — original checklist (kept for the steps)
+### ✅ VERIFIED 2026-08-21 — Y9: the width check and the pre-fill, all five steps
 
 The freeze / force value dialog now rejects values wider than the target property instead of letting
 them wrap. The arithmetic is measured against the writers' own masking in unit tests, **but nobody
@@ -8745,6 +8822,39 @@ flag stored as one).
 5. Worth one **float** case: on a `FloatProperty`, `1e300` should now be refused with
    *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
    accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
+
+
+> ### ✅ Y9 STEPS 1, 2, 3, 5 PASS 2026-08-21 `[Y9-FREEZE-2026-08-21]` — through the **Freeze button**, the consumer that had never been exercised
+>
+> Y9 was closed once before **through the Force dialog**, because the Freeze button is bound to
+> `IsAobMakerAvailable` and the toolbar read `AOBMaker Offline` at the time. With CE + the plugin up
+> that button is live, so this run drives the consumer the earlier pass could not reach. DumperTest,
+> dist 3263.
+>
+> | step | measured |
+> |---|---|
+> | 1 | `DumperTestActor::U8_Max` (`ByteProperty -> uint8`, `0x63A`) → Freeze → value box opens pre-filled **`255`**, not `9999`. **PASS** |
+> | 2 | typed `9999` → inline red **`uint8 holds 0 to 255 — 9999 would be written as 15`**, word for word, and the dialog **stayed open**. **PASS** |
+> | 3 | corrected to `200` → `AOBMaker: created AA script 'Freeze: DumperTestActor::U8_Max = 200'`. The ordinary path is unbroken. **PASS** |
+> | 5 float | `WorldMetricsSubsystem::UpdateRateInSeconds` (`FloatProperty -> float`) + `1e300` → **`Too large for a 4-byte float (max ±3.4028235E+38) — it would be written as infinity`**, dialog stayed open. **PASS** |
+> | 5 double | `DumperTestActor::F64_Ticking` (`DoubleProperty -> double`, `0x6B8`, size 8) + the **same** `1e300` → **accepted**: `created AA script 'Freeze: DumperTestActor::F64_Ticking = 1E+300'`. **PASS** — this is the half that would catch the narrowing check leaking into the 8-byte path |
+>
+> ⚠ **Step 1 had a confound, and it is worth recording because the obvious subject hides it.**
+> `U8_Max`'s **live value is also 255**, so a pre-fill of 255 is consistent with both "derived from the
+> type" (the fix) and "derived from the current value" (not the fix) — and `U8_Max` is the **only
+> `ByteProperty` in the entire game** (`Type filter = ByteProperty` → 1 result), so no other subject
+> can separate them.
+>
+> Settled two ways rather than left ambiguous:
+> * **From source** — `FreezeValueDialog.SuggestedDefault` is
+>   `Math.Min(SuggestedMagnitude /* 9999 */, IntegerRange(helperType).Max)`, i.e. the **type table**,
+>   never the property's value.
+> * ⭐ **Demonstrated** — the same dialog on a **float** whose live value is `0` pre-filled **`9999.0`**,
+>   and on the **uint8** it pre-filled `255`. Two types, two different pre-fills, neither equal to the
+>   live value in the float case. That is the type-derivation shown, not just read.
+>
+> Step 4 (the **Force** submenu consumer) was already closed by `[Y9-UI-2026-08-17]`, so with these
+> the row is complete.
 
 ### ✅ ALL 5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
 
