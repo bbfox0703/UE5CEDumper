@@ -7,6 +7,10 @@ namespace UE5DumpUI.Helpers;
 /// Per-session "remembered keywords" store for the Live Walker field search.
 /// Implements the requested rules:
 ///   - LRU: most-recently-used first, capped at <see cref="MaxEntries"/>.
+///     ⚠ New entries only. Re-using an entry that is ALREADY remembered does NOT
+///     move it to the front — see the ⚠ block in <see cref="Remember"/>: these
+///     lists are AutoCompleteBox ItemsSources, and mutating one mid-interaction
+///     makes the control revert the user's pick.
 ///   - Longest valid wins: a new keyword that EXTENDS a remembered one replaces
 ///     it (the shorter prefix is dropped); a new keyword that is a PREFIX of an
 ///     already-remembered (longer) one is ignored. So while typing
@@ -38,9 +42,36 @@ public static class SearchKeywordHistory
 
         // Longest valid wins: a remembered entry that already EXTENDS k covers it,
         // so k adds nothing — keep the longer one, change nothing.
+        //
+        // ⚠ `>=`, NOT `>` — an EXACT duplicate must be a no-op too, and that is a
+        // correctness requirement, not a tidiness one.
+        //
+        // Every one of these histories is bound as an AutoCompleteBox `ItemsSource`.
+        // Avalonia's AutoCompleteBox handles `ItemsCollectionChanged` with an
+        // unconditional `RefreshView()`, which clears the popup ListBox; on the
+        // MOUSE-pick path the ListBox is still holding the picked item at that moment,
+        // so clearing it drives `OnAdapterSelectionChanged` -> `SelectedItem = null`
+        // WITHOUT the `_skipSelectedItemTextUpdate` guard the other null-assignment
+        // sites set — and `OnSelectedItemChanged(null)` restores the box's text to
+        // what the user had TYPED. Net effect: pick "RemoteRole" from the dropdown,
+        // and ~700 ms later (when the debounce fires) the box silently reverts to "re".
+        //
+        // ANY CollectionChanged does it — content equality is irrelevant, an unrelated
+        // add or remove reverts it just the same. Since the dropdown only ever offers
+        // entries that are already IN the history, a picked keyword is always an exact
+        // duplicate, so refusing to touch the list for a duplicate removes the trigger
+        // for the only case a user can reach by clicking. A keyword that is genuinely
+        // new still mutates the list — but it cannot have come from the dropdown, so
+        // there is no selection to revert.
+        //
+        // The cost is deliberate: re-using a remembered keyword no longer moves it to
+        // the front, so ordering is first-seen rather than strict LRU for entries that
+        // already exist, and the first-seen casing is kept (which is what this class's
+        // own doc promises). Reported by the maintainer 2026-08-21 on Live Walker;
+        // all 20 keyword boxes shared it. `[LWFILTERREVERT-2026-08-21]`.
         for (int i = 0; i < history.Count; i++)
         {
-            if (history[i].Length > k.Length &&
+            if (history[i].Length >= k.Length &&
                 history[i].StartsWith(k, StringComparison.OrdinalIgnoreCase))
                 return false;
         }
