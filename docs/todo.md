@@ -4468,7 +4468,7 @@ the repo's (`[STALEDLL]`).
 >
 > That path was unreachable from the app before the fix, and it is now reachable on the first attempt.
 >
-> #### ❌ …but the interrupted row is mis-reported — `[ORPHANCANCEL-2026-08-20]` (new, LOW)
+> #### ✅ FIXED 2026-08-21 — the interrupted row was mis-reported — `[ORPHANCANCEL-2026-08-20]` (LOW)
 >
 > The `ProxyDeploy` log for the same run has **three** recycle lines, not two:
 > ```
@@ -4497,6 +4497,46 @@ the repo's (`[STALEDLL]`).
 > before the exception escapes — wrap the single-row `await` so `OperationCanceledException` still
 > contributes `FilesRecycled`/`DirsRemoved` and unticks the row, then rethrow. Severity LOW: bounded
 > at one row per cancel, and nothing is lost, only mis-counted.
+>
+> **FIXED 2026-08-21, and the sweep found a second instance of the same hole with no cancel in it.**
+>
+> **Cancellation is now OBSERVED, not thrown.** Both loops in `RemoveOrphanProxyAsync` swapped
+> `ct.ThrowIfCancellationRequested()` for `if (ct.IsCancellationRequested) { cancelled = true; break; }`,
+> and the method returns `OrphanRemovalResult(..., Cancelled: true)` carrying the counts it reached.
+> Throwing out of the middle of a row was what discarded them.
+>
+> `allFilesGone` now states `!cancelled` explicitly. It was already false after an interrupted file
+> loop (`recycled + vanished` falls short of the total), so no folder was ever pruned under a
+> half-emptied directory — but relying on that arithmetic to hold after a future edit is the kind of
+> implicit guard worth making explicit.
+>
+> **The caller folds the partial row in.** `files += result.FilesRecycled` / `dirs +=
+> result.DirsRemoved` moved OUT of the `if (result.Success)` branch, and an interrupted row is
+> neither counted as a failure nor dropped — its half-pruned chain is exactly what the user needs
+> left on screen — then the `OperationCanceledException` is rethrown so the outer handler prints the
+> cancelled summary, which now includes what that row managed.
+>
+> ⭐ **Moving the tally out of the success branch fixed a second, unreported case**: a row that
+> recycles one of its two DLLs and then hits a lock returns `Success == false`, so **everything it
+> recycled was already going unreported** — no cancel required. The finding was the visible half of
+> a wider accounting hole; `APartlyLockedRow_AlsoCountsWhatItRecycled` pins it.
+>
+> **Four tests**, driven through the real scan → delete path with a stub service (so the per-row
+> `PropertyChanged` wiring the scan installs is exercised too), one per symptom the finding lists:
+> the tally counts the partial row (`2 file(s) recycled`, not 1); the row stays on the list,
+> **unticked**, with an `Interrupted — …` status replacing the future-tense promise about a file
+> already in the Recycle Bin; a cancel is not reported as a failure; and the partly-locked case.
+>
+> ⭐ **Shown able to fail**: reverting only the accounting (tally back inside `if (result.Success)`)
+> failed **three** of the four — and the fourth, `AnInterruptedRow_StaysOnTheList_Unticked_…`, kept
+> passing, which is right: it targets the row-retention half, which that revert does not touch. Four
+> tests failing together would have meant they were one test written four times.
+>
+> ⚠ **Not re-run on disk.** `AE20`'s rig builds real orphan trees and cancels mid-pass; this fix is
+> pinned at the view-model seam with a stubbed service, so the DLL-recycling and folder-pruning
+> behaviour under a real cancel is unchanged-by-inspection rather than re-measured. Re-running
+> `AE20` would close that.
+
 > | AE30 | Object Tree → pick any UObject → set the address format to **module+offset** → Copy address, and paste into CE. Then relaunch the game and paste the same string again | the copied text is now bare hex (e.g. `1E55C298D40`), NOT `"Game-Win64-Shipping.exe"+FFFF81…`; it resolves this run and plainly fails to resolve after a relaunch instead of silently pointing somewhere unrelated | a heap UObject sits BELOW a `0x7FF7…` image base, so the old unsigned subtraction WRAPPED. That string round-trips within one run, which is what made it dangerous: it looked like the ASLR-stable form the user picked the option for. **Control:** copy an address that IS inside the module (a GObjects/GNames pointer from the Pointers panel) and confirm it still formats as `"exe"+RVA` and still resolves after a relaunch |
 > ### ✅ AE30 PASS 2026-08-20 `[AE30-DQ7R-2026-08-20]` — but the CONTROL as written cannot be run
 >
