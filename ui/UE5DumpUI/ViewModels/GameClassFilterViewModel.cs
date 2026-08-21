@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -21,6 +21,35 @@ public partial class GameClassFilterViewModel : ViewModelBase
     private List<GameClassEntry> _allResults = new();
 
     [ObservableProperty] private bool _gameClassesOnly = true;
+
+    /// <summary>Configurable row cap. The GObjects walk is always exhaustive and
+    /// <c>TotalClasses</c> counts to the end regardless ([CLASSTOTAL-2026-08-18]); this bounds only
+    /// the rows materialized. Clamped 100..50000 by the NumericUpDown and again DLL-side.
+    ///
+    /// <para>[CLASSCAP-2026-08-21] — the status line has always ended "or raise the cap" and there
+    /// was nothing to raise. Found while live-checking CLASSTOTAL on Avowed: "5,000 classes shown
+    /// of 7,409 total … ⚠ STOPPED at the 5,000-row cap" — and then advised raising a cap the
+    /// toolbar did not expose anywhere. Third instance of audit #5 Z10.
+    /// (The old sentence is deliberately not quoted in full here: <c>ClassListCapTests</c>
+    /// greps this file for it, so a doc quote would defeat the assertion.)</para></summary>
+    [ObservableProperty] private int _classListCap = Constants.DefaultClassListCap;
+
+    /// <inheritdoc cref="ClassListCap"/>
+    /// <remarks>[SNAPINTERVAL-2026-08-20] façade — NumericUpDown.Value is decimal? and an emptied
+    /// box drives it to null, which a compiled binding cannot convert to int. Absorbs the empty box
+    /// only; range belongs to the control. Notifies unconditionally so a rejected entry repaints
+    /// instead of leaving the box blank while a different value is in force.</remarks>
+    public decimal? ClassListCapValue
+    {
+        get => (decimal)ClassListCap;
+        set
+        {
+            ClassListCap = NumericInput.KeepCurrentIfEmpty(value, ClassListCap);
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnClassListCapChanged(int value) => OnPropertyChanged(nameof(ClassListCapValue));
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private string _superFilter = "";
     [ObservableProperty] private string _packageFilter = "";
@@ -94,7 +123,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
             IsLoading = true;
             StatusText = "Loading...";
 
-            var result = await _dump.ListClassesAsync(gameOnly: GameClassesOnly);
+            var result = await _dump.ListClassesAsync(gameOnly: GameClassesOnly,
+                                                      limit: ClassListCap);
 
             _allResults = result.Classes;
             RebuildSuggestions(result.Truncated, result.Total, result.TotalClasses);
@@ -107,8 +137,15 @@ public partial class GameClassFilterViewModel : ViewModelBase
             // differ meaningfully — "5,000 of 6,609" — so filtering a page and finding
             // nothing is no longer indistinguishable from the class not existing, and the
             // user can see how far above the cap the real count is.
+            // ⚠ "or raise the cap" is offered ONLY while the cap can actually go higher.
+            // [CLASSCAP-2026-08-21]: this line said it unconditionally on a panel that had NO cap
+            // control at all — the third instance of the audit #5 Z10 shape (name no lever the
+            // user cannot reach), found while live-checking CLASSTOTAL on Avowed, where it read
+            // "5,000 classes shown of 7,409 total … or raise the cap" with nothing to raise. The
+            // control exists now; at the ceiling the advice would be the same lie in a new place.
             var capNote = result.Truncated
-                ? $"  ⚠ STOPPED at the {result.RequestedLimit:N0}-row cap — filter to narrow, or raise the cap"
+                ? "  ⚠ STOPPED at the " + result.RequestedLimit.ToString("N0") + "-row cap — filter to narrow"
+                  + (ClassListCap < Constants.MaxSearchCap ? ", or raise Max above " + ClassListCap.ToString("N0") : "")
                 : "";
             StatusText = $"{result.Total:N0} classes shown of {result.TotalClasses:N0} total (scanned {result.ScannedObjects:N0} objects){capNote}";
             _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +

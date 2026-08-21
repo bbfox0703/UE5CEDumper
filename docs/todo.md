@@ -4639,6 +4639,7 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | U11 | ⛔ **NO SAMPLE ON DumperTest — checked 2026-08-20 `[U11-NOSAMPLE-2026-08-20]`.** The repo's own TOptional fixture declares `Opt_Int_Set`, `Opt_Float_Set`, `Opt_Str_Set` (FString) and `Opt_Int_Unset` — **and no `TOptional<FText>` at all** (grepped the full 75,342-line SDK export; the only other OptionalProperty in it is World Partition's `CellBounds`, a `TOptional<FBox>`). Since the fix is specific to FText — it used to read an inline FString at `FText+0x10`, where UE stores the `uint32` Flags — an FString or FBox optional exercises a different path and proves nothing. ⚠ **Do not assume DumperTest covers this**; it is cited elsewhere (e.g. `[SDKHDR]`) as *the* TOptional sample, which is true only for the non-Text cases. Needs a title with a display/label `TOptional<FText>`; `search_properties` reports `inner_type`, so candidates can be screened over the pipe. | | |
+> | U11 | ⛔ **AVOWED SCREENED 2026-08-21 — ZERO optionals of ANY inner type**, `game_only` both ways, so it cannot supply the fixture either. Method (one pipe call, reusable): `search_properties` with an empty `query` and `types:["OptionalProperty"]`, then read `inner_type` off each row. Sanity-checked in the same session — `types:["BoolProperty"]` and `["StructProperty","TextProperty"]` both return rows on the same connection, so the zero is the title's, not the query's. ⭐ **Screen only UE ≥ 5.1 titles**: `FOptionalProperty` post-dates UE 5.0, and Avowed is UE 5.04 — as is DumperTest, which is why `[U11-NOSAMPLE]` found what it found. ⚠ Field names are `prop_type` / `prop_name` / `inner_type`, not `type` / `property_name`. | | |
 > | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
 > | G7 | ⛔ **NOT REACHABLE HERE, measured 2026-08-19 `[G7-NOSAMPLE-2026-08-19]`.** The step needs a title whose offsets validate **only after a re-scan**, so that the `validated=NO -> YES (re-run)` transition exists to observe. **All NINE titles swept tonight reported `probe_ran=true, validated=true` on the FIRST pass** — Lushfoil, Manor Lords, Solarpunk, EVERSPACE 2, Geri, Avowed, DQ7R, Elliot, OCTOPATH. ⚠ That includes **Solarpunk, which this row names as the example**; it validates immediately today, so the row's own suggested host no longer produces the case. Until a title that fails first-pass validation turns up, there is nothing to transition *from*. (Original step kept below.)<br><br>~~on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path)~~ | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
 > | A9 | 🟡 **NO STALL OBSERVED 2026-08-19 `[A9-DEEP-2026-08-19]`, but the budget was never STRESSED — see below.** | | |
@@ -6089,7 +6090,7 @@ NOT a mailbox-contract change.*
 
 -----
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[CLASSTOTAL-2026-08-18]` — the Classes tab reports the REAL class total, not the cap
+### ✅ CLOSED 2026-08-21 `[CLASSTOTAL-2026-08-18]` — the Classes tab reports the REAL class total, not the cap
 
 *Was: `Aura::ListClasses` bounded its walk on the row cap AND counted `totalClasses` inside that loop,
 so `totalClasses` could never exceed `maxResults` (5,000). The Classes tab rendered "5000 classes …
@@ -6136,12 +6137,54 @@ cap". `list_classes` is pipe-JSON, so no mailbox-contract implication. Pinned by
 > * ⚠ **Read `total_classes`, never `total`.** `total` is `results.size()` and equals the cap
 >   exactly when truncated — the very misreading this row exists to correct.
 
-> | 1 ⚠ THE ONE THAT MATTERS | on a >5,000-class game (Elliot), open the Classes tab, Load with "Game classes only" off | status reads "**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap" — the two numbers DIFFER | before the fix both were 5,000, so "total" answered nothing |
-> | 2 ⚠ CROSS-CHECK | note Interesting Funcs' "{N} functions across **{K} classes**" for the same game | the Classes tab's total matches K (both ~6,609) — the two panels now AGREE | before, Classes said 5,000 STOPPED while Funcs said 6,609; the honest number is now in both |
+> | 1 ⚠ THE ONE THAT MATTERS | ✅ **PASS 2026-08-21 on AVOWED** (⚠ not Elliot — Elliot is only 3,236 classes and never truncates; that was already corrected by the wire check above and the step text is left as filed so the correction stays visible). Classes tab, "Game classes only" **off**, Load → the status line reads, exactly:<br>`5,000 classes shown of 7,409 total (scanned 92,036 objects)  ⚠ STOPPED at the 5,000-row cap — filter to narrow, or raise the cap`<br>The two numbers **DIFFER**. Before the fix both were 5,000. With "Game classes only" **on** the same Load reads `5,000 … of 5,102 total`, matching the wire figure exactly. | | |
+> | 2 ⚠ CROSS-CHECK | ✅ **PASS 2026-08-21 on AVOWED.** Interesting Funcs, "Game Only" off, Load → `20,060 functions across **7,409 classes** (4,965 above threshold 5, scanned 92,036 objects)`. The Classes tab's total for the SAME scope is **7,409**. The two panels agree.<br>⭐ This also strengthens the wire note above, which could only compare `list_all_functions` against `list_classes(game_only=true)` = 5,102: in the UI each panel has its own scope toggle, and the totals agree **at both scopes** (5,102 / 5,102 and 7,409 / 7,409). The apples-to-oranges warning is about mismatching the toggles, not about a real disagreement. | | |
 > | 3 ⚠ NON-REGRESSION | ✅ **PASS 2026-08-20** — DumperTest, Classes tab, **"Game classes only" OFF**: the status line reads exactly `3,942 classes shown of 3,942 total (scanned 25,179 objects)` — the two numbers EQUAL and **no STOPPED note**. Corroborates the pipe reading (`scanned_classes` 3,942). | | |
 > | 3 ⚠ NON-REGRESSION | on a small game (< 5,000 classes), Load | "N classes shown of N total" (equal), no STOPPED note | proves a full walk still reports one honest number and does not falsely flag truncation |
 
 -----
+
+
+### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-21 `[CLASSCAP-2026-08-21]` — the Classes tab said "raise the cap" and had no cap to raise
+
+⭐ **Found by doing the live check above, not by reading.** `[CLASSTOTAL]`'s pipe half had passed
+weeks earlier: the *numbers* were right. What only the UI could show is the sentence printed beside
+them — on Avowed, `5,000 classes shown of 7,409 total … ⚠ STOPPED at the 5,000-row cap — filter to
+narrow, **or raise the cap**` — over a toolbar with no numeric control anywhere.
+
+**Third instance of audit #5 Z10** (never name a lever the user cannot reach), after Property Search
+(`[PROPSEARCHCAP]`, fixed the same day). It was worse than a wording bug: `ListClassesAsync` was
+called with **no `limit` at all**, so the wire default of 5,000 always won and the 2,409 classes past
+it were **unreachable from the UI by any means** — no filter helps, because Super/Package suggestions
+are themselves derived from the loaded page (the panel says so, in a second warning line).
+
+**Fixed like its sibling**: `ClassListCap` + the `decimal?` façade, a `NumericUpDown` clamped
+100–50000 with `ClipValueToMinMax`, `limit:` actually passed, persistence in
+`GameClassFilterUiOptions`, a `Math.Clamp` on **load**, and a DLL-side clamp in `CMD_LIST_CLASSES`.
+The cap note now offers Max **only while it can rise** — at the ceiling it would be the same lie in
+a new place — but the `⚠ STOPPED` half stays unconditional, because a capped list must always say so.
+
+⚠ **`Constants.MaxPropertySearchCap` was renamed `MaxSearchCap`.** Three panels now share one
+ceiling (Instance Finder, Property Search, Classes) and a per-panel name for a shared number is how
+they drift apart.
+
+**LIVE-VERIFIED on Avowed** (92,036 objects, 7,409 classes; UI 3307 against the game's older 3263
+proxy — the change is UI-side, and the version banner was up and correct throughout):
+
+| Max | scope | status line |
+|---|---|---|
+| 5,000 (default) | game only | `5,000 classes shown of 5,102 total … ⚠ STOPPED … filter to narrow, **or raise Max above 5,000**` |
+| 8,000 | game only | `5,102 classes shown of 5,102 total` — **no STOPPED**, and the Super/Package "derived from the page" warning is gone too |
+| 8,000 | all classes | `7,409 classes shown of 7,409 total` — the whole pool |
+
+⚠ The middle row is the one that matters: those last **102** classes had no route to the screen
+before. Persistence and the load clamp were checked the same way as `[PROPSEARCHCAP]` —
+`classListCap: 8000` survived a restart, and a hand-edited `0` in `ui-options.json` came back as
+**100** with the ▼ spinner greyed.
+
+**`ClassListCapTests` (6)**, including one that greps the VM for the exact old sentence. ⚠ That test
+failed on its first run against my own **doc comment**, which quoted the old wording verbatim — the
+comment was reworded rather than the test weakened, and it now says why.
 
 ### ✅ VERIFIED 2026-08-21 `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path — seen in a real CE console
 

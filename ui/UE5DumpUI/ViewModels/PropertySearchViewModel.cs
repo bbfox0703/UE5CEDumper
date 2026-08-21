@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -630,7 +630,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             string advice = "narrow it with a longer property name or a Type filter";
             if (!GameClassesOnly)
                 advice += ", or tick \"Game classes only\" to skip engine classes";
-            if (PropertySearchCap < Constants.MaxPropertySearchCap)
+            if (PropertySearchCap < Constants.MaxSearchCap)
                 advice += $", or raise Max above {PropertySearchCap:N0}";
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled()

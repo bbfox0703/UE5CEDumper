@@ -210,9 +210,9 @@ public class PropertySearchFilterTests
     {
         var vm = await VmFor(new PropertySearchResult
         {
-            Total = Constants.MaxPropertySearchCap, Truncated = true,
+            Total = Constants.MaxSearchCap, Truncated = true,
             Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
-        }, vm => vm.PropertySearchCap = Constants.MaxPropertySearchCap);
+        }, vm => vm.PropertySearchCap = Constants.MaxSearchCap);
 
         Assert.DoesNotContain("raise Max", vm.StatusText);
         Assert.Contains("Type filter", vm.StatusText);

@@ -210,6 +210,7 @@ public sealed class ConsoleUiOptions
 public sealed class GameClassFilterUiOptions
 {
     public bool GameClassesOnly { get; set; } = true;
+    public int ClassListCap { get; set; } = Constants.DefaultClassListCap;
 }
 
 public sealed class ProxyDeployUiOptions

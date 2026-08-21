@@ -319,6 +319,7 @@
     <sys:String x:Key="str.InstanceFinder.NewestFirst">Newest first</sys:String>
     <sys:String x:Key="str.InstanceFinder.MaxResults">Max</sys:String>
     <sys:String x:Key="str.PropertySearch.MaxResults">Max</sys:String>
+    <sys:String x:Key="str.GameClassFilter.MaxResults">Max</sys:String>
     <sys:String x:Key="str.InstanceFinder.KeywordHint">Filter results (Name / Class / Addr)</sys:String>
     <sys:String x:Key="str.InstanceFinder.ContainerMatches">Container matches (address falls inside a TArray buffer):</sys:String>
 
@@ -1399,6 +1400,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.InstanceFinder.ExactMatch">Match class name exactly (no substring). Applies to the class box only.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.NewestFirst">Scan from the newest (highest InternalIndex) end → catches just-spawned instances (e.g. an enemy that just appeared) and avoids the result cap truncating the newest. Off = oldest first (class-default object / template / earliest instances — good for finding a Blueprint's defaults). Tip: click the Index column to re-sort either way.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.MaxResults">Maximum rows returned (100–50000). The class walk is always exhaustive; this only caps the returned list. Raise it if you see "⚠ capped" — a broad name like "Health" hits the default 200 easily. Larger values are slower to transfer and each row resolves a preview value.</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.MaxResults">Maximum class rows returned (100–50000). The GObjects walk is always exhaustive and the "of N total" figure counts every class past the cap; this bounds only the rows shown. Raise it when the status line says "⚠ STOPPED" — Super / Package suggestions are derived from the loaded rows, so a value that only occurs past the cap is not offered until you do.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.MaxResults">Maximum rows returned (100–50000). The game-side scan is always exhaustive; this only caps the returned list. Raise it if you see "⚠ capped". Larger values are slower to transfer + filter.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.Keyword">Temporary filter over the rows already returned — whitespace-separated terms are ANDed across Name / Class / Address (e.g. "BP_ char"). Instant + client-side: it does NOT reach past the result cap. To recover an instance hidden past the cap, exclude noise classes in the class-filter (⚑) — that re-runs the scan in the game — or raise Max.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.Lookup">Lookup UObject at the specified address</sys:String>

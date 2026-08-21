@@ -17,6 +17,18 @@
                 ToolTip.Tip="{StaticResource str.Tip.GameClassFilter.GameOnly}"
                 Foreground="#CCCCCC" FontSize="12"
                 VerticalAlignment="Center"/>
+      <!-- Configurable row cap. The GObjects walk is always exhaustive and the "of N total"
+           figure counts past it; this bounds only the rows materialized. Clamped 100-50000 here
+           and again DLL-side. [CLASSCAP-2026-08-21] -->
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                  ToolTip.Tip="{StaticResource str.Tip.GameClassFilter.MaxResults}">
+        <TextBlock Text="{StaticResource str.GameClassFilter.MaxResults}"
+                   Foreground="#888" VerticalAlignment="Center"/>
+        <NumericUpDown Value="{Binding ClassListCapValue}"
+                       Minimum="100" Maximum="50000" ClipValueToMinMax="True" Increment="1000"
+                       FormatString="0" Width="120" FontSize="12"
+                       VerticalAlignment="Center"/>
+      </StackPanel>
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#AAB8D0" FontSize="13" FontFamily="Consolas, Menlo, monospace"
                  VerticalAlignment="Center" Margin="8,0"/>

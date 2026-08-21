@@ -317,11 +317,21 @@ public static class Constants
     // What changed is that the panel now has a control to raise it.
     public const int DefaultPropertySearchCap = 200;
 
-    // Shared floor/ceiling for BOTH search caps. The ceiling is also enforced DLL-side in
-    // Fern.cpp for each command — the UI clamp is a convenience, not the guarantee. Keep
-    // this in step with those two clamps; PropertySearchCapClampTests pins the pairing.
+    // Default Classes-tab row cap (GameClassFilterUiOptions.ClassListCap and the panel's own
+    // default). [CLASSCAP-2026-08-21] — the panel's own status line has always advised "raise
+    // the cap" and there was no control to raise, the third instance of the Z10 shape.
+    //
+    // ⚠ 5,000 is the long-standing wire default and stays the default: a class row carries a
+    // walked property/function summary, so a big pool is not free. Avowed has 7,409 game classes
+    // (and 5,102 game-only), so a real title genuinely lands past it.
+    public const int DefaultClassListCap = 5000;
+
+    // Shared floor/ceiling for EVERY row cap the user can set — Instance Finder, Property
+    // Search, Classes. The ceiling is also enforced DLL-side in Fern.cpp per command; the UI
+    // clamp is a convenience, not the guarantee. Keep this in step with those clamps —
+    // PropertySearchCapClampTests and ClassListCapTests each pin their own pairing.
     public const int MinSearchCap = 100;
-    public const int MaxPropertySearchCap = 50000;
+    public const int MaxSearchCap = 50000;
 
     // UI
     public const int DefaultWindowWidth = 1400;

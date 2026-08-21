@@ -2404,7 +2404,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // nothing with no visible cause. [PROPSEARCHCAP-2026-08-19]
         PropertySearch.PropertySearchCap = Math.Clamp(
             o.PropertySearch.PropertySearchCap,
-            Constants.MinSearchCap, Constants.MaxPropertySearchCap);
+            Constants.MinSearchCap, Constants.MaxSearchCap);
 
         var tp = o.Teleport;
         Teleport.ZOffset = tp.ZOffset;
@@ -2427,6 +2427,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         Console.GameOnly = o.Console.GameOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
+        // Clamped on LOAD too: ui-options.json is plain text a user can edit, and a
+        // hand-written 0 would make the Classes tab return nothing with no visible cause.
+        GameClassFilter.ClassListCap = Math.Clamp(
+            o.GameClassFilter.ClassListCap, Constants.MinSearchCap, Constants.MaxSearchCap);
 
         if (Snapshot != null)
         {
@@ -2574,6 +2578,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         o.Console.GameOnly = Console.GameOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
+        o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
 
         if (Snapshot != null)
         {
