@@ -2915,7 +2915,7 @@ exact/derived/CDO classification of each object — is in `Aura.cpp` and therefo
 test target. Only the decision rule and the marker strings are pinned. The live table above is the
 evidence for the walk.
 
-### ⬜ NEW DEFECT 2026-08-20 `[FREEZEINJECT-CRLF-2026-08-20]` — "Inject Freeze Helper" reports FAILURE on a write that SUCCEEDED
+### ✅ FIXED 2026-08-21 `[FREEZEINJECT-CRLF-2026-08-20]` — "Inject Freeze Helper" reports FAILURE on a write that SUCCEEDED
 
 *Found immediately after `[FREEZEUNTICK-2026-08-20]`, by following the advice that defect's own
 message gives. **MED** — the write is fine, but the tool tells the user the setup step failed, and
@@ -2985,6 +2985,32 @@ mismatch is in the *check*, and the stored content is already correct.
 > only in its tooltip. Reading the **panel's** status line instead (a different property that still
 > showed the previous action's text) made one attempt here look like a silent no-op. Whoever fixes
 > this should consider logging the failure too, not just the success.
+
+
+**FIXED 2026-08-21** (commit `1ab753cf`).
+
+**The arithmetic, verified on disk:** the freeze helper is **58,345 bytes** with exactly **1,137**
+CRLF endings, and `58345 − 1137 = 57208`. CE stores a table file LF-normalised and the post-write
+check compares against that, so a CRLF payload made a **successful** write report
+`wrote 58345, stream has 57208`.
+
+**Fixed in CODE, not by rewriting the `.lua` — and that distinction is the whole point.** Both
+helpers are `i/lf` in the index with `core.autocrlf=true` and (until now) no `.gitattributes`, so
+the working tree's line endings are a property of the **checkout**: on this machine the freeze
+helper happened to be CRLF and the invoke helper LF, which is the *only* reason the invoke helper
+ever injected cleanly. A fresh clone can flip either. New
+`CeLuaHygiene.NormalizeTableFilePayload` folds CRLF and lone CR, applied in **both** resource
+readers. `.gitattributes` (`*.lua`, `*.CT` `eol=lf`) was added as belt-and-braces so the tree stops
+disagreeing with the index — the code no longer depends on it.
+
+⚠ **The status line will now report 57,208 rather than 58,345.** That is the correction — the old
+number over-reported by 1,137 — not a shrunken payload.
+
+**Tests**: fold/idempotence/the 1,137-byte identity, plus **both** inject commands asserted CR-free.
+The invoke one is the test that catches the fresh-clone case; it passes today only because of how
+this checkout happened to land, which is exactly why it is asserted. ⭐ **Shown able to fail**:
+reverting the freeze normaliser failed `InjectFreezeHelperLua_SendsLfOnly` at line 232; restoring it
+went green.
 
 ### ✅ FIXED 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **32** places, and now the mechanism is known
 
@@ -3374,7 +3400,7 @@ five files found, ≥15 templates seen) so it cannot pass vacuously if the code 
 and the mechanism is understood, but the *symptom* was seen on screen and has not yet been seen to
 go away on screen. Do not mark step 2 ✅ until it has.
 
-### ⬜ NEW DEFECT 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolls one row short and then selects the wrong field
+### 🟡 HALF-FIXED 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolls one row short and then selects the wrong field
 
 **Reported by the maintainer with screenshots** (`V6 / U8` step 1), on Elliot / `LSPlayerController`.
 
@@ -3397,7 +3423,26 @@ and the match-stepper around `SearchMatchCount`.
 scroll index by one; the selection landing on the last visible row says the two restores are
 competing, and an off-by-one that also explains the selection has to be found, not assumed.*
 
-### ⬜ NEW DEFECT 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
+
+**The SELECTION half is FIXED 2026-08-21** (commit `1ab753cf`). **The SCROLL half is still open.**
+
+**Selection — cause and fix.** Refresh replaces rows in place (`Fields[i] = newFields[i]`); the
+`DataGridCollectionView` splits each into Remove+Add, every one nudges **currency**, and the TwoWay
+`SelectedItem` binding writes whatever row currency landed on back into `SelectedField`. So the grid
+invents a selection the user never made — which is exactly the reported "press Refresh a few times
+and it selects `0x720 CachedConnectionPlayerId`", a row that is merely near the bottom of the
+realized range rather than the match. `RestoreSelectedField` now **clears** instead of returning
+early. All three callers are inside `RefreshAsync` passing the same captured name, so an empty name
+provably means "nothing was selected before", and the honest restore of nothing is `null`. The same
+reasoning covers "the field is gone from the new walk": a grid-invented row is worse than no
+selection, because the next action would silently act on it.
+
+⬜ **STILL OPEN — the scroll half.** The match sitting one row below the viewport is **not** fixed.
+Its cause is still derived from decompiled Avalonia rather than observed, and — per this entry's own
+instruction — nudging a scroll index to make a screenshot look right is precisely the guess worth
+avoiding. It needs to be seen happening before it is patched.
+
+### ✅ FIXED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
 
 **Reported by the maintainer with a screenshot** (`V6 / U8` step 1, second half).
 
@@ -3418,6 +3463,32 @@ identically, so whatever is wrong here is likely wrong in all of them, and which
 
 *Not fixed yet — cause not confirmed in source at time of filing.*
 
+
+
+**FIXED 2026-08-21** (commit `71cf7e2b`). ⚠ **The entry's own warning was right: it was all 20
+boxes, not one.**
+
+**Cause.** Any `CollectionChanged` on an `AutoCompleteBox`'s `ItemsSource` makes Avalonia rebuild the
+dropdown, which clears the inner `ListBox`, which drives `SelectedItem = null` **without** setting
+the guard flag every other null-assignment site sets — and the unguarded path restores the text to
+what the user typed. The 700 ms keyword-history debounce did a `RemoveAt` + `Insert` **even when the
+list was already byte-identical**, so a mouse click on a suggestion raced a collection change that
+undid it.
+
+⭐ **The sibling that does NOT revert is what confirmed the mechanism**: the one keyword box bound to
+a static `string[]` never raises `CollectionChanged` and never misbehaved.
+
+**Fix**: one character in `SearchKeywordHistory` — `history[i].Length > k.Length` →
+`>=` — so re-typing an existing keyword stops mutating the collection at all.
+
+⚠ **A deliberate cost, worth knowing:** re-using a remembered keyword **no longer moves it to the
+front**, so ordering is first-seen rather than LRU for entries that already exist. Preserving LRU
+would mean not binding the live collection to the control at all, across 20 view models. Say so if
+that trade is wrong.
+
+**Tests**: `Remember_ReusingKeyword_DoesNotReorder_SoAnAutoCompletePickSurvives` replaces the old
+`…MovesToFront`, and `Remember_Duplicate_RaisesNoCollectionChanged` counts **events**, not contents —
+a contents-only assertion passes while the control is still being reset underneath.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
 
