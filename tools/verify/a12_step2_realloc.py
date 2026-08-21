@@ -21,7 +21,11 @@ stale read or by luck.
 ⚠ Count is deliberately left at 5. The re-anchor must fire on Data alone; bundling a count change
 would let a count-only implementation pass.
 
-⚠ `offsets-0.log`, not `scan-0.log` — every marker here is `LOG_CAT "OARR"`. [A12-LOGPATH]
+⚠ scan-0.log, NOT offsets-0.log — and the distinction is subtle. Aura.cpp declares
+`#define LOG_CAT "OARR"` (that is where A11's marker goes, tagged [OARR]), but the group
+markers are `Sein::Info("SCAN:grp", ...)` calls whose EXPLICIT category overrides the file
+default and routes to scan-0.log, tagged [SCAN:grp]. One file, two markers, two logs. Read
+the CALL, not the file. [A12-LOGPATH-2026-08-21]
 """
 import pathlib
 import struct
@@ -35,7 +39,7 @@ from mutate_guard import Mutation, assert_channel_carries, read_bytes  # noqa: E
 from pipe_client import PipeClient  # noqa: E402
 
 LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
-OFFSETS = LOGDIR / "offsets-0.log"
+SCANLOG = LOGDIR / "scan-0.log"
 SLOT_A, SLOT_B = "20", "40"          # Arr_Int[1] and Arr_Int[3]
 
 
@@ -47,7 +51,7 @@ def say(s):
 
 def since(mark, needle):
     try:
-        return [l for l in OFFSETS.read_text(encoding="utf-8", errors="replace").splitlines()
+        return [l for l in SCANLOG.read_text(encoding="utf-8", errors="replace").splitlines()
                 if l.startswith("[") and l[1:20] >= mark and needle in l]
     except OSError:
         return []
@@ -74,7 +78,7 @@ def slot_addrs(row):
 
 def main():
     fails = []
-    if not assert_channel_carries(OFFSETS, "[OARR]", "the group re-anchor marker"):
+    if not assert_channel_carries(SCANLOG, "[SCAN:grp]", "the group re-anchor marker"):
         return 2
 
     with PipeClient() as c:

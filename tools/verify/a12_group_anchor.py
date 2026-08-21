@@ -36,14 +36,19 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
 
-# ⚠ offsets-0.log, NOT scan-0.log. All three markers this rig greps — `RefineGroup re-anchor:`,
-# `container-moved=`, `carries no ValueAnchor` — are emitted from Aura.cpp, whose
-# `#define LOG_CAT "OARR"` Sein maps to LF_Offsets. Reading scan-0.log made BOTH of this rig's
-# absence assertions (step 5's "no re-anchor line" and step 6's "no ValueAnchor alarm") pass no
-# matter what the code did. Same defect as its A11 sibling. [A12-LOGPATH-2026-08-21]
+# ⚠ scan-0.log, and the reason is subtle enough that it was got wrong in BOTH directions.
+# Aura.cpp declares `#define LOG_CAT "OARR"`, which routes its LOG_INFO/LOG_WARN calls to
+# offsets-0.log — that is where A11's `Radar: Refine re-anchor` goes, tagged [OARR]. But the
+# THREE markers this rig greps are not LOG_* calls: they are `Sein::Info("SCAN:grp", ...)` /
+# `Sein::Debug("SCAN:grp", ...)`, which pass an EXPLICIT category that overrides the file's
+# default. "SCAN:grp" matches Sein.cpp's { "SCAN", 4, LF_Scan } prefix rule -> scan-0.log,
+# tagged [SCAN:grp]. Measured: scan-0.log holds them, offsets-0.log holds none.
+# ⭐ So one source file emits two nearly identical markers to two different logs. The file's
+# LOG_CAT is a DEFAULT, not the answer — read the CALL. (93 LOG_* vs 22 explicit Sein:: in
+# Aura.cpp.) [A12-LOGPATH-2026-08-21]
 LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
-OFFSETS = LOGDIR / "offsets-0.log"
-SCAN = OFFSETS          # the name the rest of the file uses
+SCANLOG = LOGDIR / "scan-0.log"
+SCAN = SCANLOG          # the name the rest of the file uses
 
 
 def say(s):
@@ -71,27 +76,28 @@ def rows(c, sid, limit=50):
     return d.get("candidates") or [], d
 
 
-def assert_detector_can_see_oarr():
+def assert_detector_can_see_group_markers():
     """An absence is evidence only once the channel is shown to carry that category.
 
-    Step 5 and step 6 are both ABSENCE claims. Grepping a file the marker cannot reach returns
-    zero for "the code did not do it" and for "I am reading the wrong channel" alike, and no
-    amount of evidence that the SCAN ran separates them. [A12-LOGPATH-2026-08-21]
+    Steps 5 and 6 are ABSENCE claims. Grepping a file the marker cannot reach returns zero for
+    "the code did not do it" and for "I am reading the wrong channel" alike, and no amount of
+    evidence that the SCAN ran separates them. [A12-LOGPATH-2026-08-21]
     """
-    if not OFFSETS.exists():
-        say("DETECTOR CHECK FAILED: %s does not exist — an absence proves nothing." % OFFSETS)
+    if not SCANLOG.exists():
+        say("DETECTOR CHECK FAILED: %s does not exist — an absence proves nothing." % SCANLOG)
         return False
-    if "[OARR]" not in OFFSETS.read_text(encoding="utf-8", errors="replace"):
-        say("DETECTOR CHECK FAILED: %s carries no [OARR] line, so it is not the channel Aura.cpp "
-            "writes to. An absence proves nothing." % OFFSETS.name)
+    if "[SCAN:grp]" not in SCANLOG.read_text(encoding="utf-8", errors="replace"):
+        say("DETECTOR CHECK FAILED: %s carries no [SCAN:grp] line, so it is not the channel the "
+            "group scanner writes to. An absence proves nothing. (Run a group scan first, or "
+            "check Sein.cpp's routing table.)" % SCANLOG.name)
         return False
-    say("detector OK: %s carries [OARR] traffic — an absent marker is a real absence"
-        % OFFSETS.name)
+    say("detector OK: %s carries [SCAN:grp] traffic — an absent marker is a real absence"
+        % SCANLOG.name)
     return True
 
 
 def main():
-    if not assert_detector_can_see_oarr():
+    if not assert_detector_can_see_group_markers():
         say("ABORT: the absence assertions in steps 5 and 6 would be vacuous.")
         return 2
     fails = []
