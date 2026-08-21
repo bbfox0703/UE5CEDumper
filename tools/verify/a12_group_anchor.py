@@ -36,7 +36,14 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
 
-SCAN = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest/scan-0.log"
+# ⚠ offsets-0.log, NOT scan-0.log. All three markers this rig greps — `RefineGroup re-anchor:`,
+# `container-moved=`, `carries no ValueAnchor` — are emitted from Aura.cpp, whose
+# `#define LOG_CAT "OARR"` Sein maps to LF_Offsets. Reading scan-0.log made BOTH of this rig's
+# absence assertions (step 5's "no re-anchor line" and step 6's "no ValueAnchor alarm") pass no
+# matter what the code did. Same defect as its A11 sibling. [A12-LOGPATH-2026-08-21]
+LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
+OFFSETS = LOGDIR / "offsets-0.log"
+SCAN = OFFSETS          # the name the rest of the file uses
 
 
 def say(s):
@@ -64,7 +71,29 @@ def rows(c, sid, limit=50):
     return d.get("candidates") or [], d
 
 
+def assert_detector_can_see_oarr():
+    """An absence is evidence only once the channel is shown to carry that category.
+
+    Step 5 and step 6 are both ABSENCE claims. Grepping a file the marker cannot reach returns
+    zero for "the code did not do it" and for "I am reading the wrong channel" alike, and no
+    amount of evidence that the SCAN ran separates them. [A12-LOGPATH-2026-08-21]
+    """
+    if not OFFSETS.exists():
+        say("DETECTOR CHECK FAILED: %s does not exist — an absence proves nothing." % OFFSETS)
+        return False
+    if "[OARR]" not in OFFSETS.read_text(encoding="utf-8", errors="replace"):
+        say("DETECTOR CHECK FAILED: %s carries no [OARR] line, so it is not the channel Aura.cpp "
+            "writes to. An absence proves nothing." % OFFSETS.name)
+        return False
+    say("detector OK: %s carries [OARR] traffic — an absent marker is a real absence"
+        % OFFSETS.name)
+    return True
+
+
 def main():
+    if not assert_detector_can_see_oarr():
+        say("ABORT: the absence assertions in steps 5 and 6 would be vacuous.")
+        return 2
     fails = []
     with PipeClient() as c:
         c.assert_build()
