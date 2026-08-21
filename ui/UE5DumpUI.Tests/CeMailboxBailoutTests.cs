@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.IO;
 using System;
 using System.Collections.Generic;
@@ -154,14 +155,30 @@ public class CeMailboxBailoutTests
     /// seven copies of the mailbox wait at once." This defect is the same story — 32 copies of
     /// an untick that never worked.
     /// </summary>
+    /// <remarks>
+    /// ⚠ Runs over EVERY generator, not just the mailbox ones, because this is what catches the
+    /// splice hazard: <c>DeferredUntickLua()</c> ends in a <c>--</c> comment, so pasting it into
+    /// <c>if X then showMessage(...); return end</c> comments out the <c>return end</c> and leaves
+    /// an unterminated <c>if</c>. Demonstrated, not hypothesised — doing exactly that to the Fly
+    /// guard made three generated scripts fail to parse with
+    /// <c>'end' expected (to close 'if' at line 11)</c>. Requiring the line to EQUAL the emitter's
+    /// text means nothing can be appended after the comment.
+    /// </remarks>
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(EveryEnableScript))]
     public void EveryDeferredUntick_IsTheSharedEmittersText(string name, string script)
     {
         var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
         foreach (var line in EnableBlock(script).Split('\n').Select(l => l.Trim()))
         {
-            if (!line.Contains("memrec.Active = false", StringComparison.Ordinal)) continue;
+            // Only the ONE-LINER shape is required to match. A line carrying both the untick
+            // and its createTimer IS the shared emitter's output, so anything appended after
+            // its trailing comment shows up as an inequality — which is exactly the splice
+            // hazard. The older multi-line shape (timer on one line, untick inside the
+            // OnTimer body further down) is equally correct and is covered by
+            // ImmediateUnticksIn instead.
+            if (!IsUntick(line)) continue;
+            if (!line.Contains("createTimer", StringComparison.Ordinal)) continue;
             Assert.True(line == canonical,
                 name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua()."
                 + Environment.NewLine + "  emitted:   " + line
@@ -308,26 +325,18 @@ public class CeMailboxBailoutTests
     public void EveryGeneratedEnableBlock_ActuallyContainsAnUntickToCheck()
     {
         var barren = EveryEnableScript()
-            .Where(r => !EnableBlock((string)r[1]).Contains("memrec.Active = false", StringComparison.Ordinal))
+            .Where(r => !EnableBlock((string)r[1]).Split('\n').Any(IsUntick))
             .Select(r => (string)r[0])
             .ToList();
 
-        // ⚠ TWO known exemptions, and the second is a FILED DEFECT rather than a design choice.
+        // ONE exemption, and it is a real design fact rather than a deferral: "Reminder" is an
+        // informational script. It applies nothing, so there is no cheat to untick and no claim to
+        // be wrong about.
         //
-        //  * "Reminder" is an informational script — it applies nothing, so there is no cheat to
-        //    untick and no claim to be wrong about.
-        //
-        //  * "Trainer.*" is `[TRAINERUNTICK-2026-08-21]`: StandaloneTrainerScriptGenerator has
-        //    FOURTEEN `showMessage(...) ... return` bail-outs and does not mention `memrec` even
-        //    ONCE, so every failure path leaves the row ticked while nothing was applied — the
-        //    exact thing CLAUDE.md's rule forbids, in a script that ships to end users as a .CT.
-        //    It is exempted here rather than fixed because the fix needs a decision this test
-        //    cannot make: whether a momentary row like "TP Save position" is MEANT to stay ticked
-        //    after a successful run. Do not quietly delete this exemption — fix the generator and
-        //    then delete it, or the defect goes back to being invisible.
+        // ⚠ The "Trainer.*" exemption that used to sit here is GONE, because
+        // [TRAINERUNTICK-2026-08-21] is fixed. Do not reinstate it to make a red run green.
         var unexpected = barren
             .Where(n => !n.Contains("Reminder", StringComparison.Ordinal))
-            .Where(n => !n.StartsWith("Trainer.", StringComparison.Ordinal))
             .ToList();
         Assert.True(unexpected.Count == 0,
             "no untick found in the [ENABLE] block of: " + string.Join(", ", unexpected)
@@ -353,23 +362,58 @@ public class CeMailboxBailoutTests
     /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
     /// </summary>
     /// <summary>
-    /// The exemption above is only honest while the defect it names is still there.
+    /// The trainer keeps BOTH untick shapes, and they are not interchangeable.
     /// [TRAINERUNTICK-2026-08-21]
     ///
-    /// <para>If someone fixes StandaloneTrainerScriptGenerator, this fails and tells them to remove
-    /// the exemption — which is the difference between a documented gap and a forgotten one.</para>
+    /// <para>The momentary TP rows arm a timer <b>before</b> their bail-outs, via the generator's
+    /// own <c>AppendUntick</c>, which finds the record by DESCRIPTION rather than capturing
+    /// <c>memrec</c>. The stateful toggles must stay ticked while the cheat is on, so they untick
+    /// only on the paths that applied nothing, via the shared
+    /// <c>CeLuaHygiene.DeferredUntickLua()</c>.</para>
+    ///
+    /// <para>⚠ This is also the correction to how the defect was originally filed. It claimed the
+    /// generator "does not mention <c>memrec</c> even ONCE, so every failure path leaves the row
+    /// ticked" — a <c>memrec</c> grep used as the measurement. It was a PROXY, and it was wrong:
+    /// the TP rows already unticked without ever naming <c>memrec</c>. Assert on the two shapes,
+    /// never on that grep.</para>
     /// </summary>
     [Fact]
-    public void TheTrainerExemption_StillDescribesARealGap()
+    public void TheTrainerKeepsBothUntickShapes()
     {
         var src = File.ReadAllText(
             FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
 
-        Assert.False(src.Contains("memrec", StringComparison.Ordinal),
-            "StandaloneTrainerScriptGenerator now mentions memrec, so [TRAINERUNTICK-2026-08-21] "
-            + "may be fixed. Re-check its bail-outs and, if they untick, delete the \"Trainer.\" "
-            + "exemption in EveryGeneratedEnableBlock_ActuallyContainsAnUntickToCheck.");
+        // The momentary shape: armed ahead of the bail-outs for the two TP rows.
+        Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
+
+        // The stateful shape: one per bail-out that applies nothing. Nine of them —
+        // Setup x3, Knob, Jump, GodMode x2, Fly x2.
+        Assert.Equal(9, Regex.Matches(src, @"Line\(sb, CeLuaHygiene\.DeferredUntickLua\(").Count);
+
+        // And no bail-out may go back to returning silently. Every `return` inside a
+        // showMessage branch has to be preceded by one of the two shapes; the count check above
+        // is what pins that, so this only guards against the inline form creeping back in —
+        // splicing the comment-terminated emitter into `if X then …; return end` would comment
+        // out the `return end` itself.
+        Assert.DoesNotContain("DeferredUntickLua()); return end", src, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Does this line untick a memory record? TWO mechanisms exist and a check that knows only one
+    /// reports a working script as unguarded. [TRAINERUNTICK-2026-08-21]
+    ///
+    /// <para><c>memrec.Active = false</c> is the common one — the record CE handed the script.
+    /// <c>StandaloneTrainerScriptGenerator</c> instead resolves the row with
+    /// <c>getAddressList().getMemoryRecordByDescription(...)</c> and writes <c>mr.Active</c>,
+    /// because its untick fires from a timer long after the enabling chunk has gone.</para>
+    ///
+    /// <para>⚠ That second mechanism is exactly what made the original finding overstate itself: it
+    /// measured with a <c>memrec</c> grep and concluded the trainer never unticked at all, when its
+    /// two momentary rows always had.</para>
+    /// </summary>
+    private static bool IsUntick(string line)
+        => line.Contains("memrec.Active = false", StringComparison.Ordinal)
+        || line.Contains("mr.Active = false", StringComparison.Ordinal);
 
     private static List<string> ImmediateUnticksIn(string block)
     {
@@ -378,12 +422,16 @@ public class CeMailboxBailoutTests
         for (int i = 0; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
-            if (!line.Contains("memrec.Active = false", StringComparison.Ordinal)) continue;
+            if (!IsUntick(line)) continue;
             if (line.Contains("createTimer", StringComparison.Ordinal)) continue;
 
+            // Back-scan for BOTH timer forms: `_u.OnTimer = function(x)` (the shared emitter) and
+            // `createTimer(50, function()` (the trainer's, which takes the callback inline).
             var insideTimerBody = false;
             for (int back = i - 1; back >= 0 && back >= i - 8; back--)
-                if (lines[back].Contains("OnTimer", StringComparison.Ordinal)) { insideTimerBody = true; break; }
+                if (lines[back].Contains("OnTimer", StringComparison.Ordinal)
+                 || lines[back].Contains("createTimer", StringComparison.Ordinal))
+                { insideTimerBody = true; break; }
             if (insideTimerBody) continue;
 
             bad.Add("line " + (i + 1) + ": " + line);

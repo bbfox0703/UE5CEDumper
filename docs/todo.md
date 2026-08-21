@@ -3344,7 +3344,7 @@ not claim to be active, and a value that was genuinely left alone.
 ---
 
 
-### ⬜ NEW DEFECT 2026-08-21 `[TRAINERUNTICK-2026-08-21]` — the standalone trainer never unticks on ANY failure path
+### ✅ FIXED + CE-VERIFIED 2026-08-21 `[TRAINERUNTICK-2026-08-21]` — the standalone trainer's stateful toggles never unticked on a bail-out
 
 *Found by the exhaustive guard written for `[FREEZEUNTICK-2026-08-20]` — specifically by its
 guard-the-guard clause, which asks whether each script even CONTAINS an untick to check. **LOW-MED**,
@@ -3373,6 +3373,66 @@ A comment-free variant of the emitter is needed for those.
 the exemption comment, and `TheTrainerExemption_StillDescribesARealGap` fails the moment
 `StandaloneTrainerScriptGenerator` mentions `memrec` — telling whoever fixes it to delete the
 exemption, so a documented gap cannot decay into a forgotten one.
+
+
+---
+
+#### FIXED 2026-08-21 — ⚠ but FIRST, the filing above was WRONG about the scope
+
+⭐ **Read this before trusting any `grep -c` in a finding, including one of mine.** The entry above
+says the generator *"does not mention `memrec` even ONCE, so every failure path leaves the row
+ticked"*, over **14** bail-outs. The `memrec` count was a **proxy used as the measurement**, and it
+was wrong in the direction that would have made the fix touch working code — the very trap
+`[CDOSCOPE]` was written up for two entries earlier.
+
+`StandaloneTrainerScriptGenerator` already had its own `AppendUntick(desc)` helper, which unticks
+via `getAddressList().getMemoryRecordByDescription(...)` and so never names `memrec` at all.
+`BuildTpSave` and `BuildTpRecall` call it **before** their bail-outs (lines 380 / 407), so the timer
+is armed whichever path returns — success or `Enable Setup first` alike. **Those five sites were
+correct by design and are untouched.**
+
+**The real defect was NINE sites**, all in the stateful toggles, which have no untick at all:
+`BuildSetup` ×3 (config missing / AOB scan failed / RIP displacement), `BuildKnob`, `BuildJump`,
+`BuildGodMode` ×2, `BuildFly` ×2. Those must stay ticked while the cheat is on, so they can only
+untick on the paths that applied nothing — which is exactly what they never did.
+
+**The fix** adds `CeLuaHygiene.DeferredUntickLua()` at each of the nine, rewriting the seven inline
+one-liners as multi-line blocks.
+
+⚠ **That rewrite is not cosmetic — the inline splice produces BROKEN LUA, and this was demonstrated
+rather than asserted.** The emitter ends in a `--` comment, so
+`if X then showMessage(...); <untick>  -- comment  return end` comments out the `return end`.
+Doing exactly that to the Fly guard and parsing the output with the real `lua` interpreter gave:
+```
+FAIL 06.lua  block 1: 'end' expected (to close 'if' at line 11) near <eof>
+```
+— three scripts failing to parse. With the multi-line form, **all 18 `{$lua}` blocks across the 9
+generated entries parse clean**.
+
+**CE 7.7 A/B, on the real generated Setup script** (emitted with an empty config so it lands in the
+`Config missing` bail-out), both records in one session, differing only by the three untick lines:
+
+```
+=== TRAINERUNTICK A/B, real generated Setup script, CE 7.7 ===
+A_NO_UNTICK (pre-fix)   ->  Active=true
+B_FIXED                 ->  Active=false
+```
+
+⭐ The control is what makes it mean something: `A_NO_UNTICK` reproduces the defect in the same
+session and process, so `B_FIXED` is the fix working rather than the rig being unable to fail. Read
+from CE's Lua Engine, never the checkbox icon.
+
+**Guards.** `TheTrainerKeepsBothUntickShapes` pins 2 momentary + 9 stateful, and the exhaustive
+`EveryDeferredUntick_IsTheSharedEmittersText` now runs over **every** generator — so a spliced
+inline untick fails as an inequality, which is precisely the broken-Lua case. ⭐ Shown able to fail
+three ways: removing one of the nine, reverting one guard to inline-without-untick, and
+re-introducing the splice (which named the two Fly scripts).
+
+⚠ **The detector had to learn a second untick MECHANISM** (`mr.Active = false` from
+`getMemoryRecordByDescription`, not just `memrec.Active = false`) and a second deferred SHAPE
+(`createTimer(50, function() … end)` with the callback inline, not just `_u.OnTimer = …`). Without
+both it reported the trainer's correct TP rows as unguarded — the same false negative that produced
+the wrong filing in the first place.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 
