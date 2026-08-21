@@ -4654,9 +4654,28 @@ PropertySearchResult SearchProperties(
     if (!result.results.empty()) {
         // 2a. Collect unique preview-source class set (subclasses
         // chosen for instance lookup, NOT the defining classes).
+        // ⚠ Keyed on the DEFINING class (`classAddr`), not on `previewClassAddr`.
+        // [CDOSCOPE-2026-08-20]
+        //
+        // `previewClassAddr` is whichever subclass had the biggest `PropertiesSize`, chosen
+        // with the comment "bias toward leaf classes that actually have live instances" —
+        // a PROXY for having live instances rather than a test of it, and the proxy is wrong
+        // often enough to matter. Measured on DumperTest: the `NiagaraComponent ·
+        // WarmupTickCount` row picked class 0x…797000, which has only a CDO, while
+        // `NiagaraComponent` itself (0x…797800) had two live `NiagaraComponent0` instances.
+        // The row therefore read `0 (CDO default)` — "nothing is live" — while Freeze on that
+        // same row reported `on 2 instance(s)`.
+        //
+        // The defining class is what Force (Solide) and Freeze target, so keying on it is
+        // what makes the preview and the actions answer the same question. Sampling any
+        // instance in that hierarchy is sound for the same reason the original comment gives:
+        // the property sits at the same offset on every subclass.
+        //
+        // Rows with no preview source (`previewClassAddr == 0`: the deep-descent nested
+        // leaves) must still be skipped — that zero is load-bearing.
         std::unordered_set<uintptr_t> needPreviewClasses;
         for (const auto& m : result.results)
-            needPreviewClasses.insert(m.previewClassAddr);
+            if (m.previewClassAddr) needPreviewClasses.insert(m.classAddr);
 
         // 2b. Scan GObjects to find one instance per preview-source class.
         //
@@ -4675,7 +4694,45 @@ PropertySearchResult SearchProperties(
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
         // instance appearing later always wins — the whole point of the finding.
         std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
+
+        // Live instances of a SUBCLASS of a preview class. [CDOSCOPE-2026-08-20]
+        //
+        // Force and Freeze on a Property Search row are scoped to the class AND EVERY
+        // SUBCLASS, so a preview that only looked for an exact-class instance could mark a
+        // row `(CDO default)` — reading as "nothing is live" — while the action on that same
+        // row then reported `on 2 instance(s)`. Measured on DumperTest with
+        // NiagaraComponent::WarmupTickCount. Collected here and applied only where no exact
+        // instance was found, so an exact sample always wins.
+        std::unordered_map<uintptr_t, uintptr_t> derivedMap;
+
+        // Per-UClass verdict cache: cls -> the preview class it derives from, or 0 for none.
+        // Same reasoning as FindInstancesDerivedFrom's derivedCache — GObjects holds 10^5-10^6
+        // objects over 10^3-10^4 distinct classes, so caching by UClass* turns a per-OBJECT
+        // chain walk into a per-CLASS one, which is what makes this affordable at all.
+        std::unordered_map<uintptr_t, uintptr_t> derivesFromCache;
+        auto previewBaseOf = [&](uintptr_t cls) -> uintptr_t {
+            auto it = derivesFromCache.find(cls);
+            if (it != derivesFromCache.end()) return it->second;
+            uintptr_t found = 0;
+            uintptr_t cur = cls;
+            // Bounded the same way Ubel::ResolveFunctionInChain and Dunste::FindFuncByName
+            // are: a malformed or mid-teardown SuperStruct can self-loop.
+            for (int depth = 0; cur && depth < 64; ++depth) {
+                if (needPreviewClasses.count(cur)) { found = cur; break; }
+                uintptr_t super = 0;
+                if (!Macht::ReadSafe(cur + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
+                    || super == 0 || super == cur)
+                    break;
+                cur = super;
+            }
+            derivesFromCache[cls] = found;
+            return found;
+        };
+
         int32_t cnt = GetCount();
+        // ⚠ The early exit counts EXACT hits only. A class whose only live instance is a
+        // subclass must not stop the sweep early — the derived sample it needs may still be
+        // ahead of us, and settling for the CDO there is the defect being fixed.
         for (int32_t i = 0; i < cnt && instanceMap.size() < needPreviewClasses.size(); ++i) {
             // Skipping CDOs means a class with no live instance no longer satisfies the
             // early-exit condition, so this loop can now run the full pool. It is the same
@@ -4689,34 +4746,53 @@ PropertySearchResult SearchProperties(
             if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
             // Skip if this IS a UClass (we want instances, not the class itself)
-            if (!needPreviewClasses.count(cls) || instanceMap.count(cls) || obj == cls) continue;
+            if (obj == cls) continue;
+
+            const bool exact = needPreviewClasses.count(cls) != 0;
+            // Only pay for the chain walk when the class is not one we already want, and
+            // only while some preview class still lacks a derived sample.
+            const uintptr_t base = exact ? cls
+                                 : (derivedMap.size() < needPreviewClasses.size()
+                                        ? previewBaseOf(cls) : 0);
+            if (!base) continue;
+            if (exact ? (instanceMap.count(base) != 0) : (derivedMap.count(base) != 0)) continue;
 
             uint32_t nameIdx = 0;
             if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
                 Serie::GetString(nameIdx).find("Default__") != std::string::npos) {
-                cdoOnlyMap.emplace(cls, obj);   // first CDO seen wins; live instance still preferred
+                // Only the row's OWN class default is offered as the last-resort sample. A
+                // subclass CDO is another class's default, which would be a worse answer than
+                // the row's own and is not what the actions would touch either.
+                if (exact) cdoOnlyMap.emplace(base, obj);   // first CDO wins; live still preferred
                 continue;
             }
 
-            instanceMap[cls] = obj;
+            if (exact) instanceMap[base] = obj;
+            else       derivedMap.emplace(base, obj);
         }
 
         // Fall back to the CDO where nothing live exists — a default value is still the only
         // truth available, and dropping the preview entirely would lose information. But it
         // must not be presented as a live reading: that silent substitution IS the defect
         // this fix removes, so the row says which one it got (marked in 2c below).
-        std::unordered_set<uintptr_t> previewFromCdo;
-        for (const auto& kv : cdoOnlyMap) {
-            if (instanceMap.count(kv.first)) continue;
-            instanceMap[kv.first] = kv.second;
-            previewFromCdo.insert(kv.first);
+        // Exact > derived > class default, decided by Aura::ChoosePreviewSource so the
+        // ordering is stated in a header a test can compile. [CDOSCOPE-2026-08-20]
+        std::unordered_map<uintptr_t, PreviewSource> previewSourceOf;
+        for (uintptr_t pc : needPreviewClasses) {
+            const PreviewSource src = ChoosePreviewSource(
+                instanceMap.count(pc) != 0, derivedMap.count(pc) != 0, cdoOnlyMap.count(pc) != 0);
+            switch (src) {
+                case PreviewSource::Derived:      instanceMap[pc] = derivedMap[pc];  break;
+                case PreviewSource::ClassDefault: instanceMap[pc] = cdoOnlyMap[pc];  break;
+                default: break;   // Exact is already in instanceMap; None has nothing to add
+            }
+            if (src != PreviewSource::None) previewSourceOf[pc] = src;
         }
 
-        // 2c. Read property values and fill previews. ResolvePropertyPreviews
-        // expects the match's classAddr to key into instanceMap, but we
-        // want it to use previewClassAddr instead. Temporarily swap, run,
-        // then swap back so the wire output keeps the defining-class
-        // address as the canonical classAddr.
+        // 2c. Read property values and fill previews. `instanceMap` is now keyed by the
+        // DEFINING class, which is what `ResolvePropertyPreviews` already looks matches up
+        // by — so the old swap of classAddr <-> previewClassAddr around the call is gone.
+        // It existed only to make the lookup use the size-picked subclass.
         if (!instanceMap.empty()) {
             // Resolve EnumProperty: read UEnum* from FField for matches that need it
             for (auto& m : result.results) {
@@ -4724,24 +4800,16 @@ PropertySearchResult SearchProperties(
                     Macht::ReadSafe(m.fieldAddr + DynOff::FENUMPROP_ENUM, m.enumAddr);
                 }
             }
-            // Swap classAddr <-> previewClassAddr around the call.
-            for (auto& m : result.results) {
-                std::swap(m.classAddr, m.previewClassAddr);
-            }
             Ubel::ResolvePropertyPreviews(result.results, instanceMap);
-            for (auto& m : result.results) {
-                std::swap(m.classAddr, m.previewClassAddr);
-            }
             // Mark the rows whose only available sample was the class default object, so a
             // Blueprint default cannot read as a live value. `preview` is a free-text column
             // (bound as a TextBlock, and one of the fields the keyword box ORs over), so the
             // marker needs no wire or UI change and stays greppable by the user.
-            if (!previewFromCdo.empty()) {
-                for (auto& m : result.results) {
-                    if (!m.preview.empty() && previewFromCdo.count(m.previewClassAddr)) {
-                        m.preview += " (CDO default)";
-                    }
-                }
+            for (auto& m : result.results) {
+                if (m.preview.empty()) continue;
+                auto it = previewSourceOf.find(m.classAddr);
+                if (it == previewSourceOf.end()) continue;
+                m.preview += PreviewSourceSuffix(it->second);
             }
         }
     }

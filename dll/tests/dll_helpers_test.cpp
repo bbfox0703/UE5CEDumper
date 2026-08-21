@@ -240,6 +240,55 @@ static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
     EXPECT("null name refused", !Resolve(c, nullptr, hit));
 }
 
+// ----- Aura::ChoosePreviewSource --------------------------------------------
+// [CDOSCOPE-2026-08-20] A Property Search row's Preview and the Force/Freeze ACTIONS on
+// that same row disagreed about what counts as "an instance of this class": the preview
+// wanted an EXACT class match and fell back to `(CDO default)`, while the actions hit the
+// class AND every subclass. So a row could say "nothing is live" and the action on it then
+// report `on 2 instance(s)` — measured on DumperTest with NiagaraComponent::WarmupTickCount.
+//
+// The ordering rule lives in Aura.h so it can be compiled here; no test target builds
+// Aura.cpp, so a rule left in the walk itself would be unpinnable.
+
+static void Test_Aura_ChoosePreviewSource() {
+    using PS = Aura::PreviewSource;
+
+    // Exact wins over everything — showing a subclass's value while the row's own class has
+    // a live instance would be the wrong object.
+    EXPECT("exact beats derived and CDO",
+           Aura::ChoosePreviewSource(true, true, true) == PS::Exact);
+    EXPECT("exact alone", Aura::ChoosePreviewSource(true, false, false) == PS::Exact);
+
+    // THE DEFECT: a live subclass instance must beat the class default. Getting this pair
+    // backwards is precisely what the row was doing.
+    EXPECT("derived beats the CDO",
+           Aura::ChoosePreviewSource(false, true, true) == PS::Derived);
+    EXPECT("derived alone", Aura::ChoosePreviewSource(false, true, false) == PS::Derived);
+
+    // The CDO stays the last resort rather than being dropped — a default is still the only
+    // truth available when nothing is live.
+    EXPECT("CDO when nothing is live", Aura::ChoosePreviewSource(false, false, true) == PS::ClassDefault);
+    EXPECT("nothing at all", Aura::ChoosePreviewSource(false, false, false) == PS::None);
+}
+
+static void Test_Aura_PreviewSourceSuffix() {
+    // An ordinary live reading must stay unmarked; marking every row would make the marker
+    // worthless.
+    EXPECT_EQ_STR("exact is unmarked", Aura::PreviewSourceSuffix(Aura::PreviewSource::Exact), "");
+    EXPECT_EQ_STR("none is unmarked", Aura::PreviewSourceSuffix(Aura::PreviewSource::None), "");
+
+    // A subclass sample is LIVE but not of the row's own class, and the row has to say so —
+    // otherwise the value looks like it came from the class named in the row.
+    EXPECT_EQ_STR("derived is marked as a subclass sample",
+                  Aura::PreviewSourceSuffix(Aura::PreviewSource::Derived), " (subclass instance)");
+
+    // ⚠ The wording is unchanged but the CLAIM is stronger: subclasses really were searched
+    // and none was live, so the actions will find nothing either. Users grep this string, and
+    // the UI binds preview as free text, so it must stay exactly this.
+    EXPECT_EQ_STR("CDO keeps its greppable wording",
+                  Aura::PreviewSourceSuffix(Aura::PreviewSource::ClassDefault), " (CDO default)");
+}
+
 // ----- TryStrToAddr ----------------------------------------------------------
 
 static void Test_TryStrToAddr_AcceptsValidHex() {
@@ -6861,6 +6910,10 @@ int main() {
     RUN(Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive);
     RUN(Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates);
     RUN(Test_Ubel_ResolveFunctionInChain_RejectsBadInput);
+
+    // [CDOSCOPE-2026-08-20] preview scope must match what the row's actions do
+    RUN(Test_Aura_ChoosePreviewSource);
+    RUN(Test_Aura_PreviewSourceSuffix);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

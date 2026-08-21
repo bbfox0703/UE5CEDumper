@@ -2800,7 +2800,7 @@ spot-check rather than a 30-column sweep.
 > *reached*, because the operation it guards completes faster than a human can start a second one.
 > That is a fixture problem, not evidence the gate works. It stays open.
 
-### ⬜ NEW FINDING 2026-08-20 `[CDOSCOPE-2026-08-20]` — `(CDO default)` is EXACT-scoped while Force/Freeze on the same row are DERIVED-scoped
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[CDOSCOPE-2026-08-20]` — the Preview picked its sample class by a PROXY, not by having a live instance
 
 *Found because it misled me into choosing the wrong fixture for `AA12`/`AA13` step 3 — which is
 exactly how it would mislead a user. **LOW-MED**: nothing is corrupted, but the row tells you there
@@ -2836,6 +2836,84 @@ layer up: those fixed the *action's* scope, this is the *preview's*. Worth fixin
 row cannot disagree with itself again.
 
 *Not fixed — found during a verification pass.*
+
+
+**FIXED 2026-08-21. ⚠ The filed diagnosis was wrong, and finding that out took a diagnostic build —
+worth recording, because the wrong diagnosis produces a fix that changes nothing.**
+
+**What the entry said:** the marker is exact-scoped while the actions are derived-scoped, so a row
+can read `(CDO default)` while live *subclass* instances exist.
+
+**What was actually true.** A `Sein::Info` diagnostic in the preview walk printed, for the reported
+`NiagaraComponent · WarmupTickCount` row:
+```
+CDOSCOPE-DIAG: needPreview=2 exact=0 derived=0 cdo=2 cnt=25179
+CDOSCOPE-DIAG:   pc=0x19F02797000 exact=0 derived=0 cdo=1
+```
+while the row itself reported `class_addr=0x19F02797800`. **Different classes** — and
+`find_instances` showed the live pair `NiagaraComponent0 ×2` sitting on `0x…797800`, the row's own
+class. So the two live instances were **exact-class**, not subclass, and exact-vs-derived cannot
+explain the row at all. A first attempt built purely on the entry's diagnosis — adding a
+descendant search under `previewClassAddr` — was **live-tested and changed nothing**, which is what
+sent me to the diagnostic.
+
+**The real cause** is at `Aura.cpp:4488`, where the preview's sample class is chosen:
+
+```cpp
+// Update preview-source if THIS subclass is more derived
+// (bigger PropertiesSize) than the previous best -- bias
+// toward leaf classes that actually have live instances.
+if (ci.PropertiesSize > existing.previewPropertiesSize) { ... }
+```
+
+⭐ **The comment states the intent and the code substitutes a proxy for it.** "Bias toward leaf
+classes that *actually have live instances*" is tested by comparing `PropertiesSize` — a stand-in
+for having instances, never a test of it. Here it picked `0x…797000`, which has only a CDO, over
+`NiagaraComponent`, which had two live objects. This is audit #4's own root-cause pattern 4b
+verbatim: *a cheap proxy signal substituted for a predicate a sibling in this repo already computes
+correctly.*
+
+**The fix.** The preview is now keyed on the **defining class** (`m.classAddr`) — the same class
+Force (Solide) and Freeze target — and looks for a live instance of it **or any subclass**, in the
+order **exact → derived → class default** (`Aura::ChoosePreviewSource`). Sampling anywhere in that
+hierarchy is sound for the reason the original code already gives: the property sits at the same
+offset on every subclass. The `std::swap(classAddr, previewClassAddr)` around
+`ResolvePropertyPreviews` is **gone** — it existed only to make the lookup use the size-picked
+subclass. `previewClassAddr == 0` still means "skip this row" for the deep-descent nested leaves;
+that zero is load-bearing and is preserved.
+
+The subclass walk is a per-UClass verdict cache over the super chain, the same shape (and for the
+same reason) as `FindInstancesDerivedFrom`'s `derivedCache`, bounded at 64 levels with a self-loop
+guard like `Ubel::ResolveFunctionInChain`.
+
+**A row now says which kind of sample it got:** unmarked = a live exact-class instance;
+`(subclass instance)` = live, but of a subclass; `(CDO default)` = nothing live **anywhere in the
+hierarchy**. ⚠ That last wording is unchanged but its **claim is stronger** than before — it now
+means the actions will find nothing either, which is precisely what the entry asked for.
+
+**LIVE-VERIFIED on DumperTest**, freshly built DLL, before → after:
+
+| row | before | after | why |
+|---|---|---|---|
+| `NiagaraComponent · WarmupTickCount` | `0 (CDO default)` | **`0`** | 2 live exact `NiagaraComponent0` |
+| `NiagaraSystem · WarmupTickCount` | `0 (CDO default)` | `0 (CDO default)` | 0 exact-live, 0 derived-live — honest |
+| `Engine · MaxPixelShaderAdditiveComplexityCount` | — | **`2000 (subclass instance)`** | 0 exact-live, 6 derived incl. `GameEngine` |
+
+Across a 93-row `Count` search the tally moved `71 CDO / 22 unmarked / 0 subclass` →
+`65 CDO / 21 unmarked / 7 subclass`, totals matching. Each of the three example rows was
+cross-checked against `find_instances` for exact-live and derived-live counts, so the marker is
+confirmed against the pool rather than just against itself.
+
+**Pinned by `Test_Aura_ChoosePreviewSource` + `Test_Aura_PreviewSourceSuffix`** (1626 → 1636
+assertions). The ordering rule lives in `Aura.h` deliberately: no test target compiles `Aura.cpp`,
+so a rule left in the walk would be unpinnable. ⭐ **Shown able to fail**: flipping the
+derived/CDO preference back to the defective order failed exactly `derived beats the CDO` and
+nothing else.
+
+⚠ **What is NOT covered by a test:** the walk itself — the cache, the 64-level bound, the
+exact/derived/CDO classification of each object — is in `Aura.cpp` and therefore uncompiled by any
+test target. Only the decision rule and the marker strings are pinned. The live table above is the
+evidence for the walk.
 
 ### ⬜ NEW DEFECT 2026-08-20 `[FREEZEINJECT-CRLF-2026-08-20]` — "Inject Freeze Helper" reports FAILURE on a write that SUCCEEDED
 
