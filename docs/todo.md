@@ -3061,9 +3061,54 @@ spot-check rather than a 30-column sweep.
 >
 > **Negative — `100` and `3`:** `12 object(s) matched · scanned 644`, **no clause**. Twelve real
 > matches, so this is a genuine control and not the vacuous zero-match kind rejected under `AE13`.
-> | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
+> | 10 | ✅ **PASS 2026-08-21 `[AF21-HIDPI-2026-08-21]`** — all three arms, see below. ⚠ **Both halves of this row's own instruction were wrong**: no scaling change is needed (this desktop is permanently at **225%**), and hanging the window off the **right** edge *cannot* expose the defect. Original text: ~~Set Windows display scaling to 150%, move the main window so roughly a third of it hangs off the right edge, close the app, reopen. It reopens where it was left. Needs a real scaling change — the one row here a script cannot do.~~ | | |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+
+
+> ### ✅ AF21 PASS 2026-08-21 `[AF21-HIDPI-2026-08-21]` — and the row's own step could never have found it
+>
+> **The fix is one line in `MainWindow.OnOpenedValidatePlacement`:**
+> `int rw = (int)Math.Round(_normalWidth * scale);` — the `* scale`. `IsVisibleEnough` itself was
+> never wrong and is already unit-pinned; it was being handed a rect two-and-a-bit times too narrow.
+>
+> ⭐ **"Needs a real scaling change — the one row here a script cannot do" is FALSE.** This desktop
+> runs at **216 dpi = 225%** permanently. The HiDPI condition was never something to arrange.
+>
+> ⭐⭐ **"Hang a third of it off the RIGHT edge" cannot expose this defect**, and the arithmetic says
+> so outright. Off the right the overlap is `screenW − x` for the physical rect but
+> `min(x + w, screenW) − x` for the narrower DIP rect — **the DIP value is the LARGER one**, so the
+> buggy build is *more* permissive there and both accept. Anyone who followed the row saw a pass and
+> learned nothing. **The defect only appears off the LEFT**, where the width is what carries the rect
+> back onto the screen.
+>
+> **No window-dragging was needed**: `window-state.txt` IS the input to the code under test, so
+> seeding it and observing where the window opens exercises the same path without `SetWindowPos`
+> (whose effect Avalonia may or may not observe) and without computer-use.
+>
+> Band derived, not assumed — for a 1,124-DIP window at 2.25× on a 3,840 px screen, post-fix accepts
+> `x ≥ 120 − 2529 = −2409`, pre-fix accepts `x ≥ 120 − 1124 = −1004`, so **−2409 ≤ x < −1004** is
+> kept by the fixed build and discarded by the old one. `py tools/verify/af21_hidpi_placement.py`:
+>
+> | arm | x | expected | observed |
+> |---|---|---|---|
+> | **B — witness, mid-band** | −1707 | keep | **kept at −1707** |
+> | **C — NEGATIVE CONTROL, genuinely off-screen** | −2809 | reset | **moved to 345** (re-centred) |
+> | A — positive control, plainly on screen | 200 | keep | kept at 200 |
+>
+> ⚠ Arm C is what makes B mean anything: the guard still rejects, so "kept" is a decision and not a
+> guard that stopped running. Arm A rules out "the window ignores the file entirely".
+>
+> ⚠ **Note the live `window-state.txt` was `x=-1557` — itself inside the discriminating band.** The
+> maintainer's own saved position is a case the pre-fix build would have thrown away. The rig backs
+> the file up and restores it.
+>
+> **Three arithmetic tests added to `WindowStateTests`** so the right-edge correction cannot be lost.
+> ⚠ They initially used the existing `SinglePrimary` fixture, which is **1920** wide — at that width
+> every right-edge probe falls entirely off screen, both widths return false, and "they agree" passed
+> for the trivial reason. They now use a 3840-wide screen and assert **≥3 of the 4 probes are on
+> screen at all**, so the assertion cannot go vacuous again.
+>
 
 > ### ✅ MAINTAINER VERIFICATION PASS 2026-08-21 `[L10-OWNER-2026-08-21]` — six steps pass, one FAILS and became a defect
 >
