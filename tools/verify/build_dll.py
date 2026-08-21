@@ -19,9 +19,10 @@ and pins the console to UTF-8 (`chcp 65001`) so the bytes cl.exe emits during TH
 build agree with the bytes cmake recorded during that configure.
 
 The dep-health check is CLAUDE.md's own: `ninja -t deps`, where a C++ object sitting
-at `#deps 0` is the broken state (`.rc.res` / `.asm.obj` legitimately have none).
-It runs after every build because the failure mode is silent by construction -- the
-build succeeds, and only the *staleness* of the objects is wrong.
+at `#deps 0` is the broken state (`.rc.res` / `.asm.obj` legitimately have none) --
+plus a third exception this script had to learn the hard way, an EMPTY translation
+unit; see `deps_health`. It runs after every build because the failure mode is silent
+by construction -- the build succeeds, and only the *staleness* of the objects is wrong.
 
 Deliberately does NOT touch `dist/` or bump `build_number.txt`; both are build.ps1
 behaviours that a verification-only build must not trigger.
@@ -102,12 +103,33 @@ def require_configured():
             f"header dependency tracking (see the module docstring). Configure with build.ps1.")
 
 
+# An object emitted from a translation unit that preprocessed to NOTHING. Measured on this
+# tree: the six empty proxy objects are 527-535 bytes, the smallest real one is 10,985 — a
+# 20x gap with nothing in between, because an empty MSVC COFF is just a handful of section
+# headers plus the source-path debug record. 2 KB sits safely in the gap. [PROXYDEPS]
+EMPTY_TU_MAX_BYTES = 2048
+
+
 def deps_health(env, verbose=False):
-    """Return (bad_objects, total_cxx_objects). Bad = a C++ object with #deps 0."""
+    """Return (bad_objects, total_cxx_objects). Bad = a NON-EMPTY C++ object with #deps 0.
+
+    ⚠ `#deps 0` alone is NOT the broken state, which is what [PROXYDEPS-2026-08-19] filed and
+    what this function used to report. CLAUDE.md names two legitimate exceptions (`.rc.res`,
+    `.asm.obj`); there is a **third**, and it is the one that produced that whole finding: a
+    translation unit that preprocessed to nothing. Every `Lugner*.cpp` is wrapped head-to-toe
+    in `#ifdef UE5_PROXY_<FLAVOUR>_BUILD` with its `#include`s INSIDE the guard, and all four
+    are compiled into all four proxy targets. In the three targets that do not define a given
+    flavour the file is empty, `/showIncludes` prints nothing, and ninja records zero deps —
+    correctly. Six objects, exactly the 4x4-minus-diagonal you would predict.
+
+    So the discriminator is not the dep count but whether the object HAS ANY CONTENT. An empty
+    object at #deps 0 is fine; one with real code at #deps 0 means the `msvc_deps_prefix`
+    breakage CLAUDE.md warns about, and a `.h` edit will silently stop rebuilding it.
+    """
     r = subprocess.run([_ninja(env), "-C", str(BUILD), "-t", "deps"],
                        capture_output=True, text=True, errors="replace", env=env)
     # `ninja -t deps` exits non-zero on a stale log; that is itself information.
-    bad, total = [], 0
+    bad, empty, total = [], [], 0
     for line in r.stdout.splitlines():
         m = re.match(r"^(\S+):\s+#deps\s+(\d+)", line)
         if not m:
@@ -118,10 +140,19 @@ def deps_health(env, verbose=False):
         if not obj.endswith(".obj"):
             continue
         total += 1
-        if n == 0:
-            bad.append(obj)
+        if n:
+            continue
+        # A missing object is NOT an empty one — it has simply never been built, and calling
+        # that "fine" is how this check would go quiet on a tree it has not measured.
+        p = BUILD / obj.replace("\\", "/")
+        size = p.stat().st_size if p.exists() else None
+        if size is not None and size <= EMPTY_TU_MAX_BYTES:
+            empty.append((obj, size))
+        else:
+            bad.append(f"{obj} ({'not built' if size is None else f'{size} bytes'})")
     if verbose:
-        print(f"  deps: {total} C++ objects, {len(bad)} with #deps 0")
+        print(f"  deps: {total} C++ objects, {len(bad)} with #deps 0 and real content, "
+              f"{len(empty)} empty TUs (expected — see deps_health)")
     return bad, total
 
 
@@ -189,15 +220,18 @@ def main(argv=None):
 
     bad, total = deps_health(env, verbose=True)
     if bad:
-        # WARN, not fail. Six proxy `Lugner*.cpp` objects sit at #deps 0 in this tree and
-        # predate any of this work; hard-failing on them would block every legitimate build.
-        # Spun off as its own task. What must never be silent is the header YOU edited.
-        print(f"WARNING: {len(bad)} C++ object(s) record no header deps (pre-existing; "
-              f"proxy targets). A .h edit will not rebuild these:")
+        # Now a hard FAIL, not a warning. It used to warn because six proxy objects sat at
+        # #deps 0 and hard-failing would have blocked every build — but those six were
+        # measured to be EMPTY translation units, not broken deps, and deps_health no longer
+        # counts them. A permanent warning is worse than either verdict: it is the state in
+        # which a real breakage arrives and reads as the noise everyone already ignores.
+        print(f"build_dll: FAILED -- {len(bad)} C++ object(s) with real content record NO "
+              f"header deps. A .h edit will not rebuild these, so a green build measures "
+              f"nothing (CLAUDE.md: msvc_deps_prefix). Re-configure via build.ps1:")
         for b in bad[:20]:
             print("   ", b)
-    else:
-        print(f"deps OK: all {total} C++ objects carry header dependencies")
+        return 1
+    print(f"deps OK: all {total} C++ objects carry header dependencies")
 
     if a.require_dep:
         n = objects_depending_on(env, a.require_dep)

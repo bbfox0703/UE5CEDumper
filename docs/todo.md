@@ -85,15 +85,18 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 6 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
-> maintainer-only file deletion. The other five rows are **new** — three surfaced by the audit
-> programme itself on 2026-08-19, two (`[PROXYDEPS]`, `[RELAUNCHPIPE]`) by the overnight
-> verification run — and were deliberately deferred — none is a regression, and each states its own
-> reason for waiting. So "12 → 1" is the honest headline for the original queue, and **6** is the
-> honest row count of this table — the fifth and sixth, `[PROXYDEPS]` and `[RELAUNCHPIPE]`, were
-> both added 2026-08-19 by the overnight verification run, in passing rather than by a scan.
+> maintainer-only file deletion. The other three rows were surfaced by the audit programme itself
+> on 2026-08-19 and deliberately deferred — none is a regression, and each states its own reason for
+> waiting. So "12 → 1" is the honest headline for the original queue, and **4** is the honest row
+> count of this table.
+>
+> ⚠ **Two rows left on 2026-08-21, and they left in OPPOSITE directions** — worth noticing, because
+> a queue only shrinking by fixes hides the other outcome. `[RELAUNCHPIPE]` was **real** and is
+> fixed + live-verified (its write-up is below). `[PROXYDEPS]` was **refuted** — see below; there was
+> no defect, and the tooling that reported one has been corrected so it cannot say it again.
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -104,8 +107,6 @@ Open work only. **Read this when deciding what to do next.**
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
 > | `[VOLUMEROOT-2026-08-19]` | Three sites ask `Path.GetPathRoot` + `DriveInfo` about a path and therefore answer about the **host** volume, not the volume the path actually lives on when that path is a mount point: `WindowsPlatformService.GetFreeDiskSpaceBytes:407`, `GetTotalDiskSpaceBytes:419` (these feed the snapshot disk-space guard, so a game or snapshot folder on a mounted volume is measured against the wrong disk) and `WindowsLogCompressionService.IsSupported:71` (NTFS test; logs are under `%LOCALAPPDATA%`, so this one is near-theoretical). Audit #5 **AC17** fixed exactly this shape in `VolumeHasRecycleBin` using `GetVolumePathNameW` + the new `GetDriveTypeW` import, so the pattern to copy already exists in the same file; the disk-space pair additionally needs `GetDiskFreeSpaceExW` rather than `DriveInfo`. Found by the AC17 sibling-grep, left alone because it is a different feature and only a real mount point can verify it. |
-> | `[PROXYDEPS-2026-08-19]` | **Six proxy objects carry NO recorded header dependencies, so a `.h` edit may not rebuild the four shipped proxy DLLs.** `ninja -C build -t deps` reports `#deps 0` for `Lugner.cpp.obj` / `Lugner_Dinput8.cpp.obj` under `UE5Dumper_Proxy`, `…_ProxyDinput8`, `…_ProxyDxgi`, `…_ProxyWinmm` (the two `.asm.obj` thunks also show 0, which CLAUDE.md says is legitimate — they are **not** the concern). CLAUDE.md's Build section calls a **C++** object at `#deps 0` exactly the broken-`msvc_deps_prefix` state in which "a `.h` edit silently stops triggering a rebuild" — i.e. a proxy could ship built against stale headers. ⚠ **But the simple explanation is already refuted**: all **17** objects in `UE5DumperCommon` record their deps correctly (`Genau.cpp.obj`, `Macht.cpp.obj` … all list `Macht.h`), so this is confined to the proxy targets rather than being a whole-tree console-code-page mismatch. **Do not "fix" it by re-configuring until that is explained.** The real predicate is empirical, not the deps listing: touch a header `Lugner.cpp` includes, rebuild, see whether those objects recompile. Found in passing 2026-08-19 while adding a header-dep guard to `tools/verify/build_dll.py` (which now WARNs on these rather than failing, since they predate the work and would block every build). |
-> | `[RELAUNCHPIPE-2026-08-19]` | ✅ **FIXED + LIVE-VERIFIED 2026-08-21** — see the section below. Was: ⭐ **A game that RELAUNCHES ITSELF ends up with our DLL mapped and NO pipe server at all** — the proxy is loaded, the game runs fine, and nothing can ever connect. `UE5_StartPipeServer` (`Frieren.cpp:2220`) guards with a **one-shot** `CreateFileW(PIPE_NAME, OPEN_EXISTING)`; if that succeeds it logs `pipe already exists (another instance running) — skipping` and never starts a server. On a self-relaunching title that is a TOCTOU race against the **dying** first process. **Measured on OCTOPATH TRAVELER, reproduced 3 runs out of 3**, whole sequence in the logs: PID 28188 `pipe server started` → PID 65684 (3 s later) `pipe already exists … skipping` → 28188 `PipeServer: Stop entry (process exit — …)` → the survivor sat serverless through 140 s of polling. **Proven by repair, not just by reading**: calling `UE5_StartPipeServer` in the survivor via `tools/verify/call_export.py` logged `PipeServer: Started on the pipe (maxInstances=3)` and the sweep then completed normally (UE 4.18, 273,957 objects, 699 classes). ⚠ **Two things make this nearly invisible.** Each process start **rotates `init-0.log`**, so the two instances write to *different files* and the survivor reads as a single process contradicting itself. And `UE5_StartPipeServer` **returns `true` on the skip path too** — deliberately, "so CE Lua doesn't treat it as failure" — so no caller can distinguish "started" from "declined". Fix shape: have the guard confirm the holder is still alive and/or retry once the pipe frees, and give the skip path a distinguishable return. ⚠ Note `docs/test-games.md` records OCTOPATH as winmm-proxy LIVE-VERIFIED on 2026-08-18, so whatever launch route was used then must sequence differently — the title is not broken, the startup race is. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -1700,6 +1701,53 @@ the command above. Reconciling the three is a maintainer call, not an agent one.
 exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply behind. Mirror each as it is
 picked up.
 
+
+
+### ⛔ REFUTED 2026-08-21 `[PROXYDEPS-2026-08-19]` — the six `#deps 0` objects are EMPTY, not broken
+
+**There is no defect. A `.h` edit does rebuild the four shipped proxy DLLs**, and it always did.
+Recorded here rather than deleted because the finding was reasonable, the refutation is a
+*measurement*, and the check that produced it now knows better.
+
+**What the six actually are.** Every `Lugner*.cpp` is wrapped head-to-toe in
+`#ifdef UE5_PROXY_<FLAVOUR>_BUILD` — `Lugner.cpp:25`, `Lugner_Dinput8.cpp:30`, `Lugner_Dxgi.cpp:40`,
+`Lugner_Winmm.cpp:24` — **with its `#include`s inside the guard**, and CMake compiles all four into
+all four proxy targets. In the three targets that do not define a given flavour the file
+preprocesses to *nothing*, `/showIncludes` prints nothing, and ninja records zero deps. Correctly.
+
+The shape is the giveaway once you look at the whole table instead of the six: it is exactly
+**4×4 minus the diagonal**, one live TU per target and three empty ones.
+
+| target | `#deps 2` (the live TU) | `#deps 0` |
+|---|---|---|
+| `UE5Dumper_Proxy` | `Lugner.cpp` | `Lugner_Dinput8.cpp` |
+| `UE5Dumper_ProxyDinput8` | `Lugner_Dinput8.cpp` | `Lugner.cpp` |
+| `UE5Dumper_ProxyDxgi` | `Lugner_Dxgi.cpp` | `Lugner.cpp`, `Lugner_Dinput8.cpp` |
+| `UE5Dumper_ProxyWinmm` | `Lugner_Winmm.cpp` | `Lugner.cpp`, `Lugner_Dinput8.cpp` |
+
+**Two independent measurements, either of which settles it.**
+
+1. **Object size.** The six are **527–535 bytes** — a bare COFF header. The smallest object with
+   real code is **10,985**. A 20× gap with nothing in between.
+2. **The empirical predicate the row itself asked for** — touch a header, see what rebuilds.
+   `touch dll/src/Lugner.h` then `ninja -n` on the four proxy targets queues **exactly 4** compiles,
+   one per flavour's live TU, and relinks **all four** DLLs. Adding `Sein.h` brings in each target's
+   `Heiter.cpp.obj` as well: 8 proxy objects over 4 targets, none missing.
+
+⭐ **The row's own instinct was right and is worth keeping**: it refused to "fix" this by
+re-configuring, on the grounds that all 17 `UE5DumperCommon` objects record deps correctly so a
+whole-tree code-page mismatch was already refuted. That reasoning was sound — the remaining step was
+to ask what *else* produces a zero, not to look harder for a breakage.
+
+**What changed as a result.** `tools/verify/build_dll.py` classified `#deps 0` as broken outright and
+therefore printed a permanent WARNING on every build. That is the worst of the three possible
+states: a real breakage would have arrived looking exactly like the noise everybody had learned to
+scroll past. `deps_health` now discriminates on the object's **content** rather than its dep count
+(`EMPTY_TU_MAX_BYTES`), so the six are silent and anything genuinely dep-less is a **hard failure**
+instead of a warning. ⚠ A **missing** object counts as bad, not empty — never built is not the same
+as nothing to build. Shown able to fail: setting the threshold to 0 reports all six with their sizes
+and exits 1; at 2048 the check is clean at 72 objects. CLAUDE.md's build section now names the empty
+TU as the third legitimate exception beside `.rc.res` and `.asm.obj`.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[RELAUNCHPIPE-2026-08-19]` — a deferring instance now WATCHES instead of surrendering
 
