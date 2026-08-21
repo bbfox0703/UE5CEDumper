@@ -1726,6 +1726,50 @@ matters is simply "do normal mailbox commands still work".
 | 1 | `MB3` | **B** | Inject, then run any two `.CT` rows that use the mailbox (Teleport save/recall, and an Invoke). Cheaper first step: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with **no CE**, so a scripted poke of one command is category **A**. | Both succeed exactly as before. `pipe-0.log` / `init-0.log` show no `Mailbox: tick threw` and no `result=-11`. A `-11` with a message means a handler really did throw — capture the log, that is a genuine find. |
 | 2 | `MB3` | **C** | The throw path itself. Needs a handler that actually throws — no way to force one on demand today. | If it ever fires: the mailbox keeps polling (subsequent commands still work) and the script reports `-11` + "the operation did NOT complete" rather than hanging at `status=PROCESSING`. |
 
+> ### ✅ AE27 PASSES / 🟡 AC15 HALF 2026-08-21 `[AE27-AC15-2026-08-21]`
+>
+> **`AE27` — PASS, and the fixture really can falsify it.** DumperTest, Classes tab, **3,942
+> classes**. The first look was misleading: the top of the list is all `//Script`, which would make
+> a stale-cell bug invisible. Opening the Package box's autocomplete showed **three distinct
+> packages** — `//Engine`, `//Game`, `//Script` — so the test has something to get wrong.
+>
+> Sorted by the Package column **both ways**, which moves rows between package groups:
+>
+> | direction | top of list | every cell vs its OWN row's Path |
+> |---|---|---|
+> | descending | `//Script` … | ✅ `GameEngine → //Script/Engine/GameEngine`, … |
+> | ascending | `//Engine`, then `//Game` ×4, then `//Script` | ✅ `DmgTypeBP_Environmental → //Engine/EngineDamageTypes`, `ABP_Quinn_C → //Game/Characters/Mannequin`, … |
+>
+> Ordering is correct (`//Engine` < `//Game` < `//Script`), **no cell is blank, and every Package
+> matches its own row's Path prefix across a full reorder** — which is exactly what a wrongly-keyed
+> memo would break. Filtering by an exact package (`//Engine`) returned precisely the one class with
+> that package.
+>
+> ⚠ The Package box is an **AutoCompleteBox with exact/prefix semantics, not substring**: typing
+> `Script` matches nothing while the dropdown offers `//Script`. Worth knowing before anyone reads an
+> empty grid as a bug — it is not the space=AND keyword-box contract, and arguably should not be,
+> since it selects one package rather than searching text.
+>
+> **`AC15` — the Steam half passes; the drive scan was NOT run.**
+> Proxy Deploy → **Scan Steam** → *"Found 18 UE game(s)"*, every row with a name, a real Binaries
+> path, a deploy status and a suggested proxy. The `Version` column is **empty for 17 of 18**, and
+> the one non-empty row is the only one whose status is `DeployedOutdated` — i.e. that is OUR
+> deployed proxy's version, not a per-game `UeVersion`, which is what the row's "`UeVersion` was and
+> remains null" asks for.
+>
+> ⚠ **Two honest limits.** The row's real assertion is a *before/after* comparison ("the same games
+> are found with the same names/paths") and **no baseline exists here**, so what is shown is that the
+> scan works and surfaces no per-game version — not that the set is unchanged. And the generic
+> **drive scan was deliberately skipped**: it is a full walk of a 1.4 TB drive whose result has the
+> same missing baseline, so it would cost minutes of disk for a conclusion no stronger than the
+> Steam half's.
+>
+> 📌 Incidental, and NOT filed as a defect: the header keeps reading *"3,942 classes shown of 3,942
+> total"* while a client-side Package or name filter narrows the grid to 1–2 rows. Both boxes behave
+> the same way, and Property Search and Instance Finder report their query counts identically, so
+> this is an app-wide convention (the line describes the QUERY, not the view) rather than a
+> `[CLASSTOTAL]`-style honesty gap. Recorded because the word "shown" invites the other reading.
+>
 > ### ✅ MB3 — THE ORDINARY PATH PASSES 2026-08-19 `[MB3-POKE-2026-08-19]`, no Cheat Engine involved
 >
 > The row says the risk is **not** the throw path but plain dispatch: "if the lambda refactor broke
@@ -1793,7 +1837,7 @@ matters is simply "do normal mailbox commands still work".
 > `PipeTransportStats.Snapshot().Calls` incremented by 1 and `.Ms` by > 0 — plus the negative control
 > the comment names, that a call refused by the **not-connected guard** adds **no** sample, since that
 > guard deliberately sits above the timer.
-| 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
+| 5 | `AC15` | 🟡 **STEAM HALF PASSES 2026-08-21**, drive scan not run — see `[AE27-AC15-2026-08-21]` below. | | |
 > ### ✅ AC15 PASS 2026-08-20 `[AC15-2026-08-20]` — both scanners still detect; ⚠ the two modes are NOT comparable
 >
 > | mode | result |
@@ -1816,7 +1860,7 @@ matters is simply "do normal mailbox commands still work".
 > per-game VERSIONINFO load left both scanners detecting games, with names and paths intact, and with
 > `UeVersion` null exactly as intended — i.e. the regression the row guards against is not present in
 > anything observable today.
-| 6 | `AE27` | **B** | Game Class Filter → type in the Package box, and sort by the Package column. | Identical results to before. `Package` is now memoized per `ClassPath` with setter invalidation; a stale or blank Package cell would mean the invalidation is wrong. |
+| 6 | `AE27` | ✅ **PASS 2026-08-21** — see `[AE27-AC15-2026-08-21]` below. | | |
 > ### ✅ AE27 PASS 2026-08-20 `[AE27-DQ7R-2026-08-20]` — and the Path column cross-checks every memoized value
 >
 > **DQ7R**, Classes tab → Load → **4,393 classes shown of 4,393 total (scanned 149,408 objects)**.
