@@ -6925,7 +6925,7 @@ is a **build-flag** property, not a version property — the pattern is what has
 
 -----
 
-### ⬜ NEW 2026-08-17 — A12: the same, in GROUP mode (build 3261)
+### ✅ CLOSED 2026-08-21 — A12: the same, in GROUP mode (build 3261)
 
 *Needs a connected game and the same container as A11's check. **The rule and the anchor factories
 are unit-pinned (17 assertions, two negative controls); the WIRING through three by-name hops is
@@ -6936,6 +6936,67 @@ actions with the panel in Group mode.*
 > (the per-candidate drop tally).
 >
 > | step | do this | expect | why it is a real check |
+> ### ✅ STEPS 2, 3, 4 ALL PASS 2026-08-21 `[A12-MUTATE-2026-08-21]` — the row is CLOSED
+>
+> DumperTest dev, **dist 3308**, over the pipe with no UI, using `tools/verify/mutate_guard.py`
+> (capture → poke → witness by read-back → collateral check → restore, verified).
+>
+> | step | what was emulated | result |
+> |---|---|---|
+> | **2** buffer move | the whole `Arr_Int` slid **+4 bytes inside its own allocation**, `Count` left at 5 | **PASS** — both leaves repointed by exactly +4; `RefineGroup re-anchor: 2 … repointed, 0 dropped`; CDO row's slot addresses unchanged; zero `carries no ValueAnchor` |
+> | **3** in-place shrink | tail down, `Num` 5→4, **`Max` left at 8** | **PASS** — candidate gone, and the tally attributes it: `container-moved=1`, `predicate-said-no=0`, `unreadable=0`; whole-pass `0 repointed, 1 dropped` |
+> | **4** TMap growth | elements copied to a fresh page, header repointed, **source bytes wiped to zero** | **PASS** — leaves repointed to `scratch+4`/`scratch+8`; `2 … repointed, 0 dropped` |
+> | **4** TMap removal | the candidate's own allocation bit cleared | **PASS** — row gone, leaf **still reads 6201**, `container-moved=1` |
+>
+> ⭐ **Step 2 slides +4 INSIDE the same allocation rather than moving to a new page, and that is
+> the point.** A fresh page would also pass if the code simply re-derived each leaf from the
+> container base — right answer, wrong reason. A 4-byte slide leaves the old addresses perfectly
+> readable and full of plausible data, so "every slot moved by exactly +4" cannot come from a stale
+> read or from luck. `Count` is deliberately unchanged too, so a count-only implementation cannot
+> pass.
+>
+> ⭐ **Step 4's growth half WIPES THE SOURCE, and that is what makes it two-sided.** Without the
+> wipe a candidate that was never repointed would still read `6201` at its stale address and
+> survive — passing by doing nothing. With the source zeroed, survival is only possible if the
+> leaves actually moved.
+>
+> ⭐ **The removal half has a control on BOTH sides**, and neither is optional. *Before*: clearing
+> an UNRELATED element's bit must leave the row alive — otherwise the rule is "any sparse change
+> kills everything" and the real result is unattributable. *After*: restoring the bit must bring
+> the row BACK — otherwise the drop might have been "the container is now permanently unreadable"
+> rather than "my slot was freed". Both held.
+>
+> ⚠ **`container-moved=1`, not 2** — the slot loop stops at the first emptied slot. Asserting ≥2
+> would have failed a correct implementation.
+>
+> ⚠ Same synthetic-mutation limit as A11: these reproduce what the SCANNER OBSERVES, not the
+> events. No allocator ran, no `TMap::Add/Remove` executed, nothing was freed. Step 3 emulates
+> `RemoveAt` with `EAllowShrinking::No` only.
+>
+> ⚠ Steps 1 / 4a / 5 / 6 were **re-run** on 2026-08-21 after the log-path correction below, so
+> their absence claims are now backed by a channel shown to carry `[SCAN:grp]`.
+>
+> ### ⚠ THE LOG-PATH CORRECTION, AND IT CORRECTS ME `[A12-LOGPATH-2026-08-21]`
+>
+> A11's sibling fix established that `Refine re-anchor:` lives in `offsets-0.log`, and I applied the
+> same reasoning here and **broke this rig**. Both markers are in `Aura.cpp`, which declares
+> `#define LOG_CAT "OARR"`:
+>
+> | marker | call form | tag | file |
+> |---|---|---|---|
+> | `Radar: Refine re-anchor:` (A11) | `LOG_INFO(...)` — uses the file's `LOG_CAT` | `[OARR]` | **offsets-*.log** |
+> | `RefineGroup re-anchor:` (A12) | `Sein::Info("SCAN:grp", ...)` — **explicit category** | `[SCAN:grp]` | **scan-0.log** |
+>
+> An explicit category **overrides** the file default, and `"SCAN:grp"` matches `Sein.cpp`'s
+> `{ "SCAN", 4, LF_Scan }` prefix rule. Measured across rotations: each file holds its own marker
+> and neither holds the other's. So the ORIGINAL A12 rig and this row were right about `scan-0.log`
+> all along.
+>
+> ▶ **The rule, corrected: `#define LOG_CAT` is a DEFAULT, not the answer — read the CALL.**
+> `Aura.cpp` alone has **93** `LOG_*` calls and **22** explicit `Sein::` calls, so one source file
+> routinely writes to two different logs. `Sein.cpp`'s table resolves a category; it cannot tell you
+> which category a given line passes.
+>
 > ### ✅ A12 STEPS 1, 4a, 5, 6 PASS 2026-08-20 `[A12-PIPE-2026-08-20]` — over the pipe, no UI
 >
 > Rig: `tools/verify/a12_group_anchor.py`, DumperTest / dist 3263. Fixture read live first:

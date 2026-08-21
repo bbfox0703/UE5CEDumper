@@ -774,9 +774,26 @@ as evidence, prove the channel carries that category's traffic at all.** The rig
 
 ⚠ Concretely, for this repo: `docs/log-verification-checklist.md` already says grep by FORMAT STRING
 rather than line number. The missing half is that a format string tells you nothing about WHICH FILE
-it lands in — `Sein.cpp`'s category table is the only authority, and four categories
-(`SEETHRU` / `Grausam` / `SENSE` / `PROXY`) fall through to `init-0.log` rather than to a file named
-after them.
+it lands in. Four categories (`SEETHRU` / `Grausam` / `SENSE` / `PROXY`) fall through to
+`init-0.log` rather than to a file named after them.
+
+⭐⭐ **AND THE OBVIOUS FIX FOR THIS IS ITSELF A TRAP — it caught me the same day.** Having found that
+A11's marker is `[OARR]` because `Aura.cpp` declares `#define LOG_CAT "OARR"`, I applied the same
+reasoning to A12's marker in the SAME FILE and moved a working rig to the wrong log. The two lines
+sit a few hundred lines apart and go to different files:
+
+| marker | call | tag | file |
+|---|---|---|---|
+| `Radar: Refine re-anchor:` | `LOG_INFO(...)` — takes the file's `LOG_CAT` | `[OARR]` | `offsets-*.log` |
+| `RefineGroup re-anchor:` | `Sein::Info("SCAN:grp", ...)` — **explicit** | `[SCAN:grp]` | `scan-0.log` |
+
+**`#define LOG_CAT` is a DEFAULT, not the answer. Read the CALL.** `Aura.cpp` alone has 93 `LOG_*`
+calls and 22 explicit `Sein::` calls. `Sein.cpp`'s table resolves a category to a file; it cannot
+tell you which category a given line passes — only the call site can.
+
+▶ The cheap way to settle it without reading any of this: run the thing once and
+`grep -l "<marker>" *.log`. One command, no inference. That is what finally decided it, after two
+rounds of reasoning from the source produced two different wrong answers.
 
 ## 3. Traps in our own stack
 
