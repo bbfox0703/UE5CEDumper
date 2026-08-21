@@ -1,4 +1,5 @@
-using UE5DumpUI.Core;
+﻿using UE5DumpUI.Core;
+using UE5DumpUI;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
 using Xunit;
@@ -117,10 +118,14 @@ public class PropertySearchFilterTests
             int limit = 200, CancellationToken ct = default) => Task.FromResult(Next);
     }
 
-    private static async Task<PropertySearchViewModel> VmFor(PropertySearchResult result)
+    /// <param name="configure">Applied BEFORE the search runs — the cap is read while the
+    /// status line is composed, so setting it afterwards would test nothing.</param>
+    private static async Task<PropertySearchViewModel> VmFor(
+        PropertySearchResult result, Action<PropertySearchViewModel>? configure = null)
     {
         var vm = new PropertySearchViewModel(new CappedSearchDump { Next = result },
                                              new NoopLog()) { SearchQuery = "Health" };
+        configure?.Invoke(vm);
         await vm.SearchCommand.ExecuteAsync(null);
         return vm;
     }
@@ -174,13 +179,14 @@ public class PropertySearchFilterTests
     }
 
     /// <summary>
-    /// Z10: the cap suffix used to end "narrow the query or raise Max". This panel has
-    /// no Max control — the string was lifted from Instance Finder, which really does
-    /// own an InstanceSearchCap NumericUpDown — so half the advice sent the user hunting
-    /// for a lever that does not exist here.
+    /// Z10, then [PROPSEARCHCAP-2026-08-19]. The rule Z10 established is "never name a lever
+    /// the user cannot reach", and it happened to be satisfied by deleting "raise Max" because
+    /// this panel had no Max. It has one now, so the SAME rule requires the advice back —
+    /// while the cap can still go up. ⚠ This test was rewritten rather than deleted: the
+    /// invariant did not change, only which side of it the panel is on.
     /// </summary>
     [Fact]
-    public async Task Cap_advice_never_mentions_a_Max_control_this_panel_does_not_have()
+    public async Task Cap_advice_offers_Max_only_because_the_panel_now_owns_that_lever()
     {
         var vm = await VmFor(new PropertySearchResult
         {
@@ -189,8 +195,26 @@ public class PropertySearchFilterTests
         });
 
         Assert.Contains("STOPPED at the 200-row cap", vm.StatusText);
+        Assert.Contains("raise Max above 200", vm.StatusText);
+        // ...and it still names the levers it always did.
+        Assert.Contains("Type filter", vm.StatusText);
+        vm.Dispose();
+    }
+
+    /// <summary>
+    /// The other half of the same rule, and the one that keeps this honest as the cap moves:
+    /// at the ceiling "raise Max" is exactly the lie Z10 removed, just in a new place.
+    /// </summary>
+    [Fact]
+    public async Task Cap_advice_stops_offering_Max_once_the_cap_is_at_the_ceiling()
+    {
+        var vm = await VmFor(new PropertySearchResult
+        {
+            Total = Constants.MaxPropertySearchCap, Truncated = true,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        }, vm => vm.PropertySearchCap = Constants.MaxPropertySearchCap);
+
         Assert.DoesNotContain("raise Max", vm.StatusText);
-        // ...and it names levers the panel genuinely owns.
         Assert.Contains("Type filter", vm.StatusText);
         vm.Dispose();
     }

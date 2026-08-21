@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace UE5DumpUI.Models;
 
@@ -154,6 +154,7 @@ public sealed class PropertySearchUiOptions
 {
     public bool GameClassesOnly { get; set; } = true;
     public bool DeepSearch { get; set; }
+    public int PropertySearchCap { get; set; } = Constants.DefaultPropertySearchCap;
 }
 
 public sealed class TeleportUiOptions

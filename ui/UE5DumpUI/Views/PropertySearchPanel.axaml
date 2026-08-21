@@ -35,6 +35,19 @@
                 ToolTip.Tip="{StaticResource str.Tip.PropertySearch.Deep}"
                 Foreground="#CCCCCC" FontSize="12"
                 VerticalAlignment="Center"/>
+      <!-- Configurable result cap. The class walk is always exhaustive; this only caps
+           the returned list. Clamped 100-50000 here and again DLL-side. Default 200
+           (NOT Instance Finder's 5000 — these rows carry a resolved preview value each).
+           [PROPSEARCHCAP-2026-08-19] -->
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                  ToolTip.Tip="{StaticResource str.Tip.PropertySearch.MaxResults}">
+        <TextBlock Text="{StaticResource str.PropertySearch.MaxResults}"
+                   Foreground="#888" VerticalAlignment="Center"/>
+        <NumericUpDown Value="{Binding PropertySearchCapValue}"
+                       Minimum="100" Maximum="50000" ClipValueToMinMax="True" Increment="100"
+                       FormatString="0" Width="120" FontSize="12"
+                       VerticalAlignment="Center"/>
+      </StackPanel>
       <Button Content="{StaticResource str.PropertySearch.Search}"
               Command="{Binding SearchCommand}"
               ToolTip.Tip="{StaticResource str.Tip.PropertySearch.Search}"

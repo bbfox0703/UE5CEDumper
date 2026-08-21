@@ -85,25 +85,27 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
-> maintainer-only file deletion. The other three rows were surfaced by the audit programme itself
-> on 2026-08-19 and deliberately deferred — none is a regression, and each states its own reason for
-> waiting. So "12 → 1" is the honest headline for the original queue, and **3** is the honest row
-> count of this table.
+> maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
+> programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **2** is
+> the honest row count of this table.
 >
-> ⚠ **Three rows left on 2026-08-21, and not all in the same direction** — worth noticing, because
-> a queue only shrinking by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
-> fixed + live-verified. `[VOLUMEROOT]` was **real**, is fixed, and — against its own row's
-> prediction — is fully **verified** here, no mount point required. `[PROXYDEPS]` was **refuted**:
-> there was no defect, and the tooling that reported one has been corrected so it cannot say it
-> again. All three write-ups are below.
+> ⚠ **Four rows left on 2026-08-21, and not all in the same direction** — worth noticing, because a
+> queue that only shrinks by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
+> fixed + live-verified. `[VOLUMEROOT]` was **real**, fixed, and — against its own row's prediction —
+> fully **verified**, no mount point required. `[PROPSEARCHCAP]` was a **deferred feature**, now
+> built and live-verified on DumperTest. `[PROXYDEPS]` was **refuted**: there was no defect, and the
+> tooling that reported one has been corrected so it cannot say it again. All four write-ups follow.
 >
-> ⭐ **Two of the three sat deferred on a stated blocker that turned out to be false** — "only a real
-> mount point can verify it" (a cross-volume junction does) and "the deps listing shows a breakage"
-> (it shows empty translation units). **Re-test a deferral's premise before accepting it**, exactly
-> as you would re-derive a finding's premise before fixing it.
+> ⭐ **THREE of the four sat deferred on a stated blocker that turned out to be false** — "only a
+> real mount point can verify it" (a cross-volume junction does), "the deps listing shows a
+> breakage" (it shows empty translation units), and "cannot be visually verified in an unattended
+> session" (computer-use drove the whole thing, including a hand-corrupted settings file).
+> **Re-test a deferral's premise before accepting it**, exactly as you would re-derive a finding's
+> premise before fixing it. A deferral reason ages worse than the finding it defers.
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -112,7 +114,6 @@ Open work only. **Read this when deciding what to do next.**
 > | tag | one-line defect |
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
-> | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -1709,6 +1710,64 @@ picked up.
 
 
 
+
+
+### ✅ BUILT + LIVE-VERIFIED 2026-08-21 `[PROPSEARCHCAP-2026-08-19]` — Property Search has a Max now
+
+**The panel had no cap control, so every search was pinned to the wire default of 200** — very low
+for a query like `Health` on a real game, and a wanted field could sit past the cap with nothing
+the user could do. Audit #5 **Z10** had already fixed the *dishonest* half (a status line advising
+"raise Max" on a panel with no Max) by deleting the advice; this adds the lever, so the advice
+comes back.
+
+**What shipped**: `PropertySearchCap` on the VM (+ the `decimal?` `SNAPINTERVAL` façade), a
+`NumericUpDown` clamped 100–50000 with `ClipValueToMinMax`, `limit:` finally passed to
+`SearchPropertiesAsync`, persistence in `PropertySearchUiOptions`, a **`Math.Clamp` on LOAD**, and
+the matching **DLL-side clamp** in `CMD_SEARCH_PROPERTIES`.
+
+⚠ **The default stays 200 and is NOT raised to Instance Finder's 5000.** A property-search row is a
+match per property per class *with a resolved preview value*, so it is far heavier than an instance
+address. The point of the work is that the user can raise it, not that everyone pays for it.
+
+⚠ **"raise Max" is offered only while the cap can actually go up.** At the ceiling it would be the
+same lie Z10 removed, just in a new place. Two tests pin both halves.
+
+⚠ **The UI clamp is a convenience, not the guarantee** — any pipe client can put an integer on the
+wire, so the ceiling has to exist server-side too. The **wire default stays 200** deliberately: an
+older client that sends no `limit` must not change behaviour on a DLL upgrade alone.
+
+⭐ **The deferral reason was "cannot be visually verified in an unattended session". It was wrong** —
+computer-use drove all of it, on DumperTest (UE 5.04, 25,179 objects):
+
+| # | step | result |
+|---|---|---|
+| 1 | Properties tab after connect | **`Max [200]`** present in the toolbar, defaulted to 200 |
+| 2 | query `a`, Search | `Found 200 properties in 254 classes` — capped |
+| 3 | spinner ×8 → `Max 1000`, Search | **`Found 1000 properties in 471 classes … ⚠ STOPPED at th…`** |
+| 4 | close, reopen | `Max` reads **1000**; `ui-options.json` holds `propertySearchCap: 1000` |
+| 5 | hand-edit that file to **`0`**, reopen | `Max` reads **100** and the ▼ spinner is greyed — clamped on load |
+
+⚠ Step 3 is the one that matters: 200 → 1000 rows is the control reaching the DLL, not just
+repainting. Step 5 is a value **no control can produce** — the file is plain text a user can edit,
+and an unclamped `0` there would make every search return nothing with no visible cause.
+
+**DLL clamp, over the pipe with the UI closed** (`kMaxPipeInstances=3`, the UI holds 2):
+
+```
+limit omitted -> 200      limit 0  -> 1      limit 1000   -> 1000
+limit 1       -> 1        limit -5 -> 1      limit 999999 -> 9781 (the whole result; ceiling unreached)
+```
+
+`0` and `-5` returning **1** is the new clamp; before it they reached `Aura::SearchProperties`
+unchanged and returned zero rows — a silent total absence indistinguishable from "the field is not
+there", which is [the exact triage trap](working-lessons.md) §5 exists for.
+
+**Tests**: `PropertySearchCapTests` (5) + the rewritten Z10 pair. ⚠ The Z10 test
+`Cap_advice_never_mentions_a_Max_control_this_panel_does_not_have` **failed on this change, exactly
+as designed**, and was **rewritten rather than deleted** — its invariant ("never name a lever the
+user cannot reach") did not change, only which side of it the panel is on. `PropertySearchCapTests`
+reads the AXAML and `Fern.cpp` back rather than trusting that three files in three languages were
+kept in step by hand.
 
 ### ✅ FIXED + VERIFIED 2026-08-21 `[VOLUMEROOT-2026-08-19]` — and its "unverifiable" premise was wrong
 

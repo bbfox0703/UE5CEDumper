@@ -2399,6 +2399,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         PropertySearch.GameClassesOnly = o.PropertySearch.GameClassesOnly;
         PropertySearch.DeepSearch = o.PropertySearch.DeepSearch;
+        // Clamp on LOAD as well as in the control: ui-options.json is a plain file a
+        // user can edit, and a hand-written 0 there would make every search return
+        // nothing with no visible cause. [PROPSEARCHCAP-2026-08-19]
+        PropertySearch.PropertySearchCap = Math.Clamp(
+            o.PropertySearch.PropertySearchCap,
+            Constants.MinSearchCap, Constants.MaxPropertySearchCap);
 
         var tp = o.Teleport;
         Teleport.ZOffset = tp.ZOffset;
@@ -2546,6 +2552,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         o.PropertySearch.GameClassesOnly = PropertySearch.GameClassesOnly;
         o.PropertySearch.DeepSearch = PropertySearch.DeepSearch;
+        o.PropertySearch.PropertySearchCap = PropertySearch.PropertySearchCap;
 
         o.Teleport.ZOffset = Teleport.ZOffset;
         o.Teleport.TraceChannel = Teleport.TraceChannel;

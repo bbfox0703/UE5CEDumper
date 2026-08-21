@@ -59,6 +59,42 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// rows; the fast shallow direct-field search is the default behaviour.
     /// </summary>
     [ObservableProperty] private bool _deepSearch;
+
+    /// <summary>Configurable result cap. The class walk is always exhaustive; this only
+    /// bounds the returned list. Clamped 100..50000 by the NumericUpDown and again DLL-side.
+    ///
+    /// <para>[PROPSEARCHCAP-2026-08-19] The panel had no Max at all and every search was
+    /// pinned to the wire default of 200 — very low for a query like <c>Health</c> on a real
+    /// game, and the reason a wanted field could sit past the cap with nothing the user could
+    /// do about it. Audit #5 <b>Z10</b> fixed the half that was dishonest (the status line
+    /// advised "raise Max" on a panel with no Max) by removing the advice; this adds the
+    /// lever, so the advice can come back — see the cap suffix in <c>SearchAsync</c>.</para>
+    ///
+    /// <para>⚠ Default stays <b>200</b>, deliberately, and is NOT raised to Instance Finder's
+    /// 5000. Property search returns a row per matching property per class and resolves a
+    /// preview value for each, so its rows are far heavier than an instance address; the point
+    /// of this work is that the user can raise it when they need to, not that everyone pays
+    /// for it by default.</para></summary>
+    [ObservableProperty] private int _propertySearchCap = Constants.DefaultPropertySearchCap;
+
+    /// <inheritdoc cref="PropertySearchCap"/>
+    /// <remarks>[SNAPINTERVAL-2026-08-20] façade — NumericUpDown.Value is decimal? and an
+    /// emptied box drives it to null, which a compiled binding cannot convert to int. Absorbs
+    /// the empty box only; the range belongs to the control's Minimum/Maximum. Notifies
+    /// UNCONDITIONALLY so a rejected entry repaints instead of leaving the box blank while a
+    /// different value is in force. See Helpers/NumericInput.cs.</remarks>
+    public decimal? PropertySearchCapValue
+    {
+        get => (decimal)PropertySearchCap;
+        set
+        {
+            PropertySearchCap = NumericInput.KeepCurrentIfEmpty(value, PropertySearchCap);
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnPropertySearchCapChanged(int value) => OnPropertyChanged(nameof(PropertySearchCapValue));
+
     [ObservableProperty] private bool _isSearching;
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private ObservableCollection<PropertySearchMatch> _results = new();
@@ -553,7 +589,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 trimmedQuery,
                 types: types.Length > 0 ? types : null,
                 gameOnly: GameClassesOnly,
-                deep: DeepSearch);
+                deep: DeepSearch,
+                limit: PropertySearchCap);
 
             // Cache the full set so the client-side ResultFilter can refine
             // without another DLL roundtrip.
@@ -583,19 +620,22 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // VM-composed, and Res.Get returns "" with no Application, which would make
             // exactly this text untestable headless.)
             //
-            // The advice used to read "narrow the query or raise Max". There is no Max
-            // control on this panel — the string had been lifted from Instance Finder,
-            // which really does own an InstanceSearchCap NumericUpDown — so half of it
-            // pointed at a lever the user could not find. It now names only levers this
-            // panel actually has. (audit #5 Z10)
+            // The advice used to read "narrow the query or raise Max" on a panel with no Max
+            // control — the string had been lifted from Instance Finder, which really does own
+            // one — so half of it pointed at a lever the user could not find, and audit #5 Z10
+            // removed that half. [PROPSEARCHCAP-2026-08-19] added the lever, so it is back —
+            // but ONLY while the cap can actually go higher. At the ceiling "raise Max" would
+            // be the same lie in a new place, which is the failure this pair of changes exists
+            // to avoid; the honest advice there is to narrow.
+            string advice = "narrow it with a longer property name or a Type filter";
+            if (!GameClassesOnly)
+                advice += ", or tick \"Game classes only\" to skip engine classes";
+            if (PropertySearchCap < Constants.MaxPropertySearchCap)
+                advice += $", or raise Max above {PropertySearchCap:N0}";
             var capSuffix = result.Aborted
                 ? PartialResultNotice.Cancelled()
                 : result.Truncated
-                    ? PartialResultNotice.RowCap(result.Total, "matches",
-                          GameClassesOnly
-                              ? "narrow it with a longer property name or a Type filter"
-                              : "narrow it with a longer property name or a Type filter, "
-                                + "or tick \"Game classes only\" to skip engine classes")
+                    ? PartialResultNotice.RowCap(result.Total, "matches", advice)
                     : "";
             StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects){deepSuffix}{capSuffix}";
             _log.Info($"SearchProperties: '{trimmedQuery}'{typeSuffix} -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");

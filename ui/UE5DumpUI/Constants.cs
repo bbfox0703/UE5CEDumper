@@ -308,6 +308,21 @@ public static class Constants
     // and the InstanceFinder panel's own default).
     public const int DefaultInstanceSearchCap = 5000;
 
+    // Default Property Search result cap (PropertySearchUiOptions.PropertySearchCap and
+    // the panel's own default). [PROPSEARCHCAP-2026-08-19]
+    //
+    // ⚠ Deliberately NOT DefaultInstanceSearchCap. A property-search row is a match per
+    // property per class WITH a resolved preview value, so it is far heavier than an
+    // instance address; 200 was the long-standing wire default and stays the default here.
+    // What changed is that the panel now has a control to raise it.
+    public const int DefaultPropertySearchCap = 200;
+
+    // Shared floor/ceiling for BOTH search caps. The ceiling is also enforced DLL-side in
+    // Fern.cpp for each command — the UI clamp is a convenience, not the guarantee. Keep
+    // this in step with those two clamps; PropertySearchCapClampTests pins the pairing.
+    public const int MinSearchCap = 100;
+    public const int MaxPropertySearchCap = 50000;
+
     // UI
     public const int DefaultWindowWidth = 1400;
     public const int DefaultWindowHeight = 900;

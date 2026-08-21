@@ -2780,6 +2780,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string query = request.value("query", "");
             bool gameOnly = request.value("game_only", true);
             int limit = request.value("limit", 200);
+            // Clamp the now-configurable cap, same ceiling and same reason as
+            // CMD_FIND_INSTANCES above: <1 would return nothing, and 50000 bounds a
+            // pathological broad query to one sane payload. The class walk is exhaustive
+            // either way — this only bounds the returned list. [PROPSEARCHCAP-2026-08-19]
+            //
+            // ⚠ The DEFAULT stays 200. This is the wire default for an older client that
+            // sends no "limit" at all, and raising it would silently change that client's
+            // behaviour; the UI now always sends one.
+            if (limit < 1) limit = 1;
+            if (limit > 50000) limit = 50000;
             // Opt-in deep descent into nested struct + container-element schemas
             // (default off — keeps the shallow direct-field search fast).
             bool deep = request.value("deep", false);
