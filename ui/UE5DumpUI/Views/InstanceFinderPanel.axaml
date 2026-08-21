@@ -36,7 +36,7 @@
         <TextBlock Text="{StaticResource str.InstanceFinder.MaxResults}"
                    Foreground="#888" VerticalAlignment="Center"/>
         <NumericUpDown Value="{Binding InstanceSearchCapValue}"
-                       Minimum="100" Maximum="50000" Increment="500"
+                       Minimum="100" Maximum="50000" ClipValueToMinMax="True" Increment="500"
                        FormatString="0" Width="120" FontSize="12"
                        VerticalAlignment="Center"/>
       </StackPanel>

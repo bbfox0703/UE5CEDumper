@@ -126,8 +126,8 @@
                        Text="{StaticResource str.Pointers.InvokeTimeoutLabel}"
                        Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
             <NumericUpDown Grid.Column="1"
-                           Value="{Binding InvokeTimeoutMs, Mode=TwoWay}"
-                           Minimum="1000" Maximum="60000" Increment="1000"
+                           Value="{Binding InvokeTimeoutMsValue, Mode=TwoWay}"
+                           Minimum="1000" Maximum="60000" ClipValueToMinMax="True" Increment="1000"
                            FormatString="0"
                            IsEnabled="{Binding !IsApplyingInvokeTimeout}"
                            MinWidth="110" Margin="6,0,0,0"

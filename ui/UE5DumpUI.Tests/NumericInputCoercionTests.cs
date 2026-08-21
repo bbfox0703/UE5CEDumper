@@ -233,6 +233,7 @@ public class NumericInputCoercionTests : IDisposable
         var dir = Path.GetDirectoryName(RepoFile("ui/UE5DumpUI/Views/SnapshotPanel.axaml"))!;
         var offenders = new List<string>();
         var seen = 0;
+        var parsed = 0;
 
         foreach (var file in Directory.EnumerateFiles(dir, "*.axaml"))
         {
@@ -240,8 +241,13 @@ public class NumericInputCoercionTests : IDisposable
             foreach (Match tag in Regex.Matches(text, @"<NumericUpDown\b[^>]*>", RegexOptions.Singleline))
             {
                 seen++;
-                var bound = Regex.Match(tag.Value, @"Value=""\{Binding (?<p>[A-Za-z0-9_.]+)\}""");
+                // ⚠ The path may be followed by binding modifiers (`, Mode=TwoWay`), so do NOT
+                // anchor on the closing brace. An earlier version did, and silently skipped the one
+                // control in the app written that way — PointerPanel's InvokeTimeoutMs — which was
+                // therefore left carrying the defect while this test reported everything clean.
+                var bound = Regex.Match(tag.Value, @"Value=""\{Binding\s+(?<p>[A-Za-z0-9_.]+)");
                 if (!bound.Success) continue;      // bound some other way; not this defect's shape
+                parsed++;
                 var prop = bound.Groups["p"].Value;
                 if (!prop.EndsWith("Value", StringComparison.Ordinal))
                     offenders.Add($"{Path.GetFileName(file)}: {prop}");
@@ -249,7 +255,14 @@ public class NumericInputCoercionTests : IDisposable
         }
 
         // Guard the guard — a glob that silently matches nothing would pass this vacuously.
-        Assert.True(seen >= 18, $"only {seen} NumericUpDown controls found; the scan is not reaching the views");
+        Assert.True(seen >= 19, $"only {seen} NumericUpDown controls found; the scan is not reaching the views");
+
+        // Every one of them must actually have had its binding path read. A tag whose Value binding
+        // the regex cannot parse is skipped above, and a skip is indistinguishable from a pass —
+        // which is exactly how InvokeTimeoutMs stayed broken through a green run.
+        Assert.True(parsed == seen,
+            $"{seen - parsed} NumericUpDown control(s) had a Value binding this test could not parse, "
+            + "so they were neither checked nor reported. Widen the regex rather than the tolerance.");
 
         Assert.True(offenders.Count == 0,
             "NumericUpDown bound straight at a non-nullable property — an emptied box will show the user "

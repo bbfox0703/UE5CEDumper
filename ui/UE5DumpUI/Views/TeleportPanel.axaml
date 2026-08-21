@@ -410,12 +410,12 @@
                     Classes="accent" Padding="12,4"/>
             <TextBlock Text="{StaticResource str.TP.ZOffset}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding ZOffsetValue}" Minimum="0" Maximum="100000"
+            <NumericUpDown Value="{Binding ZOffsetValue}" Minimum="0" Maximum="100000" ClipValueToMinMax="True"
                            Increment="10" Width="120"
                            ToolTip.Tip="{StaticResource str.Tip.TP.ZOffset}"/>
             <TextBlock Text="{StaticResource str.TP.Channel}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding TraceChannelValue}" Minimum="0" Maximum="32"
+            <NumericUpDown Value="{Binding TraceChannelValue}" Minimum="0" Maximum="32" ClipValueToMinMax="True"
                            Increment="1" Width="130" Padding="4,2"
                            ToolTip.Tip="{StaticResource str.Tip.TP.Channel}"/>
           </StackPanel>
@@ -452,7 +452,7 @@
                     Classes="accent" Padding="12,4"/>
             <TextBlock Text="{StaticResource str.TP.RelDist}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding RelativeDistanceValue}" Minimum="-100000" Maximum="100000"
+            <NumericUpDown Value="{Binding RelativeDistanceValue}" Minimum="-100000" Maximum="100000" ClipValueToMinMax="True"
                            Increment="10" Width="150"
                            ToolTip.Tip="{StaticResource str.Tip.TP.RelDist}"/>
           </StackPanel>
@@ -1253,7 +1253,7 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="{StaticResource str.TP.SeeThroughPierce}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding SeeThroughPierceValue}" Minimum="1" Maximum="10"
+            <NumericUpDown Value="{Binding SeeThroughPierceValue}" Minimum="1" Maximum="10" ClipValueToMinMax="True"
                            Increment="1" Width="130" Padding="4,2"
                            ToolTip.Tip="{StaticResource str.Tip.TP.SeeThroughPierce}"/>
           </StackPanel>

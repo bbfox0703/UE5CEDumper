@@ -76,7 +76,16 @@ public partial class ValueSearchViewModel : ViewModelBase
     public decimal? MaxResultsValue
     {
         get => (decimal)MaxResults;
-        set => MaxResults = NumericInput.KeepCurrentIfEmpty(value, MaxResults);
+        set
+        {
+            MaxResults = NumericInput.KeepCurrentIfEmpty(value, MaxResults);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnMaxResultsChanged(int value) => OnPropertyChanged(nameof(MaxResultsValue));

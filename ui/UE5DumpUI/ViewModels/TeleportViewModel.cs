@@ -372,7 +372,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? ZOffsetValue
     {
         get => NumericInput.ToControlValue(ZOffset);
-        set => ZOffset = NumericInput.KeepCurrentIfEmpty(value, ZOffset);
+        set
+        {
+            ZOffset = NumericInput.KeepCurrentIfEmpty(value, ZOffset);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnZOffsetChanged(double value) => OnPropertyChanged(nameof(ZOffsetValue));
@@ -381,7 +390,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? TraceChannelValue
     {
         get => (decimal)TraceChannel;
-        set => TraceChannel = NumericInput.KeepCurrentIfEmpty(value, TraceChannel);
+        set
+        {
+            TraceChannel = NumericInput.KeepCurrentIfEmpty(value, TraceChannel);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnTraceChannelChanged(int value) => OnPropertyChanged(nameof(TraceChannelValue));
@@ -390,7 +408,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? RelativeDistanceValue
     {
         get => NumericInput.ToControlValue(RelativeDistance);
-        set => RelativeDistance = NumericInput.KeepCurrentIfEmpty(value, RelativeDistance);
+        set
+        {
+            RelativeDistance = NumericInput.KeepCurrentIfEmpty(value, RelativeDistance);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnRelativeDistanceChanged(double value) => OnPropertyChanged(nameof(RelativeDistanceValue));
@@ -399,7 +426,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordXValue
     {
         get => NumericInput.ToControlValue(CoordX);
-        set => CoordX = NumericInput.KeepCurrentIfEmpty(value, CoordX);
+        set
+        {
+            CoordX = NumericInput.KeepCurrentIfEmpty(value, CoordX);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordXChanged(double value) => OnPropertyChanged(nameof(CoordXValue));
@@ -408,7 +444,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordYValue
     {
         get => NumericInput.ToControlValue(CoordY);
-        set => CoordY = NumericInput.KeepCurrentIfEmpty(value, CoordY);
+        set
+        {
+            CoordY = NumericInput.KeepCurrentIfEmpty(value, CoordY);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordYChanged(double value) => OnPropertyChanged(nameof(CoordYValue));
@@ -417,7 +462,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordZValue
     {
         get => NumericInput.ToControlValue(CoordZ);
-        set => CoordZ = NumericInput.KeepCurrentIfEmpty(value, CoordZ);
+        set
+        {
+            CoordZ = NumericInput.KeepCurrentIfEmpty(value, CoordZ);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordZChanged(double value) => OnPropertyChanged(nameof(CoordZValue));
@@ -426,7 +480,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordPitchValue
     {
         get => NumericInput.ToControlValue(CoordPitch);
-        set => CoordPitch = NumericInput.KeepCurrentIfEmpty(value, CoordPitch);
+        set
+        {
+            CoordPitch = NumericInput.KeepCurrentIfEmpty(value, CoordPitch);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordPitchChanged(double value) => OnPropertyChanged(nameof(CoordPitchValue));
@@ -435,7 +498,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordYawValue
     {
         get => NumericInput.ToControlValue(CoordYaw);
-        set => CoordYaw = NumericInput.KeepCurrentIfEmpty(value, CoordYaw);
+        set
+        {
+            CoordYaw = NumericInput.KeepCurrentIfEmpty(value, CoordYaw);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordYawChanged(double value) => OnPropertyChanged(nameof(CoordYawValue));
@@ -444,7 +516,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordRollValue
     {
         get => NumericInput.ToControlValue(CoordRoll);
-        set => CoordRoll = NumericInput.KeepCurrentIfEmpty(value, CoordRoll);
+        set
+        {
+            CoordRoll = NumericInput.KeepCurrentIfEmpty(value, CoordRoll);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     partial void OnCoordRollChanged(double value) => OnPropertyChanged(nameof(CoordRollValue));
@@ -453,14 +534,32 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public decimal? CoordZToleranceValue
     {
         get => NumericInput.ToControlValue(CoordZTolerance);
-        set => CoordZTolerance = NumericInput.KeepCurrentIfEmpty(value, CoordZTolerance);
+        set
+        {
+            CoordZTolerance = NumericInput.KeepCurrentIfEmpty(value, CoordZTolerance);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     /// <inheritdoc cref="SeeThroughPierce"/>
     public decimal? SeeThroughPierceValue
     {
         get => (decimal)SeeThroughPierce;
-        set => SeeThroughPierce = NumericInput.KeepCurrentIfEmpty(value, SeeThroughPierce);
+        set
+        {
+            SeeThroughPierce = NumericInput.KeepCurrentIfEmpty(value, SeeThroughPierce);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     [ObservableProperty] private int _traceChannel;      // ETraceTypeQuery byte

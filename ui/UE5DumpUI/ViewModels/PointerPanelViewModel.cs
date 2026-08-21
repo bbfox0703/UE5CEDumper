@@ -63,6 +63,25 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// any value other than 5000 indicates a user override active for this game.
     /// </summary>
     [ObservableProperty] private int _invokeTimeoutMs = Constants.StarkDefaultInvokeTimeoutMs;
+
+    /// <inheritdoc cref="InvokeTimeoutMs"/>
+    /// <remarks>
+    /// [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? and an emptied box drives it to
+    /// null, which a compiled binding cannot put into an int. ⚠ This one was MISSED by the first
+    /// sweep: it is the only NumericUpDown in the app whose binding carries a modifier
+    /// (<c>{Binding InvokeTimeoutMs, Mode=TwoWay}</c>), and the scan's regex stopped at the
+    /// property name — so the guard test skipped it silently rather than reporting it. Both the
+    /// scan and the guard now allow modifiers.
+    /// </remarks>
+    public decimal? InvokeTimeoutMsValue
+    {
+        get => InvokeTimeoutMs;
+        set
+        {
+            InvokeTimeoutMs = NumericInput.KeepCurrentIfEmpty(value, InvokeTimeoutMs);
+            OnPropertyChanged();
+        }
+    }
     [ObservableProperty] private bool _isApplyingInvokeTimeout;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
@@ -783,6 +802,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     partial void OnInvokeTimeoutMsChanged(int value)
     {
         OnPropertyChanged(nameof(ShowInvokeTimeoutOverrideBadge));
+        // Keep the NumericUpDown façade in step, or a programmatic change leaves the control
+        // painting the previous number. [SNAPINTERVAL-2026-08-20]
+        OnPropertyChanged(nameof(InvokeTimeoutMsValue));
         if (_suppressInvokeTimeoutEvent) return;
         if (_dump == null) return;
         if (!HasData) return;

@@ -3227,7 +3227,7 @@ helper injected — and read `getAddressList().getMemoryRecord(0).Active` from C
 not from the checkbox icon. Expect `false`, after a ~50 ms tick. Until that is done this is fixed
 in the sense of *mechanism understood and pinned*, not *seen working*.
 
-### ✅ FIXED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 
 *Found while running L6's `X5` auto-snapshot clause. **LOW** — cosmetic-plus: nothing is lost and the
 loop keeps working, but the user is shown a raw .NET exception and two controls go dead.*
@@ -3358,6 +3358,72 @@ as having explained it, and it should not be written up as though it were.
 control disagrees with the view model. Binding `Minimum` to the existing `AutoRefreshMinSec` would
 settle it; not done here because it is a visible behaviour change this pass cannot verify on screen.
 
+
+---
+
+#### ROUND 2, 2026-08-21 — the live check found the fix incomplete, and a 19th control
+
+⭐ **This is the entry to read if you want the argument for running the live check at all.** Round 1
+was unit-pinned, negative-controlled, and *mechanically correct* — and the user-visible outcome was
+still wrong.
+
+**On screen after round 1:** the `InvalidCastException` was gone, but the field was **still blank**.
+Both halves of the report matter and only one had been fixed.
+
+**Why.** `ClipValueToMinMax` defaults to **false** (measured in round 1 and then ignored), so
+committing below-minimum text leaves `Value` **unchanged** — and it was already `null` from the
+clear, so it stayed `null`. A `null` reaches the façade, which correctly keeps the value in force —
+but that means the backing `int` does **not change**, nothing raises `PropertyChanged`, and the
+binding never pushes the real value back. The screen still stopped telling the truth about what was
+in force, which is the report's own second sentence.
+
+**Round 2:** `ClipValueToMinMax="True"` on the **11** controls that declare both a `Minimum` and a
+`Maximum` (controls with no range — the Teleport coordinate boxes — are left alone; clamping to
+Avalonia's implicit decimal bounds would be a no-op at best and a surprise at worst), plus an
+unconditional notify in every façade setter.
+
+**LIVE-VERIFIED, the reported repro exactly** — Snapshot → **Interval (sec)** → clear → type `30` →
+commit by clicking another control:
+
+| | round 1 | round 2 |
+|---|---|---|
+| validation line | *(gone)* | none |
+| field shows | **blank** | **`60`** |
+| down-spinner | — | **greyed out** — the maintainer's own stated marker that 60 is the floor |
+
+So the click-away path now behaves identically to the Tab path, which is what the report asked for.
+
+⭐ **A 19th NumericUpDown was found, and the guard test was the thing that hid it.**
+`PointerPanel.axaml:128` binds `Value="{Binding InvokeTimeoutMs, Mode=TwoWay}"` — an `int`, and the
+only NumericUpDown in the app whose binding carries a **modifier**. The scan regex stopped at
+`\}"`, so it did not match, and the guard's `if (!bound.Success) continue;` treated "cannot parse"
+as "not this defect's shape" and **skipped it silently**. A skip is indistinguishable from a pass.
+Fixed three ways: the façade added, the regex widened to allow modifiers, `seen >= 18` → `>= 19`,
+and a new assertion that **every** tag seen was also successfully parsed — so an unparseable binding
+now fails loudly instead of vanishing. ⭐ Shown able to fail: reverting that one binding produces
+`PointerPanel.axaml: InvokeTimeoutMs`.
+
+⚠ **KNOWN RESIDUE, bounded and deliberate.** Clearing the box and clicking away **without retyping**
+still paints an empty field. There is no exception, the value in force is correct, and it reappears
+the moment anything re-renders the panel (switching tabs and back shows `60`). The cause is
+Avalonia's binding re-entrancy guard swallowing a source notification raised *during* a
+target→source write.
+
+⛔ **An attempted fix for that residue was REVERTED — do not re-propose it without new evidence.**
+`NumericInput.RepaintAfterClear` posted the notification via
+`Dispatcher.UIThread.Post(..., DispatcherPriority.Background)` — idiomatic here (15 existing uses
+across 8 view models) — and **measured on screen to change nothing**. It was removed rather than
+shipped, because a helper whose XML doc confidently explains a repaint it does not perform is worse
+than the residue: it is the "report and reality computed by different paths" pattern, planted in the
+fix for it.
+
+⚠ **One unexplained test flake.** During this work a full run reported `failed: 1` once, and the
+failing test's name was filtered out of the captured output. Three consecutive full runs since have
+been green (4562/4562). It is recorded because an unnamed red is not the same thing as a green, and
+the next person seeing an intermittent failure here should know it has been seen once before.
+
+---
+
 ### ✅ FIXED 2026-08-21 `[GRIDRECYCLE-2026-08-21]` — a sorted DataGrid rendered one row's data twice
 
 **Reported by the maintainer with screenshots** (`AF16–AF23` step 2). Open Interesting Functions →
@@ -3442,7 +3508,23 @@ Its cause is still derived from decompiled Avalonia rather than observed, and �
 instruction — nudging a scroll index to make a screenshot look right is precisely the guess worth
 avoiding. It needs to be seen happening before it is patched.
 
-### ✅ FIXED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
+
+**LIVE CHECK 2026-08-21**, DumperTest / `CharacterMovementComponent`, filter `MaxWalkSpeed`
+(`2 matches`), match row `0x248` highlighted and on screen. Pressed **Refresh** three times with
+nothing else focused:
+
+* ✅ **Selection half — CONFIRMED FIXED.** No row is highlighted afterwards. The grid does **not**
+  invent a selection on an unrelated row. And this is not vacuous: `0x248` *was* highlighted before
+  the refreshes, so selection does happen here — it is now **cleared** rather than **moved to the
+  wrong row**, which is exactly what the fix claims.
+* ⬜ **Scroll half — STILL OPEN, and now OBSERVED ON THIS MACHINE rather than only reported.** After
+  the three refreshes the viewport showed `0x17C`–`0x202` while the match at `0x248` sat **below
+  it**, with the header still reading `2 matches`. That upgrades the scroll half from "cause derived
+  from decompiled Avalonia" to "reproduces here", which is the precondition this entry set before
+  anyone patches it. Still do not nudge the scroll index — now that it reproduces, it can be
+  measured.
+
+### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
 
 **Reported by the maintainer with a screenshot** (`V6 / U8` step 1, second half).
 
@@ -3489,6 +3571,14 @@ that trade is wrong.
 **Tests**: `Remember_ReusingKeyword_DoesNotReorder_SoAnAutoCompletePickSurvives` replaces the old
 `…MovesToFront`, and `Remember_Duplicate_RaisesNoCollectionChanged` counts **events**, not contents —
 a contents-only assertion passes while the control is still being reset underneath.
+
+
+**LIVE-VERIFIED 2026-08-21** on DumperTest, Live Walker / `CharacterMovementComponent`, using the
+reported gesture: typed `GravityDirection`, then `MaxWalkSpeed` (to build history), then cleared and
+typed `Max` — the dropdown offered **`MaxWalkSpeed`** — and clicked it.
+
+**The box reads `MaxWalkSpeed`**, not `Max`, and the header moved **`10 matches` → `2 matches`**, so
+the text and the filter both took. Before the fix the box reverted to what was typed.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
 

@@ -115,4 +115,5 @@ public static class NumericInput
         if (v >= (double)decimal.MaxValue) return decimal.MaxValue;
         return (decimal)v;
     }
+
 }

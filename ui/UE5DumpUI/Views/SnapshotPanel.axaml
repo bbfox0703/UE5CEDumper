@@ -100,7 +100,7 @@
                             OnContent="{StaticResource str.Snapshot.Auto.On}" Margin="0,0,14,0"/>
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Interval}" Foreground="#CCCCCC"
                          VerticalAlignment="Center" Margin="0,0,4,0"/>
-              <NumericUpDown Value="{Binding AutoSnapshotIntervalSecValue}" Minimum="60" Maximum="86400"
+              <NumericUpDown Value="{Binding AutoSnapshotIntervalSecValue}" Minimum="60" Maximum="86400" ClipValueToMinMax="True"
                              Increment="60" FormatString="0" MinWidth="120" FontSize="12"
                              IsEnabled="{Binding CanEditAutoSettings}"
                              ToolTip.Tip="{StaticResource str.Tip.Snapshot.Auto.Interval}" Margin="0,0,14,0"/>
@@ -111,7 +111,7 @@
                         ToolTip.Tip="{StaticResource str.Tip.Snapshot.Auto.Retention}" Margin="0,0,8,0"/>
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Count}" Foreground="#CCCCCC"
                          VerticalAlignment="Center" Margin="0,0,4,0"/>
-              <NumericUpDown Value="{Binding AutoSnapshotCountValue}" Minimum="1" Maximum="10000"
+              <NumericUpDown Value="{Binding AutoSnapshotCountValue}" Minimum="1" Maximum="10000" ClipValueToMinMax="True"
                              Increment="1" FormatString="0" MinWidth="110" FontSize="12"
                              IsEnabled="{Binding CanEditAutoSettings}" Margin="0,0,14,0"/>
               <CheckBox Content="{StaticResource str.Snapshot.Auto.AdjustQuota}"
@@ -138,12 +138,12 @@
       <TextBlock Text="{StaticResource str.Snapshot.MinFreeDisk}" Foreground="#999"
                  VerticalAlignment="Center" Margin="12,0,0,0"
                  ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
-      <NumericUpDown Value="{Binding SnapshotMinFreePercentValue}" Minimum="0" Maximum="99" Increment="1"
+      <NumericUpDown Value="{Binding SnapshotMinFreePercentValue}" Minimum="0" Maximum="99" ClipValueToMinMax="True" Increment="1"
                      FormatString="0" MinWidth="90" FontSize="12" VerticalAlignment="Center"
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
       <TextBlock Text="%" Foreground="#999" VerticalAlignment="Center"/>
       <TextBlock Text="/" Foreground="#777" VerticalAlignment="Center"/>
-      <NumericUpDown Value="{Binding SnapshotMinFreeGbValue}" Minimum="0" Maximum="100000" Increment="10"
+      <NumericUpDown Value="{Binding SnapshotMinFreeGbValue}" Minimum="0" Maximum="100000" ClipValueToMinMax="True" Increment="10"
                      FormatString="0" MinWidth="110" FontSize="12" VerticalAlignment="Center"
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
       <TextBlock Text="GB" Foreground="#999" VerticalAlignment="Center"/>

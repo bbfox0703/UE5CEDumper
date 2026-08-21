@@ -163,29 +163,61 @@ public partial class SnapshotViewModel : ViewModelBase
     public decimal? AutoSnapshotIntervalSecValue
     {
         get => AutoSnapshotIntervalSec;
-        set => AutoSnapshotIntervalSec = NumericInput.Coerce(
-            value, AutoSnapshotIntervalSec, AutoSnapshotMinIntervalSec, AutoSnapshotMaxIntervalSec);
+        set
+        {
+            AutoSnapshotIntervalSec = NumericInput.Coerce( value, AutoSnapshotIntervalSec, AutoSnapshotMinIntervalSec, AutoSnapshotMaxIntervalSec);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     public decimal? AutoSnapshotCountValue
     {
         get => AutoSnapshotCount;
-        set => AutoSnapshotCount = NumericInput.Coerce(
-            value, AutoSnapshotCount, AutoSnapshotMinCount, AutoSnapshotMaxCount);
+        set
+        {
+            AutoSnapshotCount = NumericInput.Coerce( value, AutoSnapshotCount, AutoSnapshotMinCount, AutoSnapshotMaxCount);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     public decimal? SnapshotMinFreePercentValue
     {
         get => SnapshotMinFreePercent;
-        set => SnapshotMinFreePercent = NumericInput.Coerce(
-            value, SnapshotMinFreePercent, SnapshotMinFreePercentFloor, SnapshotMinFreePercentCeil);
+        set
+        {
+            SnapshotMinFreePercent = NumericInput.Coerce( value, SnapshotMinFreePercent, SnapshotMinFreePercentFloor, SnapshotMinFreePercentCeil);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     public decimal? SnapshotMinFreeGbValue
     {
         get => SnapshotMinFreeGb;
-        set => SnapshotMinFreeGb = NumericInput.Coerce(
-            value, SnapshotMinFreeGb, SnapshotMinFreeGbFloor, SnapshotMinFreeGbCeil);
+        set
+        {
+            SnapshotMinFreeGb = NumericInput.Coerce( value, SnapshotMinFreeGb, SnapshotMinFreeGbFloor, SnapshotMinFreeGbCeil);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
     }
 
     // The int properties stay the canonical ones — settings load, the auto loop and the disk
