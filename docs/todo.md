@@ -6979,7 +6979,7 @@ deep behaves exactly as it did before 3261. Not a failure.
 
 -----
 
-### ⬜ NEW 2026-08-17 — A11: a grown container must no longer lose its Value Search candidates (build 3253)
+### ✅ CLOSED 2026-08-21 — A11: a grown container must no longer lose its Value Search candidates (build 3253)
 
 *Needs a connected game with a `TArray`/`TMap` UPROPERTY whose element count changes in play
 (inventory, spawned-actor list, buff list). **The RULE is unit-pinned (15 assertions, two negative
@@ -7070,7 +7070,53 @@ controls); the WIRING is not** — no target compiles `Aura.cpp`.*
 > assertions in this session alone. Each will be written immediately before the session that runs
 > it, on top of this harness.
 >
-> ⚠ **Steps 2–5 remain open and were not silently skipped.** All four require the container to
+> ### ✅ STEPS 2, 3, 4, 5 ALL PASS 2026-08-21 `[A11-MUTATE-2026-08-21]` — the row is CLOSED
+>
+> DumperTest dev, **dist 3308**, over the pipe with no UI. The blocker was never the assertion; it
+> was that nothing here changes a container's size on its own. `write_mem` makes the change
+> reachable, and `tools/verify/mutate_guard.py` makes it safe (capture → poke → **witness by
+> read-back** → collateral check → **restore, verified**).
+>
+> | step | what was emulated | result |
+> |---|---|---|
+> | **2** growth realloc | fresh page via `VirtualAllocEx`, elements copied, header → `{buf2, 7, 16}` | **PASS** — survivor repointed to `buf2 + 2×4` **exactly**; log: `1 container element(s) repointed after a realloc, 0 dropped` |
+> | **2 (ii)** separability | same move, but element[2] set to **31** in the same refine | **PASS** — repointed *and then* rejected on its merits; re-anchor and predicate are independent |
+> | **3** in-place shrink | tail memmoved down, `Num` 5→4, `Max` left at 8 | **PASS** — both live candidates dropped, log: `0 repointed, 2 dropped` |
+> | **4** sparse removal | allocation bit 1 cleared in the inline `TBitArray` word | **PASS** — dropped, log: `0 repointed, 1 dropped`, **and the address still read 4242** |
+> | **5** append into slack | element[5]=60, `Num` 5→6, `Data`/`Max` untouched | **PASS** — survived **at the same address**, zero re-anchor lines |
+>
+> ⭐ **Every step carried the CDO as a paired control** — same value, same field, same code path, one
+> difference. In steps 3 and 4 the CDO survived while the live row died, so the drops are targeted
+> rather than a blanket wipe; in step 2 the CDO stayed at its ORIGINAL address while the live one
+> moved, so the repoint is targeted rather than a blanket recompute. Without that sibling, "the row
+> is gone" and "everything is gone" look identical.
+>
+> ⭐ **Step 4's real content is that the value was still readable.** `4242` was still sitting at the
+> candidate's address when it was dropped — the freed slot is refilled at the identical address and
+> `{dataPtr,count}` never moved, so the allocation bit is the only witness there is. A rule reading
+> anything else would have kept it and shown a stale match.
+>
+> ⭐ **Step 5 is the one that could have failed.** Steps 2–4 all end in "moved or died", so the
+> cheapest way to pass them is to drop a container candidate whenever the header changes at all.
+> The slack append leaves `Data` alone and only bumps `Num`; the candidate survived **at the same
+> address with zero re-anchor lines**, so the asymmetric rule is intact.
+>
+> ⚠ **What these do NOT prove, stated plainly.** The mutations are synthetic. They reproduce **what
+> the scanner observes** — a new `Data`, a lower `Num`, a cleared bit — and not the events: no
+> allocator ran, nothing was freed, the old buffer stays mapped. Specifically, step 3 emulates
+> `RemoveAt(i, 1, EAllowShrinking::No)`; UE's default `RemoveAt` *allows* shrinking and may realloc,
+> which is a different observable. Anything depending on the old memory becoming invalid is
+> untested.
+>
+> ⚠ **deep=False throughout**, and it matters: a deep descriptor carries `ValueAnchor::Unknown`, so
+> the container branch is never reached and the whole run would be vacuous. Measured — deep=False
+> does return container rows here, which is what makes the choice available.
+>
+> ⚠ Fixture restored and re-read from the game's own view after every step:
+> `count=5 values=['10','20','30','40','50']`. The slack slot's original content was `DDDDDDDD`,
+> UE's uninitialised fill — incidental confirmation that it really was slack.
+>
+> ⚠ ~~**Steps 2–5 remain open and were not silently skipped.**~~ **SUPERSEDED 2026-08-21 — all four now PASS, see above.** Kept because its reasoning was right and its conclusion was only true until `write_mem` was used: All four require the container to
 > **change size in play** — add entries until it reallocs, remove one before the candidate's index,
 > remove the entry a TSet/TMap candidate points at, append into existing slack. Nothing on DumperTest
 > grows a UPROPERTY container by itself and no operator is present, so they need either a game with a
