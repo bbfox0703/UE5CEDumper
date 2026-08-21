@@ -23,9 +23,9 @@
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
 | **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 19 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 18 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **51** | |
+| **合計** | **50** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -567,16 +567,6 @@
 | 3 | 在活躍 session 比較 static-native PE fast path 與 game-thread dispatch 的延遲。 | 有狀態的 UFunction 仍走 dispatch，不會誤落進 fast path。 |
 | 4 | 掃過 12 款以上已測遊戲的 Class Structure Return 欄位。 | baked PARAMS 不再把 ReturnValue 當成輸入參數。 |
 | 5 | 各做一次 pointer-return 與 FString-return 的 invoke。 | pointer 回傳顯示 `0x` 前綴；FString 回傳顯示 "see After: dump above" 提示。 |
-
-### ⬜ CLASSTOTAL —— Classes 分頁報的是真正的 class 總數，不是上限值
-
-*優先度 **中** · 分類 **B**（最便宜的第一步是 A：對 Elliot 送一次 `list_classes`，看 `total_classes` 有沒有大於 5000）· 需要：class 數 > 5,000 的遊戲（Elliot 約 6,609）**和**一款 < 5,000 的小遊戲*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在 class 超過 5,000 的遊戲（Elliot）開 Classes 分頁，把「Game classes only」取消勾選後 Load。 | 狀態列寫「**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap」，兩個數字**不一樣**。<br>⚠ 兩個都是 5000 就是 FAIL —— 修正前就是這樣，「total」等於沒回答任何事。 |
-| 2 | 同一款遊戲，去看 Interesting Funcs 的「{N} functions across **{K} classes**」。 | Classes 分頁的 total 與 K 相同（都約 6,609），兩個面板互相對得上。 |
-| 3 | 對照組：換一款 class 數 < 5,000 的小遊戲 Load。 | 顯示「N classes shown of N total」（兩數相等），而且**沒有** STOPPED 提示。<br>⚠ 沒跑這步就無法排除「不管怎樣都報一個比較大的假數字」。 |
 
 ### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
 
