@@ -175,7 +175,7 @@ public static class BakedScriptGenerator
         Line(sb, $"    '[Invoke] {HelperFileName} not found in this table.\\n\\n' ..");
         Line(sb, $"    'Setup: Table -> Add File... -> select {HelperFileName}\\n' ..");
         Line(sb, "    '(Export it from UE5DumpUI: Tools -> Export CE Helper Lua File)')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "do");
@@ -185,7 +185,7 @@ public static class BakedScriptGenerator
         Line(sb, "  ss.destroy()");
         Line(sb, "  if not fn then");
         Line(sb, "    showMessage('[Invoke] Helper load error:\\n' .. tostring(err))");
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "  fn()");

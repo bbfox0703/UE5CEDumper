@@ -228,7 +228,7 @@ public static class FreezeScriptGenerator
         Line(sb, "  showMessage(");
         Line(sb, $"    '[Freeze] {HelperFileName} not found in this table.\\n\\n' ..");
         Line(sb, "    'Setup: UE5DumpUI -> Tools -> Inject Freeze Helper into Current CE Table')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "do");
@@ -241,7 +241,7 @@ public static class FreezeScriptGenerator
         Line(sb, "  ss.destroy()");
         Line(sb, "  if not fn then");
         Line(sb, "    showMessage('[Freeze] Helper load error:\\n' .. tostring(err))");
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "  fn()");

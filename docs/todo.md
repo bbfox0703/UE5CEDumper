@@ -3012,7 +3012,7 @@ this checkout happened to land, which is exactly why it is asserted. ⭐ **Shown
 reverting the freeze normaliser failed `InjectFreezeHelperLua_SendsLfOnly` at line 232; restoring it
 went green.
 
-### ✅ FIXED + CE-VERIFIED 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **32** places
+### ✅ FIXED + CE-VERIFIED END-TO-END 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **36** places
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
 This is the exact failure mode `AA12`/`AA13` exists to prevent — **"the freeze script must stop
@@ -3241,6 +3241,94 @@ confirms, on the real 7.7 binary, both things the fix was built on: CE's `setAct
 ignore an in-`[ENABLE]` untick, and a deferred one really does land.
 
 Table cleared afterwards (`0 record(s) left`); CE and the game shut down.
+
+
+---
+
+#### ROUND 2, 2026-08-21 — the first sweep MISSED both generators this defect is NAMED after
+
+⭐ **Read this one for the method lesson.** The original sweep classified call sites by reading each
+generator's C# **top to bottom**, tracking whether the last emitted literal was `"[ENABLE]"` or
+`"[DISABLE]"`. That is wrong, and the way it is wrong is not obvious: **a private helper method
+defined below the `[DISABLE]` emission still emits into `[ENABLE]`** when the enable path calls it.
+
+`FreezeScriptGenerator.AppendHelperLoader` and `BakedScriptGenerator.AppendHelperLoader` are exactly
+that — both sit at the bottom of their files, both were read as "DISABLE, nothing to untick", and
+both kept the immediate untick. So the sweep missed **the two generators this defect's own title
+names**: *"BOTH the Freeze and the baked-INVOKE generators"*. Four more sites, now fixed — **36
+total, not 32**.
+
+⚠ And the guard added with round 1 could not have caught it: `MailboxScripts()` lists eleven
+generators and **Freeze is not one of them**.
+
+**What replaced the flawed method.** `EveryGeneratedEnableBlock_UnticksOnlyViaTheSharedDeferredEmitter`
+generates a script from **every** generator that emits an `[ENABLE]` block and reads the **output** —
+the only ground truth about which block a line lands in. Backed by
+`TheEnableScriptList_CoversEveryGeneratorThatEmitsAnEnableBlock`, which globs `*ScriptGenerator.cs`
+and fails if one of them is not mentioned in the test file at all, so the next generator cannot slip
+past the way Freeze did.
+
+⚠ **The detector needed teaching too.** A line-only rule ("an untick line must also say
+`createTimer`") reported a FALSE POSITIVE on `BakedScriptGenerator`'s perfectly correct self-untick
+timer, where the timer is created on one line and the untick sits inside the `OnTimer` body several
+lines down. `ImmediateUnticksIn` now recognises both deferred shapes. A guard that cries wolf on
+working code gets disabled, which would have cost more than the defect.
+
+⚠ **One pre-existing test was pinning the DEFECT.**
+`FreezeScriptGeneratorTests.Generate_HardFailure_StopsTimersUnticksAndReturns` asserted the literal
+`if memrec then memrec.Active = false end` — it passed for as long as the untick did nothing. Now
+asserts `CeLuaHygiene.DeferredUntickLua()`.
+
+**END-TO-END IN CHEAT ENGINE 7.7, on the REAL generated script** — not the synthetic A/B above.
+The Property Search **Freeze** button is gated on the AOBMaker plugin, which is offline here, so the
+byte-identical script it copies was emitted through
+`FreezeScriptGenerator.Generate(PropertySearchViewModel.BuildFreezeParams(...))` for the exact row
+measured live minutes earlier: `DumperTestActor · TickCount · IntProperty · 0x6A8`, preview **64**.
+5,495 chars, loaded into a `vtAutoAssembler` record from CE's Lua Engine and enabled:
+
+1. it bailed out with the reported message, verbatim —
+   `[Freeze] ue5_freeze_helper.lua not found in this table.`
+2. `Freeze: DumperTestActor::TickCount = 9999  ->  Active=false` ✅ **(was `true`)**
+3. and **nothing was applied**: re-running the search showed `TickCount` at **1497**, still climbing
+   from the 64 it read before — not held at 9999.
+
+⭐ Points 2 and 3 together are the whole of `AA12`/`AA13`: an accurate message, a record that does
+not claim to be active, and a value that was genuinely left alone.
+
+**A NEW defect fell out of the exhaustive guard — `[TRAINERUNTICK-2026-08-21]`, filed below.**
+
+---
+
+
+### ⬜ NEW DEFECT 2026-08-21 `[TRAINERUNTICK-2026-08-21]` — the standalone trainer never unticks on ANY failure path
+
+*Found by the exhaustive guard written for `[FREEZEUNTICK-2026-08-20]` — specifically by its
+guard-the-guard clause, which asks whether each script even CONTAINS an untick to check. **LOW-MED**,
+but it ships to end users as a `.CT`.*
+
+**Measured, not inferred:** `StandaloneTrainerScriptGenerator.cs` emits **14** `showMessage(...)`
+bail-outs and the string `memrec` appears in that file **zero** times
+(`grep -c memrec` = 0). So every failure path — *"Config missing (no AOB / chain)"*, *"GWorld AOB
+scan FAILED"*, *"Could not read RIP displacement"*, *"Enable Setup first"*, *"No protection bit was
+resolved"*, *"Fly needs CE isKeyPressed"*, *"No saved position"* — shows a dialog, returns, and
+**leaves the record ticked while nothing was applied**. That is precisely what CLAUDE.md's rule
+forbids, and the Setup row is `AutoActivate: true`, so it is the first thing a user sees.
+
+**Why it was NOT fixed in the same pass**, deliberately: the fix needs a decision this test cannot
+make. Two of the sites (`TP Save position`, `TP Recall position`) have **no untick even on the
+SUCCESS path**, so the question is whether a momentary trainer row is *meant* to stay ticked after a
+good run. Guessing that wrong makes the trainer worse, and two speculative fixes were already
+reverted today for shipping behaviour that measurement did not support.
+
+⚠ **There is also a formatting hazard.** Ten of the fourteen are one-liners
+(`if X then showMessage('…'); return end`), and `CeLuaHygiene.DeferredUntickLua()` ends in a `--`
+comment — splicing it inline would comment out the rest of the line, including the `return end`.
+A comment-free variant of the emitter is needed for those.
+
+**The gap is kept visible rather than papered over**: the guard exempts `Trainer.*` with this tag in
+the exemption comment, and `TheTrainerExemption_StillDescribesARealGap` fails the moment
+`StandaloneTrainerScriptGenerator` mentions `memrec` — telling whoever fixes it to delete the
+exemption, so a documented gap cannot decay into a forgotten one.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 

@@ -125,12 +125,7 @@ public class CeMailboxBailoutTests
     [MemberData(nameof(MailboxScripts))]
     public void EveryEnableUntick_IsDeferred_NotImmediate(string name, string script)
     {
-        var enable = EnableBlock(script);
-        var offenders = enable.Split('\n')
-            .Select(l => l.Trim())
-            .Where(l => l.Contains("memrec.Active = false", StringComparison.Ordinal))
-            .Where(l => !l.Contains("createTimer", StringComparison.Ordinal))
-            .ToList();
+        var offenders = ImmediateUnticksIn(EnableBlock(script));
 
         Assert.True(offenders.Count == 0,
             name + ": an [ENABLE] block unticks IMMEDIATELY, which CE ignores — see "
@@ -214,6 +209,187 @@ public class CeMailboxBailoutTests
         throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
     }
 
+
+    // ── EVERY generator, not just the mailbox ones ───────────────────────────
+    //
+    // ⚠ THE HOLE THIS CLOSES, and it was a real miss. The deferred-untick sweep classified
+    // call sites by reading the GENERATOR SOURCE top-to-bottom, tracking whether the last
+    // emitted literal was "[ENABLE]" or "[DISABLE]". That is wrong, because a private helper
+    // method defined BELOW the [DISABLE] emission still emits into [ENABLE] when the ENABLE
+    // path calls it. FreezeScriptGenerator.AppendHelperLoader is exactly that: it sits at the
+    // bottom of the file and was read as "[DISABLE], nothing to untick", so its two bail-outs
+    // kept the immediate untick — including `ue5_freeze_helper.lua not found in this table`,
+    // which is the precise path the defect was originally reported on.
+    //
+    // MailScripts() above did not catch it either, because Freeze is not in that list.
+    //
+    // So this test does neither of those things. It generates a script from EVERY generator
+    // that emits an [ENABLE] block and reads the OUTPUT — the only ground truth about which
+    // block a line lands in.
+
+    public static IEnumerable<object[]> EveryEnableScript()
+    {
+        foreach (var row in MailboxScripts()) yield return row;
+
+        yield return new object[] { "Freeze.Int", FreezeScriptGenerator.Generate(new FreezeScriptParams
+        {
+            ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+        }) };
+
+        yield return new object[] { "Freeze.Bool", FreezeScriptGenerator.Generate(new FreezeScriptParams
+        {
+            ClassName = "Actor", PropertyName = "bCanBeDamaged", PropertyOffset = 0x5A,
+            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, ValueLiteral = "0",
+        }) };
+
+        yield return new object[] { "Baked.Invoke", BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>()) };
+
+        yield return new object[] { "CeInject", CeInjectScriptGenerator.Generate(@"C:\x\UE5Dumper.dll") };
+        yield return new object[] { "CeInject.Reminder", CeInjectScriptGenerator.GenerateReminder() };
+
+        // StandaloneTrainerScriptGenerator returns a LIST of records rather than one script, so
+        // every entry is yielded separately — a per-entry name makes a failure say which row.
+        var trainer = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
+        {
+            Code = 1,
+            Chain = new List<TrainerChainHop>(),
+            PawnToRoot = 0x150, RootToRelLoc = 0x128, FVectorWidth = 12,
+            PawnToCmc = 0x2F8, WalkSpeedOff = 0x248, GravityOff = 0x1C0, JumpOff = 0x250,
+            PawnToController = 0x108, MoveModeOff = 0x201, VelocityOff = 0x160, VelocitySize = 12,
+            CtrlRotOff = 0x2A0, CtrlRotSize = 12,
+        });
+        foreach (var e in trainer)
+            yield return new object[] { "Trainer." + e.Description, e.Script };
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryEnableScript))]
+    public void EveryGeneratedEnableBlock_UnticksOnlyViaTheSharedDeferredEmitter(string name, string script)
+    {
+        var offenders = ImmediateUnticksIn(EnableBlock(script));
+
+        Assert.True(offenders.Count == 0,
+            name + ": an [ENABLE] block unticks IMMEDIATELY, which CE ignores — see "
+            + "[FREEZEUNTICK-2026-08-20]. ⚠ Do NOT classify these by reading the generator source: "
+            + "a private helper defined below the [DISABLE] emission still emits into [ENABLE]."
+            + Environment.NewLine + "    " + string.Join(Environment.NewLine + "    ", offenders));
+    }
+
+    /// <summary>
+    /// Guard the guard, twice over. The list above must actually cover every generator that
+    /// emits an [ENABLE] block — a generator added later and forgotten here is precisely how
+    /// Freeze escaped — and the scripts it produces must actually contain unticks to inspect.
+    /// </summary>
+    [Fact]
+    public void TheEnableScriptList_CoversEveryGeneratorThatEmitsAnEnableBlock()
+    {
+        var services = Path.GetDirectoryName(FindRepoFile("ui/UE5DumpUI/Services/CeLuaHygiene.cs"))!;
+        var emitters = Directory.EnumerateFiles(services, "*ScriptGenerator.cs")
+            .Where(f => File.ReadAllText(f).Contains("\"[ENABLE]\"", StringComparison.Ordinal))
+            .Select(f => Path.GetFileNameWithoutExtension(f))
+            .ToList();
+
+        var covered = File.ReadAllText(FindRepoFile("ui/UE5DumpUI.Tests/CeMailboxBailoutTests.cs"));
+        var missing = emitters.Where(e => !covered.Contains(e, StringComparison.Ordinal)).ToList();
+
+        Assert.True(missing.Count == 0,
+            "these generators emit an [ENABLE] block but no test in this file mentions them, so "
+            + "their bail-outs are unchecked: " + string.Join(", ", missing));
+
+        Assert.True(emitters.Count >= 12,
+            $"only {emitters.Count} *ScriptGenerator.cs files emit [ENABLE]; the scan is not "
+            + "reaching the Services folder");
+    }
+
+    [Fact]
+    public void EveryGeneratedEnableBlock_ActuallyContainsAnUntickToCheck()
+    {
+        var barren = EveryEnableScript()
+            .Where(r => !EnableBlock((string)r[1]).Contains("memrec.Active = false", StringComparison.Ordinal))
+            .Select(r => (string)r[0])
+            .ToList();
+
+        // ⚠ TWO known exemptions, and the second is a FILED DEFECT rather than a design choice.
+        //
+        //  * "Reminder" is an informational script — it applies nothing, so there is no cheat to
+        //    untick and no claim to be wrong about.
+        //
+        //  * "Trainer.*" is `[TRAINERUNTICK-2026-08-21]`: StandaloneTrainerScriptGenerator has
+        //    FOURTEEN `showMessage(...) ... return` bail-outs and does not mention `memrec` even
+        //    ONCE, so every failure path leaves the row ticked while nothing was applied — the
+        //    exact thing CLAUDE.md's rule forbids, in a script that ships to end users as a .CT.
+        //    It is exempted here rather than fixed because the fix needs a decision this test
+        //    cannot make: whether a momentary row like "TP Save position" is MEANT to stay ticked
+        //    after a successful run. Do not quietly delete this exemption — fix the generator and
+        //    then delete it, or the defect goes back to being invisible.
+        var unexpected = barren
+            .Where(n => !n.Contains("Reminder", StringComparison.Ordinal))
+            .Where(n => !n.StartsWith("Trainer.", StringComparison.Ordinal))
+            .ToList();
+        Assert.True(unexpected.Count == 0,
+            "no untick found in the [ENABLE] block of: " + string.Join(", ", unexpected)
+            + " — EveryGeneratedEnableBlock_UnticksOnlyViaTheSharedDeferredEmitter passes "
+            + "vacuously for these.");
+    }
+
+
+    /// <summary>
+    /// Untick lines in a block that are NOT deferred. [FREEZEUNTICK-2026-08-20]
+    ///
+    /// <para>There are TWO legitimate deferred shapes and the detector has to know both, or it
+    /// reports a false positive on working code:</para>
+    /// <list type="number">
+    /// <item>the shared one-liner from <c>CeLuaHygiene.DeferredUntickLua</c>, where
+    /// <c>createTimer</c> and the untick sit on the same line;</item>
+    /// <item>the older hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
+    /// created on one line and the untick sits several lines down inside the
+    /// <c>OnTimer = function(...)</c> body.</item>
+    /// </list>
+    /// <para>A line-only test flags the second as a defect — it did exactly that on
+    /// BakedScriptGenerator's perfectly correct self-untick timer. So an untick counts as deferred
+    /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
+    /// </summary>
+    /// <summary>
+    /// The exemption above is only honest while the defect it names is still there.
+    /// [TRAINERUNTICK-2026-08-21]
+    ///
+    /// <para>If someone fixes StandaloneTrainerScriptGenerator, this fails and tells them to remove
+    /// the exemption — which is the difference between a documented gap and a forgotten one.</para>
+    /// </summary>
+    [Fact]
+    public void TheTrainerExemption_StillDescribesARealGap()
+    {
+        var src = File.ReadAllText(
+            FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
+
+        Assert.False(src.Contains("memrec", StringComparison.Ordinal),
+            "StandaloneTrainerScriptGenerator now mentions memrec, so [TRAINERUNTICK-2026-08-21] "
+            + "may be fixed. Re-check its bail-outs and, if they untick, delete the \"Trainer.\" "
+            + "exemption in EveryGeneratedEnableBlock_ActuallyContainsAnUntickToCheck.");
+    }
+
+    private static List<string> ImmediateUnticksIn(string block)
+    {
+        var lines = block.Split('\n');
+        var bad = new List<string>();
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (!line.Contains("memrec.Active = false", StringComparison.Ordinal)) continue;
+            if (line.Contains("createTimer", StringComparison.Ordinal)) continue;
+
+            var insideTimerBody = false;
+            for (int back = i - 1; back >= 0 && back >= i - 8; back--)
+                if (lines[back].Contains("OnTimer", StringComparison.Ordinal)) { insideTimerBody = true; break; }
+            if (insideTimerBody) continue;
+
+            bad.Add("line " + (i + 1) + ": " + line);
+        }
+        return bad;
+    }
 
     private static bool Within(string[] lines, int from, int span, string needle)
     {

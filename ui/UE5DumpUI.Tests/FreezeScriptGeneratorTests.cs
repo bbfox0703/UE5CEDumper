@@ -499,7 +499,12 @@ public class FreezeScriptGeneratorTests
                                        stopIdx < 0 ? 0 : stopIdx, System.StringComparison.Ordinal);
         Assert.True(stopIdx >= 0, "hard-failure branch must stop the timers");
         Assert.True(clearIdx > stopIdx, "stop() must come before the slot is cleared");
-        Assert.Contains("if memrec then memrec.Active = false end", enable);
+        // ⚠ This used to assert the literal `if memrec then memrec.Active = false end`, i.e. it
+        // pinned the BROKEN shape: CE ignores an in-[ENABLE] untick entirely, because setActive
+        // exits early while fActive is still false and then sets it true after the script returns
+        // ([FREEZEUNTICK-2026-08-20]). The assertion passed for as long as the untick did nothing.
+        // What the branch has to do is untick DEFERRABLY, via the shared emitter.
+        Assert.Contains(CeLuaHygiene.DeferredUntickLua().Trim(), enable, System.StringComparison.Ordinal);
     }
 
     [Fact]
