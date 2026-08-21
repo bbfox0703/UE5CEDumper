@@ -550,6 +550,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // Auto-refresh
     [ObservableProperty] private bool _isAutoRefreshing;
     [ObservableProperty] private int _autoRefreshIntervalSec = Constants.DefaultAutoRefreshIntervalSec;
+
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? (measured: Avalonia 12.1.1), and
+    // clearing the text box drives it to null with no way to opt out at the control. Bound straight
+    // at the non-nullable properties above, a COMPILED binding — which this app uses everywhere —
+    // cannot convert that and paints a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // in a validation line under the control, leaving the field blank while the old value is still
+    // the one in force. Binding a decimal? instead means no conversion is attempted.
+    //
+    // ⚠ These only absorb the empty box; they do not clamp. Range belongs to whoever already states
+    // it (the control's Minimum/Maximum, or a view-model guard such as OnAutoRefreshIntervalSecChanged),
+    // and several of these inputs have no meaningful range at all. See Helpers/NumericInput.cs.
+
+    /// <inheritdoc cref="AutoRefreshIntervalSec"/>
+    public decimal? AutoRefreshIntervalSecValue
+    {
+        get => (decimal)AutoRefreshIntervalSec;
+        set => AutoRefreshIntervalSec = NumericInput.KeepCurrentIfEmpty(value, AutoRefreshIntervalSec);
+    }
+
     [ObservableProperty] private int _autoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
     [ObservableProperty] private string _autoRefreshStatusText = "sec";
     private DispatcherTimer? _autoRefreshTimer;
@@ -5496,6 +5517,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     partial void OnAutoRefreshIntervalSecChanged(int value)
     {
+        OnPropertyChanged(nameof(AutoRefreshIntervalSecValue));
         // Enforce minimum interval (dynamic minimum from benchmark)
         if (value < AutoRefreshMinSec)
         {

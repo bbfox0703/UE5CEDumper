@@ -410,12 +410,12 @@
                     Classes="accent" Padding="12,4"/>
             <TextBlock Text="{StaticResource str.TP.ZOffset}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding ZOffset}" Minimum="0" Maximum="100000"
+            <NumericUpDown Value="{Binding ZOffsetValue}" Minimum="0" Maximum="100000"
                            Increment="10" Width="120"
                            ToolTip.Tip="{StaticResource str.Tip.TP.ZOffset}"/>
             <TextBlock Text="{StaticResource str.TP.Channel}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding TraceChannel}" Minimum="0" Maximum="32"
+            <NumericUpDown Value="{Binding TraceChannelValue}" Minimum="0" Maximum="32"
                            Increment="1" Width="130" Padding="4,2"
                            ToolTip.Tip="{StaticResource str.Tip.TP.Channel}"/>
           </StackPanel>
@@ -452,7 +452,7 @@
                     Classes="accent" Padding="12,4"/>
             <TextBlock Text="{StaticResource str.TP.RelDist}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding RelativeDistance}" Minimum="-100000" Maximum="100000"
+            <NumericUpDown Value="{Binding RelativeDistanceValue}" Minimum="-100000" Maximum="100000"
                            Increment="10" Width="150"
                            ToolTip.Tip="{StaticResource str.Tip.TP.RelDist}"/>
           </StackPanel>
@@ -473,18 +473,18 @@
             <TextBlock Grid.Row="0" Grid.Column="0" Text="{StaticResource str.TP.CoordXyz}"
                        Foreground="#999999" Margin="0,0,8,4" VerticalAlignment="Center"/>
             <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
-              <NumericUpDown Value="{Binding CoordX}" Increment="10" Width="180" FormatString="0.###"/>
-              <NumericUpDown Value="{Binding CoordY}" Increment="10" Width="180" FormatString="0.###"/>
-              <NumericUpDown Value="{Binding CoordZ}" Increment="10" Width="180" FormatString="0.###"/>
+              <NumericUpDown Value="{Binding CoordXValue}" Increment="10" Width="180" FormatString="0.###"/>
+              <NumericUpDown Value="{Binding CoordYValue}" Increment="10" Width="180" FormatString="0.###"/>
+              <NumericUpDown Value="{Binding CoordZValue}" Increment="10" Width="180" FormatString="0.###"/>
             </StackPanel>
             <TextBlock Grid.Row="1" Grid.Column="0" Text="{StaticResource str.TP.CoordPyr}"
                        Foreground="#999999" Margin="0,4,8,0" VerticalAlignment="Center"/>
             <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
-              <NumericUpDown Value="{Binding CoordPitch}" Increment="1" Width="180" FormatString="0.##"
+              <NumericUpDown Value="{Binding CoordPitchValue}" Increment="1" Width="180" FormatString="0.##"
                              IsEnabled="{Binding CoordSetRotation}"/>
-              <NumericUpDown Value="{Binding CoordYaw}" Increment="1" Width="180" FormatString="0.##"
+              <NumericUpDown Value="{Binding CoordYawValue}" Increment="1" Width="180" FormatString="0.##"
                              IsEnabled="{Binding CoordSetRotation}"/>
-              <NumericUpDown Value="{Binding CoordRoll}" Increment="1" Width="180" FormatString="0.##"
+              <NumericUpDown Value="{Binding CoordRollValue}" Increment="1" Width="180" FormatString="0.##"
                              IsEnabled="{Binding CoordSetRotation}"/>
             </StackPanel>
           </Grid>
@@ -569,7 +569,7 @@
                         Margin="6,0,0,0"/>
               <TextBlock Text="{StaticResource str.TP.LibZTol}" Foreground="#999999"
                          VerticalAlignment="Center" Margin="10,0,0,0"/>
-              <NumericUpDown Value="{Binding CoordZTolerance}" Increment="5" Width="110"
+              <NumericUpDown Value="{Binding CoordZToleranceValue}" Increment="5" Width="110"
                              FormatString="0.###" Minimum="0"
                              ToolTip.Tip="{StaticResource str.Tip.TP.LibZTol}"/>
             </StackPanel>
@@ -1253,7 +1253,7 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="{StaticResource str.TP.SeeThroughPierce}" Foreground="#999999"
                        VerticalAlignment="Center"/>
-            <NumericUpDown Value="{Binding SeeThroughPierce}" Minimum="1" Maximum="10"
+            <NumericUpDown Value="{Binding SeeThroughPierceValue}" Minimum="1" Maximum="10"
                            Increment="1" Width="130" Padding="4,2"
                            ToolTip.Tip="{StaticResource str.Tip.TP.SeeThroughPierce}"/>
           </StackPanel>

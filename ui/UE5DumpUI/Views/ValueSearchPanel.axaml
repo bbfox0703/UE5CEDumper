@@ -206,7 +206,7 @@
                  page is ever serialized/rendered. Default stays 50k (a broad scan
                  shouldn't collect a million by default; the truncation note tells
                  the user to raise it). -->
-            <NumericUpDown Value="{Binding MaxResults}"
+            <NumericUpDown Value="{Binding MaxResultsValue}"
                            Minimum="100" Maximum="1000000" Increment="10000"
                            ToolTip.Tip="{StaticResource str.Tip.VS.MaxResults}"
                            Width="170" FontSize="12"

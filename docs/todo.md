@@ -3024,7 +3024,7 @@ this entire finding.
 > fixing the two sites named here** — two were found by running two unrelated register rows, which is
 > a poor way to establish a blast radius.
 
-### ⬜ NEW DEFECT 2026-08-20 `[SNAPINTERVAL-2026-08-20]` — a below-minimum auto-snapshot Interval blanks the field and raises an unhandled cast exception
+### ✅ FIXED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 
 *Found while running L6's `X5` auto-snapshot clause. **LOW** — cosmetic-plus: nothing is lost and the
 loop keeps working, but the user is shown a raw .NET exception and two controls go dead.*
@@ -3062,6 +3062,98 @@ verification pass.**
 
 ⚠ **Do not "fix" it by widening the minimum or by hiding the validation line** — the floor is right
 and the message is the only thing that currently reveals the blank state.
+
+
+**FIXED 2026-08-21.** The report was one control on one panel; the shape turned out to be the
+**control's**, and a sweep found **18 NumericUpDowns in the app — every one of them carried it**.
+All 18 are fixed.
+
+**Cause, measured rather than reasoned.** A throwaway probe run through the real test host
+(deleted afterwards) established four facts against Avalonia 12.1.1:
+
+| probe | result |
+|---|---|
+| `NumericUpDown.ValueProperty.PropertyType` | `System.Nullable\`1[System.Decimal]` |
+| any `bool` property to suppress the null | **none exists** — no `IsNullable`/`AllowNull` on the surface |
+| `ClipValueToMinMax` default | **`false`** |
+| `SyncTextAndValueProperties(true, "")` | `Value` → **`null`**, under *both* clip settings |
+
+So clearing the box drives `Value` to `null` unconditionally, and binding that at a non-nullable
+`int`/`double` is what printed
+`System.InvalidCastException: Could not convert '(null)' (null) to System.Int32` in a validation
+line while the field sat blank and the loop kept running at a value the screen no longer named.
+
+⚠ **It is specific to COMPILED bindings**, which this app enables globally
+(`AvaloniaUseCompiledBindingsByDefault`, and every panel sets `x:DataType`). A reflection
+`new Binding(...)` over the same property pair was measured to swallow the null silently and recover
+on the next keystroke — so **a probe built on reflection bindings reports "no defect here" and is
+wrong**. Do not re-check this that way.
+
+**Two other repairs were tried and measured to fail** before the one that shipped — recorded so
+nobody re-treads them:
+* `NumericUpDown.TextConverter` — never sees the empty-text path (`''` still yielded `null`) *and*
+  broke ordinary in-range commits (`'120'` stopped committing at all).
+* a binding `Converter` whose `ConvertBack` returns `BindingOperations.DoNothing` — could not be
+  **shown** to work on the compiled path without compiling XAML, and an unverified fix is not a fix.
+
+**The fix.** Each control now binds a `decimal?` façade (`XxxValue`) beside the canonical property,
+so **no conversion is attempted at all**. `Helpers/NumericInput` holds the rules:
+* `Coerce(value, current, min, max)` — for the four Snapshot inputs, which have a real view-model
+  range that a hand-edited `ui-options.json` can also violate. Clamps in **decimal, before the
+  cast** (a control with no `Maximum` holds more than an `int` can), and rounds rather than
+  truncating so `60.7` lands on 61.
+* `KeepCurrentIfEmpty(value, current)` — for the other 14. **Deliberately does not clamp**: their
+  range lives on the control or in an existing guard, and the Teleport coordinate boxes have no
+  range at all, so inventing bounds would silently move a coordinate the user typed.
+* `ToControlValue(double)` — the getter direction. ⚠ **A hazard introduced and caught during the
+  fix**: the generated `(decimal)someDouble` throws `OverflowException` on NaN, either infinity, or
+  any magnitude above ~7.9e28, and these doubles are read out of the running game — the throw would
+  have landed in a property getter during rendering, which is worse than the blank field being
+  fixed. NaN → empty box, infinities saturate. Precision is unchanged: the control's value was
+  always `decimal`, so the ~15-significant-digit narrowing already happened inside the binding.
+
+`null` returns the value in force rather than zero or the floor, because an empty box is **mid-edit**,
+not a request to change anything.
+
+**Pinned by `NumericInputCoercionTests` (37) + `NumericUpDownSurfaceTests` (3).** The surface tests
+pin the three measured Avalonia facts so a version bump that moves any of them fails on the next
+build instead of in front of a user. Three guards earn their keep:
+* `NoNumericUpDownAnywhere_BindsANonNullableProperty` — **app-wide**, not per-panel. Scoping it to
+  SnapshotPanel would have pinned the reported instance and left the other 17 to be rediscovered one
+  bug report at a time. Carries a `seen >= 18` assertion so a glob that matches nothing cannot pass
+  it vacuously.
+* `PanelRanges_MatchTheViewModelClamps` — reads the AXAML `Minimum`/`Maximum` **and** the C#
+  constants and requires agreement, so a control cannot start offering a range the coercion will
+  silently snap.
+* `ToControlValue_HandlesWhatAPlainCastThrowsOn` — asserts `(decimal)v` **does** throw before
+  asserting the helper does not, so the guard is justified rather than cargo-culted.
+
+⭐ **Shown able to fail**, three separate negative controls: reverting one Snapshot binding →
+`Offenders: AutoSnapshotCount`; drifting one AXAML `Maximum` 86400 → 99999 →
+`Expected: 86400 / Actual: 99999`; reverting `CoordX` on a *different* panel →
+`TeleportPanel.axaml: CoordX`.
+
+⚠ **Left alone, deliberately.** Two things the report mentioned are **not** defects: Retention and
+Count greying out is `CanEditAutoSettings` doing its job once the Auto toggle is on (the repro
+commits by clicking that toggle, which starts the loop), and the loop running at 60 s was the
+view-model clamp already working.
+
+⚠ **Still owed a live check.** The unit layer cannot exercise a compiled binding, so the *symptom*
+going away has not been seen on screen. Re-run the `X5` auto-snapshot clause: clear **Interval
+(sec)**, type `30`, click another control — expect the field to show `60` with no validation line.
+
+⚠ **One thing measured but NOT explained.** The report says Tab clamps to 60 while a click-away
+blanks the field, and the probe shows the control's own commit path treats both identically
+(`ClipValueToMinMax=false` ⇒ a below-minimum commit leaves `Value` untouched; `=true` ⇒ it clamps).
+The asymmetry therefore comes from something outside `SyncTextAndValueProperties` and **is still
+unaccounted for**. The fix makes it moot — both paths now land on 60 — but it is not the same thing
+as having explained it, and it should not be written up as though it were.
+
+⚠ **Also noticed, not fixed:** `LiveWalkerPanel.axaml:83` declares `Maximum="60"` with **no
+`Minimum`**, so the spinner accepts a negative auto-refresh interval. Harmless today —
+`OnAutoRefreshIntervalSecChanged` and `AutoRefreshCadence.NormalizeInterval` both floor it — but the
+control disagrees with the view model. Binding `Minimum` to the existing `AutoRefreshMinSec` would
+settle it; not done here because it is a visible behaviour change this pass cannot verify on screen.
 
 ### ✅ FIXED 2026-08-21 `[GRIDRECYCLE-2026-08-21]` — a sorted DataGrid rendered one row's data twice
 

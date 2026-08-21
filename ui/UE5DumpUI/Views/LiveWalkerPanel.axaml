@@ -80,7 +80,7 @@
                     IsVisible="{Binding HasData}"
                     Padding="8,4"
                     ToolTip.Tip="Toggle automatic refresh"/>
-      <NumericUpDown Value="{Binding AutoRefreshIntervalSec}"
+      <NumericUpDown Value="{Binding AutoRefreshIntervalSecValue}"
                      Minimum="{Binding AutoRefreshMinSec}"
                      Maximum="60" Increment="1"
                      IsVisible="{Binding HasData}"

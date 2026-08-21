@@ -59,6 +59,29 @@ public partial class ValueSearchViewModel : ViewModelBase
     [ObservableProperty] private bool   _gameOnly = true;
     [ObservableProperty] private int    _maxResults = 50000;
 
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? (measured: Avalonia 12.1.1), and
+    // clearing the text box drives it to null with no way to opt out at the control. Bound straight
+    // at the non-nullable properties above, a COMPILED binding — which this app uses everywhere —
+    // cannot convert that and paints a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // in a validation line under the control, leaving the field blank while the old value is still
+    // the one in force. Binding a decimal? instead means no conversion is attempted.
+    //
+    // ⚠ These only absorb the empty box; they do not clamp. Range belongs to whoever already states
+    // it (the control's Minimum/Maximum, or a view-model guard such as OnAutoRefreshIntervalSecChanged),
+    // and several of these inputs have no meaningful range at all. See Helpers/NumericInput.cs.
+
+    /// <inheritdoc cref="MaxResults"/>
+    public decimal? MaxResultsValue
+    {
+        get => (decimal)MaxResults;
+        set => MaxResults = NumericInput.KeepCurrentIfEmpty(value, MaxResults);
+    }
+
+    partial void OnMaxResultsChanged(int value) => OnPropertyChanged(nameof(MaxResultsValue));
+
+
     /// <summary>Scan deadline in SECONDS (the "Timeout" slider, 10–90s). When a
     /// First / Group scan exceeds this wall-clock budget the DLL bails early and
     /// returns whatever matched so far (the status banner notes the truncation).

@@ -354,6 +354,115 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Cursor teleport ────────────────────────────────────────────────
     [ObservableProperty] private double _zOffset = 100.0;
+
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? (measured: Avalonia 12.1.1), and
+    // clearing the text box drives it to null with no way to opt out at the control. Bound straight
+    // at the non-nullable properties above, a COMPILED binding — which this app uses everywhere —
+    // cannot convert that and paints a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // in a validation line under the control, leaving the field blank while the old value is still
+    // the one in force. Binding a decimal? instead means no conversion is attempted.
+    //
+    // ⚠ These only absorb the empty box; they do not clamp. Range belongs to whoever already states
+    // it (the control's Minimum/Maximum, or a view-model guard such as OnAutoRefreshIntervalSecChanged),
+    // and several of these inputs have no meaningful range at all. See Helpers/NumericInput.cs.
+
+    /// <inheritdoc cref="ZOffset"/>
+    public decimal? ZOffsetValue
+    {
+        get => NumericInput.ToControlValue(ZOffset);
+        set => ZOffset = NumericInput.KeepCurrentIfEmpty(value, ZOffset);
+    }
+
+    partial void OnZOffsetChanged(double value) => OnPropertyChanged(nameof(ZOffsetValue));
+
+    /// <inheritdoc cref="TraceChannel"/>
+    public decimal? TraceChannelValue
+    {
+        get => (decimal)TraceChannel;
+        set => TraceChannel = NumericInput.KeepCurrentIfEmpty(value, TraceChannel);
+    }
+
+    partial void OnTraceChannelChanged(int value) => OnPropertyChanged(nameof(TraceChannelValue));
+
+    /// <inheritdoc cref="RelativeDistance"/>
+    public decimal? RelativeDistanceValue
+    {
+        get => NumericInput.ToControlValue(RelativeDistance);
+        set => RelativeDistance = NumericInput.KeepCurrentIfEmpty(value, RelativeDistance);
+    }
+
+    partial void OnRelativeDistanceChanged(double value) => OnPropertyChanged(nameof(RelativeDistanceValue));
+
+    /// <inheritdoc cref="CoordX"/>
+    public decimal? CoordXValue
+    {
+        get => NumericInput.ToControlValue(CoordX);
+        set => CoordX = NumericInput.KeepCurrentIfEmpty(value, CoordX);
+    }
+
+    partial void OnCoordXChanged(double value) => OnPropertyChanged(nameof(CoordXValue));
+
+    /// <inheritdoc cref="CoordY"/>
+    public decimal? CoordYValue
+    {
+        get => NumericInput.ToControlValue(CoordY);
+        set => CoordY = NumericInput.KeepCurrentIfEmpty(value, CoordY);
+    }
+
+    partial void OnCoordYChanged(double value) => OnPropertyChanged(nameof(CoordYValue));
+
+    /// <inheritdoc cref="CoordZ"/>
+    public decimal? CoordZValue
+    {
+        get => NumericInput.ToControlValue(CoordZ);
+        set => CoordZ = NumericInput.KeepCurrentIfEmpty(value, CoordZ);
+    }
+
+    partial void OnCoordZChanged(double value) => OnPropertyChanged(nameof(CoordZValue));
+
+    /// <inheritdoc cref="CoordPitch"/>
+    public decimal? CoordPitchValue
+    {
+        get => NumericInput.ToControlValue(CoordPitch);
+        set => CoordPitch = NumericInput.KeepCurrentIfEmpty(value, CoordPitch);
+    }
+
+    partial void OnCoordPitchChanged(double value) => OnPropertyChanged(nameof(CoordPitchValue));
+
+    /// <inheritdoc cref="CoordYaw"/>
+    public decimal? CoordYawValue
+    {
+        get => NumericInput.ToControlValue(CoordYaw);
+        set => CoordYaw = NumericInput.KeepCurrentIfEmpty(value, CoordYaw);
+    }
+
+    partial void OnCoordYawChanged(double value) => OnPropertyChanged(nameof(CoordYawValue));
+
+    /// <inheritdoc cref="CoordRoll"/>
+    public decimal? CoordRollValue
+    {
+        get => NumericInput.ToControlValue(CoordRoll);
+        set => CoordRoll = NumericInput.KeepCurrentIfEmpty(value, CoordRoll);
+    }
+
+    partial void OnCoordRollChanged(double value) => OnPropertyChanged(nameof(CoordRollValue));
+
+    /// <inheritdoc cref="CoordZTolerance"/>
+    public decimal? CoordZToleranceValue
+    {
+        get => NumericInput.ToControlValue(CoordZTolerance);
+        set => CoordZTolerance = NumericInput.KeepCurrentIfEmpty(value, CoordZTolerance);
+    }
+
+    /// <inheritdoc cref="SeeThroughPierce"/>
+    public decimal? SeeThroughPierceValue
+    {
+        get => (decimal)SeeThroughPierce;
+        set => SeeThroughPierce = NumericInput.KeepCurrentIfEmpty(value, SeeThroughPierce);
+    }
+
     [ObservableProperty] private int _traceChannel;      // ETraceTypeQuery byte
     [ObservableProperty] private bool _fallbackToCenter = true;
 
@@ -2577,6 +2686,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// takes effect on the next See-through ON).</summary>
     partial void OnSeeThroughPierceChanged(int value)
     {
+        OnPropertyChanged(nameof(SeeThroughPierceValue));
         if (_seeThroughActive && IsConnected)
             _ = PushSeeThroughPierceAsync(value);
     }
@@ -3117,6 +3227,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedCoordChanged(CoordRow? value)
     {
+        OnPropertyChanged(nameof(CoordZToleranceValue));
         // Suppressed while ApplyCoordFilter restores the selection onto a rebuilt row —
         // that is not the user choosing a row, and treating it as one wiped an
         // in-progress edit on every filter keystroke. (B20)

@@ -117,6 +117,19 @@ public partial class SnapshotViewModel : ViewModelBase
     /// the next (the game-impact breather + the interval floor).</summary>
     private const int AutoSnapshotMinIntervalSec = 60;
 
+    // Ranges for the four NumericUpDown inputs on this panel. These MUST equal the
+    // Minimum/Maximum written on the controls in SnapshotPanel.axaml — the coercion below
+    // is what the user actually gets, so a control that allows more than the view model
+    // accepts would silently snap their input. SnapshotIntervalCoercionTests reads both
+    // files and fails on any disagreement, so the pair cannot drift apart unnoticed.
+    private const int AutoSnapshotMaxIntervalSec  = 86400;   // 24 h
+    private const int AutoSnapshotMinCount        = 1;
+    private const int AutoSnapshotMaxCount        = 10000;
+    private const int SnapshotMinFreePercentFloor = 0;
+    private const int SnapshotMinFreePercentCeil  = 99;
+    private const int SnapshotMinFreeGbFloor      = 0;
+    private const int SnapshotMinFreeGbCeil       = 100000;
+
     private CancellationTokenSource? _autoCts;   // auto-loop lifetime
     private Task? _autoLoopTask;
 
@@ -134,14 +147,78 @@ public partial class SnapshotViewModel : ViewModelBase
     /// already running (to stop).</summary>
     public bool CanToggleAuto => AutoSnapshotEnabled || _engineState != null;
 
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal?, and an emptied box drives it
+    // to null. Bound straight at the int properties above, a compiled binding cannot convert
+    // that and shows the user a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // while the field sits blank — with the auto-capture loop still running at a value the
+    // screen no longer names. These four decimal? properties are what the AXAML binds, so no
+    // conversion is attempted and NumericInput.Coerce decides what an empty or out-of-range
+    // box means. Rationale and the two rejected alternatives: Helpers/NumericInput.cs.
+    //
+    // Each getter widens the int (always representable); each setter coerces and assigns back
+    // through the observable property, so persistence and the auto loop keep reading one value.
+
+    public decimal? AutoSnapshotIntervalSecValue
+    {
+        get => AutoSnapshotIntervalSec;
+        set => AutoSnapshotIntervalSec = NumericInput.Coerce(
+            value, AutoSnapshotIntervalSec, AutoSnapshotMinIntervalSec, AutoSnapshotMaxIntervalSec);
+    }
+
+    public decimal? AutoSnapshotCountValue
+    {
+        get => AutoSnapshotCount;
+        set => AutoSnapshotCount = NumericInput.Coerce(
+            value, AutoSnapshotCount, AutoSnapshotMinCount, AutoSnapshotMaxCount);
+    }
+
+    public decimal? SnapshotMinFreePercentValue
+    {
+        get => SnapshotMinFreePercent;
+        set => SnapshotMinFreePercent = NumericInput.Coerce(
+            value, SnapshotMinFreePercent, SnapshotMinFreePercentFloor, SnapshotMinFreePercentCeil);
+    }
+
+    public decimal? SnapshotMinFreeGbValue
+    {
+        get => SnapshotMinFreeGb;
+        set => SnapshotMinFreeGb = NumericInput.Coerce(
+            value, SnapshotMinFreeGb, SnapshotMinFreeGbFloor, SnapshotMinFreeGbCeil);
+    }
+
+    // The int properties stay the canonical ones — settings load, the auto loop and the disk
+    // guard all read them, and none of those paths goes through a façade. So they keep their
+    // own clamps (a hand-edited ui-options.json reaches them directly) and each one re-notifies
+    // its façade, otherwise a programmatic change would leave the control showing the old number.
+
     partial void OnAutoSnapshotIntervalSecChanged(int value)
     {
-        if (value < AutoSnapshotMinIntervalSec) AutoSnapshotIntervalSec = AutoSnapshotMinIntervalSec;
+        if (value < AutoSnapshotMinIntervalSec) { AutoSnapshotIntervalSec = AutoSnapshotMinIntervalSec; return; }
+        if (value > AutoSnapshotMaxIntervalSec) { AutoSnapshotIntervalSec = AutoSnapshotMaxIntervalSec; return; }
+        OnPropertyChanged(nameof(AutoSnapshotIntervalSecValue));
     }
 
     partial void OnAutoSnapshotCountChanged(int value)
     {
-        if (value < 1) AutoSnapshotCount = 1;
+        if (value < AutoSnapshotMinCount) { AutoSnapshotCount = AutoSnapshotMinCount; return; }
+        if (value > AutoSnapshotMaxCount) { AutoSnapshotCount = AutoSnapshotMaxCount; return; }
+        OnPropertyChanged(nameof(AutoSnapshotCountValue));
+    }
+
+    partial void OnSnapshotMinFreePercentChanged(int value)
+    {
+        if (value < SnapshotMinFreePercentFloor) { SnapshotMinFreePercent = SnapshotMinFreePercentFloor; return; }
+        if (value > SnapshotMinFreePercentCeil) { SnapshotMinFreePercent = SnapshotMinFreePercentCeil; return; }
+        OnPropertyChanged(nameof(SnapshotMinFreePercentValue));
+    }
+
+    partial void OnSnapshotMinFreeGbChanged(int value)
+    {
+        if (value < SnapshotMinFreeGbFloor) { SnapshotMinFreeGb = SnapshotMinFreeGbFloor; return; }
+        if (value > SnapshotMinFreeGbCeil) { SnapshotMinFreeGb = SnapshotMinFreeGbCeil; return; }
+        OnPropertyChanged(nameof(SnapshotMinFreeGbValue));
     }
 
     partial void OnAutoSnapshotEnabledChanged(bool value)
