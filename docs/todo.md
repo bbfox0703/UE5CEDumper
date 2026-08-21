@@ -7005,10 +7005,35 @@ controls); the WIRING is not** — no target compiles `Aura.cpp`.*
 > `array_data_addr 0x243AD7658E0 + 2 × 4B`, i.e. element **2** of the live array. So the `[2]` is
 > describing the byte the scanner actually matched.
 >
-> **Step 6 — PASS, and non-vacuously.** A plain (deep OFF) scan for `100` gives 11 candidates —
-> `field_name` values like `Parameters.HierarchicalBias`, no brackets — and a refine returns
-> **remaining 11**. `scan-0.log` gains **0** `Refine re-anchor:` lines. The refine is *shown* to have
-> run over real candidates, so the absent line is a decision and not an empty pass.
+> **Step 6 — ⚠ THE 2026-08-20 PASS WAS VACUOUS. Re-run 2026-08-21, now genuine.**
+> `[A11-LOGPATH-2026-08-21]`
+>
+> `Refine re-anchor:` is emitted from `Aura.cpp`, whose `#define LOG_CAT "OARR"` Sein maps to
+> **`LF_Offsets`** (`Sein.cpp`: `{ "OARR", 4, LF_Offsets }`). It lands in **`offsets-0.log`**. Both
+> the rig and **this row's own steps 2 and 3** named `scan-0.log`, where the line can never appear —
+> so "expect NO re-anchor line" passed no matter what the code did.
+>
+> ⭐⭐ **The old write-up argued explicitly that it was non-vacuous**, on the grounds that the refine
+> was shown to have run over 11 real candidates. That reasoning is sound and irrelevant: it
+> controlled for the **stimulus** happening, not for the **detector** being able to see anything.
+> A grep of the wrong file returns zero for both "the code did not do it" and "I am reading the
+> wrong channel", and no amount of evidence about the stimulus separates them.
+>
+> The rig now **proves the channel first** — it aborts unless `offsets-0.log` actually carries an
+> `[OARR]` line — and only then treats an absence as an absence:
+> ```
+> detector OK: offsets-0.log carries [OARR] traffic, so an absent marker is a real absence
+> plain scan (deep OFF) session=2 candidates=11 -> refine ok=True remaining=11
+> 'Refine re-anchor:' lines since the Direct scan began: 0   <-- must be 0
+> ```
+> **Step 6 PASS** (DumperTest, dist **3308**). Step 1 unchanged and re-confirmed: 5 candidates, 2
+> carrying `Arr_Int[2]`.
+>
+> ▶ **Generalise this.** Any register step whose PASS is "X does not appear" needs the channel shown
+> to carry X's traffic, not just the action shown to have run. `docs/log-verification-checklist.md`
+> already says to grep by FORMAT STRING; the missing half is to grep the file the format string's
+> CATEGORY actually routes to — `Sein.cpp`'s table is the authority, and four categories
+> (`SEETHRU`/`Grausam`/`SENSE`/`PROXY`) fall through to `init-0.log` rather than anywhere obvious.
 >
 > ⚠ **Steps 2–5 remain open and were not silently skipped.** All four require the container to
 > **change size in play** — add entries until it reallocs, remove one before the candidate's index,
@@ -7022,7 +7047,7 @@ controls); the WIRING is not** — no target compiles `Aura.cpp`.*
 > reads as "the index is missing".
 > |---|---|---|---|
 > | 1 | Value Search a known value that lives in a container element (a `TArray<FStruct>` field, or a `TMap` value). First Scan. | the row appears with a `[i]` element index | establishes the candidate IS a container element, not a direct field |
-> | 2 ⚠ THE ONE THAT MATTERS | in game, ADD entries to that container until it must grow (pick up items, spawn enemies), then Next Scan with the same value | the candidate **SURVIVES**, and `scan-0.log` has `Refine re-anchor: N container element(s) repointed after a realloc` | before 3253 a growth realloc left every element address stale and they were lost outright. A surviving candidate with **no** re-anchor line means the buffer never moved — the container had slack, so this run did not test the repoint |
+> | 2 ⚠ THE ONE THAT MATTERS | in game, ADD entries to that container until it must grow (pick up items, spawn enemies), then Next Scan with the same value | the candidate **SURVIVES**, and `offsets-0.log` has `Refine re-anchor: N container element(s) repointed after a realloc` | before 3253 a growth realloc left every element address stale and they were lost outright. A surviving candidate with **no** re-anchor line means the buffer never moved — the container had slack, so this run did not test the repoint |
 > | 3 | now REMOVE an element that sits BEFORE the candidate's index, then Next Scan | the candidate is **dropped**, and the log's `dropped` count goes up | this is the silent-wrong-value case: the tail shifts down one slot in place, so the old address reads cleanly and returns the neighbour's value |
 > | 4 | for a `TSet`/`TMap`: remove the entry the candidate points AT, then Next Scan | dropped | the allocation bit is the only witness — a freed sparse slot is refilled at the identical address |
 > | 5 ⚠ NON-REGRESSION, do not skip | scan a container value, then APPEND to that container without forcing a realloc (add one entry to a list that has slack), Next Scan | the candidate **survives** | the naive `{dataPtr,count}` rule drops these. If they vanish, the asymmetric rule was lost and this is a REGRESSION, not a fix |

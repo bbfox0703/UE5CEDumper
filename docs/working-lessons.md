@@ -754,6 +754,30 @@ and reddens under the same negative control.
 Lesson: a test written by copying a sibling theory's predicate inherits that sibling's *unstated
 scope*. Run the control first — a green new test is the least informative outcome available.
 
+
+### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
+
+A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the
+refine was shown to have run over 11 real candidates, so the absent `Refine re-anchor:` line must be
+a decision rather than an empty pass. The reasoning is sound and it is **irrelevant**. The rig was
+grepping `scan-0.log`; `Refine re-anchor:` is emitted from `Aura.cpp`, whose `#define LOG_CAT "OARR"`
+Sein routes to **`offsets-0.log`**. The line could not have appeared in the file being read no matter
+what the code did — and the row's own step text named the same wrong file, so the rig inherited it.
+
+⭐ **The write-up controlled for the STIMULUS and not for the DETECTOR.** A grep of the wrong file
+returns zero for both "the code did not do it" and "I am reading the wrong channel", and no amount
+of evidence about the stimulus separates those.
+
+The fix is one assertion, and it belongs in every absence-shaped check: **before treating an absence
+as evidence, prove the channel carries that category's traffic at all.** The rig now aborts unless
+`offsets-0.log` contains an `[OARR]` line.
+
+⚠ Concretely, for this repo: `docs/log-verification-checklist.md` already says grep by FORMAT STRING
+rather than line number. The missing half is that a format string tells you nothing about WHICH FILE
+it lands in — `Sein.cpp`'s category table is the only authority, and four categories
+(`SEETHRU` / `Grausam` / `SENSE` / `PROXY`) fall through to `init-0.log` rather than to a file named
+after them.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log
