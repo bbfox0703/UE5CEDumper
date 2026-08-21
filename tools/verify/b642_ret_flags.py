@@ -57,6 +57,9 @@ def main():
     a = ap.parse_args()
 
     violations, skipped, checked, with_out = [], 0, 0, 0
+    # Vacuity guards: a clean sweep means nothing if only one branch ever ran, or if every
+    # return happened to sit at offset 0 (where a wrong ret_offset would still compare equal).
+    branch_b, branch_c, nonzero_ret = 0, 0, 0
     per_class = {}
 
     with PipeClient() as c:
@@ -125,13 +128,20 @@ def main():
                     continue
 
                 if ro != VOID:
+                    branch_b += 1
+                    if ro != 0:
+                        nonzero_ret += 1
                     # (b)
                     if len(rets) != 1:
                         violations.append(
                             "%s::%s ret_offset=%d but %d param(s) carry ret==true — the two reads "
                             "disagree (this is what a pre-fix DLL does on EVERY non-void function)"
                             % (cname, name, ro, len(rets)))
-                    elif int(rets[0].get("offset") or -1) != ro:
+                    # ⚠ NOT `.get("offset") or -1`: offset 0 is legitimate and extremely common
+                    # (every no-arg getter returns at 0), and `0 or -1` is -1. That bug
+                    # produced 100+ confident false violations on its first run.
+                    elif (rets[0].get("offset") if rets[0].get("offset") is not None
+                          else -1) != ro:
                         violations.append(
                             "%s::%s ret_offset=%d but the ret param sits at %s"
                             % (cname, name, ro, rets[0].get("offset")))
@@ -139,6 +149,7 @@ def main():
                         violations.append("%s::%s ret_offset=%d but the function-level ret string "
                                           "is empty" % (cname, name, ro))
                 else:
+                    branch_c += 1
                     # (c)
                     if rets:
                         violations.append("%s::%s is void (ret_offset=0xFFFF) but %d param(s) "
@@ -151,6 +162,13 @@ def main():
     say("checked %d function(s); skipped %d by the sanity gate (%.1f%%)"
         % (checked, skipped, 100.0 * skipped / max(checked + skipped, 1)))
     say("functions with at least one out param: %d" % with_out)
+    say("branch (b) non-void: %d   branch (c) void: %d   of those, ret_offset != 0: %d"
+        % (branch_b, branch_c, nonzero_ret))
+    if branch_b == 0 or branch_c == 0:
+        say("   ⚠ FLAG: one branch never ran, so the sweep only exercised half the rule.")
+    if nonzero_ret == 0 and branch_b:
+        say("   ⚠ FLAG: every non-void return sits at offset 0, where a WRONG ret_offset would "
+            "still compare equal — the offset assertion is vacuous on this host.")
     if with_out == 0:
         say("   ⚠ FLAG (not a failure): zero out-params across the whole host. CPF_OutParm (0x100) "
             "is also in the low 32 bits, so this is the same-root-cause smell b642 is about.")

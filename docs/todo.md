@@ -13880,8 +13880,52 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
 - **Static-native PE fast path** (build 636) latency vs game-thread dispatch on an active
   session; confirm stateful UFunctions still route through dispatch (don't fall into the
   fast path by accident).
-- **FPROPERTY_FLAGS offset fix** (build 642): sweep the 12+ tested games' Class Structure
-  Return columns + confirm baked PARAMS no longer include ReturnValue as an input.
+- ✅ **FPROPERTY_FLAGS offset fix** (build 642) — **PASS 2026-08-21 `[B642-RETFLAGS-2026-08-21]`,
+  and the acceptance was RE-SCOPED, deliberately.**
+
+  ⚠ **The original wording is not runnable as written**: "sweep the 12+ tested games' Class
+  Structure Return columns". `ClassStructPanel.axaml` contains the string "Return" **zero** times —
+  it has no Functions section and no Return column at all. The only Return column in the app is
+  `LiveWalkerPanel.axaml:890`. A tester following this row would have gone looking for a control
+  that does not exist and either given up or, worse, "checked" the wrong grid.
+
+  Re-scoped to the wire, where the claim actually lives: `py tools/verify/b642_ret_flags.py`.
+
+  | host | functions checked | skipped by the sanity gate | with out-params | violations |
+  |---|---|---|---|---|
+  | DumperTest **Shipping** | 3,708 | 184 (4.7 %) | 2,825 | **0** |
+  | DumperTest **Development** | 3,721 | 185 (4.7 %) | 2,852 | **0** |
+
+  ⭐ **The design is TWO INDEPENDENT READS.** `ret_offset` comes from `UFunction::ReturnValueOffset`;
+  `params[].ret` comes from the `CPF_ReturnParm` bit off `PropertyFlags`. They must agree on every
+  function, and a disagreement needs no reference build to detect. **7,429 functions, zero
+  disagreements.**
+
+  ⚠ **This is a cross-check, NOT a controlled experiment, and the row must say so.** No pre-fix
+  binary exists to run here, so it was never shown able to fail on this machine. What can be said
+  precisely: a pre-fix DLL, which never set the per-param flag, would violate assertion (b) on
+  every one of the 2,393 non-void functions.
+
+  ⭐ **Non-vacuity is measured, not assumed.** Both branches ran (2,393 non-void / 1,315 void), and
+  **1,904 of the non-void returns sit at a NON-ZERO offset** — so the `offset == ret_offset`
+  comparison is doing real work rather than trivially matching zero on everything.
+
+  ⚠ Two guards exist because each would otherwise turn a broken probe into a clean sweep: a
+  function with `num_parms==0 && parms_size==0 && ret_offset==0xFFFF` is SKIPPED, because that is
+  also exactly what a failed `funcFlagsOff` probe looks like (4.7 % here — a high rate would be the
+  finding); and zero out-params across a host is FLAGGED, because `CPF_OutParm` (0x100) is in the
+  same low 32 bits (2,825 here, so it does not fire).
+
+  ⚠ `get_offsets` is recorded for PROVENANCE only (`use_fproperty=true, flags=56, elemsize=52`).
+  **Do not assert `flags == elemsize + 4`** — that holds by construction in all three writers, so
+  it can never fail and would be a tautology wearing a check's clothes.
+
+  ⚠⚠ **The rig's FIRST run reported 100+ confident violations that were all its own bug**:
+  `int(p.get("offset") or -1)` turns a legitimate offset of **0** into −1, and offset 0 is the
+  commonest case there is (every no-arg getter returns at 0). Python's falsy zero, in a comparison
+  whose whole job is to compare offsets. Fixed and re-run.
+
+  ▶ **The 繁中 mirror's row 4 carries the same unrunnable wording** and has been corrected there too.
 - **Verify Return Value diagnostic** (build 637/644): pointer-return shows `0x` prefix;
   FString-return shows the "see After: dump above" hint.
 - **`walk_functions_batch` follow-up** — Effort: **S**. Sister to `walk_class_batch`;

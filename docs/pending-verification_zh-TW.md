@@ -565,7 +565,7 @@
 | 1 | 在會重生 NPC 的遊戲上開 Property freeze (Route B)，觀察一段時間。 | tick 對 FPS 的影響可接受、重生時有重新掃描、換場景後 vtable liveness 守衛擋得住、多腳本並存不打架。 |
 | 2 | 在 ES2 (UE5.5) 與 Geri (UE4.27) 各做一次 instance invoke。 | log 出現 `GameThreadDispatch: validation OK — hook fired N times`，以前 timeout 回 `-5` 的 invoke 現在會成功。 |
 | 3 | 在活躍 session 比較 static-native PE fast path 與 game-thread dispatch 的延遲。 | 有狀態的 UFunction 仍走 dispatch，不會誤落進 fast path。 |
-| 4 | 掃過 12 款以上已測遊戲的 Class Structure Return 欄位。 | baked PARAMS 不再把 ReturnValue 當成輸入參數。 |
+| 4 | ✅ **已完成 2026-08-21，但驗收方式改了**。⚠ 原本寫的做不到：`ClassStructPanel.axaml` 裡「Return」出現 **0 次** —— 那個面板根本沒有 Functions 區塊、沒有 Return 欄；全 app 只有 `LiveWalkerPanel.axaml:890` 有。改成在 wire 上驗：`py tools/verify/b642_ret_flags.py`，DumperTest Shipping + Development 共 **7,429** 個 function、**0** 個違規。 | |
 | 5 | 各做一次 pointer-return 與 FString-return 的 invoke。 | pointer 回傳顯示 `0x` 前綴；FString 回傳顯示 "see After: dump above" 提示。 |
 
 ### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
