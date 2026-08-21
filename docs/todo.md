@@ -1843,6 +1843,34 @@ matters is simply "do normal mailbox commands still work".
  Byte-identical script and working teleport. `CmdTeleport` moved to `CeMailboxLayout` but the value is unchanged (8), and the generator tests already assert the emitted text — this is belt-and-braces. |
 | 8 | `AC17` | **C** | **Needs a real mount point.** Mount a fixed volume into a folder (`mountvol`, or Disk Management → Change Drive Letter and Paths → Add → empty NTFS folder), put a leftover proxy under it, then run Proxy Deploy → leftover cleanup → Execute. | The file goes to the Recycle Bin. Before this fix the fixed-drive pre-filter answered about the HOST volume (`DriveInfo` normalizes through `Path.GetPathRoot`), so it always said "Fixed" for mount-point paths and judged nothing. A removable volume mounted the same way should now be REFUSED. |
 
+
+> ### ✅ MB3 STEP 1's CE HALF PASSES 2026-08-21 `[MB3-CE-2026-08-21]` — two real `.CT` row types, and the poller never threw
+>
+> The row wants "any two `.CT` rows that use the mailbox" driven through CE, with `pipe-0.log` /
+> `init-0.log` showing **no `Mailbox: tick threw`** and **no `result=-11`**. Both command families
+> have now been driven from real CE records:
+>
+> | mailbox family | driven by | count |
+> |---|---|---|
+> | `cmd=1` **CMD_INVOKE** | the baked-invoke record (`KismetMathLibrary::MakeTransform`, `[Y10-Y13-CE-2026-08-20]`) | **9** |
+> | `cmd=6` **CMD_LIST_INSTANCES** | the class-wide Freeze records (`[AA2-STEP2-2026-08-21]`, `[FREEZESCOPE-CFG-2026-08-21]`) | **403** (221 + 182) |
+> | `cmd=4` | incidental | 1 |
+>
+> * **`Mailbox: tick threw` — 0 occurrences in EVERY log on this machine**, not just today's.
+> * **`result=-11` — 0 occurrences**, likewise.
+> * `GameThreadDispatch: invoke completed result=0` on the invoke side; the poller logged
+>   `polling thread started (poll=1ms)` and kept serving across hundreds of commands.
+>
+> ⚠ **Substitution named rather than hidden.** The row's example pair is "Teleport save/recall **and**
+> an Invoke". Teleport was **not** the second family — Freeze/LIST_INSTANCES was. Teleport needs a
+> **controllable pawn**, which DumperTest does not have, and that same requirement is what still
+> blocks `AF25`'s "run one" below. What the row is actually asserting — that the restructured poller
+> survives real `.CT` traffic without throwing — is tested by two *distinct* command families either
+> way; a third would not add a new kind of evidence, only a third data point.
+>
+> **Step 2 remains ⛔ by construction**: it needs a handler that actually throws, and there is still no
+> way to force one on demand.
+
 ### ⬜ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
 
 *Referenced from `dll/src/Radar.h` (the `kMaxGroupSessionLeaves` block) and from AB23's register row,
@@ -3190,7 +3218,7 @@ incremental `cmake --build` after editing only a `.h` is not.
 > | FL1/FL2 | plant a stale `UE5CEDumper.<Machine>.json.tmp.99999` (mtime > 1 h old) in `%LOCALAPPDATA%\UE5CEDumper\`, then run any scan | after the scan the planted file is gone and `scan-0.log` has `removed 1 abandoned staging file(s) older than 1h`; the real cache is intact and a **fresh** temp from a live write is never touched | the age guard is what makes the sweep safe against the UI writing its own `<file>.tmp.<pid>` concurrently |
 > | FL1 | ordinary regression: run two scans of the same game back to back | `HintCache: Saved results ... scan #2` and the cache file parses; **no** `staged write is incomplete` line | the refuse-on-failure gate must not refuse a legitimate write — this is the negative control for the production path, since the unit test only covers the predicate |
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L3 (T1b): AD10 / AD12 / AD13 / AD15 / AD16 / AD18
+### ✅ VERIFIED 2026-08-21 — audit L3 (T1b): AD10 / AD12 / AD13 / AD15 / AD16 / AD18 — all three steps settled
 
 *Most of L3 needs NO live check and is already machine-enforced offline: **AD12/AD13/AD15/AD16**'s
 corrected geometry is now asserted by a compile-time `static_assert` AND by
@@ -3200,6 +3228,32 @@ corrected geometry is now asserted by a compile-time `static_assert` AND by
 what a running game can settle that a checker cannot.*
 
 | # | 做什麼 | 預期 |
+
+> ### ✅ STEP 2 PASSES 2026-08-21 `[L3-STEP2-CE-2026-08-21]` — the AOB really is in the pushed CE record
+>
+> The block above correctly refused to call this done off the **clipboard** export, which carries no
+> AOB by design. This is the other route: **System tab → GWorld card → `SYM`**, with CE + the
+> AOBMaker plugin connected. The UI reported
+> `Registered CE symbol 'gworld_addr' — it re-scans on enable, so it survives a game restart.`
+>
+> **Checked in CE itself, not from the UI's word.** Reading the pushed record back with
+> `getAddressList().getMemoryRecord(0).Script` (2,063 chars) shows a genuine AOB-scan export:
+> ```lua
+> local AOBs = {
+>   {name='GWorld → gworld_addr',
+>    aob='48 8B 1D ?? ?? ?? ?? 48 85 ?? 74 ?? 41 B0 01 33 ?? ?? 8B ?? E8',
+>    pos=3, aoblen=7, symbol='gworld_addr'},
+> }
+> …
+> local aob_addr_str = AOBScanModuleUE(module_name, entry.aob)
+> …  registerSymbol(entry.symbol, final_addr)
+> ```
+> The triple matches what `[V11-SYM-2026-08-20]`'s log line reported (`pos=3, len=7`), so the AOB the
+> UI *says* it sent is the AOB that *arrived*. **"Unchanged from before" — PASS.**
+>
+> ⇒ **With this, all of L3 is settled**: step 1's condition is never met (`[AD-PATTERNS-2026-08-20]`,
+> swept), step 3's has never fired (437 files, 0 hits), and step 2 now passes in CE.
+
 ### ⛔ L3 step 1's CONDITION IS NEVER MET — swept 2026-08-20 `[AD-PATTERNS-2026-08-20]`, no game needed
 
 *Fully headless: 170 `scan-*.log` files across **25** processes already on this machine, plus one
@@ -4755,7 +4809,7 @@ cap". `list_classes` is pipe-JSON, so no mailbox-contract implication. Pinned by
 
 -----
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path
+### ✅ VERIFIED 2026-08-21 `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path — seen in a real CE console
 
 *Was: the `.CT` logged only `DLL path: …`, so a stale/old `UE5Dumper.dll` resolved silently (the Feb
 build in CE's install folder is ~0.5 MB vs the current ~2.7 MB). The build stamp is not a C ABI
@@ -4800,6 +4854,39 @@ a LOW-priority readout.*
 > | 2 | point the `.CT` at the ~0.5 MB Feb DLL vs the ~2.7 MB dist DLL | they read `0.5 MB` vs `2.7 MB` distinctly | the size is what catches the stale build a silent path never showed |
 
 -----
+
+
+> ### ✅ SEEN IN A REAL CE CONSOLE 2026-08-21 `[STALEDLL-B-CE-2026-08-21]` — both placements, and the ladder shows it did NOT hit the stale copy
+>
+> The offline rig already executed the two functions; what a CE session adds is that `ue5_log`
+> actually reached the console. It does, in **both** the places the row names:
+> ```
+> [10:04:21] [UE5Dump] DLL_PATH = D:\Github\UE5CEDumper\dist\UE5Dumper.dll  (slot 2, size 2879488 bytes (2.7 MB))
+> [10:04:23] [UE5Dump] DLL path: D:\Github\UE5CEDumper\dist\UE5Dumper.dll
+> [10:04:23] [UE5Dump] DLL size: 2879488 bytes (2.7 MB)
+> ```
+> — the **startup replay** (first line) and **immediately after `DLL path:`** (last two). **2879488 is
+> the real byte count** of `dist/UE5Dumper.dll`, independently hashed earlier today, so the readout is
+> accurate rather than plausible.
+>
+> ⭐ **The resolution ladder printed alongside is the part worth keeping**, because it shows the
+> feature working against the very hazard `[STALEDLL]`(a) describes:
+> ```
+> 2. [FOUND]       folder of CE's last File > Open   - D:\Github\UE5CEDumper\dist\
+> 6. [not reached] Cheat Engine install folder       - C:\Program Files\Cheat Engine\
+> ```
+> Slot 6 is exactly where the ~0.5 MB **February** DLL lives. It was **not reached**, and the size
+> beside the path is what would have made it obvious if it had been.
+>
+> ⚠ **Two things had to be staged, and both are worth knowing before re-running this.**
+> * `ue5_log` echoes to the console **only** under `UE5_DEBUG` — `if (UE5_DEBUG or 0) ~= 0 then
+>   print(msg) end` — while always writing the file log. So a default run prints **nothing** and looks
+>   like the feature is missing. Set `UE5_DEBUG=1` in CE's Lua console first.
+> * The `.CT` **short-circuits on an already-injected process**: *"UE5CEDumper is already loaded and
+>   serving in this process as 'UE5Dumper.dll'. No injection needed"* — and returns **before** the
+>   path/size report. A correct guard, but it means the row cannot be checked against a process that
+>   was injected by `inject.py` first; it needs a **fresh, un-injected** game. That cost two relaunches
+>   here.
 
 ### ✅ CLOSED 2026-08-20 `[PEHOOKONCE-2026-08-18]` — a failed ProcessEvent detection must now be RE-ARMABLE
 
