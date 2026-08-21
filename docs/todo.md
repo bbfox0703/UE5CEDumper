@@ -3562,12 +3562,56 @@ nothing else focused:
   invent a selection on an unrelated row. And this is not vacuous: `0x248` *was* highlighted before
   the refreshes, so selection does happen here — it is now **cleared** rather than **moved to the
   wrong row**, which is exactly what the fix claims.
-* ⬜ **Scroll half — STILL OPEN, and now OBSERVED ON THIS MACHINE rather than only reported.** After
-  the three refreshes the viewport showed `0x17C`–`0x202` while the match at `0x248` sat **below
-  it**, with the header still reading `2 matches`. That upgrades the scroll half from "cause derived
-  from decompiled Avalonia" to "reproduces here", which is the precondition this entry set before
-  anyone patches it. Still do not nudge the scroll index — now that it reproduces, it can be
-  measured.
+* ⬜ **Scroll half — STILL OPEN, but now MEASURED EXACTLY, and the obvious fix is ELIMINATED.**
+
+**The measurement.** DumperTest / `CharacterMovementComponent`, **no filter and no selection** (so
+nothing in the restore path is involved at all), scrolled to a known position, then Refresh pressed
+one press at a time:
+
+| | top visible row |
+|---|---|
+| start | `0x8D CreationMethod` |
+| after Refresh ×1 | `0x8B bIsEditorOnly` |
+| after Refresh ×2 | `0x8A bCanEverAffectNavigation` |
+
+**Exactly one row up per Refresh, cumulative.** That is literally the reported symptom — a match
+sitting as the last visible row falls one row below the viewport after a single Refresh — and it
+means the cause is **not** the restore path competing with anything. It is the in-place row
+replacement itself:
+
+```csharp
+// Same layout — replace in-place (preserves scroll position)
+for (int i = 0; i < newFields.Count; i++) Fields[i] = newFields[i];
+```
+
+⭐ **That comment is wrong**, and measurably so: each assignment is a Remove+Add in the
+`DataGridCollectionView`, and the net effect is one row of upward scroll per pass.
+
+⛔ **A fix was written, live-tested, and REVERTED — do not re-propose it.** The idea was the
+obvious one: capture the top row before the walk with the existing `CaptureViewAnchor`, restore it
+after via `RestoreBookmarkView` (proven bookmark code, not a hand-rolled scroll nudge), arranged as
+a strict single-winner ladder so the selection restore and the viewport restore could never both
+fire. It built, it was unit-pinned with 7 tests including a negative control that correctly reported
+`2 restore channels fired`, and **on screen it changed nothing**: the drift was still
+`0x8D → 0x8B → 0x8A → 0x8A`.
+
+**Why it cannot work, which is the useful part:** the restore ends in
+`grid.ScrollIntoView(anchor, null)`
+([LiveWalkerPanel.axaml.cs:341](ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs:341)), and
+`ScrollIntoView` means **"make this row visible"**, not "put this row at the top". A row that
+drifted from viewport position 0 to position 1 is *still visible*, so the call is a no-op. **Any**
+fix built on `ScrollIntoView` is blind to a drift smaller than the viewport, and that rules out the
+whole anchor-and-restore family for this symptom.
+
+**So the next attempt has to stop the drift at source, not compensate after it.** The candidate is
+to stop replacing row objects and instead mutate the existing ones in place, so the collection never
+changes and there is no Remove+Add to scroll. ⚠ That trades against something real and already
+documented at that call site: the search highlight is painted from `LoadingRow` when a row is
+*realized*, so replacing the row object is currently what repaints it — mutation would need
+`IsSearchMatch` to drive a style instead. Worth doing, not worth guessing at.
+
+**Reproduce it in about two minutes:** Instances → `CharacterMovementComponent` → double-click a row
+→ *Open in Live Walker* → scroll down ~8 notches → note the top row → press **Refresh**.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
 
