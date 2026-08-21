@@ -303,7 +303,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Text = x?.Kind ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -316,7 +316,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Text = x?.Occurrences.ToString() ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -332,7 +332,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                         (x?.WriteCount ?? 0) > 0 ? "#E0A050" : "#808080")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -345,7 +345,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Text = x?.OwnerClassName ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -360,7 +360,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -373,7 +373,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Text = x?.FunctionFullName ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         // AOT-safe sort comparers (audit #5 AF23) — the twin of
         // FunctionPropsDialog's grid, and it carried the same defect: six

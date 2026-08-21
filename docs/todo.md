@@ -2770,6 +2770,36 @@ spot-check rather than a 30-column sweep.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+
+> ### ✅ MAINTAINER VERIFICATION PASS 2026-08-21 `[L10-OWNER-2026-08-21]` — six steps pass, one FAILS and became a defect
+>
+> Run by the maintainer on **Elliot** (`v1.0.0.3264`, 353,074 objects) against the **AOT** build, and
+> handed over as a marked-up copy of the 繁中 checklist plus logs and screenshots. Recorded here
+> because several of these are steps this register had listed as **unrun or no-fixture**.
+>
+> | row | step | result |
+> |---|---|---|
+> | **AF16–AF23** | 1 — Live Funcs `Period`, Detect Stats `✓`/`Offset`, Live Walker `Params` | ✅ |
+> | **AF16–AF23** | 2 — Props dialog + Xref dialog, every header | ❌ → `[GRIDRECYCLE-2026-08-21]`, **fixed**, see below |
+> | **AF16–AF23** | 3 — Class Pivot, Snapshot `Label`/`Size`, **Snapshot Diff `Change`**, Snapshot/SPC `Class`, **Invoke param picker's 4 headers** | ✅ |
+> | **AF7 / AF8** | 1 — Force an `Int8Property` to **-5**, read back via `get_forced_fields` | ✅ |
+> | **AF7 / AF8** | 2 — same field forced to `200` | ✅ **refused**, not written as -56 |
+> | **AF22 / AF12 / AF13** | 1 — Force dialog wording | ✅ |
+> | **AF22 / AF12 / AF13** | 3 — snapshot Group match over 256 fields per slot | ✅ |
+> | **AF22 / AF12 / AF13** | 4 — Value Search per-slot cap 1024, re-run the **snapshot** Group query | ✅ still 256, and it says so |
+> | **AE4–AE7** | 4 — the mutex gate | 💬 *"執行時間太短無法測試"* — the operation finishes too fast to collide with |
+>
+> ⭐ **Three of these close things this register had written off.** `AF16–AF23` step 3 covers exactly
+> the headers the 2026-08-20 handover listed as *"still unclicked: Snapshot Diff's `Change`, the
+> Snapshot list's numeric `Size`, and the Invoke param picker's four headers"* — the last of which
+> was additionally recorded as **no fixture here** because the picker returned zero rows on this
+> machine. On a 353k-object game it returns rows and sorts. Likewise `AF7`'s *"`200` must be REFUSED"*
+> clause was previously *"nowhere evidenced"*, and `AF22` step 4 was **unrun**.
+>
+> ⚠ **AE4–AE7 step 4 is not a pass and is not a failure** — the concurrency gate could not be
+> *reached*, because the operation it guards completes faster than a human can start a second one.
+> That is a fixture problem, not evidence the gate works. It stays open.
+
 ### ⬜ NEW FINDING 2026-08-20 `[CDOSCOPE-2026-08-20]` — `(CDO default)` is EXACT-scoped while Force/Freeze on the same row are DERIVED-scoped
 
 *Found because it misled me into choosing the wrong fixture for `AA12`/`AA13` step 3 — which is
@@ -3032,6 +3062,93 @@ verification pass.**
 
 ⚠ **Do not "fix" it by widening the minimum or by hiding the validation line** — the floor is right
 and the message is the only thing that currently reveals the blank state.
+
+### ✅ FIXED 2026-08-21 `[GRIDRECYCLE-2026-08-21]` — a sorted DataGrid rendered one row's data twice
+
+**Reported by the maintainer with screenshots** (`AF16–AF23` step 2). Open Interesting Functions →
+**Props**, click a column header a few times: the grid ends up showing **the same row twice**. The
+screenshots make the shape unmistakable — the header still reads *"2 properties (1 written)"* while
+**both** rows render `read / DropItemLaunchParams_OnDeath / MapProperty`, and the descending sort
+one click earlier was **correct**. So the collection was intact and only the *rendering* was stale.
+
+**Cause.** All six cell templates in that dialog are built in code as
+
+```csharp
+CellTemplate = new FuncDataTemplate<FunctionPropRef>(
+    (x, _) => new TextBlock { Text = x?.AccessSummary ?? "", Foreground = /* from x */ },
+    supportsRecycling: true),
+```
+
+`supportsRecycling: true` tells Avalonia the produced control may be reused for a **different** data
+item *without re-running the factory* — but the factory **bakes the values in at construction** and
+binds nothing. A recycled cell therefore keeps the previous item's text. Sorting reshuffles which
+item lands in which row container, and the stale container renders a duplicate. Descending happened
+to survive because that reshuffle reused containers in an order that masked it.
+
+**Fix.** `supportsRecycling: false` on all **17** such templates, across the four code-built dialogs:
+`FunctionPropsDialog` (6), `PropertyXrefDialog` (6), `ObjectInstancePickerDialog` (4),
+`InvokeParamDialog` (1). These are small, bounded grids, so re-running a factory per row costs
+nothing measurable.
+
+⭐ **The correct pairing already existed in the tree** — `ProcessPickerWindow.cs` bakes its values
+too and correctly passes `supportsRecycling: false`. The four dialogs had drifted from it, which is
+why the fix is "match the sibling", not "invent a rule".
+
+**Pinned by `DataTemplateRecyclingTests`** (new): scans those five files, fails on any
+`supportsRecycling: true`, and separately asserts every `FuncDataTemplate` states the argument
+explicitly so a silent default cannot creep back. It carries two guard-the-guard assertions (all
+five files found, ≥15 templates seen) so it cannot pass vacuously if the code moves.
+⭐ **Shown able to fail**: reintroducing one `true` produced
+`failed … NoFuncDataTemplateClaimsRecycling … Offenders: FunctionPropsDialog.cs:206`.
+
+⚠ **Still owed: `AF16–AF23` step 2 must be re-run on a rebuilt AOT binary.** The fix is unit-pinned
+and the mechanism is understood, but the *symptom* was seen on screen and has not yet been seen to
+go away on screen. Do not mark step 2 ✅ until it has.
+
+### ⬜ NEW DEFECT 2026-08-21 `[LWREFRESH-2026-08-21]` — Live Walker Refresh scrolls one row short and then selects the wrong field
+
+**Reported by the maintainer with screenshots** (`V6 / U8` step 1), on Elliot / `LSPlayerController`.
+
+Type `RemoteRole` into the Live Walker **field search**, focus nothing else, press **Refresh**:
+
+* the header says **`1 matches`**, but the matched row is **not on screen** — the grid stops at
+  `0x720 CachedConnectionPlayerId` and `RemoteRole` appears to sit exactly **one row below** the
+  viewport;
+* pressing Refresh repeatedly, the UI ends up **selecting `0x720 CachedConnectionPlayerId`** — a row
+  that is merely the last visible one, not the match;
+* **`Auto` refresh behaves the same**, so this is not specific to the button.
+
+That combination — a correct match *count* with the wrong row scrolled to *and* selected — points at
+the restore path rather than the search: something is restoring a scroll anchor / selection against
+the rebuilt row list and winning over "scroll to the match". Candidate sites are the
+`CaptureViewAnchor` / `RestoreBookmarkView` / `ScrollToFieldRequested` trio in `LiveWalkerViewModel`
+and the match-stepper around `SearchMatchCount`.
+
+*Not fixed yet — cause not confirmed in source at time of filing. Do not patch this by nudging the
+scroll index by one; the selection landing on the last visible row says the two restores are
+competing, and an off-by-one that also explains the selection has to be found, not assumed.*
+
+### ⬜ NEW DEFECT 2026-08-21 `[LWFILTERREVERT-2026-08-21]` — picking an autocomplete suggestion reverts to what was typed
+
+**Reported by the maintainer with a screenshot** (`V6 / U8` step 1, second half).
+
+In the Live Walker field-search `AutoCompleteBox`: type `re`, the dropdown offers **`RemoteRole`**,
+click it. The box should read `RemoteRole`; it **reverts to `re`** (and the screenshot shows `re`
+*selected/highlighted*, which is the signature of the control's inline auto-completion rewriting the
+text rather than of a plain binding failure).
+
+The box is wired the way CLAUDE.md's keyword-search rule requires —
+`Text="{Binding SearchText, Mode=TwoWay}"`, `PlaceholderText` (not `Watermark`),
+`FilterMode="Contains"`, `ItemsSource="{Binding SearchHistory}"`
+([LiveWalkerPanel.axaml:478](ui/UE5DumpUI/Views/LiveWalkerPanel.axaml:478)) — so the wiring rule
+alone does not explain it, and the fix must not be "add TwoWay", which is already there.
+
+⚠ **The rule makes this wider than one box**: every keyword box in the app is required to behave
+identically, so whatever is wrong here is likely wrong in all of them, and whichever sibling
+*doesn't* revert is the strongest lead to the difference.
+
+*Not fixed yet — cause not confirmed in source at time of filing.*
+
 
 ### ⬜ NEW DEFECT 2026-08-20 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
 

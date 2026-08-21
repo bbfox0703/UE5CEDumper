@@ -776,7 +776,7 @@ public sealed class InvokeParamDialog : Window
                     FontFamily          = new FontFamily("Consolas, Courier New, monospace"),
                     FontSize            = 11,
                 },
-                supportsRecycling: true),
+                supportsRecycling: false),
         });
     }
 

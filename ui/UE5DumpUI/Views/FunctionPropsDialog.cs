@@ -203,7 +203,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.WriteCount ?? 0) > 0 ? "#E0A050" : "#808080")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -216,7 +216,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Text = x?.Occurrences.ToString() ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -231,7 +231,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.IsClassField ?? false) ? "#4EC9B0" : "#808080")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         // Confidence column — only meaningful for native disasm (Path 2); hidden
         // for the exact bytecode path. Low-confidence rows are tinted amber.
@@ -249,7 +249,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.IsLowConfidence ?? false) ? "#E0A050" : "#4EC9B0")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         };
         _grid.Columns.Add(_confCol);
         _grid.Columns.Add(new DataGridTemplateColumn
@@ -263,7 +263,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Text = x?.Name ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -277,7 +277,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Foreground = new SolidColorBrush(Color.Parse("#569CD6")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         // AOT-safe sort comparers (audit #5 AF18). Every column above is a
         // DataGridTemplateColumn — no column-level Binding at all — so nothing roots

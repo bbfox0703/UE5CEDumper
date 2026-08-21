@@ -203,7 +203,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
                     Text = ir?.Index.ToString() ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -216,7 +216,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
                     Text = ir?.Address ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -229,7 +229,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
                     Text = ir?.ClassName ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -242,7 +242,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
                     Text = ir?.Name ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.WireSortComparers(PickerSortComparers);
         _grid.SelectionChanged += (_, _) => _btnUse.IsEnabled = _grid.SelectedItem is InstanceResult;
