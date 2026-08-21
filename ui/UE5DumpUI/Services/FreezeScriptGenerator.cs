@@ -90,7 +90,7 @@ public static class FreezeScriptGenerator
         Line(sb, "local ok, handleOrErr = pcall(freezeProperty, CFG)");
         Line(sb, "if not ok then");
         Line(sb, "  showMessage('[Freeze] freezeProperty error:\\n' .. tostring(handleOrErr))");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "_ue5_freeze_handles[FREEZE_KEY] = handleOrErr");
@@ -103,7 +103,7 @@ public static class FreezeScriptGenerator
         Line(sb, "if not sok then");
         Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
         Line(sb, "  showMessage('[Freeze] start error:\\n' .. tostring(sok2))");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Three outcomes, and an older embedded helper is a FOURTH state that must not

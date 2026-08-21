@@ -106,7 +106,7 @@ public static class PointerQueryScriptGenerator
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
         Line(sb, $"  showMessage('[{tag}] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write. It runs HERE, at chunk level, rather
@@ -178,7 +178,7 @@ public static class PointerQueryScriptGenerator
             // fits (op not resolved / address still 0). Appending it to EVERY reason told a
             // user whose mailbox had timed out to go and play the game.
             Line(sb, $"  showMessage('[{tag}] ' .. tostring(err))");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "  return");
             Line(sb, "end");
             Line(sb);
@@ -191,7 +191,7 @@ public static class PointerQueryScriptGenerator
             Line(sb, "  local mem = allocateMemory(8)");
             Line(sb, "  if not mem or mem == 0 then");
             Line(sb, $"    showMessage('[{tag}] allocateMemory failed')");
-            Line(sb, "    if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
             Line(sb, "    return");
             Line(sb, "  end");
             Line(sb, "  writeQword(mem, addr)");
@@ -213,7 +213,7 @@ public static class PointerQueryScriptGenerator
             // fits (op not resolved / address still 0). Appending it to EVERY reason told a
             // user whose mailbox had timed out to go and play the game.
             Line(sb, $"  showMessage('[{tag}] ' .. tostring(err))");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "  return");
             Line(sb, "end");
             // Reference-counted so a second live "Get GWorld" record keeps the symbol

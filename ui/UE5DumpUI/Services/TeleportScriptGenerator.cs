@@ -102,7 +102,7 @@ public static class TeleportScriptGenerator
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
         Line(sb, "  showMessage('[Teleport] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write. UntickAndReturn even though these
@@ -248,7 +248,7 @@ public static class TeleportScriptGenerator
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
         Line(sb, "  showMessage('[Teleport] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write. UntickAndReturn even though these

@@ -1,3 +1,4 @@
+using System.IO;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -95,6 +96,124 @@ public class CeMailboxBailoutTests
         Assert.True(sawBailout,
             $"{name}: no ENABLE bail-out at all — the harness is not reaching the code it claims to check");
     }
+
+    // ── [FREEZEUNTICK-2026-08-20] the untick must be DEFERRED ────────────────
+    //
+    // Every assertion above checks that a bail-out unticks. None of them could tell an
+    // untick that WORKS from one that silently does nothing — and for two years every one
+    // of them was the latter.
+    //
+    // CE's TMemoryRecord.setActive (memoryrecordunit.pas) runs, in order:
+    //     if state = fActive then exit;                 // (1)
+    //     if processingThread <> nil then exit;         // (2)
+    //     if autoassemble(script, ..., state, ...) then // (3)  <- our [ENABLE] runs HERE
+    //       fActive := state;                           // (4)  <- and only NOW is it true
+    // While the script is running at (3) fActive is still false, so an immediate
+    // `memrec.Active = false` hits (1) with state = fActive = false and returns having done
+    // nothing; (4) then ticks the row anyway. Only a timer that fires after (4) can untick.
+    //
+    // Measured in CE 7.7 before the source was read: a freeze record that bailed out with
+    // "helper not found" applied nothing (the frozen value kept ticking) and still reported
+    // Active=true from CE's own Lua Engine.
+
+    /// <summary>The discriminator: an ENABLE-side untick line must also create the timer.</summary>
+    private static bool IsDeferredUntick(string line)
+        => line.Contains("memrec.Active = false", StringComparison.Ordinal)
+        && line.Contains("createTimer", StringComparison.Ordinal);
+
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void EveryEnableUntick_IsDeferred_NotImmediate(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        var offenders = enable.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Contains("memrec.Active = false", StringComparison.Ordinal))
+            .Where(l => !l.Contains("createTimer", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            name + ": an [ENABLE] block unticks IMMEDIATELY, which CE ignores — see "
+            + "[FREEZEUNTICK-2026-08-20] and CeLuaHygiene.DeferredUntickLua:"
+            + Environment.NewLine + "    " + string.Join(Environment.NewLine + "    ", offenders));
+    }
+
+    /// <summary>
+    /// Guard the guard. If a script's ENABLE block contained no untick at all, the test above
+    /// would pass vacuously — which is exactly the failure mode it exists to catch.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void EveryEnableBlock_HasAtLeastOneDeferredUntick(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        var deferred = enable.Split('\n').Count(l => IsDeferredUntick(l));
+        Assert.True(deferred > 0,
+            name + ": no deferred untick found in [ENABLE] — either the bail-outs lost their "
+            + "untick, or EveryEnableUntick_IsDeferred_NotImmediate is passing vacuously.");
+    }
+
+    /// <summary>
+    /// The emitted line must actually be the shared emitter's, not a hand-rolled copy.
+    /// CLAUDE.md: "Hand-rolling any of these is how build 2743's three defects reached all
+    /// seven copies of the mailbox wait at once." This defect is the same story — 32 copies of
+    /// an untick that never worked.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void EveryDeferredUntick_IsTheSharedEmittersText(string name, string script)
+    {
+        var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+        foreach (var line in EnableBlock(script).Split('\n').Select(l => l.Trim()))
+        {
+            if (!line.Contains("memrec.Active = false", StringComparison.Ordinal)) continue;
+            Assert.True(line == canonical,
+                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua()."
+                + Environment.NewLine + "  emitted:   " + line
+                + Environment.NewLine + "  canonical: " + canonical);
+        }
+    }
+
+
+    /// <summary>
+    /// The Lua rig <c>scripts/tests/untick_bailout_test.lua</c> exercises a COPY of the emitted
+    /// line against a model of CE's activation lifecycle — that is the only place the deferral is
+    /// shown to actually work, since text assertions structurally cannot tell a working untick
+    /// from a no-op. A copy that drifts from the emitter proves nothing about the shipped script,
+    /// so require them to be byte-identical.
+    ///
+    /// <para>Same idea as <c>check_mailbox_contract.py</c>'s hand-copied-literal check: the rig is
+    /// not in CI (no declared <c>lua</c> dependency, and a step that skips when its tool is missing
+    /// is worse than a documented manual one), so THIS is what keeps it honest.</para>
+    /// </summary>
+    [Fact]
+    public void UntickRigMatchesTheEmitter()
+    {
+        var rig = FindRepoFile("scripts/tests/untick_bailout_test.lua");
+        var text = File.ReadAllText(rig);
+        var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+
+        Assert.True(text.Contains(canonical, StringComparison.Ordinal),
+            "scripts/tests/untick_bailout_test.lua no longer contains the line "
+            + "CeLuaHygiene.DeferredUntickLua() emits, so what it proves is about a stale copy."
+            + Environment.NewLine + "  expected: " + canonical);
+
+        // Guard the guard: the rig must also still carry the IMMEDIATE shape, or its
+        // defect-reproduction case has quietly become a second copy of the fix.
+        Assert.Contains("if memrec then memrec.Active = false end", text, StringComparison.Ordinal);
+    }
+
+    private static string FindRepoFile(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
+        {
+            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
+    }
+
 
     private static bool Within(string[] lines, int from, int span, string needle)
     {

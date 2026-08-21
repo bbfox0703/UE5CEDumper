@@ -2908,7 +2908,7 @@ mismatch is in the *check*, and the stored content is already correct.
 > showed the previous action's text) made one attempt here look like a silent no-op. Whoever fixes
 > this should consider logging the failure too, not just the success.
 
-### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives: BOTH the Freeze and the baked-INVOKE generators leave a bailed-out record ACTIVE
+### ✅ FIXED 2026-08-21 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives, in **32** places, and now the mechanism is known
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
 This is the exact failure mode `AA12`/`AA13` exists to prevent — **"the freeze script must stop
@@ -3023,6 +3023,105 @@ this entire finding.
 > ⚠ **Whoever fixes this should grep for every in-`[ENABLE]` `memrec.Active = false` rather than
 > fixing the two sites named here** — two were found by running two unrelated register rows, which is
 > a poor way to establish a blast radius.
+
+
+**FIXED 2026-08-21. The leading hypothesis was right in outcome but wrong in mechanism, and the
+real one is worse: this was never two stray bail-outs — it was 32.**
+
+**Mechanism, read out of CE's own source** (`Cheat Engine/memoryrecordunit.pas:2573`,
+`TMemoryRecord.setActive`), which needed no minimal-record experiment after all:
+
+```pascal
+if state = fActive then exit;                  // (1) no-op when already in that state
+if processingThread <> nil then exit;          // (2) no-op while processing
+...
+if autoassemble(script, ..., state, ...) then  // (3) OUR [ENABLE] BLOCK RUNS HERE
+  fActive := state;                            // (4) and only NOW does it become true
+```
+
+While the script runs at **(3)**, `fActive` is still **`false`**. So `memrec.Active = false` hits
+**(1)** — `state = fActive`, both false — and returns having changed nothing. Then **(4)** ticks the
+row regardless.
+
+⚠ **The filed hypothesis said CE "overwrites a value the script set".** It does not: the write never
+lands at all. The distinction matters, because "overwritten" suggests racing the assignment (write
+it later in the block, write it twice), and none of that could ever work — the assignment is a
+**no-op**, not a loser. Only deferral past (4) works. Recording this because the wrong model
+suggests wrong fixes.
+
+**Scope, measured by classifying every emitted untick rather than by inference.** 43 sites emit
+`memrec.Active = false`; a classifier tagged each by whether it sits inside an `OnTimer` callback or
+a `[DISABLE]` block:
+
+| kind | count | verdict |
+|---|---|---|
+| **immediate, inside `[ENABLE]`** | **32** | **broken — all fixed** |
+| already deferred (`OnTimer`) | 4 | correct; untouched |
+| inside `[DISABLE]` | 6 | nothing to untick; untouched |
+| a comment | 1 | — |
+
+So it was **every stateful toggle in the app** — Movement ×4, Fly ×2, GodMode ×2, SeeThrough ×2,
+Foreground ×2, DebugCamera ×2, TimeDilation ×2, Freeze ×2, PointerQuery ×4, CeInject ×5,
+Teleport ×2 — plus `CeLuaHygiene`'s own three shared emitters (`AppendBail`,
+`AppendMailboxWait`'s `UntickAndReturn`, `AppendFailedEnable`).
+
+⭐ **And the momentary shape was right for the wrong reason.** CLAUDE.md distinguishes *stateful
+toggle* (untick-and-return) from *momentary action* (deferred timer) as two shapes that are "not
+interchangeable". They are not — but it was never the *momentary* part that made the timer work,
+only the **deferral**. The stateful bail-outs needed it exactly as much.
+
+**The fix.** One shared emitter, `CeLuaHygiene.DeferredUntickLua(indent)`, and all 32 sites call it:
+
+```lua
+if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
+```
+
+By the time the timer fires, (4) has run: `state(false) ≠ fActive(true)` clears (1) and activation
+is finished so (2) is clear. Emitted as **one line** deliberately — users read these inside CE and
+this appears 32 times; the `local` is scoped by the surrounding `if`, so repeats cannot collide.
+Spelled `memrec.Active = false` with spaces so the 11 pre-existing `CeMailboxBailoutTests`
+assertions keep matching and stay meaningful.
+
+**Pinned three ways, because text alone provably could not catch this:**
+1. `EveryEnableUntick_IsDeferred_NotImmediate` — no `[ENABLE]` untick line may lack `createTimer`.
+2. `EveryEnableBlock_HasAtLeastOneDeferredUntick` — guard the guard; without it a script that lost
+   its untick entirely would pass (1) vacuously, which is this defect's own failure mode.
+3. `EveryDeferredUntick_IsTheSharedEmittersText` — every emitted line must be byte-identical to the
+   shared emitter's, per CLAUDE.md's "hand-rolling any of these is how build 2743's three defects
+   reached all seven copies".
+
+⚠ **The 11 existing "the bail-out unticks" assertions were all TRUE and all USELESS** — every one
+passed throughout the two years the untick did nothing. Text assertions structurally cannot tell a
+working untick from a no-op, because the difference lives in CE's lifecycle. That is why the fix
+also ships a rig that RUNS it.
+
+**`scripts/tests/untick_bailout_test.lua`** (new) models `setActive` from the source and executes
+both shapes — **10/10, exit 0**:
+
+* *immediate*: the script **did** attempt the untick (1 attempt) but it **changed nothing**
+  (0 effective) and the record ends **ACTIVE** — the reported defect, reproduced offline;
+* *deferred*: the record ends **unticked**, 1 effective change, timer self-destroyed at a real 50 ms
+  interval;
+* two model controls, so neither result can be an artefact: an **external** untick after activation
+  **does** work (the model is not simply read-only, which would have made the first case pass for
+  the wrong reason), and CE's `processingThread` guard **(2)** is reachable too.
+
+Not in CI, matching `freeze_helper_test.lua`'s reasoning (no declared `lua` dependency; a step that
+skips when its tool is missing is worse than a documented manual one). `UntickRigMatchesTheEmitter`
+asserts the rig still contains the emitter's exact line **and** still contains the immediate shape,
+so its defect-reproduction case cannot quietly become a second copy of the fix.
+
+⭐ **Shown able to fail**: reverting one Protection site to the immediate form failed both
+`EveryEnableUntick_IsDeferred_NotImmediate` and `EveryDeferredUntick_IsTheSharedEmittersText`, each
+naming `Protection`.
+
+⚠ **STILL OWED: re-run in Cheat Engine.** Everything above is a source reading plus a model of that
+source. The model is faithful to CE **7.5** source while the observation was on CE **7.7**, and
+`docs/CE-Bugs-Minesweeper.md` §4 is the standing reminder that the public source lags the release.
+Repeat the original repro — Property Search → `DumperTestActor.TickCount` → **Freeze** without the
+helper injected — and read `getAddressList().getMemoryRecord(0).Active` from CE's **Lua Engine**,
+not from the checkbox icon. Expect `false`, after a ~50 ms tick. Until that is done this is fixed
+in the sense of *mechanism understood and pinned*, not *seen working*.
 
 ### ✅ FIXED 2026-08-21 `[SNAPINTERVAL-2026-08-20]` — an emptied NumericUpDown put `null` into a non-nullable binding, app-wide
 

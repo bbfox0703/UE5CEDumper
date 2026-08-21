@@ -72,7 +72,7 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
@@ -104,7 +104,7 @@ public static class MovementScriptGenerator
             // Nothing was applied, so the row must not stay ticked (same rule as the
             // timeout path above; this one was missed for the same reason).
             Line(sb, $"  showMessage('[Movement] {label} -- no pawn / no CharacterMovement (enter gameplay first)')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");
@@ -158,7 +158,7 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
@@ -189,7 +189,7 @@ public static class MovementScriptGenerator
             Line(sb, "if state < 0 then");
             // Applied nothing -> the row must not stay ticked.
             Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.4+) or no pawn.')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");

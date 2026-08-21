@@ -505,7 +505,7 @@ public static class CeLuaHygiene
     private static void AppendBail(StringBuilder sb, MailboxTimeout mode, string indent)
     {
         if (mode != MailboxTimeout.SilentReturn)
-            sb.Append(indent).Append("if memrec then memrec.Active = false end\n");
+            AppendDeferredUntick(sb, indent);
         sb.Append(indent).Append("return\n");
     }
 
@@ -657,7 +657,7 @@ public static class CeLuaHygiene
         {
             case MailboxTimeout.UntickAndReturn:
                 sb.Append(indent).Append("    showMessage('[").Append(tag).Append("] ' .. _msg)\n");
-                sb.Append(indent).Append("    if memrec then memrec.Active = false end\n");
+                AppendDeferredUntick(sb, indent + "    ");
                 sb.Append(indent).Append("    return\n");
                 break;
             case MailboxTimeout.FlagAndBreak:
@@ -731,9 +731,50 @@ public static class CeLuaHygiene
         StringBuilder sb, string luaMessageExpr, string indent = "")
     {
         sb.Append(indent).Append("showMessage(").Append(luaMessageExpr).Append(")\n");
-        sb.Append(indent).Append("if memrec then memrec.Active = false end\n");
+        AppendDeferredUntick(sb, indent);
         sb.Append(indent).Append("return\n");
     }
+
+    /// <summary>
+    /// The one Lua line that actually unticks a memory record from inside its own
+    /// <c>[ENABLE]</c> block. [FREEZEUNTICK-2026-08-20]
+    ///
+    /// <para><b>An immediate <c>memrec.Active = false</c> in <c>[ENABLE]</c> does nothing.</b>
+    /// That is not a guess — it falls out of <c>TMemoryRecord.setActive</c> in CE's
+    /// <c>memoryrecordunit.pas</c>, which does, in this order:</para>
+    /// <code>
+    ///   if state = fActive then exit;          // (1) no-op when already in that state
+    ///   if processingThread &lt;&gt; nil then exit;  // (2) no-op while processing
+    ///   ...
+    ///   if autoassemble(script, ..., state, ...) then   // (3) OUR [ENABLE] BLOCK RUNS HERE
+    ///     fActive := state;                    // (4) and only NOW does it become true
+    /// </code>
+    /// <para>While our script is running at (3), <c>fActive</c> is still <c>false</c>. So
+    /// <c>memrec.Active = false</c> hits (1) — <c>state = fActive</c>, both false — and returns
+    /// having changed nothing. Then (4) sets it true. The record ends up ticked no matter what the
+    /// bail-out asked for. Measured in CE 7.7 first, then confirmed against the 7.5 source: a
+    /// freeze record whose ENABLE bailed out with <c>helper not found</c> applied nothing (the
+    /// value kept ticking) yet read <c>Active=true</c> from CE's own Lua Engine.</para>
+    ///
+    /// <para>A <b>deferred</b> untick works because by the time the timer fires, (4) has already
+    /// run: <c>state(false) ≠ fActive(true)</c> clears (1), and the activation is finished so
+    /// (2) is clear too. This is the same mechanism that makes the momentary shape's
+    /// end-of-block timer work — it was never the "momentary" part that mattered, only the
+    /// deferral, which is why the stateful bail-outs needed it just as much.</para>
+    ///
+    /// <para>⚠ Emitted as ONE line on purpose. These scripts are read by users inside Cheat
+    /// Engine, and this appears at 32 bail-out sites; six lines apiece would bury the actual
+    /// logic. The <c>local</c> is scoped by the surrounding <c>if</c>, so repeats in one chunk
+    /// cannot collide.</para>
+    /// </summary>
+    public static string DeferredUntickLua(string indent = "") =>
+        indent + "if memrec then local _u=createTimer(nil,false) _u.Interval=50 "
+               + "_u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end"
+               + "  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op";
+
+    /// <summary><see cref="DeferredUntickLua"/>, appended with its newline.</summary>
+    public static void AppendDeferredUntick(StringBuilder sb, string indent = "")
+        => sb.Append(DeferredUntickLua(indent)).Append('\n');
 
     /// <summary>Emit the success-path close: closes the Lua Engine window unless
     /// <c>DEBUG</c> is on. Pass <paramref name="extraCondition"/> to gate on an

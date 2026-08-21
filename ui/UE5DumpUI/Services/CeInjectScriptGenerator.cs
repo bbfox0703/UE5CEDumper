@@ -83,7 +83,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "  'NOT click again after a timeout, or you will queue a second one.' .. NL .. NL ..");
         Line(sb, "  'Memory scans and the value list are unaffected -- they read memory directly.')");
         // Applies nothing, so it must not leave the row ticked.
-        Line(sb, "if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua(""));
         Line(sb, "{$asm}");
         Line(sb, "[DISABLE]");
         Line(sb, "{$lua}");
@@ -125,7 +125,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "if getOpenedProcessID() == 0 then");
         Line(sb, "  showMessage('[UE5CEDumper] No game process is attached.\\n\\n' ..");
         Line(sb, "    'Attach Cheat Engine to the running game first (File > Open Process).')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb);
@@ -162,7 +162,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "      'No injection needed -- just launch UE5DumpUI.exe and click Connect.')");
         // Untick: this record did not start that pipe, so its [DISABLE] must never
         // be allowed to run UE5_Shutdown against it (audit #4 B30).
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "  dbg('[UE5CEDumper] loaded but parked -- restarting via UE5_AutoStart')");
@@ -170,7 +170,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "    showMessage('[UE5CEDumper] The DLL is loaded but could not be restarted.\\n\\n' ..");
         Line(sb, "      'UE5_AutoStart did not run -- the game may be blocking remote threads.\\n' ..");
         Line(sb, "      'Restart the game to get a clean state.')");
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "end");
@@ -186,7 +186,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "      '  1. The DLL was moved -- expected at:\\n     ' .. DLL_PATH .. '\\n' ..");
         Line(sb, "      '  2. Anti-cheat is blocking injection\\n' ..");
         Line(sb, "      '  3. Cheat Engine needs to run as administrator')");
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "end");
