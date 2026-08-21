@@ -13,9 +13,15 @@ request was accepted, held nothing, and left a re-assert job scanning forever.
 THREE THINGS MUST HOLD, and only the first is visible in the reply:
   (a) `code == -12` (`FR_ERR_WEAK_PTR`), `held == 0`, `resolved == false`
   (b) `get_forced_fields` is EMPTY — the refusal must not persist a job
-  (c) the re-assert worker is NOT scanning — zero new `FindInstancesDerivedFrom base=` lines after
-      a few seconds. `get_forced_fields` structurally cannot show this: a job can be absent from
-      the list and still have started a worker.
+  (c) the re-assert worker is NOT scanning. `get_forced_fields` structurally cannot show this: a
+      job can be absent from the list and still have started a worker.
+
+⚠ (c) IS ABOUT A SUSTAINED RATE, NOT ABOUT ZERO SCANS, and the first version of this rig got that
+wrong and reported a FAIL against correct code. Measured: the refusal itself performs exactly ONE
+`FindInstancesDerivedFrom` — 6 ms after the request — because it has to resolve an instance to
+learn the field's TYPE before it can decide to refuse. Then silence. The control, by contrast,
+streams at 312 ms intervals indefinitely. So the discriminator is the rate AFTER a settle window,
+not the raw count.
 
 ⚠ (c) IS THE ONE WITH A CONTROL. A "no new log lines" assertion passes trivially if the worker was
 never going to log anyway, so the rig first reproduces the PRE-FIX shape on purpose — a field that
@@ -40,7 +46,9 @@ from pipe_client import PipeClient  # noqa: E402
 
 PIPELOG = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest/pipe-0.log"
 MARKER = "FindInstancesDerivedFrom base="
-SETTLE = 3.5
+SETTLE = 3.5            # control window
+SETTLE_IMMEDIATE = 1.5  # long enough for the one-shot resolution scan to land
+SETTLE_SUSTAINED = 4.0  # the window that must be silent
 
 
 def say(s):
@@ -117,6 +125,7 @@ def main():
         rate = grew / SETTLE
         say("   new '%s' lines in %.1fs: %d  (%.1f/s)" % (MARKER, SETTLE, grew, rate))
         control_ok = grew > 0
+        control_rate = rate
         if not control_ok:
             notes.append("the control did NOT produce a scanning worker (%d new lines). The "
                          "step's 'zero new lines' therefore has no demonstrated ability to "
@@ -165,17 +174,31 @@ def main():
         if listed2:
             fails.append("(b) the refusal PERSISTED a job: %s" % str(listed2)[:200])
 
-        # (c)
-        time.sleep(SETTLE)
-        grew2 = marker_count() - base2
-        say("   (c) new '%s' lines in %.1fs: %d  <-- must be 0" % (MARKER, SETTLE, grew2))
-        if grew2 > 0:
-            fails.append("(c) the re-assert worker is scanning anyway (%d new lines) — the job "
-                         "was refused in the reply but still started" % grew2)
+        # (c) — two windows. The refusal legitimately performs ONE resolution scan (it must
+        #      read the field's TYPE to know to refuse); what must not happen is a WORKER.
+        time.sleep(SETTLE_IMMEDIATE)
+        immediate = marker_count() - base2
+        settled = marker_count()
+        time.sleep(SETTLE_SUSTAINED)
+        sustained = marker_count() - settled
+        rate = sustained / SETTLE_SUSTAINED
+        say("   (c) scans in the first %.1fs: %d  (<=1 expected: the one-shot type resolution)"
+            % (SETTLE_IMMEDIATE, immediate))
+        say("   (c) scans in the NEXT %.1fs:  %d  (%.2f/s)  <-- must be 0"
+            % (SETTLE_SUSTAINED, sustained, rate))
+        if immediate > 1:
+            fails.append("(c) %d scans in the first %.1fs — more than the single type-resolution "
+                         "lookup the refusal needs" % (immediate, SETTLE_IMMEDIATE))
+        if sustained > 0:
+            fails.append("(c) the re-assert worker is still scanning after a settle window "
+                         "(%d in %.1fs, %.2f/s vs the control's %.2f/s) — the job was refused in "
+                         "the reply but a worker started anyway"
+                         % (sustained, SETTLE_SUSTAINED, rate, control_rate))
         elif not control_ok:
             say("       (reported UNPROVEN — see the control note)")
         else:
-            say("       OK, and the control above showed this counter can move")
+            say("       OK: silent, and the control above ran at %.2f/s so the counter does move"
+                % control_rate)
 
         c.request("reset_all_fields")
 
