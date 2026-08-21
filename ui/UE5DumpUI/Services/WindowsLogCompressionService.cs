@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UE5DumpUI.Core;
@@ -62,16 +63,43 @@ public sealed class WindowsLogCompressionService : ILogCompressionService
     /// <inheritdoc/>
     public bool IsSupported(string anyPath)
     {
+        // [VOLUMEROOT-2026-08-19] was Path.GetPathRoot + DriveInfo.DriveFormat, i.e. the
+        // filesystem of the HOST volume when anyPath lives on a mount point. Near-theoretical
+        // for logs under %LOCALAPPDATA%, but it is the same defect as the disk-space pair and
+        // leaving one copy behind is how the pattern survives a fix. See VolumeRoot.
+        string? root = VolumeRoot.Resolve(anyPath);
+        if (root is null) return false;
         try
         {
-            var root = Path.GetPathRoot(Path.GetFullPath(anyPath));
-            if (string.IsNullOrEmpty(root)) return false;
+            var fs = new StringBuilder(32);
+            // Only the filesystem name is wanted; every other out-param is a required
+            // placeholder. A failure here is "not supported", same as a non-NTFS answer.
+            if (!GetVolumeInformationW(root, null, 0, out _, out _, out _, fs, fs.Capacity))
+                return false;
             // NTFS only. ReFS supports neither algorithm, and FAT/exFAT/network shares
             // have no notion of either — a normal answer, not an error.
-            return string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(fs.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
     }
+
+    /// <summary>
+    /// Filesystem name for a volume. Requires the trailing backslash on the root, which
+    /// <c>VolumeRoot.Resolve</c> guarantees; accepts a volume mount-point path, which is
+    /// the reason for using it over <c>DriveInfo.DriveFormat</c>.
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetVolumeInformationW",
+               SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeInformationW(
+        string lpRootPathName,
+        StringBuilder? lpVolumeNameBuffer,
+        int nVolumeNameSize,
+        out uint lpVolumeSerialNumber,
+        out uint lpMaximumComponentLength,
+        out uint lpFileSystemFlags,
+        StringBuilder lpFileSystemNameBuffer,
+        int nFileSystemNameSize);
 
     /// <inheritdoc/>
     public Task<LogCompressionResult> CompressAsync(

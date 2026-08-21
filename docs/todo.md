@@ -85,18 +85,25 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The other three rows were surfaced by the audit programme itself
 > on 2026-08-19 and deliberately deferred — none is a regression, and each states its own reason for
-> waiting. So "12 → 1" is the honest headline for the original queue, and **4** is the honest row
+> waiting. So "12 → 1" is the honest headline for the original queue, and **3** is the honest row
 > count of this table.
 >
-> ⚠ **Two rows left on 2026-08-21, and they left in OPPOSITE directions** — worth noticing, because
-> a queue only shrinking by fixes hides the other outcome. `[RELAUNCHPIPE]` was **real** and is
-> fixed + live-verified (its write-up is below). `[PROXYDEPS]` was **refuted** — see below; there was
-> no defect, and the tooling that reported one has been corrected so it cannot say it again.
+> ⚠ **Three rows left on 2026-08-21, and not all in the same direction** — worth noticing, because
+> a queue only shrinking by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
+> fixed + live-verified. `[VOLUMEROOT]` was **real**, is fixed, and — against its own row's
+> prediction — is fully **verified** here, no mount point required. `[PROXYDEPS]` was **refuted**:
+> there was no defect, and the tooling that reported one has been corrected so it cannot say it
+> again. All three write-ups are below.
+>
+> ⭐ **Two of the three sat deferred on a stated blocker that turned out to be false** — "only a real
+> mount point can verify it" (a cross-volume junction does) and "the deps listing shows a breakage"
+> (it shows empty translation units). **Re-test a deferral's premise before accepting it**, exactly
+> as you would re-derive a finding's premise before fixing it.
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -106,7 +113,6 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
-> | `[VOLUMEROOT-2026-08-19]` | Three sites ask `Path.GetPathRoot` + `DriveInfo` about a path and therefore answer about the **host** volume, not the volume the path actually lives on when that path is a mount point: `WindowsPlatformService.GetFreeDiskSpaceBytes:407`, `GetTotalDiskSpaceBytes:419` (these feed the snapshot disk-space guard, so a game or snapshot folder on a mounted volume is measured against the wrong disk) and `WindowsLogCompressionService.IsSupported:71` (NTFS test; logs are under `%LOCALAPPDATA%`, so this one is near-theoretical). Audit #5 **AC17** fixed exactly this shape in `VolumeHasRecycleBin` using `GetVolumePathNameW` + the new `GetDriveTypeW` import, so the pattern to copy already exists in the same file; the disk-space pair additionally needs `GetDiskFreeSpaceExW` rather than `DriveInfo`. Found by the AC17 sibling-grep, left alone because it is a different feature and only a real mount point can verify it. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -1702,6 +1708,70 @@ exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply be
 picked up.
 
 
+
+
+### ✅ FIXED + VERIFIED 2026-08-21 `[VOLUMEROOT-2026-08-19]` — and its "unverifiable" premise was wrong
+
+**All three sites fixed, and the mount-point behaviour is DEMONSTRATED, not argued.** The row said
+"only a real mount point can verify it", which is why it sat deferred. That was false, and the
+correction is the more useful half of this entry.
+
+**⭐ A cross-volume DIRECTORY JUNCTION separates the two answers exactly as a mount point does**, and
+`mklink /J` needs no elevation and no spare volume. Measured on this machine:
+
+```
+junction  D:\...\out\xvol_junction  ->  C:\Windows\Fonts
+Path.GetPathRoot equivalent : D:\        free 493.0 GB / total 1863.0 GB
+GetVolumePathNameW          : C:\        free 836.3 GB / total 1881.4 GB
+```
+
+Two volumes, two genuinely different sizes, one path. `GetVolumePathNameW` resolves **through** the
+junction; `Path.GetPathRoot` only ever reads the leading drive letter of the string it was handed.
+A junction is not literally a mounted volume — but the code under test has no branch that could
+tell them apart (it asks Win32 one question and uses the answer), so it is not a distinction the
+fix can be wrong about.
+
+**The three sites, all now on one resolver.**
+
+| site | was | now |
+|---|---|---|
+| `WindowsPlatformService.GetFreeDiskSpaceBytes` | `Path.GetPathRoot` + `DriveInfo.AvailableFreeSpace` | `VolumeRoot.Resolve` + `GetDiskFreeSpaceExW` |
+| `WindowsPlatformService.GetTotalDiskSpaceBytes` | `Path.GetPathRoot` + `DriveInfo.TotalSize` | same, `lpTotalNumberOfBytes` |
+| `WindowsLogCompressionService.IsSupported` | `Path.GetPathRoot` + `DriveInfo.DriveFormat` | `VolumeRoot.Resolve` + `GetVolumeInformationW` |
+
+`VolumeHasRecycleBin` (audit #5 **AC17**, already correct) was moved onto the same helper rather than
+left as a fourth private copy — **the reason this recurred is that every site rolled its own
+resolution**, and one shared `VolumeRoot` is the only version of the fix that stops a fifth.
+
+⚠ **`DriveInfo` is the same trap wearing a different hat, and that is the non-obvious half.** Its
+constructor normalizes through `Path.GetPathRoot`, so handing it a *correct* mount root converts it
+straight back into the wrong one — which is exactly how AC17's original pre-filter defeated the
+`GetVolumePathName` call sitting three lines above it. Pass a resolved root to **Win32**, never back
+through a BCL type.
+
+⚠ **`Resolve` returns `null`, never a guess.** A `Path.GetPathRoot` fallback would look defensive
+and would silently restore the defect on precisely the paths where resolution is hardest. Each
+caller maps null onto its own fail-open sentinel, and those sentinels are **deliberately
+asymmetric**: free → `long.MaxValue` (don't block), total → `0` (collapse the percentage term),
+NTFS → `false`. Swapping any pair makes an unmeasurable volume look full.
+
+⚠ **A trap the rewrite introduced and the tests removed**: Win32 reports `ULONGLONG`, the callers
+are `long`, and a plain cast **wraps negative** — a negative free-space reading does not read as
+"unknown" to the guard, it reads as catastrophically full, so it would refuse to write on the
+*largest* volumes. `VolumeRoot.ClampToInt64` saturates; `ClampToInt64_TheNaivePlainCastIsShownToBeWrong`
+pins that the naive cast really does produce `-1` for `ulong.MaxValue`.
+
+**13 tests in `VolumeRootTests`** (4605 → 4618 overall). ⭐ **Shown able to fail, which mattered here
+more than usual**: the junction test has two silent early-return paths (no second volume, `mklink`
+refused), either of which would let it pass while asserting nothing. Restoring the old
+`Path.GetPathRoot` body failed **exactly one** test — the junction one — and left the other twelve
+green. Its cleanup is deliberately a **non-recursive** `Directory.Delete` behind a `ReparsePoint`
+check: the junction targets another volume's **root**, so a recursive delete would erase that
+volume.
+
+⚠ **Still owed, and small**: nothing here exercises a genuine `mountvol` mount point, only a
+junction. If one ever exists on a dev machine, re-run `VolumeRootTests` on it — no code change is
+expected.
 
 ### ⛔ REFUTED 2026-08-21 `[PROXYDEPS-2026-08-19]` — the six `#deps 0` objects are EMPTY, not broken
 
