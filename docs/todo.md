@@ -113,7 +113,7 @@ Open work only. **Read this when deciding what to do next.**
 >
 > | tag | one-line defect |
 > |---|---|
-> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
+> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` can pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only (it lives under `%ProgramFiles%`, so the delete needs elevation).** ⚠ **Re-measured 2026-08-21 — still present and the exposure is NARROWER but REAL, see the section below** |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -6208,6 +6208,52 @@ making the clause unconditional — fails `ItNamesTheCapBelowTheCeilingAndSaysNo
 run; neither is assumed. ⚠ That test
 failed on its first run against my own **doc comment**, which quoted the old wording verbatim — the
 comment was reworded rather than the test weakened, and it now says why.
+
+
+### 🟡 RE-MEASURED 2026-08-21 `[STALEDLL-2026-08-18]` (a) — still there, and the exposure is narrower than the row implied but NOT zero
+
+**The file is still present**, unchanged:
+
+| | bytes | mtime |
+|---|---|---|
+| `C:\Program Files\Cheat Engine\UE5Dumper.dll` | **536,064** | **2026-02-19** |
+| `dist\UE5Dumper.dll` (shipped) | 2,889,728 | today |
+
+`Glob` over CE's folder, `%USERPROFILE%\Documents`, `Desktop`, `Downloads` and `D:\Github\AOBMaker` finds
+**exactly one** stale copy — this one. There is no second hand-placed DLL anywhere the `.CT` can reach.
+
+⭐ **The row said "harmless only because a fresh DLL was already mapped". That is not the actual reason, and
+the real one is worth writing down because it decides how urgent this is.** The `.CT`'s search order
+(`scripts/UE5CEDumper.CT`, the `_slot(...)` list) puts **CE's install folder at slot 8**, deliberately
+below every table-derived slot — the code says so itself: *"a DLL here can only have been hand-placed, so it
+must stay below every table-derived slot above — silently loading a stale build is worse than failing."*
+Slot 7 is the breadcrumb written by UE5DumpUI, and it currently reads:
+
+```
+%LOCALAPPDATA%\UE5CEDumper\dll-path.txt  ->  D:\Github\UE5CEDumper\dist
+```
+
+which does hold a current DLL. **So on this machine, today, the stale file is unreachable** — the breadcrumb
+wins first.
+
+⚠ **But slots 2–4 come before the breadcrumb**: CE's last `File > Open` folder, its last `File > Save`
+folder, and the folder of the running script. **Open any `.CT` from `C:\Program Files\Cheat Engine\` and
+slot 2 becomes CE's install folder — the February DLL then wins ahead of the breadcrumb.** That is an
+ordinary thing for a user to do, so "harmless" is too strong; "not currently reachable, one File > Open
+away from being reachable" is the honest statement.
+
+⚠ The `(b)` fix is what makes this survivable rather than silent: the log line reads
+`DLL size: 523 KB` against an expected ~2.8 MB, so a person who looks at the console sees it.
+
+**Still maintainer-only.** The delete needs elevation and this session is unattended; nothing here changes
+that. The exact instruction, unchanged and now re-checked:
+
+```
+del "C:\Program Files\Cheat Engine\UE5Dumper.dll"      (from an elevated prompt)
+```
+
+Nothing depends on that file — the `.CT` finds the shipped DLL through the breadcrumb, and no code in this
+repo ever writes to CE's folder.
 
 ### ✅ VERIFIED 2026-08-21 `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path — seen in a real CE console
 
