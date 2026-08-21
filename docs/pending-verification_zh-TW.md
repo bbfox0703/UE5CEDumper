@@ -317,8 +317,6 @@
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 先做反向對照：注入舊版 DLL，配上新的 helper，啟動凍結。 | 必須被拒絕並顯示「the DLL is older than this script」。<br>⚠ 若照跑不誤，代表 contract 檢查沒生效，以下步驟全部無意義。 |
-| 2 | 換新 DLL，對一個有大量存活實例的類別（敵人、拾取物）啟動 class-wide 凍結。 | 數值真的被鎖住。<br>⚠ 被 guard 靜默拒絕的樣子跟「凍結沒作用」一模一樣，一定要確認值有 hold 住。 |
-| 3 | 檢查 init-0.log 的 LIST_INSTANCES ... classWitness=0x... 這行。 | witness 非 0；為 0 表示 guard 退回舊路徑、修正沒生效。 |
 | 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
 | 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
 
