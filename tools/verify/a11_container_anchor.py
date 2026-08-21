@@ -30,7 +30,16 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
 
-SCAN = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest/scan-0.log"
+# ⚠ offsets-0.log, NOT scan-0.log. `Refine re-anchor:` is emitted from Aura.cpp, whose
+# `#define LOG_CAT "OARR"` Sein maps to LF_Offsets (Sein.cpp: { "OARR", 4, LF_Offsets }).
+# The first version of this rig grepped scan-0.log, where the line can NEVER appear — which
+# made step 6 ("expect NO re-anchor line") pass no matter what the code did. The old write-up
+# even argued it was non-vacuous, on the grounds that the refine was shown to run over real
+# candidates. That controlled for the wrong thing: it proved the STIMULUS happened, not that
+# the DETECTOR could see anything. [A11-LOGPATH-2026-08-21]
+LOGDIR = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
+OFFSETS = LOGDIR / "offsets-0.log"
+SCAN = OFFSETS          # kept as the name the rest of the file uses
 
 
 def say(s):
@@ -39,6 +48,25 @@ def say(s):
     # Flush: a backgrounded rig's stdout is a FILE, which Python block-buffers --
     # a long run then shows an EMPTY output file and looks hung.
     sys.stdout.flush()
+
+
+def assert_detector_can_see_oarr():
+    """The channel must be shown to CARRY this category before an absence means anything.
+
+    "0 matching lines" is the same output for "the code did not do it" and "I am reading the
+    wrong file". Requiring at least one OARR-category line separates them.
+    """
+    if not OFFSETS.exists():
+        say("DETECTOR CHECK FAILED: %s does not exist — an absence proves nothing." % OFFSETS)
+        return False
+    text = OFFSETS.read_text(encoding="utf-8", errors="replace")
+    # Aura.cpp's own category tag, present on every line it writes.
+    if "[OARR]" not in text:
+        say("DETECTOR CHECK FAILED: %s carries no [OARR] line at all, so it is not the channel "
+            "Aura.cpp writes to (or nothing has written yet). An absence proves nothing." % OFFSETS)
+        return False
+    say("detector OK: %s carries [OARR] traffic, so an absent marker is a real absence" % OFFSETS.name)
+    return True
 
 
 def scan_lines_since(mark):
@@ -59,6 +87,9 @@ def candidates(c, sid, limit=200):
 
 
 def main():
+    if not assert_detector_can_see_oarr():
+        say("ABORT: the absence assertions below would be vacuous.")
+        return 2
     fails = []
     with PipeClient() as c:
         c.assert_build()
