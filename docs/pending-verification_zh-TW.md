@@ -68,11 +68,18 @@
 *優先度 **中** · ⚠ **一定要用 `build.ps1 -Mode Publish` 出來的 trimmed 版**。這個問題在一般 dev build
 上不會出現，用 dev build 測等於沒測。*
 
+⚠ **這一項還多一個必測點（2026-08-21 新增）：排序完不可以出現「兩列顯示同一筆資料」。**
+維護者回報過這個畫面：Props 對話框標題連點幾次之後，兩列都顯示同一筆，但標題還是寫
+「2 properties」。成因是 cell template 的 `supportsRecycling`，已修（17 處）。
+
 | # | 做什麼 | 預期 |
 |---|--------|------|
 | 1 | 點 Live Funcs 的 **Period**、Detect Stats 的 **✓** 和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
-| 2 | 從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，每個欄位標題都點一次。 | 兩邊各 6 個標題都會重排。`Access` / `Refs` 要照**數字**排（「12W / 3R」排在「2W / 1R」之上）。 |
-| 3 | 點 Class Pivot Discover 表的 Changed / Cat / Shape / Score、Snapshot 清單的 Label / Size、Snapshot Diff 的 **Change**、Snapshot 與 SPC group 表的 **Class**、Invoke 參數挑選視窗的 4 個標題。 | 全部都會重排。**Size** 要照數值排（「980 MB」排在「1.2 GB」之下）。 |
+| 2 | **要一款有 Blueprint bytecode 的真實遊戲**（DumperTest 測不到，它的 `Funcs` 欄整欄是空的）。從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，挑**列數 ≥ 2** 的，每個欄位標題都連點三、四次。 | 兩邊各 6 個標題都會重排；`Access` / `Refs` 照**數字**排（「12W / 3R」排在「2W / 1R」之上）。**而且每一列的內容都不一樣** —— 尤其不可以出現兩列的 Class / Name 對不起來（那就是 cell 被回收後留著上一筆的字）。 |
+
+> **步驟 3 已完成，整列刪除**（維護者驗過 Class Pivot / Snapshot / SPC group 那批；Invoke 參數挑選
+> 視窗的 4 個標題 2026-08-21 也在 DumperTest 上驗過：253 列、四個標題共點 7 次，沒有重複列，
+> Index 與 Address 全部相異，Class↔Name 也都對得起來）。
 
 -----
 
