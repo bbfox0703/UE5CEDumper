@@ -5454,49 +5454,60 @@ repo's.
 > genuinely required to see the truncation text and the picker's partial-counts flag. (DQ7R also
 > surfaced **557** exec commands, so its Console census is substantial and still uncapped.)
 >
-> ### ⛔ THE `objects ÷ 3` MODEL IS WRONG — measured 2026-08-21 `[Z8-CLASSES-2026-08-21]`
+> ### ⛔ NO LOCAL FIXTURE — six titles measured, and the `objects ÷ 3` model is WRONG
+> `[Z8-CLASSES-2026-08-21]`
 >
-> **The conclusion "not reachable here" survives. The CRITERION it published does not, and it points
-> at the wrong property — badly enough that it would send the next person to the worst candidate on
-> the machine.**
+> **The conclusion "not reachable here" survives and is now much stronger: it rests on six measured
+> titles instead of a line fitted through two. The CRITERION the row published does not survive, and
+> it points at the wrong property badly enough to send the next person to the worst candidate here.**
 >
-> A third and fourth data point, both taken over the pipe:
+> Every installed UE title of any size, screened over the pipe (`list_classes` + `list_all_functions`,
+> `game_only` OFF, one call each, 0.1–0.3 s):
 >
-> | title | objects | classes | UFunctions (`game_only` OFF) | funcs ÷ objects | funcs ÷ classes |
-> |---|---|---|---|---|---|
-> | **OCTOPATH TRAVELER** | **273,956** | **2,074** | **14,250** | **0.052** | 6.87 |
-> | DQ7R | 149,408 | 5,913 | 51,255 | 0.343 | 8.67 |
-> | Avowed | 92,036 | 7,409 | 20,060 | 0.218 | 2.71 |
-> | Elliot | 84,990 | 3,236 | 17,261 | 0.203 | 5.33 |
+> | title | objects | classes | UFunctions | f ÷ obj | f ÷ class | % of the 100,000 cap |
+> |---|---|---|---|---|---|---|
+> | **DQ7R** (UE427) | 149,408 | 5,913 | **51,255** | 0.343 | 8.67 | **51 %** |
+> | Avowed (UE504) | 92,036 | 7,409 | 20,060 | 0.218 | 2.71 | 20 % |
+> | Elliot (UE504) | 84,990 | 3,236 | 17,261 | 0.203 | 5.33 | 17 % |
+> | **OCTOPATH** (UE418) | **273,956** | 2,074 | 14,250 | **0.052** | 6.87 | 14 % |
+> | SEED / SBDR | 26,113 | 3,397 | 10,234 | 0.392 | 3.01 | 10 % |
+> | DQ I&II HD-2D | 104,867 | 3,706 | 7,801 | 0.074 | 2.10 | 8 % |
 >
-> ⭐ **OCTOPATH has the LARGEST object pool on this machine — 3.2× Elliot's — and the FEWEST
-> UFunctions of the four.** It satisfies the row's stated "~300,000 objects" almost exactly and
-> reaches **14.2 %** of the cap. The `funcs ÷ objects` ratio the model is built on spans **0.052 to
-> 0.343, a 6.6× spread**, and moves in the *opposite* direction to object count. Two points fitted a
-> line through a quantity that does not drive the thing being predicted.
+> ⭐ **OCTOPATH has the LARGEST object pool on this machine — 3.2× Elliot's, 10× SEED's — and is
+> fourth of six on functions.** It satisfies the row's stated "~300,000 objects" almost exactly and
+> reaches **14 %**. `f ÷ obj` spans **0.052 → 0.392, a 7.5× spread**, and moves *against* object
+> count. Two points had been fitted through a quantity that does not drive the thing predicted.
 >
-> **What actually drives it is CLASS count**, which is obvious in hindsight — `list_all_functions`
-> walks classes and enumerates each one's functions; objects are instances and most of OCTOPATH's
-> 273,956 are instances of very few classes. `funcs ÷ classes` still spans 2.71–8.67 (3.2×), so it is
-> not a law either, but it is the right axis.
+> Class count is the better axis — `list_all_functions` walks classes and enumerates each one's
+> functions, and most of OCTOPATH's 273,956 objects are instances of very few classes — but it is
+> **not** a predictor either: `f ÷ class` still spans **2.10 → 8.67 (4.1×)**, and **Avowed has the
+> most classes of the six (7,409) while sitting at 20 %**, against DQ7R's 5,913 classes at 51 %. What
+> actually varies is how much reflected API each class exposes, which is a property of how the game
+> was authored and is not visible from outside the process.
 >
-> ▶ **Restated criterion: Z8's positive half needs a title with roughly 12,000+ UCLASSES**
-> (100,000 ÷ the observed 2.7–8.7 funcs-per-class band gives 11,500–37,000). The largest class pool
-> installed here is **Avowed's 7,409** — short by at least 1.6×. So the row's verdict is right and
-> its number is not: **look for classes, not objects, and do not boot a title just because its pool
-> is large.**
+> ▶ **The methodological answer, which is the durable part: stop predicting. There is no structural
+> property of an install — size on disk, pak bytes, object count, class count — that forecasts this.
+> The screen IS the measurement**, and it costs one `list_all_functions` call (~0.2 s) once the title
+> is up. Six titles, six different ratios; that is the finding.
+>
+> ▶ **Z8's positive half therefore has NO fixture on this machine.** DQ7R is the best at **51 %** and
+> the next best is less than half of that. Reaching the cap needs a title roughly **2× DQ7R**, and
+> nothing installed is close.
 >
 > ⚠ **Both titles the row names as the requirement were re-checked and one does not exist.**
-> `FINAL FANTASY VII REBIRTH` is an empty folder on this machine — one directory, no executable
+> `FINAL FANTASY VII REBIRTH` is an empty folder here — one directory, no executable
 > (`py tools/verify/fixture_census.py`, which exists because of this). **SEED BATTLE DESTINY
-> REMASTERED is genuinely installed** (6.8 GB) and has never been surveyed, so it is the one
-> remaining local candidate — but on the corrected criterion it should be screened by CLASS count
-> first, which is one `list_classes` call.
+> REMASTERED is installed** and has now been surveyed: **10 %**. Neither is the answer.
 >
-> 📌 Free third data point for **A7** from the same session: `find_by_address` on a bogus address
-> over OCTOPATH's 273,956 objects returns in **61 ms** (`objects_scanned` 273,956, `duration_ms` 50).
-> That is the largest pool available and it is still three orders of magnitude short of a window a
-> client could disconnect inside. A7 stays ⛔, now on three measurements rather than two.
+> ⚠ **Incidental confirmation of this row's own warning.** The proxies deployed in SEED and DQ I&II
+> are builds **3262** and they returned `truncated: null` and `limit: null` — the fields simply are
+> not on the wire. That is exactly the "a stale DLL makes the fix look like a no-op rather than a
+> failure" trap the row opens with, observed rather than quoted.
+>
+> 📌 Free data points for **A7** from the same sweep: `find_by_address` on a bogus address takes
+> **61 ms** over OCTOPATH's 273,956 objects and **60 ms** over SEED's 26,113 — i.e. the walk is not
+> even the dominant cost, and the largest pool available is three orders of magnitude short of a
+> window a client could disconnect inside. **A7 stays ⛔ on five measurements now, not two.**
 > | Z12 | Instance Finder → **Address → Instance** on an address that lives in a deeply-nested container (the `SaveSlotList[].MsTuneData…` shape the deep descent was written for), and on a plainly-bogus address | on a deep HIT the suffix reads `[scanned (incl. deep descent) X/Y in Zms]` with the DEEP pass's counters and the SUMMED duration; on a deep MISS it adds `⚠ the deep descent probes at most 256 element(s) per container, so this miss is not proof of absence` | before, a deep success reported the SHALLOW pass's numbers (describing a pass unrelated to the answer) and dropped the deep pass's deadline flag; a deep miss never mentioned the element cap at all. Change the Options element cap and re-run — the suffix must name the value you set, not a constant |
 > ### 🟡 Z12 deep-MISS half PASS · Z13 NOT RUNNABLE on DumperTest — 2026-08-20 `[L8-Z12-Z13-2026-08-20]`
 >
