@@ -264,6 +264,19 @@ public class CeMailboxBailoutTests
             "PlayerController", "ClientSetViewTarget", 24,
             new List<BakedParamValue>()) };
 
+        // ⚠ The row above does NOT reach the contract check: BakedScriptGenerator emits
+        // AppendContractCheck only inside `if (verifyReturn)`. Measured — the script the row
+        // above produces contains zero contract-check text, so before this fixture existed the
+        // untick theories inspected only the two AppendHelperLoader bail-outs and the contract
+        // bail-out was covered by nothing at all. That is the same shape as
+        // [FREEZEUNTICK-2026-08-20], whose second round found two generators the first round's
+        // sweep had classified by READING the source rather than by generating the text.
+        yield return new object[] { "Baked.Invoke.Verify", BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 16, "0"),
+            verifyReturn: true) };
+
         yield return new object[] { "CeInject", CeInjectScriptGenerator.Generate(@"C:\x\UE5Dumper.dll") };
         yield return new object[] { "CeInject.Reminder", CeInjectScriptGenerator.GenerateReminder() };
 
@@ -761,6 +774,82 @@ public class CeMailboxBailoutTests
 
         Assert.DoesNotContain(CeMailboxLayout.ContractSymbol, script, StringComparison.Ordinal);
         Assert.DoesNotContain("g_invokeMailbox", script, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// [L11-7 / 2026-08-21] The Baked invoker's CONTRACT CHECK bail-outs, which until now were
+    /// covered by nothing at all.
+    ///
+    /// <para><c>BakedScriptGenerator</c> emits <c>AppendContractCheck</c> only inside
+    /// <c>if (verifyReturn)</c>, and every fixture in <see cref="EveryEnableScript"/> and
+    /// <see cref="MailboxScripts"/> either omits verify mode or is a different generator — so the
+    /// three contract bail-outs (symbol unresolvable / memory unreadable / wrong magic) had no
+    /// assertion on them. That is the same gap shape as
+    /// <c>[FREEZEUNTICK-2026-08-20]</c>, whose second round found two generators the first round
+    /// had classified by READING the source instead of by generating the text.</para>
+    ///
+    /// <para>⚠ Adding the verify-mode script to <see cref="EveryEnableScript"/> does NOT close
+    /// this, and a negative control is what showed it: the theories fed by that list check for the
+    /// ABSENCE of an immediate untick and for the deferred line's exact text, and neither can fail
+    /// when an untick is simply MISSING. Stripping <c>AppendBail</c>'s untick reddened 13 other
+    /// rows and left the new fixture green. The rule that catches a missing untick lives in
+    /// <see cref="EveryEnableBailout_UnticksTheRecord"/>, whose <c>MailboxScripts</c> source is the
+    /// eleven stateful toggles — so this asserts the same rule directly instead of widening a list
+    /// whose membership carries meaning.</para>
+    ///
+    /// <para>Contract failure is <b>UntickAndReturn</b> whichever shape the script otherwise has:
+    /// the check sits BEFORE the first mailbox write, so nothing was applied and no deferred timer
+    /// has been armed yet to do it later.</para>
+    /// </summary>
+    [Fact]
+    public void TheBakedInvokersContractBailoutsUntickTheRecord()
+    {
+        string script = BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 16, "0"),
+            verifyReturn: true);
+
+        var lines = EnableBlock(script).Split('\n');
+
+        // Guard the guard: if the contract check is not in this script at all, the assertions
+        // below pass vacuously and would keep passing if someone deleted the check entirely.
+        Assert.Contains("contract this script was generated against", string.Join("\n", lines),
+            StringComparison.Ordinal);
+
+        // ⚠ The rule is "a branch that REPORTS a failure and then LEAVES must already have
+        // unticked" — and the two cheaper phrasings are both wrong here, which is worth recording
+        // because each looked obviously right first.
+        //
+        //   "every showMessage is followed by an untick" (copied from
+        //   EveryEnableBailout_UnticksTheRecord) FAILS ON CORRECT CODE: the invoke-failure message
+        //   near the end of a verify script does not untick inline because it does not RETURN —
+        //   control falls through to an UNCONDITIONAL deferred timer a few lines later. That is the
+        //   momentary shape CLAUDE.md describes and AMomentaryTimeout_FlagsAndBreaks pins for
+        //   Teleport, and demanding an inline untick there is exactly the change that breaks it.
+        //
+        //   "every bare return must have unticked" ALSO fails on correct code: this generator
+        //   defines a local `_dumpHex` helper whose early `return` exits the FUNCTION, not the
+        //   block. The toggle theory never met that because its scripts define no helpers.
+        //
+        // So: a return counts as a bail-out only when a showMessage precedes it closely.
+        int guardedReturns = 0;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Trim() != "return") continue;
+            if (lines[i].Contains("syntaxcheck", StringComparison.Ordinal)) continue;
+            if (!Back(lines, i - 1, 8, "showMessage(")) continue;   // not a bail-out
+            guardedReturns++;
+            Assert.True(Back(lines, i - 1, 4, "memrec.Active = false"),
+                $"Baked.Invoke verify mode: the bail-out returning on line {i + 1} leaves the "
+                + "[ENABLE] block without unticking — the CE row stays ticked, nothing invoked.");
+        }
+
+        // Eight bail-outs return here: two helper-loader failures and the six contract branches
+        // (unresolvable / unreadable / wrong magic / re-read failed / script-too-old / DLL-too-old).
+        // A collapse means the harness stopped reaching the code it claims to check.
+        Assert.True(guardedReturns >= 7,
+            $"expected at least seven returning bail-outs, saw {guardedReturns}");
     }
 
     // ── The OTHER script shape: momentary actions ───────────────────────────

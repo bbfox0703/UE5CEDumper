@@ -702,6 +702,58 @@ can reach it. Closing the offline half is progress; claiming the row is done is 
 
 -----
 
+
+### 2.8 A patch script's ENCODING is part of the patch — `utf-8-sig` writes a BOM you did not ask for
+
+Every patch script in the 2026-08-21 session read **and wrote** with `encoding="utf-8-sig"`.
+Reading with it strips a BOM; **writing with it ADDS one.** Eleven files silently gained a BOM they
+never had, against a repo that is 427-of-446 BOM-less. Nothing failed — not the build, not 4,600
+tests, not five CI gates — and it was found only by diffing the first three bytes of every file the
+session had touched against the pre-session baseline.
+
+Two rules, both cheap:
+* **Round-trip bytes, not text**, whenever the edit does not need decoding: `p.read_bytes()` /
+  `p.write_bytes()`. It cannot change an encoding, a BOM, or a line ending.
+* When you must use text, **read with `utf-8-sig` and write with `utf-8`** — never the same codec
+  for both.
+
+⚠ The same session hit the sibling trap **four times**: a bash heredoc mangles backslash escapes, so
+`b"...
+..."` in a Python source becomes a real newline and the anchor silently stops matching.
+`working-lessons` already said "prefer the Write tool"; the correction is that it is not a
+preference. **Anything containing a backslash goes in a file written by the Write tool.**
+
+⭐ And the reason both matter more than they look: each produced a change that **no test could
+see**. A BOM does not break C#; a mangled anchor produces `occurrences: 0` and an assert, which is
+loud — but its cousin, an anchor that matches something slightly different, would not be.
+
+### 2.9 A new test that passes proves nothing until you have seen it fail — and the first two rules you write will probably be wrong
+
+Worked example, same session, closing the L11 #7 offline half. The task was "the untick theories
+never inspect a script containing a contract check". Three iterations, each caught by a control
+rather than by reading:
+
+1. Added the missing fixture to the list the theories iterate. Suite green. **The negative control
+   (strip the untick out of `CeLuaHygiene.AppendBail`) reddened 13 rows and left the new fixture
+   green** — because the theories fed by that list check for the *absence* of an immediate untick
+   and for the deferred line's *exact text*, and neither can fail when an untick is simply MISSING.
+   The rule that catches a missing untick is fed by a different list.
+2. Wrote a focused test with the rule *"every `showMessage` must be followed by an untick"*, copied
+   from the toggle theory. **It failed on correct code**: a momentary script's final failure message
+   does not untick inline because it does not RETURN — control falls through to an unconditional
+   deferred timer. Demanding an inline untick there is precisely the change that breaks the
+   momentary shape.
+3. Rewrote it as *"every bare `return` must have unticked"*. **Also failed on correct code**: the
+   generator defines a local `_dumpHex` helper whose early `return` exits the FUNCTION, not the
+   block. The toggle theory had never met that because its scripts define no helpers.
+
+The rule that is actually true of both shapes: **a branch that REPORTS a failure and then LEAVES
+must already have unticked** — a `return` preceded closely by a `showMessage`. That version passes,
+and reddens under the same negative control.
+
+Lesson: a test written by copying a sibling theory's predicate inherits that sibling's *unstated
+scope*. Run the control first — a green new test is the least informative outcome available.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log

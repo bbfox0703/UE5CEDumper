@@ -1,4 +1,4 @@
-﻿namespace UE5DumpUI.Core;
+namespace UE5DumpUI.Core;
 
 /// <summary>
 /// The single vocabulary for telling the user "what you are looking at is not the whole

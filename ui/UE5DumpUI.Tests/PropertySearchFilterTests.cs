@@ -1,4 +1,4 @@
-﻿using UE5DumpUI.Core;
+using UE5DumpUI.Core;
 using UE5DumpUI;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
