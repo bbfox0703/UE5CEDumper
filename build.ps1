@@ -772,14 +772,56 @@ if ($Target -in "All", "UI", "Test") {
                 if ($exeFile) {
                     # Copy EXE + native DLLs only — Publish dists ship without
                     # *.pdb symbols (keeps the distribution lean).
-                    Get-ChildItem -Path $publishDir -File |
-                        Where-Object { $_.Extension -in ".exe", ".dll" } |
-                        ForEach-Object { Copy-Item $_.FullName -Destination $DIST_DIR -Force }
+                    #
+                    # ⚠ VERIFY THE COPY. Copy-Item is NON-TERMINATING, so a locked
+                    # destination used to leave $exitCode at 0 while dist/ kept the
+                    # PREVIOUS binary — and the success line below then printed the
+                    # STALE file's size, which is identical to a good one (54.7 MB
+                    # either way). Measured 2026-08-22: a still-running UE5DumpUI.exe
+                    # held av_libglesv2.dll, the run "succeeded", and dist/ held
+                    # sha 1b316b6a while the freshly published exe was 18e4112d.
+                    # The hand-over rule at the top of CLAUDE.md rests entirely on
+                    # this copy, so it is checked by CONTENT, not by exit code.
+                    $copyErrs = New-Object System.Collections.Generic.List[string]
+                    foreach ($f in (Get-ChildItem -Path $publishDir -File |
+                                    Where-Object { $_.Extension -in ".exe", ".dll" })) {
+                        try   { Copy-Item $f.FullName -Destination $DIST_DIR -Force -ErrorAction Stop }
+                        catch { $copyErrs.Add("$($f.Name): $($_.Exception.Message)") }
+                    }
 
-                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                    $srcExe  = Join-Path $publishDir "UE5DumpUI.exe"
+                    $dstExe  = Join-Path $DIST_DIR   "UE5DumpUI.exe"
+                    $srcHash = (Get-FileHash $srcExe -Algorithm SHA256).Hash
+                    $dstHash = if (Test-Path $dstExe) {
+                                   (Get-FileHash $dstExe -Algorithm SHA256).Hash
+                               } else { "<missing>" }
 
-                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                    Write-Ok "UE5DumpUI.exe ($exeSize)"
+                    # NB: $dstHash can be the literal "<missing>" (9 chars), so it is
+                    # NOT safe to Substring(0,12) -- that would throw inside the very
+                    # branch whose job is to report the problem.
+                    function Short-Hash([string]$h) {
+                        if ($h.Length -ge 12) { $h.Substring(0,12) } else { $h }
+                    }
+
+                    if ($copyErrs.Count -gt 0) {
+                        foreach ($e in $copyErrs) { Write-Fail "  copy failed — $e" }
+                    }
+
+                    if ($srcHash -ne $dstHash) {
+                        Write-Fail ("dist\UE5DumpUI.exe is NOT the build that was just " +
+                                    "published (dist $(Short-Hash $dstHash) vs published " +
+                                    "$(Short-Hash $srcHash)). Something holds the file open " +
+                                    "— usually a running UE5DumpUI.exe or an injected game holding " +
+                                    "UE5Dumper.dll. The published output has been LEFT IN PLACE at " +
+                                    "$publishDir; close the holder and re-run, or copy it by hand.")
+                        $exitCode = 1
+                    }
+                    else {
+                        # Only discard the published output once dist/ provably matches it.
+                        Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                        $exeSize = Get-FileSize $dstExe
+                        Write-Ok "UE5DumpUI.exe ($exeSize, sha $(Short-Hash $srcHash))"
+                    }
                 }
                 else {
                     Write-Fail "No build output found"
