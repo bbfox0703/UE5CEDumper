@@ -6970,6 +6970,118 @@ panels put a status string in a `StackPanel` the same way, and a grep for `Statu
 not answer it (the panel matters, not the binding).
 
 
+
+### ✅ M1–M5 step 3 PASSES 2026-08-22 — close the game with a hold live and the UI connected
+
+`ActorComponent::bIsEditorOnly` held (256, capped), UI connected, then a graceful `WM_CLOSE` to the
+DumperTest window.
+
+| the row expects | result |
+|---|---|
+| no crash | ✅ process exited, no crash dialog |
+| no hang | ✅ the UI stayed fully interactive — tab switches worked immediately, and it re-titled itself from `UE5 Dump UI — DumperTest.exe` to `UE5 Dump UI` |
+| nothing new in the Windows **Application** log | ✅ newest entry is still the pre-test 14:43:25 `Security-SPP`; **zero** new entries, no `Application Error`, no `.NET Runtime` |
+| the Forced-fields strip | cleared itself — correct, the holds belonged to a dead process |
+
+⚠ The row itself says the evidence here is "nothing happened", so the reader must be shown able to
+report something: `wevtutil qe Application /c:3 /rd:true /f:text` was run first and returned real
+rows. ⚠ Under Git Bash it needs `MSYS2_ARG_CONV_EXCL='*'` or MSYS rewrites `/c:3` into a path and
+`wevtutil` fails with 「指定太多引數」 — which looks like "no events" if the exit code is ignored.
+
+-----
+
+### ✅ FOUND + FIXED 2026-08-22 `[SEETHRUTALLY-2026-08-22]` — See-through counted occluders it never hid
+
+⭐ **Found by trying to run M1–M5 step 1, and it is the reason that row exists.**
+
+`Schlacht::InvokeSetHidden` returns `bool` — false when the object is not an `AActor` (its own
+`ClassDerivesFromAny(cls, {"Actor"})` guard) or when `SetActorHiddenInGame` is cooked out — and
+**both call sites in `Tick()` discarded it**, then recorded `desired` wholesale. So `hiddenActors`,
+`hiddenCount`, the pipe's `hidden_count`, the UI's *"Active — hiding the occluder in front of your
+character"* and the log's `disabled (N restored)` all reported **intent**.
+
+**Measured on DumperTest (UE 5.4, `ue_version 504`):**
+
+| | before the fix | after |
+|---|---|---|
+| `hidden_count` | **1** | **0** |
+| `hidden_actors` | `['0x272EBF08D40']` | `[]` |
+| that object | `class=StaticMeshComponent`, **has no `bHidden` at all**; its own `bHiddenInGame` read `false` with See-through **both OFF and ON** | — |
+| log | `disabled (1 restored)` | `disabled (0 restored)` |
+
+So the feature was a **complete no-op on this build and every channel said it was working**. Audit
+#4's named root cause — the report and the reality computed by different code paths — in a sixth
+place, and the most consequential instance so far because the "reality" path did not exist at all.
+
+**Fixed**: `Tick()` records only what was APPLIED — entries carried over from the previous set (known
+to have taken) plus new ones whose `InvokeSetHidden` returned true.
+⚠ **The unchanged half is NOT verified**: the two games `docs/` records as working (Tower of Mask,
+DQ7R) are not runnable on this machine, so "behaviour where hiding works is unchanged" is an
+argument from the diff, not a measurement.
+⚠ **No test target compiles `Schlacht.cpp`**, so the live before/after above is the whole coverage.
+
+-----
+
+### ✅ ADDED 2026-08-22 `[SEETHRUSET-2026-08-22]` — `seethrough_get_state` now names the actors, not just a count
+
+⭐ **This is what unblocked the finding above, and the cost of not having it is the lesson.**
+
+The row demands a second detector that re-reads the actors' own hidden flags. That is impossible
+when the DLL reports a **count**: an outside verifier cannot name the actors. The attempt without it
+went: enumerate 33 candidate actors by class (`StaticMeshActor`, `Actor`), walk each one's `bHidden`,
+find **none** hidden while the DLL insisted on 1 — and then be **unable to tell "my candidate set is
+wrong" from "the hide silently failed"**, which are the two hypotheses the whole row is about.
+`find_instances` matches a class-name **substring** and the class histogram caps at 40 entries, so
+widening the net was guesswork; the answer appeared the moment the DLL said *who*.
+
+`Schlacht` already held the set (`s_state.hiddenActors`); the change publishes it, filled **under the
+same lock as `hiddenCount`** so a caller can never see a count that disagrees with its list. The rig
+`tools/verify/seethrough_arms.py` asserts exactly that as its first check.
+
+-----
+
+### ⬜ NEW DEFECT 2026-08-22 `[SEETHRUNOOP-2026-08-22]` — on UE 5.4 the hit resolves to a COMPONENT, so See-through hides nothing
+
+**Severity: HIGH on affected builds** — the feature does nothing at all. Not fixed: the repair
+depends on a layout fact I could not read from outside, and guessing at it is how a fix deletes
+working code (working-lessons §2.4).
+
+`Schlacht::ExtractHitActor` pulls the hit object out of the returned `FHitResult`: UE4's
+`Actor` (`TWeakObjectPtr` → leading `int32` ObjectIndex → `Aura::GetByIndex`), else UE5's
+`HitObjectHandle` (`FActorInstanceHandle`) read the same way. On DumperTest / UE 5.4 the object that
+comes back is a **`UStaticMeshComponent`** — sampled repeatedly over ~10 s at pierce depth 3, and it
+was the same object every tick, so this is systematic, not a torn read.
+
+`InvokeSetHidden` then rejects it at its own `ClassDerivesFromAny(cls, {"Actor"})` guard and returns
+false **silently** (the `SetActorHiddenInGame NOT FOUND` warning is never reached — it sits *after*
+that guard). Before `[SEETHRUTALLY]` that silence was invisible; now it surfaces as
+`hidden_count = 0`, which is honest but still a no-op.
+
+⚠ **Do not assume this is universal.** `docs/` records See-through as VERIFIED in-game on Tower of
+Mask and DQ7R, so the extraction works on those builds. What is measured is: **UE 5.4 / DumperTest
+resolves to a component**.
+
+**The diagnostic still needed** (all DLL-side — none of it is reachable over the current pipe):
+1. Dump the reflected `structFields` of `LineTraceSingle`'s `OutHit` param — the field names and
+   offsets actually present. The two candidate explanations are (a) `structFields` is flattened and
+   a nested name matched at the wrong offset, and (b) the leading `int32` of `FActorInstanceHandle`
+   is not the actor's weak-ptr index on this build.
+2. Log the resolved object's class when it fails the `Actor` guard — one `LOG_WARN` behind a
+   one-shot flag would have named this in the first session it ever ran.
+
+**Fix shape, once (1) says which:** prefer `FHitResult.Component` and hop to its owner
+(`UActorComponent::GetOwner`) when the direct actor read yields a non-Actor — a component hit is the
+common case for world geometry anyway, and the owner is what `SetActorHiddenInGame` wants.
+⚠ Whatever the fix, keep `[SEETHRUTALLY]`'s applied-not-intended rule: it is what makes the next
+version of this failure visible instead of silent.
+
+ℹ️ **M1–M5 step 1 stays open and is now BLOCKED on this**, not on tooling. The rig is written and
+refuses to report a pass (`hidden_count stayed 0 … every assertion below would be vacuous`), which
+is the correct answer while the feature does nothing here. Arms (a) and (b) additionally need a
+human moving/stalling the game; arms (c) and (d) are ready to run the moment a fixture actually
+hides something.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
