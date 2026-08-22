@@ -7082,6 +7082,55 @@ human moving/stalling the game; arms (c) and (d) are ready to run the moment a f
 hides something.
 
 
+
+### ✅ FOUND + FIXED 2026-08-22 `[DISTCOPY-2026-08-22]` — `build.ps1` reported a successful publish over a copy that never happened
+
+⭐ **Found while doing the mandatory `-Mode Publish` before hand-over** — i.e. by using the rule at
+the top of CLAUDE.md, on the one step that rule entirely depends on.
+
+Three things compounded, and each one hid the next:
+
+1. `Copy-Item` is **non-terminating** and the `ForEach-Object` loop checked nothing, so a locked
+   destination left `$exitCode` at **0**.
+2. `Remove-Item $publishDir` then ran unconditionally, **destroying the binary that had just been
+   built correctly** — the only good copy on disk.
+3. `Write-Ok` printed `Get-FileSize` of the file **in `dist/`**, i.e. the stale one. ⭐ And a stale
+   AOT exe is **54.7 MB exactly like a good one**, so the size check the memory index prescribes
+   ("54.7 MB = AOT and shippable") cannot distinguish them.
+
+**Measured**: a still-running `UE5DumpUI.exe` held `av_libglesv2.dll`; the run printed
+`[OK] UE5DumpUI.exe (54.7 MB)` and exited 0, while `dist/` kept `sha 1b316b6a` and the freshly
+published exe was `18e4112d`. **Nothing in the output said so** — only hashing `dist/` against
+`dist/publish/` did, and that directory is normally deleted before anyone could.
+
+**Fixed**: each copy is `-ErrorAction Stop` inside a try/catch that collects failures; the published
+exe is compared to the one in `dist/` **by SHA256**; a mismatch is a loud `Write-Fail` with
+`$exitCode = 1`; and `dist/publish/` is discarded **only** once `dist/` provably matches, so a
+blocked run leaves the good binary on disk to copy by hand. The success line prints the hash.
+
+⚠ `Short-Hash` exists because `$dstHash` can be the literal `"<missing>"` (9 chars) and
+`Substring(0,12)` would have thrown **inside the very branch whose job is to report the problem**.
+
+**Both directions demonstrated:**
+
+| | with `dist/UE5DumpUI.exe` held open | after closing it |
+|---|---|---|
+| per-file | 5 × `[FAIL] copy failed — <name>: <reason>` | — |
+| verdict | `[FAIL] dist\UE5DumpUI.exe is NOT the build that was just published (dist 89A8ADEE… vs published 66038833…)` + the remedy | `[OK] UE5DumpUI.exe (54.7 MB, sha 8CA03D81BAAB)` |
+| exit code | **1** | 0 |
+| `dist/publish/` | **left in place** | removed |
+
+⭐ **The general rule this earns**: a step whose whole purpose is to make a file authoritative must
+verify the file, not the operation. Checking the exit code of a copy, or the size of whatever ended
+up at the destination, both answer a different question than "is the thing I am about to hand over
+the thing I just built".
+
+ℹ️ Two smaller facts worth keeping: `-Target DLL` fails the same way when an **injected game** holds
+`dist/UE5Dumper.dll` (seen twice today), and Native AOT output is **not byte-reproducible** — four
+publishes of the same source produced four different hashes, so a hash can confirm *this* copy but
+never that two builds are "the same build".
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

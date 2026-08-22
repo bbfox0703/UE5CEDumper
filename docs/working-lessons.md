@@ -619,6 +619,28 @@ KillZ and was **destroyed**. The next record, `Recall marker 1`, then returned `
 - ⭐ The general shape: before reading an error as a defect, ask whether the **previous step in your
   own script** put the system into the state the error is truthfully reporting.
 
+
+### 2.5c "54.7 MB" is not a verification — hash `dist/` against what was just built
+
+The memory index's rule of thumb ("54.7 MB = AOT and shippable, 106.8 MB = non-trimmed") answers
+*which kind* of build is sitting in `dist/`. It cannot answer *which build*, and on 2026-08-22 that
+gap shipped a stale binary past a green run: `build.ps1 -Mode Publish` printed
+`[OK] UE5DumpUI.exe (54.7 MB)` and exited **0** while the copy into `dist/` had silently failed
+(a running `UE5DumpUI.exe` held `av_libglesv2.dll`). The size was right. The file was old.
+
+- **`Copy-Item` is non-terminating.** A `ForEach-Object { Copy-Item ... }` pipeline reports nothing
+  and leaves `$LASTEXITCODE` alone. Same trap as the `-ErrorAction SilentlyContinue` note in the
+  PowerShell tool docs, but here nobody had even asked for silence.
+- **The holder is usually one of ours**: a running UI, or an **injected game** holding
+  `dist/UE5Dumper.dll` (that one bit `-Target DLL` twice in the same session). Kill both before any
+  publish.
+- **Native AOT is not byte-reproducible.** Four publishes of identical source gave four different
+  SHA256s. So a hash proves *this copy landed*; it can never prove *two builds are the same build*.
+  Do not try to use it that way.
+- The fix in `build.ps1` is the shape to copy elsewhere: verify the **artifact**, not the operation,
+  and keep the good output on disk when the verification fails.
+
+
 ### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
 
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
