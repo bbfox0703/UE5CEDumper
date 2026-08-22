@@ -427,7 +427,9 @@ public class CeLuaQuotingTests
     // variable defined several lines above its use, so a grep for an apostrophe
     // on the emitting line structurally cannot find its siblings — only running
     // the generators can. The DLL path cases carry a hostile-but-ordinary input:
-    // a user whose Windows account is named O'Brien.
+    // a publisher folder named O'Brien Studios. (Deliberately NOT a C:\Users\<name>
+    // path -- tools/check_no_local_paths.py rejects those in tracked files, and it is a
+    // CI gate; the apostrophe is the whole point, the home directory is not.)
     // ------------------------------------------------------------------
 
     public static IEnumerable<object[]> SimpleGenerators() => new List<object[]>
@@ -439,10 +441,10 @@ public class CeLuaQuotingTests
         new object[] { "InjectRemind", CeInjectScriptGenerator.GenerateReminder() },
         new object[] { "Autorun",      CeAutorunScriptGenerator.Generate(@"D:\UE5Dumper.dll") },
         new object[] { "Autorun O'Brien",
-                       CeAutorunScriptGenerator.Generate(@"C:\Users\O'Brien\UE5Dumper.dll") },
+                       CeAutorunScriptGenerator.Generate(@"D:\O'Brien Studios\UE5Dumper.dll") },
         new object[] { "Inject",       CeInjectScriptGenerator.Generate(@"D:\UE5Dumper.dll") },
         new object[] { "Inject O'Brien",
-                       CeInjectScriptGenerator.Generate(@"C:\Users\O'Brien\UE5Dumper.dll") },
+                       CeInjectScriptGenerator.Generate(@"D:\O'Brien Studios\UE5Dumper.dll") },
         new object[] { "Fly",          FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled) },
         new object[] { "Noclip",       FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip) },
         new object[] { "Movement",     MovementScriptGenerator.Generate(MovementScriptGenerator.Knob.WalkSpeed, 250) },

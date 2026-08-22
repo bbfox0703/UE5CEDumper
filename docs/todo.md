@@ -85,16 +85,21 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
-> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **3** is
-> the honest row count of this table — the third, `[CADENCEBAND]`, was field-found on 2026-08-22
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **4** is
+> the honest row count of this table. The third, `[CADENCEBAND]`, was field-found on 2026-08-22
 > and **downgraded to low the same day**: its only witness is our own 15 FPS test harness, and the
 > one realistic scenario for a real game was tested and refuted. It stays listed because the
 > arithmetic is real below 25 FPS, not because anything is known to be broken in the field.
+> The fourth, `[FORCESTATUSCLIP]`, was found later the same day while running M1–M5 step 4.
+> ⭐ **None of the four is a straightforward code fix**: one is a maintainer-only file deletion,
+> one is an open product question, one is a design call, and one is cosmetic with the same fact
+> already reaching the user by a second, unclipped route. A fix session looking for work should
+> read `## Pending live-game verification` instead.
 >
 > ⚠ **Four rows left on 2026-08-21, and not all in the same direction** — worth noticing, because a
 > queue that only shrinks by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
@@ -119,6 +124,7 @@ Open work only. **Read this when deciding what to do next.**
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` can pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only (it lives under `%ProgramFiles%`, so the delete needs elevation).** ⚠ **Re-measured 2026-08-21 — still present and the exposure is NARROWER but REAL, see the section below** |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 > | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
+> | `[FORCESTATUSCLIP-2026-08-22]` | 🟡 **LOW.** The Property Search *Force* status line sits in a horizontal `StackPanel` with no `TextTrimming`, no wrapping and no tooltip (`PropertySearchPanel.axaml:55`), so it is right-clipped at ~30 characters on a 1389-wide window. The clipped tail is `— cap reached, more exist unheld`, a clause whose own code comment (`PropertySearchViewModel.cs:502`) says it exists because "on 256 instance(s)" reads as "all of them" without it. ⚠ LOW **and the reason is measured**: the `⚠ capped` badge in the Forced-fields strip binds the **same** `r.Truncated` (`PropertySearchPanel.axaml:134`) and is not clipped, so the fact reaches the user by a second route — this is report *incompleteness*, not a wrong report. Fix shape: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"`, and **sweep the siblings first** — a grep for `StatusText` will not find them, the containing panel is what matters. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
 > gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
@@ -7586,6 +7592,8 @@ the 第 2 步 bucket, so it can be run in any session that has the UI up.
 
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
+> **Where the batch stands at the end of 2026-08-22.** ✅ `MB3` **CLOSED** the same day (`[MB3-CT-2026-08-22]` — Save / TP-facing-dir / Recall plus a baked Invoke, all through real `.CT` records, with the pawn's pose as the witness). ✅ `AA12/AA13` and `Y10/Y13` also closed. ⛔ `.CT DLL discovery` is still blocked exactly as written below. 🟡 `U16`, `B18` and the `M1–M5` remainder are unchanged. The triage below is kept because its *reasoning* is what saved the CE session, not because every verdict is still current — check the per-row entries above before acting on any line of it.
+
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
 needs. Three changed shape, and one is blocked by an item already on the index.
 
@@ -7597,7 +7605,7 @@ folder, which is precisely the FAIL its warning describes. Deleting it needs ele
 (`%ProgramFiles%`), which is the maintainer-only half of STALEDLL. **Running this row before that
 file is gone can only produce a false negative.**
 
-**🟡 `MB3` — only step 1's CE half is left, and it can no longer fail silently.** Steps 2 and 3 were
+**✅ `MB3` — CLOSED 2026-08-22, see `[MB3-CT-2026-08-22]`.** *(The paragraph below is the pre-run triage that scoped it; it was right — plain dispatch was good, and the CE run confirmed rather than discovered.)* Only step 1's CE half was left, and it could no longer fail silently. Steps 2 and 3 were
 closed on 2026-08-19 by `[MB3-POKE-2026-08-19]` (50 consecutive dispatches through
 `tools/verify/mailbox_poke.py`, zero failures, no `Mailbox: tick threw`, no `result=-11`). Step 4 —
 the throw path — has no way to be triggered on demand and is a standing watch, not a runnable step.
