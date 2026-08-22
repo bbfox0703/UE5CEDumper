@@ -166,15 +166,23 @@ public class DumpExplorerTests
         }
     }
 
+    /// <summary>
+    /// Records warnings. The cross-game gate's diagnostic line is named verbatim by the
+    /// checklist row it closes — it is what someone greps for when a match is refused and
+    /// the screen has already scrolled — so it needs pinning, and a logger that discards
+    /// everything cannot pin it.
+    /// </summary>
     private sealed class NoopLogger : ILoggingService
     {
+        public List<string> Warnings { get; } = new();
+
         public void Info(string m) { }
-        public void Warn(string m) { }
+        public void Warn(string m) { Warnings.Add(m); }
         public void Error(string m) { }
         public void Error(string m, Exception ex) { }
         public void Debug(string m) { }
         public void Info(string c, string m) { }
-        public void Warn(string c, string m) { }
+        public void Warn(string c, string m) { Warnings.Add(m); }
         public void Error(string c, string m) { }
         public void Error(string c, string m, Exception ex) { }
         public void Debug(string c, string m) { }
@@ -183,7 +191,14 @@ public class DumpExplorerTests
     }
 
     private static DumpExplorerViewModel CreateVm(FakeDumpService dump, MockPlatformService platform)
-        => new(dump, new NoopLogger(), platform);
+        => CreateVm(dump, platform, out _);
+
+    private static DumpExplorerViewModel CreateVm(FakeDumpService dump, MockPlatformService platform,
+                                                  out NoopLogger log)
+    {
+        log = new NoopLogger();
+        return new DumpExplorerViewModel(dump, log, platform);
+    }
 
     private static FakeDumpService LiveGameWithPlayer()
     {
@@ -337,7 +352,7 @@ public class DumpExplorerTests
         {
             var dump = LiveGameWithPlayer();
             dump.NextState = new EngineState { ModuleName = "OtherGame.exe" };
-            var vm = CreateVm(dump, new MockPlatformService(Path.GetTempPath()));
+            var vm = CreateVm(dump, new MockPlatformService(Path.GetTempPath()), out var log);
             vm.SetConnected(true);
             await vm.LoadFromPathAsync(path);
 
@@ -348,6 +363,37 @@ public class DumpExplorerTests
             Assert.Contains("refused", vm.StatusText);
             Assert.Contains("Game.exe", vm.StatusText);     // names BOTH sides
             Assert.Contains("OtherGame.exe", vm.StatusText);
+
+            // The DIAGNOSTIC, not just the screen. The status line is transient — the next
+            // action overwrites it — so the log is the only record that survives long enough
+            // to explain a refusal after the fact, and it has to name both sides too.
+            var refusal = Assert.Single(log.Warnings, w => w.Contains("live match refused"));
+            Assert.Contains("'Game.exe'", refusal);
+            Assert.Contains("'OtherGame.exe'", refusal);
+        }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>
+    /// The paired control for the assertion above: an ACCEPTED match must not emit the
+    /// refusal line. Without this, a diagnostic logged unconditionally would satisfy the
+    /// refuse test and be useless in practice — the failure mode of every "the log says X"
+    /// check that is written in only one direction.
+    /// </summary>
+    [Fact]
+    public async Task Vm_LiveMatch_Accepted_LogsNoRefusal()
+    {
+        var path = await WriteTempAsync(SampleJsonlWithHash);
+        try
+        {
+            var dump = LiveGameWithPlayer();
+            dump.NextState = new EngineState { ModuleName = "Game.exe", PeHash = "ABCD1234" };
+            var vm = CreateVm(dump, new MockPlatformService(Path.GetTempPath()), out var log);
+            vm.SetConnected(true);
+            await vm.LoadFromPathAsync(path);
+
+            Assert.True(vm.LiveChecked);
+            Assert.DoesNotContain(log.Warnings, w => w.Contains("live match refused"));
         }
         finally { File.Delete(path); }
     }

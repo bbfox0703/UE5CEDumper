@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 16 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 15 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **42** | |
+| **合計** | **41** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -261,16 +261,6 @@ session 的順序很好用，保留。
 | 1 | 對同一款遊戲、同一個目標做一次 Snapshot capture。 | 擷取完成。 |
 | 2 | grep `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\view-0.log`（或遊戲資料夾的 `ui-view-*.log`）的 `PERF Snapshot capture`。 | 有 `wall … ms`。目前唯一留存的數字是 5,256.2 ms（2026-08-04，修正後），沒有 pre-2596 可比就把本次記成新基準，下次同一遊戲同一擷取再比。<br>⚠ 這條在 UI 端 view-0.log，不在 pipe-0.log。 |
 | 3 | 打開任一含 struct / enum / bool 欄位的物件 property grid。 | struct 型別、enum 名稱、bool mask 三欄都有值。FAIL = 這些欄位變空白，或並行掃描時當掉。 |
-
-### ⬜ Dump Explorer 跨遊戲身分閘 (2)(3) —— 載入別款遊戲的 dump 必須被拒絕
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 用遊戲 X 匯出一份 Dump All (.jsonl)。 | 檔案產生。 |
-| 2 | 改連「另一款」遊戲 Y，載入 X 的 .jsonl 並按 Re-check。 | 比對被拒絕、狀態列同時寫出 X 與 Y 的 module 名、所有列都是未比對、Jump 沒有東西可跳；log 出現 `DumpExplorer live match refused: dump module '…' != live module '…'`。 |
-| 3 | （機會性，等 X 真的更新版本後）連上 X，載入更新前的舊 dump。 | 仍然比對成功，但帶 "Different build — offsets may have moved" 註記。 |
 
 ### ⬜ Genau RIP decode (b2544) —— RIP 解碼修正沒有改動解出的位址
 

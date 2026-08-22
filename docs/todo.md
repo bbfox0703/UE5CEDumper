@@ -6498,6 +6498,50 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ CLOSED 2026-08-22 `[DUMPXGAME-2026-08-22]` — the Dump Explorer cross-game gate was already pinned; only its diagnostic was not
+
+⭐ **The row asked for two games and an opportunistic wait for a patch. It needed neither, and
+almost all of it was already done.** Filed under 第 2 步 as "export from game X, connect to game Y",
+with step 3 marked *（機會性，等 X 真的更新版本後）* — wait for a real title to ship an update.
+`DumpExplorerTests` already covers every branch of the gate, headless, with `FakeDumpService`
+supplying the live identity:
+
+| the row asks | already asserted by |
+|---|---|
+| step 2 — a different game is refused, both module names named, no row matched, nothing to jump to | `Vm_LiveMatch_RefusesWhenTheConnectedGameIsADifferentModule` — `LiveChecked` false, `Matched` empty, every row `IsMatched=false` **and** `LiveAddr==""`, status contains "refused" plus both names |
+| step 3 — same game, different build: still matches, but says "Different build" | `Vm_LiveMatch_SameModuleDifferentBuild_StillMatchesButSaysSo` — **staged with a pe_hash, so no patch has to ship** |
+| (the control the row does not ask for) | `Vm_LiveMatch_SameModuleAndBuild_MatchesWithNoCaveat` — matched, and *none* of "refused" / "Different build" / "identity unknown" |
+| (two branches the row does not mention) | `..._NoPeHashInDump_...` (a pre-`pe_hash` file matches but must not claim identity was checked) and `..._IdentityProbeFails_SkipsRatherThanMatchingBlind` |
+
+⚠ **THE ONE REAL GAP WAS THE LINE THE ROW NAMES BY NAME.** It requires
+`DumpExplorer live match refused: dump module '…' != live module '…'` in the log, and the tests ran
+on a `NoopLogger` that discarded everything — so the status text was pinned and the *diagnostic* was
+not. That matters more than it looks: the status line is transient and the next action overwrites
+it, so the log is the only record that survives long enough to explain a refusal after the fact.
+
+**Added**: the test logger records warnings (both the 1-arg and the category overload — a routed
+call would otherwise slip past), the refuse test asserts a single matching warning naming **both**
+quoted modules, and a new paired test `Vm_LiveMatch_Accepted_LogsNoRefusal` asserts an accepted
+match logs none.
+
+⭐ **The pair is the point, and it is the failure mode of every "the log says X" check written in
+one direction only**: a diagnostic emitted unconditionally satisfies the refuse test and is useless
+in the field. **Both controls run and reverted byte-exact:**
+
+| control | result |
+|---|---|
+| delete the `_log.Warn` line | refuse test fails — `Assert.Single()`: *the collection did not contain any matching items* |
+| hoist the `_log.Warn` above the tier-1 branch so it always fires | **both** fail — refuse on `Assert.Single()`: *contained 2 matching items*, and the accepted test on `Assert.DoesNotContain()` |
+
+16 / 16 in the class.
+
+ℹ️ Step 1 ("export a dump from game X") is not separately pinned and does not need to be — the
+reader has a real-world fixture (`Reader_ParsesRealWorldDumpFixture`) and every other test in the
+file loads a produced file. What no unit test reaches is that the status *renders*; that is the
+standard D0 residue and it is not specific to this row.
+
+
 ### ✅ B19 PASS 2026-08-22 `[B19-LOCKED-2026-08-22]` — a locked archive no longer stops the retention sweep
 
 **The defect, in the fix's own words** (`Sein.cpp:268-274`): `PruneAgedLogs` shared **one**
