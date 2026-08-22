@@ -304,7 +304,11 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 還要開 CE 並載入 .CT。
 
-### ⬜ MB3 —— CE mailbox 迴圈改成「逐次保護」（**這批最該先跑的一項**）
+### 🟡 MB3 —— CE mailbox 迴圈改成「逐次保護」（**只剩步驟 1 的 CE 那一半**）
+
+✅ **步驟 2、3 已於 2026-08-19 由 `[MB3-POKE-2026-08-19]` 關閉**（`tools/verify/mailbox_poke.py` 連續 50 次 dispatch、0 失敗、log 全乾淨）。
+步驟 4 的例外路徑沒有辦法主動觸發,是「持續留意」而不是可執行的步驟。
+所以只剩兩筆真的 `.CT` 記錄走一次 CE —— 值得做,但現在是**確認**而不是探索:plain dispatch 已知是好的。
 
 *優先度 **中** · ⚠ 改的是每一條 `.CT` 指令都會經過的輪詢迴圈，而且**沒有任何測試目標會編譯
 `Mimic.cpp`**，所以這些程式碼一行都還沒跑過。真正的風險不是例外路徑（很難觸發），而是**一般路徑**：
@@ -325,8 +329,8 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ 已量過的最大表只有 26 個成員，所以「大型」這一半還沒真的壓到。 |
-| 2 | grep `walk-0.log` 的 `ResolveEnumValue: UEnum`。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
+| 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ **2026-08-22 量過:DumperTest 的天花板就是 26**,`PhysicalMaterial::SurfaceType`(`EPhysicalSurface`,在有定義的專案裡可到 63 個)在這裡也沒破。所以這一步在 DumperTest 上壓不到。<br>▶ **換宿主前先花一道指令篩**:走個幾十個 instance,然後 `grep -o 'read [0-9]* of [0-9]*' walk-0.log | sort -t' ' -k4 -n | tail -1`。天花板還在二十幾的宿主一樣壓不到。 |
+| 2 | ✅ **2026-08-22 通過(在可得的規模上)**:DumperTest 上 437 行 `ResolveEnumValue`,`N != M` **0 個**,`truncated read` **0 個**。correctness 這一半成立,只是最大只壓到 26。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
 
 ### ⬜ AA2 / AA3 —— 凍結能撐過死亡/重生並在失聯時自行停手
 
@@ -361,7 +365,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 ### ⬜ .CT DLL discovery —— 到底是哪一個 slot 答的（**B5 主動半與探索半都已完成，只剩這一步**）
 
-*優先度 **中** · ⚠ 先確認 CE 安裝資料夾底下沒有 `UE5Dumper.dll`，否則那個較便宜的 slot 會先答（見 todo.md `[STALEDLL-2026-08-18]`）*
+*優先度 **中** · ⛔ **2026-08-22 實測:這一列現在跑不了。**`C:\Program Files\Cheat Engine\UE5Dumper.dll` **還在**(536,064 bytes,2026-02-19),所以較便宜的 slot 會先答,結果必然是這一列自己警告的那種 FAIL。刪它要提權,是 `[STALEDLL-2026-08-18]`(a) 那個維護者項目。**在那個檔案消失前跑這一列,只會得到假的失敗。***
 
 | # | 做什麼 | 預期 |
 |---|---|---|

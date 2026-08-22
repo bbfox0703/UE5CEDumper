@@ -6502,6 +6502,49 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
+
+Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
+needs. Three changed shape, and one is blocked by an item already on the index.
+
+**⛔ `.CT DLL discovery` is BLOCKED by `[STALEDLL-2026-08-18]`(a), and the two rows were never linked.**
+Its own step says *"first make sure there is no `UE5Dumper.dll` under CE's install folder, or the
+cheaper slot answers first"*. Measured 2026-08-22: `C:\Program Files\Cheat Engine\UE5Dumper.dll`
+is **still there — 536,064 bytes, dated 19 Feb 2026**. So the discovery step would report CE's own
+folder, which is precisely the FAIL its warning describes. Deleting it needs elevation
+(`%ProgramFiles%`), which is the maintainer-only half of STALEDLL. **Running this row before that
+file is gone can only produce a false negative.**
+
+**🟡 `MB3` — only step 1's CE half is left, and it can no longer fail silently.** Steps 2 and 3 were
+closed on 2026-08-19 by `[MB3-POKE-2026-08-19]` (50 consecutive dispatches through
+`tools/verify/mailbox_poke.py`, zero failures, no `Mailbox: tick threw`, no `result=-11`). Step 4 —
+the throw path — has no way to be triggered on demand and is a standing watch, not a runnable step.
+What remains is two real `.CT` rows through CE, which is worth doing but is now a confirmation
+rather than a discovery: plain dispatch is known good.
+
+**🟡 `U16` — step 2 PASSES at the size available; the fixture gap is now MEASURED, not assumed.**
+Walked `PhysicalMaterial` and the surrounding classes on DumperTest and grepped `walk-0.log`:
+
+```
+ResolveEnumValue lines            437
+read N of M with N != M             0
+GetEnumEntries: ... truncated read  0
+largest table observed          26 of 26
+```
+
+So the correctness half is satisfied over 437 resolutions. The row's own caveat — *"the largest
+table measured is only 26 members, so the 'large' half has not really been pressed"* — is confirmed
+by measurement: **26 is the ceiling on this host**, and `PhysicalMaterial::SurfaceType` (the
+`EPhysicalSurface` byte property, which in a project that defines them runs to 63 entries) does not
+reach it here because a stock project defines only a handful.
+
+▶ A cheap screen for anyone with another title injected: walk a few dozen instances, then
+`grep -o 'read [0-9]* of [0-9]*' walk-0.log | sort -t' ' -k4 -n | tail -1`. A host whose ceiling is
+still in the twenties cannot press this row either — and knowing that costs one command instead of
+a CE session.
+
+
 ### 🟡 Genau RIP decode — GNames CLOSED 2026-08-22 `[GENAURIP-RECOVERY-2026-08-22]`, GObjects shown UNCLOSABLE on this host
 
 Follows `[GENAURIP-AB-2026-08-19]`, which measured the win on notepad++ but could satisfy the
