@@ -866,6 +866,39 @@ following it exactly gets a pass and learns nothing. When a row prescribes a spe
 check that the manipulation lands in the band where the two builds actually differ.
 
 
+
+### 2.14 A verification row's stated PASS is a HYPOTHESIS about where the defect lives — check it against the fix
+
+*Three rows in one afternoon, 2026-08-22, all three the same shape.* Each row was written by
+whoever fixed the defect, at the moment they were most sure what it was. Each names a check that is
+either satisfiable without exercising the fix, or points at the wrong half of it.
+
+| row | what it told you to assert | where the defect actually lives |
+|---|---|---|
+| `B19` locked log | "the locked file is still there" | **ORDER.** That assertion is true under the fix, under the defect, *and* when the sweep never ran. The fix was one shared `error_code` ending the loop, so the witness is the aged file *after* the lock in enumeration order. |
+| Dump Explorer cross-game gate | walk two games and watch the refusal | The gate was **already** pinned by five headless tests. The only unpinned thing was the **log line** the row names in passing — and the status text it does pin is transient, overwritten by the next action. |
+| `AF7` `budget_hit` | "the reply has `budget_hit`" | **A tautology.** The DLL writes the key unconditionally, so it is present on bytecode-path replies where the flag can never be true. Meaningful only when `method == "disasm"`. |
+
+⭐ **The pattern: a row records what the author was LOOKING AT when they fixed it, not what
+distinguishes fixed from broken.** Those coincide only by luck. So before running a row, do the
+thing you would do before fixing a finding (§2.4) — **read the fix, and ask what state would make
+the stated check pass on the BROKEN build.** If you can name one, the row is wrong and the check
+you actually want is somewhere adjacent.
+
+▶ **Three practical tells**, all cheap:
+1. **Would the assertion also hold if the feature never ran?** ("the locked file survived", "no
+   error appeared") → you need a positive arm that proves it ran.
+2. **Is the asserted value written unconditionally?** grep the emitter. If it is, the row is
+   asserting the schema, not the behaviour.
+3. **Does the row name a diagnostic, a log line, a status string in passing?** That aside is often
+   the only part not already covered — the mechanism usually has tests and the *reporting* usually
+   does not.
+
+⚠ **And the correction is cheap while the mis-run is not**: all three rows had a better check
+available for the same effort or less, and two of them would have produced a confident PASS that
+measured nothing.
+
+
 ### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
 
 A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the
