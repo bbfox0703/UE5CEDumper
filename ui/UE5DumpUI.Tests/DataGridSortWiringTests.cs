@@ -265,6 +265,77 @@ public class DataGridSortWiringTests
     }
 
     /// <summary>
+    /// The THIRD rule, and the sibling of the one above: <b>a column whose cell renders a
+    /// number as text must not be sorted with a string comparer</b> — even when a comparer is
+    /// correctly wired, which is what the AOT rule checks and what makes this invisible to it.
+    ///
+    /// <para>An <c>Ordinal</c> comparer on an address is right often enough to look right.
+    /// Equal-length UPPERCASE hex compares identically ordinally and numerically, so on a host
+    /// whose pool addresses are all the same width nothing misbehaves — measured on DumperTest
+    /// 2026-08-22: all 137 <c>Object</c> instances 13 characters. That is a property of the
+    /// heap's layout, not of the comparer. One 12-character address in the set (a static
+    /// <c>FUObjectArray</c>, a <c>0x7FF…</c> module-resident object) and the order is decided by
+    /// the first character.</para>
+    ///
+    /// <para>The tree already knew the answer: <c>DataGridSortComparers.Hex&lt;T&gt;(ulong)</c>
+    /// exists, and <c>RelatedObjectsPanel.axaml.cs:22</c> was its <b>only</b> user while
+    /// <c>ObjectInstancePickerDialog.cs</c>'s identically-named "Address" column used
+    /// <c>Ordinal</c>. Two panels, one column name, two answers, one of them the documented one.
+    /// Fixed 2026-08-22 with <c>[PARAMSSORT-2026-08-22]</c>.</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> OrdinalOnNumericTextExemptions =
+        new(StringComparer.Ordinal);
+
+    [Fact]
+    public void No_address_column_is_sorted_with_a_string_comparer()
+    {
+        var suspect = new Regex(@"(?:Addr|Address|Hex|Ptr)$|^(?:Addr|Address)",
+                                RegexOptions.IgnoreCase);
+        var wiring = new Regex(
+            @"\[\s*""([^""]+)""\s*\]\s*=\s*DataGridSortComparers\.(\w+)<",
+            RegexOptions.None);
+
+        var violations = new List<string>();
+        var hit = new HashSet<string>(StringComparer.Ordinal);
+        int scanned = 0;
+
+        foreach (var cs in Directory.GetFiles(ViewsDir(), "*.cs", SearchOption.TopDirectoryOnly))
+        {
+            var name = Path.GetFileName(cs);
+            foreach (Match m in wiring.Matches(File.ReadAllText(cs)))
+            {
+                scanned++;
+                var key = m.Groups[1].Value;
+                var factory = m.Groups[2].Value;
+                if (!suspect.IsMatch(key)) continue;
+                if (!string.Equals(factory, "Ordinal", StringComparison.Ordinal)) continue;
+
+                var id = $"{name}|{key}";
+                if (OrdinalOnNumericTextExemptions.ContainsKey(id)) { hit.Add(id); continue; }
+                violations.Add(
+                    $"{name}  [\"{key}\"] uses DataGridSortComparers.Ordinal. An address/hex " +
+                    "column must sort numerically — add a `ulong` accessor on the model (see " +
+                    "RelatedObject.AddressValue) and use DataGridSortComparers.Hex, or add an " +
+                    "exemption WITH A REASON to OrdinalOnNumericTextExemptions.");
+            }
+        }
+
+        // Guard the guard: if the wiring regex stops matching, everything passes vacuously.
+        Assert.True(scanned >= 30,
+            $"only {scanned} comparer wiring(s) found across Views/*.cs — the scan has probably " +
+            "stopped matching, and an empty scan passes everything. Expected the known " +
+            "population (43 as of 2026-08-22).");
+
+        Assert.True(violations.Count == 0,
+            "Address/hex column(s) sorted as text:" + Environment.NewLine +
+            string.Join(Environment.NewLine, violations));
+
+        var stale = OrdinalOnNumericTextExemptions.Keys.Except(hit).ToList();
+        Assert.True(stale.Count == 0,
+            "Exemption(s) no longer matched — delete them: " + string.Join(", ", stale));
+    }
+
+    /// <summary>
     /// name -&gt; "file:line, interpolates X, Y" for every computed <c>string</c> property in
     /// <c>Models/</c> whose expression body interpolates a numeric member declared in the
     /// same file. The same-file requirement is what keeps unrelated string labels out.

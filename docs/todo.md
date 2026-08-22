@@ -6506,6 +6506,47 @@ hex). Only some branches carry a number and they are not the same number, so **n
 exists** and `Ordinal` is wired deliberately. Exempted with that reason — a real judgement, not a
 rubber stamp.
 
+#### Two more, found by the same pass, both surviving adversarial refutation
+
+⭐ **12 findings went to refuters; 4 survived (33%).** That ratio is the point of running them — the
+eight that died included several that read convincingly. The three below are the survivors that were
+actionable (the fourth is this entry's own subject).
+
+**(a) `ObjectInstancePickerDialog` sorted addresses as TEXT while its sibling sorted them as
+numbers.** `DataGridSortComparers.Hex<T>(ulong)` exists and had exactly **one** user in the whole
+tree — `RelatedObjectsPanel.axaml.cs:22`, `Hex<RelatedObject>(r => r.AddressValue)`. The Invoke
+param-picker's identically-named "Address" column used `Ordinal<InstanceResult>(r => r.Address)` on
+the `"0x…"` string. Two panels, one column name, two answers, and one of them documented.
+
+⚠ **It does NOT misbehave on this host and I am not going to pretend otherwise.** Equal-length
+UPPERCASE hex compares identically ordinally and numerically; measured on DumperTest 2026-08-22, all
+**137** `Object` instances are 13 characters. That is a property of this heap's layout, not evidence
+the comparer is right — one 12-character address in the set (a static `FUObjectArray`, a `0x7FF…`
+module-resident object) and the first character decides the order. Fixed anyway: `InstanceResult`
+gained the same `ulong AddressValue` accessor `RelatedObject` already had, four lines, zero risk.
+
+▶ A third guard, `No_address_column_is_sorted_with_a_string_comparer`, now refuses an `Ordinal`
+comparer on any key named like an address. Negative control run: reverting the one line fails it by
+name. Same anti-vacuity assertion as the others (43 comparer wirings across `Views/*.cs`; a scan
+finding fewer than 30 fails rather than passing everything).
+
+**(b) The snapshot cap notice was rendered in a `TextBlock` with neither `TextWrapping` nor a
+`ToolTip`** (`SnapshotPanel.axaml:362`), inside a `WrapPanel`, while the live panel gives the
+**identical shared string** both (`ValueSearchPanel.axaml:52-59`; both call
+`PartialResultNotice.PerSlotWitnessCap`). The sentence is ~230 characters and the window's
+`MinWidth` is 800 DIP. ⭐ **So the sentence whose entire job is to tell you results were truncated
+was itself being truncated** — and it is the notice `[AF12/AF13]` step 3 is written to look for.
+`ToolTip.Tip` is the half that certainly works; `TextWrapping` needs a bounded width inside a
+`WrapPanel`, hence the `MaxWidth`. ⚠ **The wrap half is owed a visual check** and is noted as such in
+the markup rather than claimed.
+
+**(c) The checklist named a column header that does not exist.** Step 1 says to click Detect Stats'
+**✓** header. `DetectStatsPanel.axaml:59` binds `str.Detect.ColConfirm`, which `en.axaml:47` defines
+as **`Result`**; ✓ is *cell* content (`DetectedStat.cs:63-64`), and a Detect run with no confirmed
+rows shows no ✓ anywhere at all. Corrected in the 繁中 file. ⚠ Small, but this is precisely the class
+of thing that makes a re-runner either file "no fixture" or click a plausible-looking neighbour and
+record a pass for the wrong column — the failure mode this whole re-run exists to avoid.
+
 **Shown able to fail, twice** — both controls run and reverted:
 
 | control | result |

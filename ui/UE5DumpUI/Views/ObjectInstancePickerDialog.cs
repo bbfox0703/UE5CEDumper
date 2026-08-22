@@ -49,7 +49,10 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
         new Dictionary<string, IComparer>
         {
             ["Index"]     = DataGridSortComparers.Number<InstanceResult>(r => r.Index),
-            ["Address"]   = DataGridSortComparers.Ordinal<InstanceResult>(r => r.Address),
+            // Hex, not Ordinal: the cell shows "0x…" and the sort must be numeric. The
+            // sibling one panel over (RelatedObjectsPanel.axaml.cs:22) already did this
+            // correctly and was the only user of DataGridSortComparers.Hex in the tree.
+            ["Address"]   = DataGridSortComparers.Hex<InstanceResult>(r => r.AddressValue),
             ["ClassName"] = DataGridSortComparers.Ordinal<InstanceResult>(r => r.ClassName),
             ["Name"]      = DataGridSortComparers.Ordinal<InstanceResult>(r => r.Name),
         };

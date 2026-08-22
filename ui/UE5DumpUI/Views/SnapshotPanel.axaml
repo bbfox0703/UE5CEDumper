@@ -359,7 +359,17 @@
             <Button Content="{StaticResource str.Snapshot.Group.Clear}" Command="{Binding ClearGroupCommand}" Padding="8,4" Margin="0,0,8,0"/>
             <ProgressBar IsIndeterminate="True" Width="120" Height="4" VerticalAlignment="Center" Margin="0,0,8,0"
                          IsVisible="{Binding IsGroupMatching}"/>
-            <TextBlock Text="{Binding GroupStatusText}" Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+            <!-- The cap notice can be ~230 characters (PartialResultNotice.PerSlotWitnessCap,
+                 the SAME string the live Group Scan shows). The live panel gives it both
+                 TextWrapping and a ToolTip (ValueSearchPanel.axaml:52-59); this one had
+                 neither, so at the window's 800 DIP MinWidth the sentence that exists to tell
+                 you results were truncated was itself truncated. ToolTip.Tip is the half that
+                 always works. ⚠ TextWrapping inside a WrapPanel only bites once the text has a
+                 bounded width, hence MaxWidth — visual confirmation is owed.
+                 [PARAMSSORT-2026-08-22] -->
+            <TextBlock Text="{Binding GroupStatusText}" Foreground="#4EC9B0" FontSize="12"
+                       VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="760"
+                       ToolTip.Tip="{Binding GroupStatusText}"/>
           </WrapPanel>
           <!-- 2-4 value rows: width scope + predicate + value (+ Between upper bound) -->
           <ItemsControl ItemsSource="{Binding GroupInputs}" IsEnabled="{Binding !IsGroupMatching}">

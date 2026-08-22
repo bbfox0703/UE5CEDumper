@@ -74,7 +74,7 @@
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 點 Live Funcs 的 **Period**、Detect Stats 的 **✓** 和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
+| 1 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 點 Live Funcs 的 **Period**、Detect Stats 的 **Result**（⚠ 舊版這裡寫「✓」，但那是**儲存格內容**不是欄位標題；標題字串是 `str.Detect.ColConfirm` = `Result`，en.axaml:47。而且一次 Detect 若沒有任何 confirmed 列，畫面上連 ✓ 都不會出現）和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
 | 2 | **要一款有 Blueprint bytecode 的真實遊戲**（DumperTest 測不到，它的 `Funcs` 欄整欄是空的）。從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，挑**列數 ≥ 2** 的，每個欄位標題都連點三、四次。 | 兩邊各 6 個標題都會重排；`Access` / `Refs` 照**數字**排（「12W / 3R」排在「2W / 1R」之上）。**而且每一列的內容都不一樣** —— 尤其不可以出現兩列的 Class / Name 對不起來（那就是 cell 被回收後留著上一筆的字）。 |
 
 > **步驟 3 已完成，整列刪除**（維護者驗過 Class Pivot / Snapshot / SPC group 那批；Invoke 參數挑選
