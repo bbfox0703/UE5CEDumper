@@ -626,6 +626,18 @@ public class FreezeValueDialogValidationTests
                         StringComparison.Ordinal);
         Assert.Contains("className", FreezeStr(FreezeValueDialog.Leaf.NarrowHint),
                         StringComparison.Ordinal);
+
+        // The assertions above are all "Force is not Freeze". They would survive renaming the
+        // Force button to "Apply", which is not what the checklist row asks for — it names the
+        // words. Pin the MEANING rather than the literal, so copy can still be improved:
+        // the Force flow holds a value through the DLL, it does not emit a script.
+        Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.Title), StringComparison.Ordinal);
+        Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.ValueLabel), StringComparison.Ordinal);
+        Assert.Contains("hold", ForceStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("script", ForceStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
+        // ...and the paired control, so "no script" cannot be satisfied by dropping the word
+        // from both sides: the Freeze button still promises one.
+        Assert.Contains("script", FreezeStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReadEnAxaml()

@@ -59,7 +59,14 @@ public sealed class FreezeValueDialog : Window
     /// <c>"true"</c>). Null when the user cancels.</summary>
     public string? ValueLiteral { get; private set; }
 
-    public FreezeValueDialog(PropertySearchMatch match, Purpose purpose = Purpose.Freeze)
+    // ⚠ NO DEFAULT ON `purpose`, deliberately. A default is the shape the original defect
+    // had: the Force flow was `new FreezeValueDialog(match)` and silently inherited every
+    // word of the Freeze wording, including CFG-block advice that means nothing for a
+    // DLL-held value. Both call sites now state which flow they are, and a third that
+    // forgets is a COMPILE ERROR rather than a dialog quietly lying about itself —
+    // strictly stronger than any test, and the lesson working-lessons.md §2.2 recorded
+    // ("make a wired-through field required"). [PARAMSSORT-2026-08-22 sweep]
+    public FreezeValueDialog(PropertySearchMatch match, Purpose purpose)
     {
         _match = match;
         _helperType = HelperTypeFor(match);

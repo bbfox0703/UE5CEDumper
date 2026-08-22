@@ -145,7 +145,7 @@ public partial class PropertySearchPanel : UserControl
 
     private async System.Threading.Tasks.Task<string?> PromptFreezeValueAsync(PropertySearchMatch match)
     {
-        var dialog = new FreezeValueDialog(match);
+        var dialog = new FreezeValueDialog(match, FreezeValueDialog.Purpose.Freeze);
         // Find the owning Window so the dialog modals correctly.
         Window? owner = null;
         if (Avalonia.Application.Current?.ApplicationLifetime

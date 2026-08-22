@@ -755,6 +755,48 @@ Lesson: a test written by copying a sibling theory's predicate inherits that sib
 scope*. Run the control first — a green new test is the least informative outcome available.
 
 
+
+### 2.11 Arming a negative control is an EDIT — restore the bytes, never the substitution
+
+*2026-08-22, during `[PARAMSSORT-2026-08-22]`. This did real damage to the tree and every gate
+stayed green.*
+
+The procedure that has been working all session is: break the thing, watch the check fail, put it
+back. **The putting-back is where the danger is.** I armed a control by replacing
+`>Hold this value<` with `>Apply<` in `en.axaml`, saw the assertion fire, and restored by replacing
+`>Apply<` with `>Hold this value<`.
+
+`en.axaml` already contained **five other** `>Apply<` strings — the Teleport panel's Move Speed,
+Time Dilation, Gravity, Gravity-Direction and Coordinate-Library buttons. All five became
+"Hold this value".
+
+⛔ **Nothing caught it.** 4,640 tests passed. `check_axaml_strings.py` passed — it verifies that
+every referenced key *exists*, which is untouched by rewriting a key's *value*. The four other CI
+gates passed. Only `git diff` knew, and only because I went looking after a `grep -c` returned 6
+where I expected 1.
+
+**The rule.** A control is armed by mutating a file you did not intend to change, so restore it the
+way you would restore any accident:
+
+- `git checkout -- <file>` when the file has **no** intended edits in the working tree. Byte-exact,
+  no reasoning required. This is almost always the right answer.
+- Otherwise snapshot the exact bytes first (`b = p.read_bytes()`) and write them back
+  (`p.write_bytes(b)`).
+- **Never** reverse the substitution. `A→B` then `B→A` is only sound when `B` did not already occur,
+  and you rarely know that. If you must, scope the replacement to a count (`replace(a, b, 1)`) or to
+  the one line — and then still verify with `git diff`, not with a `grep -c` of what you expected.
+
+⭐ **The generalisation, which is the part worth carrying:** `grep -c` told me "6" and I noticed only
+because 6 ≠ 1. Had the file contained one stray `>Apply<` instead of five, the count would have read
+2 and looked close enough to right. **`git diff --stat` after restoring a control costs nothing and
+does not depend on guessing the expected number** — which is the same failure this file's §1 warns
+about in the other direction: *a number recorded without its conditions is not a measurement*, and a
+count checked against an expectation you formed before the edit is not a verification.
+
+▶ Also noticed and left alone: **this document has two sections numbered 2.8.** Renumbering would
+break inbound references, so it is flagged here rather than silently changed.
+
+
 ### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
 
 A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the

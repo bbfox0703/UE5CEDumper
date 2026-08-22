@@ -116,7 +116,7 @@
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
+| 1 | ✅ **2026-08-22 用字部分已由測試釘住並重驗**。四個字串逐字核對 `en.axaml:857-860`：標題 `Force property value`、欄位 `Force value ({0}):`、確認鈕 `Hold this value`、NarrowHint 不含 `className` 也不含 `CFG block` —— 全部符合。守門在 `FreezeValueDialogValidationTests.TheForceWordingNeverDescribesItselfAsAFreeze`，它**自帶負對照**（Freeze 那側必須仍然含 `freeze`／`CFG block`／`className`），所以「把字全域刪掉」不會讓它變綠；2026-08-22 另加語意釘樁（Force 鈕必須含 `hold` 且不得含 `script`，Freeze 鈕必須含 `script`），改名成 `Apply` 也會被抓到。⚠ **只剩「畫面真的長那樣」沒驗**：測試讀的是 `en.axaml` 檔案，不是 merge 後的資源；若 `App.axaml` 停止合併字典，鈕會顯示 key 本身而測試照樣全綠。 Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
 | 2 | 再走一次一般的 **Freeze** 流程。 | 仍然寫「Create freeze script」，也仍然給 CFG block 那段建議（這是上一步的對照組）。 |
 | 3 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 Snapshot 分頁 → 用一個夠常見的數值做 Group match，讓某個 slot 在某個物件上配到超過 256 個欄位。 | 狀態列多出「a slot matched more than 256 fields」那段提示（和 live Group Scan 一模一樣的句子）。 |
 | 4 | 🟡 **維護者於 2026-08-21 10:08 在 repo 外的副本上標為通過，證據沒有跟著進來** （`[ZHTW-MARKS-2026-08-21]`）。依本清單自己的規矩，沒有條件的數字不算量測，所以這裡**不當成已驗**，排入重跑。 把 Value Search 的 per-slot cap 改成 1024，再跑一次**快照**的 Group 查詢。 | 快照這邊仍然顯示 256 —— 這是正確的，重點是現在會講出來而不是讓人以為兩邊同步。 |
