@@ -59,8 +59,17 @@ def fmt(ms):
 
 
 def discriminating(a, b):
-    """True when numeric and lexicographic order of these two DISAGREE."""
+    """True when numeric and lexicographic order of these two DISAGREE.
+
+    ⚠ A DISPLAY TIE IS NOT A DISAGREEMENT. 66.65 and 66.749 are different floats that both
+    render "66.7 ms"; the naive `(a < b) != (sa < sb)` calls that pair discriminating, because the
+    numbers order and the equal strings do not. It is the exact opposite: two rows that LOOK
+    identical can never show you which comparer ran. The first version of this rig had that bug and
+    reported "9 discriminating pairs, PASS" over six values that were all 66.7 ms.
+    """
     sa, sb = fmt(a), fmt(b)
+    if sa == sb or a == b:
+        return False
     return (a < b) != (sa < sb)
 
 
@@ -94,8 +103,12 @@ def main():
         # invoke BEFORE profiling — never lead with the profiler
         say("")
         say("== priming the PE hook with a real invoke (never profile first) ==")
-        pr = c.request("invoke_function", function_name="Add_IntInt", args=[3, 4])
-        say("   Add_IntInt(3,4) -> %s" % str(pr)[:160])
+        # ⚠ the field is `func_name`; `function_name` is silently rejected with
+        # {"ok": false, "error": "func_name is required"} and the prime never happens
+        pr = c.request("invoke_function", func_name="Add_IntInt", args=[3, 4])
+        say("   Add_IntInt(3,4) -> %s" % str(pr)[:200])
+        if isinstance(pr, dict) and pr.get("ok") is False:
+            say("   ⚠ the prime did NOT run: %s" % pr.get("error"))
 
         say("")
         say("== recording a %.0f s profile window ==" % WINDOW_S)
@@ -118,8 +131,8 @@ def main():
         if p is None:
             p = (r.get("cadence") or {}).get("mean_period_ms")
         if p is not None and float(p) > 0:
-            periods.append((float(p), r.get("name") or r.get("function") or "?",
-                            r.get("count") or r.get("fires")))
+            nm = "%s::%s" % (r.get("class_name") or "?", r.get("func_name") or "?")
+            periods.append((float(p), nm, r.get("count")))
     periods.sort()
 
     say("")
@@ -132,6 +145,17 @@ def main():
     if len(periods) < 2:
         say("")
         say("NOT_RUNNABLE: fewer than two rows carry a period — nothing to order.")
+        return 2
+
+    shown = sorted(set(fmt(p) for p, _, _ in periods))
+    say("")
+    say("   distinct DISPLAYED values: %d  %s" % (len(shown), shown[:8]))
+    if len(shown) < 2:
+        say("")
+        say("NOT_RUNNABLE: every row displays the same string (%s), so no click can distinguish"
+            % shown[0])
+        say("a numeric comparer from a string one. At t.MaxFPS 15 every frame-driven function")
+        say("shares the 66.7 ms frame cadence -- the spread has to come from TIMER callbacks.")
         return 2
 
     pairs = [(x, y) for i, (x, nx, _) in enumerate(periods)
