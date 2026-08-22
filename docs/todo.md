@@ -7040,7 +7040,7 @@ same lock as `hiddenCount`** so a caller can never see a count that disagrees wi
 
 -----
 
-### ⬜ NEW DEFECT 2026-08-22 `[SEETHRUNOOP-2026-08-22]` — on UE 5.4 the hit resolves to a COMPONENT, so See-through hides nothing
+### ✅ FIXED 2026-08-22 `[SEETHRUNOOP-2026-08-22]` — on UE 5.4 the hit resolved to a COMPONENT, so See-through hid nothing
 
 **Severity: HIGH on affected builds** — the feature does nothing at all. Not fixed: the repair
 depends on a layout fact I could not read from outside, and guessing at it is how a fix deletes
@@ -7176,6 +7176,66 @@ fails the build — a build error is not a negative control, it is a different e
 **What the tests do NOT cover, closed separately by inspection**: that the real buttons are wired to
 these commands. `ProxyDeployPanel.axaml:149` binds `ScanOrphansCommand` and `:169` binds
 `DeleteSelectedOrphansCommand`, so the gate the tests exercise is the one the UI drives.
+
+
+
+### ✅ `[SEETHRUNOOP-2026-08-22]` FIXED, and M1–M5 step 1 arms (c)+(d) PASS — See-through actually hides now
+
+**The root cause, measured.** Two one-shot diagnostics went in *before* any fix, because guessing at
+a struct layout from outside is how a fix deletes working code (working-lessons §2.4). They printed
+the answer directly:
+
+```
+SeeThrough: OutHit param off=88 size=248, 20 struct field(s): FaceIndex@0 Time@4 Distance@8
+  Location@16 ImpactPoint@40 Normal@64 ImpactNormal@88 TraceStart@112 TraceEnd@136
+  PenetrationDepth@160 MyItem@164 Item@168 ElementIndex@172 bBlockingHit@173
+  bStartPenetrating@173 PhysMaterial@176 HitObjectHandle@184 Component@216 BoneName@232 …
+SeeThrough: the traced hit is NOT an AActor — class 'StaticMeshComponent' at 0x22217C53400.
+  … Owner hop: outer='StaticMeshActor_43'
+```
+
+UE 5.4's `FHitResult` has **no `Actor` member** (correct for UE5), so `ExtractHitActor` fell through
+to `HitObjectHandle@184` and read its leading `int32` as an ObjectIndex — which resolves to the
+hit's `UStaticMeshComponent`, not its owner. ⭐ And the answer was sitting two members along:
+`Component@216`, whose **Outer is the owning actor**.
+
+**Fix**: try `Actor`, then `HitObjectHandle`, then `Component`, and take the first that **resolves to
+an actor** — `ResolveToActor` walks `Outer` (bounded to 4 hops), because a component's Outer is the
+actor that owns it.
+
+⭐⭐ **Why this cannot regress the builds where See-through already worked** (Tower of Mask, DQ7R —
+neither runnable here, so this argument has to carry the weight): the first two members are still
+tried **first, in the same order**, and `ResolveToActor` is the **identity at hop 0** for anything
+that is already an `AActor`. The change can only turn a previous *failure* into a success.
+
+**Verified end to end on DumperTest, two independent detectors:**
+
+| | detector ① `hidden_count` | detector ② the actor's OWN `bHidden` |
+|---|---|---|
+| enabled | **1**, `hidden_actors=['0x28D0405DF00']` | **true** ← positive control: detector ② demonstrably fires |
+| disabled | **0** | **false** — restored |
+
+**M1–M5 step 1, arms (c) and (d):**
+
+- **(c) pull the pipe connection** — the actor was confirmed hidden (`bHidden=true`) first, then the
+  client dropped without sending a disable: `active=false`, `hidden_count=0`, `bHidden=false`, and
+  the log's `disabled (1 restored)` now says **1** rather than the pre-fix lie.
+- **(d) graceful `WM_CLOSE` while active** — clean exit, **no `tick threw`** in any log, and **zero**
+  new Windows Application events. That is the arm's real target: `WorkerLoop`'s catch exists for the
+  `std::terminate` / `0xC0000409` "See-through then close the game" crash, and none occurred.
+  ⚠ A `taskkill /F` does **not** test this — it was tried first and the DLL's shutdown path never
+  ran at all, so the arm was vacuous. The row means a graceful close.
+
+Arms **(a)** and **(b)** stay open: they need a human moving the character / stalling the game.
+
+ℹ️ **A rig defect the positive control caught**, worth keeping: `walk_instance` renders a bit-field
+bool as `true (bit 7, mask 0x80)`, so testing `== "true"` read a **hidden** actor as not hidden. The
+rig refused to pass rather than reporting a false negative. ⭐ A detector has to be right about the
+**format** of what it reads, not merely about where to read it — the same shape as the display-tie
+bug in the cadence rig.
+
+ℹ️ Both diagnostics are kept: one-shot, and the OutHit dump is the first thing to read on the next
+engine whose `FHitResult` differs.
 
 
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
