@@ -15,9 +15,25 @@ are run here, because they answer different things:
       ADDRESS: the set is diffed against a snapshot taken before the spawn, so an
       object that merely survived cannot be mistaken for a new one.
 
-Spawn source: `set_debug_camera` on. UE instantiates `ADebugCameraController` and its
-components lazily on the first toggle, so this manufactures new UActorComponents on
-demand without a human playing the game.
+Spawn source, selected with `--spawn`:
+
+  debugcam  (default)  `set_debug_camera` on. UE instantiates `ADebugCameraController`
+            and its components lazily on the first toggle, so this manufactures new
+            UActorComponents without anyone playing the game. ⚠ It is ONE-SHOT per
+            process: once those objects exist, cycling the camera off/on creates
+            nothing, so a second run in the same session cannot spawn (measured on
+            DumperTest 2026-08-22: 295 live objects before, 295 after).
+
+  manual    Poll for new objects while a human — or computer-use — makes the game
+            spawn them: walk into a battle, change map, reload a save. This is the
+            mode for a real title (DQ7R et al.), where the game itself is a far better
+            object factory than any debug lever. Nothing is written during the wait;
+            the hold is already down by then, which is the whole point.
+
+⚠ Whichever source is used, NEWNESS IS ESTABLISHED BY ADDRESS against a pre-spawn
+snapshot — never by a count, and never by a name. An object that merely survived can
+therefore not be mistaken for a new one, and neither can a recycled address that was
+already in the `before` set.
 
 ⚠ Anti-vacuity, enforced: the run FAILS if the Force held nothing, if the CDO cannot
 be found, or if the spawn produced no new object of the forced class — "no new
@@ -27,12 +43,19 @@ objects were wrong" is not a pass when there were no new objects.
 """
 from __future__ import annotations
 
+import argparse
 import pathlib
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
+
+# The docstring reaches argparse as --help text, and this console is cp950: without
+# this, `--help` dies with UnicodeEncodeError on the first non-ASCII marker rather
+# than printing anything. Same idiom as the other rigs here.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BASE = "ActorComponent"
 FIELD = "bIsEditorOnly"
@@ -66,7 +89,48 @@ def _cdo(c: PipeClient, cls: str) -> str | None:
     return None
 
 
+def _spawn_manual(c: PipeClient, before: dict, deadline_s: int, settle_s: float) -> dict:
+    """Wait for the GAME to create objects. Returns the post-spawn map.
+
+    Polls by ADDRESS diff, so it cannot be fooled by a count that happens to rise.
+    Once the first genuinely-new object appears it waits `settle_s` more and re-reads,
+    because a map change spawns in waves and the first wave is rarely the whole set.
+    """
+    print()
+    print("  >> MANUAL SPAWN MODE — go make the game create objects now.")
+    print("     (enter a battle, change map, reload a save …)  waiting up to %ds" % deadline_s)
+    end = time.time() + deadline_s
+    first_seen_at = None
+    after = before
+    while time.time() < end:
+        time.sleep(3.0)
+        after = _components(c)
+        fresh = [a for a in after if a not in before]
+        if fresh and first_seen_at is None:
+            first_seen_at = time.time()
+            print("     +%d new after %ds — settling %.0fs for the rest of the wave"
+                  % (len(fresh), int(deadline_s - (end - time.time())), settle_s))
+        if first_seen_at is not None and time.time() - first_seen_at >= settle_s:
+            break
+        if first_seen_at is None:
+            print("     … still %d known, nothing new yet" % len(after))
+    return _components(c)
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--spawn", choices=("debugcam", "manual"), default="debugcam",
+                    help="how new objects are created (default: debugcam)")
+    ap.add_argument("--wait", type=int, default=180,
+                    help="manual mode: seconds to wait for a spawn (default: 180)")
+    ap.add_argument("--settle", type=float, default=6.0,
+                    help="manual mode: extra seconds after the first new object (default: 6)")
+    ap.add_argument("--base", default=BASE, help="class to force (default: %s)" % BASE)
+    ap.add_argument("--field", default=FIELD, help="bool field to force (default: %s)" % FIELD)
+    args = ap.parse_args()
+    globals()["BASE"], globals()["FIELD"] = args.base, args.field
+
     with PipeClient().connect() as c:
         c.request("reset_all_fields")
 
@@ -102,11 +166,16 @@ def main() -> int:
         print()
         print("after reset: %d live component(s) known" % len(before))
 
-        c.request("set_debug_camera", enable=True)
-        time.sleep(2.5)
-        after = _components(c)
+        if args.spawn == "manual":
+            after = _spawn_manual(c, before, args.wait, args.settle)
+            how = "game-driven spawn"
+        else:
+            c.request("set_debug_camera", enable=True)
+            time.sleep(2.5)
+            after = _components(c)
+            how = "debug camera on"
         fresh = [a for a in after if a not in before]
-        print("debug camera on -> %d component(s) that did NOT exist before" % len(fresh))
+        print("%s -> %d component(s) that did NOT exist before" % (how, len(fresh)))
         for a in fresh[:8]:
             print("    %-16s %-34s %s" % (a, after[a][0], after[a][1]))
         assert fresh, ("nothing spawned — the row is explicit that looking at objects which "
@@ -118,7 +187,8 @@ def main() -> int:
         for a, cls, v in dirty[:8]:
             print("    %-16s %-30s %s" % (a, cls, v))
 
-        c.request("set_debug_camera", enable=False)
+        if args.spawn == "debugcam":
+            c.request("set_debug_camera", enable=False)
         c.request("reset_all_fields")
 
         print()
