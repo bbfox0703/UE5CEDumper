@@ -85,12 +85,12 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
-> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **4** is
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **5** is
 > the honest row count of this table.
 > ⭐ **`[STALEDLL]`(a) CLOSED 2026-08-22** — the maintainer deleted the stale DLL, and it was
 > verified gone by a recursive sweep of both `Cheat Engine` install folders (0 `UE5Dumper*.dll`
@@ -130,6 +130,7 @@ Open work only. **Read this when deciding what to do next.**
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 > | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
 > | `[FORCESTATUSCLIP-2026-08-22]` | 🟡 **LOW.** The Property Search *Force* status line sits in a horizontal `StackPanel` with no `TextTrimming`, no wrapping and no tooltip (`PropertySearchPanel.axaml:55`), so it is right-clipped at ~30 characters on a 1389-wide window. The clipped tail is `— cap reached, more exist unheld`, a clause whose own code comment (`PropertySearchViewModel.cs:502`) says it exists because "on 256 instance(s)" reads as "all of them" without it. ⚠ LOW **and the reason is measured**: the `⚠ capped` badge in the Forced-fields strip binds the **same** `r.Truncated` (`PropertySearchPanel.axaml:134`) and is not clipped, so the fact reaches the user by a second route — this is report *incompleteness*, not a wrong report. Fix shape: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"`, and **sweep the siblings first** — a grep for `StatusText` will not find them, the containing panel is what matters. |
+> | `[Y11-OPAQUEDROP-2026-08-22]` | 🟡 **LOW — a missing message, not missing logic.** Typing a value into an **opaque `[struct]`** field of the invoke dialog is **silently discarded**: FIRE reports `ProcessEvent OK` and the post-call buffer shows the field still zero (`ImageSize=0x0`, reproduced on `.Margin`). ⭐ The dangerous half is genuinely fixed — nothing is written, which is what the pre-fix bug did — and the control proves the dialog *can* write typed values (`X=5, Y=7` → `raw 0000A0400000E040`). What is missing is telling the user their input was dropped. ⛔ Do NOT fix it by writing the value. Y11 step 3. |
 > | `[TREERECLICK-2026-08-22]` | 🟡 **Clicking the ALREADY-SELECTED Object Tree node does nothing** — no `SelectionChanged`, so no `walk_class` reaches the wire (measured: three clicks, two walks). Harmless alone, but after a cross-tab handoff (`Classes` → `Walk Class`) the panel shows class X while the tree highlight says node P, and clicking P **cannot** get it back; only selecting a different row and returning does. ⛔ **Not a `ClassStructViewModel` bug** — its `BeginLoad(nodeAddr: null)` already clears the dedupe key correctly, which is exactly why the recovery click works. Any fix belongs in the VIEW. AE2/AE3 step 5. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -16502,7 +16503,45 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 -----
 
-### ⬜ Y11 —— FIRE 對做不出來的參數型別要老實拒絕
+### 🟡 Y11 — 3 of 4 steps PASS; step 3 FAILS as written 2026-08-22 `[Y11-OPAQUEDROP-2026-08-22]`
+
+Run on **DQ7R** (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370 objects), on a live plain
+`TextBlock` at `0x28F42DD4240` — DumperTest could not serve this row (no live `TextBlock`, and its
+own classes declare zero UFUNCTIONs).
+
+| step | verdict | evidence |
+|---|---|---|
+| **1** FText param, field left at `0`, FIRE | ✅ **PASS** | Refused, and the message names the type and the reason: *"InText: FText parameters cannot be invoked from this dialog — an FText holds a shared reference the engine allocates, and sending a zeroed one crashes the game. Invoke a wrapper that takes an FString instead."* ⭐ **The game did not crash**, which is the point of the gate. |
+| **2** struct param untouched, FIRE | ✅ **PASS**, twice | `SetShadowOffset(FVector2D)` → `ProcessEvent OK`, post-call buffer `X=0, Y=0`. `SetStrikeBrush(FSlateBrush, 136 B)` → `ProcessEvent OK`, buffer all zeros across every member. |
+| **3** type `42` into that field, FIRE | ❌ **FAILS AS WRITTEN** | Not refused. `ProcessEvent OK (result=0)` and the post-call buffer reads **`ImageSize=0x0`** — the typed value was **silently discarded**. Repeated on `.Margin` with the same result (`Margin=00-00-…-00`). |
+| **4** control: ordinary params still fire | ✅ **PASS** | `SetShadowOffset` with `X=5, Y=7` → `ProcessEvent OK`, buffer `X=5, Y=7`, `raw: 0000A0400000E040` (= 5.0f / 7.0f little-endian). |
+
+⭐ **Step 4 is what makes step 3 a finding rather than a shrug.** The dialog demonstrably *does* write
+typed values into supported fields — 5 and 7 landed in the raw bytes. So the silence on the opaque
+struct fields is specific to those, not a dialog that ignores input generally.
+
+**What is actually fixed, and what is not.** The row's stated danger was that the typed text *"would
+be written as an int32 straight onto the struct's Data pointer and handed to ProcessEvent"*. That is
+**gone** — provably, because the post-call buffer is all zeros, so nothing was written. The safety
+half of the fix is real.
+
+What is missing is the **honesty** half the row asks for: the user types `42`, presses FIRE, and is
+told `ProcessEvent OK` with no indication that their input was dropped. That is this repo's
+recurring shape — the report and the reality computed by different paths — in its mildest form.
+
+▶ **The fix is a message, not logic.** Either refuse the FIRE while an opaque `[struct]` field holds
+a non-default value (what the row expects), or keep sending and say plainly that the field was
+ignored because the type cannot be marshalled. ⛔ **Do not "fix" it by writing the value** — that is
+precisely the behaviour that was removed.
+
+ℹ️ Fixture notes worth keeping: `TextBlock::SetText` is the FText candidate on any UMG title
+(`ParmsSize=24` on UE 4.27, not 16). DQ7R has **3,159** live `LocalizeTextBlock` instances but that
+subclass declares only 3 functions of its own — the Functions table lists a class's **own**
+functions, not inherited ones, so walk a **plain `TextBlock`** (DQ7R had 2 live) to reach `SetText`.
+
+-----
+
+### (original steps) Y11 —— FIRE 對做不出來的參數型別要老實拒絕
 
 *優先度 **中** · **需要**：一個參數含 `FText`、`TArray` 或 `TMap` 的 UFunction。找不到就是無樣本可測。*
 
