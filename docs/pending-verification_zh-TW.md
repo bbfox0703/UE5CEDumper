@@ -346,10 +346,10 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 開啟 See-through，然後分別做四種關閉：(a) 移動中關掉 (b) 遊戲暫停/卡住時關掉 (c) 直接拔掉 UI 連線 (d) 關閉遊戲。 | 四種情況下所有被隱藏的 actor 都恢復可見。<br>⭐ **2026-08-22 重新分類為 D2（自動化操作＋對成品斷言），不再是「只能用眼睛看」。** 原本這裡寫「（只能用眼睛看螢幕判定）」，那是本檔案唯一一處明文的肉眼宣告，而它是**過時的**：`Schlacht.cpp:392` 保有被隱藏 actor 的集合，`:411`／`:450` 維護 `hiddenCount`，`Fern.cpp` 把它從 `seethrough_get_state` 以 `hidden_count` 送出來。<br>**用兩個偵測器，而且必須是兩個：**<br>① `seethrough_get_state` 的 `hidden_count == 0`；<br>② **獨立**重讀那些 actor 的 hidden 旗標（`find_instances` → `walk_instance`），和開啟前的基準比對。<br>⚠ 只用 ① 不夠 —— DLL 的帳可以歸零，而 `SetActorHiddenInGame` 那一次 invoke 其實失敗了；那正是這一列要抓的東西，只用 DLL 自己的帳去驗等於讓被告當證人。<br>⚠⚠ **先證明通道帶得動**：開啟後必須先看到 `hidden_count > 0`，否則四個 arm 全是空過。這款遊戲若根本沒有可隱藏的遮擋物（FF7R 的 CollisionAssetActor 是隱形碰撞代理，SeeThrough 對它是 no-op），就換一款（docs 記錄 Tower of Mask 與 DQ7R 可用）。<br>ℹ️ arm (c) 斷線後重連再跑 ①②；arm (d) 遊戲已經沒了，沒有東西可讀，只剩 log 通道（`Schlacht.cpp:511`／`:533`）—— log 也是留得下來的成品，所以仍是 D2 而不是 D4。<br>**人還是要在遊戲裡走動**（arm (a) 要移動、(b) 要讓遊戲卡住），但「有沒有 actor 留在隱形狀態」這個判定不再靠眼睛。這就是「要有人點」≠「要有人判斷」。 |
-| 2 | 起一個 force-field hold，hold 進行中中斷 UI 連線，再重連並看 `get_forced_fields`。 | hold 仍列在清單上，而且用 CE 讀該欄位的值仍被壓住。<br>⚠ 只看清單不算通過：殭屍 job 會照樣列出來但已經停止 re-assert，一定要在 CE 讀值。 |
+| 2 | ✅ **2026-08-22 兩半都通過**（`[SOLIDEHOLD-2026-08-22]`）。`Actor::bIsEditorOnlyActor` hold 中把 UI 斷線，然後**在 CE 端**對真實實例 `ChaosDebugDrawActor@0x1565475F240+0x5B` 做 drift 測試：`0x23` → 寫 `0x00` → **1.5 秒內回到 `0x02`**（只回自己那個 bit，`0x01`/`0x20` 沒被動）。重連後 strip 仍列 `(58 held)`。⭐ 釋放後同一支探針寫 0 等 2 秒 → 維持 `0x00`，**同一個偵測器給出相反答案**，所以「有東西在寫」不是誤判。 | hold 仍列在清單上，而且用 CE 讀該欄位的值仍被壓住。<br>⚠ 只看清單不算通過：殭屍 job 會照樣列出來但已經停止 re-assert，一定要在 CE 讀值。 |
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
-| 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
-| 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
+| 4 | ✅ **2026-08-22 通過**（`[SOLIDEHOLD-2026-08-22]`）。DumperTest 沒有投射物/群眾，改用**測量**找 fixture：`ActorComponent::bIsEditorOnly`（+221 inheritors，池裡 519 個 component）超過上限、`Actor::bIsEditorOnlyActor`（58 個）不會。兩列同時顯示：`(256 held) ⚠ capped` 與 `(58 held)`（無徽章）。⚠ **狀態列那句讀不到** —— 被視窗右緣截斷，見 `[FORCESTATUSCLIP-2026-08-22]`。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
+| 5 | ✅ **2026-08-22 通過**（`[SOLIDEHOLD-2026-08-22]`）。只釋放 ActorComponent 那一列後重跑搜尋：該列 preview `true`→**`false`**，而仍持有的 Actor 那列 `false`→**`true`**。⭐ 同一次 refresh 裡兩列**往相反方向跑**，所以不可能是快取或整批重讀造成的假象。 | 沒有任何實例卡在被強制的值。 |
 
 ## 第 4 步 — 需要特定條件的遊戲
 

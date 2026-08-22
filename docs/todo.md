@@ -6861,6 +6861,115 @@ the only way back is relaunch + re-inject + CE re-attach.
 the point of the step is the round trip rather than the coordinates.
 
 
+
+### ✅ M1–M5 steps 2 / 4 / 5 PASS 2026-08-22 `[SOLIDEHOLD-2026-08-22]` — the 256 badge, the release, and the anti-zombie control
+
+DumperTest (`dist` v1.0.0.3314), CE 7.7 attached alongside. Fixture found by measurement, not guess:
+`ActorComponent::bIsEditorOnly` (BoolProperty, +0x8B, **+221 inheritors**) as the over-cap class and
+`Actor::bIsEditorOnlyActor` (+0x5B) as the under-cap control — 519 component instances in the pool
+against 58 actors, so one class crosses 256 and the other cannot.
+
+**Step 4 — the cap badge, with its own control on screen at the same time:**
+
+```
+Forced fields:  [Clear all]
+✕ ActorComponent · bIsEditorOnly      (256 held)  ⚠ capped
+✕ Actor          · bIsEditorOnlyActor  (58 held)
+```
+
+Both rows visible together is the point — the badge is not merely present, it is **absent where it
+should be**.
+
+⚠ **The status line's clause could NOT be read on screen** — see `[FORCESTATUSCLIP-2026-08-22]`
+below. The `⚠ capped` badge and that clause are both driven by `r.Truncated`, so the information
+reaches the user, but the sentence the row names does not.
+
+**Step 5 — release, verified as a CROSSOVER rather than a re-read:**
+
+| row | before release | after releasing only the ActorComponent row |
+|---|---|---|
+| `ActorComponent::bIsEditorOnly` | `true` | **`false`** — restored |
+| `Actor::bIsEditorOnlyActor` | `false` → `true` (held) | **still `true`** — untouched |
+
+Both previews come from a fresh Property Search, i.e. a live re-read down a different path than the
+one that wrote them. ⭐ The two rows **swapping in opposite directions in one refresh** is what rules
+out a global stale-cache artefact: a re-read bug cannot flip one row down and hold the other up.
+
+**Step 2 — hold survives a disconnect, AND is still writing.** The row is explicit that the listing
+alone is not a pass ("殭屍 job 會照樣列出來但已經停止 re-assert"), so the witness is a **drift test
+run from CE while the UI was disconnected**, on a real instance (`ChaosDebugDrawActor`
+@ `0x1565475F240`, +0x5B):
+
+```
+UI DISCONNECTED
+  before          = 0x23
+  wrote 0      -> = 0x00
+  +1.5s           = 0x02     <- the worker put ITS bit back
+  +3.0s           = 0x02
+```
+
+⭐ Three things fall out of one measurement: the worker is alive with no UI attached; the mask is
+`0x02`; and **only that bit came back** — `0x01` and `0x20` stayed clear, so Solide re-asserts its
+own field and not the byte around it. Reconnecting then showed the strip still listing
+`✕ Actor · bIsEditorOnlyActor (58 held)`, read back from the DLL by `get_forced_fields` over a
+brand-new connection.
+
+**And the negative control for that detector**, run immediately after releasing the hold:
+
+```
+AFTER RELEASE
+  byte now        = 0x00      <- best-effort base restore put it back to false
+  wrote 0, +2.0s  = 0x00      <- NOT re-asserted; the hold really stopped
+  restored to     = 0x23
+```
+
+Same probe, same address, opposite answer. Without it, "0x02 came back" is only evidence that
+*something* writes there.
+
+ℹ️ Steps 1 (See-through's four disable arms) and 3 (close the game with a hold live) are still open.
+
+-----
+
+### ⬜ NEW DEFECT 2026-08-22 `[FORCESTATUSCLIP-2026-08-22]` — the Force status line is right-clipped, and its tail is the part that matters
+
+`PropertySearchPanel.axaml:55` puts `StatusText` in a horizontal `StackPanel` with **no
+`TextTrimming`, no `TextWrapping` and no `ToolTip.Tip`**. A `StackPanel` hands a child its desired
+width and clips at the panel edge, so a long status is cut with no ellipsis and no way to read the
+rest.
+
+Measured on a maximised window at 1389×868: about 30 characters survive —
+`✓ Holding Actor::bIsEditorOnly` — cut mid-token off a property actually named
+`bIsEditorOnlyActor`.
+
+⚠ **Why it is not merely cosmetic here.** The longest message the panel produces is exactly the one
+whose ending carries information nothing else states in words:
+
+```csharp
+// PropertySearchViewModel.cs:502-507
+// A capped pool makes Held a floor, not a total. Say so — otherwise
+// "on 256 instance(s)" reads as "all of them" when it means "the first
+// 256 we walked, in ascending GObjects order, and there are more".
+StatusText = r.Truncated
+    ? $"✓ Holding {..} = {what} on {r.Held} instance(s) — cap reached, more exist unheld."
+    : $"✓ Holding {..} = {what} on {r.Held} instance(s).";
+```
+
+The clause exists *because* the count misleads without it, and it is the first thing off the edge.
+Same shape as the closed `Z10` family: **do not state something only in a place the user cannot
+reach.**
+
+ℹ️ Severity is LOW, not MED, and the reason is measured rather than assumed: `⚠ capped` in the
+Forced-fields strip is bound to the **same** `r.Truncated`
+(`PropertySearchPanel.axaml:134 IsVisible="{Binding Truncated}"`), so the fact reaches the user by a
+second, unclipped route. This is a report-completeness defect, not a wrong report — the two paths
+agree, which is the opposite of this repo's usual root cause.
+
+**Fix shape**: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"` on that
+TextBlock. ⚠ **Sweep the siblings before fixing** — the interesting question is how many other
+panels put a status string in a `StackPanel` the same way, and a grep for `StatusText` alone will
+not answer it (the panel matters, not the binding).
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
