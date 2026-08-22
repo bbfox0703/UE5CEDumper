@@ -175,7 +175,7 @@ session 的順序很好用，保留。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 4 | 進入戰鬥**實際挨打**，讓遊戲以傷害重置該旗標，同時連續按 ↻ 數次 | 多數為 `ON`，至少要看到一次 `ON (contested)`<br>⚠ 需要真的有人在玩（挨打），掛在選單或站著不動測不到。<br>⚠ 這格出現得很少是設計使然（re-assert worker 很快就贏），但**沒看到就是沒測到、不是通過**（見鐵則 1）。 |
+| 4 | 進入戰鬥**實際挨打**，讓遊戲以傷害重置該旗標。 | 至少要記錄到一次 `ON (contested)`。<br>⭐ **2026-08-22 重新分類為 D2／人來玩。** 別用眼睛盯 ↻ —— 這格出現得很少是設計使然（re-assert worker 很快就贏），用肉眼盯畫面剛好是最容易錯過、又留不下證據的做法。改成：打的時候讓一支 pipe 輪詢器持續記錄 **`get_protect_state`** 回的 `(want, godmode, resolvable)` 三元組，事後看有沒有出現 **`(1, 0, true)`**。<br>⚠ **是 `get_protect_state`，不是 `get_god_mode`** —— 後者只回 `state`／`code`，拿它輪詢永遠看不到這一格（`Fern.cpp:5518` vs `:5525`）。<br>ℹ️ 三元組**對應到哪個徽章字串**已經是純函式而且有測試（`TeleportViewModel.cs:1645-1655` 的 switch，`TeleportViewModelTests.cs:1129` 斷言 `(1,0,true) => "ON (contested)"`）。所以這一步唯一要證明的是**那個狀態真的發生過**，不是它會怎麼顯示。<br>⚠ 人還是要真的挨打（掛在選單或站著不動測不到），但**判定**不再靠眼睛 —— 這是「要有人點」≠「要有人判斷」最清楚的例子。<br>⚠ 沒記錄到就是沒測到、不是通過（鐵則 1）。 |
 
 ### ⬜ A3 —— 每個 class 的多個 FVector 都要能掃到
 
@@ -400,7 +400,7 @@ session 的順序很好用，保留。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 開啟 See-through，然後分別做四種關閉：(a) 移動中關掉 (b) 遊戲暫停/卡住時關掉 (c) 直接拔掉 UI 連線 (d) 關閉遊戲。 | 四種情況下所有被隱藏的 actor 都恢復可見。任何一個 actor 留在隱形狀態就是 FAIL（只能用眼睛看螢幕判定）。 |
+| 1 | 開啟 See-through，然後分別做四種關閉：(a) 移動中關掉 (b) 遊戲暫停/卡住時關掉 (c) 直接拔掉 UI 連線 (d) 關閉遊戲。 | 四種情況下所有被隱藏的 actor 都恢復可見。<br>⭐ **2026-08-22 重新分類為 D2（自動化操作＋對成品斷言），不再是「只能用眼睛看」。** 原本這裡寫「（只能用眼睛看螢幕判定）」，那是本檔案唯一一處明文的肉眼宣告，而它是**過時的**：`Schlacht.cpp:392` 保有被隱藏 actor 的集合，`:411`／`:450` 維護 `hiddenCount`，`Fern.cpp` 把它從 `seethrough_get_state` 以 `hidden_count` 送出來。<br>**用兩個偵測器，而且必須是兩個：**<br>① `seethrough_get_state` 的 `hidden_count == 0`；<br>② **獨立**重讀那些 actor 的 hidden 旗標（`find_instances` → `walk_instance`），和開啟前的基準比對。<br>⚠ 只用 ① 不夠 —— DLL 的帳可以歸零，而 `SetActorHiddenInGame` 那一次 invoke 其實失敗了；那正是這一列要抓的東西，只用 DLL 自己的帳去驗等於讓被告當證人。<br>⚠⚠ **先證明通道帶得動**：開啟後必須先看到 `hidden_count > 0`，否則四個 arm 全是空過。這款遊戲若根本沒有可隱藏的遮擋物（FF7R 的 CollisionAssetActor 是隱形碰撞代理，SeeThrough 對它是 no-op），就換一款（docs 記錄 Tower of Mask 與 DQ7R 可用）。<br>ℹ️ arm (c) 斷線後重連再跑 ①②；arm (d) 遊戲已經沒了，沒有東西可讀，只剩 log 通道（`Schlacht.cpp:511`／`:533`）—— log 也是留得下來的成品，所以仍是 D2 而不是 D4。<br>**人還是要在遊戲裡走動**（arm (a) 要移動、(b) 要讓遊戲卡住），但「有沒有 actor 留在隱形狀態」這個判定不再靠眼睛。這就是「要有人點」≠「要有人判斷」。 |
 | 2 | 起一個 force-field hold，hold 進行中中斷 UI 連線，再重連並看 `get_forced_fields`。 | hold 仍列在清單上，而且用 CE 讀該欄位的值仍被壓住。<br>⚠ 只看清單不算通過：殭屍 job 會照樣列出來但已經停止 re-assert，一定要在 CE 讀值。 |
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
