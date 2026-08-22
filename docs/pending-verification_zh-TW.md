@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 1 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 11 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 10 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 5 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **33** | |
+| **合計** | **32** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -253,18 +253,6 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 1 | ✅ **2026-08-22 通過**(`[AC13-2026-08-22]`)。AOT 版 v1.0.0.3315 連上 DumperTest 後送 `WM_CLOSE`:所有 log 裡 `ReadLoop` **0 次**,DLL 端只有兩行 `PipeServer: Client disconnected`(UI 用兩條 lane),整個 `pipe-0.log` 零 ERROR/WARN。⭐ 而且「沒有」不是空的:`ui-pipe-0.log` 在關閉前就停了,是 `ui-init-0.log` 的 `[16:24:15.146] UE5DumpUI shutting down...` 證明 logger 當下還活著並有寫入。 | 乾淨結束，**不可以**出現 `Pipe: ReadLoop error`。修正前那一行是關閉時的 NullReferenceException，把正常關機記成故障。 |
 | 2 | ⛔ **2026-08-22:System 分頁上沒有 IPC 數字**。那裡有的是 *DLL dispatch cost*(每個指令的 Count／Total／Avg／Max／% busy —— DLL **派送端**的成本)與 *Pipe Activity* 的往返時間。AC13 修的那個傳輸計時在 `PipeTransportStats`,唯一的消費者是 `DiagnosticsProbe`,而它只包住三個操作(Copy CE XML／Copy CE Field／Snapshot capture)並寫一行 `PERF` 到 `view-0.log`。✅ **基準已從那條 PERF 行取得**(`[B10-2026-08-22]`):Snapshot capture 的 `split dll 189.7 / ipc 34.3 / ui 414.6 ms`,6 次 dispatch、每次 ipc 6.850 ms。 | 記下數值即可，這是下一步的基準。 |
 | 3 | ⛔ **2026-08-22:這一步的觀測管道會被它自己的動作關掉**。`DiagnosticsProbe.DisposeAsync` 收尾時要再呼叫一次 `GetDiagnosticsAsync`,而 `catch { return; }` —— 遊戲一斷線,**那行 PERF 根本不會寫**,想讀的數字產不出來。要解鎖:(1) 把 `PipeTransportStats.Snapshot()`(單調、不需要 pipe)顯示在 System 分頁上,或 (2) 用真的 in-process `NamedPipeServerStream` 在寫入中途 dispose 來測計時器的位置。⚠ `PipeTransportStats` 目前**完全沒有測試**,而同一族的 `ClassifySendFailure` 有(它是純函式)。 |
-
------
-
-### ⬜ AC15 / AE27 / AF25 —— 掃描速度、Package 欄、Teleport opcode
-
-*優先度 **低** · 三項都是「結果必須完全一樣」的回歸確認*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | ⭐ **這一步不需要遊戲** —— 只要開 UI 就能跑,卻被放在第 2 步。下次有 UI 在手時順手做掉。<br>Proxy Deploy → 掃描 Steam 程式庫，再跑一次一般磁碟掃描。 | 找到的遊戲、名稱、路徑**完全相同**。唯一該有的差別是變快（每款遊戲少讀一次完整的 VERSIONINFO）。 |
-| 2 | Game Class Filter → 在 Package 欄位輸入關鍵字，再點 Package 欄位標題排序。 | 結果和以前一樣。若出現**空白或過期的 Package 欄**，就是新的快取失效寫錯了。 |
-| 3 | ✅ **2026-08-22 通過**(`[AF25-OPCODE-2026-08-22]`)。實際跑那半在 MB3 那批就做了 —— `Save marker 1`／`TP facing direction`／`Recall marker 1` 三筆真 `.CT` 記錄,以 pawn 姿態為見證(900 → 1000 → 精確回到 900.000/1110.000/92.013)。腳本內容由 `TeleportScriptGeneratorTests` 逐字釘住 `writeInteger(mb + 0x00, 8)`,opcode 仍是 8 且三個產生點都取自 `CeMailboxLayout.CmdTeleport`。⭐ 我原本懷疑這個手抄常數沒人守,**負控制推翻了**:把 C# 端改成 9 → contract gate 照樣 `CHECK OK`(它只比對 ContractVersion),但**測試掛了 6 條**。兩個方向其實都有保護,只是機制不同。 | 腳本內容一字不差，teleport 正常。opcode 仍然是 8，只是改成從共用常數取得。 |
 
 -----
 

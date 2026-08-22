@@ -272,6 +272,40 @@ Two reasons this matters beyond tidiness:
   instances" was compared against a `find_instances` count that had swept in `ActorElement*`
   non-actors.
 
+### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
+
+Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with
+the identical honest limit: *"the same games as before" cannot be checked — no baseline exists on
+this machine.*
+
+**a) Ask whether the change could possibly matter before hunting for a baseline.** The whole diff
+was `try { var info = GetVersionInfo(p); return null; } catch { return null; }` → `=> null`. **Both
+forms return null on every path.** A behavioural baseline was never needed: the removed call could
+not influence the result, and that is a *proof*, strictly stronger than any two observations. When
+a row demands a before/after and the "before" is gone, read the diff — a fix that deletes work
+whose result was discarded is provably behaviour-preserving, and the row collapses to a smoke test.
+⚠ The reverse also holds: if the diff does not carry that property, no amount of re-running the new
+code is evidence about the old, and the row should say so rather than tick.
+
+**b) An oracle computed AFTER you read the answer is worthless.** Write the independent
+implementation, run it, and **write its number down before opening the UI**. An oracle produced
+afterwards gets debugged until it agrees — every discrepancy reads as a bug in the oracle, because
+you already believe the answer. Order is the whole control, and it costs nothing to get right.
+
+**c) A count agreeing is weak evidence; the NAME is what pinned it.** The drive scan and the oracle
+both said 22 — but the sharp agreement was that **ten rows are named `Unreal Projects`** rather than
+`DumperTest` / `StackOBot` / …, because prune-on-match fired at `D:\Unreal Projects` itself and the
+per-game detector then walked its children. Pruning one level deeper yields **the same count of 22**
+with ten different names. So when comparing against an oracle, diff the *derived* fields that
+encode the algorithm's decisions, not the tally — the tally is the one number a wrong
+implementation is most likely to get right by accident.
+
+⭐ **d) Corollary that closed the row's last claim: check what the column BINDS before treating it
+as evidence.** A 2026-08-20 note read "the Version column is empty" as proof `UeVersion` was null.
+That column binds `InstalledVersion`; `UeVersion` is bound by nothing at all, so the observation was
+about a different property entirely. The conclusion happened to be true. One `grep` over the
+`.axaml` is cheaper than an argument about what a blank cell means.
+
 -----
 
 -----

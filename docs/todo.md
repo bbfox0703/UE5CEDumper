@@ -2146,7 +2146,76 @@ matters is simply "do normal mailbox commands still work".
 > `PipeTransportStats.Snapshot().Calls` incremented by 1 and `.Ms` by > 0 — plus the negative control
 > the comment names, that a call refused by the **not-connected guard** adds **no** sample, since that
 > guard deliberately sits above the timer.
-| 5 | `AC15` | 🟡 **STEAM HALF PASSES 2026-08-21**, drive scan not run — see `[AE27-AC15-2026-08-21]` below. | | |
+| 5 | `AC15` | ✅ **PASS 2026-08-22** — both halves, each against an INDEPENDENT oracle, and the "no baseline exists" limit is now closed by proof rather than by observation. See `[AC15-ORACLE-2026-08-22]` below. | | |
+> ### ✅ AC15 PASS 2026-08-22 `[AC15-ORACLE-2026-08-22]` — the drive half runs, and the missing baseline stops mattering
+>
+> Two earlier sessions closed as far as observation could reach and both recorded the same honest
+> limit: *no pre-fix baseline exists on this machine*, so re-running the scan showed only that it
+> still returns **something**. Re-reading the same list from the same code is not a second witness.
+> This closes both gaps — the unrun drive half, and the limit itself.
+>
+> **1 — The set claim is now PROVED, not observed.** `git show 5374e662` on
+> [ProxyDeployService.cs:417](ui/UE5DumpUI/Services/ProxyDeployService.cs:417) is the whole change:
+>
+> ```csharp
+> // before:  try { var info = FileVersionInfo.GetVersionInfo(exePath); return null; } catch { return null; }
+> // after:   private static string? TryDetectUeVersion(string exePath) => null;
+> ```
+>
+> **Both forms return `null` on every path** — the `try` returned null, the `catch` returned null.
+> The removed call could not influence the returned set at all, so "the same games with the same
+> names and paths" holds by construction and needs no baseline. The dead load itself is gone from
+> the scan path (the two surviving `FileVersionInfo` sites, :928 and :1395, read *proxy DLLs* via
+> `IsOurProxyDll`, which is a different and intended use). ⚠ **No timing was measured** — "faster"
+> rests on the removed work, not on a stopwatch.
+>
+> **2 — Both scans agree with an INDEPENDENT oracle** (`tools/verify/ac15_steam_oracle.py`,
+> `ac15_drive_oracle.py` — the detector re-implemented in Python from the C# spec, no shared code).
+> ⭐ Both were run and their answers written down **before** the UI was asked, which is the only
+> ordering under which an oracle can disagree. UI = `dist\UE5DumpUI.exe` **v1.0.0.3315**, AOT.
+>
+> | mode | oracle | UI | agreement |
+> |---|---|---|---|
+> | **Scan Steam** | 18 games / 2 library folders, from 72 `steamapps\common` folders | `Found 18 UE game(s)` | **18/18, name for name** |
+> | **Scan Drives, `D:`** | 22 games, `0` rows under a Steam root | `Found 22 UE game(s)` | **22/22, name and path** |
+>
+> ⭐ **The drive half's sharpest evidence is a NAME, not the count.** Ten of the 22 rows are called
+> `Unreal Projects` rather than `DumperTest` / `StackOBot` / … — because prune-on-match fired at
+> `D:\Unreal Projects` itself (Tier 3: a child holds `Binaries\Win64\*-Win64-Shipping.exe`) and
+> `ScanGameFolder` then walked its children. The oracle produced the same ten identical names. A
+> prune one level deeper yields **the same count of 22** with different names, so the count alone
+> would not have caught it; the names pin the prune point.
+>
+> **3 — The path column is confirmed by CONTENT, not by reading it**
+> (`tools/verify/ac15_path_witness.py`). The grid's `Status` / `Suggested proxy` cells are computed
+> by opening files in the resolved folder, so they witness the path independently. All 18 Steam
+> dirs exist; **11 carry one of our proxies and 7 carry none, and that split matches the Status
+> column row for row** — the 2 `DeployedOutdated` rows are exactly the 2 holding a `dxgi.dll` of
+> ours (the selected type), the 9 `DeployedOtherType` rows hold `version.dll` ×8 + `winmm.dll` ×1
+> (OCTOPATH, swapped by `octopath_proxy_swap.py`), and the 7 `NotDeployed` rows hold nothing.
+> A row pointing at the wrong directory could not produce that.
+>
+> **4 — `UeVersion` is bound by NOTHING.** The grid's `Version` column binds `InstalledVersion`
+> ([ProxyDeployPanel.axaml:373](ui/UE5DumpUI/Views/ProxyDeployPanel.axaml:373)), and a whole-tree
+> grep finds `DetectedGame.UeVersion` written at the two call sites and read only by
+> `ProxyDeployTests.cs:526`'s `Assert.Null`. ⚠ So "the Version column is empty" — cited on
+> 2026-08-20 — is **not** evidence about `UeVersion`; that column never showed it. (The 08-21 note
+> already caught this; recorded here because the wrong reading is the natural one.)
+>
+> ⚠ **Still not covered:** no timing comparison. The 11 deployed proxies all predate
+> `dist/proxy@3315`, which is the known post-republish `proxy_refresh.py` false alarm, **not** a
+> finding.
+>
+> ⭐ **The 繁中 section is DELETED, and the reason is worth keeping.** Its three sub-steps are not
+> three checks of AC15 — they are **one per item id in the heading**: sub-step 1 = `AC15`
+> (this entry), sub-step 2 = `AE27` (Game Class Filter → Package column, ✅ `[AE27-AC15-2026-08-21]`,
+> passed twice — DQ7R and DumperTest-on-AOT), sub-step 3 = `AF25` (✅ `[AF25-OPCODE-2026-08-22]`).
+> All three ids are ✅ in the register, which is the checklist's own stated ground for deleting a
+> section. Read as "three steps of AC15", sub-step 2 looks like outstanding work needing a game;
+> it is not, and it had already been done. **A multi-id heading means the sub-steps may be
+> independent items — check the register per id before scheduling one.** Bucket 第 2 步 11 → 10,
+> total 33 → 32, re-derived from the file.
+>
 > ### ✅ AC15 PASS 2026-08-20 `[AC15-2026-08-20]` — both scanners still detect; ⚠ the two modes are NOT comparable
 >
 > | mode | result |
