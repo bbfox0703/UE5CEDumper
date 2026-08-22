@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 17 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **48** | |
+| **合計** | **43** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -291,18 +291,6 @@ session 的順序很好用，保留。
 | 1 | 同一款遊戲，分別用修正前與修正後的 DLL 各注入一次，各留一份 `scan-0.log`。 | 兩份 log 都跑完整個 FindAll。 |
 | 2 | 比對兩份 log 的 candidate / probe 計數，以及 GObjects / GNames / GWorld 最終解出的位址。 | 計數下降（這是收益），而三個位址逐 byte 完全相同（這才是驗收標準）。位址有變就是 regression。<br>⚠ 不能用 sweep.sh 的 pattern diff 判定：它會跳過 Symbol*/CallFollow 簽章，乾淨的 diff 只代表「沒測到」。 |
 
-### ⬜ W8 —— 匯出的 .usmap 要含 Blueprint 產生的 class
-
-*優先度 **中** · 需要一款 Blueprint 用得多的正式遊戲（幾乎所有商業 UE 遊戲都算）。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | 對同一款遊戲匯出 `.usmap`，把「N structs」那個數字和這個 build 之前的紀錄比對。 | 數字**增加到數千**（原本只有原生 class 的幾百個），差額大致等於遊戲裡 `BlueprintGeneratedClass` 的數量。 |
-| 2 | 在檔案裡找一個已知的 `BP_*_C` 或 `WBP_*_C` 名稱。 | 找得到。修正前這些**全部被丟掉**。 |
-| 3 | 若手邊已裝 FModel / CUE4Parse，用它讀這個 `.usmap`（`W1 / W7` 那項本來就需要這個 parser）。 | 能讀出來且不報錯。 |
-
------
-
 ### ⬜ AC13 / AC14 —— Pipe 傳輸計時、關閉時的 reader
 
 *優先度 **低***
@@ -406,18 +394,6 @@ session 的順序很好用，保留。
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
 | 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
 
-### ⬜ V11 —— 「Register symbol」成功和失敗要看得出差別
-
-*優先度 **中** · 需要 CE ＋ AOBMaker plugin。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | CE ＋ AOBMaker 都連著時，在 GWorld 卡片按 **Register symbol**。 | 面板上方出現**綠色**一行，句子裡有 `gworld_addr`。 |
-| 2 | 把 CE 關掉，再按一次同一顆按鈕。 | 面板上方出現**紅色**一行，句子裡一樣有 `gworld_addr`，而且綠色那行不見了。<br>⚠ 修正前這兩種情況畫面上**完全一樣**（都是什麼都不顯示），只有 log 的等級不同。 |
-| 3 | 在 **&GEngine** 卡片重複步驟 1、2。 | 行為相同，訊息裡是 `gengine_addr`。<br>⚠ 這是修正時 grep 出來的第二個站點，原本的 finding 只寫了一個。 |
-
------
-
 ### ⬜ Y10 / Y13 —— Verify 模式：合約檢查要先跑，dump 視窗要涵蓋回傳值
 
 *優先度 **高** · 需要 CE。⚠ 這兩項**沒有動 mailbox 合約**（仍是 3 / min 1），舊的 `.CT` 照樣有效。*
@@ -431,48 +407,9 @@ session 的順序很好用，保留。
 
 -----
 
-### ⬜ Y12 —— AOBMaker 沒連時，剪貼簿要放「貼得進去」的 CE XML
-
-*優先度 **中** · 需要 CE。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | 把 CE 關掉（或讓 AOBMaker 斷線），按 **Copy AA Script (Baked)**，再到 CE 的位址清單按右鍵 → Paste。 | 出現一筆型別是 **Auto Assembler Script** 的記錄。<br>⚠ 修正前剪貼簿放的是裸的 `[ENABLE]`／`[DISABLE]` 內文，CE 根本不接受它變成一筆記錄。 |
-| 2 | 看對話框的結果訊息。 | 寫的是「copied as **CE XML**」，並且叫你貼到位址清單，而不是含糊的「copied to clipboard」。 |
-
------
-
 ## 第 4 步 — 需要特定條件的遊戲
 
 手上要有符合條件的樣本才做得動；條件寫在每項的「需要」欄。
-
-### ⬜ A12 —— Group 模式下的同一件事
-
-*build 3261 · 優先度 **高** · 需要：和 A11 同一個容器；接著 A11 那一項做，動作一樣，只是面板切 Group*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Value Search 切 **Group** 模式、**Deep 開**，兩個 slot 的值都放在同一個 `TArray<FStruct>` 元素裡，First Scan | 出現候選列，slot 欄位帶 `[i]` 索引<br>⚠ 沒開 Deep 的話這一整項都沒測到 |
-| 2 | 讓那個容器在遊戲裡長大到必須重新配置，再 Next Scan | 該列**存活**，且 `scan-0.log` 出現 `RefineGroup re-anchor: N … repointed` |
-| 3 | 刪掉一個排在命中元素「前面」的元素，再 Next Scan | 該列被丟掉，且 `RefineGroup cand[...]` 那行的 `container-moved=` 不是 0<br>⚠ 這個計數是唯一能分辨「容器搬走了」和「predicate 不符」的東西 |
-| 4 | 換成 `TMap`（value struct 同時裝兩個值）重跑第 2、3 步 | 行為同上，**而且第一次 Next Scan 不會整批被丟掉**<br>⚠ 遊戲裡什麼都沒動卻整批消失 = `MaxCapacity` / `MaxIndex` 用錯單位，這是唯一看得出來的地方 |
-| 5 | 反向對照：拿一組「非容器」的普通欄位做 Group scan，什麼都不改就 Next Scan | 列都還在，而且完全沒有 `RefineGroup re-anchor` 那行 |
-| 6 | grep log 的 `carries no ValueAnchor` | 不該出現（出現＝三個 by-name 傳遞環節有一個漏掉，離線測不到） |
-
-⚠ **巢狀第 2 層以上刻意不處理**（`UnverifiableNested`），行為與 3261 之前相同，不算失敗。
-
-### ⬜ A11 —— 容器長大後 Value Search 的候選不該消失
-
-*build 3253 · 優先度 **高** · 需要：要一款有 `TArray` / `TMap` UPROPERTY，且元素數量會在遊玩中增減的遊戲（背包、生成物清單、buff 清單）。*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Value Search 掃一個位在容器元素裡的已知值（`TArray<FStruct>` 欄位或 `TMap` 的 value），First Scan | 該列帶 `[i]` 元素索引<br>⚠ 先確認它真的是容器元素而不是直接欄位 |
-| 2 | 在遊戲裡「新增」到該容器直到它必須擴充（撿東西、生怪），再用同一個值 Next Scan | 候選**存活**，且 `scan-0.log` 出現 `Refine re-anchor: N container element(s) repointed after a realloc`<br>⚠ 候選活著但完全沒有 re-anchor 那行 = 容器還有餘裕沒真的搬家，這次沒測到 repoint |
-| 3 | 刪掉一個索引「排在候選前面」的元素，再 Next Scan | 候選被丟掉，log 的 `dropped` 數字增加<br>⚠ 這才是無聲錯值那一種：尾巴就地往前移，舊位址讀得很乾淨但回的是鄰居的值 |
-| 4 | TSet / TMap：刪掉候選指著的那一筆，再 Next Scan | 被丟掉<br>⚠ 釋放掉的 sparse slot 會被下一次 Add 就地重用，位址一模一樣，只有 allocation bit 看得出來 |
-| 5 | 反向對照（不可略過）：掃一個容器值之後，只「append」而不觸發重新配置，再 Next Scan | 候選**存活**<br>⚠ 這些消失了就是 regression 不是修好 —— 天真的 `{dataPtr,count}` 規則正是會把它們全殺掉 |
-| 6 | 對一個「非容器」的普通欄位重做第 1 步 | 行為不變，而且完全沒有 `Refine re-anchor` 那行 |
 
 ### ⬜ MG2 / TSet 迴歸 —— 計數與非迴歸（**MG1 / MG3 / A2 / U1 / V1 已完成，只剩這兩項**）
 

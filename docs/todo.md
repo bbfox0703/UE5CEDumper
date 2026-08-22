@@ -6494,6 +6494,46 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ MIRROR SWEEP 2026-08-22 `[ZHTW-SWEEP-2026-08-22]` — 50 → 43 sections, none of it new verification
+
+⭐ **Seven sections closed and not one of them needed a game.** `AF21` had been left behind after its
+own PASS was recorded; the other six were already settled by work this register had done and never
+mirrored. This is the cheapest kind of progress on the list and it is invisible unless somebody
+mechanically compares the two files — which is what produced it.
+
+**The sweep.** For every section heading in the 繁中 file, extract its ids and look for a `✅` / PASS
+/ VERIFIED heading in `todo.md` naming the same id. That is a *candidate* list, not an answer: most
+hits are per-STEP (`Step 3 CLOSED`, `STEPS 4–8 PASS`, `HALF`), and the mirror's headings already say
+`只剩步驟 X` for those. Each candidate was then checked step-by-step against its own row.
+
+| section | why it closed |
+|---|---|
+| `AC17` | `[VOLUMEROOT-2026-08-19]` — fixed AND verified, names AC17, `VolumeRootTests.cs:161` |
+| `AF21` | `[AF21-HIDPI-2026-08-21]` PASS; re-ran the rig on 3313, all three arms |
+| `A11` | `[A11-MUTATE-2026-08-21]` — "STEPS 2, 3, 4, 5 ALL PASS", plus 1 and 6 |
+| `A12` | `[A12-…-2026-08-21]` — "STEPS 1, 4a, 5, 6" + "STEPS 2, 3, 4 ALL PASS" |
+| `V11` | `[V11-SYM-2026-08-20]` — all four card × outcome combinations, which is steps 1-3 |
+| `Y12` | `[Y12-CLIP-2026-08-20]` covers step 1; step 2's wording verified at source — `InvokeParamDialog.cs:912/:919` say "AA Script copied as CE XML … paste into CE's address list" in both branches |
+| `W8` | `[W8-USMAP-2026-08-20]` covers steps 1-2 (507 of 513 BP classes present). Step 3 is "if you happen to have FModel/CUE4Parse installed" — that parser check is `W1 / W7`'s own row, which stays open, so nothing is lost |
+
+⚠ **Four candidates were REJECTED on inspection** and their sections stay: `A11`/`A12` looked
+ambiguous at first because their entry headings say CLOSED while the entry text says *"the WIRING is
+not [unit-pinned]"* — they only survived scrutiny because the same entry carries the later
+mutation-harness results. `AE4`, `AF7/AF8`, `A6`, `AE2/AE3`, `G2`, `G11`, `MB3`, `AA2/AA3`, `D2`,
+`U3/U17` and others all matched the grep and are all per-step. **A ✅ naming an id is a lead, not a
+verdict.**
+
+⚠ **The table was RECOUNTED from the file, not hand-adjusted** — the script walks the `## 第 N 步`
+headings, counts the `###` under each, rewrites all five numbers and the total, then asserts the
+derived total matches. 第 1 步 2 · 第 2 步 17 · 第 3 步 8 · 第 4 步 14 · 第 5 步 2 = **43**.
+Hand-editing that table is how it drifted before.
+
+▶ **Worth re-running whenever a batch of register work lands.** The mirror goes stale silently and
+in one direction: a row that closes in `todo.md` leaves a section here that looks like open work
+forever.
+
+
 ### ✅ FOUND + FIXED 2026-08-22 `[PARAMSSORT-2026-08-22]` — three "Params" columns sorted the LABEL, and the audit that fixed the fourth could not see them
 
 ⭐ **The most useful thing here is WHY they survived**, and it is a reusable trap: **the sweep asked
