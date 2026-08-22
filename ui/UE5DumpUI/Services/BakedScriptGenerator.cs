@@ -346,10 +346,20 @@ public static class BakedScriptGenerator
                         : $"complex return at +{returnParam.Offset}, past the "
                           + $"{dumpLen}-byte dump window above -- read it in CE's memory "
                           + "viewer at g_invokeMailbox + 0x328";
+                    // hint MUST go through EscapeLua like every other interpolated piece
+                    // on this line. It did not, and the does-not-fit branch above contains
+                    // an apostrophe ("CE's"), which closed the single-quoted Lua string
+                    // early and made the WHOLE [ENABLE] block a syntax error:
+                    //   Lua error ... ')' expected near 's'
+                    // CE then refuses to enable the record and reverts Active to false
+                    // with NO dialog, so the script simply never runs and says nothing.
+                    // Measured in CE 7.7 on SequenceCameraShakeTestUtil::GetCameraCachePOV
+                    // (ParmsSize 2064, FMinimalViewInfo return at +16, 2048B) while running
+                    // Y10 step 4. [INVOKEHINTQUOTE-2026-08-22]
                     Line(sb,
                         $"  print('[Invoke] OK: {EscapeLua(className)}::{EscapeLua(funcName)} " +
                         $"-> {EscapeLua(returnParam.ParamName)} ({displayType}@{returnParam.Offset}, " +
-                        $"size={returnParam.Size}B) -- {hint}')");
+                        $"size={returnParam.Size}B) -- {EscapeLua(hint)}')");
                 }
                 else
                 {
