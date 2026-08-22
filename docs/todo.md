@@ -7461,6 +7461,51 @@ followed.
 attempted.
 
 
+
+### ✅ A3 step 3 CLOSES THE ROW 2026-08-22 `[A3-STEP3-2026-08-22]` — and the 2026-08-19 numbers reproduced exactly
+
+`[A3-DOUBLE-2026-08-19]` closed steps 1, 2 and 4 and left step 3 (the *asymmetry corroboration*: the
+same field must also be findable through Group Scan / Property Search **Deep**, a path that already
+worked before build 3168).
+
+**Step 3 — PASS.** From a `Double`/`Exact 0` scan, the vector leaf
+`SparseVolumeTextureViewerComponent :: ComponentVelocity.X`; then
+`search_properties(query="ComponentVelocity", deep=True)` → **3 rows**, the first of which is
+**`SceneComponent`** — the class that *declares* the field, which is exactly what audit #5 A6's rule
+predicts (a Property Search row for an inherited field is keyed to the declaring class, not the
+instance's own class). Two different subsystems, same field.
+
+⭐⭐ **And the run reproduced the 2026-08-19 measurement to the digit**, which is a stronger check on
+that record than anything I set out to do:
+
+| | 2026-08-19 | today |
+|---|---|---|
+| `Double`/`Exact 0` candidates | 3,450 | **3,450** |
+| `TraceQueryTestResults` distinct vector parents | 72 | **72** |
+| `RigVMMemory_Work` | 34 | **34** |
+| `DumperTestCharacter` / `BP_ThirdPersonCharacter_C` | 19 / 19 | **19 / 19** |
+
+Different session, different build (3263 → 3315), same fixture — the recorded statistic is stable and
+was not a one-off.
+
+⚠⚠ **I walked straight into step 1's documented trap before re-reading the record, which is the
+lesson worth keeping.** Following the 繁中 step literally — *Value Search, **Float***, — gave **0**
+vector components (not even `.Location`), i.e. a clean-looking FAIL of a working fix. Under **LWC an
+`FVector` is a double-precision `FVector3d`**, so a Float scan structurally cannot see `.X`. The
+warning was already written down in this file on 2026-08-19; I re-derived it the expensive way. ⭐
+**Re-read the register entry for a row before running the checklist step** — todo.md is canonical and
+the mirror can be a whole verification pass out of date.
+
+**The mirror was exactly that**: the 繁中 section still had all four steps ⬜ and still said "Float",
+three days after the row was recorded verified. Deleted now.
+
+ℹ️ Step 4's grep is also no longer vacuous: four value scans ran this session (Float ×2, FVector,
+Double over **25,172 objects / 1,415 classes**, `deadline_hit=false`) and `hit the … scan-field cap`
+appears **0 times** in any log. The largest single class contributed 72 distinct vector parents —
+hundreds of leaves, still far under the 4,000 cap. ⚠ The WARN's own channel was not separately
+proven; the load-bearing evidence is that the scans demonstrably ran at that scale.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
