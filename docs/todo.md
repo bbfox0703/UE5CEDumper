@@ -92,7 +92,9 @@ Open work only. **Read this when deciding what to do next.**
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
 > own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **3** is
 > the honest row count of this table — the third, `[CADENCEBAND]`, was field-found on 2026-08-22
-> and is filed rather than fixed because its repair needs a design decision, not a bigger constant.
+> and **downgraded to low the same day**: its only witness is our own 15 FPS test harness, and the
+> one realistic scenario for a real game was tested and refuted. It stays listed because the
+> arithmetic is real below 25 FPS, not because anything is known to be broken in the field.
 >
 > ⚠ **Four rows left on 2026-08-21, and not all in the same direction** — worth noticing, because a
 > queue that only shrinks by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
@@ -116,7 +118,7 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` can pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only (it lives under `%ProgramFiles%`, so the delete needs elevation).** ⚠ **Re-measured 2026-08-21 — still present and the exposure is NARROWER but REAL, see the section below** |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
-> | `[CADENCEBAND-2026-08-22]` | the Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes the game runs above 25 FPS**. Measured after the `[CADENCEGAP]` fix: 0 of 6 flagged at 60 FPS (correct), **4 of 6 at 15 FPS** (all four are ordinary Tick callbacks). Not a bigger constant — the band has to be relative to the *observed* frame period, which the profiler can estimate from its own data; which estimator, and what to do with too few samples, is a maintainer call. Rig: `tools/verify/linie_cadence_gap.py`. |
+> | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
 > gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
@@ -6703,10 +6705,11 @@ and running it would have overwritten `dist/UE5DumpUI.exe` with the non-trimmed 
 
 -----
 
-### ⬜ NEW DEFECT 2026-08-22 `[CADENCEBAND-2026-08-22]` — the "periodic timer" band test assumes the game runs above 25 FPS
+### 🟡 DOWNGRADED 2026-08-22 `[CADENCEBAND-2026-08-22]` — the "periodic timer" band assumes ≥25 FPS, and the only witness is our own harness
 
-*Priority **low-med** · effort **S**, but the fix carries a design decision · found as the residue of
-`[CADENCEGAP-2026-08-22]`, and deliberately NOT folded into it*
+*Priority **low**, and **possibly not worth fixing at all** — read the refuted hypothesis before
+picking it up. Effort **S** for the constant, **M** for the honest fix. Found as the residue of
+`[CADENCEGAP-2026-08-22]` and deliberately filed apart from it.*
 
 `Fern.cpp:4163` classifies a function as a periodic timer with
 
@@ -6715,297 +6718,73 @@ if (snap[i].gapSamples >= 3 && snap[i].cv <= 0.25 &&
     snap[i].meanPeriodMs > 40.0 && snap[i].meanPeriodMs <= 30000.0)
 ```
 
-The `> 40.0` term is meant to exclude per-frame (Tick) callbacks — its own comment says "out of the
-per-frame (Tick) band". **40 ms is 25 FPS.** Below that the frame period exceeds the threshold and
-every ordinary Tick callback is badged as a timer.
+`> 40.0` is meant to exclude per-frame (Tick) callbacks — its own comment says "out of the per-frame
+(Tick) band". **40 ms is 25 FPS**, so the implication it encodes is *"period > 40 ms ⇒ not a plain
+Tick"*, and that is false below the crossover:
 
-**Measured** (same session, after the gap fix, so the two effects are cleanly separated):
+| frame cap | frame period | plain Tick |
+|---|---|---|
+| 120 / 60 / 30 FPS | 8.33 / 16.67 / 33.33 ms | correctly excluded |
+| **25 FPS** | **40.00 ms** | the exact crossover |
+| 24 / 20 / 15 / 10 FPS | 41.7 / 50 / 66.7 / 100 ms | **every plain Tick is badged a TIMER** |
+
+**Measured**, DumperTest, after the gap fix so the two effects are separate:
 
 | | periodic-looking |
 |---|---|
-| `t.MaxFPS 60` — frame 16.7 ms, under the band | **0 of 6** ✅ |
-| `t.MaxFPS 15` — frame 66.7 ms, over the band | **4 of 6** ❌ (the four once-per-frame animation callbacks) |
+| `t.MaxFPS 60` | **0 of 6** ✅ |
+| `t.MaxFPS 15` | **4 of 6** ❌ — the four once-per-frame animation callbacks |
 
-⭐ **This is the separation control for the gap fix and it is why the two are filed apart.** Before
-the fix, 15 FPS gave `6 periodic-looking`; after, `4`. The two that dropped out are the ones the gap
-fix corrected (cv 0.007 → 1.004). The four that remain were never affected by it. Had I fixed both
-at once, neither result would have been attributable.
+⚠⚠ **THE ONLY WITNESS IS OUR OWN TEST HARNESS, AND THAT IS THE HEADLINE.**
+`tools/verify/launch_dumpertest.py:38` caps DumperTest at `t.MaxFPS 15` as a deliberate house
+setting (commit `9e141ec2`, so that no row can quietly launch unbounded and skew a timing
+measurement). Every Live Funcs profile ever taken against DumperTest has therefore run at 15 FPS —
+which is why the `6 periodic-looking` log line has been sitting there unremarked. **No real game has
+been observed hitting this.**
 
-⚠ **Severity is genuinely uncertain and should not be inflated.** 15 FPS is a *test-harness* setting
-(`launch_dumpertest.py` caps DumperTest deliberately), not typical gameplay. The defect is real for
-any game in a heavy scene or on weak hardware, and the Live Funcs panel is exactly the tool someone
-reaches for when a game is behaving oddly — but nobody has reported it.
-
-▶ **The fix is not a bigger constant.** Any constant is wrong for some frame rate. The band should
-be relative to the *observed* frame period, which the profiler can estimate from its own data — the
-modal or minimum mean-period across the recorded set is a per-frame cadence by construction, since
-in any real window several functions tick once per frame. That is a design decision (which
-estimator, what to do when the window holds too few functions to estimate from, whether to expose it
-in the reply so the UI can say "frame ≈ 16.7 ms") and should be the maintainer's call, which is why
-this is filed rather than fixed. Rig: `tools/verify/linie_cadence_gap.py` already prints everything
-needed to re-measure both arms.
-
-
-### ✅ RECOVERED 2026-08-21 `[ZHTW-MARKS-2026-08-21]` — ten results marked outside the repo, six lost silently
-
-**What happened, and it is not what it sounds like.** On 2026-08-21 at 10:08 the maintainer worked
-through the 繁中 checklist on `Y:\pending-verification_zh-TW.md` and marked ten rows — seven ✅, two
-❌ and one free-text note. `Y:\` is **not the repo**. `docs/pending-verification_zh-TW.md` was edited
-a few hours later from the git version, which had never seen those marks.
-
-⚠ **Nothing was overwritten and nothing was reverted.** No git accident happened; the two files were
-simply never connected. Saying so plainly matters, because "my results got written back" sends the
-next person hunting a merge conflict that does not exist.
-
-⭐ **THE ASYMMETRY IS THE WHOLE LESSON. A ❌ survives being lost; a ✅ evaporates.** Both ❌ became
-defect entries with lives of their own (`[GRIDRECYCLE]`, `[LWREFRESH]`, both since fixed) and came
-through untouched. Of the seven ✅, **six vanished without trace** — the row just stays open and
-somebody re-runs it, and nobody ever notices the work was done twice. **The marks most worth
-rescuing are exactly the ones whose loss is invisible.**
-
-**Recovery.** `tools/verify/merge_zhtw_marks.py <copy>` matches rows by their text (ignoring any
-leading mark) and reports every divergence, including free-text notes. It **deliberately does not
-write**: a ✅ recovered this way is a claim with no conditions attached, and this register's own rule
-is that a number without its conditions is not a measurement. Each row was decided individually.
-
-| the lost mark | what was done with it |
-|---|---|
-| int8 Force negative round-trip | ⭐ **re-run, PASS** — and with better evidence than a tick: the actual byte is `0xFB`, positive control `100` → `0x64` |
-| int8 Force out-of-range refused | ⭐ **re-run, FAILED** → became `[SOLIDEHELD-2026-08-21]`, now fixed |
-| AF16–AF23 step 1 (four sort headers) | recorded 🟡 reported-by-maintainer, **queued for re-run** |
-| Force-value dialog wording | 🟡 same |
-| Snapshot ">256 fields" notice | 🟡 same |
-| per-slot cap 1024, snapshot still 256 | 🟡 same |
-| Class Pivot / Snapshot sort headers | row already closed and deleted since — nothing owed |
-| the free-text note | **restored** onto AE4/AE5/AE6/AE7 step 4 |
-
-⭐ **The re-run of the two int8 rows is the argument for re-running rather than transcribing.** One
-confirmed the maintainer and strengthened it; the other **contradicted** them — and the maintainer
-was not careless, they were reading a UI that was itself reporting `held on 145 instances`. A ✅
-carried across on trust would have permanently buried a live defect.
-
-⚠ **The restored free-text note is worth as much as any ✅**: 「執行時間太短無法測試」 on the
-AE4 mutual-exclusion gate means the delete finished before the next click, so the gate was **never
-exercised** — the row's own ⚠ already says that is *not tested*, not a pass. Without the note the
-row looks merely unattempted, and the next person repeats the same too-fast run.
-
-▶ **The durable fix is upstream of all of this**: mark results **in the repo copy**. If a working
-copy elsewhere is unavoidable, run the merge tool before editing `docs/`.
-
-
-### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-21 `[SOLIDEHELD-2026-08-21]` — a refused write was still counted as "held"
-
-⭐ **Found because a maintainer's ✅ and a scripted re-run disagreed** — and the scripted run was
-right, for a reason that matters: **the maintainer only had the UI, and the UI was showing the
-wrong thing.**
-
-**What was happening.** `Solide::ApplyToInstance` returns true when the field RESOLVED on an
-instance — its own comment says so — and two of its three branches then **discarded the write
-result**:
-
-| branch | before | |
-|---|---|---|
-| `K_BOOL` | `int32_t rc = SetActorBool(...); if (rc < 0) return false;` | ✅ already correct |
-| `K_NUMERIC` (`Solide.cpp:287`) | `if (WriteNumeric(...) && drifted) *drifted = true;` … `return true;` | ❌ result used only for the drift flag |
-| `K_OBJECT_NULL` (`:270`) | `if (WriteBytes(...) && drifted) *drifted = true;` … `return true;` | ❌ same shape |
-
-So a write that FAILED still incremented `held`. Measured on DumperTest against
-`PrimitiveComponent::VirtualTextureLodBias` (an `Int8Property`, 145 live instances):
-
-| forced | reply | `get_forced_fields` | **the actual byte** |
-|---|---|---|---|
-| −5 | `code=0 held=145` | `-5.0` | `0xFB` = −5 ✅ |
-| 100 | `code=0 held=145` | `100.0` | `0x64` = 100 ✅ |
-| **200** | `code=0 held=145` | `200.0` | **`0x00` — never written** |
-| **−200** | `code=0 held=145` | `-200.0` | **`0x00` — never written** |
-
-⭐ **The range check was working the whole time.** `Solide.cpp:147`
-(`if (!(value >= lo && value <= hi)) return false;`) genuinely refused the write: 200 did **not**
-land and did **not** wrap to −56, which is the dangerous outcome the step warns about. The memory
-was always safe. What was broken is that **the report and the reality were computed by different
-paths** — audit #4's root cause, in a third place — so the UI said "held on 145 instances, value
-200" about a field holding 0.
-
-⚠ **The two in-range rows are the positive control**, and they are what make the finding solid: the
-same field, the same address, the same call, values that DO land as `0xFB` / `0x64`. Without them,
-`0x00` would be equally consistent with a wrong address or a broken read.
-
-**The fix** brings the other two branches into line with `K_BOOL`: when a write is *attempted* and
-fails, set `refusal = FR_ERR_WRITE` and return false. A write that was never needed (value already
-equals target, pointer already null) still counts as held, which is correct. `held == 0` with a
-refusal then trips the existing L2 erase branch, so the job does not persist either.
-
-**After the fix**, same host, same field:
+⭐ **REFUTED HYPOTHESIS — do not re-form it.** The obvious realistic scenario is that you profile a
+game while it is BACKGROUNDED (you are looking at our UI, not at the game), and UE throttles an
+unfocused game below 25 FPS. Tested 2026-08-22 on DumperTest at `t.MaxFPS 60`, 15 s foreground vs
+15 s minimised:
 
 ```
-force -5   ->  code=0   held=146  value=-5.0        (unchanged)
-force 200  ->  code=-10 held=0    resolved=False    and get_forced_fields is EMPTY
+foreground   total_calls 7205   periods 8.33 / 16.67 ms   0 of 6 flagged
+minimised    total_calls 7200   periods 8.33 / 16.67 ms   0 of 6 flagged
 ```
 
-⚠ **`K_OBJECT_NULL` is fixed by the same commit but is NOT separately verified** — a failing
-8-byte write into a resolvable strong `ObjectProperty` is not something this host can stage on
-demand. It is the identical shape at the identical call site, changed the same way; recorded as
-fixed-by-inspection, not as measured.
+**It does not throttle at all** — 7205 vs 7200 calls is the same frame rate. The scenario does not
+reproduce. ⚠ One sample on one machine: other titles do throttle when unfocused, so this refutes the
+hypothesis *here*, not everywhere. But it is now evidence rather than a guess, and the guess was
+mine.
 
-▶ **Follow-up, deliberately not done here**: an out-of-range value is knowable BEFORE touching any
-instance, so the honest thing would be to reject the whole job up front with a dedicated code
-rather than discovering it per instance and reporting `FR_ERR_WRITE`. That is a behaviour change
-with its own wording decision; this commit only makes the count truthful.
+⚠ **A `TickInterval`-throttled actor tick is NOT this defect.** It is frame-driven with an arbitrary
+period and would be flagged — but it genuinely *is* periodic behaviour, and "find the callback
+driving a cooldown/respawn" is exactly what the badge is for. Do not fold it in.
 
+▶ **If it is fixed, not with a bigger constant** — any constant is wrong for some frame rate. The
+band has to be relative to the *observed* frame period, which the profiler can estimate from its own
+data. ⚠ **The obvious estimator is wrong**: the *minimum* observed period is not the frame period —
+at 60 FPS the minimum was **8.33 ms**, because `CameraModifier::BlueprintModify*` fires twice per
+frame. The **mode** of the period distribution is the frame period (4 of 6 at 16.67 ms; 4 of 6 at
+66.66 ms in the 15 FPS run), and on a real game with hundreds of dispatched functions it would be
+far more robust than on DumperTest's six. That choice, plus what to do when the window holds too few
+functions to estimate from, and whether to publish the estimate so the UI can say "frame ≈ 16.7 ms",
+is the design decision this is filed for.
 
-### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-21 `[CLASSCAP-2026-08-21]` — the Classes tab said "raise the cap" and had no cap to raise
+ℹ️ **Clock precision, since it comes up**: the cadence timestamps are
+`std::chrono::steady_clock` truncated to milliseconds (`Stark.cpp:103-107`), i.e. QPC-backed and
+**not** the ~15.6 ms (1/64 s) Windows timer tick — `Fern.cpp:1157` already picks QPC over
+`GetTickCount64` for that reason. Proven from the data rather than from what the STL ought to do:
+were gaps quantised to 15.6 ms ticks, a 16.67 ms period would alternate 15.6 / 31.2 and read
+**cv ≈ 0.24**; measured **cv = 0.028**, eight times smaller. What the residual 0.467 ms σ *is* is the
+millisecond truncation itself — the difference of two independently-truncated stamps has
+σ = √(2/12) = **0.408 ms**, so essentially all the observed jitter is the truncation floor and only
+~0.01 of the cv is real frame-pacing noise.
 
-⭐ **Found by doing the live check above, not by reading.** `[CLASSTOTAL]`'s pipe half had passed
-weeks earlier: the *numbers* were right. What only the UI could show is the sentence printed beside
-them — on Avowed, `5,000 classes shown of 7,409 total … ⚠ STOPPED at the 5,000-row cap — filter to
-narrow, **or raise the cap**` — over a toolbar with no numeric control anywhere.
-
-**Third instance of audit #5 Z10** (never name a lever the user cannot reach), after Property Search
-(`[PROPSEARCHCAP]`, fixed the same day). It was worse than a wording bug: `ListClassesAsync` was
-called with **no `limit` at all**, so the wire default of 5,000 always won and the 2,409 classes past
-it were **unreachable from the UI by any means** — no filter helps, because Super/Package suggestions
-are themselves derived from the loaded page (the panel says so, in a second warning line).
-
-**Fixed like its sibling**: `ClassListCap` + the `decimal?` façade, a `NumericUpDown` clamped
-100–50000 with `ClipValueToMinMax`, `limit:` actually passed, persistence in
-`GameClassFilterUiOptions`, a `Math.Clamp` on **load**, and a DLL-side clamp in `CMD_LIST_CLASSES`.
-The cap note now offers Max **only while it can rise** — at the ceiling it would be the same lie in
-a new place — but the `⚠ STOPPED` half stays unconditional, because a capped list must always say so.
-
-⚠ **`Constants.MaxPropertySearchCap` was renamed `MaxSearchCap`.** Three panels now share one
-ceiling (Instance Finder, Property Search, Classes) and a per-panel name for a shared number is how
-they drift apart.
-
-**LIVE-VERIFIED on Avowed** (92,036 objects, 7,409 classes; UI 3307 against the game's older 3263
-proxy — the change is UI-side, and the version banner was up and correct throughout):
-
-| Max | scope | status line |
-|---|---|---|
-| 5,000 (default) | game only | `5,000 classes shown of 5,102 total … ⚠ STOPPED … filter to narrow, **or raise Max above 5,000**` |
-| 8,000 | game only | `5,102 classes shown of 5,102 total` — **no STOPPED**, and the Super/Package "derived from the page" warning is gone too |
-| 8,000 | all classes | `7,409 classes shown of 7,409 total` — the whole pool |
-
-⚠ The middle row is the one that matters: those last **102** classes had no route to the screen
-before. Persistence and the load clamp were checked the same way as `[PROPSEARCHCAP]` —
-`classListCap: 8000` survived a restart, and a hand-edited `0` in `ui-options.json` came back as
-**100** with the ▼ spinner greyed.
-
-**`ClassListCapTests` (6)**, including one that greps the VM for the exact old sentence.
-
-**⭐ THE SIBLING SWEEP — and the fourth instance.** `grep -rn "raise Max\|raise the cap"` over the
-UI found exactly three panels that offer the advice: Instance Finder, Property Search, Classes.
-Console and Interesting Funcs offer only "tick Game classes only", which they do own; Interesting
-Properties offers nothing. So the *false-lever* form is now gone everywhere — **but Instance
-Finder, the panel the phrase was originally copied FROM, was still saying it unconditionally**, so
-at a cap of 50,000 it advised raising a Max already at its maximum. Same lie, one ceiling later.
-
-The rule now lives in **`PartialResultNotice.RaiseMaxClause(currentCap, ceiling)`** and all three
-call it. ⚠ It is shared rather than repeated because it had been written **three times in one
-day** — the third rewrite is where a rule stops being a rule — and because the Z10 family is
-specifically *advice drifting from the controls a panel has*, so the guard belongs beside the
-sentence, not beside each control. `Constants.MaxPropertySearchCap` became `MaxSearchCap` for the
-same reason.
-
-⚠⚠ **My own test could not fail, and a negative control is what showed it.** The first
-`EveryPanelThatOffersRaiseMaxGoesThroughIt` asserted `Contains("PartialResultNotice.RaiseMaxClause")`
-and `DoesNotContain("or raise Max above {")`. Substituting a hand-rolled copy into Instance Finder
-**passed both**: the comment above the copy still named the helper, and the copy used concatenation
-rather than interpolation so there was no `{`. Now it requires the open **paren** (a call, not a
-mention) and bans the phrase outright. Re-run of the same control: **fails**. The other control —
-making the clause unconditional — fails `ItNamesTheCapBelowTheCeilingAndSaysNothingAtIt`. Both were
-run; neither is assumed. ⚠ That test
-failed on its first run against my own **doc comment**, which quoted the old wording verbatim — the
-comment was reworded rather than the test weakened, and it now says why.
-
-
-### 🟡 RE-MEASURED 2026-08-21 `[STALEDLL-2026-08-18]` (a) — still there, and the exposure is narrower than the row implied but NOT zero
-
-**The file is still present**, unchanged:
-
-| | bytes | mtime |
-|---|---|---|
-| `C:\Program Files\Cheat Engine\UE5Dumper.dll` | **536,064** | **2026-02-19** |
-| `dist\UE5Dumper.dll` (shipped) | 2,889,728 | today |
-
-`Glob` over CE's folder, `%USERPROFILE%\Documents`, `Desktop`, `Downloads` and `D:\Github\AOBMaker` finds
-**exactly one** stale copy — this one. There is no second hand-placed DLL anywhere the `.CT` can reach.
-
-⭐ **The row said "harmless only because a fresh DLL was already mapped". That is not the actual reason, and
-the real one is worth writing down because it decides how urgent this is.** The `.CT`'s search order
-(`scripts/UE5CEDumper.CT`, the `_slot(...)` list) puts **CE's install folder at slot 8**, deliberately
-below every table-derived slot — the code says so itself: *"a DLL here can only have been hand-placed, so it
-must stay below every table-derived slot above — silently loading a stale build is worse than failing."*
-Slot 7 is the breadcrumb written by UE5DumpUI, and it currently reads:
-
-```
-%LOCALAPPDATA%\UE5CEDumper\dll-path.txt  ->  D:\Github\UE5CEDumper\dist
-```
-
-which does hold a current DLL. **So on this machine, today, the stale file is unreachable** — the breadcrumb
-wins first.
-
-⚠ **But slots 2–4 come before the breadcrumb**: CE's last `File > Open` folder, its last `File > Save`
-folder, and the folder of the running script. **Open any `.CT` from `C:\Program Files\Cheat Engine\` and
-slot 2 becomes CE's install folder — the February DLL then wins ahead of the breadcrumb.** That is an
-ordinary thing for a user to do, so "harmless" is too strong; "not currently reachable, one File > Open
-away from being reachable" is the honest statement.
-
-⚠ The `(b)` fix is what makes this survivable rather than silent: the log line reads
-`DLL size: 523 KB` against an expected ~2.8 MB, so a person who looks at the console sees it.
-
-**Still maintainer-only.** The delete needs elevation and this session is unattended; nothing here changes
-that. The exact instruction, unchanged and now re-checked:
-
-```
-del "C:\Program Files\Cheat Engine\UE5Dumper.dll"      (from an elevated prompt)
-```
-
-Nothing depends on that file — the `.CT` finds the shipped DLL through the breadcrumb, and no code in this
-repo ever writes to CE's folder.
-
-### ✅ VERIFIED 2026-08-21 `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path — seen in a real CE console
-
-*Was: the `.CT` logged only `DLL path: …`, so a stale/old `UE5Dumper.dll` resolved silently (the Feb
-build in CE's install folder is ~0.5 MB vs the current ~2.7 MB). The build stamp is not a C ABI
-export (only logged to `init-0.log` + carried on the pipe), the DLL is not injected yet at
-path-report time, and CE Lua has no stat-by-path API, so the cheap honest signal is file SIZE. Now:
-`ue5_dllSizeText(DLL_PATH)` is logged right after `DLL path:` and in the startup replay
-(`ue5_dllFileSize`/`ue5_dllSizeText` verified under real `lua`). **(a) delete/refresh the stale file
-in CE's install folder stays maintainer-only and is NOT done here.** Deferred idea for the pending
-batch: read the ACTUAL build stamp from the `.CT` — would need a tiny data export (`g_buildNumber` /
-`g_buildStamp`) or a `GetFileVersionInfo` read of the PE version resource; not worth a new export for
-a LOW-priority readout.*
-
-> | step | do this | expect | why |
-> |---|---|---|---|
-> ### ✅ BOTH STEPS PASS 2026-08-20 `[STALEDLL-B-LUA-2026-08-20]` — under real `lua`, no Cheat Engine needed
->
-> New rig `scripts/tests/dll_size_text_test.lua` **lifts `ue5_dllFileSize` / `ue5_dllSizeText`
-> verbatim out of `dist/UE5CEDumper.CT` and executes them** (working-lessons §2.5 — running the
-> shipped script beats asserting about its text). It cannot pass against a `.CT` that no longer
-> carries them: the extraction is a hard failure. **9 checks, 0 failures.**
->
-> * **Step 1 — PASS.** `dist/UE5Dumper.dll` → `2879488 bytes (2.7 MB)`; the shape matches
->   `N bytes (X.X MB)` and the byte count equals the real file size.
-> * **Step 2 — PASS, on the two files the row actually names.** Cheat Engine's install folder still
->   holds the February build and it reads **`536064 bytes (0.5 MB)`** against dist's
->   **`2879488 bytes (2.7 MB)`** — distinguishable, and the MB figures differ by more than 1 MB.
->   That is precisely the "0.5 MB vs 2.7 MB" discrimination this row exists to provide.
-> * **Four negative controls — PASS.** A missing path, `nil` and `""` all return the sentinel
->   `unknown (could not read the file)` rather than throwing, and `ue5_dllFileSize(nil)` returns
->   **`nil`, not `0`** — `0` would render as a real, empty file and read as a legitimate answer.
->
-> ⚠ **Scope, stated honestly:** this exercises the FUNCTION against the two real DLLs, not a live CE
-> session emitting the line. The two call sites are present and wired to `DLL_PATH` in the shipped
-> `.CT` (`ue5_log("DLL size: %s", ue5_dllSizeText(DLL_PATH))` and the startup replay), so what a CE
-> run adds is only that `ue5_log` reached the console.
->
-> 📌 **Incidentally re-confirms `[STALEDLL]` (a), which is still OPEN and maintainer-only:** the
-> stale February `UE5Dumper.dll` **is still sitting in `%ProgramFiles%\Cheat Engine\`** at
-> **536,064 bytes**, versus dist's 2,879,488. Deleting or refreshing it remains your call.
-
-> | 1 | resolve a DLL via the `.CT` (any slot — breadcrumb, manual pick, …) and open the log / Lua console | a `DLL size: N bytes (X.X MB)` line appears next to `DLL path:` | the whole point — the size is now visible beside the path |
-> | 2 | point the `.CT` at the ~0.5 MB Feb DLL vs the ~2.7 MB dist DLL | they read `0.5 MB` vs `2.7 MB` distinctly | the size is what catches the stale build a silent path never showed |
+That floor puts a lower bound on cv of `0.408 / period`, which crosses the classifier's `cv ≤ 0.25`
+at about **1.6 ms** — so a perfectly regular callback faster than that can never be called periodic.
+It is also far below the 40 ms band, so the two limits do not interact and nothing is lost. Rig:
+`tools/verify/linie_cadence_gap.py`.
 
 -----
 
