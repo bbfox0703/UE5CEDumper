@@ -3599,7 +3599,8 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > ranks LOW even when the register says MED — e.g. the case-preserving-FName (CPN) work, population
 > zero of 30+ tested games. The absence is itself the signal.
 >
-> todo.md stays canonical (CLAUDE.md's rule); edit there first, then mirror.
+> todo.md stays canonical (CLAUDE.md's rule). ⛔ **Do not mirror into the 繁中 checklist** — that
+> instruction was retired 2026-08-22; that file now takes only rows a human must verify.
 
 > ## ⚠ AND THE STANDING CONSTRAINT: VERIFICATION IS STILL THE DEEPER BACKLOG
 >

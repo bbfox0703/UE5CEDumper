@@ -1588,7 +1588,10 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
   absence is itself the signal that such games are rare.
 - Keep the "第 0 步" idea that CLAUDE.md credits it for: the checks that cost nothing from an
   ordinary session, first.
-- This file stays canonical (CLAUDE.md's rule) — edit here first, then mirror.
+- This file stays canonical (CLAUDE.md's rule). ⛔ **Do NOT "mirror" it into the 繁中 checklist** —
+  that instruction was retired 2026-08-22, because mirroring is exactly what turned that file into
+  a second copy of this register (31 items, 20 carrying evidence). A row goes there **only if Auto
+  + Computer Use cannot complete it end to end**; everything else stays here.
 
 -----
 
@@ -16185,3 +16188,320 @@ Not yet committed to:
   chain, user manually ticks Freeze in CE. Works today, no code; tradeoff is the chain
   binds to one resolved instance (breaks on respawn). Keep for one-shot static-singleton
   freezes so users don't have to wait for Route B.
+
+-----
+## Verification steps migrated from the 繁中 checklist (2026-08-22)
+
+These are the operational `做什麼 | 預期` tables for items that **do not need a human**:
+Auto + computer-use can drive them end to end (UI clicking, the pipe, log greps, offline
+tools). They lived in [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md), whose
+charter is *only what a human must verify* — carrying them there had turned that file into a
+second copy of this register.
+
+⚠ **Moved VERBATIM, including the ✅/🟡 status cells**, so no evidence was lost in the move.
+Where a step is already marked done, it is done — this is not a fresh queue.
+
+⭐ **These are still open verification work**; they are tracked by the item ids that already
+appear elsewhere in this file. What changed is only where the STEPS live.
+
+### ⬜ AF16–AF23 —— DataGrid 欄位標題排序（**必須用 AOT 版**）
+
+*優先度 **中** · ⚠ **一定要用 `build.ps1 -Mode Publish` 出來的 trimmed 版**。這個問題在一般 dev build
+上不會出現，用 dev build 測等於沒測。*
+
+⚠ **這一項還多一個必測點（2026-08-21 新增）：排序完不可以出現「兩列顯示同一筆資料」。**
+維護者回報過這個畫面：Props 對話框標題連點幾次之後，兩列都顯示同一筆，但標題還是寫
+「2 properties」。成因是 cell template 的 `supportsRecycling`，已修（17 處）。
+
+> ⭐ **步驟 2 的宿主找到了：DQ7R**（`[AF-BCHOST-2026-08-22]`）。之前的交接文件說「找不到已確認有
+> Blueprint bytecode 的遊戲」，這件事已經解決 —— DQ7R **11,256 個函式中有 705 個帶 bytecode**，
+> 另有 **89 個 `BlueprintGeneratedClass`**（`BP_BCAI_Monster_C`、`BP_Weapon_Sword_C`、
+> `BP_GameInstance_C` …，Class Type 下拉選單裡直接就有這個過濾器）。
+>
+> ⚠⚠ **但步驟 2 仍然沒完成,而且卡在一個必須先解決的前置問題:「那兩個對話框從來沒被證明會出現
+> 任何一列」。** 2026-08-22 試了 **5 次全部回 0 列**:原生欄位 `DOLLGameCharacter::HP`、原生函式
+> `MoveToLocation` 與 `GetRemainingExpToNextLevel`、Blueprint 自己的變數
+> `BP_BCAI_Monster_C::Probability_Gake`,最後一次還把 `Game only` **取消勾選**當對照組,仍然 0。
+> 依鐵則 1,**在讓它至少噴出一列之前,0 是「正確的空」還是「壞掉」分不出來** —— 所以這不算缺陷
+> 回報,也不算通過。
+>
+> ▶ **下次接手的人請從這裡開始,不要重跑上面那 5 個死路**:先找一個**確定會有 refs** 的欄位／
+> 函式讓對話框噴出 ≥2 列（可從 Interesting Props 的評分或 UMG WidgetBlueprint 這種純 BP 邏輯下手），
+> 證明偵測器會 fire 之後，才有資格做「連點 6 個欄位標題」那件事。
+> ℹ️ 兩個對話框的欄位都已確認是 6 個：Props 是 `Access / Re / Scope / Cont / Property / Type`，
+> Xref 是 `Kind / Re / Access / Owner Class / Event / Function`。
+> ℹ️ 這次的環境：DQ7R + `dist` AOT v1.0.0.3315、DLL 3315、UE427、**4,393 classes / 149,408
+> objects**（和 2026-08-20 那次 AE27 完全相同，代表這個 fixture 狀態可重現）。
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | ✅ **2026-08-22 在 AOT/trimmed 版（v1.0.0.3313，54.7 MB）上實際點過**，DumperTest UE504。每個標題點兩下：Interesting Funcs 的 Params 降冪為 **19,19,19,17,17,16,15,15**（⭐ 有鑑別力——字串排序會把 `9 (…)` 放最上面）；Detect Stats 的 Offset 升冪為 **`0x28,0x2C,0x2C,0x30,0x30,0x64`**（⭐ 字串排序會從 `0x174` 開始）；Detect Stats 的 Result 升冪全 `· guess`、降冪全 `✓ confirmed`；Live Funcs 的 Period 升冪 17,17,33,33,33,33、降冪相反。⚠ **Console / Live Funcs 的 Params 和 Period 這幾欄不具鑑別力**（參數數量都是個位數、週期在固定幀率下只有兩種等寬值），它們證明的是另一半、也是只有 trimmed build 能回答的那一半：**標題是活的、會排、會反轉**。⚠ **Live Walker 的 Params 這次沒跑**（面板上找不到函式表入口），那一欄本來就是修正前就正確、且 AF20 已驗過的那一欄。ℹ️ 順帶在 UI 上確認了 `[CADENCEGAP-2026-08-22]`：`CameraModifier` 496 calls / 17 ms 對 `ABP_Manny_C` 248 calls / 33 ms —— 呼叫兩倍、週期一半，修正前兩者都顯示 33 ms。 點 Live Funcs 的 **Period**、Detect Stats 的 **Result**（⚠ 舊版這裡寫「✓」，但那是**儲存格內容**不是欄位標題；標題字串是 `str.Detect.ColConfirm` = `Result`，en.axaml:47。而且一次 Detect 若沒有任何 confirmed 列，畫面上連 ✓ 都不會出現）和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
+| 2 | **要一款有 Blueprint bytecode 的真實遊戲**（DumperTest 測不到，它的 `Funcs` 欄整欄是空的）。從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，挑**列數 ≥ 2** 的，每個欄位標題都連點三、四次。 | 兩邊各 6 個標題都會重排；`Access` / `Refs` 照**數字**排（「12W / 3R」排在「2W / 1R」之上）。**而且每一列的內容都不一樣** —— 尤其不可以出現兩列的 Class / Name 對不起來（那就是 cell 被回收後留著上一筆的字）。 |
+
+> **步驟 3 已完成，整列刪除**（維護者驗過 Class Pivot / Snapshot / SPC group 那批；Invoke 參數挑選
+> 視窗的 4 個標題 2026-08-21 也在 DumperTest 上驗過：253 列、四個標題共點 7 次，沒有重複列，
+> Index 與 Address 全部相異，Class↔Name 也都對得起來）。
+
+-----
+
+## 第 2 步 — 要注入一個執行中的遊戲
+
+任何一款 UE 遊戲都可以。
+
+### 🟡 A6 —— Force 是否對子類別一併生效（**步驟 3 已通過;只剩步驟 5 的「生成」那半**）
+
+*build 3036 · 優先度 **高** · 步驟 1、2、4 已於 2026-08-19 驗畢並刪除*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 3 | ✅ **2026-08-22 通過**(`[A6-DERIVE-2026-08-22]`,`tools/verify/a6_prefix_siblings.py`)。用 `Actor::bIsEditorOnlyActor`(58 held)。⭐ **正向**:名字**不以 `Actor` 開頭**、但確實衍生自 `AActor` 的 `StaticMeshActor`,在 hold 期間 `bIsEditorOnlyActor = true` —— 字首比對到不了它。**反向**:33 個可 diff 的物件(含真正的同字首陌生類別 `ActorSequence`)逐欄位比對,**0 個被動到**。⚠ log 那行的 `over 3941 distinct class(es)` 是 `derivedCache.size()`(**評估過**的類別數,整個池),不是命中數 —— 拿它當命中數看會以為嚴重超抓。 | 不相關的同字首類別「沒有」被 hold<br>⚠ 前面步驟看到「hold 了數百筆」不能替代這步：字首比對也會 hold 數百筆，兩者長得一樣。 |
+| 5 | 🟡 **2026-08-22:CDO 那半通過,生成那半在這個 fixture 上做不到**(`[A6-CDO-2026-08-22]`,`tools/verify/a6_cdo_and_spawn.py`)。`ActorComponent::bIsEditorOnly` hold 256 筆時,**CDO 全程維持 `false`**,而且抽樣的 12 個活體實例 **12/12 都真的被強制**(通道證明 —— 否則「CDO 乾淨」什麼都不代表)。⛔ 生成那半:debug camera 是**每個 process 一次性**(已被用掉,`state` 已是 1),off→on 循環 295→295 個物件、**0 新增**,而 `ConsoleCommand`／`RestartLevel` 不在這裡列得出的 3,142 個函式裡。⚠ 重開遊戲**不能替代** —— 那會從磁碟重新載入 CDO,正好偵測不到記憶體中的 CDO 被寫。要解鎖:換一款能觸發關卡重載／敵人重生的遊戲。 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO）<br>⚠ 一定要在 reset 之後真的生出新物件；看既有物件測不到這件事。 |
+
+### ⬜ V6 / U8 —— 兩個一開遊戲就能看的面板行為
+
+*build 3016-3031 · 優先度 **高** · 原步驟 1（A5 Preview）已於 2026-08-19 驗畢並刪除；原步驟 2（AE9 排序選單）已於 2026-08-17 驗畢並刪除*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>✅ 「按 Refresh」那半段已於 2026-08-17 驗畢，**只剩 auto-refresh 那半段**。<br>🟡 **2026-08-22 嘗試過,未結案**(`[V6-AUTO-2026-08-22]`)。⭐ 原本的封鎖理由**已過期** —— `[AUTOREFRESH-2026-08-19]` 早在 2026-08-20 就 VERIFIED,本機 `dist` 已是 1.0.0.3315。已確認:倒數會跑不再卡在 0s;連續 4 拍後篩選字、`2 matches`、**選取列**都保住,表格沒動(⚠ 但當時本來就在頂端,「不跳回最上方」那條是空的);而且 `OnAutoRefreshTick` 只是呼叫同一個 `RefreshAsync()`,手動那半段早已 ✅ 且有 4 條測試釘住。⚠ 高亮曾在一拍 auto 後消失、卻在 6 秒前的手動 Refresh 後存活 —— 同一條程式碼路徑不可能兩種結果,所以其中一次觀察不可靠,**不據此開缺陷**。⚠⚠ **真正失效的是量具**:Live Walker 工具列會重排(載入物件後多出 `Find Refs`／`Related`),先前記下的按鈕座標會**無聲失效** —— ▼ 從 x≈547 移到 x≈521,我有兩次點在「2 matches」文字上。所以「步進失效」**未經證實**。下次要嘛請人操作,要嘛每次點擊前重新從畫面讀座標並先確認點中了。 |
+| 2 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
+
+### 🟡 AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步（**步驟 1、2、6 通過;步驟 5 發現缺陷;步驟 3 半、步驟 4 前提做不出來**）
+
+*優先度 **中** · 2026-08-22 於 DQ7R 實跑(`dist` AOT v1.0.0.3315／DLL 3315／UE427／149,370 objects)*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | ✅ **2026-08-22 通過**。過濾字串 `DOLLGameCharacter`,依序點 ScriptStruct → Function → instance → Class 四種列:標頭分別變成 `DOLLGameCharacterParameters`(72)／`MakeDOLLGameCharacterParameters`(72)／`DOLLGameCharacter`(1712)／`DOLLGameCharacterManager`(56),欄位都有載入。⭐ **四個 Properties Size 各不相同、欄位清單也不同**,所以是真的重新載入,不是看起來有換。 | 每次點擊 Class/Struct 標頭都跟著換，欄位有載入內容。 |
+| 2 | ✅ **2026-08-22 通過**。**過濾字串 `DOLLGameCharacter`**(10 列:7 個 class-like + 3 個 instance,確實交錯,滿足那條 ⚠)。↓×9 再 ↑×3 共 12 次快速切換、中間跨過 instance 列,停在 class-like 列上:標頭 = `DOLLGameCharacterSeedCorrectParameters`(36),與反白列相符,欄位(Tikara/MaxHP/MaxMP…)都在。 | Class/Struct 標頭與反白的那一列相符。<br>⚠ 清單若只有單一種類（全 instance 或全 class-like）跑再多次都證明不了；要記錄用的過濾字串。 |
+| 3 | 🟡 **只驗到一半**。「穩定後不會卡住」✅:多次快速捲動後 spinner 都不殘留。⚠ **「載入中不會提前消失」沒驗到,而且原因要記下來**:這台機器上 class 載入比我的取樣還快 —— 連 `DOLLPlayerController`(Properties Size **2224**、繼承一長串欄位)在**零等待**的截圖裡都已經畫完,spinner **一次都沒被我看到**。沒看到它出現,就不能說它的消失時機正確(鐵則 1)。要補這半需要一個會慢到看得見的載入。 | 面板穩定後 spinner 不會卡著不消失；載入還在跑時也不會提前閃掉。 |
+| 4 | 🟡 **真的切了關卡,但前提條件做不出來 —— 而且現在知道為什麼**(`[AE-LEVELRELOAD-2026-08-22]`)。授權重開後實際在 DQ7R 裡從標題畫面讀取存檔進到魚灣村,**關卡確實載入了**(物件池 **149,408 → 199,194**,+49,786,`view-0.log` 有兩行 `Loaded … named objects`)。但選中的節點在載入前後**walk 出完全一樣的結果**(`WBP_Common_TutorialTitleDeco_C`,54 fields,Properties Size 704,前後兩次都一樣),**沒有出現錯誤行,因為根本沒有失敗**。<br>⭐ **原因是這一步的前提本身有問題**:點 instance 節點走的是 `get_object` → **它的 UClass** → `walk_class`,而 UE **切關卡釋放的是 instance,不是 UClass**。Blueprint class 只要在轉換兩側都用得到就一直在,重掃後 `TutorialTitleDeco` 仍有 11 筆、class 活著、還多了幾個新 instance。所以「切關卡讓 class 位址失效」**對這種 class 行不通**。要做出來得找一個**只存在於轉換前**的 Blueprint、且它的 package 會被卸載。<br>⚠ 而且就算前提做出來了,步驟 5 已證明**再點一次已選中的列根本不發事件**,所以「再次點擊會重新嘗試載入」得改用「先選別列再選回來」才驗得到,原文的操作方式驗不出來。 | 出現錯誤訊息行，且再次點擊會重新嘗試載入（不是靜默忽略、停留在舊 class）。 |
+| 5 | ❌ **失敗 —— 新缺陷 `[TREERECLICK-2026-08-22]`**(細節與證據在 todo.md)。用 `Classes` 分頁的 **`Walk Class`** handoff 把 `DOLLSoubiState`(168) 推進面板,樹狀選取仍停在 P(`DOLLPlayerController`);**再點一次 P,面板不動**,`pipe-0.log` 在那段時間**一筆 TX 都沒有**。連跑兩次相同,再用對照組隔離出機制:同一列連點兩次只送出一次 `walk_class` —— **點已選中的列不會產生 SelectionChanged**,所以 VM 根本沒被呼叫。⛔ **不要去改 `ClassStructViewModel` 的 dedupe**,它已經正確(`BeginLoad(nodeAddr: null)`,就是 AE3 第三條路徑),那也正是「先點別列再點回來」能救回來的原因。 | 面板重新載入 P，而不是停留在被推進來的 class。 |
+| 6 | ✅ **2026-08-22 通過,而且有線上證據**。選中節點後在樹狀 Filter 框連續打 `Def` → `ault`(兩段、中間停頓),樹縮成 `Filtered: 1 / 3`,**面板沒有被清空**(仍是 `DOLLPlayerController` 2224、欄位齊全)。⭐ 更強的證據在 `pipe-0.log`:打字期間**完全沒有新的 `walk_class`**,所以「不會重複重走 class」是量到的,不是看起來沒事。 | 不會重複重走 class，面板也不會被清空。 |
+
+### ⬜ G2 —— 版本掃描加速後結果仍正確
+
+*優先度 **中** · 原步驟 3、4 已於 2026-08-18 驗畢並刪除*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
+| 2 | ✅ **`ascii` 已於 2026-08-18 用 OCTOPATH 驗出**（`winmm.dll` proxy）：`DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418`。四種組合已收三種（`utf16`+UE4、`ascii`+UE4、Tier 0 直接結束），**只剩 UE5 分支**。 | ⛔ **UE5 分支本機無宿主，先別開遊戲**：全機 18 個已安裝 UE 執行檔用 `py tools/verify/tier1_host_survey.py` 離線掃過，只有 3 個能產生 Tier-1 行，全是 UE4。需要「**同時**穿過 Tier 0 **且**映像檔內含 `++UE5+Release-` needle」的遊戲 —— Light Maze/Lushfoil/Manor Lords 有 needle 但停在 Tier 0；Solarpunk/TQ2/ES2/STVoyager/Satisfactory/DSA/Avowed 連 needle 都沒有。<br>⚠ **裝新遊戲前先用該工具篩**，不要靠引擎版本猜。<br>✅ **2026-08-22 從另一個方向印證**(`[G11-TIERS-2026-08-22]`):全機 log 裡真正產生過 Tier 1 的三款遊戲(DQ7R／DQ I&II／OCTOPATH)**全是 UE4**(4.27／4.27／4.18),與離線掃描的結論一致 —— UE5 分支確實無宿主,兩種方法各自測到同一件事。 |
+
+### ⬜ W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
+
+*build 2853 · 優先度 **中***
+
+⭐ **2026-08-22 阻礙解除(維護者指示):不必裝 FModel —— 把 CUE4Parse 當 NuGet package 加進來測。**
+本機沒裝 FModel 也沒裝 CUE4Parse(查過),原本因此卡住。
+⚠ **關鍵是別變成循環論證**:讀取器必須是**第三方**的 `UsmapParser`,不能拿我們自己的寫入邏輯
+反過來當讀取器 —— 那只會證明我們跟自己一致。CUE4Parse 是外部實作,所以成立。
+⚠ 這個 package 只給**驗證用的**一次性專案,不要進 `UE5DumpUI` 的相依(AOT/trimming)。
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 連上任一遊戲，Export → USMAP 匯出檔案 | 產出 .usmap 檔 |
+| 2 | 在 FModel 用 Directory selector → Mappings file 載入該檔（或直接跑 CUE4Parse 的 UsmapParser） | 成功載入 |
+| 3 | 查 AActor 的 bHidden / InitialLifeSpan | 屬性名稱與型別都正確列出<br>⚠ 「沒有報錯」不算通過；空表或亂碼視為失敗 |
+| 4 | 順便查一個 Blueprint 類別（*_C） | 查不到是預期的（W8 未修，*_C 被過濾），不要當成解析失敗 |
+
+### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
+
+*build 2715 / 2719 · 優先度 **中***
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 不下任何 filter，直接看 Group 結果的 master row | 預設顯示的一對值優先為非 0（不會是 PrimaryActorTick.TickInterval=0, InitialLifeSpan=0），且每個 slot 後面帶 (+N) 的 match count |
+| 2 | Filter 輸入 tickcount frozenint（空白 = AND），再把兩個字順序對調重試 | 該列變成 TickCount=NN (+1), FrozenInt=424242 (+35)；字序對調結果相同 |
+| 3 | 展開該列按 All fields，再按一次收合 | 列出該 slot 保留的所有 leaf，且物件自己的欄位排在最前面（FrozenInt 不必往下捲）；第二次按會收合，重開會重新查詢<br>⚠ 某個值「沒出現在列上」不代表沒 match — 先看 (+N) 與 All fields 再下結論 |
+| 4 | 對 All fields 裡任一 leaf 依序按 Live / Addr / Pivot / Locate | 四個都能正常跳轉；deep 或 Snapshot 來源的列若取不到 leaf 位址則整個省略 → 0x… 箭頭，而不是印 → 0x0 或物件 base |
+
+### 🟡 Genau RIP decode (b2544) —— **只剩 GObjects**;GNames / GWorld 已於 2026-08-22 關閉
+
+*優先度 **低** · 需要：一款 GObjects AOB **真的掃不到**、而且 data-section scan 能找出**真正**
+object pool 的 UE 遊戲。DumperTest 做不到 —— 原因見下,那才是重點。*
+
+✅ **2026-08-22 `[GENAURIP-RECOVERY-2026-08-22]`。** 用本專案 `PEHOOK` 的老辦法把 recovery 路徑
+逼出來(兩行:在 `FindGObjects` / `FindGNames` 把 `ScanForTarget` 的結果強制設 0),
+rig：`py tools/verify/genau_rip_recovery_ab.py`。
+
+| | pre | post | AOB 基準 |
+|---|---|---|---|
+| `GNames` | `0x7FF75A0568C0` | `0x7FF75A0568C0` | `0x7FF75A0568C0` |
+| `GWorld` | `0x7FF75A3488A0` | `0x7FF75A3488A0` | `0x7FF75A3488A0` |
+
+兩側的 fallback 都**確實跑了**(log 行是斷言出來的,不是假設),模組**沒有 rebase**
+(`code_base` 兩側都是 `0x7FF74A311000`,有查),GNames 逐 byte 相同且與 AOB 一致。
+
+⭐ **收益也比 notepad++ 那次清楚三個數量級**:候選數 **508,10x → 506,59x**,gap 約 **−1,510**
+(四次獨立 run:1511/1516/1513/1509,run 間變異只有 ±5)。notepad++ 當時只量到 −2。
+另外附帶一個獨立指標:pre 側**就緒時間 15 秒 vs post 9 秒**。
+
+⚠⚠ **GObjects 這樣是驗不了的,而查出這件事才是最有價值的部分。** 被逼到 data-scan fallback 後,
+DumperTest 的 `ValidateGObjects` 會接受**假陽性** —— `Objects=583`、`Objects=2556928`
+(真實 25,179)—— 而且回的是 **heap 位址**,每次啟動都會變。挑中哪一個假陽性取決於當下的 heap:
+post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF74B0BC3E4`。
+兩側不同**不是 regression**,拿它來斷言等於把雜訊當訊號。
+
+⭐ **教訓:把路徑 stage 出來只讓它「有跑」,不會讓比較「有意義」。** 這是兩個條件,第二個要另外檢查。
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 手上若有 GObjects AOB 真的掃不到的 UE 遊戲,對它跑 `py tools/verify/genau_rip_recovery_ab.py`(rig 對任何宿主都能跑)。 | 兩側 GObjects 逐 byte 相同。<br>⚠ **先確認它解出來的是真的**:比對 `Objects=` 和該遊戲實際物件數;數字離譜就跟 DumperTest 一樣是假陽性,那樣的相同或不同都不算數。 |
+
+### ⬜ AC13 / AC14 —— Pipe 傳輸計時、關閉時的 reader
+
+*優先度 **低***
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | ✅ **2026-08-22 通過**(`[AC13-2026-08-22]`)。AOT 版 v1.0.0.3315 連上 DumperTest 後送 `WM_CLOSE`:所有 log 裡 `ReadLoop` **0 次**,DLL 端只有兩行 `PipeServer: Client disconnected`(UI 用兩條 lane),整個 `pipe-0.log` 零 ERROR/WARN。⭐ 而且「沒有」不是空的:`ui-pipe-0.log` 在關閉前就停了,是 `ui-init-0.log` 的 `[16:24:15.146] UE5DumpUI shutting down...` 證明 logger 當下還活著並有寫入。 | 乾淨結束，**不可以**出現 `Pipe: ReadLoop error`。修正前那一行是關閉時的 NullReferenceException，把正常關機記成故障。 |
+| 2 | ⛔ **2026-08-22:System 分頁上沒有 IPC 數字**。那裡有的是 *DLL dispatch cost*(每個指令的 Count／Total／Avg／Max／% busy —— DLL **派送端**的成本)與 *Pipe Activity* 的往返時間。AC13 修的那個傳輸計時在 `PipeTransportStats`,唯一的消費者是 `DiagnosticsProbe`,而它只包住三個操作(Copy CE XML／Copy CE Field／Snapshot capture)並寫一行 `PERF` 到 `view-0.log`。✅ **基準已從那條 PERF 行取得**(`[B10-2026-08-22]`):Snapshot capture 的 `split dll 189.7 / ipc 34.3 / ui 414.6 ms`,6 次 dispatch、每次 ipc 6.850 ms。 | 記下數值即可，這是下一步的基準。 |
+| 3 | ⛔ **2026-08-22:這一步的觀測管道會被它自己的動作關掉**。`DiagnosticsProbe.DisposeAsync` 收尾時要再呼叫一次 `GetDiagnosticsAsync`,而 `catch { return; }` —— 遊戲一斷線,**那行 PERF 根本不會寫**,想讀的數字產不出來。要解鎖:(1) 把 `PipeTransportStats.Snapshot()`(單調、不需要 pipe)顯示在 System 分頁上,或 (2) 用真的 in-process `NamedPipeServerStream` 在寫入中途 dispose 來測計時器的位置。⚠ `PipeTransportStats` 目前**完全沒有測試**,而同一族的 `ClassifySendFailure` 有(它是純函式)。 |
+
+-----
+
+## 第 3 步 — 遊戲 ＋ Cheat Engine
+
+還要開 CE 並載入 .CT。
+
+### ⬜ U16 —— 大型 enum 的成員清單（**U4 / U6 / F3 已完成，只剩這一步**）
+
+*優先度 **中** · 需要：有 `EPhysicalSurface` 規模（數十個成員）enum 欄位的遊戲*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ **2026-08-22 量過:DumperTest 的天花板就是 26**,`PhysicalMaterial::SurfaceType`(`EPhysicalSurface`,在有定義的專案裡可到 63 個)在這裡也沒破。所以這一步在 DumperTest 上壓不到。<br>▶ **換宿主前先花一道指令篩**:走個幾十個 instance,然後 `grep -o 'read [0-9]* of [0-9]*' walk-0.log | sort -t' ' -k4 -n | tail -1`。天花板還在二十幾的宿主一樣壓不到。 |
+| 2 | ✅ **2026-08-22 通過(在可得的規模上)**:DumperTest 上 437 行 `ResolveEnumValue`,`N != M` **0 個**,`truncated read` **0 個**。correctness 這一半成立,只是最大只壓到 26。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
+
+### ⬜ B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
+
+*優先度 **中** · 需要：**GObjects 無法用 AOB 一次解出**的遊戲，否則 Extra Scan 根本不會跑久*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 讓 Extra Scan 真的跑久，跑到一半取消 CE record 或關掉 UI。 | `PipeServer: Stop watches+scan joins done` 在 `Stop entry` 後約一秒內出現。FAIL = 中間隔了好幾秒，或 CE 視窗整個凍住直到掃完。 |
+
+### ⬜ .CT DLL discovery —— 到底是哪一個 slot 答的（**B5 主動半與探索半都已完成，只剩這一步**）
+
+*優先度 **中** · ⛔ **2026-08-22 實測:這一列現在跑不了。**`C:\Program Files\Cheat Engine\UE5Dumper.dll` **還在**(536,064 bytes,2026-02-19),所以較便宜的 slot 會先答,結果必然是這一列自己警告的那種 FAIL。刪它要提權,是 `[STALEDLL-2026-08-18]`(a) 那個維護者項目。**在那個檔案消失前跑這一列,只會得到假的失敗。***
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 移走 `dll-path.txt`，設 `UE5_DEBUG=1`，**先把 CE 的 Lua Engine 開著**，再從 CE 最近開啟檔案清單載入 `.CT` 並勾 init。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠ 若寫的是 CE 自己的資料夾，代表這一步又沒測到。 |
+
+### ⬜ U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（**步驟 1、2 已完成，只剩這些**）
+
+*build 3169 / 3171 · 優先度 **中** · 需要：一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 在 UE5 LWC（24-byte FVector）遊戲上展開一個 struct-valued 的 TMap/TSet 元素。 | 三個分量都出現，數量級正確。 |
+| 2 | 在使用 GAS 的遊戲上做同樣展開（CDO 走訪即可，主選單就夠）。 | 成員完整、寬度正確。 |
+
+### ⬜ G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示
+
+*build 3016-3031 · 優先度 **中** · 需要：三種樣本：offset 偵測只量到一部分的遊戲、含超過 50 bytes 非 ASCII StrProperty 的在地化遊戲、以及候選 class 超過 30 與少於 30 各一款的遊戲。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 在 offset 偵測部分失敗的遊戲上打開 Pointers tab。 | 出現琥珀色橫幅「Dynamic offsets only partially measured (unmeasured:…)」並列出探針名稱。<br>⚠ 沒有橫幅不等於通過；要對同一 process 跑 get_offsets 確認回報 validated: true 才算。 |
+| 2 | 在在地化遊戲用 Property Search 找一個超過 50 bytes 的非 ASCII（CJK）StrProperty。 | 有結果列回來，preview 以「…」結尾（修正前是整個搜尋 0 列並報錯）。 |
+| 3 | Experimental → Detect Player Stats，先在候選 class 超過 30 的遊戲跑一次。 | 超過上限的列以琥珀色顯示「? not checked」（不是「· guess」），狀態列顯示「30 of N classes live-probed」。<br>⚠ 再到候選 class 少於 30 的遊戲跑一次，正確結果是完全沒有這個後綴——兩邊都做才算測完。 |
+
+### ⬜ AE10 —— AOB 掃不到 &GWorld 的遊戲上 🌍 要能用
+
+*build 2961 · 優先度 **中** · 需要：AOB 掃不到 &GWorld 的遊戲（Pointers 面板沒有 GWorld 位址，或以 proxy 模式執行，例如 TQ2），外加一款 GWorld 正常解析的遊戲做回歸。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 在該遊戲檢查 Instance Finder、Interesting Functions、Interesting Properties、Detect Stats、Class Pivot、Snapshot（Diff + Group）、SPC Query 各列的 🌍 按鈕。 | 全部可點，不再是灰的。 |
+| 2 | 點其中一個 🌍。 | 找到路徑，或顯示 DLL 明確的「no path」/「invalid」訊息。<br>⚠ 沒有任何訊息、靜默無反應就是失敗。 |
+| 3 | 反向對照：在關卡尚未載入的主選單（確定沒有活的 UWorld）再點一次 🌍。 | 回報 DLL 的 invalid/no-path 狀態，不能看起來像成功。 |
+| 4 | 回歸：在 GWorld 正常解析的遊戲上重跑幾個 🌍 交接。 | 行為與這次改動前完全相同。 |
+
+### ⬜ B25 —— pre-4.11 拒絕不再只憑一個 PE 欄位就擋掉
+
+*優先度 **中** · 需要：PE ProductVersion 落在 4.0–4.10 的遊戲，或可用 UE 版本 override 硬造；反向對照另需一個真正的 UE3 binary。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 用 UE 版本 override，或找一款 PE ProductVersion 報 4.0–4.10 的遊戲，注入後 grep `scan-0.log` 的 `below the … floor — NOT accepting that on its own`。 | 該行出現，而且掃描照樣跑完（tier 3 → low confidence → gate 不啟動）。FAIL = 對一款其實能用的遊戲印出 `SKIPPING the scan`。 |
+| 2 | 反向對照：拿一個真正的 UE3 binary 注入。 | 仍然被拒絕，`scan-0.log` 出現 `PRE-UE4 engine POSITIVELY identified`。<br>⚠ 沒跑反向對照就不算測完 — 只證明「不再擋」等於沒證明「該擋的還會擋」。 |
+
+### ⬜ B29 —— 第三方 wrapper 存在時仍會正常注入
+
+*優先度 **中** · 需要：裝了第三方 dxgi.dll / dinput8.dll wrapper（例如 ReShade）的 UE 遊戲。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 把 ReShade 或任一第三方 `dxgi.dll` / `dinput8.dll` wrapper 放進 UE 遊戲資料夾。 | 遊戲資料夾內存在非我方的同名 DLL。 |
+| 2 | 附加 CE，點 *UE5CEDumper: Inject && Connect*，並 grep `init-0.log` 的 `is loaded but is not ours`。 | 正常注入，且該行出現並指名那個外來模組。FAIL = 舊訊息 "already loaded … no injection needed"，之後 UI 連不上。 |
+| 3 | 再用一款路徑含非 ASCII 字元的遊戲重做一次，看同一則訊息。 | 訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號。 |
+
+### ⬜ GObjects layout fix (build 2782) — DragonSword，PARTIAL 剩餘項 —— base anchor 命中時要選到 UE5-Extended 而非 relaxed B
+
+*優先度 **低** · 需要：DragonSword Awakening，且該次啟動剛好從 FUObjectArray base anchor（位址結尾 …F8B0）解出 GObjects；結尾 …F8C0 的那次不算數。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 啟動 DragonSword Awakening 並注入，於 scan-0.log／offsets-0.log 找出 GObjects 解析到的位址。 | 位址結尾是 …F8B0（base anchor）。若是 …F8C0 則本次不具驗證力，直接結束、下次再試。<br>⚠ 這個 anchor 每次啟動不固定，不能靠重跑同一次判定；沒命中 …F8B0 就不要記成通過。 |
+| 2 | 確認同一份 log 中的 preset 行內容。 | 讀到 preset UE5-Extended，不是 relaxed B。 |
+| 3 | 回歸檢查：對其他原本就能解析成功的測試遊戲各注入一次，grep log 中的 Could not detect layout, using default。 | 完全沒有這一行；原本能解出的 layout 仍照舊解出。 |
+
+### ⬜ G12（heuristic 分支）—— 走 fallback 時 offset 仍正確
+
+*build 3119 · 優先度 **低** · 需要：offset 驗證走 heuristic fallback 的遊戲：scan-0.log / offsets-0.log 出現 Cannot find Guid or Vector struct（Solarpunk 是紀錄中的案例，但後續 build 可能改走 Guid）。*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 注入候選遊戲後 grep scan-0.log / offsets-0.log 的 Cannot find Guid or Vector struct 與 ValidateAndFixOffsets: Using struct。 | 確認走的是 heuristic fallback，而非 Using struct 'Guid'。<br>⚠ 走到 Guid 分支就等於沒測到，要把實際分支記下來。 |
+| 2 | 在該遊戲上用 Live Walker 檢查 enum 名稱與 TArray inner type。 | 兩者皆正確，不再偏移 8 bytes。 |
+
+### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
+
+*優先度 **中** · **需要**：一款第一次掃描後 GObjects 或 GWorld **仍未解出**的遊戲。都解得出來就是無樣本可測。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 按 **Extra Scan**，等它跑完。 | 綠色的「Found: GObjects: 0x…」**留在畫面上**。<br>⚠ 修正前它會出現一瞬間，然後被掃描自己觸發的指標 refresh 擦掉，所以每次成功都看不到結果。 |
+| 2 | 掃描**進行中**時去動 **UE version** 那個下拉選單。 | Extra Scan 按鈕在掃描真正結束前都保持 disabled。<br>⚠ 修正前那個下拉只被 `IsApplyingOverride` 擋，所以會在掃描中把 `IsScanning` 清掉，讓人可以再開第二個掃描。 |
+| 3 | 對照組：斷線再重連。 | 掃描結果那一區被清空 —— 換一款遊戲不該看到上一款的結果。 |
+
+-----
+
+### ⬜ Y11 —— FIRE 對做不出來的參數型別要老實拒絕
+
+*優先度 **中** · **需要**：一個參數含 `FText`、`TArray` 或 `TMap` 的 UFunction。找不到就是無樣本可測。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 找一個吃 `FText` 參數的 UFunction，按 **FIRE**（欄位維持預設值 `0`）。 | **被拒絕**，訊息指名 FText。<br>⚠ 全零的 FText 不是空 FText —— 它含一個引擎會 deref 的 `TSharedRef`，送零會當掉。匯出腳本那邊（helper 的 `ftext` 分支）本來就是無條件拒絕，這步是讓 FIRE 給出同一個答案。 |
+| 2 | 找一個吃 `TArray`／`TMap`／`TSet`／struct 參數的 UFunction，欄位**不要動**，按 FIRE。 | 正常送出，那個欄位維持**全零**（＝該型別的預設空值）。 |
+| 3 | 同一個欄位打進一個值（例如 `42`），再按 FIRE。 | **被拒絕**並說明原因。<br>⚠ 修正前那串文字會被當成 int32 直接寫在結構的 Data 指標上，然後交給 ProcessEvent。 |
+| 4 | 對照組：一般的 int／float／FString／指標參數照樣 FIRE。 | 全部照舊可用 —— 這步是確認閘門沒有把支援的型別一起擋掉。 |
+
+-----
+
+-----
+
+### V8 — what the tests already pin, moved out of the 繁中 checklist (2026-08-22)
+
+Migrated verbatim from `pending-verification_zh-TW.md`, whose charter is steps only. It is the
+**evidence** for why V8's live check shrank to a single look, and it was the one piece of that
+restructure that existed nowhere else — checked before the move (`V8_DataTableDrill_Truncated`,
+`V8_ContainerTruncation_FixedCapStatusLine` and `WalkDataTableRows` each returned 0 hits here).
+
+✅ **2026-08-22 重新分類。** 原本三個步驟的實質內容已經全部由測試釘住，不需要遊戲：
+
+| 原步驟 | 由誰保證 |
+|---|---|
+| 1 麵包屑／標頭／下鑽前的預覽列三處都有「showing 64 of N」 | `AuditL11HonestyTests.V8_DataTableDrill_Truncated_BadgesCrumbHeaderAndStatus` ＋ `V8_SyntheticRowMapField_CarriesBadgeBeforeTheClick` |
+| 2 狀態列講固定筆數，且**不**提 Array Limit 滑桿 | 同上的 `Assert.DoesNotContain("Array Limit", vm.StatusText)` ＋ `V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider` |
+| 3 對照組：≤64 列時上面那些字一個都不出現 | `V8_DataTableDrill_Complete_SaysNothing`（`Assert.Equal("", vm.StatusText)`） |
+| 「64」是不是 DLL 真正的頁大小 | `dll/src/Ubel.h:888` —— `WalkDataTableRows(..., int32_t limit = 64)`。查證即可，不用跑。 |
+
+⚠ **不能因此就刪掉這一列。** 那些測試斷言的是 **ViewModel 的字串**，不是畫面上的像素 —— 正是
+「怎麼用這份清單」D0 那一格自己寫下的失效方式，也是同一天 `[PARAMSSORT-2026-08-22]` 撞到的：
+快照那句提示 VM 字串完全正確，卻被放在沒有 `TextWrapping` 也沒有 `ToolTip` 的 `TextBlock` 裡，
+自己被截斷。
