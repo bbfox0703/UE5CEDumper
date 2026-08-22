@@ -16289,7 +16289,62 @@ appear elsewhere in this file. What changed is only where the STEPS live.
 | 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
 | 2 | ✅ **`ascii` 已於 2026-08-18 用 OCTOPATH 驗出**（`winmm.dll` proxy）：`DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418`。四種組合已收三種（`utf16`+UE4、`ascii`+UE4、Tier 0 直接結束），**只剩 UE5 分支**。 | ⛔ **UE5 分支本機無宿主，先別開遊戲**：全機 18 個已安裝 UE 執行檔用 `py tools/verify/tier1_host_survey.py` 離線掃過，只有 3 個能產生 Tier-1 行，全是 UE4。需要「**同時**穿過 Tier 0 **且**映像檔內含 `++UE5+Release-` needle」的遊戲 —— Light Maze/Lushfoil/Manor Lords 有 needle 但停在 Tier 0；Solarpunk/TQ2/ES2/STVoyager/Satisfactory/DSA/Avowed 連 needle 都沒有。<br>⚠ **裝新遊戲前先用該工具篩**，不要靠引擎版本猜。<br>✅ **2026-08-22 從另一個方向印證**(`[G11-TIERS-2026-08-22]`):全機 log 裡真正產生過 Tier 1 的三款遊戲(DQ7R／DQ I&II／OCTOPATH)**全是 UE4**(4.27／4.27／4.18),與離線掃描的結論一致 —— UE5 分支確實無宿主,兩種方法各自測到同一件事。 |
 
-### ⬜ W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
+### ✅ W1 / W7 PASS 2026-08-22 `[W1W7-CUE4PARSE-2026-08-22]` — a third-party parser reads our .usmap
+
+Run end to end, and **not circularly**: the reader is **CUE4Parse `1.2.2.202608`** (owner
+`GMatrixGames`) taken straight from nuget.org, unmodified, in a throwaway console project **outside
+the repo**. Per the maintainer's 2026-08-22 instruction it is deliberately **not** added to
+`UE5DumpUI`'s dependencies, which are AOT/trimming constrained.
+
+| step | result |
+|---|---|
+| **1** export the `.usmap` | ✅ `Export → USMAP (.usmap)` on DumperTest (UE504, 25,179 objects, DLL 3315) → `out\DumperTest.usmap`, **1,889,952 bytes**, magic `c4 30` (`0x30C4`). Header reports `USMAP exported`. |
+| **2** load it in a real parser | ✅ `UsmapParser` accepted it: version **`ExplicitEnumValues`**, compression **`None`**, **7,885 types**, **1,614 enums**. |
+| **3** `Actor`'s `bHidden` / `InitialLifeSpan` | ✅ class `Actor`, super `Object`, **80 properties**. `bHidden` → **`BoolProperty`**, `InitialLifeSpan` → **`FloatProperty`** — both the correct UE types, not just present. The neighbouring rows are real too: `PrimaryActorTick` → `StructProperty` with `StructType=ActorTickFunction`, then `bNetTemporary` / `bOnlyRelevantToOwner` / … as `BoolProperty`. **Not an empty or garbled table**, which the row says is a FAIL even without an exception. |
+| **4** a Blueprint class (`*_C`) | ⚠ **The row's expectation is STALE — see below.** |
+
+⭐ **The negative control is what makes "it parsed" mean anything.** A parser that never rejects
+anything would accept a garbage file too, so both failure modes were armed and both fired:
+
+* `truncated.usmap` (first half of the bytes) → `System.IO.Stream.ReadExactly` throws;
+* `badmagic.usmap` (first magic byte XOR 0xFF) → **`CUE4Parse.UE4.Exceptions.ParserException: Usmap has invalid magic`**.
+
+**⚠ Step 4's premise is out of date, and the result is the opposite — correctly so.** The row says
+*"查不到是預期的（W8 未修，`*_C` 被過濾）"*. But **W8 shipped and was verified on 2026-08-20**
+(`[W8-USMAP-2026-08-20]`), and its whole assertion was *"the struct count rises by roughly the
+number of `BlueprintGeneratedClass` objects in the game"* — i.e. W8 is precisely the change that
+**adds** Blueprint classes to the export. So finding them is right, and their absence would now be
+the defect.
+
+Observed: **5 types ending in `_C`** — `DmgTypeBP_Environmental_C`, `ABP_Manny_C`, `ABP_Quinn_C`,
+`BP_ThirdPersonCharacter_C`, `ThirdPersonMap_C` — with real inheritance and real tables
+(`ABP_Quinn_C`: 56 props, super `ABP_Manny_C`; `ABP_Manny_C`: 55 props, super `AnimInstance`).
+
+⭐ **That is a stronger confirmation of W8 than W8's own check.** W8 passed by *counting* structs;
+here an independent parser resolves the Blueprint classes' names, super-chains and property tables.
+
+▶ **Fix the row's step 4 wording** rather than the code: `*_C` present is now the expected result.
+
+**Reproducing it costs about two minutes** (the project is throwaway by design, so only the recipe
+is kept):
+
+```
+dotnet new console -o usmapcheck && cd usmapcheck
+dotnet add package CUE4Parse            # 1.2.2.202608, nuget.org
+```
+```csharp
+var u = new UsmapParser(path, Path.GetFileNameWithoutExtension(path), StringComparer.OrdinalIgnoreCase);
+u.Mappings.Types["Actor"].Properties.Values      // -> PropertyInfo { Name, MappingType, Index, ArraySize }
+```
+⚠ Two API notes that cost time. `UsmapParser`'s useful members are **fields, not properties**
+(`Mappings`, `Version`, `CompressionMethod`), so a property-only reflection dump shows nothing. And
+`PropertyInfo.MappingType` is a `PropertyType` with **no `ToString()` override** — printing it
+yields the class name `CUE4Parse.MappingsProvider.PropertyType`, which looks like a parse failure
+and is not; read its `Type` / `StructType` fields.
+
+-----
+
+### (original steps) W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
 
 *build 2853 · 優先度 **中***
 
@@ -16304,7 +16359,7 @@ appear elsewhere in this file. What changed is only where the STEPS live.
 | 1 | 連上任一遊戲，Export → USMAP 匯出檔案 | 產出 .usmap 檔 |
 | 2 | 在 FModel 用 Directory selector → Mappings file 載入該檔（或直接跑 CUE4Parse 的 UsmapParser） | 成功載入 |
 | 3 | 查 AActor 的 bHidden / InitialLifeSpan | 屬性名稱與型別都正確列出<br>⚠ 「沒有報錯」不算通過；空表或亂碼視為失敗 |
-| 4 | 順便查一個 Blueprint 類別（*_C） | 查不到是預期的（W8 未修，*_C 被過濾），不要當成解析失敗 |
+| 4 | 順便查一個 Blueprint 類別（`*_C`） | ⚠ **原文已過期(2026-08-22 更正)**:W8 已於 2026-08-20 修好並驗證(`[W8-USMAP-2026-08-20]`),它的作用**就是把 BlueprintGeneratedClass 加進匯出**。所以現在 `*_C` **查得到才是預期**,查不到反而是缺陷。實測 DumperTest 有 5 個(`ABP_Quinn_C` 56 props、super `ABP_Manny_C`)。 |
 
 ### ✅ D2（顯示配對） PASSES 2026-08-22 `[D2-PAIRING-2026-08-22]` — all four steps, on DumperTest
 
