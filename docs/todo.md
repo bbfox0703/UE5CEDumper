@@ -7238,6 +7238,73 @@ bug in the cadence rig.
 engine whose `FHitResult` differs.
 
 
+
+### ✅ A6 step 3 PASSES 2026-08-22 `[A6-DERIVE-2026-08-22]` — the hold walks the super-chain, not the name
+
+The row is explicit that a large held count settles nothing here: **a prefix match also holds
+hundreds, and the two look identical from outside**. So the run is built on the two things a name
+matcher could not survive at once — `tools/verify/a6_prefix_siblings.py`, on
+`Actor::bIsEditorOnlyActor` (58 held).
+
+| | measurement |
+|---|---|
+| ⭐ **positive** — a class a NAME match would MISS | `StaticMeshActor` **derives** from `AActor` and its name does **not** start with "Actor". While the hold was up: `0x1FE64129FC0 StaticMeshActor -> bIsEditorOnlyActor = true (bit 1, mask 0x02)`. A prefix matcher could not have reached it. |
+| **negative** — objects a NAME match would HIT | 33 diffable objects re-walked field-by-field before and after, **0 touched**. One is the genuine same-prefix stranger `ActorSequence`; the rest are a broader non-derived sample. |
+
+⭐ The pair is the point: the hold **reaches** what a name test would miss and **skips** what a name
+test would catch. Either alone is consistent with the wrong matcher.
+
+⚠ **The DLL's own log line is printed but is NOT the assertion, and reading it as one would be a bad
+mistake**: `FindInstancesDerivedFrom base='Actor': 58 live instance(s) over 3941 distinct class(es)`
+— that 3941 is `derivedCache.size()`, i.e. how many classes the derivation test was **evaluated
+for** (the whole pool), not how many matched. Taken as a match count it looks like a catastrophic
+over-hold.
+
+ℹ️ Fixture note for whoever runs this next: **"Actor" is a thin prefix on DumperTest** — 8 same-prefix
+strangers exist but 7 are interfaces with **no reflected fields**, so they cannot be diffed at all.
+The rig drops them rather than counting them (a stranger that can never show a change would pad the
+sample and make the result look stronger than it is) and tops up from a broader non-derived set.
+
+-----
+
+### 🟡 A6 step 5 — the CDO half PASSES; the spawn half is BLOCKED on this fixture `[A6-CDO-2026-08-22]`
+
+Step 5 asks: force a bool on a base class, `reset_all_fields`, then check that **newly spawned**
+objects do not carry the value — i.e. that the CDO was never written. `tools/verify/a6_cdo_and_spawn.py`
+runs both halves, because they answer different questions.
+
+**(A) The mechanism — PASSES, and not vacuously:**
+
+```
+CDO ActorComponent @ 0x1FE74854DE0 : bIsEditorOnly = false (bit 0, mask 0x01)
+force_field -> held=256 truncated=True
+  live sample of 12: 12 actually forced        <- channel proof
+  CDO during hold : bIsEditorOnly = false
+```
+
+⭐ The channel proof is what makes it mean something: **12 of 12** sampled live components really do
+carry the forced value, so "the CDO is clean" is a statement about the write path *deliberately
+skipping* it, not about nothing having been written. CLAUDE.md's "CDO-skip happens INSIDE the walk,
+before the cap" is confirmed live.
+
+**(B) The consequence — NOT RUN, and the reason is measured rather than assumed.** Three attempts:
+
+| attempt | result |
+|---|---|
+| toggle the debug camera on (AA12 step 3's lazy-instantiation trick) | `state` was **already 1** — `ADebugCameraController` and `DebugCameraHUD` had been instantiated earlier in the session. It is one-shot per process. |
+| cycle it off → on | 295 live objects before, **295** after, **0 new** |
+| find a console-command entry point to invoke (`ConsoleCommand`, `RestartLevel`) | neither is in the 3,142 functions `list_all_functions` returns here |
+
+So DumperTest has **no repeatable in-process object-recreation lever**. ⚠ A relaunch does **not**
+substitute: it reloads the CDOs from disk, so it could not detect an in-memory CDO write — which is
+the entire question.
+
+**What would unblock it**: a game where a level reload / enemy respawn can be triggered, or an
+invoke path to `APlayerController::ConsoleCommand` (`RestartLevel` recreates every actor and
+component in-process, inheriting from the in-memory CDOs). Given (A), this is corroboration rather
+than the load-bearing half — but the row asks for it, so it stays open.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

@@ -130,8 +130,8 @@ session 的順序很好用，保留。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 3 | 對一個有同字首兄弟類別的類別下 Force（如 Enemy vs EnemyProjectile、或任一 Foo / FooComponent 組合），檢查 ForcedFields 狀態列與 DLL log 的 FindInstancesDerivedFrom base=… 行 | 不相關的同字首類別「沒有」被 hold<br>⚠ 前面步驟看到「hold 了數百筆」不能替代這步：字首比對也會 hold 數百筆，兩者長得一樣。 |
-| 5 | 回歸：對基底類別 Force 一個 bool 後執行 reset_all_fields，再觀察後續**新生成**的物件 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO）<br>⚠ 一定要在 reset 之後真的生出新物件；看既有物件測不到這件事。 |
+| 3 | ✅ **2026-08-22 通過**(`[A6-DERIVE-2026-08-22]`,`tools/verify/a6_prefix_siblings.py`)。用 `Actor::bIsEditorOnlyActor`(58 held)。⭐ **正向**:名字**不以 `Actor` 開頭**、但確實衍生自 `AActor` 的 `StaticMeshActor`,在 hold 期間 `bIsEditorOnlyActor = true` —— 字首比對到不了它。**反向**:33 個可 diff 的物件(含真正的同字首陌生類別 `ActorSequence`)逐欄位比對,**0 個被動到**。⚠ log 那行的 `over 3941 distinct class(es)` 是 `derivedCache.size()`(**評估過**的類別數,整個池),不是命中數 —— 拿它當命中數看會以為嚴重超抓。 | 不相關的同字首類別「沒有」被 hold<br>⚠ 前面步驟看到「hold 了數百筆」不能替代這步：字首比對也會 hold 數百筆，兩者長得一樣。 |
+| 5 | 🟡 **2026-08-22:CDO 那半通過,生成那半在這個 fixture 上做不到**(`[A6-CDO-2026-08-22]`,`tools/verify/a6_cdo_and_spawn.py`)。`ActorComponent::bIsEditorOnly` hold 256 筆時,**CDO 全程維持 `false`**,而且抽樣的 12 個活體實例 **12/12 都真的被強制**(通道證明 —— 否則「CDO 乾淨」什麼都不代表)。⛔ 生成那半:debug camera 是**每個 process 一次性**(已被用掉,`state` 已是 1),off→on 循環 295→295 個物件、**0 新增**,而 `ConsoleCommand`／`RestartLevel` 不在這裡列得出的 3,142 個函式裡。⚠ 重開遊戲**不能替代** —— 那會從磁碟重新載入 CDO,正好偵測不到記憶體中的 CDO 被寫。要解鎖:換一款能觸發關卡重載／敵人重生的遊戲。 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO）<br>⚠ 一定要在 reset 之後真的生出新物件；看既有物件測不到這件事。 |
 
 ### 🟡 AD4 —— God Mode 徽章要說明原因而非只有開關（**只剩步驟 4：`ON (contested)`**）
 
