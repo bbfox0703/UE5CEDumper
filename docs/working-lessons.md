@@ -272,6 +272,31 @@ Two reasons this matters beyond tidiness:
   instances" was compared against a `find_instances` count that had swept in `ActorElement*`
   non-actors.
 
+### 1.w Before filing a defect, GREP THE DOCS FOR THE SUBJECT — the answer is often already written
+
+2026-08-22, running G11 step 2: Avowed's UI badge said `UE504` while the DLL log said `503`. That
+looked like the repo's signature defect shape — report and reality computed by different code paths
+— so it was filed as a confirmed defect with a reproduction.
+
+**It was a false alarm, and `docs/todo.md` already said so**, under a heading that could not have
+been more explicit: *"THREE DIFFERENT 'UE VERSION' QUANTITIES, and confusing them manufactures a G11
+false alarm"* — naming Avowed, naming the `CMC::GravityDirection` raise, concluding *"503 and 504 are
+both right for different questions"*. That note also records that the same confusion had already
+cost **two** contradictory readings before it. The filing made it three.
+
+* **The cost is asymmetric.** A false defect is worse than a missed one here, because the prescribed
+  fix ("make Avowed report 503") would have deleted a deliberate, correct structural correction —
+  the same failure mode as §2.4.
+* **The cheap guard is one command.** `grep -n <subject> docs/todo.md` before writing the filing. The
+  answer was one grep away, in the same file the filing was being written into.
+* ⚠ **A live reproduction is not evidence that the behaviour is wrong.** Reproducing `UE504` on
+  demand felt conclusive and proved only that the feature works every time. Ask "what would this
+  look like if it were CORRECT?" before "how do I reproduce it?".
+* ⭐ **The re-derivation still paid, but only because it was pushed to the mechanism.** Chasing it to
+  the actual writer showed the older note's own explanation ("the cache's 504 is from an older run")
+  was wrong — the value is written fresh every scan by the C# mirror. Stopping at "already
+  documented, never mind" would have preserved that error.
+
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
 Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with

@@ -85,19 +85,18 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 6 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
-> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **6** is
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **5** is
 > the honest row count of this table. The third, `[CADENCEBAND]`, was field-found on 2026-08-22
 > and **downgraded to low the same day**: its only witness is our own 15 FPS test harness, and the
 > one realistic scenario for a real game was tested and refuted. It stays listed because the
 > arithmetic is real below 25 FPS, not because anything is known to be broken in the field.
 > The fourth, `[FORCESTATUSCLIP]`, was found later the same day while running M1–M5 step 4.
-> ⭐ **Five of the six are not straightforward code fixes** (`[AVOWEDCACHE]`, added 2026-08-22, is
-> the exception — it is a confirmed reproducible defect, but its ROOT CAUSE is not yet known): one is a maintainer-only file deletion,
+> ⭐ **None of the five is a straightforward code fix**: one is a maintainer-only file deletion,
 > one is an open product question, one is a design call, one is cosmetic with the same fact
 > already reaching the user by a second, unclipped route, and the fifth (`[TREERECLICK]`, found
 > 2026-08-22 while running AE2/AE3) is a **UI design call about ListBox semantics** whose obvious
@@ -129,7 +128,6 @@ Open work only. **Read this when deciding what to do next.**
 > | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
 > | `[FORCESTATUSCLIP-2026-08-22]` | 🟡 **LOW.** The Property Search *Force* status line sits in a horizontal `StackPanel` with no `TextTrimming`, no wrapping and no tooltip (`PropertySearchPanel.axaml:55`), so it is right-clipped at ~30 characters on a 1389-wide window. The clipped tail is `— cap reached, more exist unheld`, a clause whose own code comment (`PropertySearchViewModel.cs:502`) says it exists because "on 256 instance(s)" reads as "all of them" without it. ⚠ LOW **and the reason is measured**: the `⚠ capped` badge in the Forced-fields strip binds the **same** `r.Truncated` (`PropertySearchPanel.axaml:134`) and is not clipped, so the fact reaches the user by a second route — this is report *incompleteness*, not a wrong report. Fix shape: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"`, and **sweep the siblings first** — a grep for `StatusText` will not find them, the containing panel is what matters. |
 > | `[TREERECLICK-2026-08-22]` | 🟡 **Clicking the ALREADY-SELECTED Object Tree node does nothing** — no `SelectionChanged`, so no `walk_class` reaches the wire (measured: three clicks, two walks). Harmless alone, but after a cross-tab handoff (`Classes` → `Walk Class`) the panel shows class X while the tree highlight says node P, and clicking P **cannot** get it back; only selecting a different row and returning does. ⛔ **Not a `ClassStructViewModel` bug** — its `BeginLoad(nodeAddr: null)` already clears the dedupe key correctly, which is exactly why the recovery click works. Any fix belongs in the VIEW. AE2/AE3 step 5. |
-> | `[AVOWEDCACHE-2026-08-22]` | ⬜ **CONFIRMED, reproduces on demand.** Avowed is UE **5.3**, but the persisted hint cache holds `ueVersion 504` with `versionDetected: true` and **no** user override — so the DLL replays it and logs `skipped DetectVersion`. Verified live on build 3315: UI shows `UE504`, `scan-0.log` agrees. Control: the **same PE hash** produced `503` on **five LIVE `tier=1` detections**, so the live path is right and the cached path is not. `versionDetectRev` is already 5, so it is self-perpetuating. ⛔ How 504 got written is still unknown — do not guess. Isolating experiment (clear the entry, re-scan) NOT run: it mutates user state, ask first. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
 > gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
@@ -7050,80 +7048,70 @@ Same probe, same address, opposite answer. Without it, "0x02 came back" is only 
 
 -----
 
-### ⬜ NEW DEFECT 2026-08-22 `[AVOWEDCACHE-2026-08-22]` — CONFIRMED: the cache serves a wrong UE version and detection is skipped
+### ✅ RETRACTED / RESCOPED 2026-08-22 `[AVOWEDCACHE-2026-08-22]` — the 504 is CORRECT; what is left is a small invariant
 
-> ### ✅ REPRODUCED ON DEMAND, build 3315 — 2026-08-22 (upgraded from OBSERVATION)
->
-> Filed below as an observation from an offline log sweep, then reproduced live while running
-> **G11 step 2**. It is no longer conditional.
->
-> Method: Avowed's `dxgi.dll` proxy updated **3263 → 3315** first (verified byte-identical to
-> `dist/proxy/dxgi.dll`), game launched, **Start Scan**. Both witnesses agree:
->
-> | witness | says |
-> |---|---|
-> | UI header | `Connected — UE504 (92036 objects)` |
-> | `scan-0.log` | `HintCache: Loaded hints … UE=504 detected` then `FindAll: UE Version = 504 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion` |
->
-> **The 504 is wrong, and the control is clean.** Avowed is UE 5.3 per two repo docs, and the
-> **same PE hash** `DDCE3EDE0BE03000` — i.e. the identical binary, not a patched one — produced
-> **`503` on five LIVE detections** (`tier=1`) across builds 3262/3263. So the live path gets it
-> right and the cached path does not.
->
-> **Impact:** `versionDetectRev` is already `5`, so the re-detect gate is satisfied and detection is
-> skipped entirely — the wrong value is self-perpetuating. The scan itself still completed (GObjects
-> `GOBJ_AV1`, GNames `GNAM_V5`, 92,036 objects), so this is a wrong *reported* version rather than a
-> broken scan today; `ueVersion` does feed engine-dependent offset selection, which is why it is
-> filed as a defect and not a cosmetic note.
->
-> ⛔ **Still unknown, and still not to be guessed: how 504 got into the cache.** The 2026-08-21 18:45
-> run *loaded* 503. A user override is ruled out by the file (`ueVersionUserOverrideAt` empty).
->
-> ▶ **The one experiment that would isolate it, deliberately NOT run because it mutates user state:**
-> clear this game's cached hint entry and re-scan. If it then detects 503, the cache is the sole
-> fault and the question narrows to the writer. Ask the maintainer before doing it.
+> ⛔ **I filed this as "the cache serves a WRONG UE version". That was wrong.** The isolating
+> experiment the maintainer approved refuted it, and the retraction matters more than the original
+> claim: a fix aimed at "make Avowed report 503" would have deleted working, deliberate behaviour.
 
-### ⬜ (original filing) `[AVOWEDCACHE-2026-08-22]` — the persisted hint cache holds a UE version that live detection never produces
+**What the experiment did.** Backed up the machine hint file, deleted **only** the Avowed entry
+(29 → 28 games, siblings verified intact), relaunched Avowed on build 3315 and re-scanned.
+Result: **UE504 again** — so the cache was never the origin.
 
-Surfaced while running **G11 step 1** (an offline sweep of archived scan logs), not by hunting.
-Filed as an OBSERVATION rather than a defect because the **mechanism is unknown** and guessing it
-would be worse than leaving it open.
+**Why 504 is right.** The DLL applies a deliberate *upward* correction, and it logged itself doing it:
 
-**What is solid:**
+```
+[SCAN:Ver] DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503        <- raw string detection
+[INIT]     UE5_Init: property marker (CMC::GravityDirection)
+           = UE5.4+ — raising version 503 -> 504.                <- structural correction
+[INIT]     UE5_Init: Complete (UE504, ...)
+```
 
-* Avowed is **UE 5.3**, per two independent repo docs — [test-games.md](test-games.md) (`UE5.3
-  (PE: 503 …)`) and [avowed-gobjects-fix.md](avowed-gobjects-fix.md) (`**UE 5.3** (UE503)`).
-* **Live detection agrees: `503`, five times**, across builds 3262 and 3263, every one
-  `tier=1, detected=yes, lowConfidence=no`.
-* **The persisted cache disagrees.** `UE5CEDumper.MSI-NB.json` (in the app-data root), entry
-  `DDCE3EDE0BE03000`, currently reads
-  `"ueVersion": 504, "versionDetected": true, "versionDetectRev": 5, "ueVersionUserOverrideAt": ""`.
-* ⭐ **A user override is ruled out by the file itself** — `ueVersionUserOverrideAt` is empty, so the
-  504 is recorded as a *detection*, not a preference. That was my first hypothesis and the data
-  refuted it.
-* **The stale value has already been used at least once.** `2026-08-18 21:58:04` logs
-  `HintCache: Loaded hints … UE=504 detected`, then
-  `FindAll: UE Version = 504 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`.
-  The run 55 minutes earlier had loaded **503**, and every run after it detected **503**.
-* **Why it is not cosmetic:** `versionDetectRev` is already `5`, so the re-detect gate is satisfied —
-  the next Avowed launch on any build ≥3112 will **replay 504 and skip detection**, and `ueVersion`
-  selects engine-dependent offsets.
+`UCharacterMovementComponent::GravityDirection` is a reflected `FVector` added in **UE5.4**
+(the post-DynOff correction in [Frieren.cpp](../dll/src/Frieren.cpp)). Avowed's binary carries it, so
+504 is the honest answer for version-gated behaviour. ⭐ **`503` and `504` were never in conflict —
+they are two different quantities**: the raw version string versus the structurally-corrected runtime
+version. The docs saying "Avowed = UE 5.3" describe the engine release and do not contradict this.
+That also explains the historical logs which showed both values side by side within one run.
 
-**What is NOT established — do not write any of it down as fact until measured:**
+**What actually remains — LOW, and it is an invariant, not a wrong value.** Frieren's own comment
+states the design: *"Runtime-only: the cached RAW detection is left as-is and re-corrected here on
+every init, so no cache delete is ever needed."* That invariant is **not upheld**, and a second
+writer is why:
 
-* how `504` got there. The 2026-08-21 18:45 run *loaded* 503 and saved; the file's mtime is
-  2026-08-22 19:17:59, i.e. it was last rewritten by an unrelated **DQ7R** scan — it is one
-  machine-wide JSON that every save rewrites whole, so ordering across games is not obvious;
-* whether replaying 504 actually breaks anything on Avowed — it is LIVE-VERIFIED historically, and
-  the 2026-08-18 cached-504 run is not recorded as having failed;
-* whether any other game's entry is stale. **Only Avowed was inspected.**
+| time | writer | writes |
+|---|---|---|
+| `20:19:17.204` | DLL `Flamme::SaveResults` | `ueVersion: 503` — the raw detection, as designed |
+| `20:19:17.878` | **UI `AobUsageService`** | `ueVersion: 504` — the CORRECTED runtime value; `scanCount` 1 → 2 |
 
-**Cheapest next step, and it is already the first action of G11 step 2:** launch Avowed and read the
-first `FindAll: UE Version` line. `504 (cached…)` means this reproduces on demand and can be
-escalated with a known repro; a re-detected `503` means the entry has since been corrected and only
-the "how" stays open.
+⚠ The shared file is **deliberate, not a collision**: `AobUsageService` writes
+`UE5CEDumper.{Machine}.json` in the app-data root — the same file `Flamme` owns — and its code says
+so ("it must mirror it", "`VersionDetectRev` is DLL-authoritative — preserved here"). It mirrors
+`EngineState.UEVersion`, which is necessarily the *corrected* value, because that is what the pipe
+reports (`g_cachedUEVersion`). There is no 504 constant anywhere in the C#.
 
------
+**Consequence, stated small because it is small:** the cache ends up holding the corrected value
+flagged `versionDetected: true`, so the raw detection is lost. Runtime behaviour is unaffected — the
+correction is idempotent and its `< 504` guard simply no-ops on the next launch. The only real cost
+is that a later launch cannot tell "raw 504" from "raised to 504", which is exactly the distinction
+the comment claims to preserve. ▶ **Decide whether the comment or the code is wrong; do not "fix"
+the version.**
+
+⛔⛔ **THIS WAS ALREADY DOCUMENTED AND I DID NOT LOOK.** The 2026-08-20 sweep in this same file
+("**THREE DIFFERENT 'UE VERSION' QUANTITIES, and confusing them manufactures a G11 false alarm**")
+names Avowed explicitly — *"cache 504 … vs detected 503 + documented raise — **not** a regression"* —
+and even records that it "cost two contradictory readings of Avowed before it was pinned down". So
+this is the **third** time the same confusion has been worked out from scratch. ▶ **Grep the docs
+for the subject before filing a defect**; the answer was one `grep -n Avowed docs/todo.md` away.
+
+⭐ **What the experiment nonetheless added, and it corrects the 2026-08-20 note.** That note explains
+the cache's 504 as *"from an older run"* — i.e. leftover. It is not leftover: it is written **fresh,
+every scan**, by the UI's `AobUsageService` 674 ms after the DLL wrote 503, as the table above shows
+with both log lines. So the cache systematically holds the corrected value rather than the raw one,
+which is what makes it contradict Frieren's comment. That mechanism was not previously identified.
+
+ℹ️ Housekeeping from the experiment: the entry was re-created with `scanCount: 2` (it had been 5).
+Harmless — it re-accumulates. A backup of the pre-experiment file is in the session scratchpad.
 
 ### ⬜ NEW DEFECT 2026-08-22 `[TREERECLICK-2026-08-22]` — re-clicking the selected tree node is a no-op, and a handoff turns that into a stuck panel
 
