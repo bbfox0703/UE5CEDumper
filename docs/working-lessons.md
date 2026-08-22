@@ -572,6 +572,53 @@ A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed f
   its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
   assertion instead. Same family as AF1's aliasing fixture in §2.3.
 
+
+### 2.5a The generated artifact must be shown to **PARSE**, and the tool that consumes it may not say so
+
+§2.5's rule, paid for a second time and with a sharper edge: on 2026-08-22 the baked invoke script
+had an **unescaped apostrophe** in a single-quoted Lua literal (`read it in CE's memory viewer`),
+which closed the string early and made the whole `[ENABLE]` block a syntax error.
+
+Three things about it are worth carrying forward.
+
+1. **The existing test generated the broken artifact and passed on it.** Y13's
+   `..._OnlyClaimsTheDumpWhenItReallyHoldsIt` produces this exact script and asserts substrings —
+   all of which are present. Across 4,648 tests, **nothing asked whether the emitted Lua compiles.**
+   Substring assertions cannot see a syntax error; only a parser can.
+2. **Cheat Engine reports nothing.** Ticking the record leaves `Active` at `false` with no dialog,
+   no output and no log line. From the outside it is indistinguishable from a checkbox that will not
+   stay ticked. The way in was `autoAssemble(record.Script:match('%[ENABLE%](.-)%[DISABLE%]'))` from
+   the Lua Engine, which *does* return the error — **when a record silently refuses to enable, run
+   its own `[ENABLE]` text through `autoAssemble` and read the message.**
+3. ⭐ **A grep for the offending character structurally could not find it.** The apostrophe was in a
+   variable defined ten lines above the interpolation, so the first sweep — grep the emitting lines
+   for `'s ` — came back **empty and looked like a clean bill of health**. The sweep that meant
+   something *ran* 19 generators (17 simple + teleport's 13 actions + freeze) through a scanner,
+   with apostrophes deliberately fed in via a class name, a property name and a Windows account
+   named `O'Brien`. Same family as §2.3's sibling grep: a filtered grep measures what survived the
+   filter.
+
+The scanner itself has one non-obvious requirement: **it cannot be a quote count.** The generators
+legitimately emit `-- ... when CE's resolver ...` inside comments, so it has to track `--` line
+comments and `--[[ ]]` long brackets. It was written against the real broken artifact first and
+shown to fire (1 line) and clear (0 after escaping that one apostrophe) before being ported into
+`CeLuaQuotingTests`; both directions are pinned as tests.
+
+### 2.5b A verification fixture can destroy the thing being measured — displace, do not relocate
+
+Running MB3's teleport round trip, the displacement step used `TP to coordinates` with the UI's
+default **0 / 0 / 0**. In `ThirdPersonMap` the origin is under the floor: the pawn fell, crossed
+KillZ and was **destroyed**. The next record, `Recall marker 1`, then returned `code -3`
+(`TP_ERR_NO_PAWN`) — a completely honest error that reads exactly like "Save silently failed".
+
+- **DumperTest does not respawn the pawn**, focused or not. The only way back is relaunch,
+  re-inject, and re-attach CE to the new PID.
+- When the point of a step is a **round trip**, displace with something relative and bounded
+  (`TP facing direction`, 100 uu) rather than an absolute coordinate. The measurement wants the pose
+  to change and come back, and it does not care where.
+- ⭐ The general shape: before reading an error as a defect, ask whether the **previous step in your
+  own script** put the system into the state the error is truthfully reporting.
+
 ### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
 
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.

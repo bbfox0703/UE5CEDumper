@@ -6813,6 +6813,54 @@ hint really was the only site.
 Negative control: reverting the fix fails exactly 3 tests; restored byte-exact. **4,689 / 4,689.**
 
 
+
+### ✅ MB3 CLOSED 2026-08-22 `[MB3-CT-2026-08-22]` — the CE half, through real `.CT` records
+
+`[MB3-POKE-2026-08-19]` closed steps 2 and 3 headlessly (50 consecutive dispatches, 0 failures).
+What was left was the row's actual worry: **the refactor touches the polling loop every `.CT`
+command goes through, and no test target compiles `Mimic.cpp`**, so the general path had never been
+exercised the way a user exercises it. Step 4's exception path cannot be triggered on purpose and
+stays a watch item, not a step.
+
+Run on CE 7.7 + a freshly relaunched, freshly injected DumperTest (`dist` v1.0.0.3314), CE
+re-attached to the new PID and `reinitializeSymbolhandler()`d — `g_invokeMailbox` and
+`g_mailboxContract` both resolved before anything was ticked.
+
+⭐ **Every claim below is an EFFECT, not a return code.** A mailbox command that reports success and
+does nothing is precisely the failure this row exists to catch, so the witness is the pawn's pose
+read back through a different code path (the UI's pipe) between records.
+
+| # | `.CT` record | witness |
+|---|---|---|
+| 1 | `Teleport: Save marker 1` | quiet (correct: `DEBUG=0`) |
+| 2 | `Teleport: TP facing direction` | pose **900 → 1000**, X only, +100 uu on yaw 0. Log: `Teleport: relative 100.0 uu (horizontal) fwd=(1.000, 0.000, 0.000) -> (1000.0, 1110.0, 92.0)` |
+| 3 | `Teleport: Recall marker 1` | pose back to **900.000 / 1110.000 / 92.013**, exactly. Log: `K2_SetActorLocation invoked OK ... -> (900.0, 1110.0, 92.0)`, `post-move cur=target`, `recall 0 -> rc=0` |
+| 4 | `Invoke (baked): KismetMathLibrary::MakeTransform` | `[Invoke] OK: ... ReturnValue (fstruct@80, size=96B)`, and the After dump decodes `26 40` / `36 40` / `80 40 40` = **11.0 / 22.0 / 33.0** — the values typed into the dialog |
+
+Record 3 is the one that matters: **Recall can only restore a pose that Save actually stored**, so
+the pair proves both commands, and a quiet Save is not taken on trust.
+
+**Step 2, re-confirmed from the CE side** (it had only been shown headlessly):
+`Mailbox: tick threw` = **0** and `result=-11` = **0** across all eight logs, with
+`Mailbox: INVOKE_BY_NAME complete, result=0` present.
+
+ℹ️ Incidental, and it explains why all of this worked with the game window unfocused:
+`Mailbox: INVOKE -> static-native fast path (flags=0x14822403, bypassing GameThreadDispatch)`.
+The address list's own reminder row ("click back into the GAME window before ticking these") is
+still right in general — the teleport records *do* go through the game thread — but a static native
+UFunction does not.
+
+⚠⚠ **A FIXTURE TRAP THAT COST A RESTART, worth writing down before it costs another.** The first
+attempt used `Teleport: TP to coordinates` with the UI's default **0 / 0 / 0** as the displacement.
+In `ThirdPersonMap` the origin is under the floor: the pawn fell, crossed KillZ and was
+**destroyed**, and `Teleport: Recall marker 1` then returned `code -3` = `TP_ERR_NO_PAWN`. The error
+was **completely honest** — the pawn really was null — but it reads exactly like "Save silently
+failed", and I nearly filed it as one. **DumperTest does not respawn the pawn**, focused or not, so
+the only way back is relaunch + re-inject + CE re-attach.
+⭐ The general rule: **displace with `TP facing direction`, never with absolute coordinates**, when
+the point of the step is the round trip rather than the coordinates.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
