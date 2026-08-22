@@ -262,9 +262,9 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | Proxy Deploy → 掃描 Steam 程式庫，再跑一次一般磁碟掃描。 | 找到的遊戲、名稱、路徑**完全相同**。唯一該有的差別是變快（每款遊戲少讀一次完整的 VERSIONINFO）。 |
+| 1 | ⭐ **這一步不需要遊戲** —— 只要開 UI 就能跑,卻被放在第 2 步。下次有 UI 在手時順手做掉。<br>Proxy Deploy → 掃描 Steam 程式庫，再跑一次一般磁碟掃描。 | 找到的遊戲、名稱、路徑**完全相同**。唯一該有的差別是變快（每款遊戲少讀一次完整的 VERSIONINFO）。 |
 | 2 | Game Class Filter → 在 Package 欄位輸入關鍵字，再點 Package 欄位標題排序。 | 結果和以前一樣。若出現**空白或過期的 Package 欄**，就是新的快取失效寫錯了。 |
-| 3 | Teleport 分頁 → 產生 CE Lua／`.CT` 的 teleport 記錄，實際跑一次。 | 腳本內容一字不差，teleport 正常。opcode 仍然是 8，只是改成從共用常數取得。 |
+| 3 | ✅ **2026-08-22 通過**(`[AF25-OPCODE-2026-08-22]`)。實際跑那半在 MB3 那批就做了 —— `Save marker 1`／`TP facing direction`／`Recall marker 1` 三筆真 `.CT` 記錄,以 pawn 姿態為見證(900 → 1000 → 精確回到 900.000/1110.000/92.013)。腳本內容由 `TeleportScriptGeneratorTests` 逐字釘住 `writeInteger(mb + 0x00, 8)`,opcode 仍是 8 且三個產生點都取自 `CeMailboxLayout.CmdTeleport`。⭐ 我原本懷疑這個手抄常數沒人守,**負控制推翻了**:把 C# 端改成 9 → contract gate 照樣 `CHECK OK`(它只比對 ContractVersion),但**測試掛了 6 條**。兩個方向其實都有保護,只是機制不同。 | 腳本內容一字不差，teleport 正常。opcode 仍然是 8，只是改成從共用常數取得。 |
 
 -----
 

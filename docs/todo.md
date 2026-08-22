@@ -7550,6 +7550,40 @@ all, and it has intact VERSIONINFO so it would stop at the first rung anyway.
 Elliot and DragonSword Awakening) and an Avowed injection (step 2). Neither is a grep.
 
 
+
+### ✅ AF25 (AC15/AE27/AF25 step 3) PASSES 2026-08-22 `[AF25-OPCODE-2026-08-22]` — teleport opcode still 8, now from the shared constant
+
+Three halves, and the live one was already done earlier today:
+
+1. **The script runs.** The MB3 batch (`[MB3-CT-2026-08-22]`) ticked real `.CT` teleport records
+   through CE — `Save marker 1`, `TP facing direction`, `Recall marker 1` — with the pawn's pose as
+   the witness (900 → 1000 → back to 900.000/1110.000/92.013 exactly). That is step 3's "實際跑一次".
+2. **The content is byte-pinned.** `TeleportScriptGeneratorTests` asserts the emitted literal
+   `writeInteger(mb + 0x00, 8)` — plus the per-action op — for Save / Recall / RecallLast / BugIt /
+   BugItGo / GetPov / GetPose / ClearAll.
+3. **The opcode comes from the shared constant**: `CeMailboxLayout.CmdTeleport = 8`, used at all
+   three emit sites in `TeleportScriptGenerator` (the per-generator `private const int CmdTeleport`
+   copies are gone).
+
+⭐ **I suspected an unguarded hand-copy and the measurement refuted it.** `check_mailbox_contract.py`
+only verifies `CeMailboxLayout.ContractVersion`, so on reading it looked as though a drifted C#
+opcode would pass everything. Negative control — set `CmdTeleport = 9` while the DLL still says 8:
+
+| | result |
+|---|---|
+| `check_mailbox_contract.py` | **CHECK OK** — it does not compare opcode values |
+| the test suite | **6 failures**, all in `TeleportScriptGeneratorTests` |
+
+Restored byte-exact. So both directions are covered, just by different mechanisms: a **C#-side**
+drift is caught by the tests, and a **DLL-side** change moves the contract surface hash (`Cmd` is in
+`CONTRACT_ENUMS`) and forces a bump. ⚠ Worth writing down because the natural conclusion from
+reading the gate alone is the opposite one.
+
+ℹ️ Steps 1 (Proxy Deploy: Steam scan vs drive scan must find identical games) and 2 (Game Class
+Filter → Package column) are still open. ⭐ Step 1 needs **no game** — it is a UI-only row sitting in
+the 第 2 步 bucket, so it can be run in any session that has the UI up.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
