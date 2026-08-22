@@ -16333,14 +16333,83 @@ touches) is the cheap way to find one, rather than guessing fields.
 | 3 | ✅ **2026-08-22 通過**(`[A6-DERIVE-2026-08-22]`,`tools/verify/a6_prefix_siblings.py`)。用 `Actor::bIsEditorOnlyActor`(58 held)。⭐ **正向**:名字**不以 `Actor` 開頭**、但確實衍生自 `AActor` 的 `StaticMeshActor`,在 hold 期間 `bIsEditorOnlyActor = true` —— 字首比對到不了它。**反向**:33 個可 diff 的物件(含真正的同字首陌生類別 `ActorSequence`)逐欄位比對,**0 個被動到**。⚠ log 那行的 `over 3941 distinct class(es)` 是 `derivedCache.size()`(**評估過**的類別數,整個池),不是命中數 —— 拿它當命中數看會以為嚴重超抓。 | 不相關的同字首類別「沒有」被 hold<br>⚠ 前面步驟看到「hold 了數百筆」不能替代這步：字首比對也會 hold 數百筆，兩者長得一樣。 |
 | 5 | 🟡 **2026-08-22:CDO 那半通過,生成那半在這個 fixture 上做不到**(`[A6-CDO-2026-08-22]`,`tools/verify/a6_cdo_and_spawn.py`)。`ActorComponent::bIsEditorOnly` hold 256 筆時,**CDO 全程維持 `false`**,而且抽樣的 12 個活體實例 **12/12 都真的被強制**(通道證明 —— 否則「CDO 乾淨」什麼都不代表)。⛔ 生成那半:debug camera 是**每個 process 一次性**(已被用掉,`state` 已是 1),off→on 循環 295→295 個物件、**0 新增**,而 `ConsoleCommand`／`RestartLevel` 不在這裡列得出的 3,142 個函式裡。⚠ 重開遊戲**不能替代** —— 那會從磁碟重新載入 CDO,正好偵測不到記憶體中的 CDO 被寫。要解鎖:換一款能觸發關卡重載／敵人重生的遊戲。 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO）<br>⚠ 一定要在 reset 之後真的生出新物件；看既有物件測不到這件事。 |
 
-### ⬜ V6 / U8 —— 兩個一開遊戲就能看的面板行為
+### ✅ V6 / U8 CLOSED 2026-08-22 `[V6U8-FNAMEPAIR-2026-08-22]` — both steps pass; the missing fixture was MANUFACTURED, not waited for
+
+Run on **DumperTest** (AOT `dist` v1.0.0.3315, DLL 3315, UE504, 24,445 objects), CE 7.7.0.10568
+attached alongside as an independent reader.
+
+---
+
+**Step 1 — auto-refresh preserves highlight, selection, scroll and stepping. ✅ PASS.**
+
+This step had been attempted twice and closed neither time. What was missing was not the feature but
+the **measurement**, and both gaps are now shut:
+
+| the row asks | result |
+|---|---|
+| filter text survives auto-refresh | ✅ still `Name` after ~3 ticks at 6 s |
+| match count survives | ✅ still `6 matches` |
+| highlight survives | ✅ `0x1B0 Layers` still amber |
+| selection survives | ✅ still `0x1C8 Tags` |
+| **table does not jump to top** | ✅ — and this time **the check was real**: the grid was first stepped down to row `0x1C8` of a long list, so "unchanged" had something to fail at. ⚠ The 2026-08-22 earlier attempt recorded this as vacuous *because the table was already at the top*; do not accept that shape again. |
+| **↑/↓ stepping still lands on highlighted rows** | ✅ pressing ▼ **after** the auto ticks advanced from `Tags` to the next match, `0x350 Name_Cjk`, and scrolled it into view |
+
+⚠⚠ **The measuring instrument was the actual blocker, and it is worth repeating why.** The Live
+Walker toolbar **reflows twice**: once when an object loads (`Find Refs` / `Related` appear) and
+again when AOBMaker connects (`Copy CE Field` / `+CE Field (flat)` appear). Coordinates noted before
+either event land on the wrong control — that is how "stepping is broken" was recorded when nothing
+had been clicked. **Re-read the ▲/▼ position from the current screenshot immediately before each
+click**; this run did, and stepping worked every time.
+
+---
+
+**Step 2 — Live Walker and Value Search agree on the same 8 bytes, suffix included. ✅ PASS.**
+
+⭐⭐ **The fixture gap was dissolved rather than deferred.** DumperTest has **no** NameProperty whose
+value carries a numeric suffix — measured three ways, not assumed: a game-wide Property Search
+(`Name`, 375 properties) shows every `NameProperty` preview as `None` / `GameNetDriver` / `Spatial` /
+`Custom`; `DumperTestActor_0`'s own `Name_*` test fields are `統一`-class strings; and
+`Map_NameToInt`'s three FName keys are `Alpha` / `Beta` / `Gamma`, all `Number=0`. The obvious move
+was to go find another game. **The cheaper and stronger move was to CREATE the case with CE and put
+it back**, which also turns the step into a controlled experiment instead of an observation.
+
+`DumperTestActor_0::NetDriverName` @ `0x1A0039C7A58`, offset `0x148`:
+
+| state | CE raw bytes (third-party reader) | Live Walker | Value Search `Exact` |
+|---|---|---|---|
+| **as found** | `1D 04 00 00 00 00 00 00` (`ComparisonIndex=0x41D`, `Number=0`) | `GameNetDriver`, hex `1D04000000000…` | `GameNetDriver` → **267** hits, incl. this address |
+| **after `writeInteger(a+4, 2)`** | `1D 04 00 00 02 00 00 00` (`Number=2`) | **`GameNetDriver_1`**, hex `1D04000002000…` | `GameNetDriver` → **266** hits, **this address GONE**; `GameNetDriver_1` → **exactly 1** hit, same address, same offset, instance `DumperTestActor_0` |
+| **restored** | `1D 04 00 00 00 00 00 00` | — | — |
+
+⭐ **`Number=2` rendering as `_1` is the correct UE convention** (display suffix is `Number-1`), so
+the panel is not merely echoing bytes — it is decoding them.
+
+⭐ **The 267 → 266 drop is the negative control, and it is the most informative line in the table.**
+It proves Value Search's FName matcher **reads the Number field** rather than comparing
+`ComparisonIndex` alone: the moment the Number moved, the row stopped being an exact match for the
+bare name. Had the count stayed 267, the "same 8 bytes" agreement would have been vacuous — two
+panels can agree while both ignore the same half of the value.
+
+⭐ **CE is what makes this more than self-agreement.** Comparing Live Walker against Value Search
+compares two consumers of the same DLL; the raw `readBytes` is outside that path entirely.
+
+ℹ️ **Incidental, and it belongs to the known open family, not to this row:** the **Instances** panel
+listed the actor as `DumperTestActor` while **Live Walker** and **Value Search** both call it
+`DumperTestActor_0`. That is the `Serie::GetString` dropped-`Number` family — same defect shape as
+this row's subject, seen on an object name instead of a property value. Not raised as new.
+
+ℹ️ Tooling note that cost a few minutes: Property Search's **Type filter** takes short tokens (its
+own hint says `opt`, `weak`); `NameProperty` matches nothing and returns an empty grid that looks
+like "no such fields exist". Search on the property **name** and read the Type column instead.
+
+### ✅ V6 / U8 —— 兩個一開遊戲就能看的面板行為 — **CLOSED 2026-08-22**，證據見上一節 `[V6U8-FNAMEPAIR-2026-08-22]`
 
 *build 3016-3031 · 優先度 **高** · 原步驟 1（A5 Preview）已於 2026-08-19 驗畢並刪除；原步驟 2（AE9 排序選單）已於 2026-08-17 驗畢並刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>✅ 「按 Refresh」那半段已於 2026-08-17 驗畢，**只剩 auto-refresh 那半段**。<br>🟡 **2026-08-22 嘗試過,未結案**(`[V6-AUTO-2026-08-22]`)。⭐ 原本的封鎖理由**已過期** —— `[AUTOREFRESH-2026-08-19]` 早在 2026-08-20 就 VERIFIED,本機 `dist` 已是 1.0.0.3315。已確認:倒數會跑不再卡在 0s;連續 4 拍後篩選字、`2 matches`、**選取列**都保住,表格沒動(⚠ 但當時本來就在頂端,「不跳回最上方」那條是空的);而且 `OnAutoRefreshTick` 只是呼叫同一個 `RefreshAsync()`,手動那半段早已 ✅ 且有 4 條測試釘住。⚠ 高亮曾在一拍 auto 後消失、卻在 6 秒前的手動 Refresh 後存活 —— 同一條程式碼路徑不可能兩種結果,所以其中一次觀察不可靠,**不據此開缺陷**。⚠⚠ **真正失效的是量具**:Live Walker 工具列會重排(載入物件後多出 `Find Refs`／`Related`),先前記下的按鈕座標會**無聲失效** —— ▼ 從 x≈547 移到 x≈521,我有兩次點在「2 matches」文字上。所以「步進失效」**未經證實**。下次要嘛請人操作,要嘛每次點擊前重新從畫面讀座標並先確認點中了。 |
-| 2 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
+| 1 | ✅ **2026-08-22 通過**（DumperTest，AOT 3315）。篩選字 `Name`、`6 matches`、高亮列 `Layers`、選取列 `Tags` 在 6 秒 × 約 3 拍 auto-refresh 後全部保留，捲軸沒有回到最上方，auto 跑完後按 ▼ 仍正確跳到下一個命中 `Name_Cjk`。⚠ **這次「不跳回最上方」才是有效檢查** —— 先把表格捲到 `0x1C8` 才開始量；同日稍早那次表格本來就在頂端，那條是空的。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>⚠⚠ **量具本身才是先前的阻礙**：Live Walker 工具列會**重排兩次**（載入物件後、AOBMaker 連上後），先前記下的按鈕座標會無聲失效。**每次點擊前重新從當下畫面讀座標。** |
+| 2 | ✅ **2026-08-22 通過**，而且缺的樣本是**做出來的、不是等來的**。DumperTest 全機沒有帶數字尾碼的 NameProperty（三種方法量過），所以用 CE 對 `DumperTestActor_0::NetDriverName` @ `0x1A0039C7A58` 寫入 `Number=2` 再還原：CE 讀到 `1D 04 00 00 02 00 00 00`，Live Walker 顯示 **`GameNetDriver_1`**（`Number-1` 是 UE 的正確慣例），Value Search 掃 `GameNetDriver_1` **剛好 1 筆**、同位址同 offset。⭐ **負控制有開火**：掃 `GameNetDriver` 的命中數從 **267 掉到 266**，那一列消失 —— 證明 Value Search 的 FName 比對**真的讀 Number**，不是只比 ComparisonIndex。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。（本次確實又看到：Instances 面板寫 `DumperTestActor`，Live Walker 與 Value Search 寫 `DumperTestActor_0`。） |
 
 ### 🟡 AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步（**步驟 1、2、6 通過;步驟 5 發現缺陷;步驟 3 半、步驟 4 前提做不出來**）
 
