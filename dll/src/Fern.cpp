@@ -5912,6 +5912,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["hook_active"]  = UE5_IsGameThreadHookActive();
             data["has_target"]   = st.hasTarget;     // camera + pawn resolved last tick
             data["hidden_count"] = st.hiddenCount;   // occluders currently hidden
+            // ...and WHICH ones. A count is the DLL's own bookkeeping and cannot be
+            // audited from outside; the addresses let a verifier re-read each actor's
+            // own bHidden bit and catch a hide that was counted but never took.
+            // [SEETHRUSET-2026-08-22]
+            {
+                json addrs = json::array();
+                for (uintptr_t a : st.hiddenActors) addrs.push_back(Renge::AddrToStr(a));
+                data["hidden_actors"] = addrs;
+            }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
             return data;
         };

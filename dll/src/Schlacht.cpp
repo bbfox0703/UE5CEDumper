@@ -438,13 +438,36 @@ void Tick() {
 
     // Diff against the currently-hidden set: un-hide those no longer occluding, hide
     // the newly-occluding ones. Nothing to do (and nothing logged) when unchanged.
+    //
+    // ⚠ RECORD WHAT WAS APPLIED, NOT WHAT WAS INTENDED. `InvokeSetHidden` returns
+    // false when the object is not an AActor (its own ClassDerivesFromAny guard) or
+    // when SetActorHiddenInGame is cooked out — and until 2026-08-22 BOTH call sites
+    // discarded that bool and `desired` was recorded wholesale. So `hiddenActors`,
+    // `hiddenCount`, the pipe's `hidden_count`, the UI's "Active — hiding the
+    // occluder in front of your character" and the log's "disabled (N restored)"
+    // all reported INTENT. Measured on DumperTest (UE 5.4): hidden_count read 1 for
+    // a UStaticMeshComponent whose own bHiddenInGame never moved in either state —
+    // the feature was a complete no-op and every channel said it was working.
+    // That is also why the verification row could not be falsified from outside.
+    // [SEETHRUTALLY-2026-08-22]; the reason a COMPONENT arrives here at all is the
+    // separate, unfixed [SEETHRUNOOP-2026-08-22].
     std::unordered_set<uintptr_t> old;
     { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; }
-    for (uintptr_t a : old)     if (!desired.count(a)) InvokeSetHidden(a, false);
-    for (uintptr_t a : desired) if (!old.count(a))     InvokeSetHidden(a, true);
+
+    std::unordered_set<uintptr_t> applied;
+    for (uintptr_t a : old) {
+        if (desired.count(a)) {
+            applied.insert(a);          // still occluding, and we know this one took
+        } else {
+            InvokeSetHidden(a, false);  // best effort; drop it either way — a failed
+        }                               // un-hide means the actor died or the setter
+    }                                   // went away, and the disable sweep is the net
+    for (uintptr_t a : desired)
+        if (!old.count(a) && InvokeSetHidden(a, true))
+            applied.insert(a);
 
     std::lock_guard<std::mutex> lk(s_mutex);
-    s_state.hiddenActors = std::move(desired);
+    s_state.hiddenActors = std::move(applied);
     s_state.code = STR_OK;
     s_state.hasTarget = true;
     s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
@@ -684,6 +707,9 @@ int32_t GetStatus(SeeThroughStatus& out) {
     out.hiddenCount = s_state.hiddenCount;
     out.pierceCount = s_state.pierceCount;
     out.state       = s_state.state;
+    // Under the same lock as hiddenCount, so a caller can never see a count that
+    // disagrees with the list it came with.
+    out.hiddenActors.assign(s_state.hiddenActors.begin(), s_state.hiddenActors.end());
     return s_state.code;
 }
 

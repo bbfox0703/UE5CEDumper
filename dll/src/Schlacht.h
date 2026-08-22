@@ -16,6 +16,7 @@
 // ============================================================
 #pragma once
 #include <cstdint>
+#include <vector>
 
 namespace Schlacht {
 
@@ -44,6 +45,20 @@ struct SeeThroughStatus {
     int32_t hiddenCount = 0;      // occluders currently hidden
     int32_t pierceCount = 1;      // how many nearest occluders to hide along the ray
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
+
+    // WHICH actors are hidden, not merely how many.
+    //
+    // hiddenCount alone is the DLL's own tally of what it BELIEVES it hid, and an
+    // outside verifier had no way to audit it: a tick where SetActorHiddenInGame
+    // was invoked but did not take looks identical to a tick where it worked.
+    // Measured 2026-08-22 on DumperTest — hiddenCount reported 1 while not one of
+    // the 33 candidate actors an independent walk could reach had bHidden set, and
+    // there was no way to tell "my candidate set is wrong" from "the hide failed",
+    // because the DLL would not say who. [SEETHRUSET-2026-08-22]
+    //
+    // The set already exists (s_state.hiddenActors); this only publishes it. Its
+    // size is hiddenCount by construction, so the two cannot drift.
+    std::vector<uintptr_t> hiddenActors;
 };
 
 // Enable / disable the see-through worker. Idempotent. enable=false un-hides any

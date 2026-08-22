@@ -1,85 +1,78 @@
 #!/usr/bin/env python3
 """M1-M5 step 1 -- See-through's disable arms, with TWO independent detectors.
 
-    py tools/verify/seethrough_arms.py probe        # what does the DLL say right now
-    py tools/verify/seethrough_arms.py baseline     # snapshot every candidate's hidden flag
-    py tools/verify/seethrough_arms.py on           # enable, wait for hidden_count > 0
-    py tools/verify/seethrough_arms.py check        # both detectors, against the baseline
-    py tools/verify/seethrough_arms.py off          # disable, then check
+    py tools/verify/seethrough_arms.py probe   # what the DLL says right now
+    py tools/verify/seethrough_arms.py run     # the whole arm in ONE connection
+    py tools/verify/seethrough_arms.py after   # detector (2) only, after an arm that
+                                               # already dropped the connection (arm c/d)
 
-THE POINT, and why one detector is not enough. The row says so in as many words:
-`seethrough_get_state`'s `hidden_count` is the DLL's own bookkeeping, so a run where
-the count zeroes but the `SetActorHiddenInGame` invoke silently failed looks exactly
-like a pass. Using only the DLL's tally is letting the accused be the witness. So:
+WHY TWO DETECTORS. The row says it outright: `seethrough_get_state`'s `hidden_count`
+is the DLL's own bookkeeping, so a tick where `SetActorHiddenInGame` was invoked but
+did not take looks exactly like a tick where it worked. Auditing the hide with the
+hider's own tally is letting the accused be the witness.
 
   detector (1)  seethrough_get_state -> hidden_count == 0
-  detector (2)  re-read the ACTORS' own bHidden bit, independently, and compare
-                against a baseline taken before See-through was ever enabled
+  detector (2)  re-read each actor's OWN bHidden bit via walk_instance
 
-Detector (2) needs to know WHICH actor got hidden, and the DLL does not report that
--- only a count. So the rig diffs: snapshot the whole candidate set's bHidden before,
-snapshot again while hiding, and whatever flipped IS the hidden actor. That also
-doubles as the channel proof the row demands (`hidden_count > 0` first, or all four
-arms are vacuous), and it is stronger: it names the actor rather than trusting a
-number.
+* Detector (2) needs to know WHICH actors, and until 2026-08-22 the DLL reported only
+a count. That gap was not academic: on DumperTest the count read 1 while not one of 33
+independently reachable candidate actors had bHidden set -- and there was no way to
+tell "my candidate set is wrong" from "the hide silently failed", which is precisely
+the defect this row exists to catch. `hidden_actors` was added to the reply for that
+reason ([SEETHRUSET-2026-08-22]); this rig is its consumer.
 
-ANTI-VACUITY. `check` FAILS if the baseline is empty, if no candidate was ever seen
-hidden, or if the two detectors disagree -- a disagreement is the finding, not an
-error to be smoothed over.
+ANTI-VACUITY, enforced rather than documented:
+  * `run` FAILS if hidden_count never rises -- nothing to hide from this pose means
+    every assertion after it is empty.
+  * `run` FAILS if the DLL names actors whose own bHidden bit is NOT set while
+    hiding. That is the positive control for detector (2): a detector never shown to
+    fire cannot certify anything when it stays quiet.
 
-⛔ The UI must be DISCONNECTED: it holds 2 of the 3 pipe slots.
+The UI must be DISCONNECTED: it holds 2 of the 3 pipe slots.
+The DLL disables See-through when the pipe client disconnects, so `run` does
+everything in one connection. Splitting it across invocations measures the
+disabled state and calls it a pass.
 """
 from __future__ import annotations
 
 import json
 import pathlib
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient  # noqa: E402
 
 OUT = pathlib.Path(__file__).resolve().parents[2] / "out"
-BASE = OUT / "seethru_baseline.json"
-
-# Occluder candidates. See-through only hides non-Pawn/Character hits, and in a
-# stock UE map the thing in front of the camera is world geometry.
-CANDIDATE_CLASSES = ["StaticMeshActor", "Actor"]
-
-HIDDEN_FIELDS = ("bHidden", "bActorHiddenInGame", "bIsHidden")
-
-
-def _instances(c: PipeClient, cls: str, limit: int = 400) -> list[dict]:
-    r = c.request("find_instances", class_name=cls, limit=limit, exact_match=False)
-    return r.get("instances") or r.get("results") or []
-
-
-def _hidden_of(c: PipeClient, addr: str) -> tuple[str, str] | None:
-    """(field name, value) of whichever hidden-ish bool this instance exposes."""
-    r = c.request("walk_instance", addr=addr)
-    for f in r.get("fields") or []:
-        n = f.get("name")
-        if n in HIDDEN_FIELDS:
-            return n, str(f.get("value"))
-    return None
-
-
-def _snapshot(c: PipeClient) -> dict[str, dict]:
-    seen: dict[str, dict] = {}
-    for cls in CANDIDATE_CLASSES:
-        for inst in _instances(c, cls):
-            addr = inst.get("addr") or inst.get("address")
-            name = inst.get("name", "")
-            if not addr or addr in seen or name.startswith("Default__"):
-                continue
-            hv = _hidden_of(c, addr)
-            if hv:
-                seen[addr] = {"name": name, "cls": inst.get("type", cls),
-                              "field": hv[0], "value": hv[1]}
-    return seen
+LAST = OUT / "seethru_last_hidden.json"
 
 
 def _state(c: PipeClient) -> dict:
     return c.request("seethrough_get_state")
+
+
+def _hidden_bit(c: PipeClient, addr: str):
+    """The actor's OWN bHidden value, read straight off the instance."""
+    r = c.request("walk_instance", addr=addr)
+    for f in r.get("fields") or []:
+        if f.get("name") == "bHidden":
+            return str(f.get("value"))
+    return None
+
+
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("true", "1")
+
+
+def _report(c: PipeClient, addrs, want: bool, label: str) -> bool:
+    ok = True
+    for a in addrs:
+        v = _hidden_bit(c, a)
+        good = (v is not None) and (_truthy(v) == want)
+        ok = ok and good
+        print("    %-16s bHidden=%-6s  %s" % (a, v, "ok" if good else "<-- WRONG"))
+    print("  %s: %s" % (label, "PASS" if ok else "FAIL"))
+    return ok
 
 
 def main() -> int:
@@ -95,61 +88,65 @@ def main() -> int:
             print(json.dumps({k: s[k] for k in sorted(s) if k != "id"}, indent=2))
             return 0
 
-        if what == "baseline":
+        if what == "after":
+            # For arms whose whole point is that the connection went away (c: pull the
+            # UI link, d: close the game). The DLL is expected to have restored
+            # everything already; this checks the actors named by the LAST run.
+            assert LAST.exists(), "no recorded hidden set -- run `run` first"
+            addrs = json.loads(LAST.read_text(encoding="utf-8"))
+            assert addrs, "EMPTY recorded set -- nothing to check, refusing to pass"
             s = _state(c)
-            if s.get("active"):
-                print("REFUSING: See-through is ACTIVE (hidden_count=%s). A baseline "
-                      "taken while it hides is not a baseline." % s.get("hidden_count"))
-                return 1
-            snap = _snapshot(c)
-            assert snap, "EMPTY candidate set -- refusing to write a baseline nothing can fail against"
-            BASE.write_text(json.dumps(snap, indent=1), encoding="utf-8")
-            hid = sum(1 for v in snap.values() if v["value"].lower() in ("true", "1"))
-            print("baseline: %d actor(s) with a hidden flag; %d already hidden" % (len(snap), hid))
-            print("  -> %s" % BASE)
-            return 0
-
-        if what == "on":
-            pierce = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-            c.request("seethrough_set", enable=True, count=pierce)
-            for _ in range(40):
-                s = _state(c)
-                if (s.get("hidden_count") or 0) > 0:
-                    print("ENABLED, hidden_count=%s has_target=%s" %
-                          (s.get("hidden_count"), s.get("has_target")))
-                    return 0
-            print("hidden_count stayed 0 -- nothing in front of the camera to hide. "
-                  "The arms below would all be VACUOUS on this fixture/pose.")
-            return 1
-
-        if what in ("check", "off"):
-            if what == "off":
-                c.request("seethrough_set", enable=False, count=1)
-
-            assert BASE.exists(), "no baseline -- run `baseline` before enabling"
-            base = json.loads(BASE.read_text(encoding="utf-8"))
-            assert base, "EMPTY baseline"
-
-            s = _state(c)
-            now = _snapshot(c)
-
-            drift = [(a, base[a]["name"], base[a]["value"], now[a]["value"])
-                     for a in base if a in now and base[a]["value"] != now[a]["value"]]
-
-            print("detector (1) DLL tally : active=%s hidden_count=%s" %
-                  (s.get("active"), s.get("hidden_count")))
-            print("detector (2) actor bits: %d of %d candidates differ from baseline"
-                  % (len(drift), len(base)))
-            for a, n, b, v in drift[:10]:
-                print("    %s  %-40s %s -> %s" % (a, n, b, v))
-
+            print("detector (1) DLL tally : active=%s hidden_count=%s"
+                  % (s.get("active"), s.get("hidden_count")))
             ok1 = (s.get("hidden_count") or 0) == 0
-            ok2 = not drift
-            print()
             print("  (1) hidden_count == 0        : %s" % ("PASS" if ok1 else "FAIL"))
-            print("  (2) no actor left hidden     : %s" % ("PASS" if ok2 else "FAIL"))
+            print("detector (2) the %d actor(s) the DLL had hidden:" % len(addrs))
+            ok2 = _report(c, addrs, False, "  (2) every one restored     ")
             if ok1 != ok2:
-                print("  ⚠ THE DETECTORS DISAGREE -- that is the finding this row exists for.")
+                print("  !! THE DETECTORS DISAGREE -- that is the finding.")
+            return 0 if (ok1 and ok2) else 1
+
+        if what == "run":
+            pierce = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+            s0 = _state(c)
+            assert not s0.get("active"), "already active -- start from off"
+
+            c.request("seethrough_set", enable=True, count=pierce)
+            hc, addrs = 0, []
+            for _ in range(40):
+                time.sleep(0.5)          # the worker ticks at ~10 Hz on the GAME thread
+                s = _state(c)
+                hc = s.get("hidden_count") or 0
+                addrs = list(s.get("hidden_actors") or [])
+                if hc:
+                    break
+            print("enabled            : hidden_count=%d  hidden_actors=%s" % (hc, addrs))
+            assert hc > 0, ("hidden_count stayed 0 -- nothing to hide from this pose; "
+                            "every assertion below would be vacuous")
+            assert len(addrs) == hc, (
+                "the DLL's count (%d) and its own list (%d) disagree -- that is a "
+                "defect in the report itself" % (hc, len(addrs)))
+            LAST.write_text(json.dumps(addrs), encoding="utf-8")
+
+            print("POSITIVE CONTROL   : each named actor's own bHidden must be TRUE")
+            fired = _report(c, addrs, True, "  detector (2) can FIRE     ")
+            assert fired, ("the DLL named actor(s) it says it hid, and their own bHidden "
+                           "bit is NOT set. Either the hide never took, or bHidden is not "
+                           "the bit SetActorHiddenInGame writes here. Do not read any "
+                           "'restored' result below as a pass until this is settled.")
+
+            c.request("seethrough_set", enable=False, count=1)
+            time.sleep(1.0)
+            s2 = _state(c)
+            print()
+            print("after disable      : active=%s hidden_count=%s"
+                  % (s2.get("active"), s2.get("hidden_count")))
+            ok1 = (s2.get("hidden_count") or 0) == 0
+            print("  (1) hidden_count == 0        : %s" % ("PASS" if ok1 else "FAIL"))
+            print("detector (2) the same %d actor(s):" % len(addrs))
+            ok2 = _report(c, addrs, False, "  (2) every one restored     ")
+            if ok1 != ok2:
+                print("  !! THE DETECTORS DISAGREE -- that is the finding this row exists for.")
             return 0 if (ok1 and ok2) else 1
 
     print("unknown verb %r" % what)
