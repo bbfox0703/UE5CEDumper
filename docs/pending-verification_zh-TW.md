@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 15 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 14 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **41** | |
+| **合計** | **40** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -134,18 +134,6 @@ session 的順序很好用，保留。
 ## 第 2 步 — 要注入一個執行中的遊戲
 
 任何一款 UE 遊戲都可以。
-
-### ⬜ AF7 / AF8 —— 反組譯預算截斷要說出來、Int8Property 的正負號
-
-*優先度 **中** · 兩項都可能因為找不到樣本而測不了，那也是結論。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | ✅ **2026-08-21 腳本重驗通過**（`py tools/verify/solide_int8_signed.py`，DumperTest / dist 3309，`PrimitiveComponent::VirtualTextureLodBias`，146 個 instance）。不只讀回 `-5.0`，**實際 byte 是 `0xFB`**；正對照 `100` → `0x64`。 | 讀回來就是 **-5**。修正前讀回來是 **251**，於是 worker 每個 tick 都重寫同一個 byte，UI 永遠顯示 drift。<br>⚠ 沒有任何遊戲露出 `Int8Property` 的話，這項就是無樣本可測。 |
-| 2 | ⚠→✅ **2026-08-21 重驗時是 FAIL，已修並複驗通過**。記憶體一直是安全的（200 沒寫進去、也沒變成 -56），但 API 回 `code=0 held=145 value=200.0`，**UI 就顯示「held on 145 instances」** —— 只看畫面看不出來，這正是 `[SOLIDEHELD-2026-08-21]`。修好後：`code=-10 held=0`，`get_forced_fields` 為空。 | 被**拒絕**（超出 int8 範圍），而不是寫進去變成 -56。 |
-| 3 | 對一個**原生**（非 Blueprint）UFunction 下 `walk_function_props`，看回覆有沒有 `budget_hit`。 | 這個 key 存在。若為 `true`，Props 對話框狀態列變琥珀色並寫出「hit its instruction budget」，Interesting Functions 批次的 **Uses** 欄顯示 `⚠ partial`。<br>⚠ 要找夠大的原生函式才會觸發 —— 先 grep DLL log 的 `AnalyzeNativeFunctionProps ... BUDGET` 找目標。 |
-
------
 
 ### ⬜ AF22 / AF12 / AF13 —— Force 對話框的用字、Group 每格上限要講出來
 

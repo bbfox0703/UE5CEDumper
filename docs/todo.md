@@ -6499,6 +6499,68 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ CLOSED 2026-08-22 `[AF7-BUDGET-2026-08-22]` — `budget_hit` verified exhaustively over the pipe, and its UI consequence pinned because no host can reach it
+
+Step 3 was the last one open in this section (steps 1 and 2 closed 2026-08-21 with
+`[SOLIDEHELD-2026-08-21]`). It reads: *call `walk_function_props` on a NATIVE UFunction and check
+the reply has `budget_hit`; if true, the Props dialog turns amber and says "hit its instruction
+budget", and Interesting Functions' Uses column shows `⚠ partial`.*
+
+⚠ **"THE KEY EXISTS" IS NEARLY A TAUTOLOGY, AND THAT IS THE TRAP THE ROW WALKS INTO.**
+`Fern.cpp:4750` writes `data["budget_hit"] = res.budgetHit;` unconditionally, so *every* reply
+carries it — including replies from the **bytecode** path, where `budgetHit` is structurally always
+false because no disassembler ran. Asserting the key on a Blueprint function proves nothing at all.
+`tools/verify/af7_budget_hit.py` therefore refuses to pass unless `method == "disasm"`.
+
+**Measured, DumperTest / dist 3313 — and it is EXHAUSTIVE, not a sample:**
+
+| | |
+|---|---|
+| functions on the host | 3,142 |
+| carrying `FUNC_Native` (0x400) | **3,109** |
+| walked with `walk_function_props` | **all 3,109** |
+| `method` distribution | `{'disasm': 3109}` — Path 2 ran on every one |
+| replies missing the key | **0** |
+| replies with `budget_hit == true` | **0** |
+
+**So the row's stated PASS is met, at the strongest strength available**: the key is present on
+3,109 replies from the path where it is meaningful.
+
+⚠ **AND `false` EVERYWHERE IS NOT EVIDENCE THE FLAG WORKS** — it is exactly what a hardwired
+`false` produces. The mechanism is genuinely reachable (`Denken.cpp` follows up to `kMaxFollow = 6`
+thunk→impl handoffs and budgets 8,192 decoded instructions across all of them), DumperTest simply
+has no call graph that large. The log marker the row suggests grepping for
+(`AnalyzeNativeFunctionProps … BUDGET`) appears **nowhere** in this host's logs.
+
+▶ **So the consequence half was pinned where it CAN be pinned — offline**, rather than left waiting
+for a game nobody has profiled yet:
+
+| new test | asserts |
+|---|---|
+| `BatchXrefCancelVsDisconnectTests.Functions_props_batch_marks_a_budget_truncated_row_partial_in_the_cell` | a truncated walk writes the `⚠ partial` marker into the Uses cell |
+| `…_leaves_an_untruncated_row_unmarked` | **the control** — an untruncated walk writes exactly `"0"` |
+| `PartialResultNoticeTests.DisassemblyBudget_SaysWhatWasTruncatedAndWhatTheAbsenceMeans` | the dialog's sentence contains "hit its instruction budget", "PREFIX", and "not seen yet" |
+
+⭐ **The pair matters more than the marker test.** "The marker appears" alone is satisfied by a
+marker appended unconditionally, which would make every row look truncated and the column useless —
+the same one-directional-assertion failure the Dump Explorer log check hit an hour earlier.
+
+**Three negative controls run, each firing on exactly one test, all reverted byte-exact:**
+
+| control | fails |
+|---|---|
+| `var partial = "";` (never appended) | the marks-partial test |
+| `var partial = PartialResultNotice.CellMarker;` (always appended) | the control test |
+| drop "not seen yet" from the notice | the notice test |
+
+ℹ️ **What is still not shown**: that a real `budget_hit == true` ever occurs in the wild, and that
+`FunctionPropsDialog` renders amber (`#E0A050`, `FunctionPropsDialog.cs:370`) — it is a code-built
+dialog, not a VM. Both are opportunistic: anyone profiling a large commercial title can settle them
+in one click with `py tools/verify/af7_budget_hit.py --attach`, which reports any function that
+trips the budget and names it.
+
+
 ### ✅ CLOSED 2026-08-22 `[DUMPXGAME-2026-08-22]` — the Dump Explorer cross-game gate was already pinned; only its diagnostic was not
 
 ⭐ **The row asked for two games and an opportunistic wait for a patch. It needed neither, and

@@ -179,6 +179,67 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     // ==================================================================
+    // AF7 — the disassembler's instruction budget must reach the cell.
+    // ==================================================================
+
+    /// <summary>A props walk whose <c>BudgetHit</c> the test controls.</summary>
+    private sealed class BudgetPropsDump : StubDumpService
+    {
+        public bool BudgetHit { get; set; }
+        public List<FunctionPropRef> Props { get; } = new();
+
+        public override Task<FunctionPropRefsResult> WalkFunctionPropsAsync(
+            string funcAddr, CancellationToken ct = default)
+            => Task.FromResult(new FunctionPropRefsResult
+            {
+                Method = "disasm", BudgetHit = BudgetHit, Props = Props,
+            });
+    }
+
+    /// <summary>
+    /// The native disassembler stops at 8,192 instructions (<c>Denken.cpp:17</c>) and
+    /// reports it as <c>budget_hit</c>. Truncated, the props list is a PREFIX — so a bare
+    /// "0" in the Uses column reads as "this function touches no class fields", which is
+    /// the conclusion the user acts on. Same cell-level lie Z9 fixed for the scan deadline.
+    ///
+    /// <para><b>The pair is the test.</b> "The marker appears" alone is satisfied by a
+    /// marker appended unconditionally, which would make every row look truncated and the
+    /// column useless. The control asserts an untruncated walk writes exactly <c>"0"</c>.</para>
+    ///
+    /// <para>⚠ Written because the DLL half could be verified exhaustively and this half
+    /// could not: all 3,109 native UFunctions on DumperTest return <c>budget_hit=false</c>
+    /// (none is big enough to trip it), so no live run reaches the truncated branch. A
+    /// <c>false</c> everywhere is also what a hardwired <c>false</c> produces —
+    /// <c>[AF7-BUDGET-2026-08-22]</c>.</para>
+    /// </summary>
+    [Fact]
+    public async Task Functions_props_batch_marks_a_budget_truncated_row_partial_in_the_cell()
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("HugeNativeFunc") };
+        var vm = new InterestingFunctionsViewModel(
+            new BudgetPropsDump { BudgetHit = true }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.NotEqual("0", rows[0].XrefInfo);
+        Assert.EndsWith(PartialResultNotice.CellMarker, rows[0].XrefInfo);
+    }
+
+    /// <summary>The control for the test above: an untruncated walk writes a bare "0".</summary>
+    [Fact]
+    public async Task Functions_props_batch_leaves_an_untruncated_row_unmarked()
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("SmallNativeFunc") };
+        var vm = new InterestingFunctionsViewModel(
+            new BudgetPropsDump { BudgetHit = false }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.Equal("0", rows[0].XrefInfo);
+        Assert.DoesNotContain(PartialResultNotice.CellMarker, rows[0].XrefInfo);
+    }
+
+    // ==================================================================
     // Z9 — the deadline flag must reach the cell and the roll-up.
     // ==================================================================
 

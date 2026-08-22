@@ -20,6 +20,23 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class PartialResultNoticeTests
 {
+    /// <summary>
+    /// AF7's row names this sentence: when the native disassembler stops early the Props
+    /// dialog must say it "hit its instruction budget". Pinned because a truncated list is
+    /// indistinguishable from a complete one — the whole point is that a field missing from
+    /// it is "not seen yet", not "not used", and the sentence has to carry that.
+    /// </summary>
+    [Fact]
+    public void DisassemblyBudget_SaysWhatWasTruncatedAndWhatTheAbsenceMeans()
+    {
+        var s = PartialResultNotice.DisassemblyBudget();
+        Assert.Contains("hit its instruction budget", s, StringComparison.Ordinal);
+        Assert.Contains("PREFIX", s, StringComparison.Ordinal);
+        Assert.Contains("not seen yet", s, StringComparison.Ordinal);
+        // and it must not be silently empty — the failure mode of every optional note
+        Assert.True(s.Trim().Length > 40, "the note collapsed to nothing: " + s);
+    }
+
     // ==================================================================
     // Z10 — the advice must name a lever the panel actually has.
     // ==================================================================
