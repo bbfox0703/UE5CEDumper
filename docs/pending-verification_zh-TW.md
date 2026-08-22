@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 1 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 10 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 9 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 5 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **32** | |
+| **合計** | **31** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -208,17 +208,6 @@ session 的順序很好用，保留。
 | 2 | 在 FModel 用 Directory selector → Mappings file 載入該檔（或直接跑 CUE4Parse 的 UsmapParser） | 成功載入 |
 | 3 | 查 AActor 的 bHidden / InitialLifeSpan | 屬性名稱與型別都正確列出<br>⚠ 「沒有報錯」不算通過；空表或亂碼視為失敗 |
 | 4 | 順便查一個 Blueprint 類別（*_C） | 查不到是預期的（W8 未修，*_C 被過濾），不要當成解析失敗 |
-
-### 🟡 G11 —— 版本偵測 Tier 2 上線後結果不變（**只剩步驟 2**）
-
-*build 3112 · 優先度 **中** · 步驟 1、3、4 已於 2026-08-22 結束*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | ✅ **2026-08-22 通過**(`[G11-SPAN-2026-08-22]`,`tools/verify/g11_version_across_builds.py`)。⭐ **這步本來看起來永遠做不了** —— 「換版前」在這台機器上已經回不去了。但**每個 `scan-*.log` 都是自足的**:開頭有 `Logger started | build:`,同一檔又有 `FindAll: UE Version`,所以一份 3112 之前的封存 log 就是一筆現成的「之前」。掃全機 24 個宿主／250 筆記錄,**4 個跨越 3112 邊界,三個值全部相同**,而且四個的「之後」都是 **LIVE 重新偵測**(不是 cached 重播):<br>• **Solarpunk**(就是那款「再補一款」,而且最強:**前後都是 LIVE**) b2812→b3263,`507 / yes / no`<br>• DumperTest ×2(fixture) b2812/2820→b3262,`504 / yes / no`<br>• `python`(rig 產物、不是遊戲) b2932→b3262,`504 / no / yes`<br>⚠ **兩個格式字串拼法不同**:live 是 `lowConfidence=`,cached 是 `lowConf=` —— 只 grep 一個會無聲漏掉一半。<br>⭐ **負對照組會 fire**:`--selftest` 竄改「實際被比較的那筆」→ verdict 變 `DIFF`。⚠ 第一版對照組挑到 **Avowed**(只有邊界之後的記錄、根本不參與比較),結果仍然 `SAME` —— **一個不會 fire 的對照組長得跟通過一模一樣**。<br>⚠ **這個窗口正在關閉**:24 個宿主只有 4 個跨界,因為 21 天保留期已經吃掉更舊的 log。要再補別款就得趁早。 | 三個值完全相同；有任何變動就回報遊戲與前後值。<br>⚠ 已完成 Elliot 與 DragonSword Awakening，至少要再補一款。 |
-| 2 | 🟡 **還沒跑,但離線先撈到一件必須先確認的事**(`[AVOWEDCACHE-2026-08-22]`,細節在 todo.md)。Avowed 的**即時偵測是 503,而且對**(test-games.md 與 avowed-gobjects-fix.md 都寫 UE 5.3),b3262/b3263 共 **5 次 LIVE 全是 503**。但 `UE5CEDumper.MSI-NB.json` 裡那筆現在是 **`ueVersion: 504` / `versionDetected: true` / `versionDetectRev: 5` / `ueVersionUserOverrideAt: ""`(沒有使用者覆寫)**,而且 2026-08-18 21:58 已經真的發生過一次 **cached 504 + skipped DetectVersion**。⚠ rev 已經是 5,所以下次開 Avowed 會直接重播 504、跳過偵測。**怎麼變成 504 的不明,不要用猜的寫進文件**;跑這一步時第一件事就是看它讀到 503 還是 504。 | 與舊 build 相同。 |
-| 3 | ✅ **2026-08-22 已答:本機從未出現過 Tier 2**(`[G11-TIERS-2026-08-22]`)。掃過全機所有遊戲的封存 scan log:`Attempting to detect` **66 次**、23 個宿主、落到記憶體掃描 36 次、**Tier 1 出現 6 次(3 款遊戲)**,但 `Tier 2 Release prefix` **0 次**。⭐ 所以這個「沒有」是有通道證明的測量,不是沒人看。真正的發現是反過來的:**Tier 2 這一階在實地上完全沒被走過**。 | 若出現，記錄遊戲名稱、版本，以及是否與該遊戲實際版本相符。<br>⚠ VERSIONINFO 完整的遊戲會停在 PE VERSIONINFO 那行、根本不進 tier ladder；要用 version resource 被 strip 的標題（Elliot）。 |
-| 4 | ⛔ **2026-08-22:本機沒有這種遊戲**。全機 log 裡 Tier 3／low confidence **0 筆**,所以這一步不是「還沒做」而是「沒有對象可做」。 | 回報的版本與先前相同。 |
 
 ### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
