@@ -1597,6 +1597,22 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+> ### ⬜ OWED 2026-08-22 — `[PARAMSSORT-2026-08-22]` click-through on the TRIMMED build
+>
+> The comparer wiring is machine-checked (`No_column_sorts_on_a_label_that_formats_a_number`, plus
+> two negative controls that both fire). What no test in a JIT host can reach is the AOT half, which
+> is the half this whole class of defect lives in — **a test cannot trim itself.**
+>
+> | # | do | expect |
+> |---|---|---|
+> | 1 | Inject DumperTest, open **Console**, **Interesting Functions** and **Live Funcs**, click each grid's **Params** header. | It sorts, and a **second click reverses**. An inert header is the AF20 failure mode and it only shows on the trimmed binary. |
+> | 2 | With the list sorted ascending, find the two functions with **≥10 parameters**. | They sort **below** every 2-parameter row. Before the fix `"11 (72B)"` ranked above `"2 (9B)"`. ⚠ DumperTest has exactly 2 such functions out of 3,142 — filter or scroll to the end rather than eyeballing the first page. |
+> | 3 | Same three grids, after several header clicks: read two adjacent rows. | Every row shows its own record. This is the `supportsRecycling` addendum; these are XAML `{Binding}` cells so it should be structurally immune, and a failure here would be a NEW finding. |
+>
+> ⚠ **`CanUserSort="True"` was added to the three columns and is NOT the fix** — do not report step 1
+> passing as evidence about the attribute. It gates whether the click does anything; the 2026-08-21
+> AOT run already showed the reflection probe resolving without it.
+
 > ### 🔄 MIRROR RECONCILED 2026-08-19 — `pending-verification_zh-TW.md` pruned 46 → 40
 >
 > The maintainer worked the 繁中 checklist off a NAS copy and ticked **18 individual step rows** across
@@ -6433,6 +6449,79 @@ worked on 2026-08-20. Not chased here because injecting the current DLL was the 
 anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLOAD]` is about.
 
 
+
+
+
+### ✅ FOUND + FIXED 2026-08-22 `[PARAMSSORT-2026-08-22]` — three "Params" columns sorted the LABEL, and the audit that fixed the fourth could not see them
+
+⭐ **The most useful thing here is WHY they survived**, and it is a reusable trap: **the sweep asked
+the wrong question, so a column that worked perfectly and sorted wrongly passed.**
+
+Audit #5 **AF20** asked *"is this header inert under trimming?"* — Avalonia resolves
+`SortMemberPath` by reflection, and under Native-AOT that metadata survives only for a property some
+compiled binding roots. Live Walker's "Params" gets its text from an element-syntax `<MultiBinding>`,
+which roots nothing, so its header was **dead** in the shipped binary. It was found and fixed.
+
+The three siblings — `ConsolePanel.axaml:226`, `InterestingFunctionsPanel.axaml:164`,
+`LiveFuncsPanel.axaml:178` — are plain `DataGridTextColumn`s that **bind `ParamsLabel` and sort
+`ParamsLabel`**. Binding and sort path agree, so the property is rooted, the header works, nothing is
+inert. **They passed.** And `ParamsLabel` is `$"{NumParms} ({ParmsSize}B)"`, so they sorted the
+string: `"11 (72B)"` ranks above `"2 (9B)"` because `'1' < '2'`.
+
+`LiveFuncsPanel.axaml.cs`'s own comment said so out loud —
+*"Class / Function / **Params** bind and sort on the same path, so they are rooted and need
+nothing"* — which was **true, and beside the point**. ⭐ **Rooted is not the same as correct.**
+
+**Reachable on a stock host, measured** (DumperTest, `list_all_functions`, 2026-08-22): 3,142
+functions; the `NumParms` histogram is `0:238 1:964 2:1093 3:541 4:152 5:77 6:60 7:7 8:6 9:2 11:1
+19:1`. Two functions have ≥10 parameters, so a real inverting pair exists — `"11 (72B)"` vs
+`"2 (9B)"`. It needs no exotic game.
+
+**The fix**: all three now declare `SortMemberPath="NumParms"` with a
+`DataGridSortComparers.Number<T>` wired in the panel's code-behind, matching the Live Walker twin.
+`ConsolePanel` had no comparer table at all and got one. `CanUserSort="True"` was added alongside —
+belt-and-braces, not the fix: `CanUserSort` is what gates whether the click does anything, and the
+2026-08-21 AOT run showed Avalonia's reflection sortability probe resolving in the shipped binary for
+comparer-wired columns that omit it. **Do not read the attribute as load-bearing.**
+
+**THE DURABLE PART IS THE GUARD, because the existing one structurally could not see this.**
+`DataGridSortWiringTests.Every_user_sortable_XAML_column_is_binding_rooted_or_has_a_comparer` asks
+"is a sort path rooted or wired?" — the AOT question. A new sibling in the same file,
+`No_column_sorts_on_a_label_that_formats_a_number`, asks the correctness one: **no column may sort
+on a computed `string` property whose expression interpolates a numeric member declared in the same
+model file.**
+
+⚠ **Its known imprecision is stated in the test rather than hidden.** Markup does not name the
+grid's item type, so labels are matched by property NAME across all of `Models/`, and two models can
+share one. `Display` is `$"{ClassName}  ({InstanceCount:N0})"` in `PivotModels` (numeric) and
+`"Name : ClassName"` in `RelatedObject` (purely textual, ordinal is *correct*). Collisions go in an
+exemption set **with the reason**, and **an exemption that stops being matched fails the test**, so
+they cannot rot.
+
+⭐ **The guard immediately found two sites I had not predicted**, and checking them is what the
+exemption mechanism is for: Live Walker's and Instance Finder's "Value" column sorts
+`LiveFieldValue.DisplayValue`, which is a heterogeneous fallback chain (FDateTime decode →
+TypedValue → `"Name (Class)"` → `"{StructType}"` → array/map/set counts → DataTable row count → raw
+hex). Only some branches carry a number and they are not the same number, so **no numeric key
+exists** and `Ordinal` is wired deliberately. Exempted with that reason — a real judgement, not a
+rubber stamp.
+
+**Shown able to fail, twice** — both controls run and reverted:
+
+| control | result |
+|---|---|
+| revert `LiveFuncsPanel` to `SortMemberPath="ParamsLabel"` | ❌ fails, naming file + header + path + both declaring models |
+| break the label scan so it matches nothing | ❌ fails on `only 0 numeric-composite label(s) found` — **it refuses to pass vacuously** |
+
+That second control is the one worth keeping. Without it a regex that quietly stopped matching would
+turn the whole guard into a no-op that reports green forever.
+
+**4,639 / 4,639 tests pass.**
+
+⚠ **In-game click-through is still owed** and is genuinely D3: that the header is clickable in the
+*trimmed* binary, that the second click reverses, and that no two rows show the same record after
+sorting. A JIT test host cannot trim itself, which is the whole reason the AOT class of defect
+exists. Added to `## Pending live-game verification`.
 
 
 ### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-22 `[CADENCEGAP-2026-08-22]` — Linie dropped every same-millisecond gap, and that MANUFACTURED the "Timer" badge

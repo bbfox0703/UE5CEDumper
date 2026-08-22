@@ -158,6 +158,163 @@ public class DataGridSortWiringTests
 
     // ---- helpers --------------------------------------------------------------
 
+    /// <summary>
+    /// The SECOND rule, and the one the first structurally cannot see: <b>a column can be
+    /// perfectly AOT-safe and still sort by the wrong key.</b>
+    ///
+    /// <para>The test above asks "does something root this sort path, or is a comparer
+    /// wired?". A <c>DataGridTextColumn</c> that binds <c>ParamsLabel</c> and sorts
+    /// <c>ParamsLabel</c> answers yes — the compiled binding roots the property, the header
+    /// works in the trimmed build, nothing is inert. It also sorts <c>"11 (72B)"</c> above
+    /// <c>"2 (9B)"</c>, because <c>ParamsLabel</c> is
+    /// <c>$"{NumParms} ({ParmsSize}B)"</c> and ordinal order compares the first character.</para>
+    ///
+    /// <para><b>That is why three of these survived audit #5 AF20.</b> The sweep asked
+    /// whether headers were inert under trimming; Live Walker's "Params" was (its value
+    /// comes from an element-syntax <c>MultiBinding</c>, which roots nothing) and was fixed,
+    /// while <c>ConsolePanel</c>, <c>InterestingFunctionsPanel</c> and <c>LiveFuncsPanel</c>
+    /// were not inert — just wrong — and passed. <c>LiveFuncsPanel.axaml.cs</c>'s own comment
+    /// listed Params among the columns that "are rooted and need nothing", which was true and
+    /// beside the point. Fixed 2026-08-22, <c>[PARAMSSORT-2026-08-22]</c>.</para>
+    ///
+    /// <para><b>The rule enforced here:</b> no column may declare a
+    /// <c>SortMemberPath</c> naming a computed <c>string</c> property whose expression
+    /// interpolates a <b>numeric</b> member declared in the same model file. Sort the number
+    /// and let the cell render the label.</para>
+    ///
+    /// <para><b>Known imprecision, stated rather than hidden:</b> markup does not name the
+    /// grid's item type, so the label is matched by property NAME across all of
+    /// <c>Models/</c>. Two different models can share a name — <c>Display</c> is
+    /// <c>$"{ClassName}  ({InstanceCount:N0})"</c> in <c>PivotModels</c> (numeric, would be
+    /// wrong to sort) and <c>"Name : ClassName"</c> in <c>RelatedObject</c> (purely textual,
+    /// correct to sort). Collisions go in the exemption set below <b>with the reason</b>,
+    /// and an exemption that stops being hit fails the test, so they cannot go stale.</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> NumericLabelSortExemptions =
+        new(StringComparer.Ordinal)
+        {
+            // Live Walker / Instance Finder "Value" — a HETEROGENEOUS column. LiveFieldValue
+            // .DisplayValue is a fallback chain (FDateTime decode, TypedValue, pointer
+            // "Name (Class)", "{StructType}", array/map/set counts, DataTable row count, raw
+            // hex). Only some branches interpolate a number and they are not the same number,
+            // so there is no numeric key to sort on; ordinal is the only order that exists.
+            // LiveWalkerPanel.axaml.cs:31 wires Ordinal deliberately. What the scan actually
+            // caught is one branch of the chain, not a formatted-number column.
+            ["LiveWalkerPanel.axaml|DisplayValue"] =
+                "LiveFieldValue.DisplayValue is a heterogeneous fallback chain; no single " +
+                "numeric key exists, and Ordinal is wired on purpose.",
+            ["InstanceFinderPanel.axaml|DisplayValue"] =
+                "Same property, same column, in the Instance Finder's field grid.",
+
+            ["RelatedObjectsPanel.axaml|Display"] =
+                "RelatedObject.Display is \"Name : ClassName\" — no numeric part, so ordinal " +
+                "order is the correct order. The numeric-composite Display is PivotModels', a " +
+                "different model this scan cannot tell apart from markup alone.",
+        };
+
+    [Fact]
+    public void No_column_sorts_on_a_label_that_formats_a_number()
+    {
+        var labels = NumericCompositeLabels(ModelsDir());
+
+        // Guard the guard. If the regexes stop matching — a C# syntax the pattern does not
+        // know, a Models/ reorganisation — `labels` goes empty and every column passes
+        // vacuously. This is the assertion that makes the test able to fail.
+        Assert.True(labels.Count >= 8,
+            $"only {labels.Count} numeric-composite label(s) found in Models/ — the scan has " +
+            "probably stopped matching, and an empty set passes everything. Expected the " +
+            "known population (17 declarations over 12 names as of 2026-08-22).");
+        Assert.Contains("ParamsLabel", labels.Keys);
+        Assert.Contains("OffsetHex", labels.Keys);
+
+        var violations = new List<string>();
+        var exemptionsHit = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.GetFiles(ViewsDir(), "*.axaml"))
+        {
+            var name = Path.GetFileName(file);
+            XDocument doc;
+            try { doc = XDocument.Load(file); }
+            catch (System.Xml.XmlException) { continue; }
+
+            foreach (var col in doc.Descendants().Where(IsColumn))
+            {
+                var path = (string?)col.Attribute("SortMemberPath");
+                if (path == null || !labels.TryGetValue(path, out var declaredAt)) continue;
+
+                var key = $"{name}|{path}";
+                if (NumericLabelSortExemptions.ContainsKey(key)) { exemptionsHit.Add(key); continue; }
+
+                var header = (string?)col.Attribute("Header") ?? "?";
+                violations.Add(
+                    $"{name}  Header=\"{header}\"  SortMemberPath=\"{path}\" — that property " +
+                    $"formats a number ({declaredAt}). Sort the numeric member instead and wire " +
+                    "a comparer for it, or add an exemption WITH A REASON to " +
+                    "NumericLabelSortExemptions.");
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            "Column(s) sorting on a label that formats a number:" + Environment.NewLine +
+            string.Join(Environment.NewLine, violations));
+
+        // A stale exemption is a silent hole. If the column moved or was fixed, drop the entry.
+        var stale = NumericLabelSortExemptions.Keys.Except(exemptionsHit).ToList();
+        Assert.True(stale.Count == 0,
+            "Exemption(s) no longer matched by any column — delete them: " + string.Join(", ", stale));
+    }
+
+    /// <summary>
+    /// name -&gt; "file:line, interpolates X, Y" for every computed <c>string</c> property in
+    /// <c>Models/</c> whose expression body interpolates a numeric member declared in the
+    /// same file. The same-file requirement is what keeps unrelated string labels out.
+    /// </summary>
+    private static Dictionary<string, string> NumericCompositeLabels(string modelsDir)
+    {
+        const string Num = @"(?:byte|sbyte|short|ushort|int|uint|long|ulong|float|double|decimal|nint|nuint)";
+        var found = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var cs in Directory.GetFiles(modelsDir, "*.cs", SearchOption.AllDirectories))
+        {
+            var src = File.ReadAllText(cs);
+            var numerics = Regex.Matches(src, $@"public\s+{Num}\??\s+(\w+)\s*(?:\{{|=>)")
+                                .Select(m => m.Groups[1].Value)
+                                .ToHashSet(StringComparer.Ordinal);
+            if (numerics.Count == 0) continue;
+
+            foreach (Match m in Regex.Matches(src, @"public\s+string\??\s+(\w+)\s*=>"))
+            {
+                // the expression body runs to the terminating semicolon
+                var end = src.IndexOf(';', m.Index + m.Length);
+                if (end < 0) continue;
+                var body = src[(m.Index + m.Length)..end];
+                if (!body.Contains("$\"", StringComparison.Ordinal)) continue;
+
+                var used = numerics.Where(n => Regex.IsMatch(body, @"\{" + Regex.Escape(n) + @"\b"))
+                                   .OrderBy(n => n, StringComparer.Ordinal)
+                                   .ToList();
+                if (used.Count == 0) continue;
+
+                var line = src[..m.Index].Count(c => c == '\n') + 1;
+                var note = $"{Path.GetFileName(cs)}:{line} interpolates {string.Join(", ", used)}";
+                found[m.Groups[1].Value] = found.TryGetValue(m.Groups[1].Value, out var prev)
+                    ? prev + "; " + note : note;
+            }
+        }
+        return found;
+    }
+
+    private static string ModelsDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Models");
+            if (Directory.Exists(candidate)) return candidate;
+        }
+        throw new DirectoryNotFoundException("could not locate ui/UE5DumpUI/Models from " + AppContext.BaseDirectory);
+    }
+
     private static bool IsColumn(XElement e) =>
         e.Name.LocalName.StartsWith("DataGrid", StringComparison.Ordinal) &&
         e.Name.LocalName.EndsWith("Column", StringComparison.Ordinal);
