@@ -43,9 +43,29 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     if (s.count == 0) {
         s.firstSeq = seq;
         s.lastMs = nowMs;
-    } else if (nowMs > s.lastMs) {
+    } else if (nowMs >= s.lastMs) {
+        //
+        // ⚠ THE COMPARISON IS >=, NOT >. A reorder is nowMs < s.lastMs. nowMs == s.lastMs is
+        // NOT a reorder — it is two fires inside the same millisecond, which is ordinary
+        // (nowMs is steady_clock truncated to ms, Stark.cpp:103-107), and >= excludes the
+        // underflow just as completely while keeping the sample. L5 (below) prescribed
+        // "strictly greater" because it was reasoning about REORDERING only; dropping the
+        // equal case was collateral. Measured 2026-08-22 on DumperTest at t.MaxFPS 60 over
+        // 10.00 s: CameraModifier::BlueprintModifyCamera fires twice per frame, count=1202
+        // but gap_samples=602 instead of 1201, and mean_period_ms read 16.61 ms against a
+        // true 8.33 ms — because the dropped sample ALSO left s.lastMs pointing at the first
+        // of the pair, so the NEXT gap spanned both fires and read as a whole frame. The
+        // four once-per-frame functions in the same window were exact, which is the control:
+        // a clock or window error would have moved all six together.
+        //
+        // The wrong number was the smaller half. Dropping the ~0 ms gaps also MANUFACTURED
+        // the regularity the "Timer" badge keys on — the surviving gaps were all exactly one
+        // frame apart, so cv collapsed to ~0.01 and a twice-per-frame render callback scored
+        // as a textbook periodic timer, the precise distinction this cadence phase exists to
+        // draw. Rig: tools/verify/linie_cadence_gap.py. [CADENCEGAP-2026-08-22]
+        //
         // Inter-arrival gap since this function's previous fire — Welford update.
-        // Guarded on nowMs > lastMs: multi-thread PE can deliver two fires of the SAME
+        // Guarded on nowMs >= lastMs: multi-thread PE can deliver two fires of the SAME
         // ufunc out of timestamp order (nowMs is stamped before the g_mu lock), and an
         // unsigned nowMs - s.lastMs would underflow to a ~1.8e19 gap that poisons the
         // Welford mean/cv for the rest of the window. Skip the reordered sample and don't
