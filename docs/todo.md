@@ -6503,6 +6503,111 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ THE `[FREEZEUNTICK]` PAIR IS CLOSED 2026-08-22 `[UNTICKPAIR-2026-08-22]` — both generators, one CE session
+
+`[FREEZEUNTICK-2026-08-20]` was the same defect in **two different generators**: a bail-out that
+applied nothing left the CE record ticked, so the table said a cheat was running when none was. The
+fix went into the **shared emitter**, so the only way to show it landed there rather than in
+`FreezeScriptGenerator` alone is to run both. Both were run, back to back, CE 7.7 + DumperTest,
+`dist` v1.0.0.3313. **`Active` was read from CE's Lua Engine every time, never from the checkbox
+icon.**
+
+**Y10 step 3 — the baked-invoke generator. Was 3 of 4 on 2026-08-20; now 4 of 4.**
+Subject `KismetMathLibrary::MakeTransform`, Verify return ticked, pushed via AOBMaker, helper
+injected. Ticked once against DumperTest — worked, and the Y13 half reproduced exactly:
+`[Invoke] OK: … ReturnValue (fstruct@80, size=96B) -- complex return; see After: dump above`, with
+`11 / 22 / 33` decodable in the After dump. Then CE was re-attached to a **sacrificial `python.exe`**
+and the record ticked again:
+
+| assertion | 2026-08-20 | now |
+|---|---|---|
+| the contract check fires FIRST | ✅ | ✅ |
+| its message names `g_mailboxContract` | ✅ | ✅ verbatim, plus three ranked causes |
+| **no `writeByte` may have run** | ✅ | ✅ — no second `[Invoke] Before:` dump appeared |
+| **the record unticks itself** | ❌ `Active=true` | ✅ **`AFTER-CONTRACT-FAIL ACTIVE=false`** |
+
+**AA12/AA13 step 2 — the freeze generator. Was "message half passes, untick half fails"; now both.**
+Staged exactly as the row asks: script and helper created **while injected**, DumperTest killed and
+relaunched **without** injection, CE re-attached, same record ticked.
+
+| the row expects | result |
+|---|---|
+| a `showMessage` naming the reason | ✅ `[Freeze] nothing was frozen:` / `[ue5_freeze] g_invokeMailbox symbol not found -- is UE5Dumper.dll injected?` |
+| **the record unticks itself** | ✅ **`1 ACTIVE=false`** (was `true`) |
+
+⭐ **The pair is the evidence.** Either alone would be consistent with a fix in one generator; both,
+from one session, is what shows the shared emitter carries it.
+
+ℹ️ Incidental: `Tools → Inject Freeze Helper` reported **`Inject freeze helper OK`** with no
+`Stream size mismatch` — `[FREEZEINJECT-CRLF-2026-08-20]` confirmed fixed from the other side.
+ℹ️ Also incidental, and it shows the contract message is honest: re-injecting the DLL into a process
+CE already had open did **not** make the freeze work — the message's own first listed cause is *"CE
+having opened the process BEFORE the DLL was injected"*. Re-attaching CE fixed it.
+
+-----
+
+### ✅ FOUND + FIXED 2026-08-22 `[FREEZECFGNAME-2026-08-22]` — the freeze script tells you to edit `className`, then reports the one you replaced
+
+⭐ **Found by running AA12/AA13 step 4, which is the step that asks you to edit the CFG.** The step
+passes on every clause it states — and while it did, the message said something false.
+
+`FreezeScriptGenerator` baked `p.ClassName` — the class at **generation** time — into the runtime
+messages, while the freeze itself reads `CFG.className` at **run** time. Two sources for one fact.
+
+**Measured in CE**, DumperTest injected, `CFG.className` edited from `DumperTestActor` to
+`NoSuchClass_ZZZ` (one `gsub`, verified by reading the record's `Script` back):
+
+```
+[Freeze] armed: no live instances of DumperTestActor (or any subclass) right now
+                                     ^^^^^^^^^^^^^^^^ names a class with plenty of live instances
+```
+
+The **behaviour** was right — it found 0 instances, because it looked up `NoSuchClass_ZZZ`. Only the
+**report** was wrong. That is the same split as `[SOLIDEHELD]`, `[CADENCEGAP]` and `[PARAMSSORT]`,
+and audit #4's named root cause, now in a fifth place.
+
+⚠ **What makes it worse than a cosmetic slip: the product instructs the edit.** The Freeze dialog's
+inherited-field warning says *"To target a single class, edit className in the generated CFG block"*,
+and the script's own cap message says *"Narrow className in CFG to cover the ones you want."* Anyone
+who follows either instruction gets messages naming the class they replaced.
+
+**Fixed** at the three `[ENABLE]` sites (`FreezeScriptGenerator.cs:134/143/150`) to read
+`tostring(CFG.className)`. ⚠ `[DISABLE]`'s Stopped line still bakes the name **and must** — it is a
+separate Lua chunk with no `CFG` in scope, and it is `dbg`-gated.
+
+⭐⭐ **AND THE DEFECT WAS PINNED BY A TEST, which is why it looked deliberate.**
+`Generate_ArmedButEmpty_DoesNotUntick_AndKeepsTheWindowOpen` asserted
+`"[Freeze] armed: no live instances of BP_Teammate_C"` — the baked literal. The class name was
+**incidental to what that test is about** (that the armed branch exists and does not untick); it was
+just a convenient anchor. Using the defect as an anchor is what made it look intentional, and it is
+why the fix showed up first as a *failing existing test*. The anchor is now the phrase without the
+name, with a comment saying why.
+
+New guard: `Generate_ScopeMessages_ReadCfgClassName_NotTheGenerationTimeName` — every scope message
+must contain `CFG.className` and must NOT contain the literal, **with the CFG line itself as the
+control** (the literal belongs there and nowhere else, so a fix that deleted the name everywhere
+fails). Negative control run and reverted byte-exact: re-baking the literal at one site fails
+exactly that test. **4,648 / 4,648 pass.**
+
+-----
+
+### ✅ AA12/AA13 step 4 PASSES 2026-08-22 — a bogus `className` is armed, not called a typo
+
+Same session, `CFG.className = 'NoSuchClass_ZZZ'`:
+
+| the row expects | result |
+|---|---|
+| behaves exactly like step 3 (armed, 0) | ✅ `[Freeze] armed: … right now -- the freeze applies as they spawn.` |
+| must NOT claim it is a spelling mistake | ✅ it does not |
+| the record stays ticked | ✅ `1 ACTIVE=true` |
+| the Lua window stays open | ✅ no `showMessage`, window up |
+
+⚠ It passed **while printing the wrong class name** — see `[FREEZECFGNAME-2026-08-22]` above. A row
+can pass every clause it states and still be watching something broken; that is why the step was
+worth running rather than reasoning about.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

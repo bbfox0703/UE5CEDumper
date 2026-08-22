@@ -349,9 +349,9 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | Property Search 找一個有 live instance 的數值欄位 → Copy Freeze Script → 貼進 CE → 打勾。 | 數值被凍住、Lua Engine 視窗自動關閉、記錄維持打勾。 |
-| 2 | 在 UE5Dumper.dll「未注入」的狀態下打勾同一份腳本。 | 跳出 showMessage 指明原因、記錄自動取消打勾、Lua 視窗保持開啟。 |
+| 2 | ✅ **2026-08-22 完整通過**(`[UNTICKPAIR-2026-08-22]`)。腳本與 helper 在**已注入**時建立,殺掉 DumperTest 後**不注入**重開,CE 重新 attach,勾同一筆:`[Freeze] nothing was frozen: … g_invokeMailbox symbol not found`,而且 **`ACTIVE=false`**(2026-08-20 時是 `true`,那就是 `[FREEZEUNTICK]`)。從 CE Lua Engine 讀,不看勾選圖示。 | 跳出 showMessage 指明原因、記錄自動取消打勾、Lua 視窗保持開啟。 |
 | 3 | 對目前 0 個 live instance 的 class（尚未生成的敵人）打勾，然後讓該類生成一隻。 | 記錄維持打勾、視窗保持開啟、只輸出 [Freeze] armed: no live instances of X right now；生成後約 5 秒內凍結生效。<br>⚠ 這裡若自動取消打勾即為 FAIL，必須回報。 |
-| 4 | 把 CFG.className 改成不存在的名稱後打勾。 | 行為與上一步完全相同（armed, 0），不得聲稱是拼字錯誤。 |
+| 4 | ✅ **2026-08-22 通過,但同時抓到一個新缺陷**。`CFG.className` 改成 `NoSuchClass_ZZZ` 後:armed / 0 個實例、不說是拼字錯誤、記錄維持 `ACTIVE=true`、視窗保持開啟 —— 這一步列的條件全中。⚠ **但訊息印的是 `DumperTestActor`**(一個明明有很多實例的類別):**行為**跟著 CFG 走,**回報**卻用產生時烤死的名字。已修 `[FREEZECFGNAME-2026-08-22]`。 | 行為與上一步完全相同（armed, 0），不得聲稱是拼字錯誤。 |
 | 5 | 嵌入 build 3125 之前（pre-1.2）的 ue5_freeze_helper.lua，再打勾新產生的腳本。 | 出現「older ue5_freeze_helper.lua … re-inject it」、視窗保持開啟、記錄維持打勾。 |
 | 6 | 同時打勾兩份不同的 freeze 腳本，再取消其中一份。 | 另一份仍持續凍結生效。 |
 
@@ -391,7 +391,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 |---|--------|------|
 | 1 | 挑一個回傳**複雜型別**（FString／struct）而且回傳欄位落在第 32 byte 之後的 UFunction，勾 **Verify return**，把 baked script 推到 CE，勾起記錄。 | Lua Engine 的 Before/After dump **涵蓋到回傳欄位**（視窗會自動加寬到剛好蓋住它）。 |
 | 2 | 看那行 `[Invoke] OK: … complex return` 的字。 | 只有在 dump 真的蓋得到時才會寫「see After: dump above」；蓋不到時改成講出偏移量並叫你去 CE 記憶體檢視器看。<br>⚠ 修正前不管蓋不蓋得到都寫 see After: dump。 |
-| 3 | 取消勾選，**把 CE 從遊戲 detach**，再勾一次。 | 先跳出合約檢查的訊息（句子裡有 `g_mailboxContract`），而且**記錄會自己取消勾選**。<br>⚠ 重點是這時候**一個 `writeByte` 都不可以跑過** —— 修正前是先寫再說。 |
+| 3 | ✅ **2026-08-22 四項全通過**(`[UNTICKPAIR-2026-08-22]`,2026-08-20 時是 3/4)。CE 改 attach 到一個犧牲用的 `python.exe` 再勾:合約檢查**先跑**、訊息**逐字含 `g_mailboxContract`**、Lua Engine **沒有出現第二份 `[Invoke] Before:` dump**(所以沒有 writeByte 跑過)、而且 **`ACTIVE=false`** —— 最後這項先前是 ❌,就是 `[FREEZEUNTICK]` 出現在 baked-invoke 產生器。 | 先跳出合約檢查的訊息（句子裡有 `g_mailboxContract`），而且**記錄會自己取消勾選**。<br>⚠ 重點是這時候**一個 `writeByte` 都不可以跑過** —— 修正前是先寫再說。 |
 | 4 | 對照組：正常連著 CE 時，挑一個 params 很大的 UFunction（by-value struct 參數）跑 Verify。 | 正常跑完。歸零迴圈現在夾在 1024 byte 以內；修正前 `parmsSize` 超過 1024 就會寫穿 `cmdFlags`／`cmdOutFlags` 和整個 mailbox 結構的尾巴。 |
 
 -----

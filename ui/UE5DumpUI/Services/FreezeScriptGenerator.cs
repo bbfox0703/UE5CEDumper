@@ -130,9 +130,20 @@ public static class FreezeScriptGenerator
         // teammates / pickups / NPCs are picked up automatically"), so unticking here
         // would turn the feature into the bug. Say it once, ungated -- this is a
         // user-facing fact, not a diagnostic -- and keep the window open.
+        // ⚠ THESE MESSAGES READ CFG.className, NOT THE GENERATION-TIME NAME.
+        // Both this script and the Freeze dialog TELL the user to edit `className` in the
+        // CFG block to narrow the scope — the cap message below says so in as many words —
+        // and until 2026-08-22 every message then went on naming the class they had just
+        // replaced. Measured in CE: with CFG.className changed to a class that does not
+        // exist, the BEHAVIOUR followed the CFG (0 instances found) while the message said
+        // "no live instances of DumperTestActor", a class with plenty of them. The report
+        // and the reality were computed from different sources. [FREEZECFGNAME-2026-08-22]
+        //
+        // `[DISABLE]` is a SEPARATE Lua chunk with no CFG in scope, so its Stopped line
+        // still bakes the name — it is dbg-gated and describes an action already taken.
         Line(sb, "elseif scount == 0 then");
-        Line(sb, $"  print('[Freeze] armed: no live instances of " +
-                 $"{EscapeLua(p.ClassName)} (or any subclass) right now -- " +
+        Line(sb, "  print('[Freeze] armed: no live instances of ' .. " +
+                 "tostring(CFG.className) .. ' (or any subclass) right now -- " +
                  "the freeze applies as they spawn.')");
         // A CAPPED pool is a success with a caveat, and the caveat has to be louder
         // than the count: `scount` is then a FLOOR, not a total, and the instances
@@ -140,16 +151,17 @@ public static class FreezeScriptGenerator
         // reaches this routinely, so it is the normal case here, not an edge one —
         // same treatment Solide's status line already gives its own capped pool.
         Line(sb, "elseif scapped then");
-        Line(sb, $"  print('[Freeze] armed on ' .. tostring(scount) .. ' instance(s) of " +
-                 $"{EscapeLua(p.ClassName)} or a subclass -- CAP REACHED, so that is a " +
+        Line(sb, "  print('[Freeze] armed on ' .. tostring(scount) .. ' instance(s) of ' .. " +
+                 "tostring(CFG.className) .. ' or a subclass -- CAP REACHED, so that is a " +
                  "floor, not a total: more instances exist and are NOT held. " +
                  "Narrow className in CFG to cover the ones you want.')");
         Line(sb, "end");
         Line(sb);
         Line(sb,
-            $"dbg(string.format('[Freeze] Started: {EscapeLua(p.ClassName)}::" +
+            $"dbg(string.format('[Freeze] Started: %s::" +
             $"{EscapeLua(p.PropertyName)} = %s ({helperType}@0x{p.PropertyOffset:X}) " +
-            "on %s instance(s)', tostring(CFG.value), tostring(scount)))");
+            "on %s instance(s)', tostring(CFG.className), tostring(CFG.value), " +
+            "tostring(scount)))");
         // Close ONLY on a start that reported an outcome, froze something, and froze
         // ALL of it. nil (old helper), 0 (armed, empty) and a capped pool all keep the
         // window up, because each just printed something the user needs to read —

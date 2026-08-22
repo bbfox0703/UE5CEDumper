@@ -1,3 +1,4 @@
+using System.Linq;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -455,6 +456,46 @@ public class FreezeScriptGeneratorTests
     // left ticked. start() now returns (ok, err, count).
     // ==================================================================
 
+    /// <summary>
+    /// Every runtime message about SCOPE must read <c>CFG.className</c>, never the name baked
+    /// in at generation time.
+    ///
+    /// <para><b>Why this is not pedantry.</b> The script and the Freeze dialog both TELL the
+    /// user to edit <c>className</c> in the CFG block to narrow the scope — the cap message
+    /// says so in as many words. Until 2026-08-22 doing that produced messages naming the
+    /// class they had just replaced. Measured in Cheat Engine with the CFG pointed at a class
+    /// that does not exist: the BEHAVIOUR followed the CFG (armed, 0 instances) while the line
+    /// read <c>no live instances of DumperTestActor</c> — a class with plenty of them. The
+    /// report and the reality came from different sources. <c>[FREEZECFGNAME-2026-08-22]</c></para>
+    ///
+    /// <para>The CFG line itself is the control: the literal belongs THERE and nowhere else,
+    /// so a fix that simply deleted the name everywhere would fail this test.</para>
+    ///
+    /// <para>⚠ <c>[DISABLE]</c> is deliberately not covered — it is a separate Lua chunk with
+    /// no <c>CFG</c> in scope, and its Stopped line is dbg-gated.</para>
+    /// </summary>
+    [Fact]
+    public void Generate_ScopeMessages_ReadCfgClassName_NotTheGenerationTimeName()
+    {
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        // the control: the literal must still be the value the CFG sets
+        Assert.Contains("className", enable, System.StringComparison.Ordinal);
+        Assert.Contains("'BP_Teammate_C'", enable, System.StringComparison.Ordinal);
+
+        foreach (var marker in new[]
+                 { "armed: no live instances of", "CAP REACHED", "[Freeze] Started:" })
+        {
+            var lines = enable.Split('\n')
+                              .Where(l => l.Contains(marker, System.StringComparison.Ordinal))
+                              .ToList();
+            Assert.True(lines.Count == 1,
+                $"expected exactly one line carrying \"{marker}\", found {lines.Count}");
+            Assert.Contains("CFG.className", lines[0], System.StringComparison.Ordinal);
+            Assert.DoesNotContain("BP_Teammate_C", lines[0], System.StringComparison.Ordinal);
+        }
+    }
+
     private static string EnableBlockOf(string script)
     {
         var e = script.IndexOf("[ENABLE]", System.StringComparison.Ordinal);
@@ -538,7 +579,14 @@ public class FreezeScriptGeneratorTests
         var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
 
         Assert.Contains("elseif scount == 0 then", enable);
-        Assert.Contains("[Freeze] armed: no live instances of BP_Teammate_C", enable);
+        // ⚠ The anchor deliberately does NOT include the class name any more. This line used
+        // to read `... no live instances of BP_Teammate_C`, i.e. it PINNED the generation-time
+        // literal — which is exactly the defect `[FREEZECFGNAME-2026-08-22]` turned out to be:
+        // edit `className` in the CFG (which the script itself tells you to do) and every
+        // message went on naming the class you replaced. The name was incidental to what this
+        // test is about — that the armed branch exists and does not untick — but using it as a
+        // convenient anchor is what made the defect look intentional.
+        Assert.Contains("[Freeze] armed: no live instances of", enable);
 
         // The close is gated on a reported outcome, a non-zero count, AND an
         // un-capped pool — a capped one printed a caveat that must not be closed over.
