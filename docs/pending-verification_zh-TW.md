@@ -170,18 +170,18 @@ session 的順序很好用，保留。
 | 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>✅ 「按 Refresh」那半段已於 2026-08-17 驗畢，**只剩 auto-refresh 那半段**。<br>🟡 **2026-08-22 嘗試過,未結案**(`[V6-AUTO-2026-08-22]`)。⭐ 原本的封鎖理由**已過期** —— `[AUTOREFRESH-2026-08-19]` 早在 2026-08-20 就 VERIFIED,本機 `dist` 已是 1.0.0.3315。已確認:倒數會跑不再卡在 0s;連續 4 拍後篩選字、`2 matches`、**選取列**都保住,表格沒動(⚠ 但當時本來就在頂端,「不跳回最上方」那條是空的);而且 `OnAutoRefreshTick` 只是呼叫同一個 `RefreshAsync()`,手動那半段早已 ✅ 且有 4 條測試釘住。⚠ 高亮曾在一拍 auto 後消失、卻在 6 秒前的手動 Refresh 後存活 —— 同一條程式碼路徑不可能兩種結果,所以其中一次觀察不可靠,**不據此開缺陷**。⚠⚠ **真正失效的是量具**:Live Walker 工具列會重排(載入物件後多出 `Find Refs`／`Related`),先前記下的按鈕座標會**無聲失效** —— ▼ 從 x≈547 移到 x≈521,我有兩次點在「2 matches」文字上。所以「步進失效」**未經證實**。下次要嘛請人操作,要嘛每次點擊前重新從畫面讀座標並先確認點中了。 |
 | 2 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
 
-### ⬜ AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步
+### 🟡 AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步（**步驟 1、2、6 通過;步驟 5 發現缺陷;只剩步驟 3 的一半與步驟 4**）
 
-*優先度 **中***
+*優先度 **中** · 2026-08-22 於 DQ7R 實跑(`dist` AOT v1.0.0.3315／DLL 3315／UE427／149,370 objects)*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 回歸：在 Object Tree 隨機點選數個節點，包含 instance 與 class-like 列（`*_C`、`ScriptStruct`、`Function`）。 | 每次點擊 Class/Struct 標頭都跟著換，欄位有載入內容。 |
-| 2 | 用關鍵字過濾樹狀圖，使 instance 與 class-like 列**交錯**出現，按住 ↓ 快速捲動後放開在一個 class-like 列上。 | Class/Struct 標頭與反白的那一列相符。<br>⚠ 清單若只有單一種類（全 instance 或全 class-like）跑再多次都證明不了；要記錄用的過濾字串。 |
-| 3 | 在同一次快速捲動中觀察載入指示器（spinner）。 | 面板穩定後 spinner 不會卡著不消失；載入還在跑時也不會提前閃掉。 |
-| 4 | 先成功載入某節點，再讓它的 class 位址失效（例如切換關卡／卸載後重新選取同一列），然後**再點一次同一列**。 | 出現錯誤訊息行，且再次點擊會重新嘗試載入（不是靜默忽略、停留在舊 class）。 |
-| 5 | 選取樹狀節點 P → 用任一 handoff 把別的 class 推進 Class/Struct（Interesting Funcs / Property Search / Dump Explorer）→ 再點一次節點 P。 | 面板重新載入 P，而不是停留在被推進來的 class。 |
-| 6 | 在有選取節點的狀態下於樹狀過濾框連續打字。 | 不會重複重走 class，面板也不會被清空。 |
+| 1 | ✅ **2026-08-22 通過**。過濾字串 `DOLLGameCharacter`,依序點 ScriptStruct → Function → instance → Class 四種列:標頭分別變成 `DOLLGameCharacterParameters`(72)／`MakeDOLLGameCharacterParameters`(72)／`DOLLGameCharacter`(1712)／`DOLLGameCharacterManager`(56),欄位都有載入。⭐ **四個 Properties Size 各不相同、欄位清單也不同**,所以是真的重新載入,不是看起來有換。 | 每次點擊 Class/Struct 標頭都跟著換，欄位有載入內容。 |
+| 2 | ✅ **2026-08-22 通過**。**過濾字串 `DOLLGameCharacter`**(10 列:7 個 class-like + 3 個 instance,確實交錯,滿足那條 ⚠)。↓×9 再 ↑×3 共 12 次快速切換、中間跨過 instance 列,停在 class-like 列上:標頭 = `DOLLGameCharacterSeedCorrectParameters`(36),與反白列相符,欄位(Tikara/MaxHP/MaxMP…)都在。 | Class/Struct 標頭與反白的那一列相符。<br>⚠ 清單若只有單一種類（全 instance 或全 class-like）跑再多次都證明不了；要記錄用的過濾字串。 |
+| 3 | 🟡 **只驗到一半**。「穩定後不會卡住」✅:多次快速捲動後 spinner 都不殘留。⚠ **「載入中不會提前消失」沒驗到,而且原因要記下來**:這台機器上 class 載入比我的取樣還快 —— 連 `DOLLPlayerController`(Properties Size **2224**、繼承一長串欄位)在**零等待**的截圖裡都已經畫完,spinner **一次都沒被我看到**。沒看到它出現,就不能說它的消失時機正確(鐵則 1)。要補這半需要一個會慢到看得見的載入。 | 面板穩定後 spinner 不會卡著不消失；載入還在跑時也不會提前閃掉。 |
+| 4 | ⛔ **這次做不到,不是沒做**。要讓 class 位址失效得切關卡／卸載,而 DQ7R 停在標題畫面、**遊戲視窗的 computer-use 授權被拒**(`DQ7R-Win64-Shipping.exe`,單一 app 請求,所以不是 ≤7 批次問題),沒辦法在遊戲裡操作。⚠ 而且步驟 5 的結果讓這一步變得**更重要**:它的預期是「再點一次同一列會重試」,但現在已知**再點一次已選中的列根本不會發事件**,所以這一步很可能也會失敗 —— 要用「先選別列再選回來」以外的方式重測。 | 出現錯誤訊息行，且再次點擊會重新嘗試載入（不是靜默忽略、停留在舊 class）。 |
+| 5 | ❌ **失敗 —— 新缺陷 `[TREERECLICK-2026-08-22]`**(細節與證據在 todo.md)。用 `Classes` 分頁的 **`Walk Class`** handoff 把 `DOLLSoubiState`(168) 推進面板,樹狀選取仍停在 P(`DOLLPlayerController`);**再點一次 P,面板不動**,`pipe-0.log` 在那段時間**一筆 TX 都沒有**。連跑兩次相同,再用對照組隔離出機制:同一列連點兩次只送出一次 `walk_class` —— **點已選中的列不會產生 SelectionChanged**,所以 VM 根本沒被呼叫。⛔ **不要去改 `ClassStructViewModel` 的 dedupe**,它已經正確(`BeginLoad(nodeAddr: null)`,就是 AE3 第三條路徑),那也正是「先點別列再點回來」能救回來的原因。 | 面板重新載入 P，而不是停留在被推進來的 class。 |
+| 6 | ✅ **2026-08-22 通過,而且有線上證據**。選中節點後在樹狀 Filter 框連續打 `Def` → `ault`(兩段、中間停頓),樹縮成 `Filtered: 1 / 3`,**面板沒有被清空**(仍是 `DOLLPlayerController` 2224、欄位齊全)。⭐ 更強的證據在 `pipe-0.log`:打字期間**完全沒有新的 `walk_class`**,所以「不會重複重走 class」是量到的,不是看起來沒事。 | 不會重複重走 class，面板也不會被清空。 |
 
 ### ⬜ G2 —— 版本掃描加速後結果仍正確
 
