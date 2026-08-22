@@ -1597,21 +1597,54 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
-> ### ⬜ OWED 2026-08-22 — `[PARAMSSORT-2026-08-22]` click-through on the TRIMMED build
+> ### ✅ DONE 2026-08-22 — `[PARAMSSORT-2026-08-22]` click-through on the TRIMMED build
 >
-> The comparer wiring is machine-checked (`No_column_sorts_on_a_label_that_formats_a_number`, plus
-> two negative controls that both fire). What no test in a JIT host can reach is the AOT half, which
-> is the half this whole class of defect lives in — **a test cannot trim itself.**
+> Driven end to end on **`dist/UE5DumpUI.exe` v1.0.0.3313, the 54.7 MB Native-AOT binary**, against
+> DumperTest (UE504, 25,179 objects, DLL 3313). Every header clicked twice.
 >
-> | # | do | expect |
-> |---|---|---|
-> | 1 | Inject DumperTest, open **Console**, **Interesting Functions** and **Live Funcs**, click each grid's **Params** header. | It sorts, and a **second click reverses**. An inert header is the AF20 failure mode and it only shows on the trimmed binary. |
-> | 2 | With the list sorted ascending, find the two functions with **≥10 parameters**. | They sort **below** every 2-parameter row. Before the fix `"11 (72B)"` ranked above `"2 (9B)"`. ⚠ DumperTest has exactly 2 such functions out of 3,142 — filter or scroll to the end rather than eyeballing the first page. |
-> | 3 | Same three grids, after several header clicks: read two adjacent rows. | Every row shows its own record. This is the `supportsRecycling` addendum; these are XAML `{Binding}` cells so it should be structurally immune, and a failure here would be a NEW finding. |
+> | panel | column | ascending | descending | does it DISCRIMINATE numeric from string? |
+> |---|---|---|---|---|
+> | Interesting Funcs | Params | `0 (0B)` ×8 | **19, 19, 19, 17, 17, 16, 15, 15** | ⭐ **YES** |
+> | Console | Params | `0 (0B)` ×6 | `6, 4, 2, 2, 2, 2` | no — nothing exceeds 9 params here |
+> | Live Funcs | Params | blank, blank, 1, 1, 3, 7 | 7, 3, 1, 1, blank, blank | no — same reason |
+> | Live Funcs | **Period** | 17, 17, 33, 33, 33, 33 | exactly reversed | no — see below |
+> | Detect Stats | **Offset** | **`0x28, 0x2C, 0x2C, 0x30, 0x30, 0x64`** | — | ⭐ **YES** |
+> | Detect Stats | Result | all `· guess` | all `✓ confirmed` | n/a — bool |
+> | Live Walker | Params | **not run** | | — |
 >
-> ⚠ **`CanUserSort="True"` was added to the three columns and is NOT the fix** — do not report step 1
-> passing as evidence about the attribute. It gates whether the click does anything; the 2026-08-21
-> AOT run already showed the reflection probe resolving without it.
+> ⭐ **Two of the seven genuinely discriminate, and they are what makes the rest mean anything.**
+> Interesting Funcs descending tops with `19 (224B)` — `FunctionalTestUtilityLibrary::
+> TraceChannelTestUtil`, the 19-parameter function this register already named — where an ordinal
+> comparer would top with `9 (…)`, because `'9' > '1'`. Detect Stats' Offset ascending starts at
+> `0x28`; ordinal would start at `0x174`, since `'1' < '2'`. Both are unambiguous.
+>
+> ⚠ **The other four columns do NOT discriminate and must not be written up as though they do.**
+> Console's parameter counts top out at 6, Live Funcs' at 7, and every Period value on a
+> fixed-frame-rate host renders `17 ms` or `33 ms`. Single-digit and equal-width values order
+> identically under both comparers. What those four rows DO establish is the other half of the row's
+> ask, and it is the half that only the trimmed binary can answer: **the header is live, it sorts,
+> and a second click reverses.** That is the AF20 failure mode — a header that animates and does
+> nothing — and it cannot be reproduced in a JIT test host.
+>
+> ⚠ **Live Walker's Params was not re-run**: its function grid's entry point was not found from the
+> panel within a reasonable time (not under Options, not under Find Refs). It is the one column of
+> the four the row names that was **already correct before this fix** and already verified by AF20,
+> so nothing is riding on it — but it is untested *today* and this says so rather than implying a
+> clean sweep.
+>
+> ✅ **Two things fell out of the same session:**
+>
+> 1. **`[CADENCEGAP-2026-08-22]` confirmed in the shipped UI**, which no unit test reaches. Live
+>    Funcs showed `CameraModifier::BlueprintModifyCamera` at **496 calls / 17 ms** beside
+>    `ABP_Manny_C::BlueprintUpdateAnimation` at **248 calls / 33 ms** — twice the calls, half the
+>    period, arithmetically consistent. Before the fix both read **33 ms** while their call counts
+>    differed 2×.
+> 2. **The Detect Stats header really does read `Result`.** The 繁中 row called it "✓"; ✓ is cell
+>    content. Corrected in the mirror, now confirmed on screen.
+>
+> ℹ️ No duplicate-record rows appeared after repeated sorting on any grid (the `supportsRecycling`
+> addendum). These are XAML `{Binding}` cells, which should be structurally immune; observing it is
+> weak evidence, and a failure would have been a new finding.
 
 > ### 🔄 MIRROR RECONCILED 2026-08-19 — `pending-verification_zh-TW.md` pruned 46 → 40
 >
