@@ -85,13 +85,17 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
-> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **5** is
-> the honest row count of this table. The third, `[CADENCEBAND]`, was field-found on 2026-08-22
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **4** is
+> the honest row count of this table.
+> ⭐ **`[STALEDLL]`(a) CLOSED 2026-08-22** — the maintainer deleted the stale DLL, and it was
+> verified gone by a recursive sweep of both `Cheat Engine` install folders (0 `UE5Dumper*.dll`
+> under either). That also **unblocks the `.CT DLL discovery` verification row**, which could
+> only have produced a false negative while the stale file was present. The third, `[CADENCEBAND]`, was field-found on 2026-08-22
 > and **downgraded to low the same day**: its only witness is our own 15 FPS test harness, and the
 > one realistic scenario for a real game was tested and refuted. It stays listed because the
 > arithmetic is real below 25 FPS, not because anything is known to be broken in the field.
@@ -123,7 +127,6 @@ Open work only. **Read this when deciding what to do next.**
 >
 > | tag | one-line defect |
 > |---|---|
-> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` can pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only (it lives under `%ProgramFiles%`, so the delete needs elevation).** ⚠ **Re-measured 2026-08-21 — still present and the exposure is NARROWER but REAL, see the section below** |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 > | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
 > | `[FORCESTATUSCLIP-2026-08-22]` | 🟡 **LOW.** The Property Search *Force* status line sits in a horizontal `StackPanel` with no `TextTrimming`, no wrapping and no tooltip (`PropertySearchPanel.axaml:55`), so it is right-clipped at ~30 characters on a 1389-wide window. The clipped tail is `— cap reached, more exist unheld`, a clause whose own code comment (`PropertySearchViewModel.cs:502`) says it exists because "on 256 instance(s)" reads as "all of them" without it. ⚠ LOW **and the reason is measured**: the `⚠ capped` badge in the Forced-fields strip binds the **same** `r.Truncated` (`PropertySearchPanel.axaml:134`) and is not clipped, so the fact reaches the user by a second route — this is report *incompleteness*, not a wrong report. Fix shape: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"`, and **sweep the siblings first** — a grep for `StatusText` will not find them, the containing panel is what matters. |
@@ -7159,7 +7162,27 @@ decision — most list UIs deliberately do nothing.
 
 -----
 
-### ⬜ NEW DEFECT 2026-08-22 `[FORCESTATUSCLIP-2026-08-22]` — the Force status line is right-clipped, and its tail is the part that matters
+### ✅ FIXED 2026-08-22 (was NEW DEFECT) 2026-08-22 `[FORCESTATUSCLIP-2026-08-22]` — the Force status line is right-clipped, and its tail is the part that matters
+
+> **FIXED.** The row's diagnosis was right but its prescription would not have worked: the status
+> line lived in a **horizontal `StackPanel`, which gives every child its DESIRED width**, so
+> `TextTrimming` there is inert — nothing ever constrains the `TextBlock`, and the text is hard-cut
+> at the panel edge with no ellipsis.
+>
+> The toolbar row is now a `DockPanel`: the fixed-width controls stay in a `Left`-docked
+> `StackPanel`, `ClassFilterNote` docks `Right`, and **`StatusText` is the fill child** — so it
+> receives exactly the leftover width and trims honestly at any window size. Added
+> `TextTrimming="CharacterEllipsis"` (the truncation becomes visible) **and**
+> `ToolTip.Tip="{Binding StatusText}"` (the tail becomes readable). Both are needed: the ellipsis
+> only says *that* something was cut; the tooltip is what makes the cut clause recoverable — and the
+> clause in question is the honesty one, `— cap reached, more exist unheld`.
+>
+> ⚠ The other long message matters as much and is longer: the `⏳ … ARMED but holding nothing yet —
+> no live instance … It will apply automatically as soon as one spawns` explanation was clipped to
+> roughly its first clause, i.e. the user saw "ARMED but holding nothing yet" and none of the part
+> that says it is working as intended.
+>
+> Tag balance checked, `-Target UI` build SUCCESS, **4,693 C# tests pass**.
 
 `PropertySearchPanel.axaml:55` puts `StatusText` in a horizontal `StackPanel` with **no
 `TextTrimming`, no `TextWrapping` and no `ToolTip.Tip`**. A `StackPanel` hands a child its desired

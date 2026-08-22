@@ -56,6 +56,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target DLL
 
 # Build UI only
+# ⚠⚠ -Target UI ALSO OVERWRITES dist\UE5DumpUI.exe WITH THE NON-TRIMMED (~107 MB) BUILD.
+#   Measured 2026-08-22: a plain `-Target UI` run ended with "[OK] UE5DumpUI.exe (106.8 MB)"
+#   in dist\. The warning below used to name only -Target Test; BOTH do it, and so does any
+#   run that reaches the publish step. The rule is not about which -Target you picked — it is
+#   that ONLY `-Mode Publish` leaves an AOT-trimmed dist\. After ANY build that touches the UI,
+#   re-run `-Mode Publish -NoBumpBuildNumber` before handing dist\ over, and check the SHA.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
 # Run tests only

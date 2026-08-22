@@ -7,8 +7,15 @@
              x:DataType="vm:PropertySearchViewModel">
 
   <DockPanel Margin="8">
-    <!-- Top: Search bar (issues a DLL roundtrip on Search click / Enter) -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+    <!-- Top: Search bar (issues a DLL roundtrip on Search click / Enter).
+         [FORCESTATUSCLIP-2026-08-22] The row is a DockPanel, not one horizontal StackPanel,
+         for one reason: a StackPanel gives every child its DESIRED width, so a long
+         StatusText is hard-cut at the panel edge with no ellipsis and no way to read the
+         tail. TextTrimming cannot help there — nothing ever constrains the TextBlock. The
+         fixed-width controls stay in a Left-docked StackPanel; StatusText is the fill child,
+         so it gets exactly the leftover width and trims honestly at any window size. -->
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
       <TextBox PlaceholderText="{StaticResource str.PropertySearch.QueryHint}"
                Text="{Binding SearchQuery}"
                x:Name="SearchQueryInput"
@@ -52,13 +59,21 @@
               Command="{Binding SearchCommand}"
               ToolTip.Tip="{StaticResource str.Tip.PropertySearch.Search}"
               Classes="accent" Padding="12,4"/>
+      </StackPanel>
+
+      <!-- Docked Right so it keeps its full width; it is short and never the clipped one. -->
+      <TextBlock Text="{Binding ClassFilterNote}" DockPanel.Dock="Right"
+                 IsVisible="{Binding ClassFilterNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                 Foreground="#E0A050" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0"/>
+      <!-- Fill child. ToolTip carries the FULL text: trimming makes the truncation visible,
+           the tooltip makes the tail readable. Both matter — the clipped tail is the part
+           that says "cap reached, more exist unheld", i.e. the honesty clause. -->
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#AAB8D0" FontSize="13" FontFamily="Consolas, Menlo, monospace"
-                 VerticalAlignment="Center" Margin="8,0"/>
-      <TextBlock Text="{Binding ClassFilterNote}"
-                 IsVisible="{Binding ClassFilterNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                 Foreground="#E0A050" VerticalAlignment="Center" FontSize="12"/>
-    </StackPanel>
+                 VerticalAlignment="Center" Margin="8,0"
+                 TextTrimming="CharacterEllipsis"
+                 ToolTip.Tip="{Binding StatusText}"/>
+    </DockPanel>
 
     <!-- Result filter (client-side; no DLL roundtrip) -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
