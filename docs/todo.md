@@ -129,7 +129,12 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 > | `[CADENCEBAND-2026-08-22]` | 🟡 **downgraded to low the same day — possibly not worth fixing.** The Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes ≥25 FPS**: 0 of 6 flagged at 60 FPS, 4 of 6 at 15 FPS. ⚠ **The only witness is our own harness** — `launch_dumpertest.py` caps DumperTest at 15 FPS by house rule; no real game has been seen hitting it, and the one realistic scenario (profiling a backgrounded game) was **tested and refuted** — DumperTest holds a full 60 FPS while minimised. If ever fixed: not a bigger constant, the band must be relative to the observed frame period, and the *minimum* period is the wrong estimator (8.33 ms at 60 FPS, from a twice-per-frame callback) — the mode is right. |
-> | `[FORCESTATUSCLIP-2026-08-22]` | 🟡 **LOW.** The Property Search *Force* status line sits in a horizontal `StackPanel` with no `TextTrimming`, no wrapping and no tooltip (`PropertySearchPanel.axaml:55`), so it is right-clipped at ~30 characters on a 1389-wide window. The clipped tail is `— cap reached, more exist unheld`, a clause whose own code comment (`PropertySearchViewModel.cs:502`) says it exists because "on 256 instance(s)" reads as "all of them" without it. ⚠ LOW **and the reason is measured**: the `⚠ capped` badge in the Forced-fields strip binds the **same** `r.Truncated` (`PropertySearchPanel.axaml:134`) and is not clipped, so the fact reaches the user by a second route — this is report *incompleteness*, not a wrong report. Fix shape: `TextTrimming="CharacterEllipsis"` + `ToolTip.Tip="{Binding StatusText}"`, and **sweep the siblings first** — a grep for `StatusText` will not find them, the containing panel is what matters. |
+> ⭐ **`[FORCESTATUSCLIP]` FIXED 2026-08-22** by `0276c05d`, and its row is **deleted** — that
+> commit marked the write-up ✅ but left this index row saying OPEN, so the two halves of the
+> register disagreed for a few hours. ⚠ The row's own prescription (`TextTrimming` on the
+> `TextBlock`) would **not** have worked: a horizontal `StackPanel` gives each child its
+> DESIRED width, so nothing constrains it and trimming is inert. The toolbar is a `DockPanel`
+> now, with the status line as the fill child.
 > | `[Y11-OPAQUEDROP-2026-08-22]` | 🟡 **LOW — a missing message, not missing logic.** Typing a value into an **opaque `[struct]`** field of the invoke dialog is **silently discarded**: FIRE reports `ProcessEvent OK` and the post-call buffer shows the field still zero (`ImageSize=0x0`, reproduced on `.Margin`). ⭐ The dangerous half is genuinely fixed — nothing is written, which is what the pre-fix bug did — and the control proves the dialog *can* write typed values (`X=5, Y=7` → `raw 0000A0400000E040`). What is missing is telling the user their input was dropped. ⛔ Do NOT fix it by writing the value. Y11 step 3. |
 > | `[TREERECLICK-2026-08-22]` | 🟡 **Clicking the ALREADY-SELECTED Object Tree node does nothing** — no `SelectionChanged`, so no `walk_class` reaches the wire (measured: three clicks, two walks). Harmless alone, but after a cross-tab handoff (`Classes` → `Walk Class`) the panel shows class X while the tree highlight says node P, and clicking P **cannot** get it back; only selecting a different row and returning does. ⛔ **Not a `ClassStructViewModel` bug** — its `BeginLoad(nodeAddr: null)` already clears the dedupe key correctly, which is exactly why the recovery click works. Any fix belongs in the VIEW. AE2/AE3 step 5. |
 >
@@ -16599,13 +16604,83 @@ second by the four witnesses above.
 |---|---|---|
 | 1 | 讓 Extra Scan 真的跑久，跑到一半取消 CE record 或關掉 UI。 | `PipeServer: Stop watches+scan joins done` 在 `Stop entry` 後約一秒內出現。FAIL = 中間隔了好幾秒，或 CE 視窗整個凍住直到掃完。 |
 
-### ⬜ .CT DLL discovery —— 到底是哪一個 slot 答的（**B5 主動半與探索半都已完成，只剩這一步**）
+### ✅ `.CT` DLL discovery CLOSED 2026-08-22 `[CTDISC-SLOTS-2026-08-22]` — the MRU slot answers, and the comment above it was wrong
 
-*優先度 **中** · ⛔ **2026-08-22 實測:這一列現在跑不了。**`C:\Program Files\Cheat Engine\UE5Dumper.dll` **還在**(536,064 bytes,2026-02-19),所以較便宜的 slot 會先答,結果必然是這一列自己警告的那種 FAIL。刪它要提權,是 `[STALEDLL-2026-08-18]`(a) 那個維護者項目。**在那個檔案消失前跑這一列,只會得到假的失敗。***
+**Unblocked by the maintainer.** This row refused to run while a February `UE5Dumper.dll` sat in CE's
+install folder — `[STALEDLL-2026-08-18]`(a). That file is **gone** (verified absent), so slot 6 can no
+longer answer and the deferred recent-files slot finally gets its turn. ✅ **`[STALEDLL-2026-08-18]`(a)
+is therefore CLOSED too** — its (b) half shipped 2026-08-19.
+
+Run on **DumperTest** (alive, frames climbing — not the dead-engine trap), CE **7.7.0.10568**, with
+every cheap slot deliberately emptied first: CE-folder DLL absent, no DLL in app-data, and
+`dll-path.txt` **moved aside** (restored afterwards, machine left as found).
+
+**Step 1 PASSES.** Loading the table from `File → Load Recent` and ticking `init`:
+
+```
+SLOT=8   DLL_PATH=D:\Github\UE5CEDumper\dist\UE5Dumper.dll
+  1. [NOT SEARCHED] trainer folder                       - not launched as a trainer
+  2. [NOT SEARCHED] folder of CE's last File > Open      - CE's Open dialog is empty
+  3. [NOT SEARCHED] folder of CE's last File > Save      - CE's Save dialog is empty
+  4. [no DLL]       folder of the running script         - "init <== ..." (id 102) :\
+  5. [NOT SEARCHED] folder recorded by UE5DumpUI         - no folder recorded yet
+  6. [no DLL]       Cheat Engine install folder          - C:\Program Files\Cheat Engine\
+  7. [no DLL]       app data folder                      - ...\AppData\Local\UE5CEDumper\
+  8. [FOUND]        folder of the most recent UE5CEDumper.CT in CE's recent-files list
+                                                         - D:\Github\UE5CEDumper\dist\
+  9. [not reached]  most recently opened cheat table     - same folder as slot 8
+```
+
+That is the row's expected sentence verbatim, and its warning case — *"若寫的是 CE 自己的資料夾，
+代表這一步又沒測到"* — is now structurally impossible: slot 6 is listed `[no DLL]`.
+
+⭐ **A second, independent witness came free.** The self-heal only fires for the **name-matched** MRU
+slot, and it rewrote `dll-path.txt` with its **own** header — *"Written by UE5DumpUI at startup **and
+by UE5CEDumper.CT after a manual pick**"* — where the file previously carried the UI-only header. So
+the file on disk proves which slot answered, independently of the report that claims it.
+
+⚠⚠ **The comment above slots 2/3 was FALSE, and measuring it is what made this run trustworthy.**
+It claimed the dialogs are *"filled in by File > Open / File > Save, and **NOT** by double-clicking
+the .CT or picking it from the recent-files menu, which is the whole bug."* Before/after on one
+freshly launched CE:
+
+```
+BEFORE any load:   OpenDialog1=[]  SaveDialog1=[]
+AFTER Load Recent: OpenDialog1=[D:\Github\UE5CEDumper\dist\UE5CEDumper.CT]  SaveDialog1=[same]
+```
+
+**`Load Recent` fills both.** The baseline is what makes that a measurement rather than a guess — the
+first reading alone could have been state CE restored at startup, so CE was killed and relaunched to
+get the empty side.
+
+⭐ **Then why did the run above report them empty?** Because `openProcess()` **overwrites both with
+the bare process name** — measured directly: `OpenDialog1=[DumperTest-Win64-Shipping]`, no path, no
+extension. `extractFilePath` of a name with no separator is `""`, so slots 2/3 correctly fall
+through. My own attach step is what emptied them, not the recent-files menu.
+
+**So the order decides which slot answers, and both were run:**
+
+| order | dialogs at chunk time | slot that answers |
+|---|---|---|
+| Load Recent → attach *(this run)* | bare process name | **8** — recent-files list |
+| attach → Load Recent *(what the record itself instructs: "init ⇐ enable after process attached")* | the `.CT`'s full path | **2** — CE's last File > Open |
+
+Both resolve to `D:\Github\UE5CEDumper\dist\`, so the chain is healthy either way and neither is a
+defect. ⛔ **Do not "fix" one into the other.** The realistic user order is the second, which means
+the MRU slot is rarely the one that fires — worth knowing before anyone concludes from a report that
+the recent-files code is dead.
+
+▶ **Fixed in `scripts/UE5CEDumper.CT`** (and the `dist/` copy refreshed, which `build.ps1:1004` also
+does): the slot 2/3 comment now records the measurement, the CE build it was measured on, and the
+ordering table, instead of the claim that measurement refuted.
+
+### ✅ .CT DLL discovery —— 到底是哪一個 slot 答的 — **CLOSED 2026-08-22**，證據見上一節 `[CTDISC-SLOTS-2026-08-22]`
+
+*優先度 **中** · ✅ **2026-08-22 已解除封鎖並跑完。**`C:\Program Files\Cheat Engine\UE5Dumper.dll` 已由維護者刪除（`[STALEDLL-2026-08-18]`(a) 一併關閉），較便宜的 slot 不再搶答，**slot 8（recent-files）如預期答出 `D:\Github\UE5CEDumper\dist\`**。*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 移走 `dll-path.txt`，設 `UE5_DEBUG=1`，**先把 CE 的 Lua Engine 開著**，再從 CE 最近開啟檔案清單載入 `.CT` 並勾 init。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠ 若寫的是 CE 自己的資料夾，代表這一步又沒測到。 |
+| 1 | ✅ **2026-08-22 通過**（DumperTest + CE 7.7.0.10568）。`SLOT=8`，報告寫的正是「folder of the most recent UE5CEDumper.CT in CE's recent-files list」，且 slot 6（CE 自己的資料夾）列為 `[no DLL]`，這一列自己警告的 FAIL 情境已結構性不可能。⭐ 另有一個獨立見證：self-heal 只有**名稱吻合**的 slot 才會觸發，而它把 `dll-path.txt` 重寫成 **.CT 自己的** header。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠⚠ **順序會決定是哪個 slot 答**（2026-08-22 兩種都量過，見上一節）：先接 process 再載入 .CT ⇒ dialog 帶著 .CT 路徑 ⇒ **slot 2** 答；先載入再接 process ⇒ `openProcess` 用**裸的行程名**覆蓋掉 dialog ⇒ 落到 **slot 8**。兩者都指向同一個正確資料夾，都不是缺陷。 |
 
 ### ⬜ U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（**步驟 1、2 已完成，只剩這些**）
 

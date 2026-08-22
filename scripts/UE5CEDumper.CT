@@ -129,12 +129,24 @@ pcall(function() _trainerDir = extractFilePath(TrainerOrigin or "") or "" end)
 _slot("trainer folder (only set in trainer mode)", _trainerDir,
       "Cheat Engine was not launched as a trainer")
 
--- 2/3. CE's file dialogs. The only channel that has ever carried this .CT's own
---      folder -- filled in by File &gt; Open / File &gt; Save, and NOT by
---      double-clicking the .CT or picking it from the recent-files menu, which
---      is the whole bug. Both are undocumented published components of CE's main
---      form, so both are guarded (the Save read used to be bare: a throw there
---      aborted the chunk before the log was even open).
+-- 2/3. CE's file dialogs. Both are undocumented published components of CE's
+--      main form, so both are guarded (the Save read used to be bare: a throw
+--      there aborted the chunk before the log was even open).
+--
+--      MEASURED 2026-08-22 on CE 7.7.0.10568, correcting what this comment used
+--      to claim. File &gt; Load Recent DOES fill both dialogs: on a freshly
+--      launched CE they read "", and immediately after picking this table from
+--      Load Recent they both read its full path. So the recent-files menu is NOT
+--      a channel that leaves these empty.
+--
+--      What DOES empty them is openProcess(): attaching writes the bare process
+--      name ("DumperTest-Win64-Shipping") over the path, and extractFilePath of
+--      a name with no separator is "". That is why the order matters --
+--        attach then load  -> dialogs hold the .CT path  -> slot 2 answers
+--        load then attach  -> dialogs hold a bare name   -> falls through to the
+--                             recent-files slot below
+--      Both resolve to the table's own folder, so the chain is correct either
+--      way; do not "fix" one of them into the other.
 local _openPath, _savePath = "", ""
 pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
 pcall(function() _savePath = getMainForm().SaveDialog1.FileName or "" end)
