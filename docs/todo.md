@@ -2,15 +2,15 @@
 
 Open work only. **Read this when deciding what to do next.**
 
-> 🤝 **Coming back? Read [handover-2026-08-20.md](handover-2026-08-20.md) first** — the closing
-> note for the four-pass verification programme that RAN the 2026-08-19 plan. **No product code
-> changed**; `build_number.txt` is **3263** and all four CI gates are green. It carries what closed,
-> the **seven new defects it found and did NOT fix**, what each remaining row still needs (CE / a
-> human playing / an approval / no fixture here), and the traps that produce confident wrong
-> answers. ⚠ Its predecessor [handover-2026-08-19.md](handover-2026-08-19.md) is still the best
-> account of *why* the programme exists, the four findings left open on purpose, and the two-machine
-> sync point (`dist` **1.0.0.3263**; 3262 was deliberately skipped) — but its repeated claim that
-> **nothing has been verified on a running game no longer holds**.
+> 🤝 **Coming back? Read [handover-2026-08-22.md](handover-2026-08-22.md) first.** It is the single
+> entry point: current state, the grants and how to launch each fixture, the traps, and a ranked
+> "start here". `build_number.txt` is **3315**, `dist/` is republished AOT-trimmed, and **all twelve**
+> pre-build CI gates are green (`py tools/check_all.py` — ⚠ *twelve*, not the four this file used to
+> imply).
+> ⚠ Its two predecessors are **archived**: [archive/handover-2026-08-20.md](archive/handover-2026-08-20.md)
+> and [archive/handover-2026-08-19.md](archive/handover-2026-08-19.md). Everything in them that is
+> still operationally true was carried forward; go back to them only for the *history* of the
+> 2026-08-19/20 verification programme.
 
 > ## ▶ If the ask is "carry on fixing bugs", do NOT start here
 >
@@ -21,9 +21,9 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **30 open batches** needing a running game (this is a
->   DERIVED count and it has drifted to a stale 43, a stale 36 and a stale 40; re-derive, never
->   hand-adjust:
+> - `## Pending live-game verification` — **15 open batches** needing a running game (2026-08-22;
+>   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
+>   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
 >   **Offer these
 >   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c

@@ -22,6 +22,77 @@ builds ≤696 in
 
 -----
 
+## 2026-08-22 (later) - Eleven more register rows, the twelve-gate discovery, and a new single-entry handover (no build change)
+
+**No source change to the product.** `build_number.txt` stays **3315**; the only code added is a
+tooling script and two verification rigs. The entry below covers the work done *after* the one above
+was written.
+
+### ⚠ The finding that matters most for anyone reading this next
+
+**CI runs TWELVE doc/source gates before it builds, plus a thirteenth over the built proxies — and
+this session ran FOUR of them all day**, because four is what the docs named. `tools/check_all.py`
+now runs the twelve in CI's order (which is not alphabetical: `aob_specificity` reads the TSV that
+`extract_patterns --check` writes) and reprints CI's own failure text, so a local failure reads like
+the one that would have appeared on the PR.
+
+⭐ **Its first run failed** — `CeLuaQuotingTests` carried a literal user-home path (`<user home>\O'Brien\UE5Dumper.dll`) — quoting it verbatim here trips the same gate, which is a fair demonstration —
+and `check_no_local_paths` rejects a concrete user home in a tracked file. That test had been
+committed hours earlier against a green four-gate run. The apostrophe was the point of the fixture;
+the home directory never was. Now `D:\O'Brien Studios\…`, with a comment saying why.
+
+### Register rows settled
+
+| row | outcome |
+|---|---|
+| `A6` step 3 | ✅ the Force walks the **super-chain, not the name** — `StaticMeshActor` (derives from `AActor`, name does *not* start with "Actor") **is** held, while 33 diffable non-derived objects including the genuine same-prefix `ActorSequence` are **untouched**. The pair is the proof; either half alone is consistent with the wrong matcher |
+| `A6` step 5 | 🟡 CDO half ✅ (CDO clean through a 256-instance hold, with 12/12 sampled live components **actually** forced as the channel proof); spawn half **blocked**, measured three ways — the debug camera is one-shot per process, cycling it gives 295 → 295 objects, and no `ConsoleCommand`/`RestartLevel` exists in the 3,142 functions listed here |
+| `AC13` step 1 | ✅ closing a **connected** UI leaves no `Pipe: ReadLoop error`; non-vacuous because `ui-init-0.log` shows the logger alive and flushing at the exact moment (`UE5DumpUI shutting down...`) |
+| `AC13` steps 2–3 | ⛔ **unobservable as written** — there is no IPC figure on the System tab, and step 3's own action destroys its observable: the probe's closing `GetDiagnosticsAsync` sits under `catch { return; }`, so closing the game mid-request suppresses the PERF line entirely |
+| `B10` | ✅ CLOSED — capture 644 objects / 12,155 fields, `wall 638.6 ms` recorded as a **new baseline** (the only prior figure is a different target and not comparable), and struct / enum / bool all decode. ⭐ Discriminating because the grid prints the **raw byte beside the decoded name**: `03 → ROLE_Authority` and `01 → DORM_Awake` are two different enums each decoded right |
+| `A3` | ✅ CLOSED by step 3, and the 2026-08-19 measurement **reproduced to the digit** across a different build (3,450 candidates · 72 · 34 · 19 · 19) |
+| `G11` steps 3–4 | ✅ answered as a measured **negative**: over 66 detection attempts across 23 hosts, `Tier 2` has **never** fired and `Tier 3` has **no subject**. The channel is proven — the ladder reached Tier 1 six times on three games |
+| `AF25` step 3 | ✅ teleport opcode still 8 and the mirror **is** guarded — a negative control (`CmdTeleport = 9`) leaves the contract gate `CHECK OK` but fails **6 tests** |
+| `V6/U8` step 1 | 🟡 attempted, **not closed**, and deliberately no defect filed — see below |
+
+The 繁中 checklist went **38 → 33**.
+
+### ⚠ Two rows where the *instrument* was the problem, not the product
+
+* `V6/U8` — the Live Walker toolbar **reflows** once an object loads (`Find Refs` / `Related`
+  appear), so coordinates captured earlier in the same session go stale silently. Two "press ▼"
+  clicks landed on the **"2 matches" label**. The claim "the stepper stopped working after
+  auto-refresh" was one sentence from being filed; it is unverified because the actuator was never
+  shown to fire in that state. `working-lessons.md` §2.5d.
+* `A3` step 1 — following the 繁中 step literally (*Value Search, **Float***) gives **0** vector
+  components, a clean-looking FAIL of a working fix, because under LWC an `FVector` is a
+  double-precision `FVector3d`. The warning was already in `todo.md` from 2026-08-19. **Read the
+  register entry before running the mirror's step.**
+
+### Docs brought to current
+
+* **`docs/handover-2026-08-22.md`** — a new single entry point, replacing both predecessors, which
+  moved to `docs/archive/`. It carries what a fresh session needs in its first ten minutes: the exact
+  **computer-use grant list** (20, with their `request_access` names), the **≤7 batching rule** and
+  the correction that **grants persist across sessions** (measured — a *reboot* is the real
+  invalidation), `systemKeyCombos` being ungranted, **which Steam process is which**
+  (`steam.exe -applaunch` to launch · `steamwebhelper.exe` to see the library · the
+  `*-Win64-Shipping.exe` to inject, with a measured shim table for all nine granted titles), the
+  dead-engine trap, the hard rules, the build/test/gate commands with their timeouts, how to drive
+  Cheat Engine, what is open with a derivation for every number, and how to close a row.
+* `todo.md`'s header was stale in two measurable ways (build **3263**, "30 open batches" against a
+  derived **15**) — the file that says *"read this when deciding what to do next"*. Fixed.
+* The OPEN FIXES INDEX heading said **3** while the table needed a fourth row
+  (`[FORCESTATUSCLIP]`); added, with the observation that **none of the four is a straightforward
+  code fix**.
+* CLAUDE.md's `Schlacht` capability row still described the pre-fix hit resolution and claimed a
+  verification that `[SEETHRUNOOP]` had just invalidated. Rewritten.
+* The 繁中 checklist's own derivation instruction said to subtract **the two** preamble headings; a
+  third was added on 2026-08-22, so following it literally now yields 34 against a correct 33.
+  Reworded to count them rather than name a number.
+
+-----
+
 ## 2026-08-22 - Unattended verification session: 8 defects found and fixed while working the register (builds 3309 → 3315, 42 commits)
 
 **Shipped**: `build_number.txt` **3315**, `dist/` republished as the Native-AOT trimmed binary
