@@ -16406,7 +16406,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ **2026-08-22 量過:DumperTest 的天花板就是 26**,`PhysicalMaterial::SurfaceType`(`EPhysicalSurface`,在有定義的專案裡可到 63 個)在這裡也沒破。所以這一步在 DumperTest 上壓不到。<br>▶ **換宿主前先花一道指令篩**:走個幾十個 instance,然後 `grep -o 'read [0-9]* of [0-9]*' walk-0.log | sort -t' ' -k4 -n | tail -1`。天花板還在二十幾的宿主一樣壓不到。 |
 | 2 | ✅ **2026-08-22 通過(在可得的規模上)**:DumperTest 上 437 行 `ResolveEnumValue`,`N != M` **0 個**,`truncated read` **0 個**。correctness 這一半成立,只是最大只壓到 26。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
 
-### ⬜ B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
+### ⛔ NO SAMPLE ON THIS MACHINE 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]` — B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
 
 *優先度 **中** · 需要：**GObjects 無法用 AOB 一次解出**的遊戲，否則 Extra Scan 根本不會跑久*
 
@@ -16490,7 +16490,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 1 | 注入候選遊戲後 grep scan-0.log / offsets-0.log 的 Cannot find Guid or Vector struct 與 ValidateAndFixOffsets: Using struct。 | 確認走的是 heuristic fallback，而非 Using struct 'Guid'。<br>⚠ 走到 Guid 分支就等於沒測到，要把實際分支記下來。 |
 | 2 | 在該遊戲上用 Live Walker 檢查 enum 名稱與 TArray inner type。 | 兩者皆正確，不再偏移 8 bytes。 |
 
-### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
+### ⛔ NO SAMPLE ON THIS MACHINE 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]` — V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
 
 *優先度 **中** · **需要**：一款第一次掃描後 GObjects 或 GWorld **仍未解出**的遊戲。都解得出來就是無樣本可測。*
 
@@ -16537,3 +16537,61 @@ restructure that existed nowhere else — checked before the move (`V8_DataTable
 「怎麼用這份清單」D0 那一格自己寫下的失效方式，也是同一天 `[PARAMSSORT-2026-08-22]` 撞到的：
 快照那句提示 VM 字串完全正確，卻被放在沒有 `TextWrapping` 也沒有 `ToolTip` 的 `TextBlock` 裡，
 自己被截斷。
+
+-----
+
+### ⛔ V10 and B18 have NO SAMPLE on this machine — measured 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]`
+
+Both rows state their own precondition: V10 needs *"a game where GObjects or GWorld is still
+unresolved after the first scan — if both resolve there is nothing to test"*, and B18 needs *"a game
+where GObjects cannot be resolved by AOB in one go, otherwise Extra Scan never runs long"*. This
+records that the precondition is **not satisfiable here**, rather than leaving them looking untried.
+
+**Direct observation on DumperTest** (injected, UE504, 25,179 objects): the System tab resolves
+**all five** — GObjects `GOBJ_ES53_1`, GNames `GNAM_V5`, GWorld `GWLD_TQ_1`, FSparseDelegateStorage,
+and the `&GEngine` slot. ⭐ There is **no Extra Scan button at all**; the only thing present is a
+dev-only *"Test Extra Scan — simulate scan progress UI (does not actually rescan)"*.
+
+**Whole-machine sweep** of `UE5CEDumper.{Machine}.json` (every host ever scanned, 29 entries) for a
+`not_found` resolve method. Four hit — and **none is a usable fixture**, which is why this is a
+"no sample" verdict and not a "found one":
+
+| host | gObjects | gWorld | why it does not count |
+|---|---|---|---|
+| `Solarpunk.exe` | `not_found` | `aob` | the **launcher shim**; the real `SolarpunkSteam-Win64-Shipping.exe` resolves both by AOB |
+| `Game.exe` | `not_found` | `not_found` | likewise a shim/launcher, not an engine process |
+| `b25a_subfloor.exe` | `not_found` | `not_found` | a **synthetic B25 fixture**, not a game |
+| `python.exe` | `not_found` | `not_found` | a rig artefact — the DLL injected into Python |
+
+Every real title resolves: 20 hosts by `aob`, Satisfactory by `symbol`, Avowed's GWorld by
+`instance_scan_recovery`. ⇒ Extra Scan cannot be made to run long enough to cancel (B18) or to
+produce a result that a refresh could erase (V10).
+
+▶ **What would unblock them:** a genuinely hard title whose GObjects AOB misses — the same class of
+game `AE10` and the `Genau RIP decode` row are waiting for. Until one is installed, these two are
+*blocked on a fixture*, not on effort.
+
+-----
+
+### 🟡 Y11 — the FIRE path is FOUND, and it explains an earlier session's dead end `[Y11-FIREPATH-2026-08-22]`
+
+Not executed yet, but the access problem that stalled it is solved and written down so the next
+attempt does not repeat the hunt.
+
+**FIRE lives in `InvokeParamDialog`, reached from Live Walker → the `Functions` expander → `PIPE`.**
+It is not on Interesting Funcs rows and not on Instance Finder rows — two places I looked first.
+(`⚙` on an Interesting Funcs row is *locate in GameEngine*; `Find Func` on an Instance row is the
+*functions-taking-this-class* query. Neither invokes anything.)
+
+⭐ **Why an earlier session recorded "面板上找不到函式表入口"** (AF16–AF23 step 1's note): the section is
+`<Expander IsVisible="{Binding HasFunctions}">` at the bottom of `LiveWalkerPanel.axaml`, so it is
+**invisible when the walked object's class has no UFunctions** — and `DumperTestActor` has **zero**.
+Walking `PlayerController` (live instance `0x2431B6A4980`) makes it appear immediately: **162
+functions**, each row carrying `INV` / `PIPE` / `AA(Baked)`. The entry point was never missing; the
+object was the wrong one.
+
+⚠ **Remaining fixture question for Y11 itself.** Step 1 needs a UFunction taking an **`FText`**
+parameter *on a class with a live instance*. `TextBlock::SetText` (1 param, 16 B) is the obvious
+candidate but DumperTest has **no live TextBlock** — the UI said so plainly: *"No live (non-CDO)
+instance of TextBlock to locate in GameEngine."* So either find an FText-taking function among
+`PlayerController`'s 162, or run Y11 on a UMG-heavy title.
