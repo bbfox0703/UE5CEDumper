@@ -16305,7 +16305,39 @@ appear elsewhere in this file. What changed is only where the STEPS live.
 | 3 | 查 AActor 的 bHidden / InitialLifeSpan | 屬性名稱與型別都正確列出<br>⚠ 「沒有報錯」不算通過；空表或亂碼視為失敗 |
 | 4 | 順便查一個 Blueprint 類別（*_C） | 查不到是預期的（W8 未修，*_C 被過濾），不要當成解析失敗 |
 
-### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
+### ✅ D2（顯示配對） PASSES 2026-08-22 `[D2-PAIRING-2026-08-22]` — all four steps, on DumperTest
+
+Run on **DumperTest Development** (injected, `dist` AOT v1.0.0.3315, DLL 3315, UE504, 25,179
+objects). Group scan: slot 1 `NumericNoByte / Between 200..100000`, slot 2
+`NumericNoByte / Exact 424242`. ⚠ `Between` is the point — `TickCount` **moves** (measured
+156 → 156 → 193 over ~16 s), so an `Exact` match on it races the game; a range brackets it.
+
+| step | result |
+|---|---|
+| **1** default pair, no filter | ✅ `F32=513.36 (+3), FrozenInt=424242` — the displayed pair is **non-zero**, not the `TickInterval=0 / InitialLifeSpan=0` trap the row warns about, and the `(+N)` match counts are present. (`FrozenInt` shows no `(+N)` because its slot kept exactly one leaf.) |
+| **2** filter `tickcount frozenint`, then reversed | ✅ The displayed leaf **changed** `F32=513.36` → **`TickCount=332 (+4)`**, i.e. the filter-matched leaf won the slot — precisely `PickGroupWitnessAssignment`. `frozenint tickcount` gave a **byte-identical row**, so it is order-independent. |
+| **3** expand → `All fields` → again to collapse | ✅ Lists all 5 kept leaves by name (`F32` 0x650, `F64` 0x658, `TickCount` 0x6A8, `F32_Ticking` 0x6B0, `F64_Ticking` 0x6B8) and the status line says `Slot 1: 5 matching field(s) … Press "All fields" again to collapse`. Second press collapses. ⚠ `FrozenInt`'s slot has **no** `All fields` button — correct, it kept one leaf. |
+| **4** `Live` / `Addr` / `Pivot` / `Locate` on a leaf | ✅ all four, on `F32_Ticking`. |
+
+**Step 4 detail, because "it navigated" is not the same as "it navigated correctly":**
+
+* **Live** → Live Walker on `DumperTestActor_0` with `F32_Ticking` **selected**, not just the object opened.
+* **Addr** → ⭐ verified by **reading the clipboard**, not by assuming: `0x24319E37FC0`, which is
+  **exactly** the address the Live Walker independently shows for `F32_Ticking`. It is neither `0x0`
+  nor the object base (`0x24319E37918`) — the two failures the row names.
+* **Pivot** → Class Pivot with `DumperTestActor (2)` selected as the target.
+* **Locate 🌍** → Live Walker with the full breadcrumb `ThirdPersonMap > PersistentLevel >
+  DumperTestActor0` and an honest status line: *"Located via GWorld — 2 hop(s) … the world→level hop
+  is a back-reference, not a static pointer"*.
+
+⚠ **One caveat, stated because it limits step 3.** All 5 leaves belong to `DumperTestActor` itself,
+so the row's "the object's own fields sort first" clause was satisfied **trivially** — there were no
+cross-object leaves to sort behind. That half needs a scan whose slot keeps leaves from an owned
+component; it is not evidence from this run.
+
+-----
+
+### (original steps) D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
 *build 2715 / 2719 · 優先度 **中***
 
