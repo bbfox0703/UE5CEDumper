@@ -22,6 +22,75 @@ builds ≤696 in
 
 -----
 
+## 2026-08-22 - Unattended verification session: 8 defects found and fixed while working the register (builds 3309 → 3315, 42 commits)
+
+**Shipped**: `build_number.txt` **3315**, `dist/` republished as the Native-AOT trimmed binary
+(54.7 MB, `sha 8CA03D81BAAB`) with the DLL rebuilt alongside. Not a feature session — every fix below
+was found by *running a verification row*, not by looking for bugs.
+
+### The defects, in the order they surfaced
+
+- **`[CADENCEGAP]`** — `Linie` dropped every same-millisecond inter-arrival sample (`>` where `>=`
+  belonged), so a 17 ms callback reported the same 33 ms period as a 33 ms one. Seen in the UI:
+  `CameraModifier` 496 calls / 17 ms against `ABP_Manny_C` 248 calls / 33 ms — twice the calls, half
+  the period, where both had read 33 ms.
+- **`[PARAMSSORT]`** — three grids sorted the **label** (`"9 (144B)"`) instead of the number, so
+  Params ordered lexicographically. Fixed at all three sites, plus an address column that sorted as
+  text. Two new AOT-sort guards; the click-through on the trimmed binary showed columns that
+  actually discriminate (Params `19,19,19,17,17,16,15,15`; Offset `0x28…0x64`).
+- **`[FREEZECFGNAME]`** — the freeze script bakes the class name into its runtime messages while the
+  freeze itself reads `CFG.className`, and the product *instructs* the user to edit that CFG. Editing
+  it made every message name the class you had just replaced. ⭐ The defect had been **pinned by a
+  test** that used the baked literal as a convenient anchor, which is why it looked deliberate.
+- **`[INVOKEHINTQUOTE]`** — an unescaped apostrophe (`"read it in CE's memory viewer"`) interpolated
+  into a single-quoted Lua literal made the **whole `[ENABLE]` block a syntax error**, and Cheat
+  Engine reports that by leaving `Active` at `false` with no dialog and nothing in the log. Any
+  invoke with a large by-value struct return was affected. New `CeLuaQuotingTests` runs **19
+  generators** through a Lua quote scanner — behavioural, because the offending value came from a
+  variable ten lines above its use and a grep of the emitting line found nothing.
+- **`[FORCESTATUSCLIP]`** *(filed LOW, not fixed)* — the Force status line is right-clipped at ~30
+  characters with no trimming or tooltip, and the clipped tail is the clause whose own code comment
+  says it exists because "on 256 instance(s)" reads as "all of them" without it.
+- **`[SEETHRUTALLY]`** — `InvokeSetHidden` returns `bool` and **both call sites discarded it**, so
+  `hiddenActors` / `hidden_count` / the UI card / the log's `disabled (N restored)` all reported
+  **intent**. `Tick()` now records only what was applied.
+- **`[SEETHRUNOOP]`** — and what that honesty exposed: on **UE 5.4** the object read out of
+  `FHitResult` is a `UStaticMeshComponent`, so `InvokeSetHidden`'s Actor guard rejected every hit and
+  **See-through was a complete no-op while every channel said it was working**. Fixed by trying
+  `Actor` → `HitObjectHandle` → `Component` and taking the first that resolves to an actor
+  (`ResolveToActor` walks `Outer`, bounded). ⭐ Cannot regress a working build: the first two members
+  are still tried first, and `ResolveToActor` is the identity at hop 0 for anything already an actor.
+- **`[DISTCOPY]`** — `build.ps1` reported a successful publish over a copy that never happened. A
+  locked destination left `$exitCode` at 0, `Remove-Item` then deleted the correctly-built binary, and
+  the success line printed the **stale** file's size — which is 54.7 MB exactly like a good one. The
+  copy is now verified by **SHA256** and `dist/publish/` is kept when it fails.
+
+### Verification closed
+
+`Y10/Y13` (all four steps) · `MB3` (the CE half, through real `.CT` records) · `AA12/AA13` ·
+`AE4–AE7` · `M1–M5` steps 2/3/4/5 and step 1's arms (c)+(d) · `B19` · `AF7` · `AF22/AF12/AF13` ·
+`AC17` · `AF21` · `A11` · `A12` · `V11` · `Y12` · `W8` · Genau RIP decode (GNames + GWorld).
+The 繁中 checklist went **50 → 35** sections.
+
+### Two capabilities added because a row could not be verified without them
+
+- **`seethrough_get_state` now returns `hidden_actors`** — the count alone could not be audited from
+  outside, and it cost a full round of guessing (33 candidate actors walked, none hidden, no way to
+  tell a wrong candidate set from a failed hide) before the set was exposed and the answer appeared
+  immediately.
+- **`tools/verify/seethrough_arms.py`** — two independent detectors that refuse to report a pass when
+  the count never rises or when the DLL names actors whose own `bHidden` is not set.
+
+### What this session is really about
+
+Six of the eight defects are the same shape, and it is the one audit #4 named: **the report and the
+reality computed by different code paths**. `[SEETHRUTALLY]` is the extreme case — the "reality" path
+did not exist at all, which is exactly why the feature could be dead for as long as it was. Every one
+of them was caught by insisting on a **second, independent witness** for a claim the system makes
+about itself.
+
+-----
+
 ## 2026-08-20 (evening) - Fourth pass on 3263: the UI and Cheat-Engine modes, 3 more defects, AA12/AA13 opened up
 
 **No source change.** `build_number.txt` is **3263** and the tree is clean. ⚠ The caveat from the
