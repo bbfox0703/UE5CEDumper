@@ -7131,6 +7131,53 @@ publishes of the same source produced four different hashes, so a hash can confi
 never that two builds are "the same build".
 
 
+
+### ✅ AE4–AE7 step 4 CLOSED 2026-08-22 `[ORPHANGATE-2026-08-22]` — the gate arm nothing covered, pinned deterministically
+
+**Why it kept not getting tested.** The row asks you to start a delete and then race a scan against
+it. It failed twice, and the maintainer wrote the reason down verbatim on 2026-08-21:
+「執行時間太短無法測試」 — the delete finished before the next button could be pressed, so the gate
+was never reached. ⭐ **That is a timing problem, not a logic problem**, and the row itself already
+says a delete that outruns you is *not tested* rather than *passed*. Making the delete slow enough
+means manufacturing a long leftover list, i.e. writing fake proxy DLLs into real game installs —
+which is not pre-approved and would be a worse fixture than the thing it tests.
+
+**What was actually missing.** `ProxyDeployConcurrencyTests` pins Refresh / UpdateAll / Deploy /
+Undeploy / Scan against each other and **never mentions orphans** — so the panel's one *destructive*
+operation was the only long operation with no gate coverage in either direction. The row was
+chasing, by hand, the arm the suite had skipped.
+
+**New `ProxyOrphanGateTests` (4 tests), both directions:**
+
+| test | what it holds open | assertion |
+|---|---|---|
+| `AScan_IsRefused_WhileAnOrphanDeleteIsRunning` | the delete, at the top of a row's removal | the scan never reaches the service (`FindCalls` unchanged), the refusal names the running op, `IsBusy` true during and false after |
+| `AnOrphanDelete_IsRefused_WhileAScanIsRunning` | the scan, parked on a `TaskCompletionSource` | `RemoveCalls == 0` — **nothing was recycled** — and the "Wait for the current operation" line shows |
+| `TheGate_IsReleased_WhenNothingWasChecked` | — | an empty pass cannot wedge the panel: a scan straight afterwards is not refused |
+| `TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate` | the confirm delegate | `IsBusy` is **false** while the dialog is up |
+
+⚠ The last one pins the row's own ⚠ (「對話框開啟不等於刪除正在跑」) **as correct, not as a hole**:
+`IsRemovingOrphans` is set *after* `ConfirmOrphanRemovalAsync` returns, and that is right because the
+dialog is modal (`OrphanCleanupConfirmDialog.ShowAsync` → `ShowDialog(owner)`, so no other panel
+button is reachable) and because holding the exclusive gate across a prompt the user may sit on
+indefinitely would lock the panel on something that can still be cancelled.
+
+**Negative controls, one change at a time, restored byte-exact both times:**
+
+| control | tests that failed |
+|---|---|
+| `TryBeginExclusive`: drop `\|\| IsRemovingOrphans` | **exactly** `AScan_IsRefused_WhileAnOrphanDeleteIsRunning` |
+| delete's entry check → a never-true predicate | **exactly** `AnOrphanDelete_IsRefused_WhileAScanIsRunning` |
+
+⚠ The first attempt at the second control used `if (false)`, which is **CS0162 unreachable-code** and
+fails the build — a build error is not a negative control, it is a different experiment. Weakened to
+`IsScanning && IsRemovingOrphans` (compiles, can never be true) instead. **4,693 / 4,693 pass.**
+
+**What the tests do NOT cover, closed separately by inspection**: that the real buttons are wired to
+these commands. `ProxyDeployPanel.axaml:149` binds `ScanOrphansCommand` and `:169` binds
+`DeleteSelectedOrphansCommand`, so the gate the tests exercise is the one the UI drives.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
