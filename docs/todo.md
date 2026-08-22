@@ -6501,6 +6501,79 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### 🟡 Genau RIP decode — GNames CLOSED 2026-08-22 `[GENAURIP-RECOVERY-2026-08-22]`, GObjects shown UNCLOSABLE on this host
+
+Follows `[GENAURIP-AB-2026-08-19]`, which measured the win on notepad++ but could satisfy the
+acceptance criterion for **GWorld only**: on a non-UE host GObjects and GNames never resolve, so
+"the address did not move" was vacuous for two of the three the row names. A *game* could not close
+it either — all five call sites are RECOVERY paths, and on a healthy title the AOB wins on the first
+pattern so **none of them runs**. That was the deadlock.
+
+⭐ **THE WAY OUT WAS THIS PROJECT'S OWN PRECEDENT.** The `PEHOOK` rows staged their TABLE arm by
+temporarily removing signatures so DumperTest mis-detects. Same trick, two lines: force
+`ScanForTarget`'s result to 0 in `FindGObjects` and `FindGNames`, and the recovery paths run on a
+real UE host that actually *has* a GObjects and a GNames to find.
+Rig: `tools/verify/genau_rip_recovery_ab.py`. Three DLLs from one tree in one session — `post` (AOB
+forced off), `pre` (+ predicate reverted), and `dist`'s untouched DLL for the AOB baseline.
+
+**✅ What closed.**
+
+| | pre | post | AOB baseline |
+|---|---|---|---|
+| `GNames` | `0x7FF75A0568C0` | `0x7FF75A0568C0` | `0x7FF75A0568C0` |
+| `GWorld` | `0x7FF75A3488A0` | `0x7FF75A3488A0` | `0x7FF75A3488A0` |
+
+Both recovery paths **verifiably ran** on both sides (the fallback log lines are asserted, not
+assumed), the module did **not** rebase (`code_base = 0x7FF74A311000` on both staged runs — checked,
+because raw addresses are otherwise meaningless), and GNames is now byte-identical *and* agrees with
+what the AOB finds. **That is the row's criterion, closed for GNames.**
+
+**⭐ And the WIN is three orders of magnitude clearer than on notepad++.**
+
+| host | candidates, pre → post | gap |
+|---|---|---|
+| notepad++ (2026-08-19) | 4,085 → 4,083 | −2 |
+| **DumperTest (staged)** | **508,10x → 506,59x** | **≈ −1,510** |
+
+Four independent runs per side: gaps **1511 / 1516 / 1513 / 1509**, against a measured run-to-run
+variance of **±5** (live `.data` contents move the absolute count, not the gap). A second,
+independent expression of the same win fell out of a bug in my own rig: **the pre side takes longer
+to become ready — 15 s vs 9 s** — because it hands the scan ~1,500 more candidates and then
+validates a bogus pool.
+
+⚠⚠ **GOBJECTS IS NOT CLOSABLE THIS WAY, AND FINDING THAT OUT IS THE MOST USEFUL PART.**
+Forced onto the data-scan fallback, DumperTest's `ValidateGObjects` accepts a **false positive**:
+
+```
+UE5_Init: Complete (UE504, GObjects=0x25339EB4E48, ..., Objects=2556928)   <- real count is 25,179
+UE5_Init: Complete (UE504, GObjects=0x1D8663E4D70, ..., Objects=583)
+```
+
+and the answer is a **heap** address, so it moves every launch regardless. Which false positive wins
+depends on live heap contents — measured: the **post** side picked instruction `0x7FF74B0BC264` on
+all three runs, the **pre** side picked `0x7FF74B0CAC34` once and `0x7FF74B0BC3E4` twice. So the two
+sides differ for a reason that is **not a regression**, and asserting on it would be reading noise
+as signal. The rig therefore **reports GObjects and refuses to assert on it**.
+
+⭐ **The lesson, and it generalises: STAGING A PATH MAKES IT RUN; IT DOES NOT MAKE IT MEANINGFUL.**
+The staging was still worth doing — it closed GNames and produced a 750× better measurement of the
+win — but "the code under test executed" and "the comparison means something" are two conditions,
+and the second one has to be checked separately.
+
+▶ **What would close GObjects**: a UE title whose GObjects AOB genuinely fails *and* whose data
+section yields the real pool. The rig runs against any host — point it at one.
+
+ℹ️ **Observed, filed here rather than as its own row because it is fallback-only and staged**:
+`ValidateGObjects` accepted a pool with 583 objects and one with 2,556,928 on a host whose real
+count is 25,179, and the DLL then reported `UE5_Init: Complete` with no warning. The path is only
+reachable when *every* GObjects AOB pattern fails — an exotic or forked engine, which
+[reversing-nonstandard-ue-games.md](reversing-nonstandard-ue-games.md) already treats as needing
+bespoke work — and `s_gobjectsMethod` does record `data_scan`, so it is not wholly silent. But
+"the fallback answered" is not the same as "the fallback answered correctly", and nothing downstream
+distinguishes them.
+
+
 ### ✅ CLOSED 2026-08-22 `[AF22-PAIR-2026-08-22]` — Freeze and Force seen SIDE BY SIDE, same row, same session
 
 Step 2 was the last one open (1, 3 and 4 closed earlier today). It is step 1's **control**: the

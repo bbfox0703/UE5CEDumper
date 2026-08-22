@@ -243,14 +243,38 @@ session 的順序很好用，保留。
 | 2 | grep `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\view-0.log`（或遊戲資料夾的 `ui-view-*.log`）的 `PERF Snapshot capture`。 | 有 `wall … ms`。目前唯一留存的數字是 5,256.2 ms（2026-08-04，修正後），沒有 pre-2596 可比就把本次記成新基準，下次同一遊戲同一擷取再比。<br>⚠ 這條在 UI 端 view-0.log，不在 pipe-0.log。 |
 | 3 | 打開任一含 struct / enum / bool 欄位的物件 property grid。 | struct 型別、enum 名稱、bool mask 三欄都有值。FAIL = 這些欄位變空白，或並行掃描時當掉。 |
 
-### ⬜ Genau RIP decode (b2544) —— RIP 解碼修正沒有改動解出的位址
+### 🟡 Genau RIP decode (b2544) —— **只剩 GObjects**;GNames / GWorld 已於 2026-08-22 關閉
 
-*優先度 **低***
+*優先度 **低** · 需要：一款 GObjects AOB **真的掃不到**、而且 data-section scan 能找出**真正**
+object pool 的 UE 遊戲。DumperTest 做不到 —— 原因見下,那才是重點。*
+
+✅ **2026-08-22 `[GENAURIP-RECOVERY-2026-08-22]`。** 用本專案 `PEHOOK` 的老辦法把 recovery 路徑
+逼出來(兩行:在 `FindGObjects` / `FindGNames` 把 `ScanForTarget` 的結果強制設 0),
+rig：`py tools/verify/genau_rip_recovery_ab.py`。
+
+| | pre | post | AOB 基準 |
+|---|---|---|---|
+| `GNames` | `0x7FF75A0568C0` | `0x7FF75A0568C0` | `0x7FF75A0568C0` |
+| `GWorld` | `0x7FF75A3488A0` | `0x7FF75A3488A0` | `0x7FF75A3488A0` |
+
+兩側的 fallback 都**確實跑了**(log 行是斷言出來的,不是假設),模組**沒有 rebase**
+(`code_base` 兩側都是 `0x7FF74A311000`,有查),GNames 逐 byte 相同且與 AOB 一致。
+
+⭐ **收益也比 notepad++ 那次清楚三個數量級**:候選數 **508,10x → 506,59x**,gap 約 **−1,510**
+(四次獨立 run:1511/1516/1513/1509,run 間變異只有 ±5)。notepad++ 當時只量到 −2。
+另外附帶一個獨立指標:pre 側**就緒時間 15 秒 vs post 9 秒**。
+
+⚠⚠ **GObjects 這樣是驗不了的,而查出這件事才是最有價值的部分。** 被逼到 data-scan fallback 後,
+DumperTest 的 `ValidateGObjects` 會接受**假陽性** —— `Objects=583`、`Objects=2556928`
+(真實 25,179)—— 而且回的是 **heap 位址**,每次啟動都會變。挑中哪一個假陽性取決於當下的 heap:
+post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF74B0BC3E4`。
+兩側不同**不是 regression**,拿它來斷言等於把雜訊當訊號。
+
+⭐ **教訓:把路徑 stage 出來只讓它「有跑」,不會讓比較「有意義」。** 這是兩個條件,第二個要另外檢查。
 
 | # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 同一款遊戲，分別用修正前與修正後的 DLL 各注入一次，各留一份 `scan-0.log`。 | 兩份 log 都跑完整個 FindAll。 |
-| 2 | 比對兩份 log 的 candidate / probe 計數，以及 GObjects / GNames / GWorld 最終解出的位址。 | 計數下降（這是收益），而三個位址逐 byte 完全相同（這才是驗收標準）。位址有變就是 regression。<br>⚠ 不能用 sweep.sh 的 pattern diff 判定：它會跳過 Symbol*/CallFollow 簽章，乾淨的 diff 只代表「沒測到」。 |
+|---|--------|------|
+| 1 | 手上若有 GObjects AOB 真的掃不到的 UE 遊戲,對它跑 `py tools/verify/genau_rip_recovery_ab.py`(rig 對任何宿主都能跑)。 | 兩側 GObjects 逐 byte 相同。<br>⚠ **先確認它解出來的是真的**:比對 `Objects=` 和該遊戲實際物件數;數字離譜就跟 DumperTest 一樣是假陽性,那樣的相同或不同都不算數。 |
 
 ### ⬜ AC13 / AC14 —— Pipe 傳輸計時、關閉時的 reader
 

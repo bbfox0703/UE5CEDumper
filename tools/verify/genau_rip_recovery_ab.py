@@ -26,12 +26,23 @@ named:
 
 and `dist`'s untouched DLL supplies the AOB-resolved baseline.
 
-WHAT IS ASSERTED, in order of what each rules out:
+WHAT IS ASSERTED — and this list was CORRECTED by the first run, which is the useful part:
   1. the recovery path really RAN on both sides (the fallback log line is present)  — else vacuous
-  2. GObjects and GNames really RESOLVED on both sides                              — else vacuous
-  3. pre and post resolved them to the SAME address                                 — the row's criterion
-  4. and recovery agrees with the AOB baseline                                      — a free bonus the
-     row does not ask for: the fallback finds what the pattern finds
+  2. GNames resolves identically on both sides AND matches the AOB baseline         — the row's
+     criterion, closed for GNames
+  3. the candidate count drops by a margin far larger than its run-to-run variance  — the win
+  4. GObjects is REPORTED, not asserted. See below.
+
+⛔ GOBJECTS CANNOT BE AN ACCEPTANCE CRITERION HERE, AND THE STAGING IS WHAT REVEALED IT.
+Forced onto the data-scan fallback, DumperTest's `ValidateGObjects` accepts a FALSE POSITIVE: the
+run reports `UE5_Init: Complete` with an object count of 583 or 2,556,928 against a real 25,179,
+and the resolved address is on the HEAP, so it moves every launch anyway. Which false positive wins
+depends on live heap contents — measured: the post side picked the same instruction on all three
+runs, the pre side picked two different ones. So the two sides differ for a reason that is **not a
+regression**, and comparing the addresses would be reading noise as signal.
+
+⭐ Staging a path makes it RUN; it does not make it MEANINGFUL. Closing the GObjects half still
+needs a UE title whose GObjects AOB genuinely fails AND whose data scan then finds the real pool.
 
 ⚠ ASLR. Raw addresses are only comparable if the module did not rebase between runs, so the rig
 parses the `code=[0x…-0x…]` range the data scan logs and REFUSES to compare unless the base is
@@ -132,11 +143,28 @@ def run_host(dll, label):
     if r.returncode != 0:
         say("   inject FAILED: %s" % (r.stdout or r.stderr or "")[-200:])
         return None, None, ""
-    time.sleep(2)
-    with PipeClient() as c:
-        c.assert_build()
-        c.ensure_scanned()
-        p = c.request("get_pointers")
+    # ⚠ POLL, do not sleep a constant. The PRE side is measurably SLOWER to become
+    # ready — the broken predicate hands the data scan ~1,500 more candidates and then
+    # validates a bogus 2.5M-object pool, so init runs long. A flat `sleep(2)` worked on
+    # the post side and failed on the pre side twice in a row, which reads as "the DLL
+    # crashed" and is not what happened. The wait is now a real deadline and the time is
+    # REPORTED, because the difference is itself a measurement.
+    t0 = time.time()
+    p = None
+    while time.time() - t0 < 180:
+        try:
+            with PipeClient() as c:
+                c.assert_build()
+                c.ensure_scanned()
+                p = c.request("get_pointers")
+            break
+        except Exception:
+            time.sleep(3)
+    ready = time.time() - t0
+    if p is None:
+        say("   %-6s NEVER became ready within 180 s" % label)
+        return None, None, ""
+    say("   %-6s ready after %.0f s" % (label, ready))
     scan = LOGDIR / "scan-0.log"
     txt = scan.read_text(encoding="utf-8", errors="replace") if scan.is_file() else ""
     m = re.findall(r"code=\[0x([0-9A-Fa-f]+)-", txt)
@@ -148,6 +176,10 @@ def run_host(dll, label):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    # A host left over from an aborted run still HOLDS the staged DLL, and the copy then
+    # fails with WinError 32 after both builds have already run. Clear the field first.
+    subprocess.run(["taskkill", "/F", "/IM", "DumperTest.exe"], capture_output=True)
+    time.sleep(1.5)
     gbak, mbak = GENAU.read_bytes(), MACHT.read_bytes()
     post_dll, pre_dll = OUT / "recovery_post.dll", OUT / "recovery_pre.dll"
     try:
@@ -219,24 +251,45 @@ def main():
                      "not comparable and the rig will not pretend otherwise" % (post_code, pre_code))
 
     say("")
-    say("== 4. THE ACCEPTANCE CRITERION — pre vs post, byte for byte ==")
+    say("== 4. THE ACCEPTANCE CRITERION — the two targets it can be applied to ==")
     if comparable:
-        for k in ("gobjects", "gnames", "gworld"):
+        for k in ("gnames", "gworld"):
             same = str(post_p.get(k)) == str(pre_p.get(k))
-            say("   %-9s %s" % (k, "identical" if same else
-                                "MOVED  %s -> %s" % (pre_p.get(k), post_p.get(k))))
+            agrees = str(base_p.get(k)) == str(post_p.get(k))
+            say("   %-9s pre==post: %-5s   ==AOB baseline: %-5s   (%s)"
+                % (k, same, agrees, post_p.get(k)))
             if not same:
                 fails.append("%s MOVED between the two predicates — that is the regression the row "
                              "exists to catch" % k)
-        say("")
-        say("   bonus (not asked for): does recovery agree with the AOB baseline?")
-        if base_code == post_code:
-            for k in ("gobjects", "gnames", "gworld"):
-                say("      %-9s AOB=%s  recovery=%s  %s"
-                    % (k, base_p.get(k), post_p.get(k),
-                       "same" if str(base_p.get(k)) == str(post_p.get(k)) else "DIFFERENT"))
-        else:
-            say("      skipped — the baseline run loaded at a different base (0x%s)" % base_code)
+            if not agrees:
+                fails.append("%s: recovery disagrees with the AOB baseline — worth understanding "
+                             "before trusting either" % k)
+
+    say("")
+    say("== 5. GObjects — REPORTED, not asserted ==")
+    say("   pre=%s  post=%s  (baseline via AOB: %s)"
+        % (pre_p.get("gobjects"), post_p.get("gobjects"), base_p.get("gobjects")))
+    say("   ⛔ Not an acceptance criterion on this host: forced onto the data-scan fallback,")
+    say("      ValidateGObjects accepts a FALSE POSITIVE (object counts of 583 / 2,556,928 against")
+    say("      a real 25,179) and the answer is a HEAP address, so it moves every launch. Which")
+    say("      false positive wins depends on live heap. Comparing these two would read noise as")
+    say("      signal. Closing this half needs a UE title whose GObjects AOB genuinely fails.")
+
+    say("")
+    say("== 6. THE WIN — candidate count, and its own variance ==")
+    def cands(txt):
+        import re as _re
+        return [int(x) for x in _re.findall(r"Found (\d+) static pointers", txt)]
+    cpre, cpost = cands(pre_txt), cands(post_txt)
+    say("   pre =%s   post=%s" % (cpre or "?", cpost or "?"))
+    if cpre and cpost:
+        gap = cpre[-1] - cpost[-1]
+        say("   gap = %d" % gap)
+        say("   ⚠ Run-to-run variance measured at +-5 over 3 runs per side (live .data contents),")
+        say("      so a gap of this size is signal. A gap under ~50 would NOT be.")
+        if gap <= 50:
+            fails.append("the candidate gap is %d, inside the noise floor — the win is not "
+                          "demonstrated by this run" % gap)
 
     say("")
     if fails:
@@ -244,8 +297,10 @@ def main():
         for f in fails:
             say("   - %s" % f)
         return 1
-    say("Genau RIP recovery A/B: PASS — the recovery paths ran, GObjects and GNames resolved through")
-    say("     them, and both predicates produced byte-identical addresses.")
+    say("Genau RIP recovery A/B: PASS — the recovery paths ran on both sides, GNames resolved")
+    say("     through them to a byte-identical address that also matches the AOB baseline, and the")
+    say("     candidate count dropped far beyond its own variance. GObjects is reported, not")
+    say("     asserted, for the reason in section 5.")
     return 0
 
 
