@@ -335,6 +335,42 @@ about a different property entirely. The conclusion happened to be true. One `gr
 
 -----
 
+### 1.aa When no host has the case, MANUFACTURE it — and let the write be the negative control
+
+`V6/U8` step 2 wanted a `NameProperty` whose value carries a numeric suffix (`Slot_1`), to check
+that Live Walker and Value Search render the same 8 bytes of an `FName`. DumperTest has none —
+measured three ways rather than assumed (a game-wide 375-property sweep, the test actor's own
+`Name_*` fields, `Map_NameToInt`'s three keys: all `Number=0`). The reflex is to go install or boot
+a game that has one, which costs a whole session and leaves the row open until then.
+
+**Cheaper and strictly stronger: write the case into memory with CE, observe, write it back.**
+
+```
+as found  1D 04 00 00 00 00 00 00  ->  GameNetDriver
+written   1D 04 00 00 02 00 00 00  ->  GameNetDriver_1
+restored  1D 04 00 00 00 00 00 00
+```
+
+⭐ **The write is not a workaround for the missing fixture — it is a better experiment than the
+fixture would have been.** A found `Slot_1` shows only that the panels agree. A *toggled* one shows
+they agree **because they read that field**: scanning the bare name went from **267 hits to 266**
+and the row vanished the instant the `Number` moved, which proves the matcher is not comparing
+`ComparisonIndex` alone. Two panels can agree while both ignore the same half of a value; only the
+transition rules that out. This is §1.2's negative control, obtained for free by owning the input.
+
+**When it applies:** the quantity is (i) reachable and writable from outside, (ii) inert enough that
+a wrong value cannot corrupt state you care about — a scratch field in our own test fixture is
+ideal — and (iii) restorable, with the restore **verified by re-reading**, not assumed from the
+write returning.
+
+⛔ **When it does not:** anything the game recomputes, anything persisted to disk, and anything whose
+wrong value could crash a session you still need. And do not manufacture the case in a title you did
+not launch yourself for this purpose.
+
+⚠ **Keep the third reader.** CE's raw `readBytes` is what makes this more than self-agreement: Live
+Walker and Value Search are two consumers of the same DLL, so they can share a decoding bug. The
+tool doing the write is conveniently also outside that path — use it to read as well as to write.
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
