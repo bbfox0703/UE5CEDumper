@@ -271,9 +271,9 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 | # | 做什麼 | 預期 |
 |---|--------|------|
-| 1 | UI 連上已注入的遊戲後，**在連線狀態下直接關掉 UI**。看 `pipe-0.log` 收尾那幾行。 | 乾淨結束，**不可以**出現 `Pipe: ReadLoop error`。修正前那一行是關閉時的 NullReferenceException，把正常關機記成故障。 |
-| 2 | 看 System 分頁的 IPC 時間數字，記下來。 | 記下數值即可，這是下一步的基準。 |
-| 3 | 在 UI 正在送要求的當下把遊戲關掉（讓寫入失敗），再看 System 分頁的 IPC 數字。 | 失敗那筆的傳輸時間**有被算進去**。修正前寫入失敗的要求一律算 0 ms，等於 pipe 最不穩的時候數字反而最好看。 |
+| 1 | ✅ **2026-08-22 通過**(`[AC13-2026-08-22]`)。AOT 版 v1.0.0.3315 連上 DumperTest 後送 `WM_CLOSE`:所有 log 裡 `ReadLoop` **0 次**,DLL 端只有兩行 `PipeServer: Client disconnected`(UI 用兩條 lane),整個 `pipe-0.log` 零 ERROR/WARN。⭐ 而且「沒有」不是空的:`ui-pipe-0.log` 在關閉前就停了,是 `ui-init-0.log` 的 `[16:24:15.146] UE5DumpUI shutting down...` 證明 logger 當下還活著並有寫入。 | 乾淨結束，**不可以**出現 `Pipe: ReadLoop error`。修正前那一行是關閉時的 NullReferenceException，把正常關機記成故障。 |
+| 2 | ⛔ **2026-08-22:System 分頁上沒有 IPC 數字**。那裡有的是 *DLL dispatch cost*(每個指令的 Count／Total／Avg／Max／% busy —— DLL **派送端**的成本)與 *Pipe Activity* 的往返時間。AC13 修的那個傳輸計時在 `PipeTransportStats`,唯一的消費者是 `DiagnosticsProbe`,而它只包住三個操作(Copy CE XML／Copy CE Field／Snapshot capture)並寫一行 `PERF` 到 `view-0.log`。 | 記下數值即可，這是下一步的基準。 |
+| 3 | ⛔ **2026-08-22:這一步的觀測管道會被它自己的動作關掉**。`DiagnosticsProbe.DisposeAsync` 收尾時要再呼叫一次 `GetDiagnosticsAsync`,而 `catch { return; }` —— 遊戲一斷線,**那行 PERF 根本不會寫**,想讀的數字產不出來。要解鎖:(1) 把 `PipeTransportStats.Snapshot()`(單調、不需要 pipe)顯示在 System 分頁上,或 (2) 用真的 in-process `NamedPipeServerStream` 在寫入中途 dispose 來測計時器的位置。⚠ `PipeTransportStats` 目前**完全沒有測試**,而同一族的 `ClassifySendFailure` 有(它是純函式)。 |
 
 -----
 

@@ -7305,6 +7305,71 @@ component in-process, inheriting from the in-memory CDOs). Given (A), this is co
 than the load-bearing half — but the row asks for it, so it stays open.
 
 
+
+### ✅ AC13 step 1 PASSES 2026-08-22; steps 2–3 are UNOBSERVABLE as written `[AC13-2026-08-22]`
+
+**Step 1 — close the UI while connected, no `Pipe: ReadLoop error`.** Run on the fresh AOT build
+(v1.0.0.3315) against an injected DumperTest, `WM_CLOSE` sent while the header still read
+`Connected — UE504 (25189 objects)`.
+
+| | result |
+|---|---|
+| `ReadLoop` anywhere in any log | **0** |
+| DLL side | `PipeServer: Client disconnected` **×2** (the UI holds two lanes), and **zero** ERROR/WARN in the whole `pipe-0.log` |
+| UI side | no error, no exception |
+
+⭐ **And the absence is not vacuous**, which took one extra check: the UI's `ui-pipe-0.log` stops at
+16:23:43, well before the close, so on its own "no error line" would prove nothing. `ui-init-0.log`
+settles it —
+
+```
+[2026-08-22 16:24:15.146] [INFO] UE5DumpUI shutting down...
+[2026-08-22 16:24:15.150] [INFO] Mirror log stopped
+```
+
+— the logger was alive and flushing at 16:24:15.146, and the DLL logged the disconnect at
+16:24:15.150. `Pipe: ReadLoop error` would have been written into exactly that window.
+
+**Steps 2–3 cannot be run as written, and the reason is worth more than the steps.**
+
+The row says 「看 System 分頁的 IPC 時間數字」. ⚠ **There is no IPC figure on the System tab.** What is
+there is *Diagnostics — DLL dispatch cost* (per-command Count / Total ms / Avg / Max / % busy — the
+DLL **dispatcher**, e.g. `get_object_list` 13 calls, 184.971 ms total, 99.3% busy) and a *Pipe
+Activity* tail of round-trip times. The transport figure AC13 fixed lives in `PipeTransportStats`,
+and its only consumer is `DiagnosticsProbe`, which wraps three specific operations (Copy CE XML,
+Copy CE Field, Snapshot capture) and writes a `PERF` line to `view-0.log`.
+
+⭐⭐ **And step 3's observable is destroyed by step 3's own action.** `DiagnosticsProbe.DisposeAsync`
+takes a *closing* `GetDiagnosticsAsync` to compute its window:
+
+```csharp
+try { after = await _dump.GetDiagnosticsAsync(limit: 0); }
+catch { return; }   // disconnected mid-operation: nothing to report
+```
+
+Close the game mid-request — which is precisely what the step asks for — and that call throws, the
+probe returns, and **no PERF line is written at all**. The number the step wants to read cannot be
+produced by the route that would report it.
+
+**What the fix actually needs, and does not have.** `PipeTransportStats` appears in **no test
+source** (only in compiled binaries under `bin/`). Its sibling on the same defect family,
+`ClassifySendFailure`, *is* tested (`PipeClientSendFailureTests`) — because it was split out as a
+pure function. AC13's fix is a `try`/`finally` **placement** and AC14's is capturing `_reader` into
+a local; neither is reachable from a pure-function test, which is why both were left to a live row
+that then turned out to be unobservable.
+
+Two ways forward, both real work rather than a click:
+1. **Surface the transport figure** where it survives a disconnect (the System tab already refreshes
+   `DLL dispatch cost` on demand; `PipeTransportStats.Snapshot()` is monotonic and needs no pipe).
+   That would make step 3 observable *and* give the metric a home outside three operations.
+2. **Test the placement** with a real in-process `NamedPipeServerStream` disposed mid-write, and
+   assert `Snapshot().Calls` incremented — the only seam that exercises where the timer sits.
+
+ℹ️ Same shape as `[ORPHANGATE-2026-08-22]` earlier today: a live row that keeps not getting run, over
+logic that has no test. There the answer was to write the test; here the pure-function seam does not
+exist, so the honest recommendation is (1) first.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
