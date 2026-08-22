@@ -7412,6 +7412,55 @@ differ only in bit index — the masks are computed per field, not stamped.
 No crash and no blanking, which is the row's stated FAIL condition.
 
 
+
+### 🟡 V6/U8 step 1 — the auto-refresh half attempted 2026-08-22, NOT closed `[V6-AUTO-2026-08-22]`
+
+⭐ **First: the row's own blocker was stale.** It said to wait until `[AUTOREFRESH-2026-08-19]` was in
+a *published* build. That fix was **VERIFIED 2026-08-20 (steps 1–7 all pass)** and `dist` here is now
+1.0.0.3315, so the gate was already lifted — §2.13 again, a deferral reason outliving its cause.
+
+**Established, on the AOT build against DumperTest (`UWorld ThirdPersonMap`, filter `SkyLight`,
+2 matches, interval 6 s):**
+
+- The countdown **runs and re-arms** (`sec · 5s → 4s → …`), i.e. the `[AUTOREFRESH]` freeze-at-0s is
+  gone in a published build.
+- Across **4 consecutive auto ticks** the filter text, the `2 matches` count and the **selected row**
+  (`SkyLight.SkyLightComponent0`) all survived, and the grid did not move.
+  ⚠ The "does not jump to the top" clause was **vacuous in that run** — the grid was already at the
+  top, so there was nothing to lose. Not evidence.
+- ⭐ **The auto path is not a separate path**: `OnAutoRefreshTick` (`:5738`) does nothing but
+  `await RefreshAsync()`, which passes `clearFieldSearch:false` and then `RestoreSelectedField`. The
+  manual half of this step is already ✅ (2026-08-17), and four tests pin the state across a refresh
+  (`LiveWalkerSearchHighlightTests.Refresh_KeepsTheKeywordAndReMarksTheFreshRows` and siblings), plus
+  `LiveWalkerSearchNavTests` for the ↑/↓ stepper.
+
+**Not established, and deliberately NOT filed as a defect:** the match highlight was observed to
+**disappear after an auto tick** while a manual `Refresh` six seconds earlier had **preserved it**,
+with `2 matches` still displayed both times. An identical code path cannot produce both outcomes, so
+**one of those two observations is unreliable** and neither is worth a finding on its own.
+
+⚠⚠ **The instrument is what failed, and this is the part to carry forward.** The Live Walker toolbar
+**reflows** — `Find Refs` and `Related` appear once an object is loaded — so button coordinates
+captured earlier in the same session go stale *silently*:
+
+| click | intended | actually hit |
+|---|---|---|
+| `(918,195)` "turn Auto OFF" | Auto | Auto — but the earlier ON/OFF bookkeeping was wrong, so a control ran with Auto **ON** |
+| `(547,301)` ▼ step | ▼ | the **"2 matches" label** — the ▼ had moved to x≈521 |
+
+So the "the ↑/↓ stepper stopped working" half is **unverified**: my own click detector was never shown
+to fire in the post-auto state, and a detector that has not been shown to work cannot testify to a
+failure (§1). Two of three coordinate assumptions went stale mid-run before I noticed.
+
+**What this row needs next**: either a human at the keyboard, or an instrument that does not depend
+on pixel positions in a reflowing toolbar — re-read the control's position from a fresh screenshot
+immediately before every click, and assert the click landed before asserting anything about what
+followed.
+
+ℹ️ Step 2 (a `NameProperty` with a numeric suffix cross-checked against Value Search) was not
+attempted.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

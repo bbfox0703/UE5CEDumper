@@ -641,6 +641,28 @@ gap shipped a stale binary past a green run: `build.ps1 -Mode Publish` printed
   and keep the good output on disk when the verification fails.
 
 
+
+### 2.5d A computer-use coordinate is a MEASUREMENT, and it expires when the layout reflows
+
+Driving the Live Walker on 2026-08-22, two of three button coordinates captured earlier in the same
+session were wrong by the time they were used — silently, because a click on empty chrome does
+nothing and looks exactly like a click on a control that did nothing.
+
+- **The toolbar reflowed mid-session.** `Find Refs` and `Related` appear once an object is loaded,
+  pushing everything right of them left. The ▼ match-stepper moved from x≈547 to x≈521, so two
+  "press ▼" actions actually clicked the **"2 matches" label**.
+- The damage is not the wasted click, it is the **conclusion**: "the stepper stopped working after
+  auto-refresh" was one sentence away from being filed as a defect, on an instrument that had never
+  been shown to fire in that state.
+- **Rule**: before a click that an assertion depends on, re-read the control's position from a fresh
+  screenshot, and prove the click LANDED (a state change you can see) before reading anything into
+  what follows. This is §1's "a check must be shown able to fail" applied to the actuator rather
+  than the detector.
+- The same session also had a toggle whose ON/OFF bookkeeping drifted, so a "control with the
+  feature OFF" ran with it **ON**. ⭐ For any toggle, read its state back from the screen — the
+  countdown, the highlight, the label — rather than tracking it in your head across a long run.
+
+
 ### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
 
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
