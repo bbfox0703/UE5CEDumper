@@ -16205,7 +16205,73 @@ Where a step is already marked done, it is done — this is not a fresh queue.
 ⭐ **These are still open verification work**; they are tracked by the item ids that already
 appear elsewhere in this file. What changed is only where the STEPS live.
 
-### ⬜ AF16–AF23 —— DataGrid 欄位標題排序（**必須用 AOT 版**）
+### 🟡 AF16–AF23 step 2 — Props half PASSES on the AOT build; Xref half still lacks a ≥2-row case `[AF16-PROPSSORT-2026-08-22]`
+
+Run on **DQ7R** (`dist` AOT **v1.0.0.3315** — the trimmed binary this row insists on, since the whole
+defect class is "the reflection sort survives JIT and is trimmed out of what ships"), UE427,
+149,370 objects.
+
+⭐⭐ **THE UNLOCK, and it is the thing to read if this row is ever revisited: the Props dialog's
+"Class fields only" checkbox is CHECKED by default and hides locals/temporaries.** That single
+default is why five earlier attempts — and, on the evidence of its note, an earlier session — saw
+`0 properties` and concluded the dialog produced nothing. The status line says so if you read it
+closely: `0 properties (0 written) (1 locals/temporaries hidden)`. **Unchecking it** turned that
+into a full table.
+
+**The second half of the unlock: pick a function whose Flags are `BC` WITHOUT `Native`.** A
+`BC,Native` function takes the native-disassembly path and reports `native disasm — heuristic, N
+unmapped`; a pure Blueprint function (`BC,BE`, `BC,BE,Event`) takes the exact bytecode path. Filter
+Interesting Funcs by `ExecuteUbergraph` on a `WBP_*` class to find them in bulk.
+
+**Fixture used:** `ExecuteUbergraph_WBP_Battle_LvUpSkill` → **11 properties (6 written)**, which is
+comfortably the "≥2 rows" the row asks for, and genuinely discriminating: Access values
+`2W/4R`, `2W/3R`, `1W/2R`, `2W/1R`, `1W/1R`×2 and five `read`; Re values 1,2,2,2,2,2,3,3,3,5,6;
+scopes `instance` and `local`; types Array/Int/Bool/Object.
+
+**All headers clicked, and every one reorders** (Access ×2, Re ×2, Scope, Property, Type):
+
+| header | ascending | descending |
+|---|---|---|
+| **Access** | five `read` first, then `1W/2R`, `1W/1R`, `1W/1R`, `2W/4R`, `2W/3R`, `2W/1R` | `2W/4R`, `2W/3R`, `2W/1R`, `1W/2R`, `1W/1R`, `1W/1R`, then the `read`s |
+| **Re** | 1,2,2,2,2,2,3,3,3,5,6 | exact reverse |
+| **Scope** | `instance` first, then all `local` | — |
+| **Property** | alphabetical (`CallFunc_Add_IntInt` → `CallFunc_Array_Get_Item` → …) | — |
+| **Type** | grouped: Array, Bool, Bool, Int, Int, … | — |
+
+⭐ **Access is provably NOT a string sort**, which is what the row is really asking. Ascending puts
+all five `read` rows **first**; a lexicographic sort would begin with `"1W / 1R"` and put `"read"`
+last. It orders on the write count as a number (`read`=0W < 1W < 2W).
+⚠ **Honest limit:** the row's sharpest example is *"12W / 3R above 2W / 1R"*, i.e. a two-digit
+count. This table's maximum is `2W` and Re maxes at 6, so the **two-digit** case is still untested —
+string and numeric agree on single digits. What is proven is the `read`-vs-`1W` ordering, which no
+string sort produces.
+
+⭐ **No cell-recycling corruption across 8 reorderings.** In every ordering each row's Access / Re /
+Scope / Type stayed glued to its own Property — `CallFunc_GetAllChildren_ReturnValue` always
+`2W/4R, 6, ArrayProperty`; `CallFunc_Less_IntInt_ReturnValue` always `1W/1R, 2, BoolProperty`;
+`VerticalBox_0` always the only green `instance`. That is exactly what the `supportsRecycling` bug
+would break, and all 11 property names stayed distinct.
+
+⚠ **The row says "6 headers each"; this dialog has 5** — `Access | Re | Scope | Property | Type`.
+A `Cont` column exists in other instances but was not present here, maximised. Not a defect; the
+row's count is what is off.
+
+**Xref half — 🟡 the dialog is PROVEN FUNCTIONAL but no ≥2-row instance was found.**
+`WBP_Battle_LvUpSkill_C::VerticalBox_0` → **1 row** (`instance | 2 | read | WBP_Battle_LvUpSkill_C`),
+which retires the earlier worry that the Xref dialog never returns anything. Seven other fields
+returned 0, and the pattern is now understood rather than mysterious: **DQ7R's Blueprint bytecode
+touches widget-internal fields, while its gameplay data is C++-driven.** `DOLLGameCharacter::MaxHP`,
+`WBP_Common_GaugeHp_C::FrontBar`/`BackBar` and `BP_BCAI_Monster_C::Probability_Gake` all → 0,
+correctly (the dialog's own note says a native field returning empty is expected).
+
+▶ **To finish the Xref half**, find a field that **two or more Blueprint functions** touch — most
+likely a variable of a BP with several named functions plus an ubergraph, not a widget whose parent
+class is C++. Cross-checking with a Props dialog first (it names the fields a given BP function
+touches) is the cheap way to find one, rather than guessing fields.
+
+-----
+
+### (original steps) AF16–AF23 —— DataGrid 欄位標題排序（**必須用 AOT 版**）
 
 *優先度 **中** · ⚠ **一定要用 `build.ps1 -Mode Publish` 出來的 trimmed 版**。這個問題在一般 dev build
 上不會出現，用 dev build 測等於沒測。*
