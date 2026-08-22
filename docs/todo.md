@@ -7506,6 +7506,50 @@ hundreds of leaves, still far under the 4,000 cap. ⚠ The WARN's own channel wa
 proven; the load-bearing evidence is that the scans demonstrably ran at that scale.
 
 
+
+### 🟡 G11 steps 3–4 ANSWERED 2026-08-22 `[G11-TIERS-2026-08-22]` — Tier 2 has never fired here, and Tier 3 has no subject
+
+Both steps are greps, and both come back empty. What makes the emptiness *evidence* rather than a
+non-result is the survey underneath it — every `DetectVersion` line across **every game's archived
+scan log on this machine**:
+
+| ladder line | occurrences |
+|---|---|
+| `Attempting to detect UE version...` | **66** |
+| `PE VERSIONINFO -> UE 5.x` (happy path) | 26 |
+| `PE VERSIONINFO … — unrecognised` | 33 |
+| `PE resource failed, falling back to memory string scan` | 36 |
+| `Tier 1 (ascii) '++UE4+Release-4.18' -> 418` | 3 |
+| `Tier 1 (utf16) '++UE4+Release-4.27' -> 427` | 3 |
+| **`Tier 2 Release prefix -> NNN`** | **0** |
+| **Tier 3 / low confidence** | **0** |
+
+⭐ **The channel is proven**: the ladder ran 66 times over **23 distinct hosts**, fell through to the
+memory scan 36 times, and reached **Tier 1 on three separate games** — `DQ7R` and
+`DQIandIIHD2DRemake` (utf16, 4.27) and `Octopath_Traveler` (ascii, 4.18). So "no Tier 2 line" is not
+"nobody looked".
+
+**Step 3 — answered: Tier 2 has never been reached on this corpus.** Nothing to record about its
+accuracy, and the useful finding is the inverse of what the step expected: **the Tier 2 rung is
+un-exercised in the field**, so nothing here can say whether it reports the right version.
+
+**Step 4 — there is no subject.** It says "re-run a game that previously reported Tier 3 (low
+confidence)". **Zero** Tier 3 lines exist, so no such game has ever been seen here. The step cannot
+be run rather than has not been.
+
+ℹ️ This also **corroborates `G2` step 2's blocker independently**. That row's `tier1_host_survey.py`
+sweep concluded the only Tier-1-capable hosts installed are UE4; the log corpus agrees from the
+other direction — all three games that actually produced a Tier 1 line are UE4 (4.18 / 4.27), so the
+**UE5 branch still has no host**, measured twice by different means.
+
+⚠ DumperTest cannot supply any of this: its version is **cached** (`FindAll: UE Version = 504
+(cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`), so the ladder does not run at
+all, and it has intact VERSIONINFO so it would stop at the first rung anyway.
+
+**What steps 1–2 still need**: a game not yet recorded (step 1 asks for at least one more beyond
+Elliot and DragonSword Awakening) and an Avowed injection (step 2). Neither is a grep.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

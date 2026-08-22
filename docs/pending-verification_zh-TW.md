@@ -170,7 +170,7 @@ session 的順序很好用，保留。
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
-| 2 | ✅ **`ascii` 已於 2026-08-18 用 OCTOPATH 驗出**（`winmm.dll` proxy）：`DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418`。四種組合已收三種（`utf16`+UE4、`ascii`+UE4、Tier 0 直接結束），**只剩 UE5 分支**。 | ⛔ **UE5 分支本機無宿主，先別開遊戲**：全機 18 個已安裝 UE 執行檔用 `py tools/verify/tier1_host_survey.py` 離線掃過，只有 3 個能產生 Tier-1 行，全是 UE4。需要「**同時**穿過 Tier 0 **且**映像檔內含 `++UE5+Release-` needle」的遊戲 —— Light Maze/Lushfoil/Manor Lords 有 needle 但停在 Tier 0；Solarpunk/TQ2/ES2/STVoyager/Satisfactory/DSA/Avowed 連 needle 都沒有。<br>⚠ **裝新遊戲前先用該工具篩**，不要靠引擎版本猜。 |
+| 2 | ✅ **`ascii` 已於 2026-08-18 用 OCTOPATH 驗出**（`winmm.dll` proxy）：`DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418`。四種組合已收三種（`utf16`+UE4、`ascii`+UE4、Tier 0 直接結束），**只剩 UE5 分支**。 | ⛔ **UE5 分支本機無宿主，先別開遊戲**：全機 18 個已安裝 UE 執行檔用 `py tools/verify/tier1_host_survey.py` 離線掃過，只有 3 個能產生 Tier-1 行，全是 UE4。需要「**同時**穿過 Tier 0 **且**映像檔內含 `++UE5+Release-` needle」的遊戲 —— Light Maze/Lushfoil/Manor Lords 有 needle 但停在 Tier 0；Solarpunk/TQ2/ES2/STVoyager/Satisfactory/DSA/Avowed 連 needle 都沒有。<br>⚠ **裝新遊戲前先用該工具篩**，不要靠引擎版本猜。<br>✅ **2026-08-22 從另一個方向印證**(`[G11-TIERS-2026-08-22]`):全機 log 裡真正產生過 Tier 1 的三款遊戲(DQ7R／DQ I&II／OCTOPATH)**全是 UE4**(4.27／4.27／4.18),與離線掃描的結論一致 —— UE5 分支確實無宿主,兩種方法各自測到同一件事。 |
 
 ### ⬜ W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
 
@@ -197,8 +197,8 @@ session 的順序很好用，保留。
 |---|---|---|
 | 1 | 挑一款尚未記錄的遊戲，換到 build ≥3112 前先記下 ueVersion / versionDetected / lowConfidence，換版後再看一次。 | 三個值完全相同；有任何變動就回報遊戲與前後值。<br>⚠ 已完成 Elliot 與 DragonSword Awakening，至少要再補一款。 |
 | 2 | 注入 Avowed（packed 標題），比對偵測到的版本。 | 與舊 build 相同。 |
-| 3 | grep scan-0.log 的 DetectVersion: Tier 2 Release prefix -> NNN。 | 若出現，記錄遊戲名稱、版本，以及是否與該遊戲實際版本相符。<br>⚠ VERSIONINFO 完整的遊戲會停在 PE VERSIONINFO 那行、根本不進 tier ladder；要用 version resource 被 strip 的標題（Elliot）。 |
-| 4 | 用先前會回報 Tier 3 (low confidence) 的遊戲重跑一次。 | 回報的版本與先前相同。 |
+| 3 | ✅ **2026-08-22 已答:本機從未出現過 Tier 2**(`[G11-TIERS-2026-08-22]`)。掃過全機所有遊戲的封存 scan log:`Attempting to detect` **66 次**、23 個宿主、落到記憶體掃描 36 次、**Tier 1 出現 6 次(3 款遊戲)**,但 `Tier 2 Release prefix` **0 次**。⭐ 所以這個「沒有」是有通道證明的測量,不是沒人看。真正的發現是反過來的:**Tier 2 這一階在實地上完全沒被走過**。 | 若出現，記錄遊戲名稱、版本，以及是否與該遊戲實際版本相符。<br>⚠ VERSIONINFO 完整的遊戲會停在 PE VERSIONINFO 那行、根本不進 tier ladder；要用 version resource 被 strip 的標題（Elliot）。 |
+| 4 | ⛔ **2026-08-22:本機沒有這種遊戲**。全機 log 裡 Tier 3／low confidence **0 筆**,所以這一步不是「還沒做」而是「沒有對象可做」。 | 回報的版本與先前相同。 |
 
 ### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
