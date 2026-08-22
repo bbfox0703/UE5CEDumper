@@ -2037,6 +2037,14 @@ architecture or UX changes in these areas.
   prints the open HIGH/MED tier with segments. The spent dossier is in `docs/archive/`; full
   rationale in the 2026-08-17 dev-log entry.
 
+- **Three Avalonia fix designs killed BY MEASUREMENT — do not re-propose any of them.** Each was tried
+  against the real UI and each failed to do the thing it was proposed for: **(a)** restoring a scroll
+  anchor with `ScrollIntoView`; **(b)** collapsing a set of collection edits into a single `Reset`;
+  **(c)** a `Dispatcher`-posted repaint to make a cleared `NumericUpDown` redraw. ⚠ They are grouped
+  here because they share a failure mode — all three are the *obvious* fix for their symptom, so a
+  fresh session re-invents them. Moved here from the memory index 2026-08-22; that index does not
+  travel with git, and this was the only fact in it the repo did not already own.
+
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,
 `multipipe-eval.md`, and `Nibble-Mask-Evaluation.md` in the AOBMaker repo.
