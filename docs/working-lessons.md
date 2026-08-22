@@ -836,6 +836,36 @@ the day was already committed — which is the other half of why the commit-earl
 keeping.
 
 
+
+### 2.13 A DEFERRAL REASON AGES WORSE THAN THE FINDING IT DEFERS
+
+*Measured over 2026-08-21/22. Six rows closed; **five had sat on a stated blocker that was simply
+false.*** The finding itself was fine each time — what had rotted was the sentence explaining why it
+could not be checked yet.
+
+| the deferral said | what was actually true |
+|---|---|
+| "only a real mount point can verify it" (`AC17`/`VOLUMEROOT`) | a cross-volume `mklink /J` junction separates the volumes just as well, and needs no elevation |
+| "the deps listing shows a breakage" (`PROXYDEPS`) | it shows **empty translation units** — six 527-byte objects against a smallest-real 10,985 |
+| "cannot be visually verified in an unattended session" | computer-use drove all five steps, including hand-corrupting a settings file to a value no control can produce |
+| "needs a real scaling change, the one row a script cannot do" (`AF21`) | the desktop is *permanently* at 225%; and the row's own gesture (hang it off the **right** edge) provably **cannot** expose the defect, so following it yields a confident false PASS |
+| "needs a game with a `UDataTable` over 64 rows" (`V8`) | five existing tests already pin every step's substance; only "is it rendered" is left |
+
+⭐ **Why it rots in exactly this direction.** A deferral is written at the moment of *least*
+knowledge about the thing — right after diagnosing the defect, before anyone has tried. It then
+travels attached to the row as though it were a measured fact, and every later reader treats it as
+one, because it is sitting next to a diagnosis that IS well-evidenced.
+
+▶ **So: re-derive a deferral's premise before accepting it, exactly as §2.4 says to re-derive a
+finding's premise before fixing it.** Ask what specifically would have to be true, and whether it
+has ever been checked. Cheap: all five above collapsed in minutes.
+
+⚠ **And the sharpest version — a blocker can be worse than wrong, it can be actively misleading.**
+`AF21`'s row named a gesture that exercises the *permissive* side of the guard, so a careful tester
+following it exactly gets a pass and learns nothing. When a row prescribes a specific manipulation,
+check that the manipulation lands in the band where the two builds actually differ.
+
+
 ### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
 
 A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the
