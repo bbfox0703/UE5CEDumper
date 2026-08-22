@@ -3178,6 +3178,15 @@ spot-check rather than a 30-column sweep.
 
 > ### ✅ AF21 PASS 2026-08-21 `[AF21-HIDPI-2026-08-21]` — and the row's own step could never have found it
 >
+> ⭐ **Re-run unchanged on build 3313, 2026-08-22**, and the 繁中 section — which had been left
+> behind after this PASS — is now deleted. Same three arms, band re-derived from the live
+> display rather than remembered: screen 3840 px, 2.25× (216 dpi), window 1124 DIP → 2529
+> physical, post-fix accepts `x >= -2409`, pre-fix `x >= -1004`, discriminating band
+> `-2409 <= x < -1004`. Witness `-1707` kept; off-screen `-2809` reset to 345; on-screen `200`
+> kept. ⚠ Note the band is **negative** — which is the arithmetic behind "hanging it off the
+> RIGHT edge cannot expose the defect", so a tester following the row's own words gets a
+> confident PASS and learns nothing.
+>
 > **The fix is one line in `MainWindow.OnOpenedValidatePlacement`:**
 > `int rw = (int)Math.Round(_normalWidth * scale);` — the `* scale`. `IsVisibleEnough` itself was
 > never wrong and is already unit-pinned; it was being handed a rect two-and-a-bit times too narrow.

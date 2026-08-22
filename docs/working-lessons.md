@@ -797,6 +797,45 @@ count checked against an expectation you formed before the edit is not a verific
 break inbound references, so it is flagged here rather than silently changed.
 
 
+
+### 2.12 A sequence of structural edits compounds — anchor each one on what it MATCHES, not on what you meant
+
+*2026-08-22, same session as §2.11, same afternoon, different mechanism. Both were mine.*
+
+Three edits to `docs/pending-verification_zh-TW.md`: delete section AC17, delete section AF21,
+rewrite section V8. Each was written as *"find the heading, walk BACK to the `-----` above it, cut to
+the next heading"*. Individually correct. In sequence, wrong.
+
+Deleting AC17 took the separator above it — which was the separator **below its neighbour Y12**. Now
+Y12 and AF21 were adjacent with nothing between them. The AF21 edit then walked back looking for a
+`-----`, found the one above **Y12**, and deleted Y12 as well.
+
+⛔ **The bug is `rindex` on a shared delimiter.** A separator does not belong to the section after
+it; it belongs to the *gap*, and the previous edit may already have consumed it. **Delete forward
+only** — from the heading to the next heading — which takes the section together with the separator
+that trails it and cannot reach a neighbour:
+
+```python
+m = re.search(r"^(?:### |## )", text[i + 4:], re.M)   # next heading, H3 or H2
+end = i + 4 + m.start()
+```
+
+⭐ **What caught it was the DERIVED COUNT, not review.** The file states its own invariant —
+`grep -c '^### '` minus the three subsections must equal the table's total — and after the second
+delete it read 47 against a table saying 48. One heading unaccounted for. Nothing in the prose
+looked wrong; the deleted section was 22 lines in the middle of a 60 KB file.
+
+▶ **So: give a structural document an arithmetic invariant, and re-derive it after every edit.**
+This one already had one, written down by someone who had been bitten before, and it paid for itself
+within the hour. `git diff | grep '^-### '` is the confirming check — it names exactly which
+headings a change removed, which is the question you actually care about.
+
+▶ And when incremental edits have already compounded, **reset and redo them in one pass** rather
+than patching the patch. `git checkout -- <file>` was safe here only because everything earlier in
+the day was already committed — which is the other half of why the commit-early habit is worth
+keeping.
+
+
 ### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
 
 A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the
