@@ -109,6 +109,26 @@ session 的順序很好用，保留。
 維護者回報過這個畫面：Props 對話框標題連點幾次之後，兩列都顯示同一筆，但標題還是寫
 「2 properties」。成因是 cell template 的 `supportsRecycling`，已修（17 處）。
 
+> ⭐ **步驟 2 的宿主找到了：DQ7R**（`[AF-BCHOST-2026-08-22]`）。之前的交接文件說「找不到已確認有
+> Blueprint bytecode 的遊戲」，這件事已經解決 —— DQ7R **11,256 個函式中有 705 個帶 bytecode**，
+> 另有 **89 個 `BlueprintGeneratedClass`**（`BP_BCAI_Monster_C`、`BP_Weapon_Sword_C`、
+> `BP_GameInstance_C` …，Class Type 下拉選單裡直接就有這個過濾器）。
+>
+> ⚠⚠ **但步驟 2 仍然沒完成,而且卡在一個必須先解決的前置問題:「那兩個對話框從來沒被證明會出現
+> 任何一列」。** 2026-08-22 試了 **5 次全部回 0 列**:原生欄位 `DOLLGameCharacter::HP`、原生函式
+> `MoveToLocation` 與 `GetRemainingExpToNextLevel`、Blueprint 自己的變數
+> `BP_BCAI_Monster_C::Probability_Gake`,最後一次還把 `Game only` **取消勾選**當對照組,仍然 0。
+> 依鐵則 1,**在讓它至少噴出一列之前,0 是「正確的空」還是「壞掉」分不出來** —— 所以這不算缺陷
+> 回報,也不算通過。
+>
+> ▶ **下次接手的人請從這裡開始,不要重跑上面那 5 個死路**:先找一個**確定會有 refs** 的欄位／
+> 函式讓對話框噴出 ≥2 列（可從 Interesting Props 的評分或 UMG WidgetBlueprint 這種純 BP 邏輯下手），
+> 證明偵測器會 fire 之後，才有資格做「連點 6 個欄位標題」那件事。
+> ℹ️ 兩個對話框的欄位都已確認是 6 個：Props 是 `Access / Re / Scope / Cont / Property / Type`，
+> Xref 是 `Kind / Re / Access / Owner Class / Event / Function`。
+> ℹ️ 這次的環境：DQ7R + `dist` AOT v1.0.0.3315、DLL 3315、UE427、**4,393 classes / 149,408
+> objects**（和 2026-08-20 那次 AE27 完全相同，代表這個 fixture 狀態可重現）。
+
 | # | 做什麼 | 預期 |
 |---|--------|------|
 | 1 | ✅ **2026-08-22 在 AOT/trimmed 版（v1.0.0.3313，54.7 MB）上實際點過**，DumperTest UE504。每個標題點兩下：Interesting Funcs 的 Params 降冪為 **19,19,19,17,17,16,15,15**（⭐ 有鑑別力——字串排序會把 `9 (…)` 放最上面）；Detect Stats 的 Offset 升冪為 **`0x28,0x2C,0x2C,0x30,0x30,0x64`**（⭐ 字串排序會從 `0x174` 開始）；Detect Stats 的 Result 升冪全 `· guess`、降冪全 `✓ confirmed`；Live Funcs 的 Period 升冪 17,17,33,33,33,33、降冪相反。⚠ **Console / Live Funcs 的 Params 和 Period 這幾欄不具鑑別力**（參數數量都是個位數、週期在固定幀率下只有兩種等寬值），它們證明的是另一半、也是只有 trimmed build 能回答的那一半：**標題是活的、會排、會反轉**。⚠ **Live Walker 的 Params 這次沒跑**（面板上找不到函式表入口），那一欄本來就是修正前就正確、且 AF20 已驗過的那一欄。ℹ️ 順帶在 UI 上確認了 `[CADENCEGAP-2026-08-22]`：`CameraModifier` 496 calls / 17 ms 對 `ABP_Manny_C` 248 calls / 33 ms —— 呼叫兩倍、週期一半，修正前兩者都顯示 33 ms。 點 Live Funcs 的 **Period**、Detect Stats 的 **Result**（⚠ 舊版這裡寫「✓」，但那是**儲存格內容**不是欄位標題；標題字串是 `str.Detect.ColConfirm` = `Result`，en.axaml:47。而且一次 Detect 若沒有任何 confirmed 列，畫面上連 ✓ 都不會出現）和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |

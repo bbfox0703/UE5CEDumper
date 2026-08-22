@@ -2782,6 +2782,46 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### ⭐ THE BLUEPRINT-BYTECODE HOST IS FOUND — DQ7R. Step 2 is still open, on a NEW blocker. `[AF-BCHOST-2026-08-22]`
+>
+> **The precondition is answered.** The handover could not name a game with Blueprint bytecode, and
+> DumperTest structurally cannot serve (its `Funcs` column is empty). **DQ7R can**: `Interesting
+> Funcs` → Load reports **11,256 functions across 4,393 classes (2,534 above threshold 5, scanned
+> 149,408 objects)**, the Flags column carries `BC` (`BC,Native`, `BC,BP,Const`, `BC,Exec,Nati`),
+> the Xref dialog independently reports **705 of 11,256 functions carry bytecode**, and the Object
+> Tree's Class Type drop-down has a **`BlueprintGeneratedClass`** filter listing **89** of them
+> (`BP_BCAI_Monster_C`, `BP_Weapon_Sword_C`, `BP_GameInstance_C`, …). Environment: `dist` AOT
+> **v1.0.0.3315**, DLL **3315**, UE427 — and the 4,393/149,408 pair is identical to the 2026-08-20
+> AE27 session, so the fixture state is reproducible.
+>
+> ⚠⚠ **Step 2 did NOT close, and the reason is a blocker that must be cleared FIRST: neither dialog
+> has ever been shown able to produce a single row.** Five attempts, all `0`:
+>
+> | # | target | dialog | result |
+> |---|---|---|---|
+> | 1 | `DOLLGameCharacter::HP` (native IntProperty) | Xref | `0 function(s) reference this field` |
+> | 2 | `MoveToLocation` (native) | Props | `0 properties (0 written) [native disasm — heuristic, 3 unmapped]` |
+> | 3 | `GetRemainingExpToNextLevel` (`BC,BP,Const`) | Props | `0 properties … 2 unmapped` — note it still chose the **native disasm** path |
+> | 4 | `BP_BCAI_Monster_C::Probability_Gake` (a Blueprint's OWN variable) | Xref | `0` |
+> | 5 | same, with **`Game only` unchecked** as a control | Xref | `0` |
+>
+> By 鐵則 1, **until it emits one row, `0` cannot be told apart from a broken detector** — so this is
+> filed as neither a defect nor a pass. ⛔ **Do not read it as a finding**; there is no evidence the
+> xref is wrong, and DQ7R's graphs may genuinely not touch these fields in a detectable pattern.
+>
+> ▶ **Next session starts here, and should not re-run the five dead ends above.** Find a field or
+> function that certainly HAS references — `Interesting Props` scoring, or a UMG
+> `WidgetBlueprint`, whose graphs are almost pure Blueprint variable traffic — and get **≥2 rows**
+> on screen. Only then is the "click each of the 6 headers 3–4×" check meaningful. Both dialogs'
+> columns are confirmed to be the required six: Props = `Access / Re / Scope / Cont / Property /
+> Type`; Xref = `Kind / Re / Access / Owner Class / Event / Function`.
+>
+> ℹ️ Two navigation notes that cost time: the Object Tree's **Class Type drop-down resets to `All`
+> when the tree reloads**, so set the filter *after* clearing the search box, not before. And
+> **`Find Class Funcs` is not the Xref dialog** — it answers "functions *taking* this class as a
+> parameter or return" (0 for `BP_BCAI_Monster_C`); the row's Xref dialog is the per-property
+> **`Find Funcs`** button in the Class Struct grid.
+
 > ### ⛔ THE `AF22` CONTROL IS CE-BLOCKED, and 2 sibling steps remain — 2026-08-20
 >
 > The 繁中 mirror runs AF22/AF12/AF13 as four steps. Step 1 is the block below (**done**). The rest:
