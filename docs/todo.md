@@ -6500,6 +6500,53 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ CLOSED 2026-08-22 `[AF22-PAIR-2026-08-22]` — Freeze and Force seen SIDE BY SIDE, same row, same session
+
+Step 2 was the last one open (1, 3 and 4 closed earlier today). It is step 1's **control**: the
+ordinary Freeze flow must *still* say "Create freeze script" and *still* give the CFG-block advice,
+so that "the Force dialog no longer mentions them" cannot be satisfied by having deleted the wording
+everywhere.
+
+**Run on the AOT build (v1.0.0.3313) against DumperTest, on `CharacterMovementComponent::MaxWalkSpeed`
+— the SAME row for both dialogs, one after the other:**
+
+| | **Freeze** | **Force** |
+|---|---|---|
+| title | `Freeze property value` | `Force property value` |
+| field label | `Freeze value (float):` | `Force value (float):` |
+| confirm button | **`Create freeze script`** | **`Hold this value`** |
+| inherited-field warning, tail | *"…To target a single class, edit **className** in the generated **CFG block** (or set derived = false for that class only)."* | *"…There is **no per-class switch for Force** — it holds the field on the declaring class and every subclass until you release it from the **"Forced fields"** strip."* |
+
+⭐ **Driving both from one row in one session is stronger than either half alone**, and stronger than
+the offline guard: the guard reads `en.axaml`, so it cannot tell whether the dialog *binds* the key
+it should. Here the same control produced two different sets of words because it was handed a
+different `Purpose`, which is the whole mechanism.
+
+⚠ **THE ROW IS MIS-FILED, and this is why it never got run.** It sits under **第 2 步 (needs an
+injected game)**, but the Freeze button is
+`IsEnabled="{Binding IsAobMakerAvailable}"` (`PropertySearchPanel.axaml:307`) — **it needs Cheat
+Engine with the AOBMaker plugin**, which is 第 3 步. Nothing on screen explains that; the button is
+simply grey. The Force submenu next to it has no such gate, so the two halves of one row need
+different environments.
+
+⚠ **And the enablement is ATTACH-scoped**: `PropertySearchPanel.axaml.cs:48` probes once when the
+panel attaches, behind a 5 s cooldown (`PropertySearchViewModel.cs:31`). Start Cheat Engine *after*
+the UI and the toolbar badge flips to **AOBMaker Connected** while the Freeze button stays **grey** —
+the panel already probed and will not probe again. **Switching to another tab and back re-attaches
+and fixes it.** Verified in that order: grey → tab away → tab back → enabled.
+
+⛔ **I nearly filed that as a defect.** `RefreshAobMakerAvailabilityAsync` looked like it had exactly
+one caller — itself, inside the very command the disabled button cannot invoke — which reads as an
+unbreakable deadlock. It was an artefact of **my own grep**: I had excluded lines to "focus" the
+output and the exclusion swallowed the fourth caller, the attach hook. Re-running the grep without
+the filter found it immediately. *A filtered grep is not a measurement of what exists — it is a
+measurement of what survived the filter.*
+
+ℹ️ No script was created and no value was held: both dialogs were cancelled. The check is about the
+words, and pushing a record into CE is an outward action the row does not ask for.
+
+
 ### ✅ CLOSED 2026-08-22 `[AF7-BUDGET-2026-08-22]` — `budget_hit` verified exhaustively over the pipe, and its UI consequence pinned because no host can reach it
 
 Step 3 was the last one open in this section (steps 1 and 2 closed 2026-08-21 with

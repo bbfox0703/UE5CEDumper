@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 14 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 13 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **40** | |
+| **合計** | **39** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -134,19 +134,6 @@ session 的順序很好用，保留。
 ## 第 2 步 — 要注入一個執行中的遊戲
 
 任何一款 UE 遊戲都可以。
-
-### ⬜ AF22 / AF12 / AF13 —— Force 對話框的用字、Group 每格上限要講出來
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | ✅ **2026-08-22 用字部分已由測試釘住並重驗**。四個字串逐字核對 `en.axaml:857-860`：標題 `Force property value`、欄位 `Force value ({0}):`、確認鈕 `Hold this value`、NarrowHint 不含 `className` 也不含 `CFG block` —— 全部符合。守門在 `FreezeValueDialogValidationTests.TheForceWordingNeverDescribesItselfAsAFreeze`，它**自帶負對照**（Freeze 那側必須仍然含 `freeze`／`CFG block`／`className`），所以「把字全域刪掉」不會讓它變綠；2026-08-22 另加語意釘樁（Force 鈕必須含 `hold` 且不得含 `script`，Freeze 鈕必須含 `script`），改名成 `Apply` 也會被抓到。⚠ **只剩「畫面真的長那樣」沒驗**：測試讀的是 `en.axaml` 檔案，不是 merge 後的資源；若 `App.axaml` 停止合併字典，鈕會顯示 key 本身而測試照樣全綠。 Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
-| 2 | 再走一次一般的 **Freeze** 流程。 | 仍然寫「Create freeze script」，也仍然給 CFG block 那段建議（這是上一步的對照組）。 |
-| 3 | ✅ **2026-08-22 改用測試驗證，比點畫面強**：`SnapshotViewModelTests.GroupMatch_SaysWhenASlotWasTruncated`（合成語料庫，`n = Constants.GroupPerSlotCap + 0/1`，欄位數由常數導出不寫死）。**恰好 256 → 不出提示；257 → 出提示**，兩臂都必須配出候選，所以差別只在那句話本身。第三個斷言把話綁到事實：句子印的數字必須等於 slot 真正保留的 leaf 數（`MatchedOffsets.Count`，⚠ 不是 `MatchCount` —— 快照路徑那個是 0）。**負對照跑過並還原**：把 store 的 `PerSlotCapHit` 拿掉 → 257 那臂失敗、256 那臂仍通過。⚠ **句子在畫面上讀不讀得到是另一回事**——`SnapshotPanel.axaml` 把它放在 `WrapPanel` 裡，2026-08-22 前既沒 `TextWrapping` 也沒 `ToolTip`，所以那句「結果被截斷」的提示自己被截斷了（已修，換行那半仍待目視確認）。 Snapshot 分頁 → 用一個夠常見的數值做 Group match，讓某個 slot 在某個物件上配到超過 256 個欄位。 | 狀態列多出「a slot matched more than 256 fields」那段提示（和 live Group Scan 一模一樣的句子）。 |
-| 4 | ✅ **2026-08-22 以結構斷言驗證**：`SnapshotGroupMatch_NeverTakesAPerSlotCapFromTheCaller`。這個保證本來就是結構性的——`SnapshotStore` 兩處都以 4 個引數呼叫 `GroupMatch.Run`，不傳 cap，所以預設的 `Constants.GroupPerSlotCap` 是唯一可能生效的值，Value Search 的設定**碰不到它**。**負對照**：在其中一處補上第 5 個引數 `8`，該測試逐字指出違規呼叫，而且上一列那兩臂也同時失敗（保留 8 個、句子卻說 256）——一個變異、三處響。ℹ️ 本機唯一非空的語料庫恰好落在鑑別窗口內（`TraceQueryTestResults`，264 個欄位，>256 且 <1024），要在畫面上重跑用 `py tools/verify/snapshot_cap_fixture.py` 先確認。 把 Value Search 的 per-slot cap 改成 1024，再跑一次**快照**的 Group 查詢。 | 快照這邊仍然顯示 256 —— 這是正確的，重點是現在會講出來而不是讓人以為兩邊同步。 |
-
------
 
 ### 🟡 A6 —— Force 是否對子類別一併生效（**只剩步驟 3、5**）
 
