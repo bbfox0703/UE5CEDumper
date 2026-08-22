@@ -6721,6 +6721,98 @@ can pass every clause it states and still be watching something broken; that is 
 worth running rather than reasoning about.
 
 
+
+### ✅ Y10 / Y13 CLOSED 2026-08-22 `[Y10-STEP4-2026-08-22]` — step 4, and with it the whole row
+
+Step 4 is the **control**: run Verify against a UFunction whose `parmsSize` is larger than the
+mailbox's 1024-byte `paramsData`, and show the pre-zero loop does not write past it. Before the fix
+the loop used `parmsSize` raw, so it would have scribbled over `cmdFlags`, `cmdOutFlags` and the
+live globals sitting past the struct end.
+
+**Fixture** `SequenceCameraShakeTestUtil::GetCameraCachePOV` — `ParmsSize` **2064**, static, 2 params
+(the size is a by-value `FMinimalViewInfo`), return `fstruct@16, size=2048B`.
+Arithmetic: `0x328 + 2064 = 0xB38`, so an unclamped loop zeroes exactly **`0x728..0xB38` = 1040
+bytes** — a region that held 31 non-zero bytes including two live pointers.
+
+⭐ **Both controls were run, which is what makes the null result mean anything.**
+
+| | measurement |
+|---|---|
+| baseline | two reads 12 s apart, no invoke: **0 bytes of natural churn**, 31 non-zero of 1040 |
+| **positive control** | filled `0x328..0x727` with `0xCC` → the reader saw **1024 / 1024**; after the tick, **0 / 1024**. The loop demonstrably ran and the reader demonstrably sees it. |
+| the claim | tail `0x728..0xB38`: **0 bytes changed**, 31 non-zero preserved |
+
+Without the positive control the "0 changed" reading is equally consistent with the script never
+running — which is exactly what happened on the first attempt (see below), so this is not a
+hypothetical.
+
+⭐ **A second, independent layer turned up that the row did not predict**: the helper refuses the
+call outright rather than merely clamping the zeroing —
+`[Invoke] FAILED: SequenceCameraShakeTestUtil::GetCameraCachePOV -- parmsSize 2064 out of range (0..1024)`,
+with a matching `showMessage`, and `AFTER-FAIL ACTIVE = false` (read from the Lua Engine) so the
+failed invoke unticks its own record. The artifact-level witness agrees: the emitted script reads
+`for i = 0, 1024 - 1 do writeByte(_PD_dbg + i, 0) end`, not `2064`.
+
+**Steps 1 and 2 are also satisfied, both live:**
+
+- **Step 2** — verbatim, in this run: the hint read *"complex return at +16, past the 256-byte dump
+  window above -- read it in CE's memory viewer at g_invokeMailbox + 0x328"*, i.e. it named the
+  offset instead of pointing at a dump that cannot hold the value.
+- **Step 1** — the `KismetMathLibrary::MakeTransform` run recorded under `[UNTICKPAIR-2026-08-22]`:
+  return `fstruct@80, size=96B`, so the window widened to 176 (the old flat 32 stopped 48 bytes
+  short of the return's first byte) and `11 / 22 / 33` were decodable **in the After dump** — the
+  coverage claim, witnessed rather than asserted.
+
+Step 3 closed earlier the same day (`[UNTICKPAIR-2026-08-22]`, 4 of 4). **The row is complete.**
+
+-----
+
+### ✅ FOUND + FIXED 2026-08-22 `[INVOKEHINTQUOTE-2026-08-22]` — the baked invoke script did not parse, and CE said nothing
+
+⭐ **Found by running Y10 step 4, and it is the reason the first attempt measured nothing.**
+
+`BakedScriptGenerator` interpolated the step-2 hint into a single-quoted Lua literal **without
+`EscapeLua`**, while every other interpolated piece on the same line went through it. The
+does-not-fit branch of that hint contains an apostrophe — *"read it in CE's memory viewer"* — which
+closes the string early and makes the **whole `[ENABLE]` block** a syntax error:
+
+```
+Lua error in the script at line 2:119: ')' expected near 's'
+```
+
+⚠⚠ **Cheat Engine does not report this.** Ticking the record leaves `Active` at `false` with **no
+dialog, no output and nothing in the log**. The user sees a checkbox that will not stay ticked.
+That is also what fooled the first pass here: the memory diff came back "0 bytes changed" and looked
+like a clean PASS, when in fact the script had never executed. It took `autoAssemble` on the
+record's own `[ENABLE]` text to surface the error.
+
+**Blast radius**: any invoke whose complex return does not fit the dump window — i.e. any large
+by-value struct return. Not exotic.
+
+⭐ **The branch was introduced by audit #5 Y13**, the fix that made the hint honest about whether the
+dump can hold the value, and **Y13's own test generates this exact broken script and passes on it**
+(`Y13_ComplexReturnHint_OnlyClaimsTheDumpWhenItReallyHoldsIt`) — every substring it looks for is
+present. Nothing in 4,648 tests asked whether the emitted Lua compiles.
+
+**Fixed**: `{EscapeLua(hint)}` at `BakedScriptGenerator.cs:355`.
+
+**New guard `CeLuaQuotingTests`** — a Lua scanner reporting lines where a quoted string is left open,
+skipping `--` comments and long brackets. ⚠ **It cannot be a naive quote count**: the generators
+deliberately emit `-- ... when CE's resolver ...` in comments, which is not a defect. The scanner
+was written against the **real broken artifact** first and shown to both fire (1 line, the print)
+and clear (0 after escaping that one apostrophe); **both directions are pinned as tests**.
+
+⭐ **Coverage is behavioural, not textual, on purpose.** The defect came from an interpolated
+variable defined ten lines above its use, so a grep for an apostrophe on the emitting line
+structurally cannot find its siblings — the first grep I ran came back empty and would have been
+mistaken for a clean sweep. Running them is the only measurement: the guard now generates **17 other
+generators + all 13 teleport actions + the freeze generator**, including a class name, a property
+name and a DLL path carrying apostrophes (a Windows account named `O'Brien`). All parse — the baked
+hint really was the only site.
+
+Negative control: reverting the fix fails exactly 3 tests; restored byte-exact. **4,689 / 4,689.**
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

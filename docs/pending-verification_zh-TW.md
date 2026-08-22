@@ -22,10 +22,10 @@
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
 | **第 2 步 — 要注入一個執行中的遊戲** | 13 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 7 | 遊戲 + Cheat Engine |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 6 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **38** | |
+| **合計** | **37** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -369,19 +369,6 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
 | 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
-
-### ⬜ Y10 / Y13 —— Verify 模式：合約檢查要先跑，dump 視窗要涵蓋回傳值
-
-*優先度 **高** · 需要 CE。⚠ 這兩項**沒有動 mailbox 合約**（仍是 3 / min 1），舊的 `.CT` 照樣有效。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | 挑一個回傳**複雜型別**（FString／struct）而且回傳欄位落在第 32 byte 之後的 UFunction，勾 **Verify return**，把 baked script 推到 CE，勾起記錄。 | Lua Engine 的 Before/After dump **涵蓋到回傳欄位**（視窗會自動加寬到剛好蓋住它）。 |
-| 2 | 看那行 `[Invoke] OK: … complex return` 的字。 | 只有在 dump 真的蓋得到時才會寫「see After: dump above」；蓋不到時改成講出偏移量並叫你去 CE 記憶體檢視器看。<br>⚠ 修正前不管蓋不蓋得到都寫 see After: dump。 |
-| 3 | ✅ **2026-08-22 四項全通過**(`[UNTICKPAIR-2026-08-22]`,2026-08-20 時是 3/4)。CE 改 attach 到一個犧牲用的 `python.exe` 再勾:合約檢查**先跑**、訊息**逐字含 `g_mailboxContract`**、Lua Engine **沒有出現第二份 `[Invoke] Before:` dump**(所以沒有 writeByte 跑過)、而且 **`ACTIVE=false`** —— 最後這項先前是 ❌,就是 `[FREEZEUNTICK]` 出現在 baked-invoke 產生器。 | 先跳出合約檢查的訊息（句子裡有 `g_mailboxContract`），而且**記錄會自己取消勾選**。<br>⚠ 重點是這時候**一個 `writeByte` 都不可以跑過** —— 修正前是先寫再說。 |
-| 4 | 對照組：正常連著 CE 時，挑一個 params 很大的 UFunction（by-value struct 參數）跑 Verify。 | 正常跑完。歸零迴圈現在夾在 1024 byte 以內；修正前 `parmsSize` 超過 1024 就會寫穿 `cmdFlags`／`cmdOutFlags` 和整個 mailbox 結構的尾巴。 |
-
------
 
 ## 第 4 步 — 需要特定條件的遊戲
 
