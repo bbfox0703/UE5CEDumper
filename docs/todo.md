@@ -7370,6 +7370,48 @@ logic that has no test. There the answer was to write the test; here the pure-fu
 exist, so the honest recommendation is (1) first.
 
 
+
+### ✅ B10 CLOSED 2026-08-22 `[B10-2026-08-22]` — WalkClassEx memo: timing recorded, and all three field families decode
+
+**Steps 1–2.** Snapshot capture on DumperTest (`NumericNoByte` / All numeric / Game objects only /
+Auto-detect noise): **644 objects, 12,155 fields**, and `ui-view-0.log` has the line:
+
+```
+PERF Snapshot capture: wall 638.6 ms · dispatcher busy 189.7 ms (29.7%) · 6 dispatches
+  · game WS +3.0 MiB · split dll 189.7 / ipc 34.3 / ui 414.6 ms
+  (per call: dll 37.948 / ipc 6.850 / ui 82.914 ms)
+  · top: snapshot_chunk 186.1ms/4x max 70.7ms, begin_snapshot 3.6ms/1x max 3.6ms
+```
+
+⚠ The only surviving prior figure is **5,256.2 ms** (2026-08-04), and it is **not comparable** — a
+different target and scope. Per the row, this becomes the **new baseline**: *DumperTest ·
+NumericNoByte · 644 objects / 12,155 fields · wall 638.6 ms*. Compare only against the same game and
+the same capture settings.
+
+⭐ **Bonus, and it partly unblocks `[AC13-2026-08-22]` step 2**: the transport figure that is missing
+from the System tab is right here — **`ipc 34.3 ms` over 6 dispatches (6.850 ms/call)**. So AC13's
+baseline can be taken from a DiagnosticsProbe-wrapped operation after all. Its **step 3** is still
+unobservable, for the separate reason recorded there.
+
+**Step 3 — struct type, enum name and bool mask, all populated.** Property grid on a live
+`StaticMeshActor` (`0x1FE6412F7C0`):
+
+| family | field | shown | raw `Hex` column |
+|---|---|---|---|
+| StructProperty | `PrimaryActorTick` | `{TickGroup=0, EndTick…}` | — |
+| BoolProperty (bitfield) | `bHidden` / `bCanBeDamaged` / … | `false (bit 7, mask 0x…)`, **a different bit and mask per field** | `62`, `20` |
+| EnumProperty | `SpawnCollisionHandling…` | `ESpawnActorCollisionH…` | `01` |
+| ByteProperty-as-enum | `Role` / `NetDormancy` / `AutoReceiveInput` | `ROLE_Authority` / `DORM_Awake` / `EAutoReceiveInput::Di…` | `03` / `01` / `00` |
+
+⭐ **What makes this discriminating rather than just "the columns are not blank":** the grid prints
+the **raw byte beside the decoded name**, so `03 → ROLE_Authority` and `01 → DORM_Awake` are visibly
+*two different enums each decoded correctly*. A single hard-coded mapping, or a name echoed from
+somewhere else, could not produce both. Likewise the bool rows share a byte (`0x59`, `0x5A`) and
+differ only in bit index — the masks are computed per field, not stamped.
+
+No crash and no blanking, which is the row's stated FAIL condition.
+
+
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still

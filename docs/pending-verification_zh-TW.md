@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 1 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 13 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 12 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 5 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **35** | |
+| **合計** | **34** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -222,16 +222,6 @@ session 的順序很好用，保留。
 | 3 | 展開該列按 All fields，再按一次收合 | 列出該 slot 保留的所有 leaf，且物件自己的欄位排在最前面（FrozenInt 不必往下捲）；第二次按會收合，重開會重新查詢<br>⚠ 某個值「沒出現在列上」不代表沒 match — 先看 (+N) 與 All fields 再下結論 |
 | 4 | 對 All fields 裡任一 leaf 依序按 Live / Addr / Pivot / Locate | 四個都能正常跳轉；deep 或 Snapshot 來源的列若取不到 leaf 位址則整個省略 → 0x… 箭頭，而不是印 → 0x0 或物件 base |
 
-### ⬜ B10 —— WalkClassEx memo 的耗時與欄位正確性
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 對同一款遊戲、同一個目標做一次 Snapshot capture。 | 擷取完成。 |
-| 2 | grep `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\view-0.log`（或遊戲資料夾的 `ui-view-*.log`）的 `PERF Snapshot capture`。 | 有 `wall … ms`。目前唯一留存的數字是 5,256.2 ms（2026-08-04，修正後），沒有 pre-2596 可比就把本次記成新基準，下次同一遊戲同一擷取再比。<br>⚠ 這條在 UI 端 view-0.log，不在 pipe-0.log。 |
-| 3 | 打開任一含 struct / enum / bool 欄位的物件 property grid。 | struct 型別、enum 名稱、bool mask 三欄都有值。FAIL = 這些欄位變空白，或並行掃描時當掉。 |
-
 ### 🟡 Genau RIP decode (b2544) —— **只剩 GObjects**;GNames / GWorld 已於 2026-08-22 關閉
 
 *優先度 **低** · 需要：一款 GObjects AOB **真的掃不到**、而且 data-section scan 能找出**真正**
@@ -272,7 +262,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | # | 做什麼 | 預期 |
 |---|--------|------|
 | 1 | ✅ **2026-08-22 通過**(`[AC13-2026-08-22]`)。AOT 版 v1.0.0.3315 連上 DumperTest 後送 `WM_CLOSE`:所有 log 裡 `ReadLoop` **0 次**,DLL 端只有兩行 `PipeServer: Client disconnected`(UI 用兩條 lane),整個 `pipe-0.log` 零 ERROR/WARN。⭐ 而且「沒有」不是空的:`ui-pipe-0.log` 在關閉前就停了,是 `ui-init-0.log` 的 `[16:24:15.146] UE5DumpUI shutting down...` 證明 logger 當下還活著並有寫入。 | 乾淨結束，**不可以**出現 `Pipe: ReadLoop error`。修正前那一行是關閉時的 NullReferenceException，把正常關機記成故障。 |
-| 2 | ⛔ **2026-08-22:System 分頁上沒有 IPC 數字**。那裡有的是 *DLL dispatch cost*(每個指令的 Count／Total／Avg／Max／% busy —— DLL **派送端**的成本)與 *Pipe Activity* 的往返時間。AC13 修的那個傳輸計時在 `PipeTransportStats`,唯一的消費者是 `DiagnosticsProbe`,而它只包住三個操作(Copy CE XML／Copy CE Field／Snapshot capture)並寫一行 `PERF` 到 `view-0.log`。 | 記下數值即可，這是下一步的基準。 |
+| 2 | ⛔ **2026-08-22:System 分頁上沒有 IPC 數字**。那裡有的是 *DLL dispatch cost*(每個指令的 Count／Total／Avg／Max／% busy —— DLL **派送端**的成本)與 *Pipe Activity* 的往返時間。AC13 修的那個傳輸計時在 `PipeTransportStats`,唯一的消費者是 `DiagnosticsProbe`,而它只包住三個操作(Copy CE XML／Copy CE Field／Snapshot capture)並寫一行 `PERF` 到 `view-0.log`。✅ **基準已從那條 PERF 行取得**(`[B10-2026-08-22]`):Snapshot capture 的 `split dll 189.7 / ipc 34.3 / ui 414.6 ms`,6 次 dispatch、每次 ipc 6.850 ms。 | 記下數值即可，這是下一步的基準。 |
 | 3 | ⛔ **2026-08-22:這一步的觀測管道會被它自己的動作關掉**。`DiagnosticsProbe.DisposeAsync` 收尾時要再呼叫一次 `GetDiagnosticsAsync`,而 `catch { return; }` —— 遊戲一斷線,**那行 PERF 根本不會寫**,想讀的數字產不出來。要解鎖:(1) 把 `PipeTransportStats.Snapshot()`(單調、不需要 pipe)顯示在 System 分頁上,或 (2) 用真的 in-process `NamedPipeServerStream` 在寫入中途 dispose 來測計時器的位置。⚠ `PipeTransportStats` 目前**完全沒有測試**,而同一族的 `ClassifySendFailure` 有(它是純函式)。 |
 
 -----
