@@ -1688,7 +1688,9 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 >
 > ⚠ **Three sections were KEPT because the sweep's "closed" verdict did not survive checking** —
 > logged because the cost of getting this wrong is deleting verification nobody has done:
-> * **`U16`** — the parent is `✅ DONE 2026-08-18`, but step 5 inside it is explicitly **🟡 PARTIAL**:
+> * **`U16`** — ✅ **now CLOSED 2026-08-22** (`[U16-ENUM65-2026-08-22]`); keeping it was the right
+>   call, and this is what it was still owed. The parent is `✅ DONE 2026-08-18`, but step 5 inside
+>   it was explicitly **🟡 PARTIAL**:
 >   *"the largest table seen is 26 entries"* and *"the CE DropDownList half was not checked"*. Those
 >   are precisely the mirror's remaining step 1. Only its step 2 (the `walk-0.log` grep) is discharged.
 > * **`U3 / U17`** — the `✅ CLOSED 2026-08-17` covers steps 1–2, which the mirror had **already**
@@ -7842,7 +7844,7 @@ the 第 2 步 bucket, so it can be run in any session that has the UI up.
 
 ### 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re-scoped before a single CE click
 
-> **Where the batch stands at the end of 2026-08-22.** ✅ `MB3` **CLOSED** the same day (`[MB3-CT-2026-08-22]` — Save / TP-facing-dir / Recall plus a baked Invoke, all through real `.CT` records, with the pawn's pose as the witness). ✅ `AA12/AA13` and `Y10/Y13` also closed. ⛔ `.CT DLL discovery` is still blocked exactly as written below. 🟡 `U16`, `B18` and the `M1–M5` remainder are unchanged. The triage below is kept because its *reasoning* is what saved the CE session, not because every verdict is still current — check the per-row entries above before acting on any line of it.
+> **Where the batch stands at the end of 2026-08-22.** ✅ `MB3` **CLOSED** the same day (`[MB3-CT-2026-08-22]` — Save / TP-facing-dir / Recall plus a baked Invoke, all through real `.CT` records, with the pawn's pose as the witness). ✅ `AA12/AA13` and `Y10/Y13` also closed. ⛔ `.CT DLL discovery` is still blocked exactly as written below. ✅ `U16` **CLOSED 2026-08-22** (`[U16-ENUM65-2026-08-22]`). 🟡 `B18` and the `M1–M5` remainder are unchanged. The triage below is kept because its *reasoning* is what saved the CE session, not because every verdict is still current — check the per-row entries above before acting on any line of it.
 
 Before setting up Cheat Engine, each of the eight rows was checked for what it *actually* still
 needs. Three changed shape, and one is blocked by an item already on the index.
@@ -7862,7 +7864,9 @@ the throw path — has no way to be triggered on demand and is a standing watch,
 What remains is two real `.CT` rows through CE, which is worth doing but is now a confirmation
 rather than a discovery: plain dispatch is known good.
 
-**🟡 `U16` — step 2 PASSES at the size available; the fixture gap is now MEASURED, not assumed.**
+**✅ `U16` — CLOSED 2026-08-22 on DQ7R; see `[U16-ENUM65-2026-08-22]`.** ⚠ The paragraph below is kept as the reasoning of the day, but **its headline number is now known wrong** — DumperTest's ceiling is **113**, not 26, and 26 was an artefact of grepping one run's `walk-0.log`. Original text:
+
+
 Walked `PhysicalMaterial` and the surrounding classes on DumperTest and grepped `walk-0.log`:
 
 ```
@@ -11355,7 +11359,7 @@ unproven is the real gesture under key repeat.*
 > | 2 **U4** | ✅ | `A = 0x1F144477910` (a UObject instance, not a UStruct), `size = 556035168`. Two calls produced **two** `WalkClass: … at 0x1F144477910` DEBUG lines and **two** `WALK:safe … refusing to cache 0x1f144477910 — PropertiesSize=556035168 (read ok); not a UStruct, or recycled memory`. Before the fix the second call was served from the poisoned entry and logged nothing. ⚠ *Conditions:* the raw bytes at `A+0x58` read `60 6C 24 21` (=556270688) a minute earlier — those are live `AActor` bitfield bytes and they move; the point is that any reading of them is garbage as a `PropertiesSize`, and both were refused. A **second, independent** witness came free: `0x1F1408E1200` (a mis-transcribed tree address, not a UClass) was walked **4** times and refused **4** times, logging all four. |
 > | 3 **U4 honest half** | ✅ | `FDateTime` `UScriptStruct` @`0x1F159AA8F80`, visited **4** times → exactly **ONE** cold-walk pair (`WalkClass: DateTime (super=, size=8)` + `— 1 fields`) and silence for visits 2–4. The gate rejects garbage, not small/empty structs. ⚠ **Strictly-zero-field case NOT demonstrated**: `FDateTime` reports **1** field (`InjectIntrinsicStructFields` supplies `Ticks`), so "0 fields is still cached" remains unwitnessed — every 0-field walk seen this session was a *refusal*. Do not read this row as closing that. |
 > | 4 **U6/F3** | ✅ *(deterministic alternative)* | `DumperTestActor_0` `+0x18` = `7C C0 08 00 | 01 00 00 00` (ComparisonIndex `0x0008C07C`, Number 1). Wrote `ChaosDebugDrawActor`'s index `0x00150570` from CE, pressed Refresh: the live header changed to **`ChaosDebugDrawActor_0`** while the class stayed `DumperTestActor` (correct — only the object's FName moved). Restored `0x0008C07C`. The name memo is keyed on the input bytes, so no stale decode survived. *(The level-travel flavour was not run — this sample has no second level.)* ⚠ The **breadcrumb** still read `DumperTestActor0`, which is a historical crumb, not a stale cache — exactly the surface the step warns not to judge from. |
-> | 5 **U16** | 🟡 PARTIAL | **138** `ResolveEnumValue` lines in `walk-0.log`, **0** with `N != M`, and **0** `GetEnumEntries: … truncated read` in *any* log in the folder. Healthy tables are still cached. ⚠ Two gaps: the largest table seen is **26** entries (no `EPhysicalSurface`-scale enum exists in this sample, so "large" is only exercised to 26), and the **CE DropDownList half was not checked**. |
+> | 5 **U16** | 🟡 PARTIAL → ✅ **both gaps closed 2026-08-22**, see `[U16-ENUM65-2026-08-22]` | **138** `ResolveEnumValue` lines in `walk-0.log`, **0** with `N != M`, and **0** `GetEnumEntries: … truncated read` in *any* log in the folder. Healthy tables are still cached. ⚠ Two gaps: the largest table seen is **26** entries (no `EPhysicalSurface`-scale enum exists in this sample, so "large" is only exercised to 26), and the **CE DropDownList half was not checked**. |
 >
 > **Unchanged by this run** (as the note below already says): U5, and the class-cache-name panels.
 
@@ -16519,14 +16523,73 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 還要開 CE 並載入 .CT。
 
-### ⬜ U16 —— 大型 enum 的成員清單（**U4 / U6 / F3 已完成，只剩這一步**）
+### ✅ U16 CLOSED 2026-08-22 `[U16-ENUM65-2026-08-22]` — a 65-member enum renders whole in CE, and this row's own ceiling claim was wrong
+
+Run on **DQ7R** (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370 objects) against the target the row
+itself names: `DefaultPhysicalMaterial` @ `0x22715637100` → `SurfaceType` (ByteProperty @`0x60`),
+whose `EPhysicalSurface` table is **65 entries** — past the 63 the row asks for.
+
+**Step 1 — four independent witnesses, and they agree.**
+
+| witness | says |
+|---|---|
+| the DLL's own log | `ResolveEnumValue: UEnum 0x226D106A8E0 — read 65 of 65 entries (legacy)` |
+| the exported CE XML (clipboard, counted programmatically) | 65 `<DropDownList>` lines, indices `0..64` **contiguous**, `0:SurfaceType_Default` … `64:EPhysicalSurface_MAX` |
+| **CE's own parse**, asked in its Lua Engine | `n=65 offby0=0 dups=0 i32=32:SurfaceType32 i63=63:SurfaceType_Max` |
+| **CE's rendered dropdown**, expanded on the live record | 0…64 all present, tail `63 : SurfaceType_Max` then `64 : EPhysicalSurface_MAX`, scrollbar at the end |
+
+⭐ **The Lua witness carried a negative control, and it fired.** The same loop scored every entry
+against `i+1` as well and returned `CTRLoffby1=65`. So `offby0=0` comes from a checker that
+demonstrably *can* report mismatches, rather than from a loop that never fires. Without that, "no
+gaps" would only have meant "nothing printed".
+
+⭐ **Why CE's parse and CE's dropdown are counted separately.** They are the two halves this row
+exists to separate: the first proves the XML we emit carries all 65 members, the second proves CE
+*renders* them. Reading only the first would repeat the shape that made See-through a no-op — the
+report and the reality computed by different paths.
+
+⚠ Route note: `+CE Field (flat)` was greyed out because AOBMaker was **Offline**, so this went
+through **`Copy CE Field`** → CE's address-list paste. That is the documented fallback and it
+round-tripped intact. CE was attached to the game (`openProcess`, pid 11944) so the value resolved to
+`0 : SurfaceType_Default` rather than `??`; the Change-value dialog was **cancelled**, nothing was
+written to the running game.
+
+**Step 2 — re-derived over the WHOLE log corpus instead of one run.** 294 walk logs across 5 hosts:
+
+```
+ResolveEnumValue resolutions      4,919
+read N of M with N != M               0
+GetEnumEntries: ... truncated read    0    (in any file in the folder)
+largest table observed              212    (DQ7R)
+```
+
+⚠⚠ **Two corrections to what this row asserted about itself.**
+
+1. **`DumperTest 的天花板就是 26` is wrong — it reaches 113.** `DumperTest/walk-0.log:212` reads
+   `read 113 of 113 entries`, with 107 and 93 behind it. 26 was never a property of the host; it was
+   a property of *which classes that one walk happened to touch*. The advice built on it — "a host
+   whose ceiling is in the twenties cannot press this row" — would have retired a usable fixture.
+2. **The row's own cheap screen inherits the same scope bug.** It greps `walk-0.log`, i.e. the
+   CURRENT run only, while **127** archived `walk-*.log` sit beside it in that single folder. Screen
+   the whole folder instead:
+
+```bash
+grep -rho "read [0-9]* of [0-9]*" "$LOCALAPPDATA/UE5CEDumper/Logs" | awk '{if($2!=$4)bad++; if($4+0>m)m=$4+0; n++} END{print n" resolutions, "bad+0" mismatched, largest "m}'
+```
+
+▶ The `🟡 PARTIAL` cell in `✅ DONE 2026-08-18 — U4 / U16 / U6 / F3` named exactly two gaps —
+*"the largest table seen is 26 entries"* and *"the CE DropDownList half was not checked"*. **Both are
+now closed**: the first by measurement (212 exists, and 65 was actually pushed through CE), the
+second by the four witnesses above.
+
+### ✅ U16 —— 大型 enum 的成員清單 — **CLOSED 2026-08-22**，證據見上一節 `[U16-ENUM65-2026-08-22]`
 
 *優先度 **中** · 需要：有 `EPhysicalSurface` 規模（數十個成員）enum 欄位的遊戲*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ **2026-08-22 量過:DumperTest 的天花板就是 26**,`PhysicalMaterial::SurfaceType`(`EPhysicalSurface`,在有定義的專案裡可到 63 個)在這裡也沒破。所以這一步在 DumperTest 上壓不到。<br>▶ **換宿主前先花一道指令篩**:走個幾十個 instance,然後 `grep -o 'read [0-9]* of [0-9]*' walk-0.log | sort -t' ' -k4 -n | tail -1`。天花板還在二十幾的宿主一樣壓不到。 |
-| 2 | ✅ **2026-08-22 通過(在可得的規模上)**:DumperTest 上 437 行 `ResolveEnumValue`,`N != M` **0 個**,`truncated read` **0 個**。correctness 這一半成立,只是最大只壓到 26。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
+| 1 | ✅ **2026-08-22 在 DQ7R 上通過**：`DefaultPhysicalMaterial` → `SurfaceType`（`EPhysicalSurface`，**65 個成員**）。四個互相獨立的見證都一致：DLL log `read 65 of 65`、匯出的 CE XML 65 行且 index `0..64` 連續、CE 自己在 Lua Engine 裡回報 `n=65 offby0=0 dups=0`（**負控制有開火**：同一圈對 `i+1` 記分得到 `CTRLoffby1=65`）、以及 CE 畫出來的 dropdown 展開到底是 `64 : EPhysicalSurface_MAX`。 | 成員完整，沒有缺尾。<br>⚠⚠ **原本寫在這裡的「DumperTest 的天花板就是 26」是錯的 —— 它其實到 113**（`DumperTest/walk-0.log:212`）。26 從來不是宿主的性質，只是「那一次走訪剛好碰到哪些 class」。<br>▶ 連帶地，原本建議的篩選指令只 grep `walk-0.log`（**只有當次執行**），旁邊還躺著 127 個 `walk-*.log`。要篩就篩整個資料夾，指令見上一節。 |
+| 2 | ✅ **2026-08-22 重新在整個 log corpus 上量過**（294 個 walk log、5 個宿主）：**4,919** 次 `ResolveEnumValue`，`N != M` **0 個**，`truncated read` **0 個**，最大的表 **212**（DQ7R）。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
 
 ### ⛔ NO SAMPLE ON THIS MACHINE 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]` — B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
 
