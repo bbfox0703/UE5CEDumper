@@ -6592,6 +6592,69 @@ exactly that test. **4,648 / 4,648 pass.**
 
 -----
 
+
+### ✅ AA12/AA13 step 5 PASSES 2026-08-22 `[AA12-STEP5-2026-08-22]` — the old-helper gate, seen in CE without rebuilding one
+
+The row asks for a **pre-1.2** `ue5_freeze_helper.lua` embedded in the table. The helper ships as an
+**EmbeddedResource** (`UE5DumpUI.csproj:150`), so genuinely embedding an old one means a rebuild and
+a republish, then another to undo — and it risks leaving `dist` shipping a 1.1 helper.
+
+⭐ **It did not need one, because the gate does not look at a version.** `FreezeScriptGenerator.cs:113`
+is `if sok2 == nil then`, where `sok2` is the second value of `pcall(handleOrErr.start)`. There is no
+version-string check anywhere: the gate's entire premise is *"a helper at ≤ 1.1 returns nothing from
+`start()`"*.
+
+**That premise was verified against the real historical file**, not assumed —
+`git show 04d40803^:scripts/ue5_freeze_helper.lua` (the commit before *"report an OUTCOME from
+start()"*) declares `UE5_FREEZE_HELPER_VERSION = '1.1'` and its `handle.start = function() … end`
+has **no `return` statement** at all.
+
+So the condition was staged directly, in CE's own Lua state, against the real generated script:
+
+```lua
+local real = freezeProperty
+freezeProperty = function(cfg)
+  local h = real(cfg); local rs = h.start
+  h.start = function() rs() end      -- swallow the returns: exactly what <=1.1 does
+  return h
+end
+```
+
+⚠ Order matters and cost me a run: the helper is a table FILE, so `freezeProperty` does not exist
+until the script has been enabled once. Wrapping too early wraps `nil` — the first attempt printed
+`freezeProperty=nil version=nil` and installed a broken global that had to be cleared. Tick once,
+untick, then wrap; the second attempt read `freezeProperty=function ver=1.4`.
+
+**Result, ticking the real record with the simulation in place:**
+
+```
+[Freeze] this table has an older ue5_freeze_helper.lua: it cannot report whether anything
+was frozen. Re-inject it via UE5DumpUI -> Tools -> Inject Freeze Helper into Current CE Table.
+RECORD ACTIVE=true
+```
+
+| the row expects | result |
+|---|---|
+| "older ue5_freeze_helper.lua … re-inject it" | ✅ verbatim |
+| the Lua window stays open | ✅ no auto-close — the close is gated on `sok2 == true` |
+| the record stays ticked | ✅ `ACTIVE=true`, read from the Lua Engine |
+
+⚠ **Scope, stated rather than glossed**: this staged the *condition the gate detects*, not a
+genuinely old file. That is exact for what the code does — there is no version check — and the
+premise linking the two was checked against the real 1.1 source. It does **not** exercise anything
+else a 1.1 helper would do differently, and nothing in this branch depends on that.
+
+ℹ️ Three independent pieces already covered the rest: the generated branch is unit-tested
+(`FreezeScriptGeneratorTests.cs:612/:619`), and the CURRENT helper's `start()` returning
+`(ok, err, count)` is covered by the executable Lua rig (`scripts/tests/freeze_helper_test.lua`,
+AA12/AA13 cases). Together with this run, the branch is shown reachable with an old helper and
+unreachable with the current one.
+
+▶ **Step 3 is the last one open in this row** — freeze a class with 0 live instances, then make one
+spawn, and the freeze must take hold within ~5 s. It needs a spawnable class on DumperTest;
+CheatManager's `Summon` exec is the likely route.
+
+
 ### ✅ AA12/AA13 step 4 PASSES 2026-08-22 — a bogus `className` is armed, not called a typo
 
 Same session, `CFG.className = 'NoSuchClass_ZZZ'`:

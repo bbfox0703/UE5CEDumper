@@ -352,7 +352,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 2 | ✅ **2026-08-22 完整通過**(`[UNTICKPAIR-2026-08-22]`)。腳本與 helper 在**已注入**時建立,殺掉 DumperTest 後**不注入**重開,CE 重新 attach,勾同一筆:`[Freeze] nothing was frozen: … g_invokeMailbox symbol not found`,而且 **`ACTIVE=false`**(2026-08-20 時是 `true`,那就是 `[FREEZEUNTICK]`)。從 CE Lua Engine 讀,不看勾選圖示。 | 跳出 showMessage 指明原因、記錄自動取消打勾、Lua 視窗保持開啟。 |
 | 3 | 對目前 0 個 live instance 的 class（尚未生成的敵人）打勾，然後讓該類生成一隻。 | 記錄維持打勾、視窗保持開啟、只輸出 [Freeze] armed: no live instances of X right now；生成後約 5 秒內凍結生效。<br>⚠ 這裡若自動取消打勾即為 FAIL，必須回報。 |
 | 4 | ✅ **2026-08-22 通過,但同時抓到一個新缺陷**。`CFG.className` 改成 `NoSuchClass_ZZZ` 後:armed / 0 個實例、不說是拼字錯誤、記錄維持 `ACTIVE=true`、視窗保持開啟 —— 這一步列的條件全中。⚠ **但訊息印的是 `DumperTestActor`**(一個明明有很多實例的類別):**行為**跟著 CFG 走,**回報**卻用產生時烤死的名字。已修 `[FREEZECFGNAME-2026-08-22]`。 | 行為與上一步完全相同（armed, 0），不得聲稱是拼字錯誤。 |
-| 5 | 嵌入 build 3125 之前（pre-1.2）的 ue5_freeze_helper.lua，再打勾新產生的腳本。 | 出現「older ue5_freeze_helper.lua … re-inject it」、視窗保持開啟、記錄維持打勾。 |
+| 5 | ✅ **2026-08-22 通過**(`[AA12-STEP5-2026-08-22]`)。**不用真的換 helper** —— 閘門是 `if sok2 == nil then`,**沒有任何版本字串檢查**,前提只是「≤1.1 的 `start()` 不回傳」。那個前提對真正的歷史檔案查證過(`04d40803^`,`VERSION='1.1'`,`handle.start` 沒有 `return`),所以直接在 CE 的 Lua state 裡包一層讓 `start()` 吞掉回傳值。結果逐字符合:「older ue5_freeze_helper.lua … Re-inject it via UE5DumpUI -> Tools -> Inject Freeze Helper」、視窗沒有自動關閉、`RECORD ACTIVE=true`。<br>⚠ 順序有講究:helper 是 table **檔案**,腳本沒被 enable 過之前 `freezeProperty` 不存在,太早包會包到 `nil`。先勾一次、取消、再包。 | 出現「older ue5_freeze_helper.lua … re-inject it」、視窗保持開啟、記錄維持打勾。 |
 | 6 | 同時打勾兩份不同的 freeze 腳本，再取消其中一份。 | 另一份仍持續凍結生效。 |
 
 ### ⬜ B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
