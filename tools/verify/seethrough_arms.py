@@ -61,7 +61,11 @@ def _hidden_bit(c: PipeClient, addr: str):
 
 
 def _truthy(v) -> bool:
-    return str(v).strip().lower() in ("true", "1")
+    # walk_instance renders a bit-field bool as `true (bit 7, mask 0x80)`, so an
+    # equality test against "true" reads a HIDDEN actor as not hidden. Caught by the
+    # positive control refusing to pass -- a detector has to be right about the
+    # format of the thing it reads, not just about where to read it.
+    return str(v).strip().lower().split(" ", 1)[0] in ("true", "1")
 
 
 def _report(c: PipeClient, addrs, want: bool, label: str) -> bool:
