@@ -6593,6 +6593,56 @@ exactly that test. **4,648 / 4,648 pass.**
 -----
 
 
+
+### ✅ AA12/AA13 CLOSED 2026-08-22 `[AA12-STEP3-2026-08-22]` — step 3, and with it the whole row
+
+The last step: freeze a class with **zero live instances**, then make one spawn, and the freeze must
+take hold within ~5 s. The record must stay ticked throughout — the row calls an auto-untick here an
+outright FAIL, because arming ahead of a spawn is the feature's advertised purpose.
+
+⚠ **The fixture was the hard part, and three obvious routes were dead:**
+
+| route | why not |
+|---|---|
+| `Summon <Class>` | **there is no `Summon`** in DumperTest's 9,806 UFunctions — checked, not assumed |
+| a native `Spawn*` UFunction to invoke | **zero** with ≤ 4 parameters |
+| `TargetPoint` / `Note` / `TriggerBox` / `AmbientSound` … | every "instance" `find_instances` reported is a `Default__` **CDO**, so they qualify as empty — but nothing can spawn one |
+
+⭐ **What worked: a class the engine creates LAZILY, on a command the UI already has a button for.**
+`ADebugCameraController` is instantiated by the PlayerController the first time the debug camera is
+toggled. Before that it has **0 non-CDO instances** — and it owns four floats of its own.
+`CheatManager` was the first candidate and is *not* usable: it already had a live instance and
+exposes no numeric `UPROPERTY` at all.
+
+**Fixture**: `DebugCameraController::SpeedScale`, `FloatProperty`, `0x9C8`.
+⭐ **Its Property Search preview reads `1 (CDO default)` — that annotation IS the control.** It says
+in the UI's own words that the value came from the CDO because no instance exists, so the frozen
+value cannot be something that was already there.
+
+**Run** (CE 7.7 + DumperTest, `dist` v1.0.0.3314):
+
+| # | what | result |
+|---|---|---|
+| 1 | Freeze `SpeedScale = 12345`, push to CE, tick | `[Freeze] armed: no live instances of DebugCameraController (or any subclass) right now -- the freeze applies as they spawn.` — **and nothing else** |
+| 2 | the Lua window | stayed **open** (the close is gated on `scount ~= 0`) |
+| 3 | `ARMED-STATE ACTIVE` | **`true`** — read from the Lua Engine, not the icon |
+| 4 | Console → Debug Camera → **Force On** | `✓ Debug Camera forced ON.`, strip reads **ON** |
+| 5 | re-run the Property Search | preview `1 (CDO default)` → **`12345`** |
+| 6 | `AFTER-SPAWN ACTIVE` | **`true`** — still ticked, still one line of output |
+
+⭐ The before/after pair on one field is what makes it decisive: the same row, the same offset, read
+by the same panel, going from "there is no instance, here is the class default" to the frozen value —
+which can only happen if an instance appeared *and* the armed freeze reached it.
+
+**The row is now complete**: step 1 (`[AA12-STEP1]`), 2 (`[UNTICKPAIR]`), 3 (here), 4 (which also
+produced `[FREEZECFGNAME-2026-08-22]`), 5 (`[AA12-STEP5]`), 6 (`[AA12-STEP6]`), plus the bail-out
+half (`[AA12-BAILOUT]`).
+
+ℹ️ Incidental, and worth keeping for the next fixture hunt: **`find_instances` counts CDOs**, so a
+class showing 1-3 "instances" may well have none that a freeze would touch — the freeze's own walk
+skips them. Filter on the `Default__` name prefix before concluding a class is populated.
+
+
 ### ✅ AA12/AA13 step 5 PASSES 2026-08-22 `[AA12-STEP5-2026-08-22]` — the old-helper gate, seen in CE without rebuilding one
 
 The row asks for a **pre-1.2** `ue5_freeze_helper.lua` embedded in the table. The helper ships as an

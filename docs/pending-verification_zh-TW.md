@@ -22,10 +22,10 @@
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
 | **第 2 步 — 要注入一個執行中的遊戲** | 13 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 7 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **39** | |
+| **合計** | **38** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的**三個**小節（2026-08-22 加了「偵測器」那節，原本是兩個）。
@@ -341,19 +341,6 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 | 1 | 先做反向對照：注入舊版 DLL，配上新的 helper，啟動凍結。 | 必須被拒絕並顯示「the DLL is older than this script」。<br>⚠ 若照跑不誤，代表 contract 檢查沒生效，以下步驟全部無意義。 |
 | 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
 | 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
-
-### ⬜ AA12 / AA13 (key: FreezeOutcome) —— Freeze 腳本不再謊報成功
-
-*build 3125 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Property Search 找一個有 live instance 的數值欄位 → Copy Freeze Script → 貼進 CE → 打勾。 | 數值被凍住、Lua Engine 視窗自動關閉、記錄維持打勾。 |
-| 2 | ✅ **2026-08-22 完整通過**(`[UNTICKPAIR-2026-08-22]`)。腳本與 helper 在**已注入**時建立,殺掉 DumperTest 後**不注入**重開,CE 重新 attach,勾同一筆:`[Freeze] nothing was frozen: … g_invokeMailbox symbol not found`,而且 **`ACTIVE=false`**(2026-08-20 時是 `true`,那就是 `[FREEZEUNTICK]`)。從 CE Lua Engine 讀,不看勾選圖示。 | 跳出 showMessage 指明原因、記錄自動取消打勾、Lua 視窗保持開啟。 |
-| 3 | 對目前 0 個 live instance 的 class（尚未生成的敵人）打勾，然後讓該類生成一隻。 | 記錄維持打勾、視窗保持開啟、只輸出 [Freeze] armed: no live instances of X right now；生成後約 5 秒內凍結生效。<br>⚠ 這裡若自動取消打勾即為 FAIL，必須回報。 |
-| 4 | ✅ **2026-08-22 通過,但同時抓到一個新缺陷**。`CFG.className` 改成 `NoSuchClass_ZZZ` 後:armed / 0 個實例、不說是拼字錯誤、記錄維持 `ACTIVE=true`、視窗保持開啟 —— 這一步列的條件全中。⚠ **但訊息印的是 `DumperTestActor`**(一個明明有很多實例的類別):**行為**跟著 CFG 走,**回報**卻用產生時烤死的名字。已修 `[FREEZECFGNAME-2026-08-22]`。 | 行為與上一步完全相同（armed, 0），不得聲稱是拼字錯誤。 |
-| 5 | ✅ **2026-08-22 通過**(`[AA12-STEP5-2026-08-22]`)。**不用真的換 helper** —— 閘門是 `if sok2 == nil then`,**沒有任何版本字串檢查**,前提只是「≤1.1 的 `start()` 不回傳」。那個前提對真正的歷史檔案查證過(`04d40803^`,`VERSION='1.1'`,`handle.start` 沒有 `return`),所以直接在 CE 的 Lua state 裡包一層讓 `start()` 吞掉回傳值。結果逐字符合:「older ue5_freeze_helper.lua … Re-inject it via UE5DumpUI -> Tools -> Inject Freeze Helper」、視窗沒有自動關閉、`RECORD ACTIVE=true`。<br>⚠ 順序有講究:helper 是 table **檔案**,腳本沒被 enable 過之前 `freezeProperty` 不存在,太早包會包到 `nil`。先勾一次、取消、再包。 | 出現「older ue5_freeze_helper.lua … re-inject it」、視窗保持開啟、記錄維持打勾。 |
-| 6 | 同時打勾兩份不同的 freeze 腳本，再取消其中一份。 | 另一份仍持續凍結生效。 |
 
 ### ⬜ B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
 
