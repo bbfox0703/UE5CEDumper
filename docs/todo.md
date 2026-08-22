@@ -85,13 +85,14 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
 > programme itself on 2026-08-19 and deliberately deferred — it is not a regression and states its
-> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **2** is
-> the honest row count of this table.
+> own reason for waiting. So "12 → 1" is the honest headline for the original queue, and **3** is
+> the honest row count of this table — the third, `[CADENCEBAND]`, was field-found on 2026-08-22
+> and is filed rather than fixed because its repair needs a design decision, not a bigger constant.
 >
 > ⚠ **Four rows left on 2026-08-21, and not all in the same direction** — worth noticing, because a
 > queue that only shrinks by fixes hides the other outcomes. `[RELAUNCHPIPE]` was **real** and is
@@ -115,6 +116,7 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` can pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only (it lives under `%ProgramFiles%`, so the delete needs elevation).** ⚠ **Re-measured 2026-08-21 — still present and the exposure is NARROWER but REAL, see the section below** |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
+> | `[CADENCEBAND-2026-08-22]` | the Live Funcs "periodic timer" classifier excludes per-frame callbacks with a hard `meanPeriodMs > 40.0`, i.e. **it assumes the game runs above 25 FPS**. Measured after the `[CADENCEGAP]` fix: 0 of 6 flagged at 60 FPS (correct), **4 of 6 at 15 FPS** (all four are ordinary Tick callbacks). Not a bigger constant — the band has to be relative to the *observed* frame period, which the profiler can estimate from its own data; which estimator, and what to do with too few samples, is a maintainer call. Rig: `tools/verify/linie_cadence_gap.py`. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
 > gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
@@ -6430,6 +6432,106 @@ two planned steps used caps of 5,000 against pools of 5,102 and 7,409, a 2 % and
 worked on 2026-08-20. Not chased here because injecting the current DLL was the better fixture
 anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLOAD]` is about.
 
+
+
+
+### ✅ FOUND + FIXED + LIVE-VERIFIED 2026-08-22 `[CADENCEGAP-2026-08-22]` — Linie dropped every same-millisecond gap, and that MANUFACTURED the "Timer" badge
+
+⭐ **Found while establishing a PRECONDITION, not while hunting.** The row "Period must sort
+numerically (16.7 ms above 1000 ms)" cannot be tested unless the profiler actually produces two
+values whose numeric and string orders disagree, so `tools/verify/livefuncs_period_fixture.py` went
+to ask what it produces. The answer was six functions all at 66.7 ms — and one of them with a fire
+count that did not match its own period.
+
+**What was happening.** `Linie::RecordCall` guarded the Welford update on `nowMs > s.lastMs`, and
+`nowMs` is a `steady_clock` reading truncated to **milliseconds** (`Stark.cpp:103-107`). Two fires
+inside one millisecond compare EQUAL, so the gap was dropped — **and `s.lastMs` was left pointing at
+the first of the pair**, which is the half that does the damage: the *next* gap then spanned both
+fires and read as a whole frame.
+
+**Measured**, DumperTest at `t.MaxFPS 60`, 10.00 s window, `tools/verify/linie_cadence_gap.py`:
+
+| | count | gap_samples | reported | implied | ratio |
+|---|---|---|---|---|---|
+| **before** `CameraModifier::BlueprintModify*` ×2 | 1202 | **602** | 16.61 ms | 8.33 ms | **1.99×** |
+| **before** the four once-per-frame functions | 600 | 599 | 16.67 ms | 16.70 ms | 1.00× |
+| **after** `CameraModifier::BlueprintModify*` ×2 | 1200 | **1199** | 8.33 ms | 8.34 ms | 1.00× |
+| **after** the four once-per-frame functions | 600 | 599 | 16.67 ms | 16.69 ms | 1.00× |
+
+⭐ **The control was free and it is what makes this solid.** Four of the six fire once per frame and
+two fire twice. A clock error or a mis-measured window moves all six together; this moved exactly
+the two, and `gap_samples` — which must be `count - 1` — sat at `count / 2` for precisely those two.
+The four were exact before AND after, so the fix regressed nothing.
+
+⚠ **The guard was DELIBERATE, which is why this is easy to misread as correct.** It is the
+prescribed fix for audit #3 finding **L5** (`docs/audit-2026-07-14-findings.md:343`), about
+REORDERED timestamps: `nowMs` is stamped before `RecordCall` takes the lock, so multi-thread PE can
+deliver two fires out of order and an unsigned `nowMs - s.lastMs` would underflow to a ~1.8e19 gap
+that poisons the mean for the rest of the window. **That hazard is real and the fix keeps it out.**
+But a reorder is `nowMs < s.lastMs`; `nowMs == s.lastMs` is not a reorder. `>=` excludes the
+underflow just as completely and keeps the sample. L5 said "strictly greater" because it was
+reasoning about reordering only — dropping the equal case was collateral.
+
+⭐⭐ **THE WRONG NUMBER WAS THE SMALLER HALF.** Dropping the ~0 ms gaps **manufactured** the
+regularity the "Timer" badge keys on: the surviving gaps were all exactly one frame apart, so `cv`
+read **0.007** and a twice-per-frame render callback scored as a textbook periodic timer — the exact
+distinction Linie's cadence phase exists to draw. Predicted from the mechanism *before* measuring
+(an alternating 0 / 16.7 ms sequence must give cv ≈ 1.0); measured after the fix: **cv = 1.002**,
+and the DLL's own summary line went from `6 periodic-looking` to `0 periodic-looking` at 60 FPS,
+which is correct — none of those six is a timer.
+
+▶ **Same root cause as `[SOLIDEHELD-2026-08-21]` the day before, and as audit #4's headline: the
+report and the reality computed by different paths.** `count` and `mean_period_ms` are the same fact
+stated twice and were allowed to disagree by 2×. Worth a sibling sweep: any other place that
+accumulates a derived statistic beside a raw counter without either being checked against the other.
+
+ℹ️ **No test target compiles `Linie.cpp`**, so `-Target Test` measures nothing about this change —
+and running it would have overwritten `dist/UE5DumpUI.exe` with the non-trimmed build for no gain.
+`-Target DLL` proves it compiles; the rig proves it works.
+
+-----
+
+### ⬜ NEW DEFECT 2026-08-22 `[CADENCEBAND-2026-08-22]` — the "periodic timer" band test assumes the game runs above 25 FPS
+
+*Priority **low-med** · effort **S**, but the fix carries a design decision · found as the residue of
+`[CADENCEGAP-2026-08-22]`, and deliberately NOT folded into it*
+
+`Fern.cpp:4163` classifies a function as a periodic timer with
+
+```cpp
+if (snap[i].gapSamples >= 3 && snap[i].cv <= 0.25 &&
+    snap[i].meanPeriodMs > 40.0 && snap[i].meanPeriodMs <= 30000.0)
+```
+
+The `> 40.0` term is meant to exclude per-frame (Tick) callbacks — its own comment says "out of the
+per-frame (Tick) band". **40 ms is 25 FPS.** Below that the frame period exceeds the threshold and
+every ordinary Tick callback is badged as a timer.
+
+**Measured** (same session, after the gap fix, so the two effects are cleanly separated):
+
+| | periodic-looking |
+|---|---|
+| `t.MaxFPS 60` — frame 16.7 ms, under the band | **0 of 6** ✅ |
+| `t.MaxFPS 15` — frame 66.7 ms, over the band | **4 of 6** ❌ (the four once-per-frame animation callbacks) |
+
+⭐ **This is the separation control for the gap fix and it is why the two are filed apart.** Before
+the fix, 15 FPS gave `6 periodic-looking`; after, `4`. The two that dropped out are the ones the gap
+fix corrected (cv 0.007 → 1.004). The four that remain were never affected by it. Had I fixed both
+at once, neither result would have been attributable.
+
+⚠ **Severity is genuinely uncertain and should not be inflated.** 15 FPS is a *test-harness* setting
+(`launch_dumpertest.py` caps DumperTest deliberately), not typical gameplay. The defect is real for
+any game in a heavy scene or on weak hardware, and the Live Funcs panel is exactly the tool someone
+reaches for when a game is behaving oddly — but nobody has reported it.
+
+▶ **The fix is not a bigger constant.** Any constant is wrong for some frame rate. The band should
+be relative to the *observed* frame period, which the profiler can estimate from its own data — the
+modal or minimum mean-period across the recorded set is a per-frame cadence by construction, since
+in any real window several functions tick once per frame. That is a design decision (which
+estimator, what to do when the window holds too few functions to estimate from, whether to expose it
+in the reply so the UI can say "frame ≈ 16.7 ms") and should be the maintainer's call, which is why
+this is filed rather than fixed. Rig: `tools/verify/linie_cadence_gap.py` already prints everything
+needed to re-measure both arms.
 
 
 ### ✅ RECOVERED 2026-08-21 `[ZHTW-MARKS-2026-08-21]` — ten results marked outside the repo, six lost silently
