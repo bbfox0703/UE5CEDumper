@@ -6497,6 +6497,54 @@ anyway, but "a deployed proxy silently not loading" is the exact shape `[PROXYLO
 
 
 
+
+### ✅ B19 PASS 2026-08-22 `[B19-LOCKED-2026-08-22]` — a locked archive no longer stops the retention sweep
+
+**The defect, in the fix's own words** (`Sein.cpp:268-274`): `PruneAgedLogs` shared **one**
+`std::error_code` between the directory iteration and the per-file `fs::remove`. A failed remove set
+`ec`, the loop's `if (ec) break` ended the sweep — and NTFS enumeration order is stable, so it ended
+it at the **same entry on every launch**. One undeletable file switched the advertised 21-day
+retention off for everything after it, permanently and silently.
+
+⭐ **THE TEST HAD TO BE ABOUT ORDER, NOT ABOUT THE LOCKED FILE.** "The locked file survived" is true
+under the fix, true under the defect, and true when the sweep never ran at all — it is the assertion
+the row's own wording invites and it decides nothing. `tools/verify/b19_locked_log.py` stages three
+archives, all aged 40 days against a 21-day window, in an **asserted** enumeration order:
+
+| staged | expected | what it rules out |
+|---|---|---|
+| `b19a-…` aged, unlocked, **before** the lock | deleted | a sweep that never ran reading as a pass |
+| `b19b-…` aged, **LOCKED** | survives | a lock that never held reading as one |
+| `b19c-…` aged, unlocked, **after** the lock | **deleted** | ⭐ **the witness** — this is the file the old code abandoned |
+
+⚠ Two preconditions the rig checks rather than assumes: it **attempts the delete itself** first and
+requires a `PermissionError` (a lock that does not bite makes the whole run vacuous — Python's
+`open()` on Windows omits `FILE_SHARE_DELETE`, which is why it works), and it lists the directory
+through the same `FindNextFileW` walk `fs::directory_iterator` uses and **refuses to run** unless it
+really sees a → b → c.
+
+**Result** (DumperTest, dist 3313): `a` deleted, `b` still there, `c` **deleted**. PASS.
+
+⭐ **NEGATIVE CONTROL RUN, and it is the good kind — it reproduces the historical defect rather than
+a contrived edit.** Two lines in `Sein.cpp` restore the old *observable* behaviour (hoist `ec` out
+of the per-file lambda, `if (ec) return;` at its top), rebuild, re-run:
+
+```
+a  deleted        <- the sweep still ran
+b  STILL THERE    <- the lock still held
+c  STILL THERE    <- FAIL, exactly and only arm (c)
+rig exit code 1
+```
+
+The failure localises to the one arm that distinguishes the two implementations, which is what makes
+the PASS mean something. Source restored **byte-exact** (working-lessons §2.11) and rebuilt;
+`build_number.txt` untouched at 3313 via `-NoBumpBuildNumber`.
+
+ℹ️ The three files are written into the real `Logs\DumperTest\` folder because that is the only
+folder the DLL sweeps. They carry a `b19`-prefixed name nothing else produces and the rig removes
+whatever survives in a `finally`, including on failure.
+
+
 ### ✅ MIRROR SWEEP 2026-08-22 `[ZHTW-SWEEP-2026-08-22]` — 50 → 43 sections, none of it new verification
 
 ⭐ **Seven sections closed and not one of them needed a game.** `AF21` had been left behind after its
