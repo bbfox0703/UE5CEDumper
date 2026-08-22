@@ -7048,6 +7048,48 @@ Same probe, same address, opposite answer. Without it, "0x02 came back" is only 
 
 -----
 
+### ⬜ NEW OBSERVATION 2026-08-22 `[AVOWEDCACHE-2026-08-22]` — the persisted hint cache holds a UE version that live detection never produces
+
+Surfaced while running **G11 step 1** (an offline sweep of archived scan logs), not by hunting.
+Filed as an OBSERVATION rather than a defect because the **mechanism is unknown** and guessing it
+would be worse than leaving it open.
+
+**What is solid:**
+
+* Avowed is **UE 5.3**, per two independent repo docs — [test-games.md](test-games.md) (`UE5.3
+  (PE: 503 …)`) and [avowed-gobjects-fix.md](avowed-gobjects-fix.md) (`**UE 5.3** (UE503)`).
+* **Live detection agrees: `503`, five times**, across builds 3262 and 3263, every one
+  `tier=1, detected=yes, lowConfidence=no`.
+* **The persisted cache disagrees.** `UE5CEDumper.MSI-NB.json` (in the app-data root), entry
+  `DDCE3EDE0BE03000`, currently reads
+  `"ueVersion": 504, "versionDetected": true, "versionDetectRev": 5, "ueVersionUserOverrideAt": ""`.
+* ⭐ **A user override is ruled out by the file itself** — `ueVersionUserOverrideAt` is empty, so the
+  504 is recorded as a *detection*, not a preference. That was my first hypothesis and the data
+  refuted it.
+* **The stale value has already been used at least once.** `2026-08-18 21:58:04` logs
+  `HintCache: Loaded hints … UE=504 detected`, then
+  `FindAll: UE Version = 504 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`.
+  The run 55 minutes earlier had loaded **503**, and every run after it detected **503**.
+* **Why it is not cosmetic:** `versionDetectRev` is already `5`, so the re-detect gate is satisfied —
+  the next Avowed launch on any build ≥3112 will **replay 504 and skip detection**, and `ueVersion`
+  selects engine-dependent offsets.
+
+**What is NOT established — do not write any of it down as fact until measured:**
+
+* how `504` got there. The 2026-08-21 18:45 run *loaded* 503 and saved; the file's mtime is
+  2026-08-22 19:17:59, i.e. it was last rewritten by an unrelated **DQ7R** scan — it is one
+  machine-wide JSON that every save rewrites whole, so ordering across games is not obvious;
+* whether replaying 504 actually breaks anything on Avowed — it is LIVE-VERIFIED historically, and
+  the 2026-08-18 cached-504 run is not recorded as having failed;
+* whether any other game's entry is stale. **Only Avowed was inspected.**
+
+**Cheapest next step, and it is already the first action of G11 step 2:** launch Avowed and read the
+first `FindAll: UE Version` line. `504 (cached…)` means this reproduces on demand and can be
+escalated with a known repro; a re-detected `503` means the entry has since been corrected and only
+the "how" stays open.
+
+-----
+
 ### ⬜ NEW DEFECT 2026-08-22 `[TREERECLICK-2026-08-22]` — re-clicking the selected tree node is a no-op, and a handoff turns that into a stuck panel
 
 Found while running **AE2/AE3 step 5** on DQ7R (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370
