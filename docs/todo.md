@@ -17508,7 +17508,7 @@ proving nothing. The PE hash is `TimeDateStamp + SizeOfImage`, so simply **rebui
 
 -----
 
-### ✅ Y11 — step 3 FIXED 2026-08-23 (build 3319); the other 3 steps passed 2026-08-22 `[Y11-OPAQUEDROP-2026-08-22]`
+### ✅ Y11 CLOSED — step 3 FIXED **and LIVE-VERIFIED** 2026-08-23 (build 3319); the other 3 steps passed 2026-08-22 `[Y11-OPAQUEDROP-2026-08-22]`
 
 Run on **DQ7R** (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370 objects), on a live plain
 `TextBlock` at `0x28F42DD4240` — DumperTest could not serve this row (no live `TextBlock`, and its
@@ -17565,8 +17565,24 @@ silence as *correct*: `Y11_SubField_TypedValueIsDroppedSilently_WhichIsWhyTheGat
 all 21 Y11 tests pass; full suite green (C++ 1644/0, C# all); `dist` republished AOT-trimmed at
 **54.7 MB**.
 
-▶ **Still owed: a live re-run of step 3 on DQ7R** — type `42` into `SetStrikeBrush`'s `ImageSize`
-and confirm FIRE is refused with that message instead of reporting `ProcessEvent OK`.
+✅ **LIVE-VERIFIED the same day on DQ7R** (UE427, 149,370 objects, DLL **3319**, AOT `dist` **3319**,
+proxy refreshed to match), on the original fixture — a live plain `TextBlock` (2 of them, as the
+2026-08-22 note said) → `SetStrikeBrush (ParmsSize=136)`. **Three fires, and the middle one is the
+one that matters:**
+
+| # | input | result |
+|---|---|---|
+| 1 | `42` into `.ImageSize [struct]` | ❌ refused — `ERROR: InStrikeBrush.ImageSize: struct parameters cannot be built from a textbox — this is a multi-word structure whose contents must be allocated inside the game, and the value you typed would be dropped. Clear the box to send an empty/zeroed value instead.` **No `ProcessEvent OK`.** |
+| 2 | ⭐ **control** — the same box back at `0` | ✅ `[#2] ProcessEvent OK (result=0)`, post-call buffer all zeros |
+| 3 | `9999` into `.DrawAs [uint8]` | ❌ refused — `ERROR: InStrikeBrush.DrawAs: 9999 does not fit in this 1-byte parameter (range: -128 to 255)` |
+
+⭐ **Fire #2 is what makes #1 and #3 mean something.** A gate that refused everything would satisfy
+the row's wording while breaking step 2, which passed on 2026-08-22 — the zero-default path still
+fires, so the refusal is specific to a value the user actually typed.
+
+⭐ **Fire #3 is the second hole, seen in the field.** Before this change 9999 masked to **15** and was
+sent silently; that is the width family (W6/Y2/Y9/Y15/AE1) in the one place its fix had never been
+applied, and it was never reported by anyone — it fell out of putting the guard where the write is.
 
 ℹ️ Fixture notes worth keeping: `TextBlock::SetText` is the FText candidate on any UMG title
 (`ParmsSize=24` on UE 4.27, not 16). DQ7R has **3,159** live `LocalizeTextBlock` instances but that
