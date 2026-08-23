@@ -1,4 +1,4 @@
-"""Report — and optionally refresh — the proxy DLLs deployed into game folders.
+﻿"""Report — and optionally refresh — the proxy DLLs deployed into game folders.
 
     py proxy_refresh.py report
     py proxy_refresh.py refresh "Lushfoil"      # substring of the game folder name
@@ -38,6 +38,15 @@ BACKUPS = ROOT / "out" / "proxy-backups"
 LIBS = [pathlib.Path(r"C:\Program Files (x86)\Steam\steamapps\common"),
         pathlib.Path(r"D:\SteamLibrary\steamapps\common")]
 OURS = {"dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll"}
+
+
+def _dist_build() -> str:
+    """The build number actually sitting in dist/, read at call time."""
+    try:
+        return (pathlib.Path(__file__).resolve().parents[2]
+                / "dist" / "build_number.txt").read_text().strip() or "?"
+    except OSError:
+        return "?"
 
 
 def say(s):
@@ -119,7 +128,11 @@ def refresh(match):
         shutil.copy2(cur, q)
         if sha(q) != sha(cur):
             raise SystemExit(f"proxy_refresh: FAILED -- copy of {cur} to {q} did not verify")
-        say(f"  refreshed {d.name} :: {q.name} -> {q.stat().st_size:,} B  (dist 3263)")
+        # DERIVED, not a literal. This line said "(dist 3263)" for every refresh
+        # regardless of what it actually copied -- a verification tool quoting a build
+        # number it never read, which is the one thing this repo's rules forbid. It
+        # would have reported "3263" while deploying 3334.
+        say(f"  refreshed {d.name} :: {q.name} -> {q.stat().st_size:,} B  (dist {_dist_build()})")
         done += 1
     say(f"\nrefreshed {done} file(s)")
     return 0

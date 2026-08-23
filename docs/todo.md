@@ -1208,6 +1208,63 @@ rather than only the tail — the gaps between reflected fields are exactly wher
 member lives. Prefer scanning the reflected gaps first. Keep the existing validation; it is not the
 problem, and it is what will stop a gap scan from accepting junk.
 
+### ✅ CLOSED 2026-08-23 `[SEETHRU-DQ7R-2026-08-23]` — the See-through non-regression is now a MEASUREMENT, not an argument
+
+`[SEETHRUNOOP-2026-08-22]` rewrote hit→actor resolution to try `Actor` → `HitObjectHandle` →
+**`Component`** and take the first that walks up to an `AActor`. The obvious risk was regressing the
+two hosts where See-through already worked, and the entry admits what it had instead of evidence:
+
+> ⭐⭐ **Why this cannot regress the builds where See-through already worked** (Tower of Mask, DQ7R —
+> **neither runnable here **when this was written**, so this argument had to carry the weight — ⭐ **DQ7R has since been MEASURED, see `[SEETHRU-DQ7R-2026-08-23]`; Tower of Mask is still untested****)
+
+That blocker expired. DQ7R has been driven repeatedly since 2026-08-20 (four runs on 2026-08-23
+alone, `[A6-SPAWN-DQ7R-2026-08-23]`). Run today on **DQ7R, UE 4.27, build 3334**, in-world at
+艾斯塔德島, with `tools/verify/seethrough_arms.py run`:
+
+```
+enabled            : hidden_count=1  hidden_actors=['0x2203EF5E680']
+POSITIVE CONTROL   : 0x2203EF5E680  bHidden=true  (bit 5, mask 0x20)   ok
+                     detector (2) can FIRE     : PASS
+after disable      : active=False hidden_count=0
+  (1) hidden_count == 0        : PASS
+  (2) every one restored       : PASS   0x2203EF5E680 bHidden=false
+```
+
+⭐ **What it hid is the point, not that it hid something.** The actor resolves to:
+
+```
+Landscape_1   class Landscape
+super chain   Landscape -> LandscapeProxy -> Actor -> Object
+outer         PersistentLevel (Level)
+```
+
+A real `AActor` subclass — so `ResolveToActor` produced an actor from the trace hit on the host the
+argument was worried about. `hidden_count=1` is expected and not a weak result: `pierce_count=1`, so
+only the nearest occluder is hidden by design.
+
+⭐ **Two independent detectors, and the second was shown able to fire before it was trusted.** The
+rig refuses a vacuous pass by construction: it FAILS if `hidden_count` never rises, and FAILS if the
+DLL names an actor whose own `bHidden` bit is not set while hiding. Both gates were exercised —
+`bHidden=true` during, `false` after, read back off the instance rather than taken from the hider's
+own tally.
+
+⚠ **Honest scope.** This shows See-through **works on DQ7R with the current resolution code**. It is
+not a differential against the pre-fix binary (that build is not deployed anywhere, and the fix is
+three builds old). What the row actually feared — that the rewrite broke a host where it used to
+work — is answered for one of the two named hosts. **Tower of Mask remains untested.**
+
+ℹ️ **Two things this run had to fix before it could measure anything**, both worth remembering:
+
+* **The deployed proxy was build 3322 while `dist` was 3334**, and a deployed proxy OWNS the pipe —
+  `inject.py` refused (`STALE MODULE(S) ALREADY MAPPED`) rather than silently measuring the old
+  binary. `py tools/verify/proxy_refresh.py refresh "DQ7R"` fixed it; the deployed file is now
+  byte-identical to `dist/proxy/version.dll` (sha `983ade2d`). **10 of the 11 deployed proxies on
+  this machine are still stale**, Geri's among them — refresh before any row that uses one.
+* **`proxy_refresh.py` printed `(dist 3263)` for every refresh** — a hardcoded literal at `:122`,
+  reporting a build it never read. It would have said "3263" while deploying 3334. Now derived from
+  `dist/build_number.txt`. A verification tool quoting a number instead of deriving it is the exact
+  failure the house rule exists to prevent, and it was inside the tooling.
+
 ## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
