@@ -285,6 +285,19 @@ static void PollingThreadBody() {
             // Mark as processing
             g_invokeMailbox.status = STATUS_PROCESSING;
 
+            // Clear the previous command's error text BEFORE dispatching this one.
+            // SetError writes errorMsg; SetDone writes only `result` and never touches
+            // it -- so without this a SUCCESSFUL command inherited the last failure's
+            // message, and a caller reading errorMsg without checking `result` first saw
+            // a stale error on a command that worked. Measured 2026-08-23: after a handler
+            // threw, `GWORLD result=0` still carried "command handler threw ...".
+            // (MBERRSTALE-2026-08-23)
+            //
+            // Cleared HERE, not after the handler: a post-clear would wipe the message a
+            // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
+            // success and populated on failure -- the only consistent pairing.
+            g_invokeMailbox.errorMsg[0] = '\0';
+
             LOG_INFO("Mailbox: received cmd=%d", cmd);
 
             // The state B4's immunity exists for is otherwise invisible: a UI client

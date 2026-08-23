@@ -3497,7 +3497,36 @@ Every successful dispatch after the throw still carried the **previous** error t
 `GAME_ENGINE result=0 … err='Unknown command'`. `result` is authoritative and correct, so nothing is
 broken, but a caller that reads `errorMsg` without checking `result` first sees a stale failure on a
 successful command. Same family as audit #4's root cause (*the report and the reality are computed by
-different code paths*). Cheap fix: clear `errorMsg[0]` on normal completion.
+different code paths*). ✅ **FIXED 2026-08-23** (build 3338).
+
+> **The fix is a PRE-clear, not a post-clear, and the distinction is the whole point.**
+> Clearing `errorMsg` *after* a handler ran would wipe the message a handler had just written via
+> `SetError`. It is cleared where the command is picked up — right after
+> `status = STATUS_PROCESSING` — so `errorMsg` is empty on success and populated on failure, which
+> is the only consistent pairing.
+>
+> Root cause, confirmed in both functions: **`SetError` writes `errorMsg`; `SetDone` writes only
+> `result` and never touches it.** So a success inherited whatever the last failure left.
+>
+> **Verified live in both directions** on DumperTest / DLL 3338, using the exact observation that
+> exposed the bug:
+>
+> | | before | after |
+> |---|---|---|
+> | a FAILING command | `cmd=16 → result=-1 err='Unknown command'` | `cmd=16 → result=-1 **err='Unknown command'**` |
+> | a SUCCEEDING command | `GWORLD result=0 … err='command handler threw …'` | `GWORLD result=0 … **OK**` (no `err`) |
+>
+> ⭐ The failing row is the **built-in negative control**: real errors still surface, so the fix is
+> not a blanket wipe. `check_mailbox_contract.py` green before and after (no layout change).
+>
+> ⚠ **A trap worth recording — the edit briefly wrote a NUL byte into a C++ source file.** The
+> patch script was passed through a shell heredoc, which collapsed `'\0'` to `' '`; Python then
+> emitted a **literal NUL** rather than the two characters backslash-zero. The tell was the diff:
+> `1483 insertions / 1470 deletions` on a 13-line edit, because git treats a file containing NUL as
+> **binary** and reports the whole thing as changed. Line endings were never the problem (CRLF
+> 1470 → 1483, exactly the 13 inserted lines). Restored from a byte snapshot and rebuilt the
+> backslash numerically as `bytes([92])`. **A whole-file diff on a small edit means the file was
+> corrupted, not reformatted — check for NUL before assuming line endings.**
 
 ### ⬜ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
 
