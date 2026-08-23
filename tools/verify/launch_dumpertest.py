@@ -22,6 +22,22 @@ TWO ARG TRAPS, both already paid for elsewhere in this repo:
   * FPS is capped with `t.MaxFPS` via `-ExecCmds`, deliberately NOT with `-BENCHMARK
     -FPS=15`. The latter switches UE to a FIXED TIMESTEP, which silently changes what
     every timing- or tick-sensitive row is measuring.
+
+!! AND THE THIRD, WHICH THAT SECOND BULLET WALKED STRAIGHT INTO (measured 2026-08-23):
+   THE FPS CAP DOES NOTHING ON THE `shipping` FLAVOUR. UE 5.4's Misc/Exec.h:11-17
+   defines UE_ALLOW_EXEC_COMMANDS as UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING when
+   (UE_BUILD_SHIPPING && !WITH_EDITOR), and UnrealBuildTool sets that to 0 unless the
+   Target.cs opts in (UEBuildTarget.cs:5147/5151); GameEngine.cpp wraps its exec
+   handling in the macro. So `-ExecCmds` is silently discarded in a Shipping package.
+   MEASURED with AD4_GetContestWrites over a timed window: **59.8 Hz**, not 15. Every
+   past all-night Shipping batch ran uncapped, and any Shipping measurement that
+   ASSUMED 15 FPS was taken at ~60.
+
+   The bullet above is a careful decision about WHICH mechanism to cap with, made
+   without checking that the chosen mechanism runs at all in the flavour being
+   launched. Keep the reasoning; check the gate. If a row needs a real cap, run it on
+   `dev`/`debug` (where -ExecCmds works), or MEASURE the rate and report it -- which
+   is what tools/verify/ad4_contested.py now does instead of quoting a configured one.
 """
 import argparse
 import os
@@ -75,6 +91,12 @@ def main(argv=None):
 
     args = [str(exe)] + HOUSE_ARGS + (["-DumperTestIdle"] if a.idle else [])
     print("launching:", " ".join(args))
+    if a.flavour == "shipping":
+        # Say it at the point of use, not only in the docstring: an operator reading
+        # the launch line sees `t.MaxFPS 15` and reasonably believes it took effect.
+        print("  !! shipping: -ExecCmds is discarded in a Shipping package "
+              "(UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING=0), so t.MaxFPS 15 does NOT apply "
+              "-- measured 59.8 Hz. Measure the rate; do not assume 15.")
     p = subprocess.Popen(args, cwd=str(exe.parent), creationflags=DETACHED)
 
     out = pathlib.Path(__file__).resolve().parents[2] / "out"

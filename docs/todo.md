@@ -619,6 +619,80 @@ All 23 scheduled items shipped; the rest were refuted or downgraded to optional 
 The rollup moved to [archive/todo-closed-2026-08-build-2715.md](archive/todo-closed-2026-08-build-2715.md);
 the per-finding detail was always in [audit-2026-07-14-findings.md](audit-2026-07-14-findings.md).
 
+### ✅ AD4 step 4 CLOSED 2026-08-23 `[AD4-CONTESTED-2026-08-23]` — the `ON (contested)` state recorded, with three witnesses
+
+The row's last open step wanted `ON (contested)` — the `(want=1, godmode=0, resolvable=true)` triple —
+observed at least once, and it was explicit that **eyeballing the badge is the wrong instrument**:
+the state is rare in real combat, so watching for it is both the easiest way to miss it and leaves
+no evidence. It asked for a pipe poller instead.
+
+Closed on **DumperTest Shipping** (UE 5.4, build 3322) with `tools/verify/ad4_contested.py`. The new
+fixture replaces "go and get hit" with `AD4_SetDamageContention(true)`, which makes
+`ADumperTestActor::Tick` write `SetCanBeDamaged(true)` on the player pawn every frame.
+
+| phase | samples | result |
+|---|---|---|
+| **A** negative control — hold, contention **OFF** | **318** | `(1,1,true)` **100.0%**; contested triple **never**; `AD4_GetContestWrites` flat at **0** |
+| **B** positive — contention **ON** | 315 | **`(1,0,true)` × 309 = 98.1%**; counter **31 → 513 (+482)** |
+| **C** recovery — contention **OFF** again | 312 | `(1,1,true)` **100.0%**; contested triple gone |
+| **D** independent witness | — | Solitar's own `re-asserted protection flag(s) (drift #N)` went **0 → 5** in `walk-0.log` |
+
+Run twice; both runs agree.
+
+⭐ **Three independent witnesses, which is why this is not one number agreeing with itself.** The
+pipe poll is the DLL reading the pawn's bit; `AD4_GetContestWrites` is the **game** counting its own
+writes from the other side; the drift warning is **Solitar** noticing independently of both. A flat
+counter while the poll said contested would mean the poll was lying; a contested poll with no drift
+line would mean the worker never saw it.
+
+⭐ **The negative control ran FIRST and is the reason B means anything.** 318 consecutive
+non-contested samples establish that the detector discriminates rather than being stuck on
+"contested" — and phase C shows it goes back, so the transition is observed in both directions.
+
+⚠ **Honest scope, and it is a real limitation.** A per-frame writer is a far harsher contest than
+combat. The rig prints this with every result: what is proven is that the state is **real and
+detectable**, not that it arises at any particular rate in ordinary play. In real combat the
+re-assert worker usually wins, which is exactly why the row was reclassified away from eyeballing.
+
+### ⚠ Found while doing it: `-ExecCmds=t.MaxFPS 15` is a NO-OP in Shipping
+
+`AD4_GetContestWrites` was added to prove the contest was live. It also, unasked, measured the
+sample's tick rate — **59.8 / 59.9 Hz in two runs**, against a launcher that documents a 15 FPS cap
+as a house guarantee ("so an all-night batch does not load the machine — this PC also drives the
+game under test").
+
+The cause is the same Shipping gate that caught the CheatManager question earlier the same day.
+UE 5.4 `Runtime/Core/Public/Misc/Exec.h:11-17`:
+
+```cpp
+#if UE_BUILD_SHIPPING && !WITH_EDITOR
+    #define UE_ALLOW_EXEC_COMMANDS UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING
+#else
+    #define UE_ALLOW_EXEC_COMMANDS 1
+#endif
+```
+
+and UnrealBuildTool sets `UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING=0` unless the Target opts in
+(`UEBuildTarget.cs:5147/5151`). `GameEngine.cpp` wraps its exec handling in that macro
+(`:1025-1102`, `:1398-1553`). So **`-ExecCmds` is silently discarded in a Shipping package** and
+every past all-night Shipping batch ran uncapped.
+
+⭐ The irony is instructive and is the reusable part: the launcher's docstring contains a *careful*
+decision about **which** capping mechanism to use — `t.MaxFPS` via `-ExecCmds` rather than
+`-BENCHMARK -FPS=15`, because the latter switches UE to a fixed timestep and "silently changes what
+every timing- or tick-sensitive row is measuring". The reasoning was right and the mechanism was
+never checked for whether it *runs at all* in the flavour being launched. **Third Shipping-gate miss
+in one day** (CheatManager, the log-verbosity comment, this).
+
+⚠ **Consequence for other rows**: any Shipping-flavour measurement that assumed 15 FPS was taken at
+~60. AD4's own numbers are unaffected because the rig now **measures** the rate and prints it
+alongside a duty-cycle prediction the observation can disagree with — predicted 94.4% from 59.9 Hz
+vs a 300 ms re-assert, observed 98.1%.
+
+`launch_dumpertest.py` now says which flavours the cap applies to and warns at launch on Shipping.
+Not "fixed" beyond that: a real Shipping cap needs either a Target.cs rebuild with
+`bAllowExecCommandsInShipping` or a different mechanism, and that is a decision, not a typo.
+
 ### 🔴 FOUND 2026-08-23 `[DTROWMAP-2026-08-23]` — the DataTable drill-down reads the NEIGHBOURING table's rows
 
 **Found within minutes of the new DumperTest fixture going live, by V8's negative control** — the
