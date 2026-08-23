@@ -1208,6 +1208,82 @@ rather than only the tail — the gaps between reflected fields are exactly wher
 member lives. Prefer scanning the reflected gaps first. Keep the existing validation; it is not the
 problem, and it is what will stop a gap scan from accepting junk.
 
+### ✅ Solide L3 + L4 + the `⚠ capped` badge CLOSED 2026-08-23 `[SOLIDE-L3L4-2026-08-23]`
+
+Three rows in one run, on the spawner fixture packaged today. `tools/verify/solide_l3_derivation.py`,
+DumperTest Shipping, UE 5.4, build 3334.
+
+### ⭐ L3 — the hold follows DERIVATION, and this is the first time that was FALSIFIABLE here
+
+`Aura::FindInstancesDerivedFrom` is specified to hold a class *and every subclass*. The plausible
+wrong implementation — matching class **names** by substring — passes anything you can assemble from
+a commercial game, because subclasses are conventionally named after their base.
+`[A6-DERIVE-2026-08-22]` got as close as a shipped title allows and said so.
+
+The fixture supplies an **inverted** pair, so the two rules cannot both be satisfied:
+
+| class | name contains `DumperTestHolder` | derives from `ADumperTestHolder` |
+|---|---|---|
+| `ADumperTestHolder` | YES | YES |
+| `ADumperTestDerivedHolder` | **NO** | **YES** |
+| `ADumperTestHolderDecoy` | **YES** | **NO** |
+
+⭐ **The disagreement was demonstrated before the test, not assumed.** `find_instances` matches by
+substring, and asking it for `DumperTestHolder` returns
+`['DumperTestHolder', 'DumperTestHolderDecoy']` — it catches the decoy and misses the derived. The
+rig prints that first and FAILS if the inversion is not present, because without it the run proves
+nothing.
+
+⭐⭐ **The decisive evidence is one number.** With 100 base + 30 derived + 8 decoys and
+`truncated=false`:
+
+```
+force_field DumperTestHolder.HolderValue = 777.0 -> held=130 resolved=True truncated=False
+    held=130   derivation predicts 130   substring predicts 108
+```
+
+**130 = base + derived. 108 = base + decoys.** Same pool, two rules, two different numbers — so
+`held` alone settles it, before any per-instance read. Then both reads agree: 12/12 sampled base and
+**12/12 sampled DERIVED** carry the forced value, **0/8 decoys** do.
+
+⚠ **The first run was NOT decidable and the rig now refuses it.** At 300 + 50 + 8 the walk hit the
+256 cap (`held=256, truncated=true`), and under a cap *"the decoys were untouched"* is equally
+explained by *"the walk never reached them"*. An absence is only evidence when the detector is known
+to have looked. The rig now fails a truncated run for the negative half instead of scoring it.
+
+### L4 — each instance restored to its OWN base
+
+`HolderValue` is seeded **1000 + global index**, distinct per instance by construction; the sample
+showed 12 distinct values (1088, 1089, 1090, 1091 …). After `reset_field`, **12/12 were back at
+their own prior value**, not at a single shared one. The defect this row exists for — one captured
+base restored to every instance — is invisible with one instance and invisible to any count, and is
+exactly what distinct seeding makes visible.
+
+### The `⚠ capped` badge
+
+The 358-instance run produced `held=256, truncated=true` — the cap firing locally and
+deterministically, which previously required finding a commercial title with a big enough class
+pool. `Spawn_Holders`'s default of 300 exists for this.
+
+-----
+
+ℹ️ **Three tooling defects found on the way, all now fixed, all the same shape — a caller using a
+name the callee never reads:**
+
+* **`find_instances` takes `limit`, not `max_results`** (`Fern.cpp`, `request.value("limit", 500)`).
+  Every rig passing `max_results` was silently running at the default 500 **and matching class names
+  by SUBSTRING** (`exact_match` defaults false). Harmless while a pool is two objects; not harmless
+  once the spawner puts 300 in it — it is what made the first run raise `TruncatedError`. Fixed in
+  the shared `find_live_actor`, so every rig that imports it is fixed.
+* **`force_field`'s `value` must be a JSON number.** `"777.0"` returns
+  `type must be number, but is string` from `request.value("value", 0.0)`. The protocol doc only
+  shows the **bool** form, so the numeric form's value type is written down nowhere.
+* **My own package check looked in the wrong encoding.** Class names are stored **UTF-16**, function
+  names ASCII, so an ASCII-only grep reported all five new classes missing from a package that
+  contained them. Caught by controlling against `DumperTestPayload`, which has existed since the
+  first build and "failed" the same check. **Third wrong-place detector in one day** — after the
+  `.pak`-vs-IoStore map scan and the unscoped `limit` regex.
+
 ### ✅ CLOSED 2026-08-23 `[SEETHRU-DQ7R-2026-08-23]` — the See-through non-regression is now a MEASUREMENT, not an argument
 
 `[SEETHRUNOOP-2026-08-22]` rewrote hit→actor resolution to try `Actor` → `HitObjectHandle` →
@@ -1265,7 +1341,7 @@ work — is answered for one of the two named hosts. **Tower of Mask remains unt
   `dist/build_number.txt`. A verification tool quoting a number instead of deriving it is the exact
   failure the house rule exists to prevent, and it was inside the tooling.
 
-### ⬜ DumperTest spawner fixture — SOURCE WRITTEN 2026-08-23, awaiting a package build
+### ✅ DumperTest spawner fixture — WRITTEN + PACKAGED 2026-08-23
 
 Item ③ of the plan in
 [auto-verification-classification-2026-08-23.md](auto-verification-classification-2026-08-23.md).
@@ -1349,11 +1425,14 @@ legitimately-empty case) · **U4** class-to-class slot recycling · **AE4–AE7 
 concurrency gate, which currently reports 執行時間太短無法測試 because nothing runs long enough to
 collide). **FREEZESCOPE step 6** becomes possible too if DQ7R is unavailable.
 
-### ⬜ Left to do
+### ✅ Packaged 2026-08-23 16:00–16:03, all three flavours
 
-Package it (Shipping at minimum; all three flavours is better — the CheatManager and `-ExecCmds`
-gates differ). Then the seven rows run headlessly through `invoke_function`, the same way AD4 / MG2
-/ V1a / V8 did.
+Verified present in each: the 9 `Spawn_*` UFunctions are reflected and all five new classes are
+registered. ⚠ **Class names are stored UTF-16 and function names ASCII** — an ASCII-only grep
+reports every class missing from a package that contains them. Control against `DumperTestPayload`
+(present since the first build) before believing such a result.
+
+First three rows closed the same hour — see `[SOLIDE-L3L4-2026-08-23]` above.
 
 ## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
 

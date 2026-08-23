@@ -1,4 +1,4 @@
-"""AD4 step 4 -- record the God Mode badge's `ON (contested)` state actually occurring.
+﻿"""AD4 step 4 -- record the God Mode badge's `ON (contested)` state actually occurring.
 
     py tools/verify/ad4_contested.py                 # full run (neg control -> positive -> recovery)
     py tools/verify/ad4_contested.py --seconds 12    # longer observation window per phase
@@ -70,7 +70,12 @@ POLL_HZ = 40.0
 
 
 def find_live_actor(c):
-    r = c.request("find_instances", class_name=ACTOR_CLASS, max_results=100)
+    # `limit` + `exact_match`, NOT `max_results` -- find_instances ignores the
+    # latter entirely (Fern.cpp reads request.value("limit", 500)), so every
+    # rig that passed max_results was silently running at the default 500 and
+    # matching class names by SUBSTRING. Harmless while the pool is two objects;
+    # not harmless once the spawner fixture puts 300 of them in it.
+    r = c.request("find_instances", class_name=ACTOR_CLASS, limit=100, exact_match=True)
     c.check_complete(r)
     live = [i for i in r.get("instances", []) if not i["name"].startswith("Default__")]
     if not live:
