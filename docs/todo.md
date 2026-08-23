@@ -631,23 +631,34 @@ fixture is strictly cheaper than searching for it, and it is the same move that 
 ⚠ **The source lives OUTSIDE this repo** (`D:\Unreal Projects\DumperTest\Source\DumperTest`), so git
 does not carry it and the other PC cannot see it. That is why the change is described here in full.
 
-### ⛔ The correction that shaped the design: a UCheatManager cannot drive this
+### ⚠ The CheatManager question, answered correctly (first answer was too broad)
 
-The natural idea — expose the knobs as console commands and type them in-game — **does not work in
-the build we actually test**:
+The natural idea — expose the knobs as console commands and type them in-game — **works in two of
+the three flavours and not the third**:
 
 ```
 CheatManagerDefines.h:  #define UE_WITH_CHEAT_MANAGER (1 && !UE_BUILD_SHIPPING)
 PlayerController.cpp:1107-1110  APlayerController::AddCheats  <- whole body inside that gate
 ```
 
-DumperTest is exercised as a **Shipping** package, so a cheat manager compiles to nothing and
-`UFUNCTION(exec)` has no console to reach it. The knobs are therefore plain
-`UFUNCTION(BlueprintCallable)` mutators, driven through the dumper's own `invoke_function` pipe
-command — which works in Shipping and needs no keyboard, so Auto + Computer Use can run them.
+So a `UCheatManager` is live in **Development** and **DebugGame**, and compiles to nothing in
+**Shipping**.
 
-ℹ️ This is the **fourth** wrong-Shipping-gate near-miss in this one file (the log-verbosity comment
-was the last). It was settled by opening the engine header, not by inference.
+⚠ **The first answer given was a flat "no", on the premise that DumperTest is exercised as a
+Shipping package. The maintainer corrected it 2026-08-23: much of the past testing actually ran the
+DEVELOPMENT exe.** The premise was wrong; the gate quoted above is right. Recorded because the
+mistake is the reusable part — *"which build flavour is this claim about"* is a question this repo
+has now got wrong twice (the other was the Shipping log-verbosity comment in the same file).
+
+**The design choice is unchanged, and for reasons that survive the correction.** The knobs are plain
+`UFUNCTION(BlueprintCallable)` driven through our own `invoke_function` pipe command, because that:
+
+* works in **all three** flavours, so a row's evidence is not silently flavour-scoped;
+* needs **no keyboard and no console UI**, so Auto + Computer Use can drive it unattended — a
+  console command cannot be typed by a headless pipe rig;
+* exercises **our own invoke path**, which is a thing under test, rather than the engine's.
+
+A cheat manager would have been the weaker instrument even where it exists.
 
 ### What was added
 

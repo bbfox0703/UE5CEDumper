@@ -1,7 +1,8 @@
 """Launch a DumperTest flavour with the house window/FPS settings, and wait for it.
 
-    py launch_dumpertest.py dev            # Development
-    py launch_dumpertest.py shipping       # Shipping
+    py launch_dumpertest.py dev            # Development  (UCheatManager live, full logging)
+    py launch_dumpertest.py shipping       # Shipping     (the closest analogue to a real game)
+    py launch_dumpertest.py debug          # DebugGame    (added 2026-08-23)
     py launch_dumpertest.py dev --idle     # ...with -DumperTestIdle (B8's deferred half ONLY)
     py launch_dumpertest.py dev --no-wait  # return as soon as the process exists
 
@@ -33,7 +34,18 @@ ROOT = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest")
 FLAVOURS = {
     "dev": ROOT / "Development/Windows/DumperTest/Binaries/Win64/DumperTest.exe",
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
+    "debug": ROOT / "DebugGame/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-DebugGame.exe",
 }
+# THREE flavours, and the exe NAME is not derivable from the folder: Development's binary is
+# plain `DumperTest.exe` with no suffix, the other two carry `-Win64-<Flavour>`. A glob written
+# as `DumperTest-Win64*.exe` silently finds two of three and reports the third as absent --
+# which is how a "the Development package was never rebuilt" conclusion gets manufactured.
+#
+# WHICH ONE TO USE IS A REAL DECISION, not a default. UE_WITH_CHEAT_MANAGER is
+# `(1 && !UE_BUILD_SHIPPING)`, so `dev`/`debug` have a live UCheatManager and `shipping` does not;
+# Shipping also drops most logging (Build.h NO_LOGGING) and editor-only reflection metadata.
+# A row whose claim could depend on any of that must say which flavour it was run on -- and the
+# honest ones get run on more than one. See docs/todo.md, the DumperTest fixture section.
 # 1280x720 windowed, 15 fps -- see the module docstring.
 HOUSE_ARGS = ["-windowed", "-ResX=1280", "-ResY=720", "-ExecCmds=t.MaxFPS 15"]
 
