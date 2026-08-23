@@ -8383,6 +8383,47 @@ refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click
 appear in the diagnostics measurement list), AF1 (needs a malformed UEnum — not reproducible on
 demand), U7's sibling paths.
 
+### ✅ AF1 CLOSED 2026-08-23 `[AF1-ENUMCOUNT-2026-08-23]` — "not reproducible on demand" is overturned: the malformed UEnum is a POKE
+
+`tools/verify/af1_enum_count.py`, **StackOBot 5.8 Shipping** (staged build), DLL 3338. **No source
+staging** — the input is data, so nothing had to be rebuilt.
+
+```
+NumValues before: 7 (0x00000007)     <- equals the baseline's 7 entries, so the offset is right
+NumValues after poke: 0x80000000     <- read-back proves the poke landed
+EInterpCurveMode = 0 entries         <- REFUSED
+ETextGender      = 4 entries         <- untouched control, still at its baseline
+```
+
+⭐ **Four legs, each removing a way to be wrong:** the pre-poke read *equals the baseline entry
+count* (so the address is the real `NumValues`, not a lucky offset); the read-back proves the write
+landed; the target collapses to 0; and a second, **untouched** enum read in the *same* `list_enums`
+call still returns its baseline — so the 0 is the guard firing, not a broken run.
+
+⚠ **Only testable on UE 5.6+, and that is not incidental.** The bug lived only in the `FNameData`
+branch — the Legacy branch's `num <= 0` test always caught the wrapped value, while this branch
+tested `== 0`. **DumperTest at 5.4 can never reach it.** StackOBot 5.8's log confirms the layout:
+`UEnum::Names detected at UEnum+0x40 (UE5.6+ FNameData, verified with 'ENetRole', count=5)`.
+`UENUM_NAMES` is **not** published by `get_offsets` — read it from `offsets-0.log`.
+
+⚠ **A fresh process is mandatory.** `s_enumCache` (`Ubel.cpp`) is a static map that is **never
+cleared or erased** (verified: no `.clear()`/`.erase()` anywhere), so once an enum resolves the poke
+is unobservable. Sequence: baseline in run 1 → **restart** → poke before anything resolves → read
+once. `list_enums` has **no address filter** and caches all **2,371** at once — never call it before
+poking.
+
+⚠⚠ **The first attempt gave the right answer for the wrong reason, and the rig caught it.**
+`read_mem` replies carry **`bytes`**, not `hex`; the rig read only `hex`, so the read-back was
+silently empty. The target *did* collapse to 0 — but with no proof the poke had landed, that 0 was
+unattributable and the rig refused to score it. **A PASS that cannot name its own cause is not a
+PASS.**
+
+ℹ️ **Fixture note for `reference-builds.md`:** the corpus copies under
+`D:\UE_Analyze_data\Varies Version builds\5.8\…` carry **no `.pak` files** — they are AOB oracles, not
+runnable games. The launchable 5.8 host is the staged build at
+`D:\Unreal Projects\StackOBot\Saved\StagedBuilds\Windows\…` (161 MB, boots to **40,708 objects**,
+`ue_version 508`).
+
 ### ✅ SPENT — 🌍 Locate-in-GWorld where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
 
 > **Steps 1, 2 and 4 CLOSED 2026-08-23 `[AE10-LOCATE-2026-08-23]`; step 3's premise does not hold.**
