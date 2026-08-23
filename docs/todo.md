@@ -1259,6 +1259,84 @@ Freeze button stayed **disabled**, because the chip mirrors LiveWalker/Pointers 
 (`MainWindowViewModel.cs:698-706`) but Property Search probes lazily on **tab activation**. A tab
 round-trip enabled it. Not filed as a defect — the panel does refresh, just not from the chip.
 
+### ✅ AA2 step 1 + AA3 step 5 CLOSED 2026-08-23 `[AA2-CONTRACT-AA3-STOP-2026-08-23]` — the row is now complete
+
+The last two steps. With step 2 (2026-08-21), step 3 (2026-08-20) and step 4 (2026-08-23),
+**AA2/AA3 is closed end to end.** CE 7.7 + AOBMaker + DumperTest Shipping.
+
+⭐ **One CE table, one script, two DLLs.** The record was pushed once and CE was never restarted —
+only the game was, with a different DLL each time. So the two results differ in exactly one variable.
+
+-----
+
+### Step 1 — the contract refusal
+
+| | |
+|---|---|
+| **positive** — contract-2 DLL | `[Freeze] nothing was frozen:`<br>`[ue5_freeze] the DLL is older than this script (script 3, DLL speaks 2) -- update UE5Dumper.dll`<br>record **left unticked** |
+| **negative control** — contract-3 DLL, *same record* | arms and **ticks**, no dialog, and the freeze then holds |
+| the other bail reasons, excluded | **60 holders were spawned first**, so "armed: no live instances" cannot explain it; the helper was in the table, so "helper not found" cannot; the DLL answered the pipe, so "no DLL" cannot |
+
+⭐⭐ **The old DLL's contract was ESTABLISHED, not assumed — and the naive read was wrong.** The row's
+staging needs a DLL older than the script, and `out/proxy-backups/` holds ten. They are dated
+**2026-08-19**, and so is the commit that moved the contract to 3 (`2c2a950c`), so the date decides
+nothing. Parsing each PE's export table for `g_mailboxContract` settles it:
+
+```
+dist/UE5Dumper.dll                       current=3  minimum=1
+*.20260819-*.bak   (all ten)             current=2  minimum=1
+DQ7R.version.dll.20260823-154401.bak     current=3  minimum=1
+```
+
+⚠ **Reading that export as a bare `int32` returns `1127564629` for every file** — that is
+`0x43354555`, `MAILBOX_CONTRACT_MAGIC`. `g_mailboxContract` is a **12-byte struct**
+`{u32 magic; i32 current; i32 minimum}` (`Mimic.h`), so the contract is at **+4**. A bare read makes
+every DLL look identical and would have "proved" the backups were unusable. The magic doubles as the
+check that the right field was read.
+
+⭐ **No staged build was needed.** The alternative was to lower `MAILBOX_CONTRACT` in `Mimic.h`
+temporarily — which would have turned `tools/check_mailbox_contract.py` (a CI gate) red and produced
+a *synthetic* DLL. A real shipped contract-2 binary is better evidence and leaves nothing to restore.
+
+⚠ **One confound removed before the run.** The backup is named `DQ7R.version.dll.….bak`, and the
+helper resolves `UE5Dumper.g_invokeMailbox` by module name; a name-resolution failure bails with a
+**different** message and would have been mis-read as the contract check firing. Copied to
+`out/oldcontract/UE5Dumper.dll` first, so the module name is right and the only thing wrong is the
+contract. **Recipe for next time: copy any `*.20260819-*.bak` to `UE5Dumper.dll` and
+`inject.py --dll` it.**
+
+-----
+
+### Step 5 (AA3) — permanent rescan failure must stop the writes
+
+The real behaviour is richer than the row's paraphrase, and was derived from the helper rather than
+quoted: `MAX_FAIL_STREAK = 3` (`ue5_freeze_helper.lua:880`) × a **5 s** rescan interval (`:85`,
+`:1094`) — so the row's "~15 s" is a derived number. On abandonment the helper disables both timers,
+clears the cache, then **defers** an untick plus a **modal** (a plain print would be destroyed by the
+generator's auto-close — `[FREEZESTUCK-2026-08-18]`).
+
+| # | observed |
+|---|---|
+| 1 | **positive detector first**: poke `-1.0f` into a frozen holder → **restored to 9999 in 1 s** |
+| 2 | suspend the game process → the DLL never picks the command up, so rescans fail |
+| 3 | within the 25 s window, a **modal**: `[ue5_freeze] DumperTestHolder: 3 consecutive rescans failed -- freeze STOPPED writing (last error: mailbox busy (concurrent invoke or rescan)). This record has been unticked; re-enable it after fixing the cause.` |
+| 4 | the record **unticked itself** (empty checkbox) |
+| 5 | **ONCE** — dismissing the modal produced no second one |
+| 6 | **resume**, then the *same* poke → stayed `-1` for **10 s** |
+
+⭐ **The symmetry is the evidence.** Identical probe, identical target: restored in 1 s before the
+break, untouched for 10 s after — and step 6 runs on a **resumed, live** process, so "the value
+stayed" is a statement about the freeze having stopped, not an artifact of a frozen game.
+
+⚠ **Suspend rather than `FreeLibrary`, deliberately.** The row says "unload/re-inject the DLL", but
+this DLL installs **MinHook trampolines on ProcessEvent** and **subclasses the game's WndProc**;
+unloading it leaves dangling pointers and would very likely crash the process — and a dead game
+trivially stops writes, proving nothing. `suspend.py`'s own docstring records that a whole-process
+suspend "stops Fern and Mimic too, so the DLL never even picks the command up", which is precisely
+the persistent rescan failure the step wants, and it is reversible. The substitution is a fidelity
+*improvement*, not a shortcut, and the last-error text (`mailbox busy`) records which failure mode
+was actually exercised.
+
 ### ✅ AA2/AA3 step 4 CLOSED 2026-08-23 `[AA2-STEP4-CHURN-2026-08-23]` — the freeze re-acquires across churn, and touches nothing else
 
 The step steps 2 and 3 structurally could not reach. Step 2 proved a class-wide freeze holds on a
@@ -13521,7 +13599,11 @@ suite can reach this.
 4. Regression check on a normal game where GWorld *does* resolve: the 🌍 handoffs still behave as
    before — this change should be invisible there.
 
-### ⬜ NEW 2026-08-15 — keep a freeze running across deaths/respawns (audit #5 AA2/AA3, build 2926)
+### ✅ CLOSED IN FULL 2026-08-23 — keep a freeze running across deaths/respawns (audit #5 AA2/AA3, build 2926)
+
+> **All five steps done.** 2 (2026-08-21) · 3 (2026-08-20) · 4 `[AA2-STEP4-CHURN-2026-08-23]` ·
+> **1 and 5 `[AA2-CONTRACT-AA3-STOP-2026-08-23]`**. The churn and the old-DLL staging came from
+> the DumperTest spawner and `out/proxy-backups/`, not from gameplay.
 
 The freeze tick used to write to cached pointers guarded only by "is qword 0 non-zero", which a
 recycled or pooled block passes — so between two rescans it could write into an object of a
@@ -13574,9 +13656,7 @@ instances.
 > **1** live object on this host while the derived sweep holds **58**. That 1-vs-58 is precisely the
 > "held one incidental debug actor while the player's pawn went untouched" story the finding tells.
 >
-> Steps 1 and 5 still need CE and stay open. **Step 2 passed 2026-08-21** and **step 4 CLOSED
-> 2026-08-23 `[AA2-STEP4-CHURN-2026-08-23]`** — the churn it needed came from the DumperTest
-> spawner, not from gameplay.
+> All five steps are now closed — see the parent heading.
 
 1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
    refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
