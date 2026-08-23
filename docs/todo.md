@@ -11101,7 +11101,36 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     correct thread (identified by CPU: 4906 ms vs 15 ms for its 141 siblings) and still read
     False. It now calls `pe_profile_start` (which forces the hook via
     `UE5_EnsureGameThreadHook`) and requires False→**True**→False around the freeze.
-  - **DLL LOWs L1 / L10** ⬜ (Solitar worker start/stop under `s_workerMutex`;
+  - ✅ **DLL LOW L1 — PASS 2026-08-23 `[L1-GODRACE-2026-08-23]`.** Solitar worker start/stop under
+    `s_workerMutex`. `tools/verify/l1_godmode_race.py`, DumperTest dev / DLL 3337.
+    **1600 toggles across 2 pipe lanes in 2.8 s, with 1585 ON↔OFF transitions** — a serialised
+    run would produce exactly **one**, so the lanes genuinely overlapped.
+    Both of L1's failure modes checked **behaviourally**, because `get_god_mode` reports intent
+    and cannot see whether the worker thread exists: poke `bCanBeDamaged` the wrong way and see
+    whether anything restores it.
+    | | |
+    |---|---|
+    | detector, god ON | poked bit **restored in 0.4 s** |
+    | detector, god OFF | poke **stayed** for the full 4 s — so the detector separates the two states |
+    | settled ON (no premature join) | restored ✅ |
+    | settled OFF (no orphan) | not restored ✅ |
+    | second, independent detector | `re-assert worker started` **794** / `stopped` **794**, net **0** |
+    ⚠⚠ **Three defects in the rig itself, each of which would have produced a confident wrong
+    answer.** They are recorded because two are traps in the *logging convention*, not in this row.
+    (1) The first anti-vacuity metric counted `GodMode: set <ON|OFF> … (want=<0|1>)` lines where
+    the argument and `want` disagree. That is **structurally always zero post-fix** — the fix holds
+    `s_workerMutex` across the store *and* the log line, so nothing can be between them. A metric
+    the fix makes impossible cannot measure concurrency. Replaced by counting ON↔OFF transitions
+    with each lane sending a **constant** value.
+    (2) ⭐ **`sorted(LOGDIR.glob("*.log"))` + slice-by-total-length reads a PREVIOUS session.**
+    The folder keeps every archive, and name-sorting puts the live `walk-0.log` **before**
+    `walk-2026…`, so the slice landed inside an archive and yielded a dead pawn address — four
+    `read_mem returned nothing` results that read as "the worker is broken". Now snapshots
+    per-file offsets over `*-0.log` only.
+    (3) The `'<name>' @+0xNN mask=0xMM` line is emitted **only on the first class scan**, not on
+    every toggle, so it is absent from a fresh OFF→ON window. The pawn address must come from the
+    fresh window (it changes per process) but the bit layout must come from the whole live log.
+  - **DLL LOW L10** ⬜ (Grausam post-enable windows + shutdown teardown;
     Welford gap underflow on out-of-order PE timestamps; Grausam `GetWindowTextW` under `g_mutex`
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
