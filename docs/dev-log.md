@@ -22,6 +22,47 @@ builds ≤696 in
 
 -----
 
+## 2026-08-23 (evening) - The proxy advisory hid winmm; found by reading import tables, not code (build 3337)
+
+**`[PROXYALTWINMM-2026-08-23]`.** Working the A6 offline bucket — the "Lushfoil proxy did not load"
+row — the useful move was to stop reading our code and parse the games' PE import tables with
+`tools/pe/pe_imports_exports.py`. Over every UE shipping `.exe` installed on this machine:
+
+```
+16 shipping exes:  14 import winmm   ·   13 import dxgi   ·   4 import version   ·   0 import dinput8
+```
+
+`ProxyImportAnalyzer.DescribeImportable` built its `alt:` list from **dxgi and dinput8 only** — so it
+recommended the flavour **nothing** imports and suppressed the one **almost everything** does, even
+though the analyzer has parsed `ImportsWinmm` since 2026-07-27 (`a2c81a0c`, *"teach the analyzer
+winmm"*), winmm is one of the four proxies we build, and the class's own remarks group `dxgi`/`winmm`
+as the *"pure static-import hijacks"* — the deterministic pair. On the 13 games importing both, the
+user saw `alt: dxgi` and was never told winmm was equally available.
+
+⚠ **Root cause is `working-lessons.md` §2.3, verbatim.** `ImportsWinmm` was appended to the record
+**with a default** — the only defaulted member — so all four `Recommend` tests construct three
+positional arguments and silently assert the no-winmm case. `DescribeImportable` was edited *again*
+on 2026-08-10 (`c28e3a78`), two weeks after winmm was taught, and still not updated. The test file's
+comment still read *"none of OUR three"*.
+
+⚠⚠ **And the structural guard I wrote for it was VACUOUS on its first draft.** It asserted
+`Display.Contains("winmm")` — but the corrected empty-case sentence is `no dxgi/winmm/dinput8`,
+which *contains* `winmm`, so with the fix removed the guard **still passed** while the two
+hand-written cases failed. Only the negative control exposed it. It now matches inside the `alt:`
+segment. Final control: dropping the winmm line fails **all three**; restoring returns 51/51.
+
+Suite **4,712 / 0 failed**, **13/13** gates, `dist/` republished AOT-trimmed.
+
+ℹ️ **What this did NOT settle.** The Lushfoil row itself stays open. Offline forensics established the
+proxy is present, correctly placed beside `LushfoilSim-Win64-Shipping.exe`, the right flavour (78
+`version.dll` exports) and dated 2026-08-19, and that the exe was **not** patched (2026-02-22) — but
+the exe never imports `version.dll`, which `ProxyImportAnalyzer`'s own remarks already document as
+**normal and non-diagnostic** for that flavour (Lushfoil is named there among 11 games running a
+working version proxy without the import; the load is a run-time `LoadLibrary`). So the filesystem
+cannot say why it failed on 2026-08-21. **Actionable instead:** Lushfoil statically imports both
+`dxgi` and `winmm`, either of which loads deterministically rather than riding a run-time
+`GetFileVersionInfo` call — which is exactly what the advisory now surfaces.
+
 ## 2026-08-23 (later still) - AC13's untested metric gets two tests, and the route that does not work is written down (no build change)
 
 **No product change; `build_number.txt` stays 3335/3336** — this adds tests only, and the final shape
