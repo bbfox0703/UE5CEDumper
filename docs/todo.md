@@ -5770,7 +5770,15 @@ Same probe, same address, opposite answer. Without it, "0x02 came back" is only 
 
 ℹ️ ✅ **Step 1 (See-through's four disable arms) is CLOSED 2026-08-23** — arms (c)+(d) passed
 2026-08-22, arms **(a)** and **(b)** on 2026-08-23, see `[SEETHRU-ARMS-AB-2026-08-23]` below.
-Step 3 (close the game with a hold live) is still open.
+✅ **Step 3 (close the game with a Solide hold live) is CLOSED 2026-08-23
+`[SOLIDEHOLD-STEP3-2026-08-23]`** — DumperTest dev / DLL 3337: `force_field(numeric, 7777)` on
+`DumperTestHolder::HolderValue` reported **held=80** with **8/8** sampled instances actually
+reading 7777 (so the hold was demonstrably re-asserting, not merely registered), then a posted
+`WM_CLOSE` exited the process in **1.5 s** with **0** `tick threw` / `[ERROR]` lines and **0**
+crash dumps.
+⚠ Same rule as arm (b): a `taskkill /F` does not test this — the DLL's shutdown path never runs.
+
+⭐⭐ **M1–M5 is now complete: steps 1, 2, 3, 4 and 5 all closed.**
 
 ### ✅ M1–M5 step 1 arms (a) + (b) PASS 2026-08-23 `[SEETHRU-ARMS-AB-2026-08-23]` — the row's "needs a human" was wrong for both
 
