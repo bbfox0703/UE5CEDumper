@@ -6029,6 +6029,33 @@ static void Test_Radar_RefineContainerAnchor() {
     EXPECT("a container anchor with no scan-time count falls back, not drops",
            V(ValueAnchor::ArrayElement, 3, -1, kData, 0x9000, 9, true)
                == RefineAnchorVerdict::KeepAddress);
+    EXPECT("no scan-time BASE falls back too (that is our bookkeeping, not the game's)",
+           V(ValueAnchor::ArrayElement, 3, 8, /*dataAtScan=*/0, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- an EMPTIED container is a FACT, not missing bookkeeping -------------
+    // TArray::Empty()/Reset() releases the allocation and sets Data to nullptr.
+    // Both callers `continue` on a failed header read BEFORE calling this, so
+    // nowData == 0 here always means "read fine, and the buffer is gone".
+    // Until 2026-08-23 `!nowData` was OR-ed into the bookkeeping guard above and
+    // returned KeepAddress, jumping over both Drop rules below — so the candidate
+    // stayed pinned to freed memory, and freed memory that still holds the scanned
+    // value reads back as a live hit.
+    EXPECT("emptied container (Data=nullptr, Count=0) DROPS",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/0, true)
+               == RefineAnchorVerdict::Drop);
+    EXPECT("emptied SPARSE container drops too",
+           V(ValueAnchor::SparseElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/0, false)
+               == RefineAnchorVerdict::Drop);
+    // Even element 0 -- the one whose address equals the buffer base, and so the one
+    // most likely to still read a plausible value out of the freed block.
+    EXPECT("element 0 of an emptied container drops (its address IS the old base)",
+           V(ValueAnchor::ArrayElement, 0, 1, kData, /*nowData=*/0, /*nowNum=*/0, true)
+               == RefineAnchorVerdict::Drop);
+    // A garbage header (null data but a non-zero count) must not be trusted either.
+    EXPECT("null data with a non-zero count is not trusted",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/9, true)
+               == RefineAnchorVerdict::Drop);
 
     // --- the address recomputation ------------------------------------------
     EXPECT("element address = data + idx*stride + intra",

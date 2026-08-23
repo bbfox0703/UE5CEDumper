@@ -741,7 +741,166 @@ vs a 300 ms re-assert, observed 98.1%.
 Not "fixed" beyond that: a real Shipping cap needs either a Target.cs rebuild with
 `bAllowExecCommandsInShipping` or a different mechanism, and that is a decision, not a typo.
 
-### 🔴 FOUND 2026-08-23 `[DTROWMAP-2026-08-23]` — the DataTable drill-down reads the NEIGHBOURING table's rows
+### ✅ FIXED 2026-08-23 `[DTROWMAP-2026-08-23]` — the DataTable drill-down now finds its OWN RowMap
+
+Fix in `Ubel::ProbeRowMapOffset`. The scan is now bounded by the object and covers all of it:
+
+* starts at `ci.SuperPropertiesSize` (where this class's own storage begins) instead of at the end
+  of the reflected fields, so an offset **below** `endReflected` is reachable — which is where
+  `RowMap` actually lives in a cooked build;
+* ends at `ci.PropertiesSize - 0x38` (a `TSparseArray` is 56 bytes), so it can no longer read past
+  the object into a neighbour;
+* two passes — the holes between reflected fields first (a non-reflected member can only be in a
+  hole), then the claimed bytes as a fallback so a wrong reflected `Size` cannot hide the target;
+* the failure log now says it is deliberately **not** widening past the object, and why.
+
+Validation logic untouched: it was never the problem, and it is what keeps a whole-object scan
+honest.
+
+**Measured before → after, same fixture, same flavour (DumperTest Shipping, UE 5.4):**
+
+| table | before | after |
+|---|---|---|
+| `Table_Big` (100 rows) | `row_count 8`, `row_map_offset 240` — *the neighbour's rows* | **`row_count 100`, `row_map_offset 48`**, rows `Row_000…Row_099` |
+| `Table_Small` (8 rows) | `"RowMap not found by probing"` | **`row_count 8`, `row_map_offset 48`**, rows `Row_000…Row_007` |
+
+Both now resolve at **48**, the offset `ReadProcessMemory` said was right all along.
+
+-----
+
+### ✅ FOUND + FIXED 2026-08-23 `[DTTEXT-2026-08-23]` — a DataTable's FText column came back blank
+
+Visible only once `[DTROWMAP]` was fixed and the walk was reading the right table. `Caption`
+(`TextProperty`) was listed with its type and its raw hex and **no value and no `str_value` at all**:
+
+```
+{"hex":"40CA72F5A70100001200000000000000","name":"Caption","offset":24,"size":16,"type":"TextProperty"}
+```
+
+The pointer in that hex is valid. `WalkDataTableRows`'s per-field reader simply had no
+`TextProperty` branch — it handles `StrProperty` / `Utf8StrProperty` / `AnsiStrProperty` / Object /
+Struct / Enum. `WalkInstance` **does** handle it (`Ubel.cpp:5157-5160`), and on the same object in
+the same build every one of the actor's eight `Text_*` fields rendered perfectly through
+`walk_instance` while the DataTable path rendered none.
+
+⭐ **Audit #4's root cause again, verbatim: *the report and the reality are computed by different
+code paths*.** Two readers for one property type, and only one of them was ever exercised by a
+DataTable. The fix mirrors `WalkInstance`'s branch line for line, including its `"(empty)"`
+`typedValue`, and says in the comment that the two must agree.
+
+⚠ **The failure mode is why this matters more than a missing field would.** The column was still
+*listed*, with its type and its hex — so it read as "this row has no caption", not as "we cannot
+decode FText here". A blank cell is a fact about the data; a missing decoder is a fact about us.
+
+**After:** `Caption` decodes on all 100 rows — `走一步 0` … `走一步 99`. The string is CJK **by
+construction**, so a mis-decode cannot produce it by accident, and it proves the whole chain: a
+`\uXXXX`-escaped C++ literal → UHT → a cooked Shipping package → `FText` → `ReadFTextString` → JSON.
+
+-----
+
+### ✅ V1a step 1 CLOSED 2026-08-23 `[V1A-REALLOC-2026-08-23]` — and it found a hole on the way
+
+`tools/verify/v1a_container_realloc.py`. The row predates audit #5's A11 re-anchor, so its wording
+("the candidate is discarded") had to be re-derived before it could be judged.
+`Radar::RefineContainerAnchor` now distinguishes drop / **repoint** / keep, and a growth realloc is
+*supposed* to repoint — which satisfies the row's real requirement (no wrong address) more strongly
+than dropping would. PASS was therefore defined as **dropped, or re-pointed to the correct new
+address**; FAIL as kept at the old one.
+
+| phase | ground truth (`ReadProcessMemory`, DLL out of the loop) | refine result |
+|---|---|---|
+| **1** grow by 400 | `Data 0x18B9D96BC40 → 0x18BA77009A0`, `Count 4 → 404` | live candidate **repointed to exactly the new base**; CDO control **survived unchanged** |
+| **2** `Empty(0)` | `Data=0x0 Count=0` — buffer released | live candidate **dropped**; CDO control survived |
+
+⭐ **The positive control is free and structural.** `Arr_Churn` is seeded in the **constructor**, so
+the **CDO** carries element 0 too — and nothing reallocates a CDO. One scan therefore yields a
+moving candidate and a stationary one, refined by the same code in the same call. Without it,
+"the candidate is gone" cannot be told from "the refine is a shredder".
+
+⭐⭐ **Phase 2's first run was INCONCLUSIVE, and fixing that is what found the defect.** With an
+`Exact` refine, a vanished candidate might have been eliminated by the **value test** rather than by
+the anchor policy — the freed block no longer read `7001`, so the run proved nothing about the
+policy. The fix is to refine with a predicate that **cannot eliminate anything**:
+`Between INT32_MIN..INT32_MAX` matches every `int32`. Under it the byte comparison is a tautology,
+so the only thing that can remove a candidate is the anchor rule. No allocator behaviour is involved
+and nothing has to be assumed about freed memory.
+
+-----
+
+### ✅ FOUND + FIXED 2026-08-23 `[V1AEMPTY-2026-08-23]` — an emptied container left its candidates on freed memory
+
+`Radar::RefineContainerAnchor` checked, in this order:
+
+```
+2. if (elementIndex < 0 || numAtScan < 0 || !dataAtScan || !nowData) return KeepAddress;
+3. if (elementIndex >= nowNum)  return Drop;
+5. if (nowNum < numAtScan)      return Drop;
+6. if (nowData != dataAtScan)   return Repoint;
+```
+
+`TArray::Empty(0)` releases the buffer and sets `Data` to `nullptr`. `Macht::ReadTArray` has no
+check on `Data`, so `{0,0,0}` reads back **successfully** — and both call sites already `continue`
+on `!hs.ok` before this function runs. So arriving with `nowData == 0` always means *"the header
+read fine and the buffer is gone"* — **positive evidence**, not missing bookkeeping. Grouping it
+with the guard at step 2 returned `KeepAddress` and jumped over **both** Drop rules that would have
+caught it (step 3 with `nowNum == 0`, and step 5).
+
+**Fix:** split `!nowData` out into its own `return Drop`, with the reasoning recorded at the site.
+
+⭐ **Demonstrated in both directions, twice over.** Not reasoned about — watched:
+
+* **Unit level.** Four new assertions in `dll_helpers_test.cpp`. With the fix reverted:
+  `Pass: 1645  Fail: 4`, and the four are exactly the new ones. With it: `Pass: 1649  Fail: 0`.
+  Nothing else moved.
+* **Live level.** Same rig, same fixture, two builds. **Pre-fix**: after `Empty(0)` released the
+  buffer, the candidate **SURVIVED a permissive refine at `0x288051E3740`** — a freed address.
+  **Post-fix**: dropped, CDO control still surviving.
+
+⭐ And the pre-fix run is the one worth keeping: the freed address read `85863968`, **not** the
+scanned value — so under an ordinary `Exact` refine it would have been dropped *by luck* and the
+defect would have stayed invisible. The permissive predicate is the whole reason it was seen.
+
+-----
+
+### ✅ V8 DLL half CLOSED 2026-08-23 `[V8-DLLHALF-2026-08-23]`; the one look is still owed
+
+`tools/verify/v8_datatable_cap.py`. The three UI strings are already pinned by C# tests — but those
+assert the **ViewModel's** strings from **synthetic** input, so they say nothing about whether the
+DLL hands the ViewModel a correct `N`. It did not: every one of them passed throughout
+`[DTROWMAP-2026-08-23]`, while a 100-row table reported 8. This closes the half they structurally
+cannot reach.
+
+| # | check | measured |
+|---|---|---|
+| 1 | truncated case | `Table_Big` → `row_count 100`, **64** rows at the default; `limit=1000` → 100/100; Caption decodes on **all 100** |
+| 2 | **negative control** | `Table_Small` → `8/8`, nothing truncated |
+| 3 | **N follows the data** | `V8_RebuildBigTable(77)` → new object, `77/77`, and `77` with **64** rows at the default |
+| 4 | **N is exact** | `V8_RemoveOneTableRow()` → `76/76` |
+
+⭐ **Checks 3 and 4 are impossible on a commercial game and are what make 1 meaningful.** A constant
+that happens to read 100 passes check 1 forever; only changing `N` on demand proves the number is
+read from the data. Check 4 then rules out an off-by-one or a capacity-vs-count confusion, which
+check 3 alone would not.
+
+⭐ The page size is **derived at runtime** from `Ubel.h` and the `CMD_WALK_DATATABLE_ROWS` handler
+rather than hard-coded in the rig. ⚠ The first version of that derivation searched `Fern.cpp`
+unscoped and matched **another command's** `request.value("limit", 200)`, reporting a disagreement
+that did not exist — a detector has to be right about *where* it reads, not only about what it
+matches. Now scoped to the handler block.
+
+⬜ **Still owed, and it is one look:** whether the three strings are actually **painted** — not
+clipped, not covered. `[PARAMSSORT-2026-08-22]` is the precedent: a correct VM string in a
+`TextBlock` with no `TextWrapping` truncated itself.
+
+-----
+
+### ✅ MG2 step 2's DataTable half CLOSED 2026-08-23 — unblocked by the two fixes above
+
+The half that was blocked an hour earlier. "Open any UDataTable — rows still parse correctly" is now
+answered by the V8 run: 100 rows, each with correct `Index` / `Label` / `Value`, and an `FText`
+`Caption` decoding to its seeded CJK. **MG2 is now closed in full.**
+
+### ✅ FOUND + FIXED 2026-08-23 `[DTROWMAP-2026-08-23]` — the DataTable drill-down read the NEIGHBOURING table's rows
 
 **Found within minutes of the new DumperTest fixture going live, by V8's negative control** — the
 8-row table that was only there to prove the ">64" banner *stays away*. It never got that far: the

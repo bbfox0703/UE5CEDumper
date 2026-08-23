@@ -545,8 +545,27 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
         return RefineAnchorVerdict::KeepAddress;
     // Stamped as a container but missing the data to act on it — degrade to the
     // old behaviour rather than dropping a candidate on our own bookkeeping.
-    if (elementIndex < 0 || numAtScan < 0 || !dataAtScan || !nowData)
+    // These three are OUR failures to record something, not facts about the game.
+    if (elementIndex < 0 || numAtScan < 0 || !dataAtScan)
         return RefineAnchorVerdict::KeepAddress;
+
+    // `nowData == 0` is NOT missing bookkeeping and must not be grouped with the
+    // guards above — it is positive evidence that the buffer is GONE. Both callers
+    // (Aura.cpp:8036 / :9228) `continue` on `!hs.ok`, so a header that could not be
+    // read never reaches here: arriving with nowData == 0 means the read SUCCEEDED
+    // and returned an empty container, i.e. TArray::Empty()/Reset() released the
+    // allocation. Every element candidate then refers to a slot that no longer
+    // exists.
+    //   Until 2026-08-23 this sat inside the guard above and returned KeepAddress,
+    // short-circuiting BOTH Drop rules below that would otherwise have caught it
+    // (`elementIndex >= nowNum` with nowNum == 0, and the shrink test). The
+    // candidate was left pinned to freed memory, and freed memory that still
+    // happens to hold the scanned value reads back as a perfectly good hit — a
+    // stale address reported as a live one, which is the exact failure V1a exists
+    // to catch. Found by v1a_container_realloc.py; the live half was inconclusive
+    // because the allocator had already reused the block, so the decisive evidence
+    // is the pure-function test, not the game.
+    if (!nowData) return RefineAnchorVerdict::Drop;
 
     // The slot no longer exists.
     if (elementIndex >= nowNum) return RefineAnchorVerdict::Drop;

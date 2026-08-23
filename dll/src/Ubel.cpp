@@ -6135,15 +6135,58 @@ void ResolvePropertyPreviews(
 // RowMap (TMap<FName, uint8*>) is NOT reflected — must scan memory.
 // Returns the byte offset of the TSparseArray within the DataTable, or -1 if not found.
 static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
-    // Find end of reflected data to start scanning from there
-    int32_t endReflected = 0;
-    for (const auto& fi : ci.Fields) {
-        int32_t fieldEnd = fi.Offset + fi.Size;
-        if (fieldEnd > endReflected)
-            endReflected = fieldEnd;
+    // The scan is bounded BY THE OBJECT, and it covers the whole of it.
+    //
+    // Two things were wrong here until 2026-08-23 [DTROWMAP-2026-08-23], and
+    // together they made this report a NEIGHBOURING table's rows as this table's:
+    //
+    //  (1) It started at the end of the reflected fields and only went FORWARD.
+    //      RowMap is declared immediately after RowStruct, so in a COOKED build --
+    //      where the WITH_EDITORONLY_DATA members between them are stripped -- it
+    //      lands at +0x30, in the hole between RowStruct (+0x28..0x30) and the
+    //      bools (+0x80). Measured on UE 5.4: endReflected = 152, real RowMap = 48.
+    //      The target sat BEHIND the scan start, so no amount of forward range
+    //      could reach it. This was not a tuning problem.
+    //
+    //  (2) It ran +0..+256 from there with no bound tied to the object.
+    //      UDataTable's PropertiesSize is 176, so 232 of its 257 candidate offsets
+    //      were OUTSIDE the object. DataTables get allocated near each other, so
+    //      the overrun lands in another UDataTable and validates on a real RowMap:
+    //      real FName row names, real row pointers, a plausible count. Not an
+    //      error -- a confident wrong answer. Proven with ReadProcessMemory, with
+    //      this DLL out of the loop: Table_Big+240 and Table_Small+48 were the
+    //      same address and served the same eight rows for a 100-row table.
+    //
+    // So: walk every 8-aligned offset of THIS class's own storage and never past
+    // PropertiesSize. Offsets a reflected field already claims are tried LAST --
+    // RowMap is by definition not one of them, but preferring the holes keeps a
+    // reflected TMap/TSet on some other class from being mistaken for it, and the
+    // fallback means a wrong Size on a reflected field cannot hide the real thing.
+    // The validation below is unchanged: it was never the problem, and it is what
+    // keeps a whole-object scan honest.
+    constexpr int32_t kSparseArrayBytes = 0x38;   // Macht::ReadTSparseArray reads +0x00..+0x37
+
+    int32_t scanBegin = (ci.SuperPropertiesSize > 0 ? ci.SuperPropertiesSize : 0);
+    scanBegin = (scanBegin + 7) & ~7;
+    const int32_t scanEnd = ci.PropertiesSize - kSparseArrayBytes;
+    if (scanEnd < scanBegin) {
+        Sein::Warn("WALK", "ProbeRowMapOffset: no room to scan (propsSize=%d, "
+                   "superPropsSize=%d) — a UDataTable smaller than a TSparseArray "
+                   "means the class layout is not what we think it is",
+                   ci.PropertiesSize, ci.SuperPropertiesSize);
+        return -1;
     }
-    // Ensure 8-byte alignment
-    endReflected = (endReflected + 7) & ~7;
+
+    // True when a reflected field already owns this byte. Size 0 still claims one
+    // byte: a bitfield bool reports Size 1, but a defensive 0 must not make the
+    // range empty and silently mark the offset free.
+    auto claimedByReflected = [&ci](int32_t off) {
+        for (const auto& fi : ci.Fields) {
+            const int32_t sz = fi.Size > 0 ? fi.Size : 1;
+            if (off >= fi.Offset && off < fi.Offset + sz) return true;
+        }
+        return false;
+    };
 
     int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
     int pairSize  = fnameSize + 8;  // FName + uint8*
@@ -6152,9 +6195,15 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
     // so the site cannot silently drift if fnameSize or the value type changes.
     int stride    = Macht::ComputeSetElementStride(pairSize, 8);
 
-    // Scan forward from end of reflected properties, up to +256 bytes
-    for (int32_t delta = 0; delta <= 256; delta += 8) {
-        int32_t candidate = endReflected + delta;
+    // Pass 0 = the holes between reflected fields (where a non-reflected member
+    // must live); pass 1 = everything else still inside the object, as a fallback
+    // so a wrong reflected Size cannot hide the real RowMap. Neither pass ever
+    // leaves [scanBegin, scanEnd] — that bound is the whole point.
+    for (int pass = 0; pass < 2; ++pass) {
+    for (int32_t candidate = scanBegin; candidate <= scanEnd; candidate += 8) {
+        const bool claimed = claimedByReflected(candidate);
+        if ((pass == 0) == claimed)
+            continue;                       // pass 0 wants holes, pass 1 wants the rest
         Macht::TSparseArrayView sa;
         if (!Macht::ReadTSparseArray(dataTableAddr + candidate, sa))
             continue;
@@ -6201,13 +6250,20 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
 
         if (validated) {
             Sein::Info("WALK", "ProbeRowMapOffset: found RowMap at DataTable+0x%X "
-                         "(count=%d, stride=%d)", candidate, count, stride);
+                         "(count=%d, stride=%d, pass=%s, scanned 0x%X..0x%X of a "
+                         "0x%X-byte object)", candidate, count, stride,
+                         pass == 0 ? "hole" : "claimed",
+                         scanBegin, scanEnd, ci.PropertiesSize);
             return candidate;
         }
     }
+    }
 
-    Sein::Warn("WALK", "ProbeRowMapOffset: could not find RowMap (endReflected=0x%X)",
-                 endReflected);
+    Sein::Warn("WALK", "ProbeRowMapOffset: could not find RowMap in 0x%X..0x%X "
+                 "(propsSize=0x%X). NOT widening the scan past the object: doing so "
+                 "is how a NEIGHBOURING UDataTable's RowMap used to be served as this "
+                 "one's [DTROWMAP-2026-08-23].",
+                 scanBegin, scanEnd, ci.PropertiesSize);
     return -1;
 }
 
@@ -6379,6 +6435,23 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                 } else if (fi.TypeName == "Utf8StrProperty" ||
                            fi.TypeName == "AnsiStrProperty") {
                     fv.strValue = ReadFUtf8String(rowPtr, fi.Offset);
+                } else if (fi.TypeName == "TextProperty") {
+                    // Mirrors WalkInstance's TextProperty branch (:5157-5160) on
+                    // purpose, including the "(empty)" typedValue: the two readers
+                    // must agree, and this is the pair that did not.
+                    //
+                    // [DTTEXT-2026-08-23] Until now this branch did not exist, so an
+                    // FText column of a DataTable came back with NO value and NO
+                    // str_value at all -- while the SAME property on the SAME object
+                    // in the SAME build rendered fine through walk_instance. The row
+                    // still listed the field with its type and its raw hex, so the
+                    // column looked present and merely blank, which reads as "this
+                    // row has no caption" rather than as "we cannot decode FText
+                    // here". Found on a fixture whose FText column is deliberately
+                    // CJK, immediately after [DTROWMAP-2026-08-23] stopped the walk
+                    // reading the wrong table.
+                    fv.strValue = ReadFTextString(rowPtr + fi.Offset);
+                    fv.typedValue = fv.strValue.empty() ? "(empty)" : fv.strValue;
                 }
 
                 // EnumProperty: resolve enum name
