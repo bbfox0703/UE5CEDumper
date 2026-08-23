@@ -16984,7 +16984,85 @@ run has not already shown.
 | 1 | 用 UE 版本 override，或找一款 PE ProductVersion 報 4.0–4.10 的遊戲，注入後 grep `scan-0.log` 的 `below the … floor — NOT accepting that on its own`。 | 該行出現，而且掃描照樣跑完（tier 3 → low confidence → gate 不啟動）。FAIL = 對一款其實能用的遊戲印出 `SKIPPING the scan`。 |
 | 2 | 反向對照：拿一個真正的 UE3 binary 注入。 | 仍然被拒絕，`scan-0.log` 出現 `PRE-UE4 engine POSITIVELY identified`。<br>⚠ 沒跑反向對照就不算測完 — 只證明「不再擋」等於沒證明「該擋的還會擋」。 |
 
-### ⬜ B29 —— 第三方 wrapper 存在時仍會正常注入
+### 🟡 B29 — the discriminator PASSES offline 2026-08-23 `[B29-PRODUCTNAME-2026-08-23]`; only the end-to-end CE run is left, and the fixture now EXISTS
+
+The row needed a third-party `dxgi.dll`/`dinput8.dll` wrapper in a UE game folder. The 2026-08-23
+sweep reported none on this machine. **That is no longer true** — the maintainer supplied one:
+
+```
+D:\SteamLibrary\steamapps\common\SEED BATTLE DESTINY REMASTERED\Game_SBDR\Binaries\Win64\dxgi.dll
+  5,255,448 bytes, 2026-08-02 · ProductName "ReShade" · 0 hits for UE5CEDumper / UE5_Init
+```
+(installer kept at `C:\Users\Andyc\Downloads\ReShade_Setup_6.8.0.exe`). SBDR is a UE title with its
+own log folder, so it is a real host, not a synthetic one.
+
+⭐⭐ **What actually discriminates the fixed build from the broken one — and it is NOT the message.**
+`git show 229df1d8^:dll/src/Methode.cpp` shows the pre-fix rule was a **path** test:
+
+```c
+// Case 2: proxy DLL — only count if NOT loaded from System32/SysWOW64
+if (IsProxyDllName(fileName)) {
+    if (sysDirLen == 0 || _strnicmp(modPath, sysDir, sysDirLen) != 0) {
+        outName = fileName;   // -> "already loaded, no injection needed"
+        return true;
+```
+
+So the old code already ignored System32 **by path**. A wrapper in the **game folder** is not under
+System32, so the old code returned `true` and told the user *"already loaded, no injection needed"* —
+the pipe then never appeared. The new code replaces the path heuristic with an identity check.
+
+⚠ **Therefore the six log lines already on disk do NOT close this row**, and it would have been easy
+to think they did. `Logs\cheatengine-x86_64\init-20260818-*.log` (build **3262**) contains:
+
+```
+CEPlugin: 'dxgi.dll'    is loaded but is not ours (path=C:\WINDOWS\SYSTEM32\dxgi.dll) — not a UE5CEDumper proxy
+CEPlugin: 'WINMM.dll'   is loaded but is not ours (path=C:\WINDOWS\SYSTEM32\WINMM.dll) — …
+CEPlugin: 'VERSION.dll' is loaded but is not ours (path=C:\WINDOWS\SYSTEM32\VERSION.dll) — …
+```
+×2 (two Inject&&Connect clicks). Those prove the **message plumbing** — it fires, and it renders the
+module name and full path correctly. They prove nothing about the fix, because **both** builds
+exclude System32.
+
+**✅ The deciding predicate is now verified, on the case that matters.** `IsOurModule` reads the PE
+VERSIONINFO `ProductName` and requires `"UE5CEDumper"`, enumerating `\VarFileInfo\Translation` rather
+than assuming the `040904B0` block. `tools/verify/b29_product_name.py` applies that exact rule through
+the same Win32 API:
+
+| case | `IsOurModule` | ProductName |
+|---|---|---|
+| our `dist/proxy/dxgi.dll` | **True** | `UE5CEDumper` |
+| our `dist/UE5Dumper.dll` | **True** | `UE5CEDumper` |
+| **ReShade wrapper (game folder)** | **False** | `ReShade` |
+| Windows' real `dxgi.dll` | **False** | `Microsoft® Windows® Operating System` |
+
+⭐ **Both controls are present, and the rig FAILS without them** — a predicate that answered "not ours"
+for everything would pass the wrapper case vacuously, so the run asserts it saw at least one of each.
+
+⭐ **The two detectors provably cannot disagree**, which the C++ comment claims and which was checked
+rather than taken on trust: `DumperModuleDetector.IsOurs` is
+`string.Equals(productName, Constants.ProxyProductName, OrdinalIgnoreCase)` with
+`ProxyProductName = "UE5CEDumper"` — the same rule as `_wcsicmp(value, L"UE5CEDumper")`.
+
+**▶ What is left is one end-to-end run**, and it is blocked on a *permission*, not on a fixture:
+the CE plugin is **not installed**. `HKCU\Software\Cheat Engine\Plugins64` registers only
+`AOBMaker_CEPlugin.dll` (enabled) and `CE-Handwire.dll` (disabled), and the copy at
+`out\ce-plugin-test\UE5Dumper.dll` is the stale **3262** build. Installing it means copying the
+current DLL into CE's plugin folder **and writing a registry key** — a persistent change to the
+maintainer's Cheat Engine, so it is not something to do unasked. Once installed: attach CE to SBDR,
+click *UE5CEDumper: Inject && Connect*, and expect
+`'dxgi.dll' is loaded but is not ours (path=…\Game_SBDR\Binaries\Win64\dxgi.dll)` **plus a normal
+injection** — FAIL being the old *"already loaded … no injection needed"*.
+
+ℹ️ **Step 3's non-ASCII case has a cheaper subject than the row assumes.** It expects a game whose
+**path** contains non-ASCII, and the historic symptom was `EVERSPACE? 2`. But EVERSPACE's install
+folder is plain ASCII (`…\common\EVERSPACE`, verified byte-wise), so the `?` did not come from a path.
+The likelier source is a **ProductName**: Windows' own `dxgi.dll` reports
+`Microsoft® Windows® Operating System`, and `EVERSPACE® 2` carries the same `®`. Any run that logs the
+System32 modules already exercises a non-ASCII string through this exact format — so step 3 may be
+satisfiable from the same session rather than needing a specially-named install.
+
+
+### 🟡 B29 —— 第三方 wrapper 存在時仍會正常注入（判別式 **2026-08-23 離線通過**；只剩 CE 端一次實跑）—— 見 `[B29-PRODUCTNAME-2026-08-23]` 一節
 
 *優先度 **中** · 需要：裝了第三方 dxgi.dll / dinput8.dll wrapper（例如 ReShade）的 UE 遊戲。*
 
