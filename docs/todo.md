@@ -8481,7 +8481,10 @@ No crash and no blanking, which is the row's stated FAIL condition.
 
 
 
-### 🟡 V6/U8 step 1 — the auto-refresh half attempted 2026-08-22, NOT closed `[V6-AUTO-2026-08-22]`
+### ✅ SPENT — V6/U8 step 1, the auto-refresh half `[V6-AUTO-2026-08-22]`
+
+> **CLOSED 2026-08-22 `[V6U8-FNAMEPAIR-2026-08-22]` — BOTH steps pass.** The "NOT closed" in the old
+> title outlived its cause by one session.
 
 ⭐ **First: the row's own blocker was stale.** It said to wait until `[AUTOREFRESH-2026-08-19]` was in
 a *published* build. That fix was **VERIFIED 2026-08-20 (steps 1–7 all pass)** and `dist` here is now
@@ -10319,7 +10322,11 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 > | 5 ⚠ control | a class that OVERRIDES ProcessEvent (a BP with its own slot), invoked directly | log shows **`(caller-asserted safe)`**, and the call still works | fail-open is correct here; the trampoline would have run the BASE implementation |
 > | 6 | ordinary gameplay for a few minutes with an invoke queued | no `SEH exception during queued PE call`, no 0xC0000409 | the `thread_local` guard did not suppress the legitimate drain |
 
-### 🟡 7-of-8 CLOSED 2026-08-19 — AD4: the God Mode badge must now name WHY, not just on/off (build 3203)
+### ✅ 8-of-8 — AD4: the God Mode badge must now name WHY, not just on/off (build 3203)
+
+> **The eighth and last step CLOSED 2026-08-23 `[AD4-CONTESTED-2026-08-23]`** — `(want=1, godmode=0,
+> resolvable=true)` recorded 309/315 samples on DumperTest, with a 318-sample negative control and
+> two further independent witnesses.
 
 *Needs a connected game with a pawn. See dev-log build 3203. **The badge MAP is unit-pinned (11
 tests, two negative controls); what is not pinned is that the DLL actually reports the three fields
@@ -13043,7 +13050,10 @@ This is the one verification in the register that needs **no game at all**.
 > time on the way out, with the plugin being removed — an incidental repeat of step 2's unload path.
 
 
-### ⬜ NEW 2026-08-15 — 🌍 Locate-in-GWorld on a game where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
+### ✅ SPENT — 🌍 Locate-in-GWorld where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
+
+> **Steps 1, 2 and 4 CLOSED 2026-08-23 `[AE10-LOCATE-2026-08-23]`; step 3's premise does not hold.**
+> Nothing here is still owed.
 
 The 🌍 buttons were gated on the client `IsGWorldAvailable` flag, which is really *"the AOB scan
 produced a &GWorld slot address"* — not *"a live UWorld exists"*. The DLL has world-recovery
@@ -13378,7 +13388,10 @@ instances.
 > `ExceptionAutoSave_DumperTest.ct` **in the repo root**, which was deleted. Worth knowing: driving
 > record state from Lua can litter the working tree.
 
-### ⬜ SUPERSEDED — original AA1 steps, kept for the method
+### ℹ️ SUPERSEDED, NOT OPEN WORK — original AA1 steps, kept for the method
+
+> Its successor **closed 2026-08-18** (the packed-bitfield freeze row just above). The ⬜ here was
+> making a deliberately-archived section count as an open row in every sweep.
 
 Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that
 does not own the whole byte. Freezing a `BoolProperty` now emits `boolMask` into the generated CFG and
@@ -13430,7 +13443,9 @@ bool's `bool_mask` arrive on the `search_properties` wire.
 > ⚠ Same scope caveat as AA1: the record held `ChaosDebugDrawActor`, the only non-CDO exact-`Actor`
 > instance — see `[FREEZESCOPE-2026-08-18]`.
 
-### ⬜ SUPERSEDED — original Y15 steps, kept for the method
+### ℹ️ SUPERSEDED, NOT OPEN WORK — original Y15 steps, kept for the method
+
+> Its successor **closed 2026-08-18** (the 1-byte-enum freeze row just above). Same note as AA1.
 
 Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always
 using a 4-byte `writeInteger`. The mapping and both call sites are unit-tested with four negative
@@ -13945,7 +13960,10 @@ at the Lua expression; everything after it — the mailbox write, the DLL's `CMD
 
 
 
-### ⬜ NEW 2026-08-14 — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
+### ✅ SPENT — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
+
+> **CLOSED 2026-08-22 `[W1W7-CUE4PARSE-2026-08-22]`** — a third-party parser reads the export. This
+> heading covers only W1/W7, so it is fully discharged; kept for the reasoning below.
 
 The `.usmap` export declared v3 and wrote the v0 body; it has been unopenable since the feature
 shipped on 2026-03-01. Now fixed to v4 with a round-trip reader in the test suite that asserts the
@@ -14202,7 +14220,14 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 
 -----
 
-### 🟡 MG2 / TSet+UDataTable no-regression / U2 — container geometry on a real game (build 2830)
+### 🟡 U2 only — container geometry on a real game (build 2830); MG2 is CLOSED
+
+> **MG2 closed in full 2026-08-23** — step 1 + the TSet halves `[MG2-CONTAINER-2026-08-23]`, and the
+> UDataTable half once `[DTROWMAP-2026-08-23]` / `[DTTEXT-2026-08-23]` were fixed. **Only U2 is left**,
+> and it is D_ENVIRONMENT: `WITH_CASE_PRESERVING_NAME` needs a title that ships with it, and DumperTest
+> cannot fake it — the flag is an `#ifndef` in `NameTypes.h:30`, overridable in principle, but this
+> machine's UE 5.4 is an INSTALLED BINARY engine (`Engine/Build/InstalledBuild.txt` present) so a game
+> module compiled with a 16-byte FName would ABI-mismatch the precompiled Core.
 
 *Closed here already: **MG1 · MG3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
 UI half 2026-08-18). **Still open: three.** **MG2**'s rows-equal-count half (the count half passed;
@@ -18404,7 +18429,10 @@ game `AE10` and the `Genau RIP decode` row are waiting for. Until one is install
 
 -----
 
-### 🟡 Y11 — the FIRE path is FOUND, and it explains an earlier session's dead end `[Y11-FIREPATH-2026-08-22]`
+### ✅ SPENT — Y11's FIRE path `[Y11-FIREPATH-2026-08-22]`
+
+> **Y11 CLOSED 2026-08-23** (build 3319) — step 3 fixed AND live-verified. The hunt recorded below is
+> what made that possible; kept for the route, not as outstanding work.
 
 Not executed yet, but the access problem that stalled it is solved and written down so the next
 attempt does not repeat the hunt.
