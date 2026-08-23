@@ -16971,6 +16971,40 @@ property search.** This is working-lessons §1.2 with a new failure mode: the ru
 was wrong, and a wrong key looks exactly like a true absence.
 
 
+#### ⛔ …and gameplay does NOT supply it either — Elliot is RULED OUT 2026-08-23 `[U3U17-LWC-ELLIOT-OUT-2026-08-23]`
+
+The previous note said the containers were empty only because nothing ticks at a title screen, and
+that a loaded save should populate them. **Tested, and that prediction was wrong.**
+
+Elliot was driven into real gameplay — autosave loaded, worlds `MainField_A2` / `BGE_FLD_A2` /
+`EV_FLD_A2` live. Re-swept **900 live heap instances**: **748 populated containers of any kind**, and
+**0** whose element is `Vector` / `Rotator` / `Transform` / `Quat`.
+
+⭐ **That 748 is the whole point** — it is the negative control. An earlier pass of this same sweep
+reported "0 vector-bearing" while ALSO finding 0 populated containers of any kind, which proved
+nothing. With 748 the detector is demonstrably firing, so the 0 is a measurement.
+
+▶ **Elliot is ruled out as the LWC vehicle**, and not for lack of trying: the two candidate shapes are
+dead ends by design. `CalibrationPointComponent::SubPoints` (a `TMap` of `Vector`) is camera-calibration
+tooling that never instantiates at runtime, and `SkeletalMeshComponent::CachedBoneSpaceTransforms` reads
+`count: 0` on **all 127** live skeletal meshes — that cache is editor/debug-oriented and stays empty in
+a shipping build. So step 1 needs a **different title**, not a different game state.
+
+⚠⚠ **Third wrong-key trap in one row, and this one nearly produced a false negative.** For an
+`ArrayProperty` the walk reply carries **`count`**, not a `value` string — arrays have no `value` key at
+all. A sweep that parses `value` therefore scores every array as empty. Combined with the two earlier
+traps (`search_properties` exposes only `inner_type`, never the element struct; the element struct types
+live on `walk_instance` under `array_struct_type` / `map_value_struct_type` / `set_elem_struct_type`),
+the rule for this codebase is blunt: **the field you want is often on the wire under a different key,
+from a different command, and reading the wrong one looks exactly like a true absence.** Always show the
+detector firing on something before believing a zero.
+
+ℹ️ Operational note: Elliot renders **fullscreen-exclusive**, so computer-use screenshots capture the
+desktop behind it and it cannot be driven by sight. `alt+Return` toggles it to windowed and makes it
+visible — that is what unblocked the save load here. Its keystrokes DO land while exclusive; they just
+cannot be verified visually, so use the pipe (world name, object count) as the feedback channel.
+
+
 ### 🟡 U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（GAS 半 **CLOSED 2026-08-23**；LWC 半只差容器樣本）—— 證據見 `[U3U17-GAS-2026-08-23]` 一節
 
 *build 3169 / 3171 · 優先度 **中** · 需要：一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
