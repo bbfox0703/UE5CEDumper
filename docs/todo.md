@@ -7391,6 +7391,33 @@ small deltas as noise, not as findings.
 exits immediately when its shipping exe is launched directly (Steam DRM wants the client), and
 **EVERSPACE (RSG)** was not attempted. Both need a Steam-client launch.
 
+> ### ✅ STVoyager SWEPT 2026-08-23 `[G11-STVOYAGER-2026-08-23]` — the DRM blocker is solved, and this is the cross-revision re-detect
+>
+> `"C:\Program Files (x86)\Steam\steam.exe" -applaunch 2643390` is the whole fix for *"exits
+> immediately when its shipping exe is launched directly"*. ⚠ It boots slowly — well past a
+> 2-minute wait — so wait on the **process**, not on a fixed timeout.
+> `pe_hash 4720D6A80ABFA000`, **46,995 objects** (a genuinely booted engine, not the dead-engine
+> trap), all three globals via AOB, `item_size=24`, `lowConfidence=no`.
+>
+> ⭐⭐ **Two runs, and the pair is the evidence** — the same title in one session, distinguished by
+> the log line:
+>
+> | run | cache going in | `FindAll: UE Version` line | what it shows |
+> |---|---|---|---|
+> | 1 | `506 / rev 5` | `506 (cached, rev=5, detected=yes, lowConf=no) — **skipped DetectVersion**` | the cache-hit path |
+> | 2 | **`0 / rev 1`** (primed by hand) | `506 (**tier=1**, detected=yes, lowConfidence=no, publisher=-)` | a **real re-detection** |
+>
+> After run 2 the cache was **rewritten `0/rev1 → 506/rev5`**, the log line and the cache **agree
+> (506 = 506)** — which is the comparison this step demands — and `ueVersionUserOverrideAt` was
+> empty before and after, so no user override was destroyed.
+>
+> ⚠ **A `trigger_scan` does NOT exercise this, and that cost a step.** Editing the on-disk cache and
+> re-scanning left it at `0/rev1` untouched: the version is held in memory from process start, so
+> `trigger_scan` re-scans pointers but never re-reads the version cache. **The stale-rev case needs
+> a fresh process** — prime the cache, then relaunch.
+>
+> ⬜ **EVERSPACE (RSG) is still unswept** — same `-applaunch` technique should apply (appid 1128920).
+
 ### 🟡 STEPS 4+5 CLOSED 2026-08-18 — G2: the version sweep is ~29 s faster, and must still be RIGHT
 
 *Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
