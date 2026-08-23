@@ -54,8 +54,15 @@ from pipe_client import PipeClient  # noqa: E402
 # The docstring reaches argparse as --help text, and this console is cp950: without
 # this, `--help` dies with UnicodeEncodeError on the first non-ASCII marker rather
 # than printing anything. Same idiom as the other rigs here.
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+#
+# line_buffering matters as much as the encoding here: in manual spawn mode this run
+# blocks for MINUTES, and a redirected stdout is block-buffered, so the whole (A)
+# section -- the CDO address, `held=N`, the live-sample channel proof -- can still be
+# sitting in the buffer while the poll lines stream out. Measured 2026-08-23: a
+# captured run began at the spawn banner with the entire mechanism half missing, i.e.
+# the evidence existed and did not reach the log, which is the same as not having it.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 BASE = "ActorComponent"
 FIELD = "bIsEditorOnly"

@@ -7530,7 +7530,62 @@ sample and make the result look stronger than it is) and tops up from a broader 
 
 -----
 
-### 🟡 A6 step 5 — the CDO half PASSES; the spawn half is BLOCKED on this fixture `[A6-CDO-2026-08-22]`
+### ✅ A6 step 5 CLOSED 2026-08-23 `[A6-SPAWN-DQ7R-2026-08-23]` — the spawn half, on a live commercial game
+
+The (A) mechanism half passed on DumperTest 2026-08-22. (B) — *"make genuinely new objects and check
+they did not inherit a written CDO"* — was blocked there because `set_debug_camera` is **one-shot per
+process**. Run here on **DQ7R** (UE427, proxy build 3315), which has real map loads.
+
+**Four independent runs, every one a PASS**, using `tools/verify/a6_cdo_and_spawn.py --spawn manual`:
+
+| # | game state at snapshot | baseline components | newly spawned | carrying the forced value |
+|---|---|---|---|---|
+| 1 | Title screen | 828 | 1 | **0** |
+| 2 | Title → save menu | 828 | 5 | **0** |
+| 3 | In-world 魚灣村 | 10,250 | 2 | **0** |
+| 4 | In-world → map change to 艾斯塔德島 | 10,252 | 4 | **0** |
+
+⭐ **Not vacuous, and the rig enforces that**: each run first proves the channel — `force_field ->
+held=256`, then **12 of 12** sampled live components actually carry the value — and the run FAILS if
+nothing new appeared. So "none of the new ones were forced" is a statement about objects that exist,
+made while the write path is demonstrably working.
+
+⭐⭐ **The gap that would have made this evidence hollow, closed separately.** Every newly-observed
+object was an `AtomComponent`, and a new `AtomComponent` copies **`Default__AtomComponent`** — not the
+`Default__ActorComponent` the rig checks. So a clean spawn would prove nothing unless the subclass CDO
+was clean too. Checked directly, during a live hold:
+
+```
+                                         BEFORE      DURING hold
+Default__ActorComponent @0x1DBAB2303E0   false       false
+Default__AtomComponent  @0x1DBAB2C3220   false       false      <- the one spawns inherit
+Default__SceneComponent @0x1DBAB230EC0   false       false
+```
+
+`force_field` on `ActorComponent` holds across every subclass (`Aura::FindInstancesDerivedFrom`), and
+CDOs are objects in that set — so a missing CDO-skip **would** have written all three, and every new
+`AtomComponent` would have carried it. It wrote none. That is what makes the spawn observation
+discriminating rather than decorative.
+
+⚠ **Honest scope.** All 12 observed spawns across the four runs were audio components. A map
+transition's own wave was never captured: the settle window (15–25 s) closes before a level finishes
+streaming, and the transition to 艾斯塔德島 completed after run 4 had already reported. So this
+demonstrates *"objects created during play do not inherit a written CDO"* on a real game — not *"a
+whole level's worth of actors"*. Given (A), and given the subclass-CDO check above, that is
+sufficient; a longer `--settle` would harvest a bigger wave if anyone wants one.
+
+⭐ **This run also validated the cap fix from earlier the same day, in the field.** DQ7R holds **828**
+live components at its title screen and **10,270** once 魚灣村 is loaded — both above the rig's old
+`limit=400`. The previous code would have diffed a 400-object *sample* and reported roughly 9,870
+untouched survivors as "newly spawned", i.e. a confident, catastrophic false FAIL. `check_complete`
+now makes a cap a loud error instead.
+
+ℹ️ `--spawn manual` was also improved mid-run: its stdout is now line-buffered, because a captured run
+began at the spawn banner with the whole (A) section — CDO address, `held=`, the channel proof — still
+sitting in a block buffer. Evidence that never reaches the log is the same as not having it.
+
+
+### ✅ A6 step 5 — the CDO half PASSES `[A6-CDO-2026-08-22]` (the spawn half, blocked here, CLOSED 2026-08-23 on DQ7R — see `[A6-SPAWN-DQ7R-2026-08-23]`)
 
 Step 5 asks: force a bool on a base class, `reset_all_fields`, then check that **newly spawned**
 objects do not carry the value — i.e. that the CDO was never written. `tools/verify/a6_cdo_and_spawn.py`
@@ -16390,7 +16445,7 @@ touches) is the cheap way to find one, rather than guessing fields.
 
 任何一款 UE 遊戲都可以。
 
-### 🟡 A6 —— Force 是否對子類別一併生效（**步驟 3 已通過;只剩步驟 5 的「生成」那半**）
+### ✅ A6 —— Force 是否對子類別一併生效 — **步驟 3、5 全部 CLOSED**（步驟 5 的「生成」那半 2026-08-23 在 DQ7R 上關閉，見 `[A6-SPAWN-DQ7R-2026-08-23]`）
 
 *build 3036 · 優先度 **高** · 步驟 1、2、4 已於 2026-08-19 驗畢並刪除*
 
