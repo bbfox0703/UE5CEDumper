@@ -9077,7 +9077,57 @@ container kind, truncated & full).
 - 🟡 **PARTIAL `[DUMPERTEST-LOG-2026-08-17]` — A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer
   wedges the walk (U1).** The **passive half PASSES**: every `KeySz=`/`ValSz=` in the DumperTest
   `walk-0.log` is plausible (8/4, 4/4, 8/4, 16/4, 4/12) — nothing like `1073742336`.
-  ⚠ **The degraded branch itself is NOT TESTED and must not be recorded as passing.** All five maps
+  ⚠ **The degraded branch itself is NOT TESTED and must not be recorded as passing.**
+
+> ### ⛔ U1's PRESCRIBED PROBE CANNOT WORK 2026-08-23 `[U1-PROBE-2026-08-23]` — measured, and the reason is three layers of defence
+>
+> The row (and the A* classification) says: *"poke a bogus `ElementSize` into a live
+> `FMapProperty`"* → expect `Cannot read map elements for '…'`. **Run on DumperTest / DLL 3337
+> with `tools/verify/u1_map_elemsize.py`: the poke lands and nothing happens.**
+>
+> ```
+> Map_NameToInt FMapProperty @ 0x2007F24C9A0
+> pointer pairs whose ElementSizes are (8, 4): 1   ->  +0x70 KeyProp / ValueProp   (witnessed)
+> before:  map_count=3 elements=3
+> poke read-back: 0x40000200 (want 0x40000200)     <-- the write DID land
+> with a bogus ElementSize: map_count=3 elements=3, oracle_warn=False
+> after restore: map_count=3 elements=3
+> ```
+>
+> ⭐ **The read-back is what makes this a finding instead of a defect report.** "The walker still
+> worked" has two very different causes — it ignored the garbage, or **the write never landed** —
+> and only a read-back separates them. Without it this rig would have filed a false defect.
+>
+> **Why it cannot work**, from `Ubel.cpp`'s `ResolveInnerSize` — **three** layers, in order:
+> 1. `InferScalarSize(innerTn)` is **type-driven and first**. `IntProperty → 4`,
+>    `NameProperty → 8` (`0x10` case-preserving), `ObjectProperty → 8`, … For a scalar value the
+>    function **returns before `FPROPERTY_ELEMSIZE` is ever read**, so the poke is unobservable
+>    *by design*.
+> 2. Only if that yields 0 is the raw `ElementSize` read — and it is then passed through
+>    **`ValidateArrayElemSize`**, so obvious garbage (`0x40000200`) is rejected rather than used.
+> 3. If validation also fails and the type is `StructProperty`, the size is recovered from the
+>    `UScriptStruct`'s `PropertiesSize`.
+>
+> ⇒ **A garbage ElementSize is defended three ways.** The degraded branch is guarded by
+> `else if (fv.mapCount > 0 || sa.Data != 0)` ([Ubel.cpp:4573](dll/src/Ubel.cpp:4573)) and is
+> reached only when the pair layout genuinely cannot be resolved.
+>
+> **What a future attempt must change** (do not repeat the above):
+> * use a **StructProperty-valued** map — `Map_IntToVec3f` on `DumperTestActor` — so layer 1
+>   returns 0 and the ElementSize is actually consulted;
+> * poke a **plausible-but-wrong** size (e.g. 16 where 12 is right), not obvious garbage, so it
+>   survives `ValidateArrayElemSize`;
+> * and expect layer 3 to still recover the right size from the `UScriptStruct` — so reaching the
+>   branch may require breaking the struct pointer too. **It is entirely possible this branch is
+>   unreachable by data alone and needs a staged build**, which would move U1 out of "cheapest"
+>   and into the staged tier.
+>
+> ℹ️ Reusable from this run regardless: the rig **witnesses** the ValueProp instead of assuming an
+> offset. `get_offsets` does not publish `FSTRUCTPROP_STRUCT`, so it scans the FMapProperty for a
+> pointer pair whose ElementSizes match what the field's *name* says they must be (FName=8,
+> int32=4) and **refuses to run unless exactly one pair matches**. It found exactly one, at
+> `+0x70`. Also: `fproperty_elemsize` is **52** at runtime here, not `Grimoire.h`'s `0x3C`
+> default — read it from `get_offsets`. All five maps
   read cleanly (`Read 3/3 map entries … skipped 0 unallocated` on each), so
   `Cannot read map elements for '%s'` (`Ubel.cpp`, `Sein::Warn`) structurally cannot fire here — and
   this file already says the case is hard to force deliberately. The "no multi-second freeze" half is
