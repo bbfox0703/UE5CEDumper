@@ -5189,6 +5189,19 @@ unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
 > | AB17 | ✅ **PASS 2026-08-20 `[AB17-REAP-2026-08-20]` — both halves, headless.** Rig: `tools/verify/ab17_session_reap.py`, against the real `kScanSessionIdleExpiry` of **300 s** (`Radar.h:837`). **Reap:** session A idled **320 s**, then a second `begin_value_scan` (session B) swept it — a query against A returns `ok=false, error="session_not_found"` while B answers normally. ⭐ The explicit error is what makes this meaningful: had a dead id returned an empty-but-ok reply, "0 candidates" would be indistinguishable from "reaped", so the rig asserts on `ok`/`error` and never on the row count. **Protect-mine-first:** session C idled **320 s** and was then REFINED — `refine_value_scan` returned `ok=true, remaining=94` and C stayed alive, i.e. a Refine protects its own session *before* sweeping others. A wrong ordering would have had C reap itself and the refine fail. Both are wall-clock behaviours, which is exactly why no unit test can reach them. | | |
 > | AB17 | begin a value scan, do a Next Scan or End, leave the app connected & idle; separately, start a 2nd scan much later | a stale earlier session is reaped on the next Begin/Refine/End (memory does not accumulate); the session being refined is NOT dropped when you step away mid-refine | the sweep trigger + the "protect my own session" ordering are not unit-testable (wall-clock) |
 > | AB12 | attach CE to a process with **>1024 loaded modules** and click Inject & Connect (or click it twice) | the "already loaded" / post-inject check correctly finds our DLL even past module 1024; a successful inject is never reported "not mapped" | needs a real large-module process |
+>
+> ⭐ **SCREENED 2026-08-23 `[AB12-SCREEN-2026-08-23]` — the precondition does not exist on this
+> machine, so the fixture is genuinely required.** Toolhelp module walk over every process:
+> **182 readable, 0 with >1024 modules.** The maximum is `explorer.exe` at **398** — under 40% of
+> the threshold. Next highest: SystemSettings 285, SteelSeriesSonar 282, OneDrive 250,
+> StartMenuExperienceHost 229. A UE sample sits near 100.
+> ⚠ **Honest limits of the screen:** 188 processes were unreadable (access denied / wrong
+> bitness) — but those are protected/system processes that are not injection targets anyway, so
+> they cannot satisfy the row either. And this is a snapshot with **no game running**; a very
+> large title could in principle differ, though nothing observed here is within 2.5x of the cap.
+> ⇒ Stop looking for a host. The row needs a **fixture that loads >1024 modules**, not a survey.
+> The classification doc's advice to *"screen before assuming a fixture is needed"* was the right
+> question; this is the answer, recorded as a negative rather than left implicit.
 > | AB13 | (maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L8 (U5 VMs + scoring): Z8 / Z12 / Z13
