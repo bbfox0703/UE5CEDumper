@@ -11077,7 +11077,31 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     come from psapi `PROCESS_MEMORY_COUNTERS_EX.PrivateUsage` via ctypes — **psutil is not installed
     on this machine**, so the classification doc's "psutil private bytes" entry is not runnable as
     written.
-  - **DLL LOWs L1 / L8 / L10** ⬜ (Solitar worker start/stop under `s_workerMutex`;
+  - ✅ **DLL LOW L8 — PASS 2026-08-23 `[L8-NOPUMP-2026-08-23]`.** Grausam's `GetWindowTextW`
+    under `g_mutex`. `tools/verify/l8_fglock_nopump.py`, DumperTest dev / DLL 3337.
+    **Offline half, on the shipped binary and stronger than reading source:** `GetWindowTextW`
+    does not appear in `dist/UE5Dumper.dll`'s import table at all, while `SetWindowLongPtrW` —
+    the subclassing call two lines away in the same function — does, so the detector fires. The
+    only source occurrence is the explanatory comment ([Grausam.cpp:175](dll/src/Grausam.cpp:175)).
+    **Live half:** freeze ONLY the UE game thread, then enable the lock so `SubclassEnumProc` runs
+    over a window whose thread is not pumping → **0.260 s, `state=1`** (budget 3 s).
+    ⚠⚠ **Three separate ways this test was vacuous before it was right — all found, none assumed.**
+    (1) The rig sent `enabled=True`; the DLL reads **`enable`** ([Fern.cpp](dll/src/Fern.cpp)), so
+    the unknown key defaulted to **false** and every call disabled an already-disabled lock. The
+    reply still said `ok: true`. Caught only because the DLL log showed `set OFF` twice and no
+    `set ON`. The rig now asserts the reply's `state == 1`.
+    (2) A **re-enable skips the body**: [Grausam.cpp:167](dll/src/Grausam.cpp:167) is
+    `if (::GetPropW(hwnd, kOrigProcProp)) return TRUE; // already subclassed by us`. So the
+    enable must be the **first ever in that process** — which needs a fresh launch, and the rig
+    refuses to run if `get_foreground_lock` is not 0. Proof the body ran: the `Subclassed window`
+    log line count rises.
+    (3) ⭐ **`game_thread_stalled == False` is NOT evidence of a healthy thread.**
+    `Stark::IsGameThreadResponsive` opens with `if (!s_hookActive) return true;` — with no
+    ProcessEvent hook installed it reports responsive **unconditionally**. The rig froze the
+    correct thread (identified by CPU: 4906 ms vs 15 ms for its 141 siblings) and still read
+    False. It now calls `pe_profile_start` (which forces the hook via
+    `UE5_EnsureGameThreadHook`) and requires False→**True**→False around the freeze.
+  - **DLL LOWs L1 / L10** ⬜ (Solitar worker start/stop under `s_workerMutex`;
     Welford gap underflow on out-of-order PE timestamps; Grausam `GetWindowTextW` under `g_mutex`
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
