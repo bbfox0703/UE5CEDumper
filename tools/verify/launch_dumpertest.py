@@ -1,4 +1,4 @@
-"""Launch a DumperTest flavour with the house window/FPS settings, and wait for it.
+﻿"""Launch a DumperTest flavour with the house window/FPS settings, and wait for it.
 
     py launch_dumpertest.py dev            # Development  (UCheatManager live, full logging)
     py launch_dumpertest.py shipping       # Shipping     (the closest analogue to a real game)
@@ -24,20 +24,24 @@ TWO ARG TRAPS, both already paid for elsewhere in this repo:
     every timing- or tick-sensitive row is measuring.
 
 !! AND THE THIRD, WHICH THAT SECOND BULLET WALKED STRAIGHT INTO (measured 2026-08-23):
-   THE FPS CAP DOES NOTHING ON THE `shipping` FLAVOUR. UE 5.4's Misc/Exec.h:11-17
+   `-ExecCmds` IS SILENTLY DISCARDED ON THE `shipping` FLAVOUR. UE 5.4's Misc/Exec.h:11-17
    defines UE_ALLOW_EXEC_COMMANDS as UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING when
    (UE_BUILD_SHIPPING && !WITH_EDITOR), and UnrealBuildTool sets that to 0 unless the
-   Target.cs opts in (UEBuildTarget.cs:5147/5151); GameEngine.cpp wraps its exec
-   handling in the macro. So `-ExecCmds` is silently discarded in a Shipping package.
-   MEASURED with AD4_GetContestWrites over a timed window: **59.8 Hz**, not 15. Every
-   past all-night Shipping batch ran uncapped, and any Shipping measurement that
-   ASSUMED 15 FPS was taken at ~60.
+   Target.cs opts in (UEBuildTarget.cs:5147/5151); GameEngine.cpp wraps its exec handling
+   in the macro. So `-ExecCmds=t.MaxFPS 15` never reached the CVar, and a timed window
+   with AD4_GetContestWrites measured **59.8 Hz**.
 
-   The bullet above is a careful decision about WHICH mechanism to cap with, made
-   without checking that the chosen mechanism runs at all in the flavour being
-   launched. Keep the reasoning; check the gate. If a row needs a real cap, run it on
-   `dev`/`debug` (where -ExecCmds works), or MEASURE the rate and report it -- which
-   is what tools/verify/ad4_contested.py now does instead of quoting a configured one.
+   ⚠ BUT "so Shipping ran UNCAPPED" -- said here earlier the same day -- WAS WRONG, and
+   the 59.8 is the tell. DumperTest caps ITSELF: DumperTestSubsystem.cpp ApplyMaxFPS
+   defaults t.MaxFPS to 60 and applies it from C++ with ECVF_SetByCode, which the Shipping
+   console restriction does not touch (only ProcessUserConsoleInput refuses cheat cvars).
+   Past Shipping batches ran at the sample's own 60, not unbounded.
+
+   The sample exposes `-DumperTestMaxFPS=N` for exactly this, so the cap is now requested
+   through the switch that actually works in every flavour. Two lessons, and the second is
+   the one that keeps costing: (1) a careful choice of MECHANISM is worthless if the
+   mechanism is gated out of the build you launch; (2) when a measurement contradicts a
+   configured value, the next question is "what else sets this?", not "so it is unset".
 """
 import argparse
 import os
@@ -63,7 +67,12 @@ FLAVOURS = {
 # A row whose claim could depend on any of that must say which flavour it was run on -- and the
 # honest ones get run on more than one. See docs/todo.md, the DumperTest fixture section.
 # 1280x720 windowed, 15 fps -- see the module docstring.
-HOUSE_ARGS = ["-windowed", "-ResX=1280", "-ResY=720", "-ExecCmds=t.MaxFPS 15"]
+# -DumperTestMaxFPS is the sample's OWN switch, applied from C++ with ECVF_SetByCode
+# (DumperTestSubsystem.cpp ApplyMaxFPS), so unlike -ExecCmds it survives a Shipping
+# package. -ExecCmds is kept alongside it only as a belt for any future sample that
+# lacks the switch; on this one it is inert in Shipping and redundant elsewhere.
+HOUSE_ARGS = ["-windowed", "-ResX=1280", "-ResY=720",
+              "-DumperTestMaxFPS=15", "-ExecCmds=t.MaxFPS 15"]
 
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 
@@ -92,11 +101,12 @@ def main(argv=None):
     args = [str(exe)] + HOUSE_ARGS + (["-DumperTestIdle"] if a.idle else [])
     print("launching:", " ".join(args))
     if a.flavour == "shipping":
-        # Say it at the point of use, not only in the docstring: an operator reading
-        # the launch line sees `t.MaxFPS 15` and reasonably believes it took effect.
-        print("  !! shipping: -ExecCmds is discarded in a Shipping package "
-              "(UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING=0), so t.MaxFPS 15 does NOT apply "
-              "-- measured 59.8 Hz. Measure the rate; do not assume 15.")
+        # Say it at the point of use: an operator reading the launch line sees BOTH
+        # switches and should know which of the two is doing the work here.
+        print("  note: shipping discards -ExecCmds "
+              "(UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING=0); the cap comes from "
+              "-DumperTestMaxFPS, applied from C++. Still MEASURE the rate for any "
+              "row whose result depends on it.")
     p = subprocess.Popen(args, cwd=str(exe.parent), creationflags=DETACHED)
 
     out = pathlib.Path(__file__).resolve().parents[2] / "out"

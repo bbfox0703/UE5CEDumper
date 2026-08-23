@@ -722,8 +722,22 @@ UE 5.4 `Runtime/Core/Public/Misc/Exec.h:11-17`:
 
 and UnrealBuildTool sets `UE_ALLOW_EXEC_COMMANDS_IN_SHIPPING=0` unless the Target opts in
 (`UEBuildTarget.cs:5147/5151`). `GameEngine.cpp` wraps its exec handling in that macro
-(`:1025-1102`, `:1398-1553`). So **`-ExecCmds` is silently discarded in a Shipping package** and
-every past all-night Shipping batch ran uncapped.
+(`:1025-1102`, `:1398-1553`). So **`-ExecCmds` is silently discarded in a Shipping package**.
+
+⛔ **CORRECTED the same day: "…and every past all-night Shipping batch ran uncapped" was WRONG,
+and the 59.8 was the tell.** A genuinely uncapped UE sample on this GPU renders an empty level at
+several hundred FPS, not at 59.8. **DumperTest caps itself**: `DumperTestSubsystem.cpp`
+`ApplyMaxFPS` defaults `t.MaxFPS` to **60** and applies it **from C++** with `ECVF_SetByCode` —
+which the Shipping restriction does not touch, because only `ProcessUserConsoleInput` refuses cheat
+cvars. Past Shipping batches ran at the sample's own 60.
+
+⭐ **And the sample already exposed the fix**: `-DumperTestMaxFPS=N`, same C++ path, works in every
+flavour. `launch_dumpertest.py` now passes it. **Measured on Shipping after the change: 14.9 Hz.**
+So the cap the launcher documents as a house guarantee is real again, on all three flavours.
+
+⚠ The reusable lesson is the second miss, not the first: **when a measurement contradicts a
+configured value, the next question is "what else sets this?", not "so it is unset".** Reading 59.8
+as "uncapped" skipped straight past a suspiciously round number.
 
 ⭐ The irony is instructive and is the reusable part: the launcher's docstring contains a *careful*
 decision about **which** capping mechanism to use — `t.MaxFPS` via `-ExecCmds` rather than
