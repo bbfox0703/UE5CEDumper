@@ -19,15 +19,24 @@ ZH = "docs/pending-verification_zh-TW.md"
 APPLY = "--apply" in sys.argv
 
 BUCKETS = [
+    # 2026-08-23: AD4 closed [AD4-CONTESTED-2026-08-23] and its section was deleted,
+    # which emptied this bucket. An EMPTY bucket is kept, not removed: the grouping is
+    # about LOGISTICS (what has to be set up), and the next row that needs a running
+    # game with no CE belongs here. Deleting it would make the next author re-derive
+    # the axis. The renderer already omits a bucket with no members from the table.
     ("第 2 步 — 要注入一個執行中的遊戲", "一款執行中的 UE 遊戲 + 注入",
      "任何一款 UE 遊戲都可以，但 PASS 要靠人在遊戲裡做一件 Auto 做不到的事。",
-     ["AD4"]),
+     []),
     ("第 3 步 — 遊戲 ＋ Cheat Engine", "遊戲 + Cheat Engine",
      "還要開 CE 並載入 .CT。",
      ["AA2 / AA3", "M1–M5"]),
     ("第 4 步 — 需要特定條件的遊戲", "符合特定條件的遊戲",
      "要先找到符合條件的遊戲，而且要有人在裡面操作或判斷。",
-     ["MG2", "B8（deferred", "V1a", "b719 freeze", "V8"]),
+     # MG2 closed in full 2026-08-23 [MG2-CONTAINER-2026-08-23] + the DataTable half
+     # once [DTROWMAP]/[DTTEXT] were fixed; its section is gone. V1a survives as step 2
+     # only (the NumericAll UX judgement) -- its heading was renamed, so match on the
+     # bare key, not the old full title.
+     ["B8（deferred", "V1a", "b719 freeze", "V8"]),
     ("第 5 步 — 目前沒有可測的環境", "目前沒有",
      "⚠ 這一組**永遠是低優先**，即使登記表寫 MED —— 「找不到樣本」本身就是訊號。",
      ["U2", "G3"]),
