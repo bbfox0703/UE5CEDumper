@@ -1265,6 +1265,96 @@ work — is answered for one of the two named hosts. **Tower of Mask remains unt
   `dist/build_number.txt`. A verification tool quoting a number instead of deriving it is the exact
   failure the house rule exists to prevent, and it was inside the tooling.
 
+### ⬜ DumperTest spawner fixture — SOURCE WRITTEN 2026-08-23, awaiting a package build
+
+Item ③ of the plan in
+[auto-verification-classification-2026-08-23.md](auto-verification-classification-2026-08-23.md).
+Written; **the maintainer packages on request.** Same arrangement as the first fixture extension.
+
+**Why.** All eight existing mutators only **change a field on an object that lives for the whole
+level**. Several rows need the other thing — objects being **created and destroyed while the dumper
+watches** — and no commercial game does that on cue, which is why they sat unrunnable.
+
+### The three classes are a DISCRIMINATING SET, not three samples
+
+```
+ADumperTestHolder        : AActor              base
+ADumperTestDerivedHolder : ADumperTestHolder   DERIVES; name does NOT contain "Holder" first
+ADumperTestHolderDecoy   : AActor              does NOT derive; name CONTAINS "DumperTestHolder"
+```
+
+⭐ A feature claiming to act on *"a class **and its subclasses**"* must hold **Derived** and must
+**not** hold **Decoy**. A substring match on the class name gets that exactly backwards. **Nothing
+in the tree today can tell those two apart**, which is why Solide's derivation test has never been
+falsifiable here — `[A6-DERIVE-2026-08-22]` had to borrow `StaticMeshActor` and a same-prefix
+stranger from a commercial title to approximate it.
+
+The decoy also carries a field with the **same name** (`HolderValue`), so a match on the *field*
+rather than the class cannot pass by accident either.
+
+### The rest
+
+| class | for |
+|---|---|
+| `UDumperTestLateSpawn` | **zero live instances and no subclasses** until `Spawn_LateInstance()`. AA12/AA13 step 3 needs "a legitimately empty result must not be reported as success"; the previous attempt picked `NiagaraComponent`, which had two live instances, so the empty case was never exercised |
+| `UDumperTestPayloadB` | a second shape, alternated with `UDumperTestPayload` so a freed GObjects slot is refilled by a **different** class. ⚠ Same-class reuse tests nothing — the stale pointer still resolves to the same class and reads plausibly |
+
+### The nine mutators (all declared ON `ADumperTestActor`)
+
+```cpp
+void  Spawn_Holders(int32 Count = 300, bool bDerived = false);
+void  Spawn_Decoys(int32 Count = 8);
+void  Spawn_DestroyHolders();          // Destroy() + Empty() + ForceGarbageCollection(true)
+int32 Spawn_CountHolders() const;
+int32 Spawn_Generation() const;        // proves churn HAPPENED rather than assuming the invoke landed
+void  Spawn_LateInstance();
+void  Spawn_RecycleChurn(int32 Rounds = 32);
+int64 Spawn_LastRecycledAddr() const;
+void  Spawn_ManyComponents(int32 Count = 1500);
+```
+
+⚠ **Declared on `ADumperTestActor`, none inherited** — `invoke_function` could not reach them
+otherwise, and two prior attempts at rows like these died at `0 functions walked` for exactly that
+(`[INVOKEINHERIT-2026-08-20]`).
+
+### Decisions worth knowing before reading the code
+
+* **`HolderValue = 1000 + GLOBAL index`, distinct per instance and not restarted by a second call.**
+  A force-a-field-across-all-instances feature must restore each instance's **own** prior value; if
+  they all started equal, restoring the wrong one to all of them is invisible. That is Solide L4.
+* **`AlwaysSpawn` collision handling.** The default silently refuses an overlapping spawn, so a
+  request for 300 would quietly deliver fewer and every count downstream would be measuring the
+  collision solver.
+* **`ForceGarbageCollection(true)` in the destroy path.** `Destroy()` only marks pending-kill; the
+  UObject keeps its GObjects slot until a GC runs. Every row here cares about the **slot** being
+  freed and reused, so leaving that to the engine's schedule makes the test a race.
+* **Default `Count = 300`** is above Solide's 256 cap on purpose, so the `⚠ capped` badge gets a
+  local deterministic trigger instead of a hunt through a commercial title's class pools.
+
+### ⚠ Two engine facts checked in the UE 5.4 source, one of which was a live bug
+
+* **`UActorComponent` is `abstract`** — `UCLASS(DefaultToInstanced, BlueprintType, **abstract**, …)`,
+  `ActorComponent.h:131`. The first draft of `Spawn_ManyComponents` called
+  `NewObject<UActorComponent>` and would have returned null every iteration: **the pool would never
+  grow and the row would have read as "the cap never fires" rather than as a broken fixture.**
+  Switched to `USceneComponent`, which is concrete (`SceneComponent.h:87-88`) and still derives from
+  `UActorComponent`, which is what a derived-pool count counts.
+* `UEngine::ForceGarbageCollection(bool bFullPurge)` exists at `Engine.h:2615`.
+
+### Rows this unlocks (7)
+
+Solide **L3** (derivation vs substring) · Solide **L4** (per-instance restore bases) · Solide
+**`⚠ capped`** badge · **AA2/AA3 step 4** (freeze across churn) · **AA12/AA13 step 3** (the
+legitimately-empty case) · **U4** class-to-class slot recycling · **AE4–AE7 step 4** (the
+concurrency gate, which currently reports 執行時間太短無法測試 because nothing runs long enough to
+collide). **FREEZESCOPE step 6** becomes possible too if DQ7R is unavailable.
+
+### ⬜ Left to do
+
+Package it (Shipping at minimum; all three flavours is better — the CheatManager and `-ExecCmds`
+gates differ). Then the seven rows run headlessly through `invoke_function`, the same way AD4 / MG2
+/ V1a / V8 did.
+
 ## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
