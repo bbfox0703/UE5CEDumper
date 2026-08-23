@@ -16490,7 +16490,7 @@ like "no such fields exist". Search on the property **name** and read the Type c
 | 5 | ❌ **失敗 —— 新缺陷 `[TREERECLICK-2026-08-22]`**(細節與證據在 todo.md)。用 `Classes` 分頁的 **`Walk Class`** handoff 把 `DOLLSoubiState`(168) 推進面板,樹狀選取仍停在 P(`DOLLPlayerController`);**再點一次 P,面板不動**,`pipe-0.log` 在那段時間**一筆 TX 都沒有**。連跑兩次相同,再用對照組隔離出機制:同一列連點兩次只送出一次 `walk_class` —— **點已選中的列不會產生 SelectionChanged**,所以 VM 根本沒被呼叫。⛔ **不要去改 `ClassStructViewModel` 的 dedupe**,它已經正確(`BeginLoad(nodeAddr: null)`,就是 AE3 第三條路徑),那也正是「先點別列再點回來」能救回來的原因。 | 面板重新載入 P，而不是停留在被推進來的 class。 |
 | 6 | ✅ **2026-08-22 通過,而且有線上證據**。選中節點後在樹狀 Filter 框連續打 `Def` → `ault`(兩段、中間停頓),樹縮成 `Filtered: 1 / 3`,**面板沒有被清空**(仍是 `DOLLPlayerController` 2224、欄位齊全)。⭐ 更強的證據在 `pipe-0.log`:打字期間**完全沒有新的 `walk_class`**,所以「不會重複重走 class」是量到的,不是看起來沒事。 | 不會重複重走 class，面板也不會被清空。 |
 
-### ⬜ G2 —— 版本掃描加速後結果仍正確
+### 🟡 G2 —— 版本掃描加速後結果仍正確（步驟 1 **2026-08-23 答出**，見 `[UE3-GALGUN-2026-08-23]`；步驟 2 的 UE5 分支仍無宿主）
 
 *優先度 **中** · 原步驟 3、4 已於 2026-08-18 驗畢並刪除*
 
@@ -17185,6 +17185,72 @@ anchor is therefore stale — the machine JSON holds `peHash 691B0D9809EB2000` w
 `71D66A9009EB1000` — so the next injection will re-scan from scratch rather than reuse `GOBJ_ES53_1`. That is
 expected behaviour, not a defect, and it does not affect this closure: the row is about the DLL's layout
 choice, not about the game build.
+
+### ✅ B25 branch B RE-RUN on a REAL UE3 game, and G2 step 1 answered with it — 2026-08-23 `[UE3-GALGUN-2026-08-23]`
+
+The maintainer installed **Gal\*Gun: Double Peace** (Steam appid 511740), which is a genuine
+**Unreal Engine 3** title:
+`D:\SteamLibrary\steamapps\common\GalGun Double Peace\Binaries\Win64\GG2Game.exe`, 53,640,704 bytes,
+`CompanyName "Epic Games, Inc."`, `LegalCopyright "Copyright 1998-2012 Epic Games, Inc."`, with
+`APEX_Clothing*` / PhysX-legacy DLLs beside it.
+
+⚠ **This does NOT invalidate the earlier "no real UE3 binary exists here" measurement — it post-dates
+it.** `appmanifest_511740.acf` records `lastupdated` = **2026-08-23 10:06:35**, and the 290-exe sweep
+that found zero UE3 markers ran that morning, before the install. The absence claim was true when
+made; the fixture was created afterwards. ▶ Worth remembering as the shape of a *correct* absence
+result that later stops being true — the sweep was not wrong, the world changed.
+
+**Branch B — ✅ PASSES on a commercial title, and more strongly than the synthetic did.**
+`Logs\GG2Game\scan-0.log`, whole file **14 lines**:
+
+```
+DetectPublisher: no thumbprint match (Copyright='…1998-2012 Epic Games…', Company='Epic Games, Inc.')
+DetectVersion: PE VERSIONINFO Product=1.0 File=1.0 — unrecognised
+DetectVersion: PE resource failed, falling back to memory string scan
+PreUE4: Epic copyright newest year 2012 (PRE-UE4) — 'Copyright 1998-2012 Epic Games, Inc. …'
+PreUE4: marker 'SeqAct_ (UE3 Kismet)'      hit at 0x244DAF9
+PreUE4: marker 'UnrealEngine3'             hit at 0x2729BD0
+PreUE4: marker 'PhysXLoader64 (PhysX 2.8)' hit at 0x2AA61D0
+DetectVersion: PRE-UE4 engine POSITIVELY identified (4/4 markers, 2 needed) -> sentinel 300.
+FindAll: UE Version = 300 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+FindAll: PRE-UE4 engine (Unreal Engine 3) — SKIPPING the scan.
+```
+
+⭐ **4/4 markers, where `b25b_ue3.exe` could only manage 2/4** — the synthetic carried the two string
+literals; a real UE3 build also trips the PhysX 2.8 loader and the ≤2013 Epic copyright. So the
+marker table is now exercised across its whole width on a binary nobody constructed for it.
+
+⭐ **14 lines vs branch A's 3,886 is still the cleanest discriminator** between *"scanned and accepted
+with low confidence"* and *"refused before starting"*.
+
+⭐ **An offline pre-check agreed with the DLL, independently.** Before injecting, a byte scan of the
+exe found `UnrealEngine3` ×3 (ANSI) + ×1 (UTF-16LE), `SeqAct_` ×10, `PhysXLoader64` ×1 — and the
+controls `UnrealEngine4` and `FUObjectArray` at **0**. The DLL then reported the same markers at
+concrete addresses.
+
+**G2 step 1 — ✅ ANSWERED, by the same run.** That row asked to separate the version-string scan from
+`CountPreUE4Markers`' own full-file pass, and explicitly suggested *"a pre-UE4 game whose check ends
+early"*. This is that game:
+
+| span | measured |
+|---|---|
+| `PE resource failed, falling back to memory string scan` → next `[SCAN:Ver]` line | **277 ms** |
+| the same start → `UE Version = 300` verdict (**includes** `CountPreUE4Markers`) | **316 ms** |
+
+Bar was *"單獨的版本字串掃描本身在 1 秒以內"* — comfortably met. Game and exe size recorded as the row
+asks: Gal\*Gun: Double Peace, `GG2Game.exe`, **53,640,704 bytes**.
+
+⚠ **Honest bound:** the next `[SCAN:Ver]` line is itself emitted *from* `CountPreUE4Markers` (the
+copyright check), so 277 ms is an **upper bound** on the string scan alone, not an isolated figure.
+Since the bar is 1000 ms the conclusion holds a fortiori — but the row's original ask, a dedicated
+divider log, would still be the way to get an exact number. ▶ The row's caveat about the earlier
+**2.4 s** figure is now explained rather than merely suspected: here the *entire* fallback-to-verdict
+window, both scans included, is 316 ms on a 53.6 MB image.
+
+ℹ️ Injected through CE + `dist\UE5CEDumper.CT` (init → Inject DLL). No CE plugin was needed or
+installed for this row, and CE's `Plugins64` was re-checked afterwards — still only AOBMaker
+(enabled) and CE-Handwire (disabled).
+
 
 ### ✅ B25 CLOSED 2026-08-23 `[B25-RECHECK-2026-08-23]` — both branches already passed, and the row's own step-1 alternative is impossible
 
