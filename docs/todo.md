@@ -862,6 +862,90 @@ defect would have stayed invisible. The permissive predicate is the whole reason
 
 -----
 
+### ✅ V8 CLOSED 2026-08-23 `[V8-PAINTED-2026-08-23]` — the three strings are painted; a FOURTH site is clipped
+
+The one thing the C# tests structurally could not answer — *are those strings actually on the
+screen* — answered by looking, on the **AOT-trimmed** `dist/UE5DumpUI.exe` (v1.0.0.3332, DLL 3332)
+against DumperTest Shipping. Trimmed on purpose: reflection-shaped binding code is exactly what
+survives a plain build and fails a trimmed one.
+
+**Live Walker → `DumperTestTable_Big_2` → RowMap. All three, verbatim and unclipped:**
+
+| site | painted |
+|---|---|
+| breadcrumb | `DumperTestTableBig_2 › RowMap [100 x DumperTestTableRow] ⚠ showing 64 of 100 ›` |
+| header | `DataTable<DumperTestTableRow>  RowMap ⚠ showing 64 of 100` |
+| status line | `Showing the first 64 of 100 rows — this view is capped at 64 per fetch.` |
+
+The status line does **not** mention the Array Limit slider (a DataTable's cap is fixed at 64 per
+fetch, not the slider) — which is what
+`V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider` asserts, now confirmed in pixels.
+The grid ends at `[63] Row_063`: 64 rows, matching the badge.
+
+⭐ **The negative control was run, not assumed.** `DumperTestTable_Small_1` (8 rows), same session,
+same panel: breadcrumb reads `RowMap [8 x DumperTestTableRow]` with **no ⚠**, the header carries no
+badge, and there is **no status line at all**. So the badge is not always-on, and its presence on
+the 100-row table means something. This is `V8_DataTableDrill_Complete_SaysNothing` on screen.
+
+⭐ **`[DTTEXT-2026-08-23]` also confirmed to the pixels** — expanding `[63] Row_063` renders
+`Index 63 / Label Row_063 / Value 163 / Caption 走一步 63`. The CJK reached the screen through
+`\uXXXX` C++ literal → UHT → cooked Shipping package → `FText` → `ReadFTextString` → JSON →
+Avalonia.
+
+-----
+
+### 🟡 FOUND 2026-08-23 `[V8PREVIEWCLIP-2026-08-23]` — the FOURTH disclosure site is invisible at the default column width
+
+Found by the very look this row exists for, and it is the failure mode the row **names**:
+
+> *那些測試斷言的是 **ViewModel 的字串**，不是畫面上的像素 …… 同一天 `[PARAMSSORT-2026-08-22]` 撞到的：
+> 快照那句提示 VM 字串完全正確，卻被放在沒有 `TextWrapping` 也沒有 `ToolTip` 的 `TextBlock` 裡，
+> 自己被截斷。*
+
+There are **four** sites, not three. `AuditL11HonestyTests.V8_SyntheticRowMapField_CarriesBadgeBeforeTheClick`
+says so in its own comment — *"The preview row is what the user clicks to drill in, so the cap
+belongs here too"* — and asserts the badge is in the pre-click preview string.
+
+It is in the string. It is not on the screen:
+
+```
+LiveWalkerViewModel.DataTableFieldPreview(dt) =>
+    $"{{DataTable: {dt.RowCount} rows, {dt.RowStructName}}}"
+    + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
+```
+
+so the full value is `{DataTable: 100 rows, DumperTestTableRow}  ⚠ showing 64 of 100` — badge
+**last**. And the cell it lands in (`Views/LiveWalkerPanel.axaml:587-595`):
+
+```xml
+<DataGridTemplateColumn Header="{StaticResource str.LiveWalker.Value}" Width="200" MinWidth="100">
+  <TextBlock Text="{Binding DisplayValue}" VerticalAlignment="Center" Margin="4,0"/>
+```
+
+Fixed **200 px**, a bare `TextBlock`, **no `ToolTip.Tip`**, no trimming ellipsis. Observed on screen:
+`{DataTable: 100 rows, D` — cut mid-word, ~22 characters in. The prefix alone overflows the column,
+so the badge is **structurally unreachable at the default width** on every table, at every N.
+
+⚠ **Honest severity: LOW, and the reason matters.** The other three sites disclose correctly, so a
+user who clicks through *is* told. The column is user-resizable (`CanUserResizeColumns="True"`), so
+the text is recoverable, just not by default. Nothing is silently wrong — this is discoverability,
+not a lie. That is why it is filed rather than hot-fixed.
+
+⛔ **Not fixed, because the fix is a UX choice and it is the maintainer's, not mine.** Two defensible
+one-line options:
+
+1. **`ToolTip.Tip="{Binding DisplayValue}"` on that `TextBlock`.** Fixes every clipped value in the
+   Live Walker grid, not just this badge — the general problem. Cost: a hover tooltip on *all* value
+   cells, duplicating short values that were never clipped.
+2. **Put the badge FIRST** in `DataTableFieldPreview` — `⚠ showing 64 of 100 {DataTable: …}`. Keeps
+   the grid untouched and guarantees the important half is inside 200 px. Cost: the preview reads
+   oddly when nothing is capped is not an issue (`BadgeSuffix` is empty then), but it inverts the
+   established `…{value}{badge}` ordering the other three sites use.
+
+I lean **(1)**: it repairs the class of defect rather than this instance, and `[PARAMSSORT]` was the
+same shape in a different panel. But it changes behaviour across a whole grid, so it wants a
+decision rather than a drive-by.
+
 ### ✅ V8 DLL half CLOSED 2026-08-23 `[V8-DLLHALF-2026-08-23]`; the one look is still owed
 
 `tools/verify/v8_datatable_cap.py`. The three UI strings are already pinned by C# tests — but those

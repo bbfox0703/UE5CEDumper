@@ -22,12 +22,35 @@
 |---|---|---|
 | **第 2 步 — 要注入一個執行中的遊戲** | 0 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 2 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 4 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 3 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **8** | |
+| **合計** | **7** | |
 
 > 這張表是**數出來的**，不要手改 —— 用 `tools/verify/zhtw_rebuild_buckets.py --apply`
 > 重建，它會從檔案本身重新數。第 0、1 步已經整組清空。
+
+### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
+
+**判準只有一條，而且要能被檢查:**
+
+> **一列留在這裡，當且僅當「Auto + Computer Use 沒辦法從頭到尾自己跑完」** ——
+> 需要人在遊戲裡做 Auto 做不到的動作、需要人用眼睛下判斷、或全世界根本沒有樣本。
+
+⚠ **這條判準以前不存在於這個檔案裡**，只存在於選材時的習慣 —— 檔案自己都寫過
+「`非人工`、`人工`、`肉眼` 這幾個字在本檔案裡一個都沒有」。**沒有寫下來的規則不會活過一次交接**，
+於是它慢慢變成 [todo.md](todo.md) 登記表的中文副本:重整前有 **31 項**、其中 **20 項**帶著證據標記
+(finding tag、`file:line`、log 行、日期化的 ✅)，平均每項 913 字。
+
+**重整做了三件事**（2026-08-22）:
+1. **21 項移回 [todo.md](todo.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
+   離線工具）。步驟表格**原封不動**搬過去，沒有刪掉任何東西，見那份文件的
+   「Verification steps migrated from the 繁中 checklist」一節。
+2. **只留 10 項**，就是下面這些。
+3. **CLAUDE.md 原本寫「先改 todo.md，再 mirror」** —— 一個 mirror 指令必然產出翻譯版，已改掉。
+
+⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 todo.md，不要寫在這裡。
+⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
+一律進 todo.md。這正是它上次走樣的方式。
 
 ### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
 
@@ -251,19 +274,6 @@ session 的順序很好用，保留。
 | 2 | 在 ES2 (UE5.5) 與 Geri (UE4.27) 各做一次 instance invoke。 | log 出現 `GameThreadDispatch: validation OK — hook fired N times`，以前 timeout 回 `-5` 的 invoke 現在會成功。 |
 | 3 | 在活躍 session 比較 static-native PE fast path 與 game-thread dispatch 的延遲。 | 有狀態的 UFunction 仍走 dispatch，不會誤落進 fast path。 |
 | 5 | 各做一次 pointer-return 與 FString-return 的 invoke。 | pointer 回傳顯示 `0x` 前綴；FString 回傳顯示 "see After: dump above" 提示。 |
-
-### 🟡 V8 —— DataTable 下鑽只抓得到前 64 列（**只剩「畫面真的印出來了嗎」**）
-
-*優先度 **低**（原為中）· 需要：一個列數**超過 64** 的 `UDataTable`*
-
-⚠ **內容對不對已經全部由測試釘住**（清單在 todo.md「V8 — what the tests already pin」）。
-但那些測試斷言的是 **ViewModel 的字串**，不是畫面上的像素 —— 所以還是要有人看一眼。
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | 手上若剛好有列數 >64 的 `UDataTable`，在 Live Walker 下鑽它的 RowMap，**只看一眼**：那三處字串有沒有真的顯示出來、有沒有被截掉或蓋住。 | 三處都看得到完整的「⚠ showing 64 of N」。<br>ℹ️ 內容對不對已經有測試在管，這一步只回答「印出來了嗎」。 |
-
------
 
 ## 第 5 步 — 目前沒有可測的環境
 

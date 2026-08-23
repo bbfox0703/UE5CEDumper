@@ -36,7 +36,10 @@ BUCKETS = [
      # once [DTROWMAP]/[DTTEXT] were fixed; its section is gone. V1a survives as step 2
      # only (the NumericAll UX judgement) -- its heading was renamed, so match on the
      # bare key, not the old full title.
-     ["B8（deferred", "V1a", "b719 freeze", "V8"]),
+     # V8 closed in full 2026-08-23 [V8-DLLHALF / V8-PAINTED]; its one remaining look
+     # was done and the leftover ([V8PREVIEWCLIP-2026-08-23]) is a todo.md fix item,
+     # not a "a human must judge this" checklist row.
+     ["B8（deferred", "V1a", "b719 freeze"]),
     ("第 5 步 — 目前沒有可測的環境", "目前沒有",
      "⚠ 這一組**永遠是低優先**，即使登記表寫 MED —— 「找不到樣本」本身就是訊號。",
      ["U2", "G3"]),
