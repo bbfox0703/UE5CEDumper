@@ -144,7 +144,13 @@ Open work only. **Read this when deciding what to do next.**
 > textbox …`. ⚠ It also closed a SECOND hole nobody had reported: an out-of-range **integer**
 > sub-field silently masked to width — the W6/Y2/Y9/Y15/AE1 family surviving in the one place
 > its fix had not been applied.
-> | `[TREERECLICK-2026-08-22]` | 🟡 **Clicking the ALREADY-SELECTED Object Tree node does nothing** — no `SelectionChanged`, so no `walk_class` reaches the wire (measured: three clicks, two walks). Harmless alone, but after a cross-tab handoff (`Classes` → `Walk Class`) the panel shows class X while the tree highlight says node P, and clicking P **cannot** get it back; only selecting a different row and returning does. ⛔ **Not a `ClassStructViewModel` bug** — its `BeginLoad(nodeAddr: null)` already clears the dedupe key correctly, which is exactly why the recovery click works. Any fix belongs in the VIEW. AE2/AE3 step 5. |
+> ⭐ **`[TREERECLICK]` FIXED 2026-08-23** (build 3322) and its row is **deleted**. The cause was
+> plain `ListBox` semantics — Avalonia writes `SelectedItem` only when it CHANGES, so clicking the
+> already-highlighted node raised nothing and no walk reached the pipe. The fix is
+> `MainWindowViewModel.ShowClassInClassStructAsync`, which **clears the tree highlight before**
+> loading; all five cross-tab handoffs route through it. That fixes both halves at once: the tree
+> stops claiming P is selected while the panel shows X, and the next click on P becomes a real
+> change, so it loads. ⛔ Deliberately NOT a pointer handler on the tree — see the section.
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
 > gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
@@ -7135,7 +7141,7 @@ which is what makes it contradict Frieren's comment. That mechanism was not prev
 ℹ️ Housekeeping from the experiment: the entry was re-created with `scanCount: 2` (it had been 5).
 Harmless — it re-accumulates. A backup of the pre-experiment file is in the session scratchpad.
 
-### ⬜ NEW DEFECT 2026-08-22 `[TREERECLICK-2026-08-22]` — re-clicking the selected tree node is a no-op, and a handoff turns that into a stuck panel
+### ✅ FIXED 2026-08-23 (was NEW DEFECT 2026-08-22) `[TREERECLICK-2026-08-22]` — re-clicking the selected tree node is a no-op, and a handoff turns that into a stuck panel
 
 Found while running **AE2/AE3 step 5** on DQ7R (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370
 objects). The row's stated expectation — *select node P → push another class into Class/Struct via a
@@ -7173,6 +7179,42 @@ flow never reaches the dedupe. A fix aimed there would edit working code and cha
 **Where a fix would go:** the view. Either handle item pointer-press on the tree so a click on the
 already-selected node re-raises the load, or have the handoff clear the tree highlight so the UI
 stops claiming P is selected while showing X.
+
+**✅ FIXED 2026-08-23, build 3322 — by clearing the highlight, not by intercepting the click.**
+`MainWindowViewModel.ShowClassInClassStructAsync(classAddr)` sets `ObjectTree.SelectedNode = null`
+and then awaits the load; **all five** cross-tab handoffs (`:1132/:1216/:1270/:1430/:1816`) route
+through it, and the command is now called from exactly one place.
+
+⭐ **It fixes both halves with one write.** The tree stops asserting a selection that is not what is
+on screen, *and* the next click on that node becomes a genuine change — so it loads. Order is
+load-bearing: clear FIRST, because `OnObjectSelected(null)` returns at `ClassStructViewModel.cs:349`
+before its first await and takes no load ticket, so it cannot supersede the load on the next line;
+and if the load throws, the tree is left honestly unselected.
+
+⛔ **The obvious fix — a pointer handler that re-raises the click — was designed, then rejected on
+evidence.** Three independent designs were put through adversarial review; two converged on this one
+and the third (a tunnel-phase `PointerPressed` handler) admitted its load-bearing premise, Avalonia's
+tunnel-before-bubble ordering, **could not be verified from this tree**. Two further facts killed it
+outright: re-raising `SelectionChanged(node)` lands back in `OnObjectSelected`, whose dedupe at
+`ClassStructViewModel.cs:358` swallows it — so it has *exactly this fix's coverage* at far higher
+risk — and bypassing that dedupe is pinned against by `RepeatedSelectionOfSameNode_WalksOnlyOnce`
+(`ClassStructViewModelConcurrencyTests.cs:340`). The DataTemplate root is also a `StackPanel` with no
+`Background`, which Avalonia does not hit-test, so the handler would have had dead zones.
+
+⭐ **The test that matters is the wiring one, and its negative control was RUN.** Three tests pin the
+*mechanism* (re-selecting the same node is silent; after a clear it fires; the clear is idempotent) —
+but those are `[ObservableProperty]` semantics and would pass with or without the fix. The real
+regression is a **sixth handoff added later that bypasses the helper**, so
+`EveryCrossTabClassHandoff_GoesThroughTheHelperThatClearsTheTree` asserts on the source that exactly
+one direct `LoadClassCommand.ExecuteAsync` remains and that the clear precedes the load. Simulating
+that sixth site made it fail with the actionable message, then it was restored. Full suite green
+(C++ 258 + 1644, C# all); `dist` republished AOT-trimmed at 54.7 MB.
+
+▶ **Still owed: a live re-run of AE2/AE3 step 5 on DQ7R** — handoff a class, then click the
+previously-selected tree node and confirm it now walks.
+
+ℹ️ Bookkeeping: this defect is **not** in `pending-verification_zh-TW.md` (grep = 0). Its 繁中 row is
+todo.md's own AE2/AE3 step-5 cell.
 
 **Severity: LOW–MED, and it is a design call, not an obvious bug.** The damage is a user-visible
 disagreement between the tree highlight and the panel, fully recoverable by clicking any other row

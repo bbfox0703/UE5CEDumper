@@ -285,6 +285,44 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ValueSearch.PivotEnabled = on;
     }
 
+    /// <summary>
+    /// Cross-tab "show me this class": DETACH the Object Tree highlight, then load
+    /// <paramref name="classAddr"/> into the Class/Struct panel. Every cross-tab class
+    /// handoff goes through here.
+    ///
+    /// <para>The detach is the fix for <c>[TREERECLICK-2026-08-22]</c>. After a handoff the
+    /// panel shows a class that no tree node selected, yet the tree kept highlighting the
+    /// node the user picked earlier — the UI asserting a selection that is not what is on
+    /// screen. Worse, that lie was unrecoverable by the obvious gesture: an Avalonia
+    /// <c>ListBox</c> writes <c>SelectedItem</c> only when it CHANGES, so clicking the
+    /// still-highlighted node raised nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
+    /// never fired (<c>ObjectTreeViewModel.cs:168</c>) and no walk reached the pipe. Clearing
+    /// the selection fixes both at once: the tree stops lying, and the next click on that
+    /// node is a real change, so it loads.</para>
+    ///
+    /// <para>⛔ The fix does NOT belong in <c>ClassStructViewModel</c>, which is already
+    /// correct — <c>LoadClassAsync</c> clears its dedupe key via <c>BeginLoad(nodeAddr:
+    /// null)</c> (<c>ClassStructViewModel.cs:250</c>), which is exactly why clicking a
+    /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
+    /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
+    /// (<c>:358</c>) swallows it, so that buys nothing this does not — and bypassing that
+    /// dedupe is pinned against by <c>RepeatedSelectionOfSameNode_WalksOnlyOnce</c>.</para>
+    ///
+    /// <para>Order is load-bearing: clear FIRST. <c>OnObjectSelected(null)</c> returns at
+    /// <c>ClassStructViewModel.cs:349</c> before its first await and deliberately takes no
+    /// load ticket, so it cannot supersede the load started on the next line; and if that
+    /// load throws, the tree is left honestly unselected rather than pointing at a stale
+    /// node. This is the same bare null write as <see cref="ObjectTreeViewModel.ClearOnDisconnect"/>
+    /// (<c>:496</c>); it touches no collection, so the reentrancy note at
+    /// <c>ObjectTreeViewModel.cs:505-510</c> — which is about the selection model reacting
+    /// to <c>FilteredNodes.Clear()</c> mid-method — does not apply.</para>
+    /// </summary>
+    private async Task ShowClassInClassStructAsync(string classAddr)
+    {
+        ObjectTree.SelectedNode = null;
+        await ClassStruct.LoadClassCommand.ExecuteAsync(classAddr);
+    }
+
     /// <summary>Address format options for toolbar ComboBox.</summary>
     public string[] AddressFormatOptions { get; } =
     [
@@ -1091,7 +1129,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 SelectedTabIndex = (int)MainTabIndex.ClassStruct; // Switch to ClassStruct tab
-                await ClassStruct.LoadClassCommand.ExecuteAsync(classAddr);
+                await ShowClassInClassStructAsync(classAddr);
             }
             catch (Exception ex)
             {
@@ -1175,7 +1213,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                         _log.Info($"InterestingFunctions -> ClassStruct fallback: {className}::{funcName}");
                     }
@@ -1229,7 +1267,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                     }
                     else
@@ -1389,7 +1427,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata (look for {propName})";
                         _log.Info($"InterestingProperties -> ClassStruct fallback: {className}.{propName}");
                     }
@@ -1775,7 +1813,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata " +
                                      $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)";
                         _log.Info($"Console -> ClassStruct fallback: {className}::{funcName}");
