@@ -5768,7 +5768,51 @@ AFTER RELEASE
 Same probe, same address, opposite answer. Without it, "0x02 came back" is only evidence that
 *something* writes there.
 
-ℹ️ Steps 1 (See-through's four disable arms) and 3 (close the game with a hold live) are still open.
+ℹ️ ✅ **Step 1 (See-through's four disable arms) is CLOSED 2026-08-23** — arms (c)+(d) passed
+2026-08-22, arms **(a)** and **(b)** on 2026-08-23, see `[SEETHRU-ARMS-AB-2026-08-23]` below.
+Step 3 (close the game with a hold live) is still open.
+
+### ✅ M1–M5 step 1 arms (a) + (b) PASS 2026-08-23 `[SEETHRU-ARMS-AB-2026-08-23]` — the row's "needs a human" was wrong for both
+
+Both arms were classified human-only (*"needs a human moving the character / stalling the game"*).
+Neither does. DumperTest dev / DLL 3337.
+
+**Arm (a) — moving restores a hidden actor.** `tools/verify/seethrough_arm_a.py`.
+`teleport_relative` is an ordinary pipe command and DumperTest has a real player pawn, so the
+movement is driven over the **same connection** that owns the See-through session — which matters,
+because the DLL disables See-through on client disconnect, so a two-process arm would measure the
+disabled state and call it a pass.
+
+| step | observed |
+|---|---|
+| positive control | `0x18C7F268F40` **own** `bHidden=true` — not the hider's tally |
+| ⭐ **negative control** | held still 6 s → **still hidden**, `active=true`, `count=1` |
+| the arm | 6 × `teleport_relative(900)` → `bHidden=**false**`, `hidden_count=0`, `actors=[]` |
+| attribution | `active` **still true** at the end, so the restore is the move — not arm (c)/(d) |
+
+The negative control is what makes it an arm rather than a coincidence: without it, "it became
+visible after I moved" is equally consistent with the hide simply lapsing.
+
+**Arm (b) — See-through active while the game is HUNG, then a graceful close.**
+`tools/verify/seethrough_arm_b.py`, stalling the UE game thread with `suspend-tid`.
+
+| witness | before stall | after stall |
+|---|---|---|
+| `IsHungAppWindow` (the OS's view) | False | **True** |
+| `game_thread_stalled` (Stark's heartbeat) | False | **True** |
+
+Two independent witnesses, both required to start healthy so they can be shown to flip. With the
+game hung the DLL **still answered** (`active=true, hidden_count=1`), so the ~10 Hz worker did not
+wedge the pipe. Then a posted `WM_CLOSE` exited the process in **1.0 s**, with **0** `tick threw`
+and **0** crash dumps — which is the arm's real target, since `WorkerLoop`'s catch exists for the
+`std::terminate` / `0xC0000409` "See-through then close the game" crash.
+
+⚠ **A `taskkill /F` does not test this** (recorded during arms (c)/(d): the DLL's shutdown path
+never runs, so the arm is vacuous). It must be a posted `WM_CLOSE`.
+
+ℹ️ The arm-(a) rig legitimately refused a run on the second attempt — arm (a) had moved the pawn
+5400 units, so nothing occluded from the new pose and `hidden_count` was 0. Relaunching restored a
+valid pose. A rig that declines to score a vacuous setup is working.
 
 -----
 
