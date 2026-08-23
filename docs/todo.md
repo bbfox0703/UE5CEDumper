@@ -16984,7 +16984,7 @@ run has not already shown.
 | 1 | 用 UE 版本 override，或找一款 PE ProductVersion 報 4.0–4.10 的遊戲，注入後 grep `scan-0.log` 的 `below the … floor — NOT accepting that on its own`。 | 該行出現，而且掃描照樣跑完（tier 3 → low confidence → gate 不啟動）。FAIL = 對一款其實能用的遊戲印出 `SKIPPING the scan`。 |
 | 2 | 反向對照：拿一個真正的 UE3 binary 注入。 | 仍然被拒絕，`scan-0.log` 出現 `PRE-UE4 engine POSITIVELY identified`。<br>⚠ 沒跑反向對照就不算測完 — 只證明「不再擋」等於沒證明「該擋的還會擋」。 |
 
-### 🟡 B29 — the discriminator PASSES offline 2026-08-23 `[B29-PRODUCTNAME-2026-08-23]`; only the end-to-end CE run is left, and the fixture now EXISTS
+### ✅ B29 — steps 1 and 2 CLOSED 2026-08-23 `[B29-PRODUCTNAME-2026-08-23]` (offline discriminator) + `[B29-LIVE-2026-08-23]` (end-to-end); step 3 still lacks a non-ASCII path
 
 The row needed a third-party `dxgi.dll`/`dinput8.dll` wrapper in a UE game folder. The 2026-08-23
 sweep reported none on this machine. **That is no longer true** — the maintainer supplied one:
@@ -17062,7 +17062,75 @@ System32 modules already exercises a non-ASCII string through this exact format 
 satisfiable from the same session rather than needing a specially-named install.
 
 
-### 🟡 B29 —— 第三方 wrapper 存在時仍會正常注入（判別式 **2026-08-23 離線通過**；只剩 CE 端一次實跑）—— 見 `[B29-PRODUCTNAME-2026-08-23]` 一節
+#### ✅ …and the end-to-end CE run PASSED the same day `[B29-LIVE-2026-08-23]`
+
+Run with the maintainer's explicit permission to install the CE plugin and remove it afterwards.
+
+**Host:** `SEED BATTLE DESTINY REMASTERED.exe` (PID 7772, UE427) with a **genuine ReShade install**
+beside it — `dxgi.dll` 5,255,448 B plus `ReShade.ini`, `ReShade.log`, `reshade-shaders\`.
+
+⚠ **Installing the plugin does NOT need elevation, and the obvious route is a dead end.** Copying into
+`C:\Program Files\Cheat Engine\plugins\` requires UAC. Writing an absolute path straight into
+`HKCU\Software\Cheat Engine\Plugins64` **looks** like it works — the key keeps the value — but CE
+silently ignores it: its own plugin list still showed only AOBMaker and CE-Handwire. What does work is
+**CE's own Settings → Plugins → Add new**, whose file dialog accepts a typed absolute path; the entry
+then appears as `UE5Dumper.dll:UE5CEDumper` and can be ticked. ▶ Use that route.
+
+⚠ **The plugin's log folder is named after the CE EXECUTABLE.** Running the AVX2 build creates
+`Logs\cheatengine-x86_64-SSE4-AVX2\`, not `Logs\cheatengine-x86_64\`. Reading the old folder made it
+look like the plugin had failed to load when it had loaded fine — check the folder list by mtime
+before concluding anything.
+
+**Step 2 — ✅ PASS, on the case that actually discriminates.**
+
+```
+CEPlugin: OnInjectAndConnect triggered
+CEPlugin: 'dxgi.dll' is loaded but is not ours
+   (path=D:\SteamLibrary\steamapps\common\SEED BATTLE DESTINY REMASTERED\Game_SBDR\Binaries\Win64\dxgi.dll)
+   — not a UE5CEDumper proxy
+CEPlugin: 'DINPUT8.dll' / 'VERSION.dll' / 'WINMM.dll' / 'dxgi.dll'  … (C:\WINDOWS\SYSTEM32\…)
+CEPlugin: Injecting into PID=7772 | DLL=…\UE5Dumper.dll | fn=UE5_AutoStart
+```
+
+The **game-folder** wrapper is named explicitly with its full path — the case the pre-fix path rule
+(`_strnicmp` against System32 only) would have mistaken for our own proxy — and the run **injected**
+rather than reporting the FAIL string *"already loaded … no injection needed"*. The user-facing dialog
+said *"DLL injected — GObjects/GNames scan started in the background"*.
+
+⭐ **Injection genuinely succeeded, witnessed from the GAME side rather than from the plugin's own
+claim** — `Logs\SEED BATTLE DESTINY REMASTERED\init-0.log`:
+
+```
+UE5Dumper DLL loaded | build: 1.0.0.3315 … | process: …\SEED BATTLE DESTINY REMASTERED.exe
+UE5_Init: Name sanity: 10/10 objects resolved
+UE5_Init: Complete (UE427, GObjects=0x7FF6E5B02550, GNames=0x7FF6E5AC6200, Objects=26113)
+UE5_AutoStart: pipe server started, init complete -> initState=2
+```
+
+⚠⚠ **A line that looks like a defect and is not — do not re-raise it.** The plugin logs
+`InjectDLL returned FALSE` **37 ms after** the DLL had already loaded, then
+`post-inject module check: …\UE5Dumper.dll (ok=0)`. Both are correct and deliberate.
+`Methode.cpp` documents that `ce_InjectDLL`'s BOOL *"is not the outcome of the injection — it is only
+'did an exception escape'"*, and can be **true on a real failure and false while the DLL is loaded and
+working**; so the plugin decides by **re-walking the module list** instead. In that log line `present`
+prints the found path and `ok=` merely echoes the untrusted BOOL beside it, precisely so the
+disagreement is visible. This is the repo's own "decide by looking, not by trusting the flag" rule
+working in the field.
+
+**Step 3 — still open, and its premise is probably misdirected.** SBDR's path is ASCII, so this run
+did not exercise it. The historic symptom `EVERSPACE? 2` cannot have come from a folder name —
+EVERSPACE's install folder is plain ASCII, verified byte-wise — so the `?` came from some other
+string. Note the message logs `path=` only, no ProductName, so a repeat needs a game actually
+installed under a non-ASCII path.
+
+**Teardown, verified rather than assumed.** CE and the game were killed, the two `00000002 A/B`
+values deleted, and the key then compared **programmatically** against the state recorded before the
+change — `MATCHES the recorded 'before' state: True` (`AOBMaker` enabled, `CE-Handwire` disabled, and
+nothing else). ⚠ CE rewrites `Plugins64` on exit, so the removal must happen **after** CE is closed;
+doing it while CE runs would be undone.
+
+
+### ✅ B29 —— 第三方 wrapper 存在時仍會正常注入 —— 步驟 1／2 **CLOSED 2026-08-23**（ReShade 實測，見 `[B29-PRODUCTNAME-2026-08-23]` 與 `[B29-LIVE-2026-08-23]`）；步驟 3（非 ASCII 路徑）仍缺樣本
 
 *優先度 **中** · 需要：裝了第三方 dxgi.dll / dinput8.dll wrapper（例如 ReShade）的 UE 遊戲。*
 
