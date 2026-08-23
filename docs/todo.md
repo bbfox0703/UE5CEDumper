@@ -16817,7 +16817,68 @@ ordering table, instead of the claim that measurement refuted.
 |---|---|---|
 | 1 | ✅ **2026-08-22 通過**（DumperTest + CE 7.7.0.10568）。`SLOT=8`，報告寫的正是「folder of the most recent UE5CEDumper.CT in CE's recent-files list」，且 slot 6（CE 自己的資料夾）列為 `[no DLL]`，這一列自己警告的 FAIL 情境已結構性不可能。⭐ 另有一個獨立見證：self-heal 只有**名稱吻合**的 slot 才會觸發，而它把 `dll-path.txt` 重寫成 **.CT 自己的** header。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠⚠ **順序會決定是哪個 slot 答**（2026-08-22 兩種都量過，見上一節）：先接 process 再載入 .CT ⇒ dialog 帶著 .CT 路徑 ⇒ **slot 2** 答；先載入再接 process ⇒ `openProcess` 用**裸的行程名**覆蓋掉 dialog ⇒ 落到 **slot 8**。兩者都指向同一個正確資料夾，都不是缺陷。 |
 
-### ⬜ U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（**步驟 1、2 已完成，只剩這些**）
+### 🟡 U3 / U17 — the GAS half CLOSED 2026-08-23 `[U3U17-GAS-2026-08-23]`; the LWC host is FOUND, only its container is not
+
+Run on **Elliot** (`Elliot-Win64-Shipping`, UE504, 85,079 objects, dxgi proxy) with the AOT `dist` UI
+v1.0.0.3315, at the main menu — which the row explicitly permits (*"CDO 走訪即可，主選單就夠"*).
+
+⚠ **Setup that must not be skipped, and it is this row's real trap.** Elliot's deployed proxy was the
+**2026-08-19 build** (2,876,928 B) while `dist` is 3315 (2,891,264 B). A stale proxy serves the pipe
+and *ignores* a fresh injection — `pipe_client`'s trap 1 — so every number below would have described
+a three-week-old DLL. It was refreshed from `dist/proxy/dxgi.dll` (byte-identical to the TQ2 proxy
+already proven at 3315) and the game then reported `build: 1.0.0.3315`. `assert_build()` is what makes
+this checkable rather than a hope.
+
+**The GAS half — ✅ PASS, and it is a REGRESSION GUARD, not a feature check.** The row's own wording:
+*"GAS really does have a vtable, and 'just delete the skip' would show four values here."*
+
+`Default__CharacterAttributeSet` @`0x7FF4DE8B77F8` — **30** `FGameplayAttributeData` fields, every one
+previewing as exactly `{BaseValue=…, CurrentValue=…}`. Two members. No pointer halves, no `f:[…]`
+byte-blind fallback. Magnitudes are real game defaults, not garbage: `BasicMoveSpeed = 1000`,
+`BasicJumpZVelocity = 2100`, `MaxDivingOxygenPoint = 5`.
+
+⭐ **The vtable was proven present from the raw bytes, so "the skip works" is measured, not inferred:**
+
+| field | first 8 bytes | next 4 (BaseValue) | next 4 (CurrentValue) |
+|---|---|---|---|
+| `HealthPoint` | `F8924748 01000000` | `0000803F` = 1.0f | `0000803F` |
+| `BasicMoveSpeed` | `F8924748 01000000` | `00007A44` = 1000.0f | `00007A44` |
+| `BasicJumpZVelocity` | `F8924748 01000000` | `00400345` = 2100.0f | `00400345` |
+
+The leading pointer `0x1484792F8` is **identical across all three** — exactly what one shared vtable
+looks like — the declared size is **16** and the fields sit on a **16-byte stride** (0x30, 0x40, 0x50…),
+and each decoded float matches its own hex exactly.
+
+⭐⭐ **The expansion is the clincher, because the OFFSETS are the evidence.** Expanding `HealthPoint`
+in Live Walker gives a two-row table:
+
+```
+0x8   BaseValue      FloatProperty   1    0000803F
+0xC   CurrentValue   FloatProperty   1    0000803F
+```
+
+`0x8` and `0xC` — the first eight bytes are excluded. Delete the skip and members would also appear at
+`0x0` and `0x4`, i.e. **four** values. ⚠ And the fourth would be *convincing*: the vtable's high half
+reads `01000000` = **1**, which would sit in the grid looking like a perfectly ordinary attribute.
+That is why this guard exists.
+
+⭐ **Two independent witnesses.** The headless pipe pass was run **before** the UI was launched, and the
+UI then showed the same values, the same hex and the same offsets. The UI is not the only observer.
+
+**The LWC half — 🟡 host FOUND, vehicle still missing.** The sweep called this blocked for want of a
+UE5 LWC title. **Elliot is one**, measured rather than assumed: on `Default__SceneComponent`,
+`RelativeLocation` / `RelativeRotation` / `RelativeScale3D` / `ComponentVelocity` all report
+**size = 24**, and `RelativeScale3D`'s hex is `000000000000F03F` ×3 — three IEEE-754 **doubles** of
+1.0, i.e. three components at the right magnitude.
+
+▶ So step 1 no longer needs a different game; it needs a **struct-valued `TMap`/`TSet` with a populated
+element** inside Elliot. That distinction matters because the container-element path is a *different
+caller* from the plain-field path, which is the whole point of U17. One search attempt was made and
+failed for a tooling reason (`search_properties` rejects an empty `name`), not because none exists —
+so this is "not yet looked for properly", not "not there".
+
+
+### 🟡 U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（GAS 半 **CLOSED 2026-08-23**；LWC 半只差容器樣本）—— 證據見 `[U3U17-GAS-2026-08-23]` 一節
 
 *build 3169 / 3171 · 優先度 **中** · 需要：一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
 
