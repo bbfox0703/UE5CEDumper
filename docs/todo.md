@@ -16878,6 +16878,44 @@ failed for a tooling reason (`search_properties` rejects an empty `name`), not b
 so this is "not yet looked for properly", not "not there".
 
 
+#### 🟡 …and the LWC half's blocker is now MEASURED rather than assumed `[U3U17-LWC-BLOCKER-2026-08-23]`
+
+Searched Elliot (UE504, LWC confirmed) for the one thing step 1 still needs: a **struct-valued
+`TMap`/`TSet` whose element carries an `FVector`, with at least one entry**. It is not there **at the
+main menu**, and that is now a measurement with a working detector behind it rather than a failed
+look.
+
+**What exists:** 1,442 distinct container properties; 44 of them populated (`{Map: 325, Name→Struct}`,
+`{Map: 201, Int→Struct}`, `{Map: 102, Object→Struct}`, …). **11 containers whose element really is
+vector-like** — `SubPoints` (`MapProperty`, element **Vector**) on `CalibrationPointComponent`,
+`ProxyComponentCentersObjectSpace` (`Vector`) on `LandscapeMeshProxyComponent`,
+`CachedBoneSpaceTransforms` / `CachedComponentSpaceTransforms` / `RestTransforms`
+(`ArrayProperty` of **Transform**, and an `FTransform` holds two `FVector`s).
+
+**Why none of them serves:** every vector-bearing container is empty here. The 11 sit on CDOs, and the
+**29 live heap `SkeletalMeshComponent` instances** all have `CachedBoneSpaceTransforms` at zero
+entries — at a title screen the meshes are not ticking, so nothing has filled the caches. ▶ **This row
+needs Elliot in actual gameplay**, not a main-menu CDO walk. That is a sharper statement than
+"no fixture on this machine": the host is right, the container kinds exist, only the *population* is
+missing, and a loaded save should supply it.
+
+⚠⚠ **A tooling trap that produced a confident zero, and the control is what caught it.** The obvious
+approach — `search_properties` filtered to `MapProperty`/`SetProperty`, then read `struct_type` — sweeps
+1,442 rows and reports **0** vector-like containers. That answer is meaningless: a control showed
+`struct_type` is populated on **0 of 1,404** container rows while `StructProperty` rows carry
+`struct_type='Vector'` quite happily. `search_properties`' row schema exposes only `inner_type`
+(e.g. `"StructProperty"`) — *which* struct is never in the reply, so the question cannot even be asked
+of that command.
+
+⭐ **The data is on the wire, under different keys, from a different command.** `walk_instance` emits
+`array_struct_type` / `map_key_struct_type` / `map_value_struct_type` / `set_elem_struct_type`
+(`Fern.cpp:1477-1606`). Re-run through `walk_instance` over 500 live instances, **211 fields reported
+an element struct type** — the detector demonstrably fires — and the 11 candidates above fell out
+immediately. ▶ **To ask "which struct is inside this container", walk the instance; do not filter the
+property search.** This is working-lessons §1.2 with a new failure mode: the rule was right, the *key*
+was wrong, and a wrong key looks exactly like a true absence.
+
+
 ### 🟡 U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（GAS 半 **CLOSED 2026-08-23**；LWC 半只差容器樣本）—— 證據見 `[U3U17-GAS-2026-08-23]` 一節
 
 *build 3169 / 3171 · 優先度 **中** · 需要：一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
