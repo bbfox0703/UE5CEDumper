@@ -619,6 +619,54 @@ All 23 scheduled items shipped; the rest were refuted or downgraded to optional 
 The rollup moved to [archive/todo-closed-2026-08-build-2715.md](archive/todo-closed-2026-08-build-2715.md);
 the per-finding detail was always in [audit-2026-07-14-findings.md](audit-2026-07-14-findings.md).
 
+### ✅ MG2 step 1 + the TSet half of step 2 CLOSED 2026-08-23 `[MG2-CONTAINER-2026-08-23]`
+
+Both remaining MG2 steps were parked on *"find a real game that happens to contain a `TSet<FName>`,
+a `TSet<UObject*>` and a small enough `TMap`"*. The fixture supplies all three.
+`tools/verify/mg2_container_count.py`, DumperTest Shipping, UE 5.4, build 3322.
+
+| # | check | measured |
+|---|---|---|
+| **1a** | `TMap<int32,int32>` under the cap, remove one | `6/6` → `5/5`; remaining keys `[4001..4005]` = the old set **minus the lowest** |
+| **1b** | `TSet<FName>` under the cap, remove one | `4/4` → `3/3`; exactly `Alpha` gone, `[Beta, Gamma, Delta]` left |
+| **2** | **independence control** | `array_limit=64` → header **305**, rows **64** (disagree); `array_limit=1024` → **305/305** (agree) |
+| **3** | `TSet<UObject*>` elements re-walked | all 4 addresses are real `DumperTestPayload` objects, `PayloadValue` = 909090 / 8100 / 8101 / 8102 |
+
+⭐⭐ **Check 2 is the one that makes the row worth closing, and it is the part a commercial game
+cannot give you.** The vacuity risk here is obvious once stated: if the header count were computed
+from the rendered list, the two could only ever agree and "they agree" would be worthless. Settled
+first in code —
+
+```
+Ubel.cpp:4410   fv.mapCount = sa.MaxIndex - sa.NumFreeIndices;   <- the TSparseArray HEADER
+Ubel.cpp:3682   WalkInstance(..., int32_t arrayLimit, ...)        <- the LIST is a capped walk
+```
+
+— and then **demonstrated at runtime**: `V1a_GrowContainers(300)` pushed the map to 305 and the two
+numbers separated to `305` vs `64`, then rejoined at `305/305` once the cap was raised. A check that
+can be *made to fail on demand* is evidence; one only ever observed agreeing is not. You cannot ask
+a shipped game to add 300 map entries.
+
+⭐ **Step 1 is a DIFF, not a reading.** A single agreeing pair could agree by construction, so the
+removal is the test: both numbers drop by exactly one *and* the surviving keys are the old set minus
+the lowest — which is what `MG2_RemoveOneMapEntry` is specified to remove. A walker rendering a
+stale inline copy would keep the low key and fail here.
+
+⭐ **Step 2 counts nothing.** A broken decode still produces N rows, so the object set's elements
+were **re-walked at the addresses the set reported** and each had to come back as a live object of
+the class the set claimed, with a readable `PayloadValue`. All four did, and the values are the
+seeded ones (the actor's own `Payload` at 909090 plus `SetPayload_0..2` at 8100-8102) — so the set
+holds the right objects, not merely four valid ones.
+
+⛔ **Step 2's "open any UDataTable" half stays OPEN, blocked by
+[`[DTROWMAP-2026-08-23]`](#) — not skipped.** The drill-down can serve a *neighbouring* table's rows,
+so a render check would be judging the wrong table's data. It becomes runnable the moment that is
+fixed, and the fixture already holds both tables it needs.
+
+ℹ️ The rig mutates the fixture and says so at the top: it shrinks `Set_Name` (four seeds — re-running
+on one long-lived process eventually empties it and `[1b]` then correctly fails; relaunch rather
+than "fix" that), and phase 2 deliberately leaves the containers ~300 larger for V1a.
+
 ### ✅ AD4 step 4 CLOSED 2026-08-23 `[AD4-CONTESTED-2026-08-23]` — the `ON (contested)` state recorded, with three witnesses
 
 The row's last open step wanted `ON (contested)` — the `(want=1, godmode=0, resolvable=true)` triple —
