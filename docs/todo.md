@@ -7416,6 +7416,36 @@ exits immediately when its shipping exe is launched directly (Steam DRM wants th
 > `trigger_scan` re-scans pointers but never re-reads the version cache. **The stale-rev case needs
 > a fresh process** — prime the cache, then relaunch.
 >
+> ### ✅ G11 step 2 PASS 2026-08-23 `[G11-AVOWED-2026-08-23]` — Avowed reports UE504, as documented, and it is NOT a defect
+>
+> Avowed = **appid 2457220** (from the Steam manifest; the handover table omits it). Launched via
+> the Steam client, proxy refreshed first (below), `load_mode: proxy:dxgi.dll`.
+>
+> | field | value | matches the documented shape? |
+> |---|---|---|
+> | `ue_version` | **504** | ✅ exactly what this step says to expect |
+> | `object_count` | **92,036** | ✅ the register's own figure (it notes 92,036 → 92,037 drift as noise) |
+> | `item_size` | **20** | ✅ the packed `FUObjectItem` |
+> | `gobjects_pattern_id` | **GOBJ_AV1** | ✅ |
+> | `gworld_method` | **instance_scan_recovery** | ✅ not a direct AOB |
+> | log line | `UE Version = 504 (cached, rev=5, detected=yes, lowConf=no)` | ✅ agrees with the cache |
+>
+> ⚠ **Proxy trap again, caught by the report rather than by a failure this time.** Avowed ships a
+> **`dxgi.dll`** proxy (not `version` — its exe imports dxgi+winmm and not version, so dxgi is the
+> deterministic choice here) and it was **STALE** at 2,891,264 B / sha `eb59beb768c3`. Refreshed to
+> 3337 before launching, so the numbers above are the shipping build's. `proxy_refresh.py report`
+> is the cheap pre-flight; running it *before* the launch saves the relaunch EVERSPACE cost.
+>
+> ### ✅ G1 + X3 screening — the NEGATIVE recorded 2026-08-23 `[G1X3-SCREEN-2026-08-23]`
+>
+> `get_offsets` on **Avowed**: **0** `unmeasured`, **0** `validated:false`, **1** `validated:true`.
+> ⭐ Control: the token `validated` appears exactly **once** in the whole reply, so the search is
+> able to find it — a zero from a broken grep would look identical otherwise.
+> ⭐⭐ **Avowed is the strongest candidate on this machine** — packed 20-byte `FUObjectItem`,
+> GWorld only via `instance_scan_recovery`, a licensee-shaped title. If any installed game were
+> going to show a partial-offset failure it is this one, and it does not. That makes this the
+> fourth sitting to find nothing; the banner's failure case still has no host here.
+
 > ### ✅ EVERSPACE (RSG) SWEPT 2026-08-23 `[G11-RSG-2026-08-23]` — both un-swept titles are now done
 >
 > ⚠ **The appid was wrong in the note above.** `1128920` is **EVERSPACE 2** (already swept);
