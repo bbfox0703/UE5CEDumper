@@ -413,6 +413,27 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// </remarks>
     public string? ValueTooltip => string.IsNullOrEmpty(DisplayValue) ? null : DisplayValue;
 
+    /// <summary>
+    /// The full <see cref="TypeName"/>, for the Type column's hover tooltip — or
+    /// <c>null</c> when empty.
+    /// </summary>
+    /// <remarks>
+    /// Sibling of <see cref="ValueTooltip"/>, same defect, one column left. The Type
+    /// cell is 115 px and UE type names run long by nature — the case that prompted it
+    /// was <c>DataTableRows</c> rendering as <c>DataTableRo</c>, and
+    /// <c>SoftObjectProperty</c> / <c>MulticastInlineDelegateProperty</c> are worse. It
+    /// was spotted as the negative control for <c>[V8PREVIEWCLIP-2026-08-23]</c>:
+    /// hovering this cell to prove the Value tooltip was really the new binding showed
+    /// a column that was equally clipped and equally silent.
+    ///
+    /// <para>⚠ No <c>[NotifyPropertyChangedFor]</c> needed, and that is a fact about
+    /// <see cref="TypeName"/>, not an omission: it is <c>init</c>-only and structural —
+    /// the same-layout branch of a refresh checks it before reusing rows at all, so it
+    /// cannot change under a live row. <see cref="DisplayValue"/> is the opposite and
+    /// that is why its twin needs nine notifications.</para>
+    /// </remarks>
+    public string? TypeTooltip => string.IsNullOrEmpty(TypeName) ? null : TypeName;
+
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
         !IsGuessed &&

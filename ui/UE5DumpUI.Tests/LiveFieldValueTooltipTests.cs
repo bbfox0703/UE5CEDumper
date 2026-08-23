@@ -106,6 +106,43 @@ public class LiveFieldValueTooltipTests
     }
 
     [Fact]
+    public void TypeTooltip_CarriesTheWholeTypeName_AndIsNullWhenEmpty()
+    {
+        // The Type cell is 115px and UE type names run long. "DataTableRows" rendering
+        // as "DataTableRo" is what exposed it -- while hovering that very cell as the
+        // negative control for the Value column's fix.
+        var f = new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows" };
+        Assert.Equal("DataTableRows", f.TypeTooltip);
+
+        var longer = new LiveFieldValue { Name = "x", TypeName = "MulticastInlineDelegateProperty" };
+        Assert.Equal("MulticastInlineDelegateProperty", longer.TypeTooltip);
+
+        Assert.Null(new LiveFieldValue { Name = "x" }.TypeTooltip);
+    }
+
+    [Fact]
+    public void TheTypeColumnActuallyBindsTheTooltip()
+    {
+        var root = FindRepoRoot();
+        Assert.NotNull(root);
+        var path = Path.Combine(root!, "ui", "UE5DumpUI", "Views", "LiveWalkerPanel.axaml");
+        Assert.True(File.Exists(path), path);
+        var src = File.ReadAllText(path);
+
+        Assert.Contains("ToolTip.Tip=\"{Binding TypeTooltip}\"", src);
+        int text = src.IndexOf("Text=\"{Binding TypeName}\"", System.StringComparison.Ordinal);
+        int tip = src.IndexOf("ToolTip.Tip=\"{Binding TypeTooltip}\"", System.StringComparison.Ordinal);
+        Assert.True(text >= 0 && tip > text && tip - text < 200,
+            "ToolTip.Tip=\"{Binding TypeTooltip}\" must sit on the same TextBlock as "
+            + "Text=\"{Binding TypeName}\" in the Type column's CellTemplate.");
+
+        // Converting DataGridTextColumn -> DataGridTemplateColumn is what gave the cell
+        // an element to hang the tooltip on. Sorting came free with the text column and
+        // must not have been dropped in the conversion -- nothing else would notice.
+        Assert.Contains("SortMemberPath=\"TypeName\"", src);
+    }
+
+    [Fact]
     public void TheValueColumnActuallyBindsTheTooltip()
     {
         // The property can be perfect and the column can still not use it -- which is

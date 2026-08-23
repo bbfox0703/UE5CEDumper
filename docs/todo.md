@@ -894,6 +894,60 @@ Avalonia.
 
 -----
 
+### ✅ FIXED 2026-08-23 `[TYPECOLCLIP-2026-08-23]` — the Type column clipped too, and fixing it nearly broke its sort
+
+The sibling of `[V8PREVIEWCLIP-2026-08-23]`, found *as that fix's negative control*: hovering the
+Type cell to prove the Value tooltip was really the new binding showed a column that was equally
+clipped (`DataTableRows` → `DataTableRo` at 115 px) and equally silent. Maintainer asked for it too.
+
+**What shipped**
+
+* `Models/LiveFieldValue.cs` — `public string? TypeTooltip`, same null-when-empty shape as
+  `ValueTooltip`. ⚠ **No `[NotifyPropertyChangedFor]`, and that is a fact not an omission**:
+  `TypeName` is `init`-only and structural (a refresh's same-layout branch checks it *before*
+  deciding it may reuse rows), so it cannot change under a live row. `DisplayValue` is the opposite,
+  which is why its twin needs nine.
+* `Views/LiveWalkerPanel.axaml` — `DataGridTextColumn` → `DataGridTemplateColumn`, because a text
+  column's `Binding=` is not an element and there is nothing to hang `ToolTip.Tip` on. Template
+  deliberately identical to the Value column beside it so the two cannot drift visually.
+* `Views/LiveWalkerPanel.axaml.cs` — **a sort comparer for `TypeName`**. See below.
+
+### ⭐ The conversion silently unrooted the column's sort, and the repo's own guard caught it
+
+`DataGridSortWiringTests.Every_user_sortable_XAML_column_is_binding_rooted_or_has_a_comparer` failed
+the moment the XAML changed:
+
+```
+LiveWalkerPanel.axaml / FieldGrid : DataGridTemplateColumn SortMemberPath="TypeName" Binding="(none)"
+```
+
+Avalonia resolves `SortMemberPath` by **reflection**, and under trimming that metadata survives only
+for a property some compiled binding roots. As a `DataGridTextColumn`, `Binding="{Binding TypeName}"`
+rooted it and the column was safe *for free*. Converting it to a template column removed that
+binding — so the header would have animated and **done nothing in the shipped trimmed build**, while
+working perfectly in every JIT test host and every Debug run.
+
+⭐ **The shape worth remembering: making a column PRETTIER can break its SORT, because both ride on
+the same attribute.** Nothing about "add a tooltip" suggests "check the sort wiring".
+
+Fixed by rule (2) — an explicit comparer, exactly as the Value column already does:
+
+```csharp
+["TypeName"] = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.TypeName),
+```
+
+⚠ Rule (1) was **not** used even though the cell template's `Text="{Binding TypeName}"` is a
+compiled binding and plausibly roots the property. The guard only credits the *column's own*
+`Binding`, deliberately: it exists because audit #5 found six instances of one defect and a sweep
+turned up four more, one of them argued away in a comment. Arguing with it is how the tenth happens.
+
+⭐ **Both directions observed, not reasoned.** Deleting the comparer reproduces the failure above
+(1 failed / 4706 succeeded, and it is the only one); restoring gives **4707 / 0**.
+
+ℹ️ Two more tests in `LiveFieldValueTooltipTests` — `TypeTooltip` carries the whole name and is
+`null` when empty; the XAML binds it on the same `TextBlock` as `Text="{Binding TypeName}"`, and
+`SortMemberPath="TypeName"` is still present so the conversion cannot silently drop sorting again.
+
 ### ✅ FIXED 2026-08-23 `[V8PREVIEWCLIP-2026-08-23]` — the Value column now offers the text it cannot show
 
 Maintainer picked option **(1)**, the tooltip — the option that repairs the *class* of defect rather
@@ -941,8 +995,9 @@ the same row — which is *also* visibly clipped (`DataTableRo` for `DataTableRo
 tooltip at all**. So what appears over the Value cell is this binding, not some grid-wide tooltip
 behaviour that was there all along.
 
-ℹ️ Noted in passing, deliberately NOT fixed: the **Type** column clips the same way and has no
-tooltip. Same class, different column, and outside what was asked for here.
+ℹ️ The **Type** column clipped the same way. It was left alone here as outside the ask, then
+fixed on request the same day — see `[TYPECOLCLIP-2026-08-23]` above, where the conversion turned
+out to unroot the column's sort.
 
 ⭐ **Both the guard and the fix were shown able to fail.**
 

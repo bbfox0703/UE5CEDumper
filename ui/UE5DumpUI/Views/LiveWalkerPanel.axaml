@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:UE5DumpUI.ViewModels"
              xmlns:m="using:UE5DumpUI.Models"
@@ -581,9 +581,27 @@
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}" SortMemberPath="Name"
                             Width="220" MinWidth="140" IsReadOnly="True"/>
-        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
-                            Binding="{Binding TypeName}" SortMemberPath="TypeName"
-                            Width="115" IsReadOnly="True"/>
+        <!-- A TemplateColumn only so the cell has an element to hang ToolTip.Tip on;
+             a DataGridTextColumn's Binding= has none. 115px clips readily — the case
+             that prompted it was "DataTableRows" rendering as "DataTableRo", and UE
+             type names are long by nature (SoftObjectProperty,
+             MulticastInlineDelegateProperty). Same [V8PREVIEWCLIP-2026-08-23] shape as
+             the Value column beside it, which is why this template is deliberately
+             IDENTICAL to that one: same VerticalAlignment and Margin, so the two
+             columns cannot drift apart visually. SortMemberPath / IsReadOnly carry
+             over from the text column unchanged. -->
+        <DataGridTemplateColumn Header="{StaticResource str.ClassStruct.Type}"
+                                SortMemberPath="TypeName"
+                                CanUserSort="True"
+                                Width="115" IsReadOnly="True">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:LiveFieldValue">
+              <TextBlock Text="{Binding TypeName}"
+                         ToolTip.Tip="{Binding TypeTooltip}"
+                         VerticalAlignment="Center" Margin="4,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.Value}"
                                 SortMemberPath="DisplayValue"
                                 CanUserSort="True"
