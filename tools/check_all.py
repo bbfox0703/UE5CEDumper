@@ -36,6 +36,23 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TSV = os.path.join("out", "sweep", "patterns.tsv")
 
+# Gates whose failure is REPORTED but does not fail the run.
+#
+# The rule this encodes: a red build must mean "the software is wrong", never
+# "someone forgot a tick". Every blocking gate here fails in the SAME commit as the
+# change that broke it, so its fix is local and the noise is ~zero. An advisory gate
+# is one that fails LATER, decoupled from the change -- which is how a team learns to
+# read red as "probably just docs" and then misses a real one.
+#
+# check_audit_register (advisory since 2026-08-23): it kept the audit register's OPEN
+# COUNT honest while a fix programme was running. That programme is spent -- 0 HIGH,
+# 0 MED, 4 open of 297 (3 LOW + 1 INFO), and CLAUDE.md marks §3b's fix queue SPENT --
+# so it was blocking the build over a number nobody acts on, and its failure mode is
+# "a ✅ missing from one row of a 297-row table", landing whenever the dev-log entry
+# does rather than with the fix. The SCRIPT stays: --list is still the only way to
+# find the open HIGH/MED tier. Re-open an audit round => move the name out of this set.
+ADVISORY = {"check_audit_register"}
+
 # (name, argv, why-it-failed text from ci.yml, needs_pattern_extract)
 GATES = [
     ("extract_patterns --check",
@@ -121,7 +138,7 @@ def main() -> int:
         return 0
 
     os.makedirs(os.path.join(ROOT, "out", "sweep"), exist_ok=True)
-    failed, skipped = [], []
+    failed, skipped, advisory = [], [], []
     t0 = time.time()
 
     for name, argv, why, slow in GATES:
@@ -137,13 +154,26 @@ def main() -> int:
         tail = [ln for ln in (r.stdout or "").splitlines() if ln.strip()][-1:] or [""]
         if r.returncode == 0:
             print("  ok    %-28s %5.1fs  %s" % (name, dt, tail[0][:96]))
+        elif name in ADVISORY:
+            advisory.append((name, why, r))
+            print("  warn  %-28s %5.1fs  exit=%d  (advisory -- does not fail the run)"
+                  % (name, dt, r.returncode))
         else:
             failed.append((name, why, r))
             print("  FAIL  %-28s %5.1fs  exit=%d" % (name, dt, r.returncode))
 
     print()
-    print("%d gate(s) run, %d failed, %d skipped, %.1fs total"
-          % (len(GATES) - len(skipped), len(failed), len(skipped), time.time() - t0))
+    print("%d gate(s) run, %d failed, %d advisory, %d skipped, %.1fs total"
+          % (len(GATES) - len(skipped), len(failed), len(advisory), len(skipped),
+             time.time() - t0))
+
+    for name, why, r in advisory:
+        print()
+        print("-" * 78)
+        print("ADVISORY (not a build failure): %s" % name)
+        print("what drifted: %s" % why)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        print(out[-1500:] if out else "<no output>")
 
     for name, why, r in failed:
         print()
