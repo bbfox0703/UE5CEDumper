@@ -16214,7 +16214,73 @@ Where a step is already marked done, it is done — this is not a fresh queue.
 ⭐ **These are still open verification work**; they are tracked by the item ids that already
 appear elsewhere in this file. What changed is only where the STEPS live.
 
-### 🟡 AF16–AF23 step 2 — Props half PASSES on the AOT build; Xref half still lacks a ≥2-row case `[AF16-PROPSSORT-2026-08-22]`
+### ✅ AF16–AF23 step 2 — Xref half CLOSED 2026-08-23 `[AF16-XREF-2026-08-23]`; the fixture was FOUND, not guessed
+
+The Props half passed on 2026-08-22. What remained was a field that **two or more Blueprint bytecode
+functions touch**, so the Xref dialog returns ≥ 2 rows and its headers can be sorted. Five earlier
+hunts picked fields by intuition and every one returned 0 or 1.
+
+⭐⭐ **The fix was to stop guessing.** `tools/verify/af16_xref_fixture.py` inverts the mapping the DLL
+already exposes — `walk_function_props` over every script-backed UFunction, then
+`prop_addr → {functions}` — so any property with ≥ 2 **is** a fixture by construction. On DQ7R
+(AOT `dist` v1.0.0.3315, DLL 3315, UE427, 149,408 objects, proxy `version.dll` already deployed):
+
+```
+functions: 5955 total, 916 script-backed (non-native)
+probed 916; 705 took the exact bytecode path; 661 distinct instance props
+properties touched by >= 2 functions: 58
+```
+
+**Two fixtures were used, because the first is homogeneous and the second discriminates.**
+
+| # | fixture | rows | why it was needed |
+|---|---|---|---|
+| 1 | `DOLLActionSecondCheck :: CasterGameCharacter` @`0x340` | **26** | volume + a `Function` column with 26 distinct values |
+| 2 | `MapStateBase :: StateData` @`0x250` | **9** | `Kind` has 2 values, `Re` varies (1/3/5/9), `Owner Class` has 2 — the only way to see a **reorder** at all |
+
+⚠ Note both are keyed to the **declaring** class, not the Blueprint: the rig names
+`BP_ActionSecondCheck_C`, Property Search lists `DOLLActionSecondCheck (+1 inheritor)`. Searching for
+the BP class name finds nothing — this is the same inherited-field rule CLAUDE.md records for Solide.
+
+**All six headers — `Kind | Re | Access | Owner Class | Event | Function` — sort.** Results:
+
+* **`Function`** (26 rows): ascending is alphabetical on the full path, beginning `BurstPoint120_Up_F`;
+  descending begins `ZonePoint_T` — a clean reversal.
+* **`Re`** (9 rows): ascending `1,3,3,3,3,5,5,5,9`; descending `9,5,5,5,3,3,3,3,1`. Exact reversal.
+* **`Kind`**: groups `instance` first, then all `ref`.
+* **`Owner Class`**: groups `BP_MapManager_C` (×8) before `BP_MapStateLoading_C`.
+* **`Access`, `Event`**: clickable, indicator moves, no crash — but constant/empty in both fixtures.
+
+⭐ **No cell-recycling corruption across every reordering.** Each row's `Kind`/`Re`/`Owner Class`
+stayed glued to its own `Function`: `MapChangeCutScene` kept `Re=9` in all four orderings,
+`MapChangeField`/`Rura`/`Title` kept `5`, and `FactoryNextMapState` kept `1` **and** its unique
+`instance` + `BP_MapStateLoading_C` pair. That mismatch is exactly what the `supportsRecycling` defect
+produced, so this is the check that matters.
+
+⭐ **Incidental and worth keeping: the sort is STABLE.** Sorting by `Kind` (2 values) left the eight
+`ref` rows in their original scan order rather than scrambling them.
+
+⚠ **Honest limit, same as the Props half's:** `Re` here is `1/3/5/9` — all single digit, where a string
+sort and a numeric sort agree. So the headers demonstrably reorder, but **numeric-vs-string is still
+not discriminated** on this dialog. It needs a field with a ≥10 reference count; the rig can find one
+(`--top`) if that is ever worth a session. `Access` was `read` throughout, so its ordering is untested.
+
+⭐⭐ **The rig's confirm step earned itself immediately, and the result is a correction rather than a
+defect.** Every candidate is re-asked through `find_property_xrefs` — what the dialog itself calls —
+and only counted if that returns ≥ 2. The first run offered `DOLLCharacter::AutoPossessPlayer` with
+**16** functions while `find_property_xrefs` returned **0**, with and without `game_only`, over the
+identical 11,256-function / 705-bytecode corpus. Cause, measured rather than guessed: all 16 came from
+`method="disasm"` — the native-disassembly **heuristic** (Path 2) — while `find_property_xrefs` is a
+Kismet **bytecode** xref ([Aura.cpp:5541](dll/src/Aura.cpp:5541)). The two commands answer different
+questions. **The dialog's own footer says so**: *"Native (C++) functions have no bytecode and cannot be
+detected here — an empty result on an engine field is expected."* The rig now skips non-bytecode
+replies and the confirm step went from 3-of-5 to **6-of-6 AGREE**.
+
+▶ **Do not re-run the earlier dead ends.** `WBP_Battle_LvUpSkill_C::VerticalBox_0` returning 1 row is
+now *explained*, not unlucky: that class owns exactly 2 UFunctions, one of which is an event stub.
+
+
+### ✅ AF16–AF23 step 2 — Props half PASSES on the AOT build (Xref half CLOSED 2026-08-23, see `[AF16-XREF-2026-08-23]`) `[AF16-PROPSSORT-2026-08-22]`
 
 Run on **DQ7R** (`dist` AOT **v1.0.0.3315** — the trimmed binary this row insists on, since the whole
 defect class is "the reflection sort survives JIT and is trimmed out of what ships"), UE427,
