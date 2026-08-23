@@ -250,22 +250,41 @@ internal static class ProxyImportAnalyzer
                 ProxyType.Version, "version · default · imported, may be bypassed — try injection");
 
         string alt = DescribeImportable(imports);
+        // An EMPTY alt with a parsed import table now means none of the three non-version
+        // flavours is importable -- winmm included, which the old wording omitted from
+        // both the list and this sentence. `imports is null` stays distinct: unknown is
+        // not the same as none.
         string display = alt.Length > 0
             ? $"version · default · alt: {alt}"
-            : (imports is ProxyImportInfo i && !i.ImportsDxgi && !i.ImportsDinput8
-                ? "version · default · no dxgi/dinput8"
+            : (imports is not null
+                ? "version · default · no dxgi/winmm/dinput8"
                 : "version · default");
         return new ProxySuggestion(ProxyType.Version, display);
     }
 
     /// <summary>Short list of the non-version proxies the .exe imports (the ones
     /// that can actually activate), or "" when unknown/none. Extension trimmed for
-    /// compactness ("dxgi", "dinput8").</summary>
+    /// compactness ("dxgi", "winmm", "dinput8").
+    ///
+    /// <para>⚠ <c>winmm</c> was MISSING here until 2026-08-23
+    /// (<c>[PROXYALTWINMM-2026-08-23]</c>) even though the analyzer has parsed
+    /// <see cref="ProxyImportInfo.ImportsWinmm"/> since 2026-07-27 and winmm is one of the
+    /// four proxies we build. Measured over the 16 UE shipping .exes installed on the
+    /// maintainer's machine: <b>14 import winmm and 0 import dinput8</b> — so this helper
+    /// was offering the flavour nothing imports while hiding the one almost everything
+    /// does. It survived because <c>ImportsWinmm</c> was appended to the record WITH A
+    /// DEFAULT, so all four Recommend tests constructed it with three positional
+    /// arguments and silently asserted the no-winmm case.</para>
+    ///
+    /// <para>Order is deliberate: dxgi and winmm are the pure static-import hijacks (see
+    /// the class remarks), so they are the deterministic picks and come first; dinput8 is
+    /// the run-time-<c>LoadLibrary</c> shape.</para></summary>
     private static string DescribeImportable(ProxyImportInfo? imports)
     {
         if (imports is not ProxyImportInfo i) return "";
-        var parts = new List<string>(2);
+        var parts = new List<string>(3);
         if (i.ImportsDxgi) parts.Add("dxgi");
+        if (i.ImportsWinmm) parts.Add("winmm");
         if (i.ImportsDinput8) parts.Add("dinput8");
         return string.Join(", ", parts);
     }

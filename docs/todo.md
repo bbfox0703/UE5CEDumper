@@ -7217,6 +7217,50 @@ repo's.
 > per-keyword truncation disclosure working on a real title.
 > | Z13 | on any game, open **Interesting Properties** and **Interesting Functions** and sort by Score; find an HP-named row and read its score tooltip | the tooltip reads `keywords(1 hits)` for a plain `HP`/`CurrentHP` name, not `keywords(2 hits)`, and that row scores **5 lower** than it did before | this is the one DELIBERATE score movement in the batch and it is not silent: `"HP"` and `"Hp"` both tokenised to `["hp"]`, so one keyword was counted twice. Nothing visible on HP alone becomes hidden (10 → 5, both thresholds ≤ 5), but an HP function on an `Anim*`/`Niagara*`/`Sound*`/`Particle*` class (−2 class penalty) goes 8 → 3 and correctly drops below the threshold. ⚠ **What to actually watch for: an HP row you EXPECTED that is now missing from the default view** — if one appears, it is a threshold crossing, and the fix is "Show all", not re-adding the duplicate |
 
+### ✅ FIXED 2026-08-23 (was NEW DEFECT) `[PROXYALTWINMM-2026-08-23]` — the proxy advisory offered the flavour NOTHING imports and hid the one almost everything does
+
+Found while working the A6 offline bucket (the Lushfoil proxy-not-loading row), by reading the
+import tables rather than the code.
+
+`ProxyImportAnalyzer.DescribeImportable` built its "alt:" list from **dxgi and dinput8 only**. It
+never mentioned **winmm**, although the analyzer has parsed `ImportsWinmm` since **2026-07-27**
+(`a2c81a0c` — *"teach the analyzer winmm"*), winmm is one of the **four** proxies `-Target DLL`
+builds, and the class's own remarks group `dxgi.dll`/`winmm.dll` together as the *"pure static-import
+hijacks"* — i.e. the **deterministic** pair, the ones most worth suggesting.
+
+⭐⭐ **Measured, not argued.** Every UE shipping `.exe` installed on this machine, parsed with
+`tools/pe/pe_imports_exports.py`:
+
+```
+16 shipping exes:  14 import winmm   ·   13 import dxgi   ·   4 import version   ·   0 import dinput8
+```
+
+So the advisory listed **dinput8 (0 of 16)** and suppressed **winmm (14 of 16)**. On the 13 games
+importing both (Lushfoil, DQ7R, Avowed, Elliot, Geri, Manor Lords, TQ2, Solarpunk, …) the user saw
+`version · default · alt: dxgi` and was never told winmm was equally available. The empty-list
+sentence was wrong too: it read `no dxgi/dinput8`, which enumerates two of the three non-version
+flavours and omits the third.
+
+⚠ **Root cause, and it is a lesson already in `working-lessons.md` §2.3.** `ImportsWinmm` was
+**appended to the record with a default** (`bool ImportsWinmm = false`) — the only defaulted member.
+So all four `Recommend` tests construct `ProxyImportInfo` with **three positional arguments** and
+silently assert the no-winmm case. `DescribeImportable` was then edited *again* on **2026-08-10**
+(`c28e3a78`, two weeks after winmm was taught) and still not updated: the default made the gap
+invisible to the tests. The test file's own comment still says *"none of OUR three"*.
+
+**Fix:** add winmm to the list (order `dxgi, winmm, dinput8` — deterministic first), and correct the
+empty case to `no dxgi/winmm/dinput8`.
+
+⭐ **The guard is structural, not another example.** `Recommend_EveryNonVersionFlavour_IsOfferedWhenImported`
+enumerates `ProxyType` and asserts that a game importing only that flavour is told so — a **fifth**
+flavour added the same way fails it.
+
+⚠⚠ **The first draft of that guard was VACUOUS, and only the negative control caught it.** It
+asserted `Display.Contains("winmm")` — and the fallback sentence `no dxgi/winmm/dinput8` *contains*
+`winmm`, so with the fix removed the guard still passed while the two hand-written cases failed. It
+now matches inside the `alt:` segment only. Control re-run: dropping the winmm line fails **all
+three** tests; restoring it returns **51/51**. Full suite **4,712 / 0 failed**; **13/13** gates.
+
 ### ✅ VERIFIED 2026-08-20 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored" — step 1 run on OCTOPATH, the bypass is REAL on this pair
 
 *Was: the Proxy Deploy panel's `DeployedCurrent` is computed from the file on DISK only; it does NOT

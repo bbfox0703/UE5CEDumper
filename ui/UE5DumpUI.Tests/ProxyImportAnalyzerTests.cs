@@ -1,3 +1,4 @@
+using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Text;
@@ -84,7 +85,76 @@ public class ProxyImportAnalyzerTests
         var imports = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false);
         var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
         Assert.Equal(ProxyType.Version, s.Type);
-        Assert.Equal("version · default · no dxgi/dinput8", s.Display);
+        Assert.Equal("version · default · no dxgi/winmm/dinput8", s.Display);
+    }
+
+    // ── [PROXYALTWINMM-2026-08-23] ──
+    //
+    // DescribeImportable offered only dxgi and dinput8. winmm has been parsed since
+    // 2026-07-27 and is one of the four proxies we build, and the class's own remarks
+    // group dxgi+winmm as the PURE STATIC-IMPORT HIJACKS -- the deterministic pair.
+    // Measured over the 16 UE shipping .exes installed on this machine: 14 import winmm,
+    // 0 import dinput8. So the advisory listed the flavour nothing imports and hid the
+    // one almost everything does.
+    //
+    // ⚠ It survived because ImportsWinmm was APPENDED TO THE RECORD WITH A DEFAULT, so
+    // every test above constructs three positional args and silently asserts the
+    // no-winmm case. That is why the guard below enumerates ProxyType instead of adding
+    // one more hand-written case: a FIFTH flavour added the same way would be caught.
+
+    [Fact]
+    public void Recommend_ImportsWinmm_OffersIt()
+    {
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, true);
+        var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
+        Assert.Equal(ProxyType.Version, s.Type);          // still never auto-escalates
+        Assert.Equal("version · default · alt: winmm", s.Display);
+    }
+
+    [Fact]
+    public void Recommend_DxgiAndWinmm_ListsBoth_DeterministicFirst()
+    {
+        // The real shape on this machine: Lushfoil, DQ7R, Avowed, Elliot, Geri, Manor
+        // Lords and eight others import dxgi AND winmm. Before the fix this read
+        // "alt: dxgi" and the user was never told winmm was equally available.
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(false, false, true, true);
+        var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
+        Assert.Equal("version · default · alt: dxgi, winmm", s.Display);
+    }
+
+    [Fact]
+    public void Recommend_EveryNonVersionFlavour_IsOfferedWhenImported()
+    {
+        // STRUCTURAL GUARD, not another example: for each non-version proxy we build, a
+        // game importing ONLY that flavour must have it named in the advisory. Add a
+        // fifth ProxyType and forget DescribeImportable, and this fails.
+        foreach (var t in Enum.GetValues<ProxyType>())
+        {
+            if (t == ProxyType.Version) continue;   // the default, never an "alt"
+            var imports = new ProxyImportAnalyzer.ProxyImportInfo(
+                ImportsVersion: false,
+                ImportsDinput8: t == ProxyType.Dinput8,
+                ImportsDxgi:    t == ProxyType.Dxgi,
+                ImportsWinmm:   t == ProxyType.Winmm);
+
+            Assert.True(imports.Imports(t),
+                $"precondition: ProxyImportInfo must model {t} at all");
+
+            var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
+            string name = t.ToString().ToLowerInvariant();
+
+            // ⚠ Match on the "alt:" LIST, not on the whole Display. The first draft of
+            // this guard asserted Display.Contains(name) and passed VACUOUSLY when winmm
+            // was dropped -- because the fallback sentence is "no dxgi/winmm/dinput8",
+            // which contains "winmm". The negative control (delete the winmm line and
+            // re-run) is the only reason that was caught.
+            int at = s.Display.IndexOf("alt:", StringComparison.Ordinal);
+            Assert.True(at >= 0,
+                $"a game importing only {t} was offered no alternative at all: \"{s.Display}\"");
+            string altList = s.Display[(at + 4)..];
+            Assert.True(altList.Contains(name, StringComparison.Ordinal),
+                $"a game importing only {t} is never told it can use it: \"{s.Display}\"");
+        }
     }
 
     [Fact]
