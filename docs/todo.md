@@ -1259,6 +1259,75 @@ Freeze button stayed **disabled**, because the chip mirrors LiveWalker/Pointers 
 (`MainWindowViewModel.cs:698-706`) but Property Search probes lazily on **tab activation**. A tab
 round-trip enabled it. Not filed as a defect — the panel does refresh, just not from the chip.
 
+### ✅ AA2/AA3 step 4 CLOSED 2026-08-23 `[AA2-STEP4-CHURN-2026-08-23]` — the freeze re-acquires across churn, and touches nothing else
+
+The step steps 2 and 3 structurally could not reach. Step 2 proved a class-wide freeze holds on a
+**quiescent** 145-instance pool and said so; the guard being tested — *re-read `ClassPrivate` before
+every write, refuse a foreign class* — only matters when a **slot is recycled**, and no commercial
+game produces that on cue. The spawner does: `Spawn_DestroyHolders()` is
+`Destroy()` + `Empty()` + **`ForceGarbageCollection(true)`**, so slots are genuinely freed and reused.
+
+CE 7.7 + AOBMaker + DumperTest Shipping, build 3334. Freeze pushed the normal way (Property Search →
+Freeze → *"every live DumperTestHolder and every subclass (1 inherit this…)"* → value 9999) and
+ticked. `tools/verify/aa2_step4_churn.py` drives the churn.
+
+| | |
+|---|---|
+| precondition | 12/12 sampled holders holding 9999 **before** the churn — otherwise a post-churn reading measures nothing |
+| churn | destroy 100 + force GC → **0 live**; re-spawn 8 decoys, then 100 fresh holders |
+| **re-acquire** | **4.1 s** (row allows ~5 s). Across five runs: 2.0 s, 3.1 s, 4.1 s, and 100/100 frozen in three further trials |
+| nothing unrelated | decoys **8/8 untouched**; **176 unrelated fields** across 10 objects, **0 changed** |
+
+⭐ **The intermediate readings are the evidence, not the endpoint.** Fresh instances are seeded
+`1000+i`, so the poll shows them converting:
+
+```
+t=+1.0s  11/12 hold 9999   e.g. ['1107', '9999', '9999', '9999']
+t=+4.1s  12/12 hold 9999   e.g. ['9999', '9999', '9999', '9999']
+```
+
+A post-churn 9999 therefore cannot be a value that was already there — the objects did not exist a
+second earlier and were born at 1107.
+
+⭐ **The decoy control is adversarial by construction.** `ADumperTestHolderDecoy` does **not** derive
+from the frozen class, but its class NAME contains it and it carries a field of the **same name at
+the same offset (`0x290`)**. A write by name, or a write into a recycled slot without re-checking
+`ClassPrivate`, lands there. It never did.
+
+⭐⭐ **Slot reuse was forced, not hoped for.** A dedicated run destroyed 100 frozen holders and then
+spawned 24 decoys: **24 of 24 landed on addresses that had just held a frozen holder**, and **all 24
+read `-1`**. That is the AA2 defect's exact scenario — a foreign class in a recycled, recently-frozen
+slot — and the guard held.
+
+⚠ **My own rig produced a vacuous control on its first run, and it is worth recording.** It reported
+*"decoys: 0 checked, 0 changed"* and **scored that PASS** — because `Spawn_Decoys` adds decoys to the
+same `SpawnedHolders` array that `Spawn_DestroyHolders` empties, so the churn destroyed the control
+along with the subject. An empty set cannot fail. The rig now re-spawns the decoys **before** the
+holders (so they are live for the whole re-acquisition window) and **refuses to score an empty
+control**. Same trap I had been checking other people's work for all day.
+
+### ⚠ One unreproduced anomaly, recorded because it is exactly the shape AA2 is about
+
+On the run with the broken control, **one decoy of eight read `9999`**. Chased rather than filed:
+
+* it was genuinely a decoy — `walk_instance` reported `class=DumperTestHolderDecoy`, and it was not
+  in the holder list;
+* it held 9999 steadily for 6 s;
+* ⭐ **but the freeze was NOT writing it**: `write_mem` of `-1.0f` to `addr+0x290` stuck for 6 s. A
+  re-asserting freeze would have restored 9999 within a tick. So it was written **once**, not held;
+* **not reproduced in four subsequent attempts** — three replays of the identical
+  destroy→decoys→holders sequence (0/8 each, 100/100 holders frozen), plus the forced-recycle run
+  above (0/24).
+
+So: one write of the frozen value into a non-derived class, seen once in five runs, un-reproducible,
+and not an ongoing hold. **Not filed as a defect** — one observation with no reproduction is not a
+finding, and I could not exclude an artifact of the run whose control was broken. Recorded here
+because if it ever reappears this is the second sighting, and the reproduction recipe plus the
+`write_mem` discriminator are written down.
+
+⚠ Step 4 is closed; **step 1 (old-DLL contract refusal) and step 5 (AA3, permanent rescan failure)
+remain open.**
+
 ### ✅ AA12/AA13 step 3 CLOSED 2026-08-23 `[AA12-STEP3-EMPTY-2026-08-23]` — the legitimate empty case, with a negative control
 
 The row's hardest step, and the one the previous attempt could not stage. It needed *"a class with
@@ -13505,7 +13574,9 @@ instances.
 > **1** live object on this host while the derived sweep holds **58**. That 1-vs-58 is precisely the
 > "held one incidental debug actor while the player's pawn went untouched" story the finding tells.
 >
-> Steps 1, 4 and 5 still need CE plus gameplay churn (respawns / streaming) and stay open. **Step 2 passed 2026-08-21 — see below.**
+> Steps 1 and 5 still need CE and stay open. **Step 2 passed 2026-08-21** and **step 4 CLOSED
+> 2026-08-23 `[AA2-STEP4-CHURN-2026-08-23]`** — the churn it needed came from the DumperTest
+> spawner, not from gameplay.
 
 1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
    refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
