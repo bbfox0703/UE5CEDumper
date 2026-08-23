@@ -10176,7 +10176,37 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   the fix did not swing the other way: **Star Trek Voyager (UE5.6)** stores its FText as UTF-8, and
   its Chinese must still read correctly.
 
-- 🟡 **Fly/Noclip no longer leaves the pawn ghosted** (build 2596, B8) — **MAIN PATH VERIFIED**
+- ✅ **Fly/Noclip no longer leaves the pawn ghosted** (build 2596, B8) — **DEFERRED HALF CLOSED
+  2026-08-23 `[B8-DEFERRED-2026-08-23]`**, DumperTest dev / DLL 3337:
+
+  ```
+  20:24:47.820  Fly: SetActorEnableCollision(0) invoked        <- collision OFF (noclip on)
+  20:24:53.898  Fly: noclip = 0                                <- disable, game thread FROZEN
+  20:24:53.912  Fly: worker stopped
+  20:24:53.912  [WARN] Fly: DISABLED but the pawn's collision is still OFF (game thread
+                       unresponsive) — waiting for it to resume to restore it
+  20:24:53.913  Fly: waiting for the game thread to resume so the pawn's collision can be restored
+  20:24:58.729  Fly: SetActorEnableCollision(1) invoked        <- the retry fires
+  20:24:58.729  Fly: game thread resumed after 4750 ms — pawn collision restored
+  ```
+
+  All four elements of the fix observed: collision goes off; the disable **notices** the
+  unresponsive game thread instead of optimistically committing; it says it is waiting; and on
+  resume it **retries and applies** the restore. The pawn is not left ghosted.
+
+  ⭐⭐ **The row's own framing is what kept this stuck, and it should not be re-used.** It says
+  the deferred half *"needs a game that actually goes quiet when backgrounded"* — Elliot would
+  not, and the hunt for a title that does was the blocker. But the code branches on
+  **`Stark::IsGameThreadResponsive()`**, and `tools/verify/suspend.py suspend-tid` flips that
+  **deterministically** on any title, DumperTest included. Backgrounding is a proxy for the
+  condition; suspending the game thread *is* the condition. No `-DumperTestIdle` was needed.
+
+  ⚠ **Grep for the right string.** The disable path logs `Fly: DISABLED but the pawn's collision
+  is still OFF`; the *worker* tick logs `collision … deferred`. Searching for the worker's
+  wording against the disable path produced a false FAIL on the first run even though the
+  behaviour was already correct.
+
+- 🟡 (original entry) **Fly/Noclip no longer leaves the pawn ghosted** (build 2596, B8) — **MAIN PATH VERIFIED**
   > **⚠ READ THIS BEFORE RE-TESTING — the deferred half is NOT reachable by closing the game.**
   > Closing a game never calls Fly's disable at all: `UE5_Shutdown` does not run on game close
   > (proven — zero `UE5_Shutdown: Cleaning up` lines in any session), so `Dunste::SetEnabled(false)`
