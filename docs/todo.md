@@ -11039,7 +11039,20 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     is paused/stalled, (c) yank the UI connection and (d) close the game — in **all four** every
     hidden actor must become visible again. A single actor left invisible is the failure, and it is
     only visible on screen. ⬜
-  - **M4 — Tot latch zombifying a Solide hold** during the disconnect window. Acceptance: start a
+  - ✅ **M4 — PASS 2026-08-23 `[M4-TOTZOMBIE-2026-08-23]`.** `tools/verify/m4_tot_latch_zombie.py`,
+    DumperTest dev / DLL 3337, 60 live `DumperTestHolder`.
+    | step | observed |
+    |---|---|
+    | hold applied | `force_field(numeric, 4242)` → **held=60**, `truncated=false`, 8/8 sampled read 4242 |
+    | ⭐ detector proven FIRST | poke `-1` while healthy → **restored in 0.4 s** |
+    | disconnect | `_f.close()` — an **abrupt** handle close, not `__exit__`; a clean teardown is the path that already works, and the latch is set by the monitor noticing a dropped socket |
+    | reconnect, listed? | ✅ `('DumperTestHolder', 'HolderValue', 60)` |
+    | ⭐⭐ **zombie check** | poke `-1` again → **restored in 0.4 s** — the worker is still re-asserting |
+    The last row is the whole row: a zombie **lists** but stops re-asserting, so
+    `get_forced_fields` alone cannot tell the two apart. And the detector was established
+    *before* the disconnect, so "the value came back" cannot be confused with "nothing ever
+    changed it".
+  - ~~**M4 — Tot latch zombifying a Solide hold** during the disconnect window.~~ Acceptance: start a
     force-field hold, disconnect the UI mid-hold, reconnect → `get_forced_fields` must still list the
     hold AND the value must still be held (a zombie job lists but stops re-asserting, so checking the
     list alone is not enough — read the value in CE). ⬜
