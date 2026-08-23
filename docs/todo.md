@@ -7416,7 +7416,37 @@ exits immediately when its shipping exe is launched directly (Steam DRM wants th
 > `trigger_scan` re-scans pointers but never re-reads the version cache. **The stale-rev case needs
 > a fresh process** — prime the cache, then relaunch.
 >
-> ⬜ **EVERSPACE (RSG) is still unswept** — same `-applaunch` technique should apply (appid 1128920).
+> ### ✅ EVERSPACE (RSG) SWEPT 2026-08-23 `[G11-RSG-2026-08-23]` — both un-swept titles are now done
+>
+> ⚠ **The appid was wrong in the note above.** `1128920` is **EVERSPACE 2** (already swept);
+> the un-swept title is **EVERSPACE™ = 396750**. Both come from the Steam manifests
+> (`appmanifest_*.acf` `"name"`), which is the reliable source — the handover's table lists only
+> EVERSPACE 2.
+>
+> `pe_hash 5D8E2D5003601000`, **186,979 objects**, `item_size=24`, all three globals via AOB,
+> `lowConfidence=no`. Cache `ueVersion=420, rev=5` vs log `FindAll: UE Version = 420 (cached,
+> rev=5, detected=yes, lowConf=no)` — **agree (420 = 420)**, `ueVersionUserOverrideAt` empty.
+>
+> ⭐⭐ **A deployed proxy was serving the pipe and `assert_build` caught it** — the first attempt
+> failed with *"the DLL answering the pipe reports build '3263', but dist is '3337'"*. EVERSPACE
+> ships our `VERSION.dll` in `RSG\Binaries\Win64\`, it auto-loads and **owns the pipe**, so an
+> `inject.py` of the current build would have been measuring a four-day-old DLL. `proxy_refresh.py
+> refresh "EVERSPACE"` updated both EVERSPACE titles (backups taken); the relaunch then reported
+> **`load_mode: proxy:version.dll`**, i.e. the refreshed proxy served the session.
+> ℹ️ The backed-up proxy hashed **`418b8bb9f82d`** — the same sha the Lushfoil investigation found,
+> confirming every deployed proxy on this machine was the one 3263 build.
+> ⭐ It is also a live confirmation of the version-proxy path on a title whose exe **statically
+> imports** `version.dll` (RSG is one of only four such titles here) — the deterministic case, as
+> opposed to Lushfoil's run-time `LoadLibrary`.
+>
+> ### ⛔ Z8's positive case: EVERSPACE does NOT satisfy it, and object count is the wrong proxy
+>
+> With the biggest object pool on this machine (**186,979**), EVERSPACE returns only
+> **11,197 UFunctions** (`game_only=false`; 7,233 with it on) — barely a tenth of Z8's
+> >100,000 threshold, and `truncated=false` at both settings. **Object count is not a proxy for
+> function count**, so "find a big game" is not the search: Z8's UI half still needs a genuinely
+> SEED/FF7R-class *function* pool. Recorded as a negative so the next session does not re-try the
+> largest-object-pool title.
 
 ### 🟡 STEPS 4+5 CLOSED 2026-08-18 — G2: the version sweep is ~29 s faster, and must still be RIGHT
 
