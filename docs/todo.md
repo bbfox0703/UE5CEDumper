@@ -3520,7 +3520,7 @@ different code paths*). ✅ **FIXED 2026-08-23** (build 3338).
 > not a blanket wipe. `check_mailbox_contract.py` green before and after (no layout change).
 >
 > ⚠ **A trap worth recording — the edit briefly wrote a NUL byte into a C++ source file.** The
-> patch script was passed through a shell heredoc, which collapsed `'\0'` to `' '`; Python then
+> patch script was passed through a shell heredoc, which collapsed the source's `'\\0'` down to `'\0'`; Python then
 > emitted a **literal NUL** rather than the two characters backslash-zero. The tell was the diff:
 > `1483 insertions / 1470 deletions` on a 13-line edit, because git treats a file containing NUL as
 > **binary** and reports the whole thing as changed. Line endings were never the problem (CRLF
