@@ -7228,7 +7228,37 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    On such a title, enum names and TArray inner types were previously read 8 bytes off. Confirm they
    are right now, and **record which branch the log shows** — a run that resolved via `Guid` did not
    exercise this.
-   **⬜ Branch recorded, and it is the WRONG one `[DSA-2026-08-16]`:** `FindStructByName: Found
+   ✅ **CLOSED 2026-08-23 `[G12S2-STAGE-2026-08-23]` — the fallback was STAGED, and it reproduces
+   the validated path exactly.** The row waits on *"a title whose offset validation takes the
+   heuristic fallback"*, and no such title exists here — every one resolves via `Guid`. Staging the
+   condition is what makes it runnable: one inserted line in `Genau.cpp`,
+   `guidStruct = vectorStruct = 0;`, placed **after** the two `FindStructByName` calls so they still
+   run.
+   ⭐⭐ **That placement is the positive control, and it fired:**
+   ```
+   FindStructByName: Found 'Guid'   at 0x1DF1A5C9280 (index=4118)
+   FindStructByName: Found 'Vector' at 0x1DF1A5C9100 (index=4124)
+   ValidateAndFixOffsets: Cannot find Guid or Vector struct — trying heuristic fallback
+   ```
+   The structs **were** found and the fallback was taken anyway — so this is provably the staged
+   branch, and every offset below came from the heuristic rather than from Guid probing.
+   ⭐ **The oracle is pre-published ground truth, not self-consistency** — the same eight fields
+   `[G12-PIPE-2026-08-17]` recorded from the *validated* path on build 3262. All eight match:
+   | | expected | got |
+   |---|---|---|
+   | `Grade` (FENUMPROP) | `EDumperTestGrade::Elite` | ✅ |
+   | `UpdateOverlapsMethodDuringLevelStreaming` | `EActorUpdateOverlapsMethod::UseConfigDefault` | ✅ |
+   | `RemoteRole` / `NetDormancy` (FBYTEPROP) | `ROLE_None` / `DORM_Awake` | ✅ |
+   | `Arr_Int` / `Arr_Struct` / `Tags` / `Layers` | `IntProperty`/4, `StructProperty`/**32**, `NameProperty`/8 ×2 | ✅ |
+   `Grade` is the discriminating one: `EDumperTestGrade` has a **hole at 3..6** (`Legend`=7), so a
+   build confusing index with value could not land on `Elite` by accident.
+   ⚠ **Revert verified in the BINARY.** `Genau.cpp` is `i/lf **w/lf**`, so `git checkout` would have
+   silently rewritten every line ending while `git status` stayed clean — reverted from a byte
+   snapshot instead (identical, LF 5372, 0 NULs). After the rebuild the log reads
+   `ValidateAndFixOffsets: **Using struct 'Guid'**` with no fallback line, which is the proof the
+   stage is gone from what ships (`dist/` is gitignored, so a clean tree proves nothing).
+
+   **⬜ (original) Branch recorded, and it is the WRONG one `[DSA-2026-08-16]`:** `FindStructByName: Found
    'Guid' at 0x1B5FB6840C0` → `ValidateAndFixOffsets: Using struct 'Guid'`, i.e. the validated path,
    with `FStructProp::Struct = +0x70` published from a real measurement. The Step 2.5 default block
 
