@@ -894,7 +894,68 @@ Avalonia.
 
 -----
 
-### 🟡 FOUND 2026-08-23 `[V8PREVIEWCLIP-2026-08-23]` — the FOURTH disclosure site is invisible at the default column width
+### ✅ FIXED 2026-08-23 `[V8PREVIEWCLIP-2026-08-23]` — the Value column now offers the text it cannot show
+
+Maintainer picked option **(1)**, the tooltip — the option that repairs the *class* of defect rather
+than this one instance.
+
+**What shipped**
+
+* `Models/LiveFieldValue.cs` — new computed `public string? ValueTooltip`, returning
+  `DisplayValue` or **`null`** when empty.
+* `Views/LiveWalkerPanel.axaml:587-603` — `ToolTip.Tip="{Binding ValueTooltip}"` on the Value
+  column's `TextBlock`, beside the existing `Text="{Binding DisplayValue}"`. The `DataTemplate`
+  already carries `x:DataType="m:LiveFieldValue"`, so it is a **compiled** binding and AOT-safe;
+  verified on the trimmed publish, not just in a Debug run.
+
+⚠ **`null`, not `""`, and that is why it is a separate property.** Avalonia shows a tooltip whenever
+`Tip` is non-null, so binding `DisplayValue` straight through would pop an **empty box on every
+blank cell**. Matches how the other bound tooltips in this UI already behave (`XrefInfo`,
+`ScoreTooltip`) — they are nullable and the binding simply goes quiet.
+
+⚠ **All nine `[NotifyPropertyChangedFor(nameof(DisplayValue))]` now have a `ValueTooltip` twin.**
+Without them the tooltip would go stale while the visible text updated — which is *worse* than the
+clipping it fixes, because a tooltip reads as authoritative.
+
+**Scope was checked, not assumed.** `ContainerTruncation.BadgeSuffix` has nine call sites; eight
+build a **breadcrumb label**, which renders fine (confirmed on screen during
+`[V8-PAINTED-2026-08-23]`). Only `DataTableFieldPreview` lands in a grid cell. So this was the one
+affected badge site, and the fix needed no wider sweep — though it does now also rescue every other
+long value in that column (Map/Set previews, struct previews, long strings).
+
+⭐ **Four tests, and the drift guard is the one that matters.** `LiveFieldValueTooltipTests`:
+the badge survives into the tooltip; empty ⇒ `null`; the XAML actually binds it *on the same
+element* as `DisplayValue`; and the two notification sets are equal in count. The last is the only
+one that stops the fix rotting — a tenth source property added later without its twin.
+
+⭐ **Verified on the AOT-TRIMMED publish, not a Debug run** (v1.0.0.3334, DLL 3334, DumperTest
+Shipping) — which is the whole point for a new XAML binding, since binding-shaped code is what
+survives untrimmed and fails after trimming. Hovering the RowMap cell pops:
+
+```
+{DataTable: 100 rows, DumperTestTableRow} ⚠ showing 64 of 100
+```
+
+⭐ **And a negative control that rules out the boring explanation.** Hovering the **Type** cell of
+the same row — which is *also* visibly clipped (`DataTableRo` for `DataTableRows`) — shows **no
+tooltip at all**. So what appears over the Value cell is this binding, not some grid-wide tooltip
+behaviour that was there all along.
+
+ℹ️ Noted in passing, deliberately NOT fixed: the **Type** column clips the same way and has no
+tooltip. Same class, different column, and outside what was asked for here.
+
+⭐ **Both the guard and the fix were shown able to fail.**
+
+* Deleting one mirrored notification → `9 … but 8`, **1 failed / 4704 succeeded**. Restored → 4705.
+* ⚠ And the guard **failed on its very first run, for the wrong reason** — `10 vs 9`. The tenth
+  "occurrence" was the attribute name written inside a `<c>…</c>` in `LiveFieldValue`'s own doc
+  comment, i.e. **the prose documenting the rule broke the check enforcing it**. Now it counts
+  *attribute lines* (`line.Trim() == attr`) instead of substring hits. Same shape as the
+  `MG2_RemoveOneMapEntry decl=2` miscount earlier the same day and as the `v8_datatable_cap.py`
+  regex that matched another command's `limit` default: **a detector has to be right about WHERE it
+  reads, not only about what it matches.** Three instances in one day is a pattern worth naming.
+
+### ✅ FOUND + FIXED 2026-08-23 `[V8PREVIEWCLIP-2026-08-23]` — the FOURTH disclosure site was invisible at the default column width
 
 Found by the very look this row exists for, and it is the failure mode the row **names**:
 

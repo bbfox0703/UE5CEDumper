@@ -590,7 +590,16 @@
                                 Width="200" MinWidth="100">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
+              <!-- ToolTip.Tip is load-bearing, not a nicety: this column is a fixed
+                   200px and has no trimming ellipsis, so a longer value is invisible
+                   with nothing on screen saying so. [V8PREVIEWCLIP-2026-08-23] — a
+                   DataTable's "showing 64 of 100" badge is appended after
+                   "{DataTable: 100 rows, <struct>}", which alone overflows, so the
+                   badge could not be read at the default width on any table.
+                   Bound to ValueTooltip (null when empty), NOT to DisplayValue, so a
+                   blank cell does not pop an empty tooltip. -->
               <TextBlock Text="{Binding DisplayValue}"
+                         ToolTip.Tip="{Binding ValueTooltip}"
                          VerticalAlignment="Center" Margin="4,0"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

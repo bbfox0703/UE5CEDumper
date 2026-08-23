@@ -1,4 +1,4 @@
-using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Linq;
 using UE5DumpUI.Core;
@@ -119,26 +119,31 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>Raw hex value (always populated for readable fields).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _hexValue = "";
 
     /// <summary>Human-readable typed value (for Float, Int, Bool, etc.).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _typedValue = "";
 
     /// <summary>For ObjectProperty: address of the referenced object.</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _ptrAddress = "";
 
     /// <summary>For ObjectProperty: name of the pointed-to object.</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _ptrName = "";
 
     /// <summary>For ObjectProperty: class name of the pointed-to object.</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _ptrClassName = "";
 
@@ -156,6 +161,7 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>For ArrayProperty: element count (-1 = not an array).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private int _arrayCount = -1;
 
@@ -197,6 +203,7 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>For MapProperty: entry count (-1 = not a map).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private int _mapCount = -1;
 
@@ -248,6 +255,7 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>For SetProperty: entry count (-1 = not a set).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private int _setCount = -1;
 
@@ -286,6 +294,7 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>For EnumProperty: resolved enum name (e.g., "ROLE_Authority").</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
     [ObservableProperty] private string _enumName = "";
 
@@ -368,6 +377,41 @@ public sealed partial class LiveFieldValue : ObservableObject
         DecodeHexAsNumeric(TypeName, HexValue) ??
         (!string.IsNullOrEmpty(HexValue) ? HexValue :
         ""));
+
+    /// <summary>
+    /// The full <see cref="DisplayValue"/>, for the Value column's hover tooltip — or
+    /// <c>null</c> when there is nothing to show.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Value cell is a fixed 200 px <c>TextBlock</c>
+    /// (<c>Views/LiveWalkerPanel.axaml</c>), so anything longer is simply invisible —
+    /// there is not even a trimming ellipsis to hint that text was cut.
+    /// <c>[V8PREVIEWCLIP-2026-08-23]</c> is what that costs: a DataTable's pre-drill
+    /// preview reads
+    /// <c>{DataTable: 100 rows, DumperTestTableRow}  ⚠ showing 64 of 100</c>, the badge
+    /// is appended LAST, and the prefix alone overflows the column — so the one
+    /// disclosure that warns you the grid holds 64 of 100 rows was unreachable at the
+    /// default width, on every table, at every N. The ViewModel string was correct the
+    /// whole time and a test asserted it; only the pixels were wrong. Same shape as
+    /// <c>[PARAMSSORT-2026-08-22]</c> in another panel.
+    /// </para>
+    /// <para>
+    /// ⚠ Returns <c>null</c>, not <c>""</c>, and that is the point of having a separate
+    /// property instead of binding <c>DisplayValue</c> straight to <c>ToolTip.Tip</c>:
+    /// Avalonia shows a tooltip whenever <c>Tip</c> is non-null, so an empty string
+    /// would pop an empty box on every blank cell. This matches how the other bound
+    /// tooltips in this UI behave (<c>XrefInfo</c>, <c>ScoreTooltip</c>).
+    /// </para>
+    /// <para>
+    /// ⚠ Every <c>[NotifyPropertyChangedFor(nameof(DisplayValue))]</c> in this file
+    /// carries a matching one for this property. They must stay in lockstep or a live
+    /// field's tooltip goes stale while its visible text updates — which is a worse
+    /// failure than the clipping, because a stale tooltip looks authoritative.
+    /// <c>LiveFieldValueTooltipTests</c> pins the pairing at source level.
+    /// </para>
+    /// </remarks>
+    public string? ValueTooltip => string.IsNullOrEmpty(DisplayValue) ? null : DisplayValue;
 
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
