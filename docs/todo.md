@@ -619,6 +619,83 @@ All 23 scheduled items shipped; the rest were refuted or downgraded to optional 
 The rollup moved to [archive/todo-closed-2026-08-build-2715.md](archive/todo-closed-2026-08-build-2715.md);
 the per-finding detail was always in [audit-2026-07-14-findings.md](audit-2026-07-14-findings.md).
 
+### 🔴 FOUND 2026-08-23 `[DTROWMAP-2026-08-23]` — the DataTable drill-down reads the NEIGHBOURING table's rows
+
+**Found within minutes of the new DumperTest fixture going live, by V8's negative control** — the
+8-row table that was only there to prove the ">64" banner *stays away*. It never got that far: the
+100-row table reported **8 rows**, and the 8-row table reported **nothing at all**.
+
+`Ubel::ProbeRowMapOffset` ([Ubel.cpp:6137](../dll/src/Ubel.cpp)) locates `UDataTable::RowMap` by
+scanning memory, because `RowMap` is a protected non-`UPROPERTY` (`TMap<FName, uint8*>`) and there
+is no reflection entry to look it up with. It scans **forward from the end of the reflected fields,
++0..+256 in 8-byte steps**, and accepts the first candidate whose `TSparseArray` validates (real
+FName row name, userspace row pointer).
+
+Measured on DumperTest Shipping (UE 5.4, build 3322), `UDataTable`:
+
+| quantity | value | where from |
+|---|---|---|
+| `props_size` (object size) | **176** | `walk_class` on the `DataTable` UClass |
+| `endReflected` = max(offset+size) | **152** | its 5 reflected fields; `ImportKeyField` @136 +16 |
+| scan range | **152 … 408** | `endReflected + 0..256`, Ubel.cpp:6156 |
+| real `RowMap` offset | **48** | raw process read, see below |
+
+**Two defects, and they are independent:**
+
+1. **The scan can never reach the target.** `RowMap` is declared immediately after `RowStruct`, so
+   in a **cooked** build — where the `WITH_EDITORONLY_DATA` members between them are stripped — it
+   lands at offset **48**, in the gap between `RowStruct` (40..48) and the bools (128). The scan
+   starts at 152 and only goes *forward*. On any cooked `UDataTable` the true RowMap is
+   **structurally unreachable**. This is not a tuning problem; +256 more bytes would not help.
+
+2. **The scan is not bounded by the object.** The object ends at `props_size` = 176; the scan runs
+   to 408, so **232 of its 257 candidate offsets are outside the object**. `PropertiesSize` was in
+   hand the whole time — the probe's signature is
+   `ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci)` and `ci.PropertiesSize` is a
+   field on that very struct ([Ubel.h](../dll/src/Ubel.h), `struct ClassInfo`).
+
+⭐ **Together they produce a confident wrong answer, not an error.** DataTables are typically
+allocated near each other, so the out-of-bounds scan lands in *another* `UDataTable` — and a real
+RowMap validates perfectly. Proven by reading the process directly, with the DLL out of the loop
+(`ReadProcessMemory`, no pipe involved):
+
+```
+Table_Big   @0x16D013D1780   +48  -> Data=0x16CFB13D580  ArrayNum=100   <- the real RowMap
+Table_Big   @0x16D013D1780   +240 -> Data=0x16D046A0F40  ArrayNum=8
+Table_Small @0x16D013D1840   +48  -> Data=0x16D046A0F40  ArrayNum=8     <- byte-identical
+```
+
+`0x16D013D1780 + 240 == 0x16D013D1840 + 48`. The two tables sit exactly 192 bytes apart, so the
+probe walked 48 bytes past the end of `Table_Big` and read **`Table_Small`'s RowMap**. The DLL then
+reported, for a 100-row table: `row_count: 8`, `row_map_offset: 240`, and eight rows named
+`Row_000`…`Row_007` with correct-looking `Index`/`Label`/`Value` — *the other table's data,
+rendered as this table's*.
+
+The lone-table case gives the other failure: `Table_Small` has no DataTable at +240 and the probe
+returns `"RowMap not found by probing"`, i.e. the feature is simply dead there.
+
+⚠ **Two detectors, and the second is what makes this reportable.** The DLL's own reply is one
+witness; `ReadProcessMemory` from outside is the other, and it is the one that establishes what the
+right answer *was* (100). A row count alone could never have shown this — 8 is a perfectly
+plausible number for a DataTable.
+
+ℹ️ **`Caption` (the FText column) comes back `null`** in every row of that walk. Not chased yet, and
+it may well be downstream of reading the wrong table. Re-check after the fix before treating it as
+its own defect.
+
+⚠ **This blocks `V8` as written, and MG2 step 2's "open any UDataTable" half.** V8 asks whether the
+drill-down caps at 64 of N; that premise assumes it finds the right N. It does not. V8 cannot be
+judged until this is fixed.
+
+⚠ **No test compiles `Ubel.cpp`** (the C++ suite is two header-only test files — audit #5 §0), so
+nothing was going to catch this offline. The fixture caught it in the first ten minutes of being
+alive, which is the argument for building fixtures rather than hunting for games.
+
+**Fix shape** (not yet applied): bound the scan by `ci.PropertiesSize`, and scan the *whole* object
+rather than only the tail — the gaps between reflected fields are exactly where a non-reflected
+member lives. Prefer scanning the reflected gaps first. Keep the existing validation; it is not the
+problem, and it is what will stop a gap scan from accepting junk.
+
 ## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
