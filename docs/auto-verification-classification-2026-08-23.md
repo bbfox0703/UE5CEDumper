@@ -43,6 +43,28 @@ works in **all three flavours**. The analyst never opened `DumperTestSubsystem.c
 collision restore and Grausam's foreground lock"**. The fixture was built for this row. The
 register's "需要：背景時真的會停止 tick 的遊戲…Elliot 背景仍在 tick，測不到" is simply out of date.
 
+### ⛔ CAPABILITY LIMIT, measured 2026-08-23 — Avalonia MENU items are not clickable
+
+Every `B_UI_DRIVE` estimate below assumes the UI can be driven. **Top-level menus cannot.** Measured
+on `Tools ▾` and `Export ▾`, four items, by coordinate click and by keyboard:
+
+* clicking the menu **header** opens the popup reliably;
+* clicking an **item** dismisses it and runs **nothing**;
+* six `Down` presses give **no selection highlight**;
+* the UI log shows no trace and `StatusText` never changes — so the command never fires.
+
+⚠ It cost most of a session: two Tools actions looked like broken features when they were
+unreachable input. **Never file an Avalonia menu item as defective without first checking the UI log
+to prove the command ran.**
+
+⭐ **CE's own menus are Win32 and work fine.** `Table → Add file` opened, accepted a typed path and
+worked first try. So a UI-menu-gated row is not necessarily dead — obtain the artefact another way
+and use CE's side. `[AA12-STEP3-EMPTY-2026-08-23]` closed exactly that way, using
+`scripts/ue5_freeze_helper.lua` (which `UE5DumpUI.csproj:150-152` embeds verbatim, so it is
+byte-identical to what the menu would have exported).
+
+**Re-read any B_UI_DRIVE row that depends on a menu before scheduling it.**
+
 ### ⚠ Method note — how ~12 already-closed rows got analysed as open
 
 The six segments were partitioned over lines **2711–16669**, derived as "the `## Pending live-game

@@ -1208,7 +1208,10 @@ rather than only the tail — the gaps between reflected fields are exactly wher
 member lives. Prefer scanning the reflected gaps first. Keep the existing validation; it is not the
 problem, and it is what will stop a gap scan from accepting junk.
 
-### 🟡 AA12/AA13 step 3 — ATTEMPTED 2026-08-23, blocked in the SETUP path, not the row `[AA12-STEP3-ATTEMPT-2026-08-23]`
+### ✅ SUPERSEDED by the CLOSE below — the earlier blocked attempt `[AA12-STEP3-ATTEMPT-2026-08-23]`
+
+> The blocker turned out to be an **input** limitation, not a broken feature: Avalonia menu items
+> are not clickable by computer use. Kept for the ground it covered and for the traps it names.
 
 The fixture half is done and the row is closer than it has ever been. It stopped on a Cheat Engine
 plumbing step, and the ground already covered is written down so the next attempt starts here.
@@ -1255,6 +1258,79 @@ table files*. That sidesteps the plumbing entirely and gets the row to its actua
 Freeze button stayed **disabled**, because the chip mirrors LiveWalker/Pointers availability
 (`MainWindowViewModel.cs:698-706`) but Property Search probes lazily on **tab activation**. A tab
 round-trip enabled it. Not filed as a defect — the panel does refresh, just not from the chip.
+
+### ✅ AA12/AA13 step 3 CLOSED 2026-08-23 `[AA12-STEP3-EMPTY-2026-08-23]` — the legitimate empty case, with a negative control
+
+The row's hardest step, and the one the previous attempt could not stage. It needed *"a class with
+**zero live instances right now**, including subclasses"*, then *"make one spawn and confirm the
+freeze takes hold within ~5 s"*. `NiagaraComponent` looked right and turned out to have two live
+instances, so the empty case was never actually exercised.
+
+`UDumperTestLateSpawn` is that class by construction, and `Spawn_LateInstance()` is the second half
+no commercial game gives you on cue. CE 7.7 + AOBMaker plugin + DumperTest Shipping, build 3334.
+
+| the row asks | observed |
+|---|---|
+| zero live instances, incl. subclasses | pipe pre-check: `find_instances exact_match=true` → CDO only, **0 live** |
+| record **stays ticked** | ✅ ticked (CE's red-X active marker) and still ticked afterwards |
+| window **stays open** | ✅ Lua Engine window open |
+| the line | ✅ **`[Freeze] armed: no live instances of DumperTestLateSpawn (or any subclass) right now -- the freeze applies as they spawn.`** — it names the subclass condition itself |
+| then spawn one, freeze takes hold ≤5 s | ✅ **1.0 s** |
+
+⭐⭐ **The discriminator is a number the game and the freeze disagree on.** `Spawn_LateInstance` seeds
+`LateValue = 5000 + count`; the freeze forces **9999**. So "the freeze took hold" is not a reading
+that could have been true anyway.
+
+⭐ **Negative control run, not asserted.** Untick the record, spawn again:
+
+```
+0x17A78C40D60  LateValue = 5001   <- NEW, freeze off   (5000 + 1, the game's own value)
+0x17A78C47810  LateValue = 9999   (from the frozen run)
+```
+
+The game's natural value is demonstrably not 9999, and the frozen instance kept its forced value.
+That is what makes the 9999 attributable to the freeze rather than to the fixture.
+
+ℹ️ **The armed-empty path also re-demonstrated the bail-out rule on the way in.** Ticking before the
+helper was present produced `showMessage: [Freeze] ue5_freeze_helper.lua not found in this table.`
+**and left the record unticked** — CLAUDE.md's *"a bail-out that applied NOTHING must untick the
+record"*, observed. Step 3's requirement is the opposite (armed-but-empty must **stay** ticked), and
+both behaviours were seen in the same session, which is the pair that makes either meaningful.
+
+-----
+
+### ⛔ CAPABILITY LIMIT FOUND — Avalonia top-level MENU items are not clickable by computer use
+
+This is not a product defect (the maintainer's own clicks work) and it is not about this row, but it
+**changes what "Auto + Computer Use" can verify** and belongs with the classification.
+
+Measured on `Tools ▾` and `Export ▾`, four different items, both by coordinate click and by keyboard:
+
+* clicking the menu **header** opens the popup, reliably;
+* clicking an **item** dismisses the popup and **does nothing** — no command runs;
+* six `Down` presses produce **no selection highlight** at all;
+* the UI's own log shows **no trace** of the command, and `StatusText` (which every branch of
+  `InjectFreezeHelperLuaAsync` sets, and which *is* rendered at `MainWindow.axaml:40-46`) never
+  changes. So the command genuinely never fires — this is not a silent-failure product bug.
+
+⚠ **It cost most of a session.** Two Tools actions (`Inject Freeze Helper`, `Export Freeze Helper`)
+appeared to be broken features; they were unreachable input, not broken code. **Do not file an
+Avalonia menu item as defective without first proving the command ran** — the UI log is the cheap
+check.
+
+⭐ **CE's own menus are Win32 and work fine** — `Table → Add file` opened, took a typed path, and
+worked first try. So the workaround for any UI-menu-gated row is: get the artefact another way, then
+use CE's side.
+
+**The bypass used here, reusable:** the helper the Tools menu would have exported is a **file in this
+repo** — `scripts/ue5_freeze_helper.lua`, embedded verbatim by
+`UE5DumpUI.csproj:150-152` (`<EmbeddedResource Include="..\..\scripts\ue5_freeze_helper.lua">`). So
+`Table → Add file` on that path gives byte-identical content with the menu removed from the loop.
+
+ℹ️ Two smaller operational notes from the same run: the Windows IME must be switched to English
+before typing a path into a Win32 dialog (click the taskbar language indicator; `Shift` does not
+toggle it and `systemKeyCombos` is ungranted), and the taskbar indicator's x position moves, so
+screenshot before clicking it — a miss landed on OneDrive and aborted the batch.
 
 ### ✅ Solide L3 + L4 + the `⚠ capped` badge CLOSED 2026-08-23 `[SOLIDE-L3L4-2026-08-23]`
 
