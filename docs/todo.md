@@ -16781,7 +16781,7 @@ ordering table, instead of the claim that measurement refuted.
 | 3 | 反向對照：在關卡尚未載入的主選單（確定沒有活的 UWorld）再點一次 🌍。 | 回報 DLL 的 invalid/no-path 狀態，不能看起來像成功。 |
 | 4 | 回歸：在 GWorld 正常解析的遊戲上重跑幾個 🌍 交接。 | 行為與這次改動前完全相同。 |
 
-### ⬜ B25 —— pre-4.11 拒絕不再只憑一個 PE 欄位就擋掉
+### ✅ B25 —— pre-4.11 拒絕不再只憑一個 PE 欄位就擋掉 — **CLOSED 2026-08-23**，證據見 `[B25-RECHECK-2026-08-23]` 一節（grep 該 tag）
 
 *優先度 **中** · 需要：PE ProductVersion 落在 4.0–4.10 的遊戲，或可用 UE 版本 override 硬造；反向對照另需一個真正的 UE3 binary。*
 
@@ -16800,7 +16800,97 @@ ordering table, instead of the claim that measurement refuted.
 | 2 | 附加 CE，點 *UE5CEDumper: Inject && Connect*，並 grep `init-0.log` 的 `is loaded but is not ours`。 | 正常注入，且該行出現並指名那個外來模組。FAIL = 舊訊息 "already loaded … no injection needed"，之後 UI 連不上。 |
 | 3 | 再用一款路徑含非 ASCII 字元的遊戲重做一次，看同一則訊息。 | 訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號。 |
 
-### ⬜ GObjects layout fix (build 2782) — DragonSword，PARTIAL 剩餘項 —— base anchor 命中時要選到 UE5-Extended 而非 relaxed B
+### ✅ DragonSword GObjects layout CLOSED 2026-08-23 `[DSLAYOUT-BASEANCHOR-2026-08-23]` — the archive already held the proof, and the checkbox was looking for the wrong thing
+
+The remaining PARTIAL asked: when the **FUObjectArray base** anchor hits, does the layout picker choose
+`UE5-Extended` rather than the relaxed alternative? **It does, in all three archived DSClient sessions**,
+and no game had to be launched to establish it.
+
+`%LOCALAPPDATA%\UE5CEDumper\Logs\DSClient-Win64-Shipping\offsets-*.log`:
+
+```
+2026-08-16 19:48  ObjectArray: Layout 'UE5-Extended' detected (strict)   Num=278252  Max=10551296  NumChunks=5
+2026-08-18 06:43  ObjectArray: Layout 'UE5-Extended' detected (strict)   Num=72604   Max=10551296  NumChunks=2
+2026-08-18 16:01  ObjectArray: Layout 'UE5-Extended' detected (strict)   Num=275612  Max=10551296  NumChunks=5
+```
+
+⭐ **It really is the BASE anchor, proven from the bytes rather than from the address.** The DEBUG dump
+`+00:000090E9000090EA +10:0000018C63E69D30 +20:0004349C00A10000 +28:00000005000000A1` decodes to
+`Objects@+0x10 = 0x18C63E69D30`, `Max@+0x20 = 10,551,296`, `Num@+0x24 = 275,612`, `MaxChunks@+0x28 = 161`,
+`NumChunks@+0x2C = 5` — byte-for-byte `{ "UE5-Extended", { 0x10, 0x20, 0x24, 0x28, 0x2C } }`
+([Aura.cpp:313](dll/src/Aura.cpp:313)), and every decoded value equals what the log independently printed.
+Had the anchor been `ObjObjects`, `Objects` would sit at `+0x00` and `"Default"` ([Aura.cpp:300](dll/src/Aura.cpp:300)) —
+tried first — would have won instead.
+
+⭐ **The counterfactual is what makes it a positive exercise rather than a lucky miss.** From the same bytes,
+relaxed B reads `Num@+0x04 = 37,097` (the frozen disregard-for-GC count) with a valid `Objects@+0x10`, so it
+**would** have matched; and `Max = 10,551,296` exceeds the old `0x800000` ceiling, so strict `UE5-Extended`
+would have *failed* pre-2782. This host is exactly the shape the fix was written for.
+
+⭐ **Two independent detectors, and a negative control that fires.** `Genau`'s validator — different file,
+different log category — agrees in `scan-0.log`:
+`ValidateGObjects: Valid at 0x7FF73D951870 (preset UE5-Extended, Num=275612, Max=10551296, ...)`, after
+rejecting five decoys. And `Strict validation failed for all presets` occurs **0** times in DSClient while
+firing in **10** files elsewhere in the same log tree, so the absence is meaningful rather than a bad grep.
+
+⚠ **Why the row read open, and it is not a coverage gap:** its checkbox says *"address ending `…F8B0` rather
+than `…F8C0`"*. Those literals came from the **2026-08-10 pre-patch binary**; run 3's address is
+`0x7FF73D951870`, so a literal grep looks like a miss even though the substance passed.
+`docs/test-games.md` had already recorded run 3 as *"accepted in the STRICT tier as preset `UE5-Extended`"* —
+nobody connected it to this row. ▶ **Do not re-check by address suffix; check the layout name.**
+
+ℹ️ **Forward-looking, recorded so the next session is not surprised:** DragonSword was **patched 2026-08-20**
+(`appmanifest_4570720.acf` `lastupdated` = 2026-08-20 15:04), which is *after* the newest log. The cached
+anchor is therefore stale — the machine JSON holds `peHash 691B0D9809EB2000` while the exe now computes
+`71D66A9009EB1000` — so the next injection will re-scan from scratch rather than reuse `GOBJ_ES53_1`. That is
+expected behaviour, not a defect, and it does not affect this closure: the row is about the DLL's layout
+choice, not about the game build.
+
+### ✅ B25 CLOSED 2026-08-23 `[B25-RECHECK-2026-08-23]` — both branches already passed, and the row's own step-1 alternative is impossible
+
+Bookkeeping, not work: the ⬜ was a copy artifact of the 2026-08-22 migration, whose preamble says the tables
+were *"moved VERBATIM, including the ✅/🟡 status cells"*. The result has existed since
+`[B25-SYNTH-2026-08-19]`. Re-read off disk today rather than trusted from the doc:
+
+| branch | file | what it says |
+|---|---|---|
+| **A** sub-floor | `Logs\b25a_subfloor\scan-0.log` | `PE VERSIONINFO says UE 405, below the 411 floor — NOT accepting that on its own …` then `UE Version = 405 (tier=3, detected=yes, lowConfidence=yes)`. **3,886 lines**, `SKIPPING the scan` = **0** — it swept the tables. |
+| **B** UE3 control | `Logs\b25b_ue3\scan-0.log` | `PRE-UE4 engine POSITIVELY identified (2/4 markers, 2 needed) -> sentinel 300` then `FindAll: … SKIPPING the scan … a refusal by design, not a scan failure`. **10 lines** total. |
+
+⭐ **3,886 lines vs 10 is the whole point** — it separates *"scanned and accepted with low confidence"* from
+*"refused before starting"* far more sharply than either log line does on its own.
+
+⭐ **The evidence is NOT stale, and that was checked rather than assumed.** It was taken on dist 1.0.0.3263
+(`10b00cf8`); dist is now 3315. But `git log 10b00cf8..HEAD -- dll/src/Genau.cpp dll/src/Genau.h
+dll/src/Grimoire.h` returns **0 commits** and the diff is **empty** — the code under test is byte-identical.
+
+⚠⚠ **Correction 1 — step 1's "用 UE 版本 override 硬造" alternative cannot work, by construction.** The refusal
+gate is `if (UEVersion < MIN_SUPPORTED && bVersionDetected && !bLowConfidence && !bUserOverride)`, and the
+override arm sets `bUserOverride = true` **without ever calling `DetectVersionDetailed`** — so an override
+neither prints the floor line nor arms the refusal it is supposed to probe. The PE-resource route is the only
+provocation, which is what the 2026-08-19 run used. ▶ Delete that clause rather than trying it.
+
+⚠ **Correction 2 — no real UE3 binary exists on this machine, measured.** 290 executables byte-scanned for the
+marker table (`UnrealEngine3` narrow + UTF-16LE, `SeqAct_`, `PhysXLoader64`): **0 hits**. Positive control by
+the identical test: `b25b_ue3.exe` returns `['UnrealEngine3','SeqAct_']`, `b25a_subfloor.exe` returns `[]` —
+so the strings and the test are right and the markers are simply absent. Honest limit: 23 exes >250 MB were
+not scanned (modern UE4/UE5 titles by identity), and a packed section could hide the literals, so this is a
+strong *"I could not find one"*, not a theorem.
+
+▶ **A stronger branch-A re-run is available and has never been used**: `D:\UE_Analyze_data\Varies Version
+builds\4.10\Shipping\UE4Game-Win64-Shipping.exe` — a genuine Epic-signed x64 binary, ProductVersion 4.10.4.0,
+so `400+10 = 410 < 411`. Checked that it will not trip the UE3 gate by mistake (no pre-UE4 markers;
+LegalCopyright 2015 > the 2013 marker cutoff; no `++UE4+Release-` needle → tier 3 → lowConfidence → gate stays
+disarmed). Optional corroboration only; the row is closed either way.
+
+⚠ **Re-run trap if branch A is repeated on the SAME exe**: `b25a_subfloor.exe` is now cached
+(`ueVersion 405, lowConfidence true, versionDetectRev 5`, matching `Genau.h`'s `kVersionDetectLogicRev = 5`),
+so a second run takes the cached arm, logs `— skipped DetectVersion`, and the floor line never reappears —
+proving nothing. The PE hash is `TimeDateStamp + SizeOfImage`, so simply **rebuilding via
+`tools/verify/b25_marker_exes.py` mints a new hash** and a fresh entry; no need to hand-edit the machine JSON.
+
+
+### ✅ GObjects layout fix (build 2782) — DragonSword — **CLOSED 2026-08-23**，證據見 `[DSLAYOUT-BASEANCHOR-2026-08-23]` 一節（grep 該 tag）；原 PARTIAL 剩餘項 —— base anchor 命中時要選到 UE5-Extended 而非 relaxed B
 
 *優先度 **低** · 需要：DragonSword Awakening，且該次啟動剛好從 FUObjectArray base anchor（位址結尾 …F8B0）解出 GObjects；結尾 …F8C0 的那次不算數。*
 
