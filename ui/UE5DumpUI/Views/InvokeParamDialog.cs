@@ -601,9 +601,37 @@ public sealed class InvokeParamDialog : Window
 
                     if (_structEdits.TryGetValue(i, out var subEdits))
                     {
-                        // Struct param: write each sub-field (DynamicStructField overload)
+                        // Struct param: validate EVERY sub-field first, then write them.
+                        //
+                        // The validation used to live only in the scalar branch below, and
+                        // WriteParam's own comment asserts "TryValidateScalar refuses ahead of
+                        // this whenever the user actually typed something". That was true for a
+                        // top-level param and FALSE here: this branch called WriteStructParam
+                        // straight through, so a sub-field went to WriteParam unchecked. Two
+                        // things fell through the gap, both silent:
+                        //
+                        //   * a sub-field that is ITSELF opaque (a nested struct such as
+                        //     FSlateBrush::ImageSize / ::Margin) hit WriteParam's
+                        //     IsUnwritableParam early-return, so the typed value was dropped and
+                        //     FIRE still reported "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
+                        //   * an out-of-range INTEGER sub-field masked to width exactly the way
+                        //     top-level params used to, i.e. the width family (W6/Y2/Y9/Y15/AE1)
+                        //     surviving in the one place its fix was not applied.
+                        //
+                        // Refusing is deliberate and is what the row asks for. ⛔ Do NOT "fix"
+                        // this by writing the value instead: writing the user's text over a
+                        // structure's first pointer field is the original Y11 defect.
                         var subFields = subEdits.Select(se => se.sf).ToArray();
                         var subValues = subEdits.Select(se => se.edit.Text ?? "0").ToArray();
+
+                        if (!ParamBufferBuilder.TryValidateStructSubFields(
+                                subFields, subValues, out var badField, out var subErr))
+                        {
+                            _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                            _resultLabel.Text = $"ERROR: {param.Name}.{badField}: {subErr}";
+                            return;
+                        }
+
                         ParamBufferBuilder.WriteStructParam(buf, param.Offset,
                             (IReadOnlyList<DynamicStructField>)subFields, subValues);
                     }

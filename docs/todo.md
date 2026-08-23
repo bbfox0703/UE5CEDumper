@@ -135,7 +135,15 @@ Open work only. **Read this when deciding what to do next.**
 > `TextBlock`) would **not** have worked: a horizontal `StackPanel` gives each child its
 > DESIRED width, so nothing constrains it and trimming is inert. The toolbar is a `DockPanel`
 > now, with the status line as the fill child.
-> | `[Y11-OPAQUEDROP-2026-08-22]` | 🟡 **LOW — a missing message, not missing logic.** Typing a value into an **opaque `[struct]`** field of the invoke dialog is **silently discarded**: FIRE reports `ProcessEvent OK` and the post-call buffer shows the field still zero (`ImageSize=0x0`, reproduced on `.Margin`). ⭐ The dangerous half is genuinely fixed — nothing is written, which is what the pre-fix bug did — and the control proves the dialog *can* write typed values (`X=5, Y=7` → `raw 0000A0400000E040`). What is missing is telling the user their input was dropped. ⛔ Do NOT fix it by writing the value. Y11 step 3. |
+> ⭐ **`[Y11-OPAQUEDROP]` FIXED 2026-08-23** (build 3319) and its row is **deleted**. The dialog
+> validated top-level params and then called `WriteStructParam`, which forwards each sub-field
+> straight to `WriteParam` — whose opaque-type guard returns **silently**. So an opaque
+> sub-field's typed value was dropped while FIRE still said `ProcessEvent OK`. The guard now
+> lives beside the write it protects (`ParamBufferBuilder.TryValidateStructSubFields`) and the
+> dialog refuses, naming the member: `ERROR: NewBrush.ImageSize: … cannot be built from a
+> textbox …`. ⚠ It also closed a SECOND hole nobody had reported: an out-of-range **integer**
+> sub-field silently masked to width — the W6/Y2/Y9/Y15/AE1 family surviving in the one place
+> its fix had not been applied.
 > | `[TREERECLICK-2026-08-22]` | 🟡 **Clicking the ALREADY-SELECTED Object Tree node does nothing** — no `SelectionChanged`, so no `walk_class` reaches the wire (measured: three clicks, two walks). Harmless alone, but after a cross-tab handoff (`Classes` → `Walk Class`) the panel shows class X while the tree highlight says node P, and clicking P **cannot** get it back; only selecting a different row and returning does. ⛔ **Not a `ClassStructViewModel` bug** — its `BeginLoad(nodeAddr: null)` already clears the dedupe key correctly, which is exactly why the recovery click works. Any fix belongs in the VIEW. AE2/AE3 step 5. |
 >
 > *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
@@ -17500,7 +17508,7 @@ proving nothing. The PE hash is `TimeDateStamp + SizeOfImage`, so simply **rebui
 
 -----
 
-### 🟡 Y11 — 3 of 4 steps PASS; step 3 FAILS as written 2026-08-22 `[Y11-OPAQUEDROP-2026-08-22]`
+### ✅ Y11 — step 3 FIXED 2026-08-23 (build 3319); the other 3 steps passed 2026-08-22 `[Y11-OPAQUEDROP-2026-08-22]`
 
 Run on **DQ7R** (`dist` AOT v1.0.0.3315, DLL 3315, UE427, 149,370 objects), on a live plain
 `TextBlock` at `0x28F42DD4240` — DumperTest could not serve this row (no live `TextBlock`, and its
@@ -17530,6 +17538,35 @@ recurring shape — the report and the reality computed by different paths — i
 a non-default value (what the row expects), or keep sending and say plainly that the field was
 ignored because the type cannot be marshalled. ⛔ **Do not "fix" it by writing the value** — that is
 precisely the behaviour that was removed.
+
+**✅ FIXED 2026-08-23, build 3319 — and the root cause was narrower than 'a missing message'.**
+The dialog *did* validate, via `TryValidateScalar`, but only in its **scalar** branch. Its **struct**
+branch called `WriteStructParam` straight through, and that forwards every sub-field to `WriteParam`,
+whose opaque-type guard is a **silent early return**. `WriteParam`'s own comment asserted the check
+*"refuses ahead of this whenever the user actually typed something"* — true of a top-level param,
+false of a sub-field, and that false comment is why the hole survived.
+
+⭐ **The guard now lives with the write it protects**, as `ParamBufferBuilder.TryValidateStructSubFields`,
+rather than being duplicated in a View — so the two cannot drift, and it is testable without an
+Avalonia window. The dialog refuses and **names the member**:
+`ERROR: NewBrush.ImageSize: struct parameters cannot be built from a textbox …`.
+
+⚠⚠ **It closed a second hole that nobody had reported.** The same unvalidated path meant an
+out-of-range **integer** sub-field masked to width — 9999 into a 1-byte member fired as 15. That is
+the width family (W6/Y2/Y9/Y15/AE1) surviving in the one place its fix had not been applied.
+
+⛔ **Not fixed by writing the value** — that is the original Y11 defect and a test now pins the
+silence as *correct*: `Y11_SubField_TypedValueIsDroppedSilently_WhichIsWhyTheGateExists` asserts
+`WriteStructParam` leaves the buffer zeroed, so a future 'helpful' write breaks a test.
+
+⭐ **Four new tests, and the negative control was RUN, not asserted.** Neutering
+`TryValidateStructSubFields` to `return true` made exactly the two refusal tests fail (2 failed /
+2 passed) — the defaults-pass and silent-drop tests correctly do not depend on the guard. Restored,
+all 21 Y11 tests pass; full suite green (C++ 1644/0, C# all); `dist` republished AOT-trimmed at
+**54.7 MB**.
+
+▶ **Still owed: a live re-run of step 3 on DQ7R** — type `42` into `SetStrikeBrush`'s `ImageSize`
+and confirm FIRE is refused with that message instead of reporting `ProcessEvent OK`.
 
 ℹ️ Fixture notes worth keeping: `TextBlock::SetText` is the FText candidate on any UMG title
 (`ParmsSize=24` on UE 4.27, not 16). DQ7R has **3,159** live `LocalizeTextBlock` instances but that

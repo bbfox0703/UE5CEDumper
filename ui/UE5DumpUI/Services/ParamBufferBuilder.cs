@@ -135,8 +135,46 @@ public static class ParamBufferBuilder
     }
 
     /// <summary>
+    /// Validate every sub-field of a struct param, the way the top-level scalar path
+    /// validates a param, and name the first one that fails.
+    ///
+    /// <para>This exists because <see cref="WriteStructParam"/> forwards each sub-field
+    /// straight to <see cref="WriteParam"/>, whose opaque-type guard returns SILENTLY. The
+    /// dialog validated top-level params only, so a sub-field that is itself opaque — a
+    /// nested struct such as <c>FSlateBrush::ImageSize</c> — had its typed value dropped
+    /// while FIRE still reported <c>ProcessEvent OK</c>
+    /// (<c>[Y11-OPAQUEDROP-2026-08-22]</c>), and an out-of-range integer sub-field masked
+    /// to width, which is the W6/Y2/Y9/Y15/AE1 family surviving in the one place its fix
+    /// had not been applied.</para>
+    ///
+    /// <para>Living here rather than in the dialog is the point: the check now sits beside
+    /// the write it guards, so the two cannot drift apart and it can be tested without an
+    /// Avalonia window.</para>
+    /// </summary>
+    public static bool TryValidateStructSubFields(
+        IReadOnlyList<DynamicStructField> subFields,
+        IReadOnlyList<string> subValues,
+        out string fieldName, out string error)
+    {
+        fieldName = "";
+        error = "";
+        for (int i = 0; i < subFields.Count && i < subValues.Count; i++)
+        {
+            var sf = subFields[i];
+            if (TryValidateScalar(sf.TypeName, sf.Size, (subValues[i] ?? "").Trim(), out var err))
+                continue;
+            fieldName = sf.Name;
+            error = err;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Write a DLL-discovered dynamic struct's sub-field values into the buffer.
     /// Phase B fallback for structs not in KnownStructLayouts.
+    ///
+    /// <para>⚠ Call <see cref="TryValidateStructSubFields"/> first — see its remarks.</para>
     /// </summary>
     public static void WriteStructParam(
         byte[] buf, int paramOffset,
@@ -321,9 +359,15 @@ public static class ParamBufferBuilder
         // TOptional, and a StructProperty with no resolved layout) have no textbox
         // encoding. Leave the slot ZEROED instead of falling through to the size-driven
         // default, which wrote 4 bytes of the user's text over the structure's first
-        // pointer field and handed ProcessEvent a bogus Data pointer. TryValidateScalar
-        // refuses ahead of this whenever the user actually typed something, so reaching
-        // here means the box was left at its zero default (audit #5 Y11).
+        // pointer field and handed ProcessEvent a bogus Data pointer (audit #5 Y11).
+        //
+        // ⚠ CALLERS MUST RUN TryValidateScalar FIRST — this early-return is silent by
+        // design, so anything that skips the check drops the user's input and still
+        // reports success. This comment used to claim the check "refuses ahead of this"
+        // as though it were guaranteed; it was only ever true of the top-level scalar
+        // path, and InvokeParamDialog's STRUCT branch reached here unchecked, which is
+        // exactly [Y11-OPAQUEDROP-2026-08-22]. Both call sites validate now; a third one
+        // that forgets will reproduce the same silent drop.
         if (IsUnwritableParam(typeName)) return;
 
         switch (typeName)

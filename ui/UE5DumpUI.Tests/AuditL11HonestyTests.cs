@@ -612,6 +612,73 @@ public class AuditL11HonestyTests
         Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "hello", out _));
     }
 
+    // ── Y11 step 3: the SUB-FIELD path had no gate at all ──────────────────────
+    //
+    // The dialog validated top-level params and then called WriteStructParam, which
+    // forwards each sub-field straight to WriteParam. WriteParam's opaque-type guard
+    // returns SILENTLY, so a nested-struct sub-field (FSlateBrush::ImageSize) had its
+    // typed value dropped while FIRE still said "ProcessEvent OK", and an out-of-range
+    // integer sub-field masked to width. Measured on DQ7R 2026-08-22.
+    //
+    // Negative control: delete the TryValidateStructSubFields call in
+    // InvokeParamDialog (or make this helper always return true) -> both facts below
+    // fail, and Y11_SubField_TypedValueIsDroppedSilently documents why that matters.
+
+    private static readonly DynamicStructField[] BrushLike =
+    [
+        new("Tint",      "StructProperty", 0,  16),   // opaque nested struct
+        new("DrawAs",    "ByteProperty",   16, 1),    // 1-byte, range-checked
+        new("ImageSize", "StructProperty", 20, 8),    // opaque nested struct
+    ];
+
+    [Fact]
+    public void Y11_SubField_OpaqueStructWithATypedValueIsRefusedAndNamed()
+    {
+        var ok = ParamBufferBuilder.TryValidateStructSubFields(
+            BrushLike, ["0", "0", "42"], out var field, out var err);
+
+        Assert.False(ok);
+        Assert.Equal("ImageSize", field);          // names the offender, not just "a field"
+        Assert.Contains("cannot be built", err);
+    }
+
+    [Fact]
+    public void Y11_SubField_OutOfRangeIntegerIsRefused()
+    {
+        // The width family (W6/Y2/Y9/Y15/AE1) survived here because the fix was applied
+        // to top-level params only: 9999 into a 1-byte sub-field used to fire as 15.
+        var ok = ParamBufferBuilder.TryValidateStructSubFields(
+            BrushLike, ["0", "9999", "0"], out var field, out var err);
+
+        Assert.False(ok);
+        Assert.Equal("DrawAs", field);
+        Assert.Contains("does not fit", err);
+    }
+
+    [Fact]
+    public void Y11_SubField_UntouchedDefaultsStillPass()
+    {
+        // The control: leaving the boxes at their zero default legitimately means
+        // "send the zeroed struct", which step 2 proved is safe. Refusing that would
+        // break a passing case to fix a failing one.
+        Assert.True(ParamBufferBuilder.TryValidateStructSubFields(
+            BrushLike, ["0", "0", "0"], out _, out _));
+        Assert.True(ParamBufferBuilder.TryValidateStructSubFields(
+            BrushLike, ["", "", ""], out _, out _));
+    }
+
+    [Fact]
+    public void Y11_SubField_TypedValueIsDroppedSilently_WhichIsWhyTheGateExists()
+    {
+        // This is the defect itself, pinned: WriteStructParam does NOT write an opaque
+        // sub-field, and says nothing about it. The buffer staying zero is correct
+        // behaviour -- writing 42 over a struct's first pointer was the original Y11 bug
+        // -- so the repair had to be a refusal, never a write.
+        var buf = new byte[32];
+        ParamBufferBuilder.WriteStructParam(buf, 0, BrushLike, ["0", "0", "42"]);
+        Assert.All(buf, b => Assert.Equal(0, b));
+    }
+
     [Fact]
     public void Y11_StringAndPointerParamsAreStillAccepted()
     {
