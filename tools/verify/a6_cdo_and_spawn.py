@@ -70,10 +70,19 @@ def _truthy(v) -> bool:
     return str(v).strip().lower().split(" ", 1)[0] in ("true", "1")
 
 
-def _components(c: PipeClient, limit: int = 400) -> dict:
-    """addr -> (class, name) for live, non-CDO objects whose class contains 'Component'."""
+def _components(c: PipeClient, limit: int = 200000) -> dict:
+    """addr -> (class, name) for live, non-CDO objects whose class contains 'Component'.
+
+    ⚠ THE CAP IS LOAD-BEARING AND MUST NOT SILENTLY BITE. Newness is decided by
+    diffing this set against itself across the spawn, so a truncated `before` makes
+    every unsampled survivor look NEWLY SPAWNED — a false positive, in the direction
+    that invents evidence rather than losing it. The old default was 400, which is
+    fine on DumperTest (295 components) and wrong on any real game. `check_complete`
+    turns a cap into a loud failure instead of a quiet sample.
+    """
     out = {}
     r = c.request("find_instances", class_name="Component", limit=limit, exact_match=False)
+    c.check_complete(r)
     for i in r.get("instances") or []:
         n = str(i.get("name", ""))
         if i.get("addr") and not n.startswith("Default__"):
