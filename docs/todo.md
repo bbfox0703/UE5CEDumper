@@ -7232,10 +7232,14 @@ hijacks"* — i.e. the **deterministic** pair, the ones most worth suggesting.
 `tools/pe/pe_imports_exports.py`:
 
 ```
-16 shipping exes:  14 import winmm   ·   13 import dxgi   ·   4 import version   ·   0 import dinput8
+16 shipping exes:  14 import winmm   ·   14 import dxgi   ·   4 import version   ·   0 import dinput8
+(14 of the 16 import BOTH dxgi and winmm; the other two are modular builds importing none of the four)
+⚠ CORRECTED 2026-08-23: first written here and in dev-log as "13 import dxgi" / "13 games
+importing both". Re-derived with `uniq -c` over the same 16 exes: it is 14 and 14. The dev-log
+entry keeps the wrong figure because that file is append-only; THIS is the canonical count.
 ```
 
-So the advisory listed **dinput8 (0 of 16)** and suppressed **winmm (14 of 16)**. On the 13 games
+So the advisory listed **dinput8 (0 of 16)** and suppressed **winmm (14 of 16)**. On the 14 games
 importing both (Lushfoil, DQ7R, Avowed, Elliot, Geri, Manor Lords, TQ2, Solarpunk, …) the user saw
 `version · default · alt: dxgi` and was never told winmm was equally available. The empty-list
 sentence was wrong too: it read `no dxgi/dinput8`, which enumerates two of the three non-version
