@@ -7353,7 +7353,38 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 > **not** an unresolved-globals title, the log-folder survey that nominated it was reading a
 > failed-launch artefact, and therefore:
 >
-> ⛔ **G3 steps 3 and 4 have no fixture on this machine.** Every installed title resolves everything,
+> ### ✅ G3 STEPS 3 + 4 CLOSED 2026-08-23 `[G3-STAGE-2026-08-23]` — staged, because the "fixture" was a corpse
+>
+> ⛔ **First, the fixture claim in `tools/verify/g3_rescan_apply.py` is REFUTED.** It names
+> Satisfactory as *"the only host with an unresolved global"*. Its `GObjects=0x0` readings are a
+> **dead engine**, and the object count settles it — four recorded sessions of the same title:
+> `07:27 GObjects=0x0 / Objects=0`, `07:34 resolved / Objects=137372`,
+> `17:30 GObjects=0x0 / Objects=0`, `17:57 resolved / Objects=137425`. The shipping exe cannot be
+> launched directly (a modal *"Failed to open descriptor file …uproject"* hides behind the window);
+> `steam.exe -applaunch 526870` boots it and it resolves everything. `apply_rescan: Applied GEngine`
+> has **never** appeared in any Satisfactory log. Following that paragraph reproduces
+> `[G3-VOID-2026-08-20]`. The rig's docstring now says so at the top.
+>
+> ⭐ **Staged instead, and the stage is chosen to satisfy the row's own guard.** `apply_rescan` runs
+> its GEngine second pass **only `if (g_cachedGEngine == 0)`** ([Fern.cpp:5159](dll/src/Fern.cpp:5159)),
+> so the precondition is enforced in code. A one-shot skip in `Genau::FindGEngineSlot`, placed
+> **after** the existing `bOffsetsProbeRan` deferred gate, forces the first *post-gate* resolve to
+> miss: init's deferred call returns early without consuming it, init's `ResolveGEngineDeferred`
+> misses, and `apply_rescan`'s call then succeeds.
+>
+> | | observed |
+> |---|---|
+> | precondition | `gengine=0x0`, `method=not_found` — genuinely unresolved at init |
+> | **step 3** | `ValidateAndFixOffsets: Starting` = **1 before, 1 after** Extra Scan → Apply — Apply did not re-enter validation, which is the gate's whole purpose |
+> | **step 4** | `apply_rescan: Applied GEngine=0x7FF7DFFFAAF0 (aob)`, and `get_pointers` then reports it resolved |
+>
+> ⚠ **Revert verified two ways.** `git checkout -- dll/src/Genau.cpp` returned the file
+> **byte-identical** to the pre-stage snapshot (LF 5372, 0 CRLF) — the first revert this session
+> where `git checkout` was safe to use, because `.gitattributes` now pins `eol=lf`. And the rebuilt
+> DLL resolves `gengine=0x7FF7DFFFAAF0 (aob)` at **init**, proving the stage is gone from what ships
+> (`dist/` is gitignored, so a clean tree proves nothing).
+>
+> ⛔ (superseded) **G3 steps 3 and 4 have no fixture on this machine.** Every installed title resolves everything,
 > which is what the steps themselves predicted (*"all 34 tested games resolve GWorld, so this may not
 > be reachable"*). They are a 第 5 步 item — no sample exists — not an untried one.
 
