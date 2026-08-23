@@ -619,6 +619,88 @@ All 23 scheduled items shipped; the rest were refuted or downgraded to optional 
 The rollup moved to [archive/todo-closed-2026-08-build-2715.md](archive/todo-closed-2026-08-build-2715.md);
 the per-finding detail was always in [audit-2026-07-14-findings.md](audit-2026-07-14-findings.md).
 
+## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
+
+**Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
+to contain X"*: `AD4` (God Mode `ON (contested)`), `MG2` step 1+2 (`TSet<FName>` / `TSet<UObject*>` /
+a `UDataTable`, and an un-capped container that loses an element), `V1a` step 1 (a container that
+**reallocates** between two scans), and `V8` (a `UDataTable` with **>64 rows**). Manufacturing the
+fixture is strictly cheaper than searching for it, and it is the same move that closed the missing
+`FName` row on 2026-08-22 — see working-lessons §1.aa.
+
+⚠ **The source lives OUTSIDE this repo** (`D:\Unreal Projects\DumperTest\Source\DumperTest`), so git
+does not carry it and the other PC cannot see it. That is why the change is described here in full.
+
+### ⛔ The correction that shaped the design: a UCheatManager cannot drive this
+
+The natural idea — expose the knobs as console commands and type them in-game — **does not work in
+the build we actually test**:
+
+```
+CheatManagerDefines.h:  #define UE_WITH_CHEAT_MANAGER (1 && !UE_BUILD_SHIPPING)
+PlayerController.cpp:1107-1110  APlayerController::AddCheats  <- whole body inside that gate
+```
+
+DumperTest is exercised as a **Shipping** package, so a cheat manager compiles to nothing and
+`UFUNCTION(exec)` has no console to reach it. The knobs are therefore plain
+`UFUNCTION(BlueprintCallable)` mutators, driven through the dumper's own `invoke_function` pipe
+command — which works in Shipping and needs no keyboard, so Auto + Computer Use can run them.
+
+ℹ️ This is the **fourth** wrong-Shipping-gate near-miss in this one file (the log-verbosity comment
+was the last). It was settled by opening the engine header, not by inference.
+
+### What was added
+
+| file | addition |
+|---|---|
+| `DumperTestTypes.h` | `#include "Engine/DataTable.h"`; `USTRUCT() FDumperTestTableRow : FTableRowBase` — `int32 Index` / `FName Label` / `float Value` / `FText Caption` (the caption carries the B28 CJK trigger, `\uXXXX`-escaped per the file's own rule). |
+| `DumperTestActor.h` | `TSet<FName> Set_Name`, `TSet<TObjectPtr<UObject>> Set_Object`, `TObjectPtr<UDataTable> Table_Small` (8 rows) / `Table_Big` (**100** rows), `TMap<int32,int32> Map_Churn`, `TArray<int32> Arr_Churn`; non-UPROPERTY knobs `bContestDamage` / `ContestWrites` / `TableSerial`; 8 `BlueprintCallable` mutators + `private UDataTable* BuildTable(const TCHAR*, int32)`. |
+| `DumperTestActor.cpp` | container seeds + runtime table construction in `BeginPlay`; the AD4 contention writer in `Tick`; the 8 mutator bodies + `BuildTable`. |
+
+**The mutators** (all `Category = "DumperTest|<row>"`):
+`MG2_RemoveOneMapEntry` · `MG2_RemoveOneSetEntry` · `V1a_GrowContainers(int32 Count = 64)` ·
+`V1a_ShrinkContainers` · `V8_RebuildBigTable(int32 Rows = 100)` · `V8_RemoveOneTableRow` ·
+`AD4_SetDamageContention(bool)` · `AD4_GetContestWrites()`.
+
+⭐ **Every row gets its negative control from the same fixture**, which is the point of building it
+rather than finding it: `Table_Small` (8) is the un-capped case that must render **no** ">64"
+banner; `AD4_SetDamageContention(false)` is the un-contested session that must settle to plain green
+`ON`, without which the amber `ON (contested)` reading means nothing; `Map_Churn` starts **under**
+the 128 array limit so header-count and row-count are required to agree exactly.
+
+⭐ **`AD4_GetContestWrites` exists so the contest can be shown live rather than assumed** — the same
+role `FrameCount` plays in separating "no timer" from "no actor". A badge reading `ON (contested)`
+while the counter is flat would be the badge lying, and there would be no way to tell otherwise.
+
+### Two defects found in this code by review, before it ever compiled
+
+Both are recorded because each is a shape worth recognising, not because they survived:
+
+1. **Self-aliasing set removal.** `for (const FName& N : Set_Name) { Set_Name.Remove(N); break; }`
+   hands `Remove` a reference **into the element it is about to destroy**. It happens to work today.
+   Fixed by copying the `FName` out and removing after the loop.
+2. **`NewObject` reusing an explicit name.** `V8_RebuildBigTable` re-created the table as
+   `DumperTestTable_Big` under the same Outer, which tears the **old** object down while `Table_Big`
+   still points at it. Fixed with a `TableSerial` suffix — which also makes a rebuild *visible* in
+   the object list.
+
+### Engine facts verified against UE 5.4 source before relying on them
+
+- `UDataTable::AddRow` / `RemoveRow` / `GetRowNames` are at `DataTable.h:319/316/313`, i.e. **above**
+  the `WITH_EDITOR` fence at 321 — runtime table building is real, no cooked asset needed.
+- `RowStruct` (line 85) is reachable: `GENERATED_UCLASS_BODY()` leaves the section `public:`.
+- `UCLASS(MinimalAPI)` is not a blocker — `StaticClass` is exported and all three methods carry
+  `ENGINE_API`, so nothing here becomes a link error at package time.
+- `TSet<FName>` and `TSet<TObjectPtr<UObject>>` both have engine UPROPERTY precedent
+  (`MetaDataTagsForAssetRegistry`, `TemporarilyReferencedObjects`).
+
+### ⬜ What is left — a package build, which is the maintainer's step
+
+Nothing here has been compiled. Build the **Shipping** package to
+`D:\UE_Analyze_Data\For Testing\DumperTest`, then the four rows run headless through
+`invoke_function`. ⚠ Re-check the escaped caption survives the round trip: it is the one string in
+the fixture whose corruption would look like a *B28 defect* rather than like a build problem.
+
 ## ▶ Next up (genuinely actionable now)
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
