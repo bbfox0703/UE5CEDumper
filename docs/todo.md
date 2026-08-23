@@ -6619,7 +6619,40 @@ LOWERING the cap, not by finding a host*):
 > ladder to 3/3. Anyone re-running step 3 with `direct_call` alone will stall at 2/3 and think the
 > bound is wrong.
 >
-> ⛔ **Step 3c remains unreachable, and not for want of trying.** It needs a condemn *followed by a
+> ### ✅ STEP 3c CLOSED 2026-08-23 `[PEHOOK3C-STAGE-2026-08-23]` — reachable after all, and the blocker below aimed at the wrong mechanism
+>
+> ⭐⭐ **3c has nothing to do with the pattern.** The note below reasons about pattern hits and
+> SIB alternates, but `this offset is TRUSTED again` is emitted by the **post-install validator**
+> ([Frieren.cpp:1869](dll/src/Frieren.cpp:1869)) when a *previous* validation FAILED and a later one
+> PASSES. And the failure path only runs when the offset's provenance is the **version table** —
+> a zero-fire reading on a pattern-detected offset is deliberately ignored. So on DumperTest the
+> cycle can never start, for a reason unrelated to which patterns match.
+>
+> ⭐ **The stage is therefore one line, and it cannot crash the host:** relabel the provenance
+> (`fromTable = true`) at [Frieren.cpp:1773](dll/src/Frieren.cpp:1773). **The offset itself is still
+> the pattern's**, so the hook is correct and fires normally — only the validator's interpretation of
+> a zero-fire window changes. Nothing is mis-detected, which removes the crash risk a
+> wrong-slot stage would carry.
+>
+> The rest is `suspend-tid`, the same instrument B8 and L8 used:
+> ```
+> [1] provenance: version TABLE (a guess — the post-install validator decides whether it is right)
+> [2] VALIDATION FAILED — hook at 0x7FF7D1DD8CB0 (vtable+0x268) fired 0 times in 1500ms   <- thread frozen
+> [3] resumed
+> [4] this offset is TRUSTED again — the earlier zero-fire reading (1 consecutive) was an
+>     idle game thread, not a mis-detected slot
+> ```
+> That is exactly the step's wording — *"after a condemn, let the game tick and invoke until the hook
+> re-installs and validates"* — and it is the **over-correction** check too: the recovery attributes
+> the zero-fire to an idle thread rather than a bad slot.
+>
+> ⚠ **The design objection below is right, and does not apply.** It rejects *"a runtime-togglable
+> pattern set — a test hook in shipping code"*. A **staged build** ships nothing: the line existed
+> for one build, was reverted with `git checkout`, and the rebuilt DLL logs
+> `offset resolved to vtable+0x268 via the **pattern scan**` again — verified in the binary, since
+> `dist/` is gitignored.
+>
+> ⛔ (superseded) **Step 3c remains unreachable, and not for want of trying.** It needs a condemn *followed by a
 > successful re-detection* (`this offset is TRUSTED again`). The shipping DLL's pattern always
 > matches on DumperTest, so it never condemns; the SIB-less variant can never re-validate, so it
 > never recovers. No build available today misses once and then hits. Reaching it would need a
