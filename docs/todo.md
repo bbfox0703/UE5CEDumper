@@ -3194,7 +3194,7 @@ matters is simply "do normal mailbox commands still work".
 | # | ID | cat | what to do | expected |
 |---|---|---|---|---|
 | 1 | `MB3` | **B** | Inject, then run any two `.CT` rows that use the mailbox (Teleport save/recall, and an Invoke). Cheaper first step: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with **no CE**, so a scripted poke of one command is category **A**. | Both succeed exactly as before. `pipe-0.log` / `init-0.log` show no `Mailbox: tick threw` and no `result=-11`. A `-11` with a message means a handler really did throw — capture the log, that is a genuine find. |
-| 2 | `MB3` | **C** | The throw path itself. Needs a handler that actually throws — no way to force one on demand today. | If it ever fires: the mailbox keeps polling (subsequent commands still work) and the script reports `-11` + "the operation did NOT complete" rather than hanging at `status=PROCESSING`. |
+| 2 | `MB3` | ✅ **CLOSED 2026-08-23** | The throw path itself. Needs a handler that actually throws — no way to force one on demand today. | If it ever fires: the mailbox keeps polling (subsequent commands still work) and the script reports `-11` + "the operation did NOT complete" rather than hanging at `status=PROCESSING`. |
 
 > ### ✅ AE27 PASSES / 🟡 AC15 HALF 2026-08-21 `[AE27-AC15-2026-08-21]`
 >
@@ -3453,6 +3453,51 @@ matters is simply "do normal mailbox commands still work".
 >
 > **Step 2 remains ⛔ by construction**: it needs a handler that actually throws, and there is still no
 > way to force one on demand.
+
+
+### ✅ MB3's THROW PATH CLOSED 2026-08-23 `[MB3-THROW-2026-08-23]` — "no way to force one on demand" is overturned
+
+The row above said *"Needs a handler that actually throws — no way to force one on demand today"*,
+which is why it sat in bucket **C**. A staged, `#ifdef`-guarded `case 16:` that throws makes it
+deterministic. DumperTest dev, staged DLL over build 3337, driven with the **existing**
+`tools/verify/mailbox_poke.py --cmd 16` — no new rig.
+
+| check | observed |
+|---|---|
+| the throw is reported | `cmd=16 -> result=-11`, `err='command handler threw — the operation did NOT complete'` |
+| ⭐ **the mailbox keeps polling** | next dispatch `GWORLD result=0`, `GAME_ENGINE result=0` |
+| repeatable, not one-shot luck | throw → `-11`, ordinary → `0`, again |
+| ⭐ **second, independent oracle** | `[WARN] Mailbox: tick threw (UE5_TEST_THROW) — skipping` — it names the staged sentinel, so the throw is attributable to *this* case and not to anything else |
+
+Both halves of the row's stated expectation therefore hold: the poller survives **and** the script
+sees `-11` + "the operation did NOT complete".
+
+`MB_ERR_HANDLER_THREW = -11` ([Mimic.cpp:119](dll/src/Mimic.cpp:119)). ⭐ Safe to stage **because it
+was checked first**: `Routine::RunTickGuarded` ([Routine.h:96](dll/src/Routine.h:96)) catches
+`const std::exception&` **and** `...`. An uncaught C++ throw would have `std::terminate`d the game.
+⭐ `mailbox_poke` already poisons `OFF_RESULT` with `0x7FFFFFFF` before every round trip, so a `0`
+must be genuinely **written** rather than read stale — the anti-vacuity was built in.
+
+**The stage and its revert.** Six inserted lines in `Mimic.cpp` only: `#define UE5_TEST_THROW` +
+`#include <stdexcept>` after the `<exception>` include, and an `#ifdef`-guarded
+`case 16: throw std::runtime_error("UE5_TEST_THROW");` between `case CMD_TIME:`'s `break;` and the
+`default:`. Cmd 16 is deliberately **NOT** added to `Mimic.h`, so `check_mailbox_contract.py` stayed
+green before and after. Reverted from a **byte snapshot** (identical, 65,541 bytes), not
+`git checkout`.
+
+⚠⚠ **The revert was verified in the BINARY, not in `git status`.** `dist/` is gitignored, so a clean
+tree says nothing about the shipped DLL. After rebuilding, `--cmd 16` returns
+**`-1 / 'Unknown command'`** — the `default:` branch — instead of `-11`. That is the proof the staged
+case is gone from what actually ships.
+
+### ⚠ Incidental: `errorMsg` is not cleared on success `[MBERRSTALE-2026-08-23]`
+
+Every successful dispatch after the throw still carried the **previous** error text —
+`GWORLD result=0 … err='command handler threw …'`, and after the revert
+`GAME_ENGINE result=0 … err='Unknown command'`. `result` is authoritative and correct, so nothing is
+broken, but a caller that reads `errorMsg` without checking `result` first sees a stale failure on a
+successful command. Same family as audit #4's root cause (*the report and the reality are computed by
+different code paths*). Cheap fix: clear `errorMsg[0]` on normal completion.
 
 ### ⬜ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
 
