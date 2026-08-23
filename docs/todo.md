@@ -7210,8 +7210,26 @@ one direct `LoadClassCommand.ExecuteAsync` remains and that the clear precedes t
 that sixth site made it fail with the actionable message, then it was restored. Full suite green
 (C++ 258 + 1644, C# all); `dist` republished AOT-trimmed at 54.7 MB.
 
-▶ **Still owed: a live re-run of AE2/AE3 step 5 on DQ7R** — handoff a class, then click the
-previously-selected tree node and confirm it now walks.
+✅ **LIVE-VERIFIED 2026-08-23 on DQ7R** (UE427, 149,370 objects, DLL + AOT `dist` both **3322**),
+which also closes **AE2/AE3 step 5**:
+
+| step | observed |
+|---|---|
+| select tree node `Actor` | panel shows `Actor` (544); tree row highlighted |
+| `Classes` → `DOLLSoubiState` → **Walk Class** | panel shows `DOLLSoubiState` (**168**) **and the `Actor` highlight is GONE** — the tree no longer claims a selection that is not on screen |
+| click `Actor` again | ✅ highlight returns **and the panel reloads `Actor` (544)** |
+
+⭐ **The wire is the second witness, the same one that made the original finding unambiguous.**
+`ui-pipe-0.log` now shows three TX where the defect showed a gap:
+
+```
+12:33:29  id=88  walk_class 0x1CCE36EB380   <- selecting Actor
+12:35:16  id=89  walk_class 0x1CCE56CCA00   <- the DOLLSoubiState handoff
+12:35:45  id=90  walk_class 0x1CCE36EB380   <- the re-click, SAME addr as id=88
+```
+
+id=90 is precisely the request that did not exist before (*"no TX at all"*), and its address being
+identical to id=88 is what proves it re-walked the previously-selected node rather than something else.
 
 ℹ️ Bookkeeping: this defect is **not** in `pending-verification_zh-TW.md` (grep = 0). Its 繁中 row is
 todo.md's own AE2/AE3 step-5 cell.
@@ -16592,7 +16610,7 @@ like "no such fields exist". Search on the property **name** and read the Type c
 | 2 | ✅ **2026-08-22 通過**。**過濾字串 `DOLLGameCharacter`**(10 列:7 個 class-like + 3 個 instance,確實交錯,滿足那條 ⚠)。↓×9 再 ↑×3 共 12 次快速切換、中間跨過 instance 列,停在 class-like 列上:標頭 = `DOLLGameCharacterSeedCorrectParameters`(36),與反白列相符,欄位(Tikara/MaxHP/MaxMP…)都在。 | Class/Struct 標頭與反白的那一列相符。<br>⚠ 清單若只有單一種類（全 instance 或全 class-like）跑再多次都證明不了；要記錄用的過濾字串。 |
 | 3 | 🟡 **只驗到一半**。「穩定後不會卡住」✅:多次快速捲動後 spinner 都不殘留。⚠ **「載入中不會提前消失」沒驗到,而且原因要記下來**:這台機器上 class 載入比我的取樣還快 —— 連 `DOLLPlayerController`(Properties Size **2224**、繼承一長串欄位)在**零等待**的截圖裡都已經畫完,spinner **一次都沒被我看到**。沒看到它出現,就不能說它的消失時機正確(鐵則 1)。要補這半需要一個會慢到看得見的載入。 | 面板穩定後 spinner 不會卡著不消失；載入還在跑時也不會提前閃掉。 |
 | 4 | 🟡 **真的切了關卡,但前提條件做不出來 —— 而且現在知道為什麼**(`[AE-LEVELRELOAD-2026-08-22]`)。授權重開後實際在 DQ7R 裡從標題畫面讀取存檔進到魚灣村,**關卡確實載入了**(物件池 **149,408 → 199,194**,+49,786,`view-0.log` 有兩行 `Loaded … named objects`)。但選中的節點在載入前後**walk 出完全一樣的結果**(`WBP_Common_TutorialTitleDeco_C`,54 fields,Properties Size 704,前後兩次都一樣),**沒有出現錯誤行,因為根本沒有失敗**。<br>⭐ **原因是這一步的前提本身有問題**:點 instance 節點走的是 `get_object` → **它的 UClass** → `walk_class`,而 UE **切關卡釋放的是 instance,不是 UClass**。Blueprint class 只要在轉換兩側都用得到就一直在,重掃後 `TutorialTitleDeco` 仍有 11 筆、class 活著、還多了幾個新 instance。所以「切關卡讓 class 位址失效」**對這種 class 行不通**。要做出來得找一個**只存在於轉換前**的 Blueprint、且它的 package 會被卸載。<br>⚠ 而且就算前提做出來了,步驟 5 已證明**再點一次已選中的列根本不發事件**,所以「再次點擊會重新嘗試載入」得改用「先選別列再選回來」才驗得到,原文的操作方式驗不出來。 | 出現錯誤訊息行，且再次點擊會重新嘗試載入（不是靜默忽略、停留在舊 class）。 |
-| 5 | ❌ **失敗 —— 新缺陷 `[TREERECLICK-2026-08-22]`**(細節與證據在 todo.md)。用 `Classes` 分頁的 **`Walk Class`** handoff 把 `DOLLSoubiState`(168) 推進面板,樹狀選取仍停在 P(`DOLLPlayerController`);**再點一次 P,面板不動**,`pipe-0.log` 在那段時間**一筆 TX 都沒有**。連跑兩次相同,再用對照組隔離出機制:同一列連點兩次只送出一次 `walk_class` —— **點已選中的列不會產生 SelectionChanged**,所以 VM 根本沒被呼叫。⛔ **不要去改 `ClassStructViewModel` 的 dedupe**,它已經正確(`BeginLoad(nodeAddr: null)`,就是 AE3 第三條路徑),那也正是「先點別列再點回來」能救回來的原因。 | 面板重新載入 P，而不是停留在被推進來的 class。 |
+| 5 | ✅ **2026-08-23 通過（缺陷已修，build 3322）**。原本是 ❌ 失敗並開出 `[TREERECLICK-2026-08-22]`；修法是 handoff 先清掉樹狀選取，因此樹不再宣稱一個畫面上沒有的選取，而且再點同一節點變成真正的變更、會重新載入。實測：選 `Actor`(544) → `Walk Class` 推 `DOLLSoubiState`(168)、**`Actor` 高亮消失** → 再點 `Actor` → 高亮回來且面板重載 544。wire 佐證 `ui-pipe-0.log` id=90 `walk_class` 與 id=88 同位址（缺陷時這一筆完全不存在）。詳見 `[TREERECLICK-2026-08-22]` 一節。 |
 | 6 | ✅ **2026-08-22 通過,而且有線上證據**。選中節點後在樹狀 Filter 框連續打 `Def` → `ault`(兩段、中間停頓),樹縮成 `Filtered: 1 / 3`,**面板沒有被清空**(仍是 `DOLLPlayerController` 2224、欄位齊全)。⭐ 更強的證據在 `pipe-0.log`:打字期間**完全沒有新的 `walk_class`**,所以「不會重複重走 class」是量到的,不是看起來沒事。 | 不會重複重走 class，面板也不會被清空。 |
 
 ### 🟡 G2 —— 版本掃描加速後結果仍正確（步驟 1 **2026-08-23 答出**，見 `[UE3-GALGUN-2026-08-23]`；步驟 2 的 UE5 分支仍無宿主）
