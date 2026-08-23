@@ -17014,7 +17014,53 @@ cannot be verified visually, so use the pipe (world name, object count) as the f
 | 1 | 在 UE5 LWC（24-byte FVector）遊戲上展開一個 struct-valued 的 TMap/TSet 元素。 | 三個分量都出現，數量級正確。 |
 | 2 | 在使用 GAS 的遊戲上做同樣展開（CDO 走訪即可，主選單就夠）。 | 成員完整、寬度正確。 |
 
-### ⬜ G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示
+### 🟡 G1 / X3 / U7 / AF2 — step 3 CLOSED 2026-08-23 `[AF2-CLASSCAP-2026-08-23]`; step 2 reproduced on a 2nd host; step 1 has no fixture on the shipped build
+
+**Step 3 (AF2, the class-probe cap) — ✅ CLOSED, both halves, which is what the row insists on.**
+
+| half | host | status line | verdict |
+|---|---|---|---|
+| **> 30 candidate classes** | **TQ2** (UE507, 279,586 objects, 32 classes) | `80 candidates · 41 confirmed  ⚠ 30 of 32 classes live-probed — 2 shown as "? not checked"  ⚠ 6 keyword(s) hit the 200-row cap` | ✅ |
+| **< 30 candidate classes** | **DQ7R** (UE427, 149,408 objects) | `80 candidates · 20 confirmed  ⚠ 5 keyword(s) hit the 200-row cap` — **no probe suffix at all** | ✅ |
+
+⭐ **The negative half is provable, not merely observed.** `DetectStatsViewModel.cs:253-256` emits the
+suffix only when `unprobedClasses = byClass.Count - classesProbed > 0`. Its absence on DQ7R therefore
+*means* `byClass.Count ≤ classesProbed ≤ 30` — the row's "候選 class 少於 30" case — rather than
+"I didn't notice a banner".
+
+⭐ **Exactly 2 rows carry the badge, and they are visibly distinct from a guess.** Seen together in one
+screenful on TQ2: `? not check[ed]` on `TQ2QuestSpawnOnDamaged::m_TargetDamage` and
+`wbp_summons_hud_entry_C::T_Cooldown_Timer`, each annotated **"not live-probed (past the class cap)"**,
+sitting among `· guess` rows (`m_ActiveWeaponSet`, `MaxUndilatedFrameTime`, `DemoRemainingTime`, …).
+Count matches the status line's "2".
+
+⭐ **The colour claim was checked in SOURCE rather than judged from a screenshot** — `DetectedStat.cs:66`
+`ConfirmColor` is `#C08A3E` (amber) for not-checked vs `#808080` (grey) for guess and `#6A9955` for
+confirmed. The code even states the intent: *"The third is not a weaker guess — it is the absence of
+evidence, and calling it a guess is the AF2 defect."*
+
+**Step 2 (X3, non-ASCII StrProperty) — 🟡 unchanged, but now reproduced on a SECOND host.** todo.md
+already recorded the split from an earlier host; DQ7R independently gives the same one, which upgrades
+"no fixture here" from one machine-state to two titles:
+
+* ✅ **rows come back** — 169 distinct `StrProperty` fields, 6 with CJK previews (`"アルス"` …), no error
+  and no 0-row result, which was the entire pre-fix failure mode.
+* ✅ **the ellipsis marker is emitted** — previews cut at 50 chars and end `…`, e.g.
+  `"../../../Engine/Content/EngineFonts/Faces/RobotoBo…"` and
+  `"Creates a gradient of 0 near the camera to white a…"`.
+* ⬜ **the two together still have no fixture.** Every CJK preview in DQ7R is a short name (≈6 bytes);
+  every >50-char preview is ASCII engine-path text. A localized title stores display strings as
+  **`FText`**, not `FString`, so CJK `StrProperty` tends to be short identifiers — that is *why* this
+  combination is hard to find, and it is worth writing down rather than re-searching each time.
+
+**Step 1 (G1, partial offsets) — ⛔ no fixture on the shipped build.** `unmeasured:` appears in exactly
+4 archived files, all under `Logs\DumperTest\`, and all from build **`91d09b94-dirty`** — the same
+uncommitted experimental build already flagged for producing bogus `data_scan` GObjects. No clean build
+on any host has ever reported a partial offset measurement, so the amber
+"Dynamic offsets only partially measured" banner cannot be provoked here without manufacturing it.
+
+
+### 🟡 G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示（步驟 3 **CLOSED 2026-08-23**；步驟 2 第二個宿主複現同一半；步驟 1 出貨版無樣本）—— 見 `[AF2-CLASSCAP-2026-08-23]`
 
 *build 3016-3031 · 優先度 **中** · 需要：三種樣本：offset 偵測只量到一部分的遊戲、含超過 50 bytes 非 ASCII StrProperty 的在地化遊戲、以及候選 class 超過 30 與少於 30 各一款的遊戲。*
 
