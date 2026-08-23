@@ -1417,7 +1417,35 @@ otherwise, and two prior attempts at rows like these died at `0 functions walked
   `UActorComponent`, which is what a derived-pool count counts.
 * `UEngine::ForceGarbageCollection(bool bFullPurge)` exists at `Engine.h:2615`.
 
-### Rows this unlocks (7)
+### Rows this unlocks — CLAIMED 7, and here is what they actually turned out to be
+
+| row | status 2026-08-23, after the package |
+|---|---|
+| Solide **L3** derivation vs substring | ✅ **CLOSED** `[SOLIDE-L3L4-2026-08-23]` |
+| Solide **L4** per-instance restore bases | ✅ **CLOSED**, same run |
+| Solide **`⚠ capped`** badge | ✅ **CLOSED**, same run (`held=256 truncated=true` at 358 instances) |
+| **AA2/AA3 step 4** freeze across churn | ⬜ still needs **Cheat Engine**; the spawner supplies the churn but not the freeze |
+| **AA12/AA13 step 3** the legitimately-empty case | ⬜ still needs **Cheat Engine**; `UDumperTestLateSpawn` is the fixture half and it is in place |
+| **U4** class-to-class slot recycling | ⬜ a **deliberate deferral**, and the spawner only partly reaches it — see below |
+| **AE4–AE7** the concurrency gate | ⛔ **MIS-CLAIMED. The spawner cannot help.** |
+
+⛔ **The AE4–AE7 claim was wrong twice over, and it is worth writing down because it is the kind of
+plan item that would have burned a whole session.** Its open step is **2, not 4** (step 4 closed
+2026-08-20, `[ORPHANGATE-2026-08-22]`), and step 2's blocker is that **Deploy / Remove / Refresh /
+Update All each finish inside one screenshot round-trip**, so the busy bar cannot be caught. The
+proposal was to inflate GObjects with `Spawn_Holders(200000)` so a guarded op runs long enough — but
+`ProxyDeployViewModel` makes **zero pipe calls** and `DeployAsync` is **file I/O on game folders**.
+The size of the object pool is irrelevant to it. Verified by grep, not by reasoning.
+
+⚠ **U4, honestly.** `s_walkClassExCache` is keyed by **UClass** address, and UClasses are created at
+startup and rooted, so they are not what gets recycled. `Spawn_RecycleChurn` recycles **instance**
+slots between two classes with sane `PropertiesSize`, which is the right shape — but the residual
+concern the row defers is a **stale UI reference** silently rendering the new occupant as the old
+one, and the walk itself re-reads the class pointer every time. A pipe-only run would show "the walk
+reports the current class", which is true and does not address the deferral. Left deferred rather
+than closed with a pass that means less than it looks.
+
+### Rows this unlocks (as originally claimed)
 
 Solide **L3** (derivation vs substring) · Solide **L4** (per-instance restore bases) · Solide
 **`⚠ capped`** badge · **AA2/AA3 step 4** (freeze across churn) · **AA12/AA13 step 3** (the
