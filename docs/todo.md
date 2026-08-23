@@ -1334,8 +1334,44 @@ unloading it leaves dangling pointers and would very likely crash the process �
 trivially stops writes, proving nothing. `suspend.py`'s own docstring records that a whole-process
 suspend "stops Fern and Mimic too, so the DLL never even picks the command up", which is precisely
 the persistent rescan failure the step wants, and it is reversible. The substitution is a fidelity
-*improvement*, not a shortcut, and the last-error text (`mailbox busy`) records which failure mode
-was actually exercised.
+*improvement*, not a shortcut.
+
+⭐⭐ **And the substitution turned out to be forced, not merely preferable: the DLL PINS ITSELF.**
+`Heiter.cpp` calls `GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | …_FROM_ADDRESS, &DllMain)`
+on the inject path, precisely so *"a FreeLibrary of this DLL while the poller runs would unmap code
+that is executing"*. So the row's literal *"unload the DLL"* is **not runnable at all** — it is not
+a question of whether it would crash. (Deliberately **not** done on the CE branch, where no threads
+are running.) The suspend is the only reversible way to produce the state the step describes.
+
+### ⚠ Two corrections to the step-5 record above, and one defect it exposed
+
+Established from the helper's own code after the fact — the observations stand, one *interpretation*
+did not.
+
+1. ⚠ **The streak was NOT three 5 s timeouts, and the derivation above is wrong about the
+   mechanism.** `waitDone`'s timeout path is `if not wok then return nil, 0, werr end` and does
+   **not** clear `OFF_CMD` — deliberately, since the DLL may still write its reply later. So rescan
+   #1 timed out with `cmd` left set, and rescans #2 and #3 short-circuited on the in-flight guard
+   (`ue5_freeze_helper.lua:645-650`) in **microseconds**. `MAX_FAIL_STREAK × 5 s ≈ 15 s` lands near
+   the truth only because the *rescan interval* is 5 s, not because three waits elapsed. The row's
+   PASS is unaffected — the freeze stopped, unticked and printed once, all observed — but *"~15 s
+   because 3 × 5 s"* should not be re-quoted.
+2. ⭐ **That cascade is why the modal said `mailbox busy`, and it was a real defect.** `_lastError`
+   was overwritten by every failure and the message reported the **last** one, so for the whole
+   *"the DLL took the command and wedged"* family the modal was **guaranteed** to offer a transient
+   concurrency cause for a permanent fault — in the one place a user reads it, and against
+   CLAUDE.md's own *"never report a mailbox failure by guessing"*. **Fixed** as
+   `[FREEZEFIRSTERR-2026-08-23]`: the abandon message now names the **first** error of the streak
+   and appends a differing latest one. The live modal's text was reproduced exactly in
+   `freeze_helper_test.lua` (AA31, shown failing before the fix) — so the earlier
+   *"the last-error text records which failure mode was actually exercised"* was **backwards**: it
+   recorded the consequence and discarded the cause, including its actionable hint.
+3. ℹ️ **On step 1's staging**, two details worth keeping. `_freezeOutdated` is captured **once at
+   helper load** (`:286`), so a resident chunk is not replaced by a re-`load()` of the same version
+   — both arms must provably run the same chunk. They did: **one CE instance, one table, one script
+   push, never restarted**; only the game changed. And the refusal must be matched on the
+   **numbers** `(script 3, DLL speaks 2)`, not the phrase *"older than this script"* alone — `:477`
+   (`no contract symbol`) shares the phrase. The recorded evidence quotes the numbers.
 
 ### ✅ AA2/AA3 step 4 CLOSED 2026-08-23 `[AA2-STEP4-CHURN-2026-08-23]` — the freeze re-acquires across churn, and touches nothing else
 

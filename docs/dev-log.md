@@ -22,6 +22,61 @@ builds ≤696 in
 
 -----
 
+## 2026-08-23 - The freeze abandon modal blamed the wrong cause; `ue5_freeze_helper.lua` -> 1.5 (build 3335)
+
+**`[FREEZEFIRSTERR-2026-08-23]` — found by a verification row, not by an audit.** Closing AA3 step 5
+(*"a permanent rescan failure must stop the writes"*) on a live suspended DumperTest, the abandon
+modal read:
+
+```
+[ue5_freeze] DumperTestHolder: 3 consecutive rescans failed -- freeze STOPPED writing
+(last error: mailbox busy (concurrent invoke or rescan)). This record has been unticked...
+```
+
+The row still PASSED — the freeze did stop, untick and print exactly once. But the **reported cause
+was a consequence**, and structurally so:
+
+* `waitDone`'s timeout path is `if not wok then return nil, 0, werr end` and does **not** clear
+  `OFF_CMD` — deliberately, because the DLL may still write its reply later;
+* so rescan #1 times out with `cmd` left set, and rescans #2 and #3 short-circuit on the in-flight
+  guard (`:645-650`) in microseconds;
+* `_lastError` was overwritten by each, and the message reported the **last** one.
+
+So for the entire *"the DLL took the command and wedged"* family — a suspended process, a hung game
+thread — the modal was **guaranteed** to name a transient concurrency cause for a permanent fault,
+in the one place a user ever reads it, and to discard the timeout's actionable hint
+(*"stale g_invokeMailbox address? re-inject, or re-enable the table"*). That is the distinction
+CLAUDE.md's *"never report a mailbox failure by guessing"* exists to preserve.
+
+**Fix:** track `_firstError` (set only on the 0→1 transition, cleared with `_lastError` on any clean
+rescan) and report it, appending a differing latest one:
+
+```
+... freeze STOPPED writing (first error: mailbox timeout after 5008ms -- the DLL never picked
+this up (stale g_invokeMailbox address? re-inject, or re-enable the table); then: mailbox busy
+(concurrent invoke or rescan)).
+```
+
+⭐ **The live modal was reproduced in the rig before anything was changed.** `freeze_helper_test.lua`
+AA31 stages the real sequence — a healthy start, then the fake DLL is killed by mutating the captured
+`installMailbox` opts — and printed the byte-identical `(last error: mailbox busy …)`, failing. Its
+control (every failure identical) passed throughout, so the case discriminates.
+
+**Helper version 1.4 → 1.5, and the bump is load-bearing**: `versionLess` makes a same-version
+re-load a **no-op**, so a 1.4 chunk already resident in a user's CE table would never have received
+this. Two copies of the version exist (the doc block at `:90` and `THIS_HELPER_VERSION` at `:273`);
+both moved.
+
+⚠ **The bump broke two AA30 cases and silently weakened a third**, which is the more reusable
+lesson: they hard-coded `'1.4'`/`'1.5'`, so with the file at 1.5 the *"an OLDER file does not
+downgrade a newer resident"* case was re-loading a **same-version** file and passing on the wrong
+branch entirely. AA30 now **derives** `OLDER`/`CUR`/`NEWER` from whatever the helper declares.
+Negative-controlled: forcing `OLDER = CUR` makes the replace case fail.
+
+Suite: **159 checks, 0 failures**. Gates: **12/12**. `dist/` republished AOT-trimmed — the helper is
+an `EmbeddedResource` (`UE5DumpUI.csproj:150-152`), so the shipped exe carries its own copy and
+*"Export Freeze Helper Lua File…"* would otherwise have kept writing 1.4.
+
 ## 2026-08-22 (later) - Eleven more register rows, the twelve-gate discovery, and a new single-entry handover (no build change)
 
 **No source change to the product.** `build_number.txt` stays **3315**; the only code added is a

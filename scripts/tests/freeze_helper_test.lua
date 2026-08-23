@@ -1146,22 +1146,34 @@ end
 -- ============================================================
 -- AA30: an UPDATED helper must take effect on re-load; a same/older one must not.
 -- ============================================================
+-- ⭐ The three versions below are DERIVED from the helper, never typed. They used to
+-- be the literals '1.4'/'1.5', so bumping the helper to 1.5 (the [FREEZEFIRSTERR]
+-- fix, which HAD to bump -- a same-version re-load is a no-op, so 1.4 residents in
+-- the wild would never receive it) broke two of these cases and silently weakened
+-- the third: with the file at 1.5, the "an OLDER file does not downgrade" case was
+-- re-loading a SAME-version file and passing on the wrong branch entirely.
+local CUR = UE5_FREEZE_HELPER_VERSION            -- whatever the file under test declares
+local function bump(v, d)                        -- same major, minor +/- d
+  local a, b = v:match('^(%d+)%.(%d+)$')
+  return string.format('%s.%d', a, tonumber(b) + d)
+end
+local OLDER, NEWER = bump(CUR, -1), bump(CUR, 1)
 
 case('AA30: a newer-version helper REPLACES a resident older one on re-load')
 do
   resetWorld()
-  UE5_FREEZE_HELPER_VERSION = '1.2'          -- an OLD helper is resident
+  UE5_FREEZE_HELPER_VERSION = OLDER          -- an OLD helper is resident
   local sentinel = function() return 'OLD' end
   freezeProperty = sentinel
   assert(loadfile(HELPER))()                 -- re-add the current file: CE recompiles the chunk
   check(freezeProperty ~= sentinel, 'AA30: the newer helper redefined freezeProperty')
-  eq(UE5_FREEZE_HELPER_VERSION, '1.4', 'AA30: and bumped the resident version')
+  eq(UE5_FREEZE_HELPER_VERSION, CUR, 'AA30: and bumped the resident version')
 end
 
 case('AA30: the SAME version is a no-op -- shared state and the resident fn are kept')
 do
   resetWorld()
-  UE5_FREEZE_HELPER_VERSION = '1.4'
+  UE5_FREEZE_HELPER_VERSION = CUR
   local sentinel = function() return 'SAME' end
   freezeProperty = sentinel
   _ue5_invoke_busy = true                    -- in-flight state that must survive a re-load
@@ -1174,14 +1186,61 @@ end
 case('AA30: an OLDER file re-added does not downgrade a newer resident helper')
 do
   resetWorld()
-  UE5_FREEZE_HELPER_VERSION = '1.5'
+  UE5_FREEZE_HELPER_VERSION = NEWER
   local sentinel = function() return 'NEWER' end
   freezeProperty = sentinel
   assert(loadfile(HELPER))()
   eq(freezeProperty, sentinel, 'AA30: the newer resident is kept; the older file is a no-op')
-  eq(UE5_FREEZE_HELPER_VERSION, '1.5', 'AA30: and the resident version is not downgraded')
+  eq(UE5_FREEZE_HELPER_VERSION, NEWER, 'AA30: and the resident version is not downgraded')
   -- Restore a REAL freezeProperty so the process ends in a clean state.
-  UE5_FREEZE_HELPER_VERSION = '1.0'; assert(loadfile(HELPER))()
+  UE5_FREEZE_HELPER_VERSION = nil; assert(loadfile(HELPER))()
+end
+
+-- ============================================================
+-- AA31: the abandon modal must name the FIRST failure of the streak, not the
+-- busy-guard CONSEQUENCE of it.
+-- ============================================================
+-- Found closing AA3 step 5 on a live game (2026-08-23): the DLL was SUSPENDED, and
+-- the modal reported `mailbox busy (concurrent invoke or rescan)` -- a TRANSIENT
+-- concurrency cause offered for a PERMANENT fault, in the one place a user ever
+-- reads it.
+--
+-- The cascade is structural, not a fluke. waitDone's timeout path is
+-- `if not wok then return nil, 0, werr end` and does NOT clear OFF_CMD -- deliberately,
+-- because the DLL may still write into the mailbox later. So rescan #1 times out with
+-- cmd left set and rescans #2/#3 short-circuit on the in-flight guard in microseconds.
+-- `_lastError` is overwritten by each, so the abandon message is GUARANTEED to blame the
+-- busy guard whenever the first failure was a timeout -- which is precisely the "it took
+-- the command and wedged" shape CLAUDE.md requires be told apart from "the DLL never
+-- picked it up". It also means the streak is NOT three 5 s waits: it is one, then two
+-- instant returns.
+
+case('AA31: the abandon message names the FIRST error, not the busy-guard consequence')
+do
+  resetWorld()
+  -- Hold the opts table so the fake DLL can be killed AFTER a healthy start -- which
+  -- is the real scenario: the freeze was working, then the process wedged.
+  local opts = { pages = { {} } }
+  installMailbox(opts)
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  eq(h.isAbandoned(), false, 'AA31: healthy at the start -- the mailbox answers')
+  opts.deadPage = 0                                -- the DLL stops picking commands up
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'AA31: abandoned after 3 consecutive failures')
+  local msg = PRINTS[#PRINTS]
+  check(msg and msg:find('never picked this up', 1, true) ~= nil,
+        'AA31: the message names the TIMEOUT that actually caused the abandonment', msg)
+end
+
+case('AA31 control: an unchanging cause is still reported unchanged')
+do
+  resetWorld()
+  local h = newHandle{ className = 'MyClass', propOffset = 0x20, valueType = 'int32', value = 99 }
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'AA31 control: abandoned')
+  local msg = PRINTS[#PRINTS]
+  check(msg and msg:find('g_invokeMailbox', 1, true) ~= nil,
+        'AA31 control: every failure identical -> that cause is what is reported', msg)
 end
 
 -- ============================================================

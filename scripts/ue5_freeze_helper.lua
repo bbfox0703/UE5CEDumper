@@ -87,13 +87,18 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.4'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.5'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
                                         -- 1.3 cfg.derived + cfg.memrec; start() also
                                         --     returns `capped`
                                         -- 1.4 correctness fixes, no API change; an
                                         --     updated helper now replaces an older
                                         --     resident copy on re-load
+                                        -- 1.5 the abandon message reports the FIRST
+                                        --     error of the streak, not the busy-guard
+                                        --     consequence of it. MUST bump: 1.4 is
+                                        --     resident in tables already in the wild
+                                        --     and a same-version re-load is a no-op
 
   =========================================================================
   SAMPLES
@@ -265,7 +270,7 @@
 -- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
 -- -- redefine only when this chunk is NEWER than the resident one -- so an update
 -- takes effect while a same/older re-load stays a no-op that preserves state.
-local THIS_HELPER_VERSION = '1.4'
+local THIS_HELPER_VERSION = '1.5'
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -860,6 +865,7 @@ if not freezeProperty or _freezeOutdated then
       _tickTimer   = nil,
       _rescanTimer = nil,
       _lastError   = nil,
+      _firstError  = nil,
       -- Identity witness from the last successful rescan (contract 2).
       _classPtr    = 0,
       _classOff    = 0,
@@ -1009,6 +1015,16 @@ if not freezeProperty or _freezeOutdated then
         rescanInstances(handle.cfg.className, handle.cfg.filter, handle._derived)
       if err then
         handle._lastError = err
+        -- The FIRST failure of a streak is the CAUSE; the ones after it can be
+        -- consequences of it. waitDone's timeout path returns without clearing
+        -- OFF_CMD (deliberately -- the DLL may still write the reply later), so a
+        -- rescan that TIMED OUT leaves the next two to short-circuit on the
+        -- in-flight guard and report 'mailbox busy'. Reporting only the last error
+        -- therefore offers a transient concurrency cause for a permanent fault, in
+        -- the one place the user reads it -- and hides exactly the distinction
+        -- CLAUDE.md requires ("the DLL never picked it up" vs "it took the command
+        -- and wedged"). [FREEZEFIRSTERR-2026-08-23], seen on a live suspended game.
+        if handle._failStreak == 0 then handle._firstError = err end
         handle._failStreak = handle._failStreak + 1
         -- One failure is usually a transient 'mailbox busy' (a concurrent
         -- invoke); keeping the cache is right there. A PERSISTENT failure is
@@ -1026,10 +1042,14 @@ if not freezeProperty or _freezeOutdated then
           handle._capped = false
           -- ONE message, two channels. Built once so the print and the modal that
           -- follows the untick can never say different things.
+          -- First error = the cause; mention a differing latest one after it so a
+          -- genuinely changing fault is not hidden either.
+          local first, latest = tostring(handle._firstError or err), tostring(err)
+          local why = (latest ~= first) and (first .. '; then: ' .. latest) or first
           local msg = string.format(
             '[ue5_freeze] %s: %d consecutive rescans failed -- freeze STOPPED ' ..
-            'writing (last error: %s). %s',
-            tostring(handle.cfg.className), handle._failStreak, tostring(err),
+            'writing (first error: %s). %s',
+            tostring(handle.cfg.className), handle._failStreak, why,
             handle.cfg.memrec
               and 'This record has been unticked; re-enable it after fixing the cause.'
               or  'Untick and re-tick this record after fixing the cause.')
@@ -1046,6 +1066,7 @@ if not freezeProperty or _freezeOutdated then
         handle._cache = addrs
         handle._cacheCls = clsOf
         handle._lastError = nil
+        handle._firstError = nil
         handle._failStreak = 0
         handle._abandoned = false
         handle._capped = capped and true or false
