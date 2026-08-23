@@ -22,6 +22,39 @@ builds ≤696 in
 
 -----
 
+## 2026-08-23 (later) - A sibling clip found by sweep, and the sweep became gate 13 (build 3336)
+
+**`[DUMPHDRCLIP-2026-08-23]`.** Closing the classification doc's A6 item *"`[FORCESTATUSCLIP]`
+sibling `.axaml` sweep"*. `DumpExplorerPanel.axaml:28` carried `TextTrimming="CharacterEllipsis"` as
+the last child of a **horizontal `StackPanel`, behind four fixed-width buttons** — the exact
+structure fixed on 2026-08-22 elsewhere. A `StackPanel` hands each child its **desired** width, so
+the trimming can never fire and the text is hard-cut with no ellipsis and no tooltip.
+
+The tail is again the part that matters: `BuildHeader` emits
+`UE {ver} · {module} · … · {DumpedAt}`, so the first thing lost is the **dump timestamp** — the field
+that says whether the dump is stale. Fixed like the precedent: `DockPanel`, buttons `Left`-docked,
+`HeaderText` as the fill child, plus `ToolTip.Tip`.
+
+⭐ **The narrowing is the reusable part.** The naive query — bound `TextBlock` in a horizontal
+`StackPanel`, no tooltip — returns **138 hits**, nearly all short scalars (`PoseX`, `ArrayLimit`).
+That is `working-lessons.md` §2's "~52% wrong" shape in miniature: a real structural pattern with no
+severity filter is noise. The discriminator is **the author's own `TextTrimming`** — its presence
+says they expected clipping and asked for an ellipsis, and the layout makes it impossible. 138 → 1.
+
+⚠ **A dropout dropped for the wrong reason.** `ValueSearchPanel.axaml:694` has `Width="520"` and is
+genuinely fine. But `MainWindow.axaml:338/353` were excluded by a first draft that examined only
+**direct** children; their tooltips sit on the wrapping `Border`. The correct rule is *a tooltip
+anywhere up the ancestor chain*, and the draft would have hidden a real case nested one level
+deeper. The shipped check walks ancestors for `ToolTip.Tip` **and** `Width`/`MaxWidth`.
+
+**New gate:** `tools/check_inert_trimming.py`, wired into `check_all.py` — **13 gates now**. This
+defect class has shipped four times (`FORCESTATUSCLIP`, `V8PREVIEWCLIP`, `TYPECOLCLIP`,
+`DUMPHDRCLIP`), which is what makes a one-off sweep the wrong deliverable. Negative-controlled
+against the pre-fix file via `git show HEAD:…`: it reports the hit there and none on the fixed tree.
+
+⚠ **Stop quoting the gate count** — it has been 4, 12, and now 13. The handover row and the memory
+index were changed from a hard number to *"derive it from `N gate(s) run`"*.
+
 ## 2026-08-23 - The freeze abandon modal blamed the wrong cause; `ue5_freeze_helper.lua` -> 1.5 (build 3335)
 
 **`[FREEZEFIRSTERR-2026-08-23]` — found by a verification row, not by an audit.** Closing AA3 step 5

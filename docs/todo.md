@@ -8545,6 +8545,51 @@ not answer it (the panel matters, not the binding).
 
 
 
+### ✅ FIXED 2026-08-23 (was NEW DEFECT) `[DUMPHDRCLIP-2026-08-23]` — the Dump Explorer meta header, found by sweeping for `[FORCESTATUSCLIP]`'s siblings
+
+> **This closes the classification doc's A6 item *"`[FORCESTATUSCLIP]` sibling `.axaml` sweep"*, and
+> the sweep is now a CI gate rather than a one-off.**
+
+`DumpExplorerPanel.axaml:28` had `TextTrimming="CharacterEllipsis"` on a `TextBlock` that is the
+**last child of a horizontal `StackPanel`, behind four fixed-width buttons** — the identical
+structure `[FORCESTATUSCLIP-2026-08-22]` was fixed for. A `StackPanel` measures children with
+infinite available width and hands each its **desired** width, so the trimming can never fire: the
+text is hard-cut at the panel edge with no ellipsis and no tooltip to recover it.
+
+⚠ **The tail is the load-bearing part again.** `BuildHeader`
+(`DumpExplorerViewModel.cs:531`) produces
+`UE {ver} · {module} · {N} classes · {N} props · {N} funcs · {DumpedAt}` — so what gets cut first is
+the **dump timestamp**, i.e. exactly the field that tells you whether the dump you are reading is
+stale. A long game module name pushes it off sooner.
+
+**Fixed** the same way as the precedent: the row is now a `DockPanel` with the buttons in a
+`Left`-docked `StackPanel` and `HeaderText` as the fill child (so trimming becomes real), plus
+`ToolTip.Tip="{Binding HeaderText}"` (so the cut tail stays readable). Published AOT-trimmed,
+build 3336.
+
+⭐ **The sweep found exactly one, and the narrowing is the interesting part.** A naive structural
+query — *bound `TextBlock` inside a horizontal `StackPanel` with no tooltip* — returns **138 hits**,
+nearly all short scalars (`PoseX`, `ArrayLimit`), which is `working-lessons.md` §2's "~52% wrong"
+shape in miniature: a real pattern with no severity filter is noise. The objective discriminator is
+**the author's own `TextTrimming`** — its presence means they expected clipping and asked for an
+ellipsis, and the layout makes that impossible. That cuts 138 → 1.
+
+⚠ **Two dropouts were re-checked by hand, and one had dropped for the WRONG reason.**
+`ValueSearchPanel.axaml:694` has `Width="520"`, so it is self-constrained and trimming works —
+correctly excluded. But `MainWindow.axaml:338/353` were excluded by an early draft that looked only
+at **direct** children of the panel; their tooltips are on the wrapping `Border`, not the
+`TextBlock`. The rule they satisfy is *"a tooltip anywhere up the ancestor chain"*, and the draft
+would have hidden a genuine case nested one level deeper. The shipped check walks ancestors for
+both `ToolTip.Tip` and `Width`/`MaxWidth`.
+
+**Now gated**: `tools/check_inert_trimming.py`, registered in `check_all.py`. Negative-controlled —
+run against the pre-fix file (`git show HEAD:…`) it reports the hit; against the fixed tree, none.
+Its docstring records what is deliberately **not** flagged and why.
+
+⚠ **The gate count is now 13.** It has been 4, then 12, then 13 — `check_all.py` prints
+`N gate(s) run`; derive it, never quote it. The handover row and the memory index were both changed
+from a hard number to that instruction.
+
 ### ✅ M1–M5 step 3 PASSES 2026-08-22 — close the game with a hold live and the UI connected
 
 `ActorComponent::bIsEditorOnly` held (256, capped), UI connected, then a graceful `WM_CLOSE` to the

@@ -92,6 +92,12 @@ GATES = [
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
 
+    ("check_inert_trimming",
+     ["tools/check_inert_trimming.py"],
+     "a TextBlock asks for TextTrimming inside a horizontal StackPanel, where it can "
+     "never fire, and no ancestor carries a ToolTip.Tip -- so the clipped tail is "
+     "unreadable. This defect class has shipped four times", False),
+
     ("check_proxy_exports",
      ["tools/check_proxy_exports.py"],
      "a dll/src/Proxy*.def omits a real export or fails to pin its real ordinal. "
