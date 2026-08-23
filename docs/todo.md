@@ -11130,7 +11130,39 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     (3) The `'<name>' @+0xNN mask=0xMM` line is emitted **only on the first class scan**, not on
     every toggle, so it is absent from a fresh OFF→ON window. The pawn address must come from the
     fresh window (it changes per process) but the bit layout must come from the whole live log.
-  - **DLL LOW L10** ⬜ (Grausam post-enable windows + shutdown teardown;
+  - 🟡 **DLL LOW L10 — teardown half PASS 2026-08-23 `[L10-TEARDOWN-2026-08-23]`; the
+    re-subclass half remains.** DumperTest dev / DLL 3337, via `tools/verify/call_export.py`.
+    ```
+    20:19:13.383  [Grausam] Foreground lock ENABLED (fg-window=0x81029A)
+    20:19:15.467  UE5_Shutdown: Cleaning up...
+    20:19:15.473  [Grausam] Foreground lock DISABLED
+    ```
+    ⭐ **The ENABLED line is what makes this non-vacuous.** `Foreground lock DISABLED` sits in
+    the unconditional soft-disable branch ([Grausam.cpp:271](dll/src/Grausam.cpp:271)), so on its
+    own it does not show anything was turned off. Here the reply carried `state=1` **and** the log
+    recorded the enable 2 s earlier, so the lock was demonstrably on when shutdown reached it.
+    ⬜ **Still owed:** the *"re-subclasses on the GFW hook's rare window re-find"* half needs the
+    game window destroyed and recreated (the fullscreen-toggle case), which is not reachable
+    headlessly.
+  - ✅ **M5 — `UE5_Shutdown` worker-join ordering — PASS 2026-08-23 `[M5-SHUTDOWN-2026-08-23]`.**
+    Same sequence. With a GodMode hold **active** (`state=1`, `re-assert worker started` logged),
+    `UE5_Shutdown` **returned in 0.173 s** (thread exit code 0), `re-assert worker stopped` was
+    logged inside the shutdown window, the process stayed alive, and no new crash dump appeared.
+    ⚠⚠ **The row's stated acceptance — "close the game while the UI is still connected" — CANNOT
+    exercise this fix, and that is why it kept not getting run.** Closing a game never calls
+    `UE5_Shutdown` (the same fact B8's block records), so the whole worker-join ordering under
+    test is skipped. Substituting an explicit `UE5_Shutdown` is therefore a **fidelity
+    improvement, not a shortcut** — it is the CE-Disable path, i.e. the only path that reaches
+    the code.
+    ⚠ **B8's block claims "zero `UE5_Shutdown: Cleaning up` lines in any session" — that is
+    STALE.** 6 files in the log corpus contain it (grep control: `PipeServer` hits 334 files, so
+    the search works). The path is real and reachable; it just is not reachable from a window
+    close.
+    ℹ️ **New reusable tool:** `tools/verify/call_export.py` calls any `UE5Dumper.dll` C-ABI export
+    inside the injected game via `CreateRemoteThread`, resolving the RVA by loading our own DLL
+    locally with `DONT_RESOLVE_DLL_REFERENCES` (no DllMain, no side effects). It bounds the wait
+    and reports a timeout as a timeout, because a hang is not a test result.
+
     Welford gap underflow on out-of-order PE timestamps; Grausam `GetWindowTextW` under `g_mutex`
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
