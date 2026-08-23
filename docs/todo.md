@@ -16836,7 +16836,74 @@ ordering table, instead of the claim that measurement refuted.
 | 2 | 在在地化遊戲用 Property Search 找一個超過 50 bytes 的非 ASCII（CJK）StrProperty。 | 有結果列回來，preview 以「…」結尾（修正前是整個搜尋 0 列並報錯）。 |
 | 3 | Experimental → Detect Player Stats，先在候選 class 超過 30 的遊戲跑一次。 | 超過上限的列以琥珀色顯示「? not checked」（不是「· guess」），狀態列顯示「30 of N classes live-probed」。<br>⚠ 再到候選 class 少於 30 的遊戲跑一次，正確結果是完全沒有這個後綴——兩邊都做才算測完。 |
 
-### ⬜ AE10 —— AOB 掃不到 &GWorld 的遊戲上 🌍 要能用
+### ✅ AE10 — steps 1, 2, 4 CLOSED 2026-08-23 `[AE10-LOCATE-2026-08-23]`; step 3's premise is UNSATISFIABLE and the row's own fixture requirement was wrong
+
+Run on **TQ2** (`TQ2-Win64-Shipping`, UE507, **279,587 objects**, dxgi proxy build 3315 — i.e. **proxy
+mode**, the historic failure condition) with the AOT `dist` UI v1.0.0.3315.
+
+⚠⚠ **The row's stated fixture — "a game where the AOB scan does NOT resolve &GWorld" — is not what
+this defect was ever about, and no such host exists here.** todo.md's own long-form note records the
+real symptom: on TQ2 *"the flag read false even though GWorld **was** resolved, so the button was
+silently disabled"*. Confirmed again today: TQ2 logs `GWorld=0x7FF6A61BF788 (aob)`. Across all 24 host
+log folders **every real game resolves &GWorld by AOB**; the only `GWorld=0x0` lines are cancelled or
+pre-scan windows. ▶ **Fix the row's 需要 line** — it sends the next reader hunting a host that does not
+exist and is not required.
+
+**Step 1 — ✅ PASSED, and proven STRUCTURALLY rather than by clicking.** There is no mechanism left
+that can grey these buttons:
+
+| check | result |
+|---|---|
+| `IsGWorldAvailable` declaration or binding | **none** — the property is gone; only explanatory comments remain |
+| `IsEnabled` on any 🌍 button (ClassPivot / DetectStats / InstanceFinder / InterestingFuncs / InterestingProps / Snapshot / SPC / ValueSearch) | **0** |
+| `CanExecute` guard on any Locate command | **0** |
+| *negative control* — can that grep fire at all? | **yes**, 19 `CanExecute` uses elsewhere (e.g. `DumpExplorerViewModel.cs:142`) |
+
+⭐ That is stronger than observing seven panels: a proof that no gate exists covers every panel at
+once, including ones added later. It was then **live-confirmed** on the historic problem host — the
+`🌍 Locate` button in Instance Finder was enabled on TQ2 in proxy mode.
+
+**Step 2 — ✅ PASSED, twice, with two independent detectors agreeing.**
+
+| target | headless `find_path_from_gworld` | the UI's 🌍 |
+|---|---|---|
+| `Actor` @`0x17EB479F790` / `…FA60` (the 2 live actors) | `status=ok_via_level  found=True  visited=53855` | breadcrumb `lmain_menu > PersistentLevel > Actor0` + *"Located via GWorld — 2 hop(s) to Actor_0 (Actor). (via the world's level list — streaming/WP actor; the world→level hop is a back-reference, not a static pointer)"* |
+| `Default__Actor` @`0x7FF47259D598` | — | `lmain_menu > gmmain_menu_C_2147481657 > HUD > Actor > Default__Actor`, *"Located via GWorld — 4 hop(s)"* |
+
+⭐ **The pipe run was done BEFORE the UI was launched**, so the UI is not the only witness: the DLL
+independently reported `ok_via_level`, and the panel's message says *"via the world's level list"* —
+the same branch, in words. The row's FAIL condition (*"沒有任何訊息、靜默無反應"*) is decisively not met:
+every click produced a breadcrumb **and** a sentence explaining how the path was reached.
+
+⚠ The failure branch (`no_path` / `invalid`) was **not** exercised. Two attempts to manufacture it
+failed for benign reasons: a `Package` row exposes no detail strip (nothing to walk, so no 🌍), and
+CDOs turn out to be *reachable* through the class chain. Not a gap in the fix — a gap in this run.
+
+**Step 3 — ⛔ THE PREMISE IS UNSATISFIABLE, and this is the row's real correction.** It asks for the
+main menu *"確定沒有活的 UWorld"*. TQ2 sitting at its main menu has **5 live non-CDO UWorlds**:
+
+```
+0x17FBAB43A60  l_main_menu_scene_01     0x17B7E687480  World
+0x17E484BAEA0  l_main_menu_scene_02     0x17B050B68E0  l_main_menu
+0x17B500C0040  l_main_menu_scene_03
+```
+
+**In UE a main menu is itself a level.** The same was independently found for Avowed (its last session
+was at `MainMenuPlayerController` with 92,036 objects and 6 non-CDO UWorlds). So "go to the main menu"
+can never produce the no-UWorld state on a normal title. ▶ Either delete step 3, or restate it against
+the condition the DLL actually has: `Fern.cpp` emits `status="no_gworld"` only when **neither** &GWorld
+derefs **nor** any non-CDO UWorld exists in GObjects — which needs a process that is not a running UE
+game, not a main menu.
+
+**Step 4 — ✅ PASSED, with an honest caveat.** The regression control is "a game whose GWorld resolves
+normally", and TQ2 **is** that game (`(aob)`), so the handoffs above are themselves the control: they
+behaved exactly as designed on a normal-GWorld host. ⚠ The row imagined two different games — one
+broken, one normal — but since the broken kind does not exist, TQ2 serves both roles: it is the
+historic failure site (proxy mode) *and* a normal-GWorld host. A second title would add nothing this
+run has not already shown.
+
+
+### 🟡 AE10 —— 🌍 要能用（步驟 1／2／4 **CLOSED 2026-08-23**，步驟 3 前提不成立）—— 證據見 `[AE10-LOCATE-2026-08-23]` 一節（grep 該 tag）；原標題「AOB 掃不到 &GWorld 的遊戲上」
 
 *build 2961 · 優先度 **中** · 需要：AOB 掃不到 &GWorld 的遊戲（Pointers 面板沒有 GWorld 位址，或以 proxy 模式執行，例如 TQ2），外加一款 GWorld 正常解析的遊戲做回歸。*
 
