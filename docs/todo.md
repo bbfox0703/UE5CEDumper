@@ -5209,6 +5209,23 @@ repo's.
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | Z8 ⚠ needs a BIG game | on a title with more than 100,000 UFunctions (a **SEED / FF7R**-class pool; `game_only` OFF makes the cap far easier to reach on any title), open **Console** and Load, then open **Interesting Functions** and Load | Console no longer claims anything about the GAME: it reads "No UFUNCTION(exec) commands in the N functions scanned so far … this scan did not finish, so it is not evidence the game has none", plus `⚠ STOPPED at the 100,000-row cap`. Interesting Functions shows the same cap suffix AND its class-noise picker now shows `⚠ Counts are partial` | the DLL emitted **no truncation marker at all** for `list_all_functions` before this, so a capped page was reported as a complete census of the game — and Interesting Functions had no flag it could even pass to its picker. A game UNDER the cap proves only that the flag stays off (still worth doing as the regression check: no spurious warning) |
+> ### ✅ Z8 DLL half PASS 2026-08-23 `[Z8-TRUNCATED-2026-08-23]` — the cap marker fires AND clears
+>
+> The row's positive case is gated on *"a title with more than 100,000 UFunctions"*, but the DLL
+> half does not need one: `limit` forces the cap on any title. DumperTest dev / DLL 3337,
+> `game_only=false`:
+>
+> | request | returned | `truncated` | `scanned_classes` |
+> |---|---:|---|---:|
+> | `list_all_functions limit=100` | 100 | **true** | 135 (stopped early) |
+> | `list_all_functions limit=100000` | 9823 (the whole pool) | **false** | 3947 (scanned all) |
+>
+> ⭐ **Two-sided, so it is a detector rather than an assertion**: the marker *fires* under the cap
+> and *clears* above it, and `scanned_classes` corroborates independently (135 vs 3947) — the
+> truncated run demonstrably stopped early rather than merely being labelled.
+> ⬜ **Still needs a big title:** the UI-wording half — Console reading *"…this scan did not
+> finish…"* — is a Console/Interesting-Functions render and remains SEED/FF7R-class work.
+
 > ### 🟡 Z8 regression half PASS 2026-08-20 — no spurious warning under the cap; the POSITIVE case still needs a big title
 >
 > **Elliot** (84,990 objects), with **Game Only OFF** on Console — the setting the row names as the
@@ -11323,9 +11340,35 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   `GameThreadDispatch: validation OK — hook fired N times`; previously-`-5`-timing-out
   instance invokes should now succeed. Lower-priority extras: a UE 4.18-4.24 game (smaller
   vtable / lower slot) + a heavily-modified publisher fork.
-- **Static-native PE fast path** (build 636) latency vs game-thread dispatch on an active
-  session; confirm stateful UFunctions still route through dispatch (don't fall into the
-  fast path by accident).
+- 🟡 **Static-native PE fast path** (build 636) — **the "by accident" half is CLOSED 2026-08-23
+  `[B636-NOACCIDENT-2026-08-23]`, OFFLINE and structurally; the latency half is NOT established.**
+
+  ⭐ **"Don't fall into the fast path by accident" cannot happen, and the proof needs no game.**
+  `direct_call` is **caller-supplied and defaults to false** — `Fern.cpp:5290`
+  `bool directCall = request.value("direct_call", false);`, with the comment *"Caller is
+  responsible for asserting safety."* Nothing in the DLL infers it. On the client side there is
+  exactly **one** site in the whole UI that ever sets it:
+  `PointerPanelViewModel.cs:1777` `directCall: true`, hardcoded to **`className: "KismetMathLibrary"`**
+  in the self-test — a class that is static-native by definition, chosen explicitly rather than by
+  a heuristic. `DumpService.cs:2953` states the rest: *"Default false preserves the existing
+  behavior for LiveWalker's Pipe Invoke."* So a stateful UFunction has no route into the fast path.
+
+  ⬜ **Latency half — attempted 2026-08-23 and deliberately NOT reported.** Two measurement
+  attempts were discarded rather than published:
+  1. The first benchmark passed `addr=` to `invoke_function`, which wants `instance_addr` /
+     `class_name`. **Every one of the 80 timed calls was an error reply**, so the "0.223 ms vs
+     0.184 ms" it produced was the latency of a *rejection*. Caught only because the return value
+     was checked — the timings alone looked entirely plausible. (Same parameter-name class of bug
+     that invalidated an L8 result the same day: `enabled` vs `enable`.)
+  2. With the call shape fixed, `Abs(-3.5)` returned `ok:true, result:0` and a buffer of
+     `-3.5, 0, -3.5` — the return slot **mirrors the input**, i.e. the function never executed.
+     That is exactly the failure `PointerPanelViewModel`'s own docstring warns about: *"was
+     indistinguishable from a call that ran and wrote nothing — the return slot is untouched
+     either way."*
+
+  **What a future attempt needs:** a KismetMathLibrary function whose return is *verified* to
+  change the buffer (derive the return offset by finding the expected value, as attempt 2 tried),
+  and only then time `direct_call` true vs false. Do not report a number without that check.
 - ✅ **FPROPERTY_FLAGS offset fix** (build 642) — **PASS 2026-08-21 `[B642-RETFLAGS-2026-08-21]`,
   and the acceptance was RE-SCOPED, deliberately.**
 
