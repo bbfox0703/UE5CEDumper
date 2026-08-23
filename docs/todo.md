@@ -11047,7 +11047,37 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     mutator arriving in the window respawned an unjoined worker). Acceptance: with a hold active,
     close the game while the UI is still connected → no hang, no crash on exit. Evidence is the
     absence of a hang; there is no positive log line. ⬜
-  - **DLL LOWs L1 / L5 / L8 / L10 / L12** (Solitar worker start/stop under `s_workerMutex`;
+  - ✅ **DLL LOW L5 — PASS 2026-08-23 `[L5-CADENCE-2026-08-23]`.** Welford gap underflow.
+    `tools/verify/linie_cadence_gap.py`, DumperTest dev / DLL 3337, 10 s window at 60 FPS.
+    ⭐ **A real before/after, not an assertion.** The rig's own docstring records the PRE-fix
+    measurement (2026-08-22, build 3309): the two twice-per-frame `CameraModifier::BlueprintModify*`
+    rows read **ratio 1.99x with `gap_samples = count/2`**. This run reads **1.00x with
+    `gap_samples = 1199 = count-1`** on the same two rows, same game, same rig. The four
+    once-per-frame functions were 1.00x in both runs — a **free built-in control** that rules out a
+    clock or window-measurement artifact, because no clock error can move exactly the two doubled
+    rows. The guard is now `nowMs >= s.lastMs` ([Linie.cpp:46](dll/src/Linie.cpp:46)) with the
+    reorder case (`nowMs < s.lastMs`, the unsigned-underflow input) still excluded, so the
+    ~1.8e19-gap hazard L5 was filed for cannot occur.
+    ⚠ Two commits, do not conflate: `7f3898ff` (the L1/L5/L8/L10/L12 batch) introduced the guard as
+    `>`, and `06f01d27` `[CADENCEGAP-2026-08-22]` corrected it to `>=` after the `>` form was found
+    to drop every same-millisecond sample. This row verifies the end state of both.
+  - ✅ **DLL LOW L12 — PASS 2026-08-23 `[L12-STRLEAK-2026-08-23]`.** Fern `str_params` malloc leak on
+    a mid-loop JSON `type_error`. `tools/verify/l12_strparams_leak.py`, DumperTest dev / DLL 3337.
+    2000 invokes of `str_params = [ {16 KB string}, {"text": 12345} ]` — the good element allocates
+    ~32 KB and is pushed to `strAllocs`, then `sp.value("text","")` throws `type_error.302`
+    **after** it, which is the only input shape that can leak anything.
+    Predicted if unfixed: **~63 MB**. Observed: **+0.9 MB** (idle drift is ~0.2 MB/read).
+    ⭐ **Anti-vacuity, and it is the load-bearing check**: **2000 of 2000** requests returned an
+    error reply, so the throw fired every time and the leak path was entered on every iteration. A
+    silent success would have exercised the ordinary free-at-the-bottom path and proved nothing.
+    ⚠ **The first control was too weak and the rig correctly FAILED itself.** Spawning 300 actors
+    moved private bytes **+0.0 MB** — not because the probe is blind, but because ~600 KB is under
+    the noise floor of a 3 GB process. Recalibrated to 3000 actors (**+3.3 MB**), which establishes
+    the probe's resolution an order of magnitude below the 63 MB effect under test. Private bytes
+    come from psapi `PROCESS_MEMORY_COUNTERS_EX.PrivateUsage` via ctypes — **psutil is not installed
+    on this machine**, so the classification doc's "psutil private bytes" entry is not runnable as
+    written.
+  - **DLL LOWs L1 / L8 / L10** ⬜ (Solitar worker start/stop under `s_workerMutex`;
     Welford gap underflow on out-of-order PE timestamps; Grausam `GetWindowTextW` under `g_mutex`
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
