@@ -9043,6 +9043,53 @@ Two ways forward, both real work rather than a click:
 logic that has no test. There the answer was to write the test; here the pure-function seam does not
 exist, so the honest recommendation is (1) first.
 
+-----
+
+### 🟡 AC13 step 4 — PARTIALLY CLOSED 2026-08-23 `[AC13-STEP4-2026-08-23]`: option (2) was attempted, one half landed, and the other hit a wall worth writing down
+
+**`PipeTransportStats` is no longer untested.** `ui/UE5DumpUI.Tests/PipeTransportStatsPlacementTests.cs`
+adds two deterministic tests, **both negative-controlled against a deliberately broken build**:
+
+| test | what it pins | control run |
+|---|---|---|
+| `ARefusalWithNothingSent_IsNotCountedAsTransport` | the not-connected guard sits **above** the timer, so a refusal that sent nothing logs no 0 ms sample | moved the timer above the guard → **only this test failed** |
+| `Snapshot_IsMonotonicAndConvertsTicksToMilliseconds` | the accumulator never goes backwards, and ticks→ms is right (record exactly `Frequency/100`, expect 10 ms) | changed the factor 1000.0 → 500.0 → **only this test failed** |
+
+Both controls reverted to an empty `git diff` and a green 2/2. **Zero production change** — the final
+shape needs none.
+
+⛔ **The positive half — "a request that dies in the write is still counted" — is still untested, and
+the route was tried and abandoned. Recorded so nobody re-spends it.**
+
+`SendAsync` refuses before the timer unless `IsConnected` is true and `_writer` is live, so the test
+needs a real connected pipe. Two walls, in order:
+
+1. **`Constants.PipeName` is a hardcoded `const`.** A test server would bind the name a running
+   game's DLL also serves, and named pipes allow several server instances per name — so the test's
+   client can reach the DLL, or the UI's client can reach the test. That is exactly the hazard behind
+   CLAUDE.md's *"never run `pipe_client.py` while the UI is connected"*. An optional `pipeName` ctor
+   parameter was prototyped, and **reverted** with the test rather than left in production to justify
+   something that no longer exists.
+2. ⭐ **With the name injectable, `PipeClient.ConnectAsync` reproducibly never completes against an
+   in-process `NamedPipeServerStream`** — while a raw `NamedPipeClientStream` built with *identical*
+   arguments connects in **0.15 s**. Measured across four variations, all timing out at the harness
+   bound while the server's own `WaitForConnectionAsync` reported **completed**:
+   `maxNumberOfServerInstances` **1** and **4**, and **on** and **off** the xUnit synchronization
+   context (`Task.Run`). The dialled name was confirmed correct by capturing the client's own
+   `Connecting to pipe: …` log line, and a `PipeClient` pointed at a name nobody serves throws at its
+   5 s timeout as designed — so the injection worked and the timeout works; it is the
+   live-server case that stalls. **Not diagnosed. It is not an AC13 defect** and cost more than it
+   was worth.
+
+⚠ **The first draft of these tests hung with no message** — an unbounded `await` in a helper — and
+that is what turned a 10-minute suite into a killed test host reporting `4708 succeeded / error: 1`
+with **zero failures listed**. Bounding every await (working-lessons §2.7, *a hang is not a test
+result*) turned it into a 10 s failure naming the exact line, which is the only reason the wall above
+could be characterised at all.
+
+**Still open, unchanged:** the recommendation in the block above — surface the transport figure where
+a disconnect cannot destroy the observable — remains the honest way to make the live row runnable.
+
 
 
 ### ✅ B10 CLOSED 2026-08-22 `[B10-2026-08-22]` — WalkClassEx memo: timing recorded, and all three field families decode

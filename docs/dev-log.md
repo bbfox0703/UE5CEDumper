@@ -22,6 +22,44 @@ builds ≤696 in
 
 -----
 
+## 2026-08-23 (later still) - AC13's untested metric gets two tests, and the route that does not work is written down (no build change)
+
+**No product change; `build_number.txt` stays 3335/3336** — this adds tests only, and the final shape
+needed **zero** production edits.
+
+`PipeTransportStats` appeared in **no test source at all** — the sibling of the same defect family
+(`ClassifySendFailure`) is tested only because it was split out as a pure function, while AC13's fix
+is a `try`/`finally` **placement**. `[AC13-2026-08-22]` had already found the live row unobservable,
+so the metric had no coverage of any kind.
+
+**Two deterministic tests, each negative-controlled against a deliberately broken build:**
+
+* the not-connected guard sits **above** the timer, so a refusal that sent nothing logs no 0 ms
+  sample — control: moved the timer above the guard, **only that test failed**;
+* `Snapshot()` is monotonic and converts ticks→ms correctly (record exactly `Frequency/100`, expect
+  10 ms) — control: factor 1000.0 → 500.0, **only that test failed**.
+
+Both controls reverted to an empty diff and a green 2/2. Suite: **4,709 tests, 0 failed, 34.7 s.**
+
+⛔ **The positive half is still uncovered, and the attempt is recorded rather than repeated.**
+`SendAsync` needs a live connection to reach the timer at all. `Constants.PipeName` is a hardcoded
+`const`, so a test server would bind the name a running game's DLL also serves — the hazard behind
+*"never run `pipe_client.py` while the UI is connected"*. An injectable `pipeName` ctor parameter was
+prototyped and then **reverted with the test**, rather than left in production justifying something
+that no longer exists. With it in place, `PipeClient.ConnectAsync` **reproducibly never completes**
+against an in-process `NamedPipeServerStream`, while a raw `NamedPipeClientStream` with identical
+arguments connects in **0.15 s** — measured at `maxNumberOfServerInstances` 1 and 4, on and off the
+xUnit sync context, always with the server's own `WaitForConnectionAsync` reporting completed. The
+dialled name was confirmed from the client's own log line, and a `PipeClient` aimed at an unserved
+name throws at its 5 s timeout as designed. Not diagnosed; not an AC13 defect.
+
+⚠ **The lesson that cost the most.** The first draft had an unbounded `await` in a helper, so it
+**hung with no message** — and that is what made the full suite report `4708 succeeded / error: 1`
+with **zero failures listed** after the host was killed. Bounding every await (working-lessons §2.7,
+*a hang is not a test result*) turned it into a 10 s failure naming the exact line, which is the only
+reason the wall above could be characterised instead of guessed at. The clean suite now runs in
+**34.7 s** — the earlier 9m46s was entirely the hang.
+
 ## 2026-08-23 (later) - A sibling clip found by sweep, and the sweep became gate 13 (build 3336)
 
 **`[DUMPHDRCLIP-2026-08-23]`.** Closing the classification doc's A6 item *"`[FORCESTATUSCLIP]`
