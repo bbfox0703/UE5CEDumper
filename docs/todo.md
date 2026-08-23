@@ -944,6 +944,23 @@ turned up four more, one of them argued away in a comment. Arguing with it is ho
 ⭐ **Both directions observed, not reasoned.** Deleting the comparer reproduces the failure above
 (1 failed / 4706 succeeded, and it is the only one); restoring gives **4707 / 0**.
 
+⭐ **Verified on the AOT-trimmed publish** (v1.0.0.3334, sha 9d422400, DumperTest Shipping) — which
+is the only place the sort claim can be tested at all:
+
+| check | observed |
+|---|---|
+| tooltip on a clipped cell | cell `ObjectPropert` → tooltip **`ObjectProperty`** |
+| tooltip on the case that prompted it | cell/tooltip **`DataTableRows`** |
+| sort ascending | header ↑, rows reorder to `BoolProperty ×3 → DataTableRows → ObjectProperty → StrProperty` (was offset order) |
+| sort descending | header ↓, exact reverse |
+
+Both sort directions, in the trimmed binary, are what close the risk the conversion introduced.
+
+⚠ **An operational trap worth recording, unrelated to the code**: the address box silently ate a
+hex address as Bopomofo (`0x1C607092740` → `0風注音量器度假使出任`) because the Windows IME was in
+Chinese mode. `Shift` did not toggle it and `systemKeyCombos` is ungranted, so Win+Space is
+unavailable — **clicking the taskbar language indicator does work** and is the route to use.
+
 ℹ️ Two more tests in `LiveFieldValueTooltipTests` — `TypeTooltip` carries the whole name and is
 `null` when empty; the XAML binds it on the same `TextBlock` as `Text="{Binding TypeName}"`, and
 `SortMemberPath="TypeName"` is still present so the conversion cannot silently drop sorting again.
