@@ -34,6 +34,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git Operations
 - When creating PRs, check for branch divergence and resolve merge conflicts before attempting `gh pr create`. Run `git status` and `git log --oneline -5` first.
+- **Line endings are pinned by `.gitattributes`, NOT by your git config — do not "fix" them with
+  `core.autocrlf`.** `* text=auto eol=lf` is set repo-wide (2026-08-23). This exists because
+  `core.autocrlf` is **machine-local**: on this PC it is unset at `--local`/`--global` and **`true`
+  at `--system`** (the Git-for-Windows installer default in `C:\Program Files\Git\etc\gitconfig`),
+  which does not travel between the two development PCs. `.gitattributes` does.
+  ⚠⚠ **What it prevents, and it is not cosmetic:** before the pin, a file that was `i/lf w/lf` got
+  **rewritten to CRLF by `git checkout`**, and `git status` stayed **CLEAN** afterwards because the
+  index never changed — so `git checkout -- <file>` could not be trusted to revert a staged
+  experiment byte-for-byte. Every staged A* row on 2026-08-23 reverted from a `cp` byte snapshot
+  for that reason. Measured before the pin: index `i/lf` on **1,021 of 1,035** tracked files, but
+  the working tree was **339 `w/lf` / 679 `w/crlf` / 3 `w/mixed`**. Verified after: deleting
+  `Genau.cpp` and re-checking it out returns it **byte-identical** (LF 5372, 0 CRLF).
+  ℹ️ `text=auto`, never a bare `text`, so git keeps auto-detecting binaries — `VersionNeedleScan.h`
+  carries a deliberate NUL inside a comment about NUL-terminated needles and must stay untouched.
+- ⚠ **A whole-file diff on a small edit means the file was CORRUPTED, not reformatted.** Twice on
+  2026-08-23 a patch script run through a shell heredoc had its `\\0` collapsed to `\0`, so Python
+  wrote a **literal NUL byte** into a source file (`Mimic.cpp`) and then into `docs/todo.md`. Git
+  and grep treat a NUL-bearing file as **binary**: the tells are `1483 insertions / 1470 deletions`
+  on a 13-line edit, and `grep` answering `Binary file docs/todo.md matches`. **Check for NUL before
+  blaming line endings**, and build a backslash numerically (`bytes([92])`) when patching through a
+  heredoc.
 
 -----
 

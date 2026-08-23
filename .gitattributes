@@ -16,3 +16,37 @@
 
 # Lua rigs and the CE table are read by the same tooling.
 *.CT   text eol=lf
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EVERYTHING ELSE — added 2026-08-23 after a staged-build session kept having to
+# work around this.
+#
+# THE PROBLEM IS THAT `core.autocrlf` IS MACHINE-LOCAL. Measured on this PC:
+# it is unset at --local and --global and `true` at --system, i.e. the
+# Git-for-Windows installer default living in C:\Program Files\Git\etc\gitconfig.
+# That file is not in the repo and does not travel, so the two development PCs can
+# check the same commit out with different line endings. `.gitattributes` DOES
+# travel, which is why the rule belongs here rather than in a git config.
+#
+# The index is already uniform: 1,021 of 1,035 tracked files are `i/lf`. The WORKING
+# TREE was not — 339 `w/lf`, 679 `w/crlf`, 3 `w/mixed`. Pinning eol=lf makes the
+# checkout match the index everywhere.
+#
+# ⚠ WHY IT MATTERED, concretely: a file that is `i/lf w/lf` gets REWRITTEN TO CRLF by
+# `git checkout`, and `git status` stays CLEAN afterwards because the index is
+# unchanged. So `git checkout -- <file>` could not be trusted to revert a staged
+# experiment byte-for-byte — every staged row in this session reverted from a byte
+# snapshot instead. With eol=lf a checkout is byte-safe again.
+#
+# `text=auto`, never a bare `text`: it lets git keep auto-detecting binaries, so
+# `dll/src/VersionNeedleScan.h` (a deliberate NUL inside a comment about
+# NUL-terminated needles) and the image/gz assets are left alone.
+* text=auto eol=lf
+
+# Binary assets — never transform, never diff as text.
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.gz   binary
