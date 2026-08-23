@@ -1208,6 +1208,54 @@ rather than only the tail — the gaps between reflected fields are exactly wher
 member lives. Prefer scanning the reflected gaps first. Keep the existing validation; it is not the
 problem, and it is what will stop a gap scan from accepting junk.
 
+### 🟡 AA12/AA13 step 3 — ATTEMPTED 2026-08-23, blocked in the SETUP path, not the row `[AA12-STEP3-ATTEMPT-2026-08-23]`
+
+The fixture half is done and the row is closer than it has ever been. It stopped on a Cheat Engine
+plumbing step, and the ground already covered is written down so the next attempt starts here.
+
+### ✅ What is now established
+
+| | |
+|---|---|
+| the fixture the row needed | `UDumperTestLateSpawn` — **0 live instances** (pipe-verified: `find_instances exact_match=true` → CDO only) and **no subclasses**. This is what the `NiagaraComponent` attempt lacked; that class turned out to have two live instances |
+| Property Search finds it | one hit, `IntProperty @0x28`, Preview **`0 (CDO default)`** — ⭐ the *same marker* that misled the earlier attempt, except here it is genuinely true |
+| the Freeze dialog | Scope line reads **"every live DumperTestLateSpawn and every subclass"**, value pre-filled 9999 |
+| the push | **works** — two `Freeze: DumperTestLateSpawn::LateValue = 9999  <script>` records appeared in CE's table, unticked, via the AOBMaker plugin bridge |
+| ⭐ the bail-out rule | ticking with the helper absent produced `showMessage`: **`[Freeze] ue5_freeze_helper.lua not found in this table.`** with the setup hint — and the record **did not stay ticked**. That is CLAUDE.md's "a bail-out that applied NOTHING must untick the record", observed working |
+
+### ⛔ Where it stopped
+
+`Tools → Inject Freeze Helper into Current CE Table` **does not put the helper in the table.** Clicked
+twice, position confirmed at full resolution; re-ticking still gives `not found in this table`.
+`InjectFreezeHelperLuaAsync` (`MainWindowViewModel.cs:3362`) sets `StatusText` on **every** branch —
+progress, success, three distinct failures — and `StatusText` **is** rendered
+(`MainWindow.axaml:40-46`, top-left, `MaxWidth=360`, trimmed, with a tooltip). It stayed on
+"AOBMaker plugin connected" throughout. So either the command never fired, or a periodic AOBMaker
+re-check overwrites `StatusText` faster than the result can be read. **Not diagnosed — do not record
+it as a defect until it is.**
+
+**Next attempt should use the documented fallback first** (the handler names it itself): `Tools →
+Export Freeze Helper Lua File…` to disk, then add it to the table through CE's own *Table Extras →
+table files*. That sidesteps the plumbing entirely and gets the row to its actual question.
+
+### ⚠ Two operational traps that cost most of the time here
+
+* ⭐⭐ **`open_application` on Cheat Engine LAUNCHES A NEW INSTANCE — it does not front the running
+  one.** Three calls left **four** CE processes. The AOBMaker bridge stays bound to the *first*
+  instance, so the freeze records went there while I was staring at a different instance's empty
+  table and had begun writing it up as *"the UI reports success but CE has no record"*. **That would
+  have been a fabricated defect.** Front CE with `py tools/verify/front_window.py front cheatengine`
+  (the process name has no space, so `front "Cheat Engine"` finds nothing) and call
+  `open_application` **once**, to start it.
+* **Two different status lines.** The Properties tab's own status sits top-**right** of the panel;
+  `MainWindowViewModel.StatusText` sits top-**left**. I read the panel's for several minutes while
+  waiting for a MainWindow message. Both are `TextTrimming`-ellipsised.
+
+ℹ️ Also seen, minor: the top toolbar's AOBMaker chip read **Connected** while Property Search's own
+Freeze button stayed **disabled**, because the chip mirrors LiveWalker/Pointers availability
+(`MainWindowViewModel.cs:698-706`) but Property Search probes lazily on **tab activation**. A tab
+round-trip enabled it. Not filed as a defect — the panel does refresh, just not from the chip.
+
 ### ✅ Solide L3 + L4 + the `⚠ capped` badge CLOSED 2026-08-23 `[SOLIDE-L3L4-2026-08-23]`
 
 Three rows in one run, on the spawner fixture packaged today. `tools/verify/solide_l3_derivation.py`,
