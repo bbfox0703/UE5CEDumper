@@ -75,6 +75,29 @@
 ⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
 一律進 todo.md。這正是它上次走樣的方式。
 
+### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
+
+**判準只有一條，而且要能被檢查:**
+
+> **一列留在這裡，當且僅當「Auto + Computer Use 沒辦法從頭到尾自己跑完」** ——
+> 需要人在遊戲裡做 Auto 做不到的動作、需要人用眼睛下判斷、或全世界根本沒有樣本。
+
+⚠ **這條判準以前不存在於這個檔案裡**，只存在於選材時的習慣 —— 檔案自己都寫過
+「`非人工`、`人工`、`肉眼` 這幾個字在本檔案裡一個都沒有」。**沒有寫下來的規則不會活過一次交接**，
+於是它慢慢變成 [todo.md](todo.md) 登記表的中文副本:重整前有 **31 項**、其中 **20 項**帶著證據標記
+(finding tag、`file:line`、log 行、日期化的 ✅)，平均每項 913 字。
+
+**重整做了三件事**（2026-08-22）:
+1. **21 項移回 [todo.md](todo.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
+   離線工具）。步驟表格**原封不動**搬過去，沒有刪掉任何東西，見那份文件的
+   「Verification steps migrated from the 繁中 checklist」一節。
+2. **只留 10 項**，就是下面這些。
+3. **CLAUDE.md 原本寫「先改 todo.md，再 mirror」** —— 一個 mirror 指令必然產出翻譯版，已改掉。
+
+⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 todo.md，不要寫在這裡。
+⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
+一律進 todo.md。這正是它上次走樣的方式。
+
 ### 分組是「後勤」，不是「誰判定」—— 兩條軸要分開（2026-08-22 修正）
 
 上面那張 **第 0～5 步** 的表回答的是「這一項要先準備多少東西」。那是**後勤軸**，拿來排一場
@@ -166,13 +189,17 @@ session 的順序很好用，保留。
 | 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
 | 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
 
-### ⬜ M1–M5 / DLL LOW L1,L5,L8,L10,L12 / Solide L2–L4 + 截斷徽章 —— hold worker 的競態、斷線與 256 上限徽章
+### ⬜ M1–M5 步驟 1 —— See-through 開著時關閉遊戲，只剩 (a)(b) 兩種關法
 
-*優先度 **中***
+*優先度 **中** · 需要：有人在遊戲裡移動，或有辦法把遊戲弄到沒有回應*
+
+ℹ️ 同一列的 arm (c)(d) 與 M1–M5 步驟 2/3/4/5 都已通過；證據、finding id 與 rig 用法在 todo.md
+（`[SEETHRUNOOP-2026-08-22]`、`[SEETHRUTALLY-2026-08-22]`、`[SOLIDEHOLD-2026-08-22]`）。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 🟡 **2026-08-22:arm (c)(d) 與「單純關掉」都通過,只剩 (a)(b)**。先修好兩個缺陷才測得動:`[SEETHRUTALLY]`(回報的是「打算隱藏」)與 `[SEETHRUNOOP]`(UE 5.4 的 `FHitResult` 解出來是 component,整個功能沒作用)。現在 DLL 會在 `seethrough_get_state` 回 `hidden_actors`,偵測器②能指名道姓。<br>⚙️ `py tools/verify/seethrough_arms.py run` / `after`。實測:開啟時 `hidden_count=1` 且該 actor **自己的 `bHidden=true`**(正控制:偵測器②證明會 fire),關閉後兩者都歸零/false。<br>**arm (c)** 拔連線:先確認真的隱藏了,再讓 client 斷線 —— `hidden_count=0`、`bHidden=false`、log `disabled (1 restored)`。**arm (d)** 開著時 graceful `WM_CLOSE`:乾淨結束、任何 log 都沒有 `tick threw`、Windows 應用程式記錄零新增(這一列真正在防的是 `std::terminate`/0xC0000409 那個崩潰)。⚠ `taskkill /F` **不算**,DLL 的關閉路徑根本不會跑。<br>剩下的 **(a) 移動中關掉**、**(b) 遊戲卡住時關掉** 需要有人在遊戲裡操作。 |
+| a | Teleport 分頁開啟 See-through，確認 `hidden_count > 0`。接著在遊戲裡**持續移動**（讓 worker 正在 trace／隱藏／還原），**移動中**用視窗右上 ✕ 關閉遊戲。 | 遊戲乾淨結束。<br>log 沒有 `tick threw`；Windows 事件檢視器「Windows 記錄 → 應用程式」**零新增**錯誤。<br>⚠ `taskkill /F` 不算：那條路徑根本不會跑 DLL 的關閉流程，這一列要防的就是 `std::terminate` / `0xC0000409`。 |
+| b | 同樣開著 See-through，把遊戲弄到**畫面卡住／沒有回應**（大量載入、或按住標題列拖著不放），在卡住狀態下關閉遊戲視窗。 | 同上：乾淨結束、log 沒有 `tick threw`、應用程式記錄零新增。<br>⚠ 若跳出「這個程式沒有回應」而你按了「結束工作」，等同 `taskkill /F`，不算通過。 |
 
 ## 第 4 步 — 需要特定條件的遊戲
 
