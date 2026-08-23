@@ -2483,6 +2483,16 @@ direction, both shipped (dev-log builds 838-872).
   so the After dump is unambiguous. ~2-line patch in `Mimic.cpp` (both fast path + game-
   thread dispatch).
 
+  ⭐⭐ **SECOND, INDEPENDENT SIGHTING 2026-08-23 — and it cost a measurement.** While attempting
+  `b636`'s latency half on DumperTest, `Abs(-3.5)` returned `ok:true, result:0` and a parameter
+  buffer of `-3.5, 0, -3.5`: the ReturnValue slot simply **mirrored the input**, so "the function
+  ran and wrote -3.5" was indistinguishable from "the function never executed". The b636 number was
+  discarded rather than published (see `[B636-NOACCIDENT-2026-08-23]`). ⚠ `PointerPanelViewModel`'s
+  own docstring already states the hazard in the same words — *"was indistinguishable from a call
+  that ran and wrote nothing — the return slot is untouched either way"* — so this is now
+  **documented in three places and observed on two titles (ES2, DumperTest)**. It is no longer a
+  nice-to-have: it is the thing blocking a verification row. Raising priority.
+
 - **CE Lua AA Script activation hang — UX hardening** — Effort: **M** (mitigation) ·
   Risk: low. AA Script sometimes never reaches the mailbox (CE Lua froze or hid an error).
   Mitigations: re-arm helper-injected check on UI Connect; mailbox heartbeat `print()`
