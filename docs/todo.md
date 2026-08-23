@@ -16993,7 +16993,7 @@ sweep reported none on this machine. **That is no longer true** — the maintain
 D:\SteamLibrary\steamapps\common\SEED BATTLE DESTINY REMASTERED\Game_SBDR\Binaries\Win64\dxgi.dll
   5,255,448 bytes, 2026-08-02 · ProductName "ReShade" · 0 hits for UE5CEDumper / UE5_Init
 ```
-(installer kept at `C:\Users\Andyc\Downloads\ReShade_Setup_6.8.0.exe`). SBDR is a UE title with its
+(installer kept at `%USERPROFILE%\Downloads\ReShade_Setup_6.8.0.exe`). SBDR is a UE title with its
 own log folder, so it is a real host, not a synthetic one.
 
 ⭐⭐ **What actually discriminates the fixed build from the broken one — and it is NOT the message.**
