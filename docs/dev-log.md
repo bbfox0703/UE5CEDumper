@@ -22,6 +22,31 @@ builds ≤696 in
 
 -----
 
+## 2026-08-24 (later) - The C1 spawner fixture already existed; the repo's copy of the sample source did not know (build 3349)
+
+**`[C1-SPAWNER-EXISTS-2026-08-24]`.** Found by accident while picking a queued-route fixture for
+b636: `list_all_functions` on a running DumperTest reports **17** `DumperTestActor` UFunctions, and
+they include `Spawn_Holders`, `Spawn_Decoys`, `Spawn_DestroyHolders`, `Spawn_CountHolders`,
+`Spawn_Generation`, `Spawn_LateInstance`, `Spawn_RecycleChurn`, `Spawn_LastRecycledAddr` and
+`Spawn_ManyComponents` — the entire set the classification doc drafted as **bucket C1, the one
+fixture addition it said would unlock seven rows**, plus one it never asked for.
+
+It is not a declaration stub: three `Spawn_LateInstance` calls moved the live
+`DumperTestLateSpawn` population **2 → 5**.
+
+⚠ **Two sessions concluded the opposite, including this one.** The check both made was to grep
+`tools/ue-sample/DumperTest/Source/DumperTest/DumperTestActor.h` — which is dated **2026-08-19** and
+contains none of it, while the packaged `DumperTest.exe` used for every verification run is dated
+**2026-08-23** and contains all of it. **The repo's copy of the sample source is stale relative to
+the binary that is actually used.** So grepping `tools/ue-sample` is not a valid way to answer "does
+this fixture exist"; ask the running game. Earlier today I corrected an agent for saying the spawner
+had shipped — the agent was right and the correction was wrong.
+
+ℹ️ Recorded separately so it is not mistaken for a fixture defect: invoking any **parameterised**
+`DumperTestActor` UFunction over the pipe returns `ProcessEvent error code -4`, while every
+**zero-parameter** one returns 0. The split is exact and hits the pre-existing `AD4_*` functions as
+hard as the new `Spawn_*` getters, so it belongs to the parameterised-invoke path. Not diagnosed.
+
 ## 2026-08-24 - The b637 return-value fix had a sibling it never covered: int64 (build 3348)
 
 **`[RETINT64-2026-08-24]`.** Found while closing the b637/b644 verification row, not by looking for
