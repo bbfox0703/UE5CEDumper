@@ -139,7 +139,36 @@ The six segment ranges stopped short of `docs/todo.md`'s trailing closure sectio
 
 ---
 
-## BUCKET A — runnable headless today (31 rows, grouped by sitting)
+## BUCKET A — ~~runnable headless today (31 rows, grouped by sitting)~~ **TRIAGED 2026-08-24 — MOSTLY ALREADY CLOSED**
+
+> ⛔ **DO NOT RUN ANY ROW BELOW WITHOUT GREPPING `docs/todo.md` FOR ITS CLOSURE TAG FIRST.**
+> A 12-way triage on 2026-08-24 found **8 of 12 row groups already closed**, most of them closed on
+> **2026-08-23 — the same day this document was written, or later that day**. That is now the
+> measured norm, not an accident: B6 was **6 of 9** stale, B7 **2 of 5**, A1 **7 of 9**.
+>
+> **Closed, tags verified present by literal grep (do not re-schedule):**
+> `A1 B10 correctness half` `[B10-2026-08-22]` · `A1 B8 deferred half` · `A2 step-1 arm (b)`
+> `[SEETHRU-ARMS-AB-2026-08-23]` · `A3 SEETHRUNOOP/SEETHRUTALLY` `[SEETHRU-DQ7R-2026-08-23]` ·
+> `A4 G11 step 2` `[G11-AVOWED-2026-08-23]` · `A4 G1+X3 screening` `[G1X3-SCREEN-2026-08-23]` ·
+> `A5 Z8 DLL half` `[Z8-TRUNCATED-2026-08-23]` · `A5 A3 step 3` `[A3-STEP3-2026-08-22]` ·
+> `A5 U6/F3 step 4` · `A6 [FORCESTATUSCLIP] sweep` `[DUMPHDRCLIP-2026-08-23]` ·
+> `A7 PEHOOKONCE step 3` `[PEHOOKONCE-3-2026-08-20]` · `A7 b648 ES2 half`
+>
+> **Closed 2026-08-24 by this programme:** `A5 U4 step 3` `[U4-STEP3-2026-08-24]` ·
+> `A5 U3/U17 step 5` `[U17-STEP5-2026-08-24]`.
+>
+> ⭐ **`U4 step 3` also RETIRES a C-bucket fixture.** Its survey found **67 natural zero-field
+> `UScriptStruct`s** in the DumperTest pool (500 surveyed: 432 with fields, 68 without), so the
+> drafted `USTRUCT() struct FDumperTestEmpty` at §C3 is **unnecessary**.
+>
+> **Genuinely still open** (and *six of nine cannot fail as written* — each needs a rig designed
+> before it can be run): `b636` static-native latency · `M1/M2/M3` Schlacht restore-set arms (a)+(b) ·
+> `M1-M5 step 1 arm (a)` re-scoped (close-while-moving) · `AE10 no_path` · `AC13 step 4` (offline
+> decision) · `AF16 --top` (offline; replace with a unit-test line) · `Lushfoil` proxy-not-loading
+> (recommend: close as unreproducible — 3 launches is a coin flip) · `TQ2 G11 step 1` evidence
+> transcription (offline; ⚠ the "21-day purge is about to eat it" urgency was **overstated** — the
+> logs are dated 2026-08-23, so the deadline is ~2026-09-13, not today).
+
 
 ### A1. One DumperTest `dev` launch, no UI, no CE — ~~**9 rows**~~ **6 WERE ALREADY CLOSED when this doc was written or later that day** (L5 `[L5-CADENCE-2026-08-23]`, L1 `[L1-GODRACE-2026-08-23]`, L8 `[L8-NOPUMP-2026-08-23]`, L10 `[L10-HEADLESS-2026-08-20]`, L12 `[L12-STRLEAK-2026-08-23]`, M4 `[M4-TOTZOMBIE-2026-08-23]`); **M5 CLOSED 2026-08-24** `[M5-JOINORDER-2026-08-24]`. **Remaining: B10 correctness half, B8 deferred half.** ⚠ Triage against todo.md before running any bucket here — B6 was 6-of-9 stale, B7 2-of-5, A1 7-of-9.
 ```
