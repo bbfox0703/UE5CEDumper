@@ -8727,7 +8727,7 @@ suite can reach this.
 4. Regression check on a normal game where GWorld *does* resolve: the 🌍 handoffs still behave as
    before — this change should be invisible there.
 
-### 🟡 STEPS 1-4, 7, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too (5 needs damage, 6 has no fixture, 8 has no old .CT)
+### 🟡 STEPS 1-4, 7, 8, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too (**8 CLOSED 2026-08-24**; 5 needs damage, 6 has no fixture)
 
 *Needs a game with a **player pawn** and any inherited `AActor` bool (`bCanBeDamaged`, `bHidden`,
 `bReplicates`) — i.e. any UE game. Runs in the same sitting as `[FREEZESTUCK-2026-08-18]` above.*
@@ -8897,7 +8897,67 @@ suite can reach this.
 > in CFG to cover the ones you want.')` — read out of the generated CFG in step 3. Its **runtime
 > firing and the stay-open behaviour were not observed**, and cannot be here.
 >
-> ### ⛔ Step 8 has no fixture either — no pre-contract-3 `.CT` exists on this machine
+> ### ✅ STEP 8 PASSES 2026-08-24 `[FREEZESCOPE-8-OLDCONTRACT-2026-08-24]` — the pre-contract-3 artifact existed all along, in the HELPER
+>
+> ⛔ **This supersedes the "Step 8 has no fixture either" note below.** That note said *"no
+> pre-contract-3 `.CT` exists on this machine … it would have to be reconstructed, which tests the
+> reconstruction."* The reconstruction objection was right; the premise was not. **The contract is
+> not carried by the `.CT`, and not by the generated script — it is carried by the HELPER**, as
+> `local UE5_SCRIPT_CONTRACT = <n>`. Measured:
+>
+> ```
+> grep -c CONTRACT scripts/UE5CEDumper.CT                  -> 0
+> grep -n  Contract ui/.../FreezeScriptGenerator.cs         -> (nothing)
+> git show 04d40803^:scripts/ue5_freeze_helper.lua          -> v1.1, UE5_SCRIPT_CONTRACT = 2
+> ```
+> That helper is a period artifact from commit `661c3925` (**2026-08-16**), and contract 3 landed in
+> `2c2a950c` (**2026-08-19**) — so it genuinely predates it and nothing was reconstructed.
+>
+> **Fixture, and why this class and not the one the other freeze rows use.** Exact-vs-derived *is*
+> the assertion, so the base needs a real subclass. `ADumperTestDerivedHolder : public
+> ADumperTestHolder` exists for exactly that, and `ADumperTestHolderDecoy` **does not derive** while
+> its class name *contains* the base's — the negative half, which catches a scope computed from a
+> string test. `HolderValue` is seeded **1000 + i**, distinct per instance, so an unfrozen instance
+> can never be mistaken for a frozen one. 30 + 30 + 8 live instances, DLL **3338**, CE **7.7**,
+> DumperTest Shipping. Ticked from the **address-list checkbox** — the normal user path.
+>
+> | phase | embedded helper | `DumperTestHolder` | `DumperTestDerivedHolder` | `DumperTestHolderDecoy` |
+> |---|---|---|---|---|
+> | **arm** | 1.1, `UE5_SCRIPT_CONTRACT = 2` (29,535 B) | **30/30 @ 9999** | **0/30** — still 1030…1059 | 0/8 |
+> | **control** | 1.5, contract 3 (58,802 B) | 30/30 @ 9999 | **30/30 @ 9999** | 0/8 |
+>
+> * **"it still runs"** — the base pool going 30/30 is the load-bearing half. A contract-2 script
+>   against a contract-3 DLL passes the range check (`MIN 1 ≤ 2 ≤ 3`) and **actually writes**.
+> * **"still holds its exact-class pool"** — derived untouched under 1.1, fully held under 1.5.
+> * ⭐ **The control is what makes the empty derived pool mean "narrow scope" instead of "nothing
+>   ran"** — and note the base pool alone already rules the second reading out, so the two legs are
+>   independent rather than restatements.
+> * **The decoy is 0/8 in BOTH phases** — the derived scope is reached by *derivation*, never by the
+>   class name that contains the base's.
+>
+> ⚠ **What this does NOT cover, stated rather than glossed.** The generated freeze *script* was
+> **current**, not period — only the helper is the old artifact. That is defensible because the
+> script never touches the mailbox: it fills a `CFG` table and every mailbox write is the helper's,
+> so the contract-bearing component is the one that was swapped. A current script setting
+> `cfg.derived = true` is simply a key a 1.1 helper has no concept of, and the measured result is the
+> exact-class pool the row predicts. What is untested is a *period-generated script text*, which
+> would need a `git worktree` build of the old UI.
+>
+> ⚠ **CE has ONE Lua state, and 1.1 does not gate its definitions on version.** Loading 1.1 over a
+> resident 1.5 leaves `UE5_FREEZE_HELPER_VERSION` at `'1.5'` (1.1's guard is
+> `if not UE5_FREEZE_HELPER_VERSION`) while `freezeProperty` *does* become 1.1's — a mixed state that
+> would have made the run unattributable. Both globals were cleared to `nil` before each phase, and
+> the embedded size was read back each time (29,535 / 58,802) so which helper ran is a measurement,
+> not an assumption.
+>
+> ▶ Rig: `tools/verify/freezescope_step8.py` (`spawn` / `read` / `verdict --phase arm|control`).
+> Its `spawn` also spawns **8 decoys** — with zero of them, "no decoy was held" is trivially true and
+> the decoy control is vacuous.
+>
+> **Remaining on this row: steps 5 and 6 only** — 5 needs damage taken on the player pawn, 6 has no
+> fixture.
+>
+> ### ⛔ SUPERSEDED 2026-08-24 — "Step 8 has no fixture either" was wrong about WHERE the contract lives (see the PASS above)
 >
 > Every `.CT` on disk is current-era (`scripts/UE5CEDumper.CT`, `dist/UE5CEDumper.CT`,
 > `out/teleport_rows.CT`). Backward compatibility against a script predating contract 3 cannot be
