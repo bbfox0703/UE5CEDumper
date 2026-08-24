@@ -13161,8 +13161,37 @@ produced, so this is the check that matters.
 
 ⚠ **Honest limit, same as the Props half's:** `Re` here is `1/3/5/9` — all single digit, where a string
 sort and a numeric sort agree. So the headers demonstrably reorder, but **numeric-vs-string is still
-not discriminated** on this dialog. It needs a field with a ≥10 reference count; the rig can find one
+not discriminated** on this dialog. It needs a field with a >=10 reference count; the rig can find one
 (`--top`) if that is ever worth a session. `Access` was `read` throughout, so its ordering is untested.
+
+### ✅ The `--top` residual is CLOSED 2026-08-24 `[AF16-BYCONSTRUCTION-2026-08-24]` — **it was unreachable, not merely unrun**
+
+**There is no string sort path on this dialog to discriminate against**, so a >=10-reference field
+would have confirmed arithmetic and nothing more. Verified by reading all four links in the chain:
+
+| | |
+|---|---|
+| `PropertyXrefDialog.cs:40` | `["Occurrences"] = DataGridSortComparers.Number<PropertyXrefMatch>(r => r.Occurrences)` |
+| `PropertyXrefDialog.cs:312` | `SortMemberPath = nameof(PropertyXrefMatch.Occurrences)` — the **property**, not a formatted label |
+| `PropertyXref.cs:27` | `public int Occurrences { get; init; }` |
+| `DataGridSortComparers.cs:32-37` | `Number<T>` is `getter(ta).CompareTo(getter(tb))` over `long` |
+
+The failure mode trimming actually produces here is an **inert header** (no reorder at all), and that
+was already shown by the existing 9-row fixture reversing exactly: `1,3,3,3,3,5,5,5,9` ->
+`9,5,5,5,3,3,3,3,1` (todo.md:13077). The one route by which a numeric column *could* become a string
+sort — a `SortMemberPath` aimed at a formatted label — is machine-enforced offline by
+`No_column_sorts_on_a_label_that_formats_a_number` (`DataGridSortWiringTests.cs:216`).
+
+⭐ **Closed with an offline substitute that is itself shown able to fail.** The digit boundary is now
+pinned in `DataGridSortComparersTests.Number_OrdersByIntegerKey`:
+`Assert.True(c.Compare(R(n: 9), R(n: 10)) < 0)` and its converse. Armed by swapping the comparer to
+the string form (`Ordinal<Row>(r => r.N.ToString())`), the test goes **red on exactly those two new
+assertions** and on no others — the pre-existing `1v2 / 5v2 / 3v3` all still pass under a string
+compare, because none of them crosses a digit boundary. That is the precise demonstration that the
+old assertions could not have caught this and the new ones can. Reverted; green again.
+
+ℹ️ `Access` ordering remains untested, and stays that way — it is a two-value enum rendered as text,
+with no numeric/string ambiguity to resolve.
 
 ⭐⭐ **The rig's confirm step earned itself immediately, and the result is a correction rather than a
 defect.** Every candidate is re-asked through `find_property_xrefs` — what the dialog itself calls —
