@@ -11202,8 +11202,22 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   thread, which is why it freezes CE rather than just the game.
 
 - ✅ **Log retention no longer dies at the first undeletable file** (build 2603, B19) --
-  **PASS 2026-08-24** `[B19-BACKDATE-2026-08-24]`. `py tools/verify/retention_backdate.py b19`,
-  DumperTest dev, DLL 3348.
+  **CLOSED 2026-08-22** `[B19-LOCKED-2026-08-22]` (archive:3614), by
+  `tools/verify/b19_locked_log.py`. **This bullet was STALE**; the ⬜ it carried until 2026-08-24
+  was wrong.
+
+  ⚠⚠ **CORRECTION 2026-08-24: I re-derived this row without triaging it first, and published a
+  `[B19-BACKDATE-2026-08-24]` tag for it.** That tag is **withdrawn** -- there is one closure here
+  and it is the 08-22 one. Two things make the mistake worth writing down rather than quietly
+  deleting: I had spent the same day establishing that *this register is systematically stale and
+  every row must be grepped before it is run* (B6 6-of-9, B7 2-of-5, A1 7-of-9) and then did not
+  apply it to a row I found by accident; and **the existing rig is the better one** -- it stages
+  **three** files (`b19a` unlocked BEFORE the lock, `b19b` locked, `b19c` unlocked AFTER), where my
+  version had only the last two. `b19a` is what proves the sweep RAN, a control mine borrowed from a
+  different verb instead of owning.
+
+  ℹ️ The `b19` verb in `retention_backdate.py` is kept as a second, independent implementation
+  (it reaches the same verdict from a different rig), but `b19_locked_log.py` is the rig of record.
 
   ```
   planted  ZZRET-aaa-held.log   (held open, sorts FIRST)
@@ -11295,10 +11309,52 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   the very shape this rig exists to avoid. It is now bounded to lines written after the fixtures were
   planted, and it **fails** if the count is not 1.
 
-  ✅ **This also closes AF11 step 6's negative control** — *"backdate a library past 21 days and
-  restart; it must still be there (`maxAgeDays: 0`, same as `Bookmarks\`)"* — verified at **-400 days**,
-  alongside a must-die case in the same sweep, which is what makes it a control rather than an
-  observation.
+  ⚠ **CORRECTION: AF11 step 6's retention clause was NOT closed by this run -- it was already
+  closed 2026-08-20** by `tools/verify/l10_step6_age_sweep.py`, credited at todo.md:4289. That rig
+  had already planted the identical pair (a 30-day `TeleportCoords\` file that must survive against
+  a 30-day `Snapshots\` group that must die) and states the same reason in the same words: *"the old
+  file survived is equally well explained by the sweep never running at all"*. The claim that this
+  run closed it is withdrawn.
+
+  ℹ️ What IS new here, stated narrowly so it is not re-inflated later: the **mixed-age group** pair
+  (`.db` at -25d kept alive by a `-wal` at -1d) -- `l10` plants a group of one uniform age, so the
+  group-newest rule itself was untested -- and the `snapshots-…` prefix guard.
+
+  ### ✅ The last-access hazard, which NEITHER existing rig could test `[RETENTION-ATIME-2026-08-24]`
+
+  CLAUDE.md's app-data rule says the sweep must key on **`LastWriteTimeUtc`, stamped by the store on
+  use — never last-access**, because NTFS last-access updates are **on by default**
+  (`fsutil behavior query DisableLastAccess` = 2), so any AV / backup / indexer read would make every
+  file look like today and the sweep would silently never fire. That is a severe, silent failure and
+  it was **untested**.
+
+  ⚠ **It was untested for a structural reason worth naming: every rig set both stamps together.**
+  `l10_step6_age_sweep.py` and this rig's other cases all use `os.utime(p, (t, t))`, so a sweep
+  reading the WRONG stamp passes them identically. `l10`'s own header calls that "fine" — and it is
+  fine for what `l10` tests, but it means the hazard could not be caught there.
+
+  The case that catches it: `snapshots.ZZRETATIME.db` with **mtime -30d and atime = NOW**. It
+  **died**, so `LastWriteTime` is what is read. The rig now runs 8 cases and the log witness count is
+  **derived** from the doomed set rather than hardcoded — it was a literal `deleted 1` until this
+  case became the second doomed group, and it duly went red against a perfectly correct sweep. A
+  stale expectation is the same defect class this rig hunts, so that was fixed rather than bumped.
+
+  ### ⛔ STILL UNTESTED: there is a THIRD sweep, and it is an ATTRIBUTION HAZARD
+
+  Recon found that `Logs\` is swept by **two** independent subsystems, not one. Besides the C++
+  `Sein` pair, the UI's **`LoggingService`** runs its own retention from its constructor
+  (`App.axaml.cs:62`): `PruneAgedLogs` (`LoggingService.cs:83`, per category),
+  `CleanupOldLogFolders` (`:105`, whole folders, `dir.Delete(true)`), and `PruneOrphanedLogs`, all at
+  `Constants.LogMaxAgeDays`. **None of it is exercised above.**
+
+  ⚠ **And it deletes folders under the same `Logs\` root while logging nothing**, so a rig that has
+  both a game and the UI running cannot attribute a missing folder to either. The C++ arm above is
+  safe only because it ran with **no UI**, and the C# arm only because its fixtures live in
+  `Snapshots\` / `Bookmarks\` / `TeleportCoords\`, which `LoggingService` does not touch. ▶ A future
+  `LoggingService` arm must run with **no game injected**, and should cover the cases recon names:
+  the orphan sweep in the UI's own folder, the per-category sweep, the `*.log` glob guard, and
+  `zzrig-0.log` at 30 days — which must **die**, because `-0.log` is a slot name and the live set is
+  only `{init,pipe,view}-0.log`.
 
 - ✅ **The proxy dedup guard says when it is not armed** (build 2603, B47) — **VERIFIED 2026-08-05,
   build 2645 — and the 2026-08-04 ✅ was credited to the WRONG SESSION.**

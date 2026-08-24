@@ -320,6 +320,16 @@ CS_CASES = [
      "the fresh sibling that keeps the whole group alive"),
     ("Snapshots", "snapshots-ZZRETNOTOURS.db", -400.0, False,
      "no dot after the prefix, so GameKeyOf refuses it -- never a candidate"),
+    # ⚠ THE LAST-ACCESS CASE. Fresh atime, 30-day mtime: it dies only if the sweep reads
+    # LastWriteTime. CLAUDE.md warns that keying on last-access would silently disable
+    # retention forever -- NTFS atime updates are ON by default, so any AV/backup/indexer
+    # read makes every file look like today. Neither this rig's other cases nor
+    # tools/verify/l10_step6_age_sweep.py could catch that: both set atime and mtime
+    # TOGETHER via os.utime(p, (t, t)), so a sweep reading the wrong stamp passes them
+    # identically. l10's header calls that "fine"; it is fine for what l10 tests, but it
+    # does mean the hazard CLAUDE.md names was untested until now.
+    ("Snapshots", "snapshots.ZZRETATIME.db", -30.0, True,
+     "mtime -30d but atime NOW -- dies only if LastWriteTime is what is read"),
     ("Bookmarks", "bookmarks.ZZRETBM.json", -400.0, False,
      "Bookmarks retention is 0 = OFF"),
     ("TeleportCoords", "teleport-coords.zzretcoord.json", -400.0, False,
@@ -339,6 +349,9 @@ def csharp():
             continue
         f = write(d / name, "{}\n")
         backdate(f, days)
+        if "ZZRETATIME" in name:
+            # mtime stays OLD, atime becomes NOW -- the whole point of this case.
+            os.utime(f, (time.time(), time.time() + days * DAY))
         planted.append((f, must_die, why))
     if not planted:
         raise SystemExit("csharp: no target folder exists; open the UI once first")
@@ -388,10 +401,17 @@ def csharp():
     if hits:
         for h in hits:
             say("witness (this run): %s" % h)
-        # The COUNT is the sharp part: one doomed group -> "deleted 1".
-        if not any("deleted 1 " in h for h in hits):
-            fails.append("the sweep logged a deletion count that is not 1, but exactly "
-                         "one fixture group was doomed -- something else was swept too")
+        # The COUNT is the sharp part, and it is DERIVED, never hardcoded. It was a
+        # literal "deleted 1" until the last-access case became the second doomed group,
+        # and the check duly went red on a correct sweep -- a stale expectation is the
+        # same defect class this rig hunts, so it now counts the doomed Snapshots
+        # fixtures instead.
+        want = sum(1 for f, m, _ in planted
+                   if m and f.parent.name == "Snapshots")
+        if not any(("deleted %d " % want) in h for h in hits):
+            fails.append("the sweep logged a deletion count other than %d, but exactly %d "
+                         "Snapshots fixture(s) were doomed -- something else was swept too"
+                         % (want, want))
     else:
         say("witness (this run): NONE -- no AppDataFolderMaintenance line since %s" % since)
         fails.append("the sweep left no log line for this run, so the only evidence is "
