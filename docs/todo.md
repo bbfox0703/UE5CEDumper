@@ -12371,7 +12371,47 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     Acceptance: enable See-Through, then (a) toggle off during motion, (b) toggle off while the game
     is paused/stalled, (c) yank the UI connection and (d) close the game — in **all four** every
     hidden actor must become visible again. A single actor left invisible is the failure, and it is
-    only visible on screen. ⬜
+    only visible on screen.
+
+    ### ✅ **arms (a) (b) (c) PASS 2026-08-24** `[M123-RESTORESET-2026-08-24]` — headless; (d) is unobservable
+
+    `py tools/verify/seethrough_restoreset.py`, DumperTest dev, DLL 3349.
+
+    | arm | disturbance | captured actor's own `bHidden` after |
+    |---|---|---|
+    | **(a)** | disable issued **mid-motion** (the disable<->Tick race) | `false` |
+    | **(b)** | disable issued while the **game thread is SUSPENDED** | `false` |
+    | **(c)** | the socket **yanked** (abrupt handle close, not `__exit__`) | `false` |
+    | (d) | close the game | ⛔ see below |
+
+    ⭐ **"Only visible on screen" is out of date, and that is what makes this headless.**
+    `seethrough_get_state` returns `hidden_actors` — the **addresses**, not just the tally — so each
+    actor's own `AActor::bHidden` bit (**+88, mask 0x80**, resolved at runtime) is read straight out
+    of the process with `ReadProcessMemory`. That is an independent witness: not the hider's count,
+    not anything the DLL computed for the answer.
+
+    ⭐ **The address set is captured BEFORE the disable, deliberately.** The worker re-picks
+    occluders every tick, so *"`hidden_actors` is empty afterwards"* is worthless — an empty list is
+    exactly what a worker that merely stopped choosing produces, un-hidden or not. The rig pins the
+    actors that were hidden at the moment of the disable and re-reads **those**.
+
+    ⭐ **Every arm carries its own negative control**: after the positive control, the rig waits
+    2 s doing nothing and requires the bit to be **still set**. Without it, "the bit is clear" is
+    equally well explained by the hide simply lapsing.
+
+    ⚠ **Each arm runs on a FRESH GAME, and that was found the hard way.** A fresh DumperTest hides
+    an occluder within a second, but after arm (a)'s 6x600-unit move **nothing is hideable any more**
+    — the camera faces open space. Arms (b) and (c) duly reported *"nothing was ever hidden"* and
+    failed for want of a SUBJECT, which reads exactly like a defect and is really a spent fixture.
+    ⚠ **And recalling a saved marker does NOT fix it**: `teleport_save_marker` then
+    `teleport_recall_marker` returns `code 0, tier 1` — a clean success — and the view is **still**
+    not hideable. The marker restores where the pawn stands, not what the camera looks at. Only a
+    relaunch is a state reset that actually works here.
+
+    ⛔ **Arm (d) is NOT RUNNABLE, and not for want of scheduling.** Once the process exits there is
+    no memory to read and *"is this actor visible"* has no referent. A rig that reported a pass there
+    would be asserting something unobservable. Recorded as structurally impossible rather than left
+    looking un-run.
   - ✅ **M4 — PASS 2026-08-23 `[M4-TOTZOMBIE-2026-08-23]`.** `tools/verify/m4_tot_latch_zombie.py`,
     DumperTest dev / DLL 3337, 60 live `DumperTestHolder`.
     | step | observed |
