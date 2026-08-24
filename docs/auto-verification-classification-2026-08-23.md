@@ -269,7 +269,7 @@ re-run the process-suspend form.**
   OCTOPATH has 273,956 objects but only **699 classes**, and the dissect's cost is one `callDLL`
   **per field**, so record the **element count** alongside the elapsed time or a cheap run reads as
   a proven bound. ⚠ Refresh the **stale winmm proxy** first or every number is the old binary's.
-- ⬜ **`B5` mailbox flavour** — ⚠ **probably mis-bucketed**: `mailbox_poke.py` drives the mailbox by
+- ✅ **`B5` mailbox flavour — CLOSED 2026-08-24** `[B5-MAILBOX-2026-08-24]`, and the mis-bucketing was confirmed: **no Cheat Engine was involved** — ⚠ **probably mis-bucketed**: `mailbox_poke.py` drives the mailbox by
   `WriteProcessMemory` with **no CE at all**, so this is bucket A, not B. The "3 CE `createThread`s"
   is inherited from the direct-export flavour and is the wrong instrument — the mailbox is
   asynchronous by construction, so one poke inside the window suffices. ⚠ It also has a third

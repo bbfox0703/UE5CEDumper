@@ -11757,6 +11757,64 @@ on it read dead memory.
   here it is a direct `UE5_Init` from CE Lua. Same entry point, same guard — but the mailbox flavour
   specifically is still unexercised.*
 
+  ### ✅ THE MAILBOX FLAVOUR IS CLOSED 2026-08-24 `[B5-MAILBOX-2026-08-24]` — `Mimic::EnsureInitialized` really is the second caller
+
+  The note above ends *"the mailbox flavour specifically is still unexercised"*. It is exercised now,
+  and **no Cheat Engine was involved** — which is also a correction to how the row was bucketed.
+
+  ⭐ **NOT a CE row.** `mailbox_poke.py` drives the mailbox with `WriteProcessMemory` and nothing
+  else, and `CommandRequiresInit` returns true for every command except `CMD_FOREGROUND`, so
+  `CMD_QUERY_PTR` reaches `EnsureInitialized` with no CE anywhere. The classification listed this
+  under *"Cheat Engine sitting"* and prescribed **3 CE `createThread`s** — that instrument is
+  inherited from the DIRECT-export flavour and is the wrong one here: the mailbox is asynchronous by
+  construction (the DLL's own poller thread dispatches it), so **one** poke inside the window is
+  enough. Category A, not B.
+
+  **Fixture:** `tools/verify/b5_mailbox_race.py` — a hardlinked copy of DumperTest Development at
+  `D:\ZZProxyB5` with our real `version.dll` proxy dropped beside the exe (`DumperTest.exe` imports
+  `VERSION.dll`, confirmed by reading its import table). Launching it gives the row's precondition
+  for free, confirmed rather than assumed:
+
+  ```
+  DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)
+  PRE-RACE: initState=2 (READY)   objects=0   gobjects=0x0   gnames=0x0
+  ```
+
+  **All four PASS conditions, in one log window** (reproduced twice, 12:33 and 12:35):
+
+  ```
+  12:35:19.685 UE5_Init: Starting initialization...                      <- exactly ONE
+  12:35:19.816 Mailbox: auto-initializing (UE5_Init)...                  <- EnsureInitialized, the 2nd caller
+  12:35:19.816 UE5_Init: init already in progress on another thread — tid=39136 is waiting (guard working, not an error)
+  12:35:21.253 UE5_Init: Complete (UE504, GObjects=0x7FF7DFDFAAA0, GNames=0x7FF7DFD0DD40, Objects=25212)
+  12:35:21.254 UE5_Init: tid=39136 resumed after waiting (first caller succeeded — returning its result, no second scan)
+  ```
+  …and the mailbox command itself completed normally — `result=0` after **1443 ms**, i.e. it blocked
+  for the scan and shared its result rather than erroring or re-scanning.
+
+  ⚠⚠ **THE CONCURRENCY HAD TO BE CONSTRUCTED — the note above says so, and ignoring it cost two
+  runs.** DumperTest's scan window is **1.57 s** (25,212 objects), less than half Elliot's 3.3 s at
+  85,068. Spawning `mailbox_poke.py` as a PROCESS costs ~0.5–1.0 s of interpreter start **plus a
+  nested spawn for `mailbox_addr`** — more than the whole window, and the first attempt duly landed
+  after the scan and produced the documented no-lines-at-all shape. The fix is to resolve the mailbox
+  address and open the process handle **before** anything starts, leaving only the
+  `WriteProcessMemory` inside the window: the poke then began at **+140 ms** and blocked 1443 ms.
+
+  ⚠ **`call_export.py` cannot be the first caller in proxy mode**, and this is a second rig
+  limitation of the `[INJECTOWNER]` family: it looks for a module literally named `UE5Dumper.dll`,
+  but in proxy mode our code **is** `VERSION.dll`, so it reports *"UE5Dumper.dll is not loaded --
+  inject first"* on a process where our DLL is demonstrably running and serving a pipe. The pipe's
+  `trigger_scan` was used instead, which is also closer to the row's own wording (*"connect the UI,
+  click Scan, and while the scan is still running…"*). ⚠ `trigger_scan` returns **immediately**
+  (`started: true`) and runs the scan on a worker — it is not itself the blocking call.
+
+  ⛔ **A rig trap worth not re-paying: NEVER take a log byte-offset before a launch.** `<cat>-0.log`
+  **rotates on process start**, so a pre-launch offset points into the *previous* run's file. If the
+  new file is shorter the slice comes back empty; if it is longer the slice silently **drops this
+  run's opening lines** — which is what happened here, reporting `0` "Starting initialization" lines
+  while the raw log plainly had exactly one. The second shape is the dangerous one because it looks
+  like a failed run rather than a broken reader. Mark **after** the process exists.
+
 - ⬜ *(original instructions kept for the method)* **Provoke the concurrent `UE5_Init`** (build 2592, B5) — the active half of the passive check in
   ① above. Needs the **proxy** launch path, because that is what makes the second caller reachable:
   the proxy starts the pipe *without* scanning, so both cached pointers are 0 while the pipe is
