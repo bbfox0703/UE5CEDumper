@@ -13782,7 +13782,7 @@ but dist is '3345'"*) -- the stale-build guard doing its job on a deliberately m
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | ✅ **CLOSED 2026-08-24** `[G1-AMBER-2026-08-24]` — 不是在真遊戲上等到，而是用 staged DLL 造出來。舊步驟（「在 offset 偵測部分失敗的遊戲上打開 Pointers tab」）**永遠不可能失敗** — 本機沒有任何遊戲會部分失敗，所以永遠跑到 caveat 分支，「什麽事都沒發生」也算過。 | staged 3344：`validated=False` / `fallback_reason='unmeasured:elemsize'`，琥珀色橪幅**出現**；clean 3345：`validated=True`，橪幅**消失**。詳見 todo.md `[G1-AMBER-2026-08-24]`。 |
+| 1 | ✅ **CLOSED 2026-08-24** `[G1-AMBER-2026-08-24]` — 不是在真遊戲上等到，而是用 staged DLL 造出來。舊步驟（「在 offset 偵測部分失敗的遊戲上打開 Pointers tab」）**永遠不可能失敗** — 本機沒有任何遊戲會部分失敗，所以永遠跑到 caveat 分支，「什麼事都沒發生」也算過。 | staged 3344：`validated=False` / `fallback_reason='unmeasured:elemsize'`，琥珀色橫幅**出現**；clean 3345：`validated=True`，橫幅**消失**。詳見 todo.md `[G1-AMBER-2026-08-24]`。 |
 | 2 | 在在地化遊戲用 Property Search 找一個超過 50 bytes 的非 ASCII（CJK）StrProperty。 | 有結果列回來，preview 以「…」結尾（修正前是整個搜尋 0 列並報錯）。 |
 | 3 | Experimental → Detect Player Stats，先在候選 class 超過 30 的遊戲跑一次。 | 超過上限的列以琥珀色顯示「? not checked」（不是「· guess」），狀態列顯示「30 of N classes live-probed」。<br>⚠ 再到候選 class 少於 30 的遊戲跑一次，正確結果是完全沒有這個後綴——兩邊都做才算測完。 |
 
