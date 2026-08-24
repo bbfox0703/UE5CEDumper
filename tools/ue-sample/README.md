@@ -457,8 +457,29 @@ could be run and then had nothing to converge on. These five move on the same 1 
 all **on the HUD**, which for the raw three is the only way to learn their value at all: there is
 no reflection to ask, so you need the number off the screen before you can search for it.
 
-They are appended at the END of the class so every offset quoted elsewhere (`TickCount` +0x518,
-`FrozenInt` +0x51C, `Opt_Int_Set` +0x468, `Set_Int` +0x358) still points at the same field. That
+They are appended at the END of the class so every offset quoted elsewhere still points at the same
+field.
+
+> ⚠ **The rule is right; the four numbers this sentence used to quote were STALE, and had been for
+> some time.** It read *"`TickCount` +0x518, `FrozenInt` +0x51C, `Opt_Int_Set` +0x468, `Set_Int`
+> +0x358"*. Measured 2026-08-24 against **both** the pre-change and post-change packages, which agree
+> with each other and disagree with all four:
+>
+> | field | doc said | actually (both packages) |
+> |---|---|---|
+> | `TickCount` | +0x518 | **+0x6A8** |
+> | `FrozenInt` | +0x51C | **+0x6AC** |
+> | `Opt_Int_Set` | +0x468 | **+0x608** |
+> | `Set_Int` | +0x358 | **+0x368** |
+>
+> ⭐ **That old == new is the useful half**: appending seven UPROPERTYs moved **zero** existing
+> fields (136 → 143, `PropertiesSize` 2096 → 2328, all growth at the tail), so the rule works. The
+> numbers had simply rotted against an older build. `docs/todo.md:9972` attributes `0x518` to
+> `Map_IntToVec3f` rather than `TickCount`, which is the same rot seen from another angle.
+>
+> ▶ **Do not re-quote an offset here.** Nothing in `tools/verify/` hardcodes one — they resolve by
+> NAME at run time (`mutate_guard_selftest.py:58` calls `field_offset(c, inst, "TickCount")`), which
+> is why the rot cost nothing. Keep it that way: an offset in prose has no owner and no gate. That
 makes the raw three a **trailing** hole rather than an interior one — the easier case for hole
 detection, but still inside `PropertiesSize`, and the interior case is already covered by the
 static `RawInt` / `RawFloat` / `RawDouble`.
