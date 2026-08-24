@@ -9554,6 +9554,74 @@ container kind, truncated & full).
 | 1 | Live Walker → drill into a `TSet` / `TMap` / `TArray<obj>` with **> 128** entries | Breadcrumb AND header read `⚠ showing 128 of N`; a status line names the **Array Limit** slider |
 | 2 | Drill into a container with **≤ 128** entries | No `showing…` badge anywhere and no status line (common case stays clean) |
 | 3 | Raise the toolbar **Array Limit** slider, re-open the same big container | The shown count rises (e.g. `showing 256 of N`); once the cap ≥ N the badge disappears entirely |
+
+### ✅ CONTAINERCAP steps 1-3 CLOSED 2026-08-24 `[CONTAINERCAP-LIVE-2026-08-24]` — all three disclosures, on the AOT build
+
+`dist/UE5DumpUI.exe` **v1.0.0.3338, the 54.7 MiB Native-AOT binary** (sha256 `1d510af3…`), DumperTest
+Shipping (UE504, 24,478 objects), DLL 3338. Live Walker → `DumperTestActor0` → `Set_Big`
+(`SetProperty {Set: 199, IntProperty}` @ `0x558`).
+
+| step | what was done | result |
+|---|---|---|
+| **1** | drill into `Set_Big` at the default cap | breadcrumb `SetBig {Set: 199, IntProperty} ⚠ showing 128 of 199`; header `Set<IntProperty> Set_Big ⚠ showing 128 of 199`; status `Showing the first 128 of 199 entries — raise the "Array Limit" slider in the toolbar and re-open this container to read more.` ✅ all three |
+| **2** | `Set_Int` (3 entries) as the clean control | breadcrumb `SetInt {Set: 3, IntProperty}`, header `Set<IntProperty> Set_Int`, **no status line at all** — every disclosure empty on the non-truncated case ✅ |
+| **3a** | Array Limit **128 → 64**, re-open | `⚠ showing 64 of 199` in breadcrumb, header and status — **the count tracks the slider** ✅ |
+| **3b** | Array Limit **64 → 256** (≥ 199), re-open | **badge absent everywhere**, no status line, and the grid runs to `[199] = 9199` ✅ |
+
+⭐ **Incidental confirmation of the A2/M2 fixture:** the element list goes `[4] → [6]` — index **5**
+(value 9005) is the low index the sample removes after the `TBitArray` spills past its 128-bit inline
+buffer. Its absence is the walker reading the **heap** copy rather than the inline words frozen at
+spill time, which is the thing `Set_Big` was built to catch.
+
+⚠ **The step-3 wording is only half-reachable on this fixture.** *"The shown count rises (e.g.
+`showing 256 of N`)"* cannot be seen with N=199, because the slider is exponential — 128 → 256 jumps
+straight past it. The substance of that clause (the shown count follows the cap) was measured in the
+**other** direction instead, 128 → 64, which is the same claim and is reachable.
+
+#### ⚠ NEW FINDING `[CAPREFRESH-2026-08-24]` (LOW) — **Refresh** updates only ONE of the three truncation disclosures
+
+Found while running step 3, by pressing **Refresh** instead of re-opening. Both directions measured
+on the same container:
+
+| sequence | breadcrumb | header | status line |
+|---|---|---|---|
+| navigate at 64, raise to 256, **Refresh** | **`⚠ showing 64 of 199`** (stale) | *(cleared)* | *(absent)* |
+| navigate at 256, lower to 64, **Refresh** | **no badge** (stale) | `⚠ showing 64 of 199` | **absent** |
+
+⭐ **The second row is the one that matters: the breadcrumb silently says the container is complete
+while 135 of 199 entries are missing.** That is the exact defect `[CONTAINERCAP-2026-08-18]` was
+written to remove — *"nothing distinguished a complete 128-entry set from the first 128 of 199"* —
+reintroduced through the Refresh path.
+
+**Mechanism, and it is systematic rather than a one-off** (`LiveWalkerViewModel.cs`, every
+`ContainerTruncation` call site mapped to its method):
+
+```
+NavigateToArrayContainerAsync   BadgeSuffix(crumb) + StatusLine    <- runs ONCE, at navigation
+NavigateToMapContainer          BadgeSuffix(crumb) + StatusLine
+NavigateToSetContainer          BadgeSuffix(crumb) + StatusLine
+NavigateToDataTableContainer    BadgeSuffix(crumb) + StatusLine
+PopulateArrayContainerFields    BadgeSuffix(header) only           <- runs on navigation AND Refresh
+PopulateMapContainerFields      BadgeSuffix(header) only
+PopulateSetContainerFields      BadgeSuffix(header) only
+PopulateDataTableRowFields      BadgeSuffix(header) only
+```
+
+The crumb label is **baked into the `BreadcrumbItem` at push time** and the status line is written
+only from the `Navigate*` path, so a re-populate cannot move either. **No `Populate*` method calls
+`StatusLine` at all.** Array, Map, Set and DataTable all share the shape.
+
+**Fix shape** (not applied — this session verifies): move the badge + status computation into the
+`Populate*` methods, or have Refresh update the *current* crumb's `Label` from the same helper the
+header uses. The pure helper already exists (`ContainerTruncation`), so both disclosures can be
+derived from one call rather than computed on two paths — which is audit #4's root cause verbatim,
+*the report and the reality are computed by different code paths*.
+
+**Severity LOW**: the header — the most prominent of the three — is always correct, and the user has
+to change the Array Limit *and* press Refresh rather than re-open to reach it. It is filed because
+the row's own acceptance treats all three disclosures as load-bearing ("Breadcrumb **AND** header …
+**and** a status line"), and because the under-reporting direction is the one the original defect was
+about.
 - ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
   title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
   Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
