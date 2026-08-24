@@ -277,7 +277,7 @@ re-run the process-suspend form.**
   early-returns and **no log lines appear at all** — that is a staging miss, never a result.
 
 ### B7. Misc UI — **5**
-`Dump Explorer` identity gate cases (2) and (3) — case (3)'s "needs an actual DQ7R patch" is wrong: the gate keys on module name + `pe_hash`, so flipping one padding byte in a copied exe manufactures it in a minute · ~~`Solide capped badge`~~ (CLOSED 2026-08-24, was already verified 3x) · `B16` Group/Map sort columns · `b637/b644` Return Value diagnostic strings · `G1` amber banner (staged DLL, UI reads it).
+~~`Dump Explorer` identity gate cases (2) and (3)~~ **BOTH CLOSED** — (2) already was, on 2026-08-17 `[GRP4-UI-2026-08-17]`; (3) closed 2026-08-24 `[DUMPGATE-C3-2026-08-24]`. This entry's claim was RIGHT and cheaper than it guessed: no copied exe needed, flipping one hex digit of `pe_hash` **in the dump's meta line** is enough, because the gate only string-compares that line · ~~`Solide capped badge`~~ (CLOSED 2026-08-24, was already verified 3x) · ~~`B16` Group/Map sort columns~~ (CLOSED 2026-08-24 `[B16-GROUPMAP-2026-08-24]`) · `b637/b644` Return Value diagnostic strings · `G1` amber banner (staged DLL, UI reads it).
 
 ---
 

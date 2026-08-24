@@ -12129,7 +12129,46 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   `meta.module` do agree on the same game despite coming from different producers. **Cases (2) and
   (3) are still ⬜**: (2) load that dump with a *different* game connected → must refuse and name both
   sides; (3) load a pre-patch dump of the same game → must match **with** the "Different build" caveat.
-  Note (3) needs an actual DQ7R patch to come along, so it is opportunistic, not schedulable.
+
+  ### CLOSED 2026-08-24 -- case (2) was already closed; case (3) was closed today `[DUMPGATE-C3-2026-08-24]`
+
+  **Case (2) -- CLOSED 2026-08-17, uncredited here until today.** `[GRP4-UI-2026-08-17]`
+  (todo.md:8517) dumped from DumperTest **Development** and loaded it with **Shipping** connected
+  (24,445 objects vs 25,179 -- a genuinely different binary). The refusal **named both modules**, the
+  *In current game* list was **empty**, and all 82,385 rows read *"Not checked yet"* rather than *"Not
+  in current game"*. That is this bullet's case (2) end to end.
+
+  **Case (3) -- CLOSED 2026-08-24.** DumperTest Development, UE504 / 25,212 objects, AOT-trimmed
+  `dist\UE5DumpUI.exe` 54.7 MiB build 3343. Rig: `tools/verify/dumpgate_case3.py`.
+
+  | dump loaded | status line, verbatim off the screen |
+  |---|---|
+  | the export itself (**control**) | `Live match: 3,947 class(es) in the current game (82,665 of 82,665 rows matched).` |
+  | same file, `pe_hash` flipped **one hex digit** | **`Different build of the same game -- offsets may have moved. `**`Live match: 3,947 class(es) in the current game (82,665 of 82,665 rows matched).` |
+
+  The two loads differ by **one character of input**, in one session against one game, so the gate is
+  shown *choosing between branches* rather than merely rendering a literal. It still matched (3,947
+  classes, 82,665 of 82,665, *Not in current game -- 0*), which is the deliberate design: `pe_hash` is
+  per-build, so refusing here would reject a dump the user took of this very game last week.
+
+  ⛔ **"Needs an actual DQ7R patch ... opportunistic, not schedulable" WAS WRONG, and the gate's own
+  source says why.** `DumpExplorerViewModel.cs:396-403` is three **plain string comparisons** over
+  `meta.module` and `meta.pe_hash` as read from the dump's first line; nothing re-hashes the running
+  exe at match time. Flipping one hex digit in that line manufactures "a different build" exactly as
+  far as the gate can tell -- a real patch would be a slower way to produce the same two strings. Cost
+  was about a minute, against a wait of months.
+
+  ⚠ **THE TRAP THAT WOULD HAVE FAKED THIS PASS, disarmed BEFORE the run rather than after.** The
+  tier-2 branch picks this caveat only when **both** hashes are non-empty and differ; if **either**
+  side is empty it falls through to *"Build identity unknown (no pe_hash) -- matched on module name
+  only."* Both are amber caveats in the same label, so a run that never checked the live hash can
+  photograph the **wrong branch** and file it as a pass. So the live hash was read from the pipe
+  first: `pe_hash 6A8AA8DF10F1F000`, len 16, non-empty -- and the dump's meta line carried the
+  **identical** value, which is also the case-(1) premise (the two producers -- live DLL
+  `Fern.cpp:1322` vs `DumpAllService.cs:372` -- do agree) confirmed rather than assumed.
+
+  ℹ️ Neither case's *refusal* text was re-read today; case (2)'s was read on screen on 08-17, and
+  case (3) never refuses by design.
 
 - **Solide pool-truncation badge — `⚠ capped` / "cap reached, more exist unheld"** (build 2531+;
   DLL `Solide`/`Fern` + Property Search + Teleport Stealth card). `Aura` already computed
