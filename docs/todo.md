@@ -12515,6 +12515,25 @@ statistics term in `Linie.cpp:31` (Welford's running `M2`), and the `Map="M2"` t
 audit #5 **D3**/Aura's, which was never renamed, so it stands.
 
 - **`b648` — GameThreadDispatch hook validation on two more engines** (moved here from the 繁中
+
+  ### ✅ **PASS 2026-08-24** `[B648-TWOENGINES-2026-08-24]` — both engines, DLL 3350
+
+  | title | UE | objects | the line |
+  |---|---|---|---|
+  | EVERSPACE 2 | **505** (5.5) | 600,268 | `validation OK -- hook fired **2358** times in 1500ms` |
+  | The Artisan of Glimmith (Geri) | **427** (4.27) | 24,226 | `validation OK -- hook fired **1170** times in 1500ms` |
+
+  Both in `proxy:version.dll` mode, one game at a time. ⭐ **A second, independent witness in the
+  same run**: `pe_profile_start` then `pe_profile_get` attributed the firings to **3 distinct
+  UFunctions** on each title, so the hook is genuinely DISPATCHING and not merely "installed" -- the
+  count in the log line and the profiler's attribution are computed by different code.
+
+  ⚠⚠ **BOTH TITLES WOULD HAVE MEASURED A THREE-WEEK-OLD DLL.** ES2's deployed proxy answered the
+  pipe at build **3337** while `dist` was 3350, and a proxy owns the pipe, so the fresh injection was
+  a no-op -- `pipe_client`'s trap 1, caught by `assert_build()`. Geri's was stale too. Both were
+  refreshed and the games relaunched before any number below was taken.
+  ⚠ The stale proxy was **byte-size-identical** to the current one (2,898,432 B both), so a size
+  comparison would have called it current. Only the hash caught it.
   checklist 2026-08-24, because it is **not human-only**). Do one instance invoke on **ES2**
   (UE5.5) and one on **Geri** (UE4.27). PASS = the log carries
   `GameThreadDispatch: validation OK — hook fired N times`, and instance invokes that previously
