@@ -13,6 +13,8 @@
 
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
+#include <cwchar>
 #include <string>
 
 static int g_pass = 0;
@@ -565,6 +567,53 @@ static void Test_TruncateUtf8_FourByteSequenceAndMalformedInput() {
     EXPECT("malformed input is still shortened", out.size() < junk.size());
 }
 
+// ----- [NONASCIILS-2026-08-24] — why a wide path must NEVER reach Sein via %ls -----
+//
+// Sein::WriteLog formats with a NARROW vsnprintf (Sein.cpp), and every DLL target —
+// this test executable included — is /MT, a statically linked CRT whose locale is
+// PRIVATE to the module and is always "C". So the behaviour pinned below is not
+// host-dependent and cannot be changed by the game or by Cheat Engine.
+//
+// ⭐ THESE ARE THE ASSERTIONS THAT CAN FAIL. They pin the CRT behaviour the fix exists
+// to route around, not the fix's own output — which is what makes them a control
+// rather than a restatement. Measured live 2026-08-24: a real ReShade dxgi.dll under
+// `D:\測試\…` produced a COMPLETELY BLANK log record from Methode.cpp, while the same
+// DLL at an ASCII path logged perfectly.
+static void Test_NarrowVsnprintf_DropsWideNonAscii() {
+    const wchar_t* wpath = L"D:\\\u6e2c\u8a66\\Game\\Binaries\\Win64\\dxgi.dll";
+
+    char buf[256];
+    std::memset(buf, 0x7F, sizeof(buf));   // poison, so "empty" is an observation not a default
+    int n = std::snprintf(buf, sizeof(buf), "path=%ls", wpath);
+    EXPECT("narrow %ls on a wide path with chars > 0xFF FAILS outright", n < 0);
+    EXPECT("...and leaves the buffer EMPTY — the ASCII prefix is lost too, so grepping "
+           "for a mangled path finds nothing at all", buf[0] == '\0');
+
+    // Same specifier, same buffer, ASCII input: fine. So the failure is about the
+    // CHARACTERS, not about %ls or about the buffer.
+    char ok[256];
+    int m = std::snprintf(ok, sizeof(ok), "path=%ls", L"D:\\Game\\Binaries\\Win64\\dxgi.dll");
+    EXPECT("the same %ls with an ASCII path succeeds", m > 0);
+    EXPECT_EQ_STR("...and renders exactly", std::string(ok),
+                  "path=D:\\Game\\Binaries\\Win64\\dxgi.dll");
+
+    // ⚠ THE SILENT HALF, and it is the nastier one: U+0080–U+00FF passes the C-locale
+    // cast and emits a RAW Latin-1 byte — invalid UTF-8 inside a UTF-8 log, with no
+    // error anywhere. Note this is exactly the ™/® class of name Methode.cpp's own
+    // comment cites; ™ (U+2122) is > 0xFF and so blanks the line instead.
+    char latin[256];
+    int k = std::snprintf(latin, sizeof(latin), "%ls", L"EVERSPACE\u00ae 2");
+    EXPECT("U+00AE does NOT fail the conversion", k > 0);
+    EXPECT("...it emits a bare 0xAE byte, i.e. invalid UTF-8 in a UTF-8 log",
+           std::string(latin, static_cast<size_t>(k > 0 ? k : 0))
+               .find(static_cast<char>(0xAE)) != std::string::npos);
+
+    // The replacement expression all four call sites now use.
+    EXPECT_EQ_STR("EncodeUtf16 renders the same path as valid UTF-8",
+                  Utf8Helpers::EncodeUtf16(wpath, std::wcslen(wpath)),
+                  "D:\\\xe6\xb8\xac\xe8\xa9\xa6\\Game\\Binaries\\Win64\\dxgi.dll");
+}
+
 static void Test_IsWellFormedUtf8() {
     bool multi = false;
     EXPECT("ASCII is well-formed",
@@ -782,6 +831,9 @@ int main() {
     Test_TruncateUtf8_AsciiCutsExactlyAtLimit();
     Test_TruncateUtf8_NeverSplitsAMultiByteSequence();
     Test_TruncateUtf8_FourByteSequenceAndMalformedInput();
+
+    // [NONASCIILS] — the CRT behaviour that makes %ls unusable for paths
+    Test_NarrowVsnprintf_DropsWideNonAscii();
 
     std::printf("---------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

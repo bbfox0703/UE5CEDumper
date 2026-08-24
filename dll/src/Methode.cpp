@@ -252,8 +252,21 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
             // A same-named module that is NOT ours: the genuine Windows copy, or
             // a third-party wrapper (ReShade, Ultimate ASI Loader, SpecialK…).
             // Worth logging — it is exactly the case that used to be misread.
-            LOG_INFO("CEPlugin: '%ls' is loaded but is not ours (path=%ls) — not a UE5CEDumper proxy",
-                     fileName, modPath);
+            //
+            // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] Sein formats with a
+            // NARROW vsnprintf (Sein.cpp:499) and every DLL target is /MT — a static CRT
+            // whose locale is PRIVATE to us and is always "C", so the host cannot change
+            // it. UCRT's %ls then returns EILSEQ for any wide value > 0xFF, printf sets
+            // _characters_written = -1, and the tail writes buffer[0] = 0: the WHOLE
+            // record is lost, ASCII prefix included, so grepping for a mangled path finds
+            // nothing at all. Measured on a real ReShade dxgi.dll under `D:\測試\…`: a
+            // blank line where this message should be, while the same DLL at an ASCII
+            // path logged perfectly. (U+0080–U+00FF is worse still — it passes the cast
+            // and emits a raw Latin-1 byte, i.e. invalid UTF-8 inside a UTF-8 log.)
+            const std::string nameU8 = Utf8Helpers::EncodeUtf16(fileName, wcslen(fileName));
+            const std::string pathU8 = Utf8Helpers::EncodeUtf16(modPath, wcslen(modPath));
+            LOG_INFO("CEPlugin: '%s' is loaded but is not ours (path=%s) — not a UE5CEDumper proxy",
+                     nameU8.c_str(), pathU8.c_str());
             continue;
         }
 

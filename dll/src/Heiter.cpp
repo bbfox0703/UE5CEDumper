@@ -176,9 +176,16 @@ static void AutoStartBody()
             const wchar_t* leaf = wcsrchr(hostPath, L'\\');
             leaf = leaf ? leaf + 1 : hostPath;
             if (IsCheatEngineExeName(leaf)) {
-                LOG_WARN("DllMain AutoStart: host process is '%ls' — Cheat Engine is never "
+                // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — and this leaf is
+                // NOT ASCII by construction: IsCheatEngineExeName anchors only the first 11
+                // characters (`_wcsnicmp(leaf, L"cheatengine", 11)`), leaving the rest free.
+                // Users rename CE builds routinely — `cheatengine-x86_64-SSE4-AVX2.exe` is
+                // itself the rename this gate was widened for — so `cheatengine-測試.exe`
+                // would lose the entire warning explaining why auto-start was skipped.
+                const std::string leafU8 = Utf8Helpers::EncodeUtf16(leaf, wcslen(leaf));
+                LOG_WARN("DllMain AutoStart: host process is '%s' — Cheat Engine is never "
                          "a scan target; skipping auto-start (CE plugin, not yet enabled, "
-                         "or the DLL was injected into CE by hand?)", leaf);
+                         "or the DLL was injected into CE by hand?)", leafU8.c_str());
                 g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
                 return;
             }

@@ -112,8 +112,12 @@ static uintptr_t TrySymbolExport(const char* mangledName) {
             if (addr) {
                 wchar_t modName[MAX_PATH] = {};
                 GetModuleFileNameW(modules[i], modName, MAX_PATH);
-                LOG_INFO("TrySymbolExport: Found '%s' in module '%ls' at 0x%llX",
-                         mangledName, modName, (unsigned long long)(uintptr_t)addr);
+                // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — Sein formats with
+                // a narrow vsnprintf, so a wide path with any character > 0xFF silently
+                // empties the WHOLE record. See Methode.cpp for the full note.
+                const std::string modU8 = Utf8Helpers::EncodeUtf16(modName, MAX_PATH);
+                LOG_INFO("TrySymbolExport: Found '%s' in module '%s' at 0x%llX",
+                         mangledName, modU8.c_str(), (unsigned long long)(uintptr_t)addr);
                 return reinterpret_cast<uintptr_t>(addr);
             }
         }

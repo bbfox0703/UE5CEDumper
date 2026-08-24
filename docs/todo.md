@@ -13736,7 +13736,7 @@ doing it while CE runs would be undone.
 > argument is the compile-time ASCII pipe name. Confirmed intact in the fixture's `pipe-0.log`; it is
 > a positive control for "`%ls` works when the input is ASCII", not evidence about non-ASCII.
 >
-> ### ❌ STEP 3 RUN AND **FAILED** 2026-08-24 `[NONASCIILS-2026-08-24]` (MED) — the prediction above is CONFIRMED, and the symptom is worse than it said
+> ### ✅ STEP 3 CLOSED 2026-08-24 — first RUN AND FAILED (`[NONASCIILS-2026-08-24]`, MED), then FIXED and re-verified the same day. The prediction was confirmed and the symptom was worse than it said
 >
 > ⬆ **The block above is superseded.** It was filed as a prediction *before* the run, deliberately.
 > The run has now happened: **UE5Dumper.dll registered as a CE plugin** (see below), CE 7.7 attached
@@ -13804,6 +13804,74 @@ doing it while CE runs would be undone.
 > **documented, expected behaviour**: [Methode.cpp:374-380](dll/src/Methode.cpp:374) spells out that
 > CE's BOOL "can be true on a real failure and false while the DLL is loaded and working", which is
 > precisely why the code does its own module walk. Not a defect; not filed.
+>
+> ### ✅ FIXED + RE-VERIFIED 2026-08-24 — `[NONASCIILS-2026-08-24]` closed, and **B29 step 3 now PASSES**
+>
+> **The fix: convert before logging, at four sites.** `Utf8Helpers::EncodeUtf16(...)` + `%s`, which is
+> what the DLL already does everywhere it gets this right.
+>
+> | site | why it needed it |
+> |---|---|
+> | [`Methode.cpp:255`](dll/src/Methode.cpp:255) | the row's own message. ⭐ `:260-261` already converted the *returned* values the same way — only the log line was left behind |
+> | [`Macht.cpp:520`](dll/src/Macht.cpp:520) | ⭐ **the most exposed of the four.** Despite the field name and the `in '%ls'` wording, `m.name` is a **full install path** (`GetModuleFileNameW`), and it is reached from the ordinary **MA1 fallback** — no CE plugin, no third-party DLL, just a game installed under a non-ASCII folder. ⚠ needed a new `#include "Utf8Helpers.h"` |
+> | [`Genau.cpp:115`](dll/src/Genau.cpp:115) | `TrySymbolExport` logs the module path |
+> | [`Heiter.cpp:179`](dll/src/Heiter.cpp:179) | ⚠ **not ASCII-by-construction**, contrary to first reading: `IsCheatEngineExeName` anchors only the **first 11 characters**, so `cheatengine-測試.exe` would lose the entire warning explaining why auto-start was skipped |
+>
+> ⛔ **NOT changed, and the reasons are worth keeping** so nobody "finishes the job": `Genau.cpp:2645`
+> is `swprintf_s` with a **wide** format string (`%ls` is the native case there, `Sein` is not
+> involved); `Genau.cpp:2778`/`:2783` range over ASCII wide literals; `Fern.cpp:506` is the
+> compile-time ASCII pipe name; `Lugner*.cpp` ×4 log `GetSystemDirectoryW` paths. **4 of 13 `%ls`
+> sites**, not all of them.
+>
+> **THE RE-RUN — same fixture, same menu item, fixed DLL** (sha256 `0771fc02…`, 2,897,408 bytes,
+> loaded into CE from `dist\` and confirmed by module walk):
+>
+> ```
+> [11:56:46.289] [INFO] [CEP] CEPlugin: 'dxgi.dll' is loaded but is not ours
+>                (path=D:\測試\DumperTest\DumperTest\Binaries\Win64\dxgi.dll) — not a UE5CEDumper proxy
+> ```
+>
+> | | records naming a module | EMPTY records |
+> |---|---|---|
+> | before the fix, non-ASCII | 6 | **2** |
+> | ASCII control (unchanged) | 8 | 0 |
+> | **after the fix, non-ASCII** | **8** | **0** |
+>
+> The non-ASCII run now has exactly the ASCII control's shape. Step 3's expected result —
+> *"訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號"* — **holds**.
+>
+> **A CI-runnable regression test, and it was SHOWN ABLE TO FAIL.**
+> `dll/tests/utf8_helpers_test.cpp` gained `Test_NarrowVsnprintf_DropsWideNonAscii` (built by
+> `build.ps1 -Target Test`, and that target is **`/MT` like the DLL**, so it is a faithful CRT
+> replica). ⭐ It pins the **CRT behaviour the fix routes around**, not the fix's own output — which
+> is what makes it a control rather than a restatement:
+>
+> * `snprintf(buf, n, "path=%ls", L"D:\\測試\\…")` returns **< 0** and leaves `buf[0] == '\0'`
+>   (buffer poisoned with `0x7F` first, so "empty" is an observation, not a default);
+> * the **same specifier and buffer** with an ASCII path succeeds and renders exactly;
+> * ⚠ the silent half is pinned too: `L"EVERSPACE\u00ae 2"` **succeeds** and emits a bare `0xAE` —
+>   invalid UTF-8 inside a UTF-8 log, with no error anywhere;
+> * `EncodeUtf16` on the same wide path yields the expected UTF-8 bytes.
+>
+> ⭐ **Armed and observed failing**: flipping only the wide literal to ASCII fails **exactly 3** of the
+> assertions — the two CRT-failure ones and the `EncodeUtf16` byte comparison — while the ASCII
+> control and the Latin-1 case keep passing. Three failing rather than all seven is the point: a
+> blanket failure would have meant the test was one assertion written seven times. Reverted
+> byte-exactly (`git diff` = 52 insertions, 0 deletions); **265 pass / 0 fail**.
+>
+> ⚠ **`Macht.cpp` and `Genau.cpp` are closed BY CONSTRUCTION, not by live capture, and that is
+> deliberate.** Neither has ever been observed with a non-ASCII argument in the whole log corpus, and
+> forcing MA1/symbol-export on a non-ASCII-installed game is expensive and unreliable. They share one
+> formatter with the site that *was* measured, and the unit test pins that formatter. Said here
+> rather than implied, so nobody later reads this row as four live measurements.
+>
+> ℹ️ **The CE plugin was registered for this run and has been UNREGISTERED again** — CE's list is back
+> to the two entries it had (`AOBMaker_CEPlugin.dll` enabled, `CE-Handwire.dll` disabled). Re-enable
+> with `py tools/verify/ce_plugin_register.py register`. ⚠ It points at an **absolute path to
+> `dist\UE5Dumper.dll`**, never a copy under CE's folder, so there is no second artifact to go stale
+> (`[STALEDLL-2026-08-18]`); the trade is that **CE holds that file open while running**, so close CE
+> before `build.ps1 -Target DLL`. That fails loudly with a link error rather than silently with a
+> stale DLL, which is the right way round.
 
 ### ⚠ NEW 2026-08-24 `[INJECTOWNER-2026-08-24]` (MED) — `inject.py` still uses the pre-fix rule B29 removed from the DLL
 
