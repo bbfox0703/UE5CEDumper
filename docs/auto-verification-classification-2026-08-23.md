@@ -170,7 +170,7 @@ Then over one `pipe_client.py` session (UI **must** be disconnected — `kMaxPip
 Run the `wevtutil` Application query **before** each arm so the detector is shown able to report something.
 
 ### A3. ⭐ One DQ7R launch — the single highest-value A row
-**`[SEETHRUNOOP]` / `[SEETHRUTALLY]` non-regression.** The blocker on record is *"Tower of Mask and DQ7R are not runnable on this machine"* — **false since 2026-08-20**, and DQ7R was driven four more times on 2026-08-23 (`[A6-SPAWN-DQ7R-2026-08-23]`). The `ResolveToActor` rewrite has never been shown to still hide on a build where the *old* extraction worked. One `seethrough_arms.py run`. Same sitting also covers **FREEZESCOPE step 6** (B) and the **Solide capped badge** (B) — DQ7R has 1024-CAPPED pools.
+**`[SEETHRUNOOP]` / `[SEETHRUTALLY]` non-regression.** The blocker on record is *"Tower of Mask and DQ7R are not runnable on this machine"* — **false since 2026-08-20**, and DQ7R was driven four more times on 2026-08-23 (`[A6-SPAWN-DQ7R-2026-08-23]`). The `ResolveToActor` rewrite has never been shown to still hide on a build where the *old* extraction worked. One `seethrough_arms.py run`. Same sitting also covers **FREEZESCOPE step 6** (B). ~~the Solide capped badge~~ — **CLOSED, do not schedule**: verified three times already (`[SOLIDEHOLD-2026-08-22]` is decisive, DumperTest not DQ7R), credited in todo.md 2026-08-24.
 
 ### A4. Version/detection sweep — **4 rows**, one launch each
 - **G11 step 1** — Solarpunk and TQ2 sit at `versionDetectRev` 1/3/absent; copy `UE5CEDumper.{Machine}.json` aside, launch, `get_pointers`, diff. (Re-read todo.md:11357 first — the 12-title cache sweep may already discharge this.)
@@ -277,7 +277,7 @@ re-run the process-suspend form.**
   early-returns and **no log lines appear at all** — that is a staging miss, never a result.
 
 ### B7. Misc UI — **5**
-`Dump Explorer` identity gate cases (2) and (3) — case (3)'s "needs an actual DQ7R patch" is wrong: the gate keys on module name + `pe_hash`, so flipping one padding byte in a copied exe manufactures it in a minute · `Solide capped badge` · `B16` Group/Map sort columns · `b637/b644` Return Value diagnostic strings · `G1` amber banner (staged DLL, UI reads it).
+`Dump Explorer` identity gate cases (2) and (3) — case (3)'s "needs an actual DQ7R patch" is wrong: the gate keys on module name + `pe_hash`, so flipping one padding byte in a copied exe manufactures it in a minute · ~~`Solide capped badge`~~ (CLOSED 2026-08-24, was already verified 3x) · `B16` Group/Map sort columns · `b637/b644` Return Value diagnostic strings · `G1` amber banner (staged DLL, UI reads it).
 
 ---
 
@@ -325,7 +325,7 @@ Rows it closes:
 |---|---|
 | **Solide L4** (per-instance restore bases) | 300 instances with **distinct** `HolderValue = 1000+i` — the defect (one shared base restored to all) is undetectable with one instance |
 | **Solide L3** (substring vs derivation) | Child **must** be held, Decoy **must not** — no discriminating pair exists anywhere today |
-| **Solide `⚠ capped` badge** | 300 > 256 locally and deterministically, instead of hunting a class in a commercial title |
+| ~~**Solide `⚠ capped` badge**~~ **CLOSED — needs no fixture** | Was already closed by `[SOLIDEHOLD-2026-08-22]` using `ActorComponent::bIsEditorOnly` (519 instances, +221 inheritors) — a base class with many inheritors beats a spawner. The C1 fixture is unnecessary *for this row*. |
 | **AA2/AA3 step 4** (freeze across churn) | spawn A → freeze → destroy → **GC** → spawn B. ⚠ Same-class respawn does *not* test the guard; foreign-class slot reuse is the whole defect |
 | **AA12/AA13 step 3** (legitimate empty case must NOT untick) | `UDumperTestLateSpawn` has zero live instances *and no subclasses* — the previous attempt picked `NiagaraComponent`, which had two |
 | **U4 class-to-class recycling** | `Spawn_LastRecycledAddr()` hands the harness the reused address instead of making it guess |
@@ -392,5 +392,5 @@ PASS: `…` appears **inside** the quotes (test `"…" in preview`, not `endswit
 ## If you point me at exactly three things
 
 1. **The bookkeeping pass** on the ~12 stale-closed headings (30 minutes, prevents the next planner repeating five segments' worth of wasted analysis).
-2. **One DQ7R launch** — the See-through non-regression (`seethrough_arms.py`), FREEZESCOPE step 6, and the Solide capped badge, all in one sitting behind a blocker that stopped being true three days ago.
+2. **One DQ7R launch** — the See-through non-regression (`seethrough_arms.py`) and FREEZESCOPE step 6, in one sitting behind a blocker that stopped being true three days ago. (The Solide capped badge was listed here too; it is **CLOSED** and needs no launch.)
 3. **The spawner fixture (C1)** — one package build, seven rows, and it is the first DumperTest addition that creates *objects* rather than fields, which several future registers will inherit.

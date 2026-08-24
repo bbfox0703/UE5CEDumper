@@ -12018,7 +12018,7 @@ would have reported a permanent false FAIL against already-fixed code.
 green**. So this row needed only the OS-level half, which is why it never required the UI drive B1
 prescribes.
 
-### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Solide `capped` badge · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644
+### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644
 
 *Every ID this heading names is a live check that lives in the bullets below and nowhere else. The
 heading exists because this list spent months parented to whatever `###` happened to precede it —
@@ -12107,7 +12107,40 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   the badge and the status text. Secondary check: with the pool capped, `RemoveForce` must still
   restore cleanly (the base-prune guard is skipped while truncated — L4), so verify no field is left
   stuck at the forced value after Reset.
-  ⬜ unverified.
+  ### ✅ CLOSED 2026-08-24 — already verified THREE times, none of which reached this bullet
+
+  Not a run, a bookkeeping correction. The badge has been observed on screen three separate times:
+
+  | closure | tag | what it showed |
+  |---|---|---|
+  | **2026-08-22** ⭐ decisive | `[SOLIDEHOLD-2026-08-22]` (todo.md:5828) | DumperTest, dist 3314 — the positive case **and its negative control on one screen** |
+  | 2026-08-20 | `[DQ7R-CAP-2026-08-20]` (todo.md:8904) | DQ7R, a real commercial title |
+  | 2026-08-23 | `[SOLIDE-L3L4-2026-08-23]` (todo.md:1518) | closed alongside L3 + L4 |
+
+  The 08-22 evidence is what the acceptance clause above asks for, verbatim and in one refresh
+  (todo.md:5839) — including the "hold on a small class -> neither appears" half, which is the part
+  a broken build passes:
+
+  ```
+  X ActorComponent . bIsEditorOnly      (256 held)  WARN capped
+  X Actor          . bIsEditorOnlyActor  (58 held)
+  ```
+
+  Fixture chosen by measurement rather than guess: `ActorComponent::bIsEditorOnly` (+221 inheritors,
+  519 instances -> over cap) against `Actor::bIsEditorOnlyActor` (58 instances -> under cap). The
+  bullet's own worry — "most gameplay classes never reach the cap, which is exactly why this went
+  unnoticed" — was solved by picking a base class with many inheritors instead of hunting for
+  projectiles.
+
+  Discriminating, and unusually well for this register: each way the feature can break produces a
+  visibly different screen. The pre-fix defect this row exists for (Solide drops `rset.truncated`)
+  leaves the ActorComponent row with no badge; a flag stuck true adds one to the Actor row too. Both
+  rows rendered simultaneously is what excludes both.
+
+  ⚠ **Two slivers deliberately NOT claimed** (recorded rather than reopened): the status-line clause
+  "cap reached, more exist unheld" has never been read on screen — `[SOLIDEHOLD-2026-08-22]` says so
+  itself at todo.md:5846 — and the secondary `RemoveForce`-while-capped check was closed under L4,
+  not here.
 
 - **Copy CE Field drills object-pointer arrays — leaf + GWorld-path spine + dup-crumb dedup — DONE +
   MERGED (PR #323, builds 1364-1379).** LEAF (`SpawnedAttributes[2]` → `CharacterAttributeSet` →
