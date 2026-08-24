@@ -1006,12 +1006,35 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
 
 // Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
 // traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
+//
+// ⚠ `extern "C++"` is REQUIRED here, and the reason is easy to miss: this file wraps
+// everything from line ~124 to ~2314 in one big `extern "C" {` for the UE5_* exports,
+// so a helper declared in the middle of it inherits **C language linkage** even though
+// it is `static`. Returning `std::vector<FunctionInfo>` from a C-linkage function is
+// MSVC warning C4190 ("has C-linkage specified, but returns UDT which is incompatible
+// with C") — emitted on every clean build, and invisible on an incremental one because
+// Frieren.cpp only recompiles when it is touched. That is why it looked new after a
+// sync: nothing changed, the object cache had simply been hiding it.
+//
+// The twin of this function in Mimic.cpp:529 is byte-for-byte the same and does NOT
+// warn, because Mimic uses per-declaration `extern "C"` and never opens a block. That
+// asymmetry between two identical helpers IS the diagnosis.
+//
+// Nothing was ever broken at runtime — these are `static`, used only as function
+// pointers inside this translation unit, never called from C. But language linkage is
+// part of a function's TYPE in C++, so leaving it wrong is the kind of thing that
+// breaks on a compiler upgrade or under /permissive-, not the kind that stays cosmetic.
+//
+// Negative control 2026-08-24: removing this `extern "C++"` brings C4190 straight back
+// on the next Frieren.cpp recompile; restoring it silences it. Both directions observed.
+extern "C++" {
 static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
     return Ubel::WalkFunctions(cls);
 }
 static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
     return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
 }
+}  // extern "C++"
 
 // Resolve a UFunction by name on a class OR ANY OF ITS BASES.
 //

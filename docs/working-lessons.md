@@ -1497,6 +1497,72 @@ was never yours. (That is what settled it here.)
 about the console code page, this one is about which VS you entered. Getting the code page right
 does not save you from the wrong toolset.
 
+### 3.8c `build.cmd` runs Windows PowerShell **5.1**, and exactly ONE command in `build.ps1` is fragile there
+
+Two facts that only bite together.
+
+**1. `build.cmd` always spawns 5.1, whatever shell you type it in.** Its last line is
+`powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 …`, and on Windows `powershell.exe`
+is *always* Windows PowerShell 5.1 — PowerShell 7 is a **separate executable**, `pwsh.exe`. Launching
+`build.cmd` from pwsh 7 just makes pwsh the parent process. The transcript proves it out of the
+script's own mouth: `主應用程式: powershell -NoProfile …` / `PSVersion: 5.1.…` / `PSEdition: Desktop`.
+
+**2. Under 5.1, `Get-FileHash` is a script FUNCTION, not a cmdlet.** Measured over every command
+`build.ps1` calls — 26 of them — exactly one is not a compiled cmdlet:
+
+```
+Name          Type      Source
+Get-FileHash  Function  Microsoft.PowerShell.Utility
+```
+
+It lives in `Microsoft.PowerShell.Utility.psm1`, so resolving it forces PowerShell to **auto-load
+that module from disk at the moment of first call**. `Write-Host`, `Copy-Item`, `Get-ChildItem` and
+the other 24 are binary cmdlets already in the initial session state and never touch the module file.
+⇒ anything that blocks that one on-disk load — an AV real-time scan (**this machine runs
+Bitdefender**, §3.8), AMSI, a transient lock — raises `CommandNotFoundException` for `Get-FileHash`
+**and for nothing else in the script**. Which is precisely what happened on 2026-08-24: four
+consecutive `build.cmd publish` runs died at *"無法辨識 'Get-FileHash' 詞彙"*, immediately after the
+AOT publish had just written a 54 MB native binary — peak AV activity. It did **not** reproduce
+under an otherwise identical run minutes later, so it is intermittent, not a logic bug.
+
+⚠ **The version-dependence nearly hid it.** Under PowerShell 7 `Get-FileHash` *is* a compiled cmdlet,
+so probing from `pwsh` reports **zero** fragile commands and reads as an all-clear. Classify commands
+in the host that will actually run them.
+
+**Fix: remove the dependency, do not switch hosts.** `build.ps1` now computes SHA-256 through
+`System.Security.Cryptography` (always-loaded CLR, no module) via `Get-Sha256Hex`, verified
+case-sensitively identical to `Get-FileHash` on three files including the 54 MB exe.
+⛔ **Do NOT "fix" this by pointing `build.cmd` at `pwsh`** — `Microsoft.VisualStudio.DevShell.dll` is
+a .NET Framework assembly, and more importantly the `[Console]::OutputEncoding` pin at the top of
+`build.ps1` is load-bearing for `msvc_deps_prefix` (CLAUDE.md): change the host and a `.h` edit can
+silently stop triggering a rebuild. That trades a located, one-line problem for an unlocated one.
+
+⚠⚠ **CI runs the SAME `build.ps1` under a DIFFERENT PowerShell, so it structurally could not have
+caught this.** `.github/workflows/release.yml` invokes `./build.ps1 -Mode Publish` under
+`shell: pwsh` (every step in that file is `pwsh`), i.e. **PowerShell 7** — where `Get-FileHash` is a
+compiled cmdlet and the failure mode does not exist. Locally `build.cmd` gives it **5.1**. Keep that
+divergence in mind for any *other* `build.ps1` behaviour too: green CI says nothing about the host
+the maintainer actually builds in. (The `Get-FileHash` call in that workflow at `release.yml:79` was
+checked and left alone for the same reason — pwsh, and no AV on the runner.)
+
+### 3.8d An incremental build HIDES compiler warnings — a "new" warning after a sync usually is not new
+
+`.\build.cmd clean` and a from-scratch tree surfaced `Frieren.cpp(1009): warning C4190` that plain
+`build.cmd publish` never showed. Nothing had changed: read the Ninja step counts — `[1/11]` (no
+`Frieren.cpp` in the list, no warning), `[1/34]` (`Frieren.cpp` compiled, warning), `[1/83]` clean
+(compiled, warning). **A warning is emitted by a COMPILE, and Ninja only compiles what changed**, so
+a warning in an untouched file is invisible until something forces its TU to rebuild — which a repo
+sync, a header edit, or `clean` will do at an arbitrary later date. ⇒ *"this appeared after I synced"*
+is not evidence the sync caused it. Before hunting a cause, check whether that TU was compiled at all
+in the run that was quiet.
+
+The C4190 itself is worth knowing as a shape: `Frieren.cpp` wraps ~2,200 lines in one
+`extern "C" {` for the `UE5_*` exports, so a `static inline` helper declared inside it inherits **C
+language linkage** and returning `std::vector<FunctionInfo>` trips C4190. ⭐ **The diagnosis was the
+asymmetry**: `Mimic.cpp:529` holds a byte-identical twin that does *not* warn, because Mimic uses
+per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
+adapters; negative-controlled in both directions.
+
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
 "One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and

@@ -317,6 +317,48 @@ function Invoke-CppSelfTest {
     return $true
 }
 
+# SHA-256 without Get-FileHash. NOT a style preference — Get-FileHash is the ONE
+# fragile command this whole script uses, and it broke a Publish run on 2026-08-24
+# with "無法辨識 'Get-FileHash' 詞彙" (CommandNotFoundException), four times in a row,
+# right after the AOT publish wrote a 54 MB native binary.
+#
+# MEASURED, not guessed. Of the 26 commands build.ps1 calls, under **Windows
+# PowerShell 5.1** — which is what build.cmd launches — exactly one is not a
+# compiled cmdlet:
+#
+#     Name          Type      Source
+#     Get-FileHash  Function  Microsoft.PowerShell.Utility
+#
+# It is a PowerShell FUNCTION living in Microsoft.PowerShell.Utility.psm1, so
+# resolving it forces PowerShell to auto-load that module FROM DISK at the moment
+# of first call. Every other command here (Write-Host, Get-ChildItem, Copy-Item, …)
+# is a binary cmdlet present in the initial session state and never touches the
+# module file. So anything that blocks that one on-disk load — an AV real-time
+# scan (this machine runs Bitdefender), AMSI, a transient lock, module-path
+# shadowing — produces a CommandNotFoundException for `Get-FileHash` **and for
+# nothing else in the script**. That is exactly the observed failure.
+#
+# ⚠ The classification is VERSION-DEPENDENT and that nearly hid it: under
+# PowerShell 7 `Get-FileHash` is a compiled Cmdlet and the fragility does not
+# exist. Probing from `pwsh` reports "0 functions" and looks like an all-clear.
+# build.cmd invokes `powershell`, not `pwsh`.
+#
+# System.Security.Cryptography is in the always-loaded CLR, so this has no module
+# dependency at all. Output is byte-for-byte the same shape as Get-FileHash's
+# .Hash — UPPERCASE hex, no separators — which the callers rely on for both the
+# -ne comparison and Substring(0,12).
+function Get-Sha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+                                     [System.IO.FileAccess]::Read,
+                                     [System.IO.FileShare]::ReadWrite)
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($fs)) -replace '-', '') }
+        finally { $fs.Dispose() }
+    }
+    finally { $sha.Dispose() }
+}
+
 function Get-FileSize([string]$Path) {
     if (Test-Path $Path) {
         $size = (Get-Item $Path).Length
@@ -791,10 +833,11 @@ if ($Target -in "All", "UI", "Test") {
 
                     $srcExe  = Join-Path $publishDir "UE5DumpUI.exe"
                     $dstExe  = Join-Path $DIST_DIR   "UE5DumpUI.exe"
-                    $srcHash = (Get-FileHash $srcExe -Algorithm SHA256).Hash
-                    $dstHash = if (Test-Path $dstExe) {
-                                   (Get-FileHash $dstExe -Algorithm SHA256).Hash
-                               } else { "<missing>" }
+                    # Get-Sha256Hex, not Get-FileHash — see its definition for why that one
+                    # command is the only load-bearing fragility in this script.
+                    $srcHash = Get-Sha256Hex $srcExe
+                    $dstHash = if (Test-Path $dstExe) { Get-Sha256Hex $dstExe }
+                               else { "<missing>" }
 
                     # NB: $dstHash can be the literal "<missing>" (9 chars), so it is
                     # NOT safe to Substring(0,12) -- that would throw inside the very
