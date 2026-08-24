@@ -29,7 +29,12 @@ BUCKETS = [
      []),
     ("第 3 步 — 遊戲 ＋ Cheat Engine", "遊戲 + Cheat Engine",
      "還要開 CE 並載入 .CT。",
-     ["AA2 / AA3", "M1–M5"]),
+     # AA2/AA3 and M1–M5 were DELETED from the checklist 2026-08-24: AA2/AA3 closed end to
+     # end ([AA2-CONTRACT-AA3-STOP-2026-08-23] + [AA2-STEP4-CHURN-2026-08-23]) and M1–M5
+     # step 1 arm (b) closed ([SEETHRU-ARMS-AB-2026-08-23]) while its arm (a) is not
+     # human-only and moved to todo.md. The bucket is empty on purpose; the renderer omits
+     # an empty bucket, and the axis comment above says why the row itself stays.
+     []),
     ("第 4 步 — 需要特定條件的遊戲", "符合特定條件的遊戲",
      "要先找到符合條件的遊戲，而且要有人在裡面操作或判斷。",
      # MG2 closed in full 2026-08-23 [MG2-CONTAINER-2026-08-23] + the DataTable half
@@ -39,10 +44,14 @@ BUCKETS = [
      # V8 closed in full 2026-08-23 [V8-DLLHALF / V8-PAINTED]; its one remaining look
      # was done and the leftover ([V8PREVIEWCLIP-2026-08-23]) is a todo.md fix item,
      # not a "a human must judge this" checklist row.
-     ["B8（deferred", "V1a", "b719 freeze"]),
+     # B8 deleted 2026-08-24 ([B8-DEFERRED-2026-08-23]). b719's heading was cut down to
+     # "b719 —— Property freeze (Route B)" when b636/b637+644/b642 closed and b648 moved to
+     # todo.md, so the key had to shorten with it.
+     ["V1a", "b719"]),
     ("第 5 步 — 目前沒有可測的環境", "目前沒有",
      "⚠ 這一組**永遠是低優先**，即使登記表寫 MED —— 「找不到樣本」本身就是訊號。",
-     ["U2", "G3"]),
+     # G3 deleted 2026-08-24 ([G3-STAGE-2026-08-23], steps 3+4 closed by staging).
+     ["U2"]),
 ]
 
 CHARTER = """### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）

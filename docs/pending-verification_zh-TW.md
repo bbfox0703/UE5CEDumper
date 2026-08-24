@@ -21,13 +21,36 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 2 步 — 要注入一個執行中的遊戲** | 0 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 2 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 3 | 符合特定條件的遊戲 |
-| **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **7** | |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 0 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 2 | 符合特定條件的遊戲 |
+| **第 5 步 — 目前沒有可測的環境** | 1 | 目前沒有 |
+| **合計** | **3** | |
 
 > 這張表是**數出來的**，不要手改 —— 用 `tools/verify/zhtw_rebuild_buckets.py --apply`
 > 重建，它會從檔案本身重新數。第 0、1 步已經整組清空。
+
+### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
+
+**判準只有一條，而且要能被檢查:**
+
+> **一列留在這裡，當且僅當「Auto + Computer Use 沒辦法從頭到尾自己跑完」** ——
+> 需要人在遊戲裡做 Auto 做不到的動作、需要人用眼睛下判斷、或全世界根本沒有樣本。
+
+⚠ **這條判準以前不存在於這個檔案裡**，只存在於選材時的習慣 —— 檔案自己都寫過
+「`非人工`、`人工`、`肉眼` 這幾個字在本檔案裡一個都沒有」。**沒有寫下來的規則不會活過一次交接**，
+於是它慢慢變成 [todo.md](todo.md) 登記表的中文副本:重整前有 **31 項**、其中 **20 項**帶著證據標記
+(finding tag、`file:line`、log 行、日期化的 ✅)，平均每項 913 字。
+
+**重整做了三件事**（2026-08-22）:
+1. **21 項移回 [todo.md](todo.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
+   離線工具）。步驟表格**原封不動**搬過去，沒有刪掉任何東西，見那份文件的
+   「Verification steps migrated from the 繁中 checklist」一節。
+2. **只留 10 項**，就是下面這些。
+3. **CLAUDE.md 原本寫「先改 todo.md，再 mirror」** —— 一個 mirror 指令必然產出翻譯版，已改掉。
+
+⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 todo.md，不要寫在這裡。
+⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
+一律進 todo.md。這正是它上次走樣的方式。
 
 ### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
 
@@ -217,41 +240,9 @@ session 的順序很好用，保留。
 
 還要開 CE 並載入 .CT。
 
-### ⬜ AA2 / AA3 —— 凍結能撐過死亡/重生並在失聯時自行停手
-
-*build 2926 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 先做反向對照：注入舊版 DLL，配上新的 helper，啟動凍結。 | 必須被拒絕並顯示「the DLL is older than this script」。<br>⚠ 若照跑不誤，代表 contract 檢查沒生效，以下步驟全部無意義。 |
-| 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
-| 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
-
-### ⬜ M1–M5 步驟 1 —— See-through 開著時關閉遊戲，只剩 (a)(b) 兩種關法
-
-*優先度 **中** · 需要：有人在遊戲裡移動，或有辦法把遊戲弄到沒有回應*
-
-ℹ️ 同一列的 arm (c)(d) 與 M1–M5 步驟 2/3/4/5 都已通過；證據、finding id 與 rig 用法在 todo.md
-（`[SEETHRUNOOP-2026-08-22]`、`[SEETHRUTALLY-2026-08-22]`、`[SOLIDEHOLD-2026-08-22]`）。
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| a | Teleport 分頁開啟 See-through，確認 `hidden_count > 0`。接著在遊戲裡**持續移動**（讓 worker 正在 trace／隱藏／還原），**移動中**用視窗右上 ✕ 關閉遊戲。 | 遊戲乾淨結束。<br>log 沒有 `tick threw`；Windows 事件檢視器「Windows 記錄 → 應用程式」**零新增**錯誤。<br>⚠ `taskkill /F` 不算：那條路徑根本不會跑 DLL 的關閉流程，這一列要防的就是 `std::terminate` / `0xC0000409`。 |
-| b | 同樣開著 See-through，把遊戲弄到**畫面卡住／沒有回應**（大量載入、或按住標題列拖著不放），在卡住狀態下關閉遊戲視窗。 | 同上：乾淨結束、log 沒有 `tick threw`、應用程式記錄零新增。<br>⚠ 若跳出「這個程式沒有回應」而你按了「結束工作」，等同 `taskkill /F`，不算通過。 |
-
 ## 第 4 步 — 需要特定條件的遊戲
 
 要先找到符合條件的遊戲，而且要有人在裡面操作或判斷。
-
-### ⬜ B8（deferred 半） —— 遊戲執行緒安靜時關 Fly 仍會補回碰撞
-
-*優先度 **低** · 需要：背景時真的會停止 tick 的遊戲（有吃 t.IdleWhenNotForeground）。Elliot 背景仍在 tick，測不到。*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Teleport 分頁 → Fly ON + Noclip → 飛穿一道牆 → alt-tab 切到 UI 等超過 500 ms → 按 Disable。 | Disable 有被按到（不是靠關遊戲觸發）。<br>⚠ 關閉遊戲永遠測不到這半：關遊戲不會呼叫 UE5_Shutdown，Fly 的 disable 根本不執行。 |
-| 2 | grep `walk-0.log` 的 `Fly:`。 | 出現 `Fly: DISABLED but the pawn's collision is still OFF (game thread unresponsive)`，切回遊戲後再出現 `Fly: game thread resumed after N ms — pawn collision restored`。FAIL = 只有一行 `Fly: DISABLED`，之後角色掉出世界。<br>⚠ 不在 init-0.log；Dunste 的 LOG_CAT 被路由到 walk。 |
-| 3 | 回遊戲撞牆，並順便檢查 `Fly: collision disable deferred`。 | 角色被牆擋住；`deferred` 那行可以出現，但每次 stall 只能出現一次，不能連續刷。 |
 
 ### ⬜ V1a 第 2 步 —— NumericAll 結果量的橘色警告（第 1 步已於 2026-08-23 關閉）
 
@@ -264,16 +255,18 @@ session 的順序很好用，保留。
 |---|---|---|
 | 2 | 選 NumericAll 掃一個 0 / 1 / 255 這類小值。 | 橘色結果量警告出現，且結果數量還在人可以用的範圍。<br>⚠ 這一格是純 UX 判斷，沒有機械式 PASS 線——「警告有沒有出現」可以自動測，「數量能不能用」不行。 |
 
-### ⬜ b719 freeze / b648 PE / b636 fast path / b642 FPROPERTY_FLAGS / b637+644 return value —— 舊版 invoke、回傳值與屬性凍結的一次性複查
 
-*優先度 **低** · 需要：ES2 (UE5.5) 與 Geri (UE4.27)；屬性凍結那項要一款 NPC 會重生的遊戲（首選 Geri）。*
+### ⬜ b719 —— Property freeze (Route B) 的長時間體感
+
+*優先度 **低** · 需要：一款 NPC 會重生、且能換場景的遊戲。*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 在會重生 NPC 的遊戲上開 Property freeze (Route B)，觀察一段時間。 | tick 對 FPS 的影響可接受、重生時有重新掃描、換場景後 vtable liveness 守衛擋得住、多腳本並存不打架。 |
-| 2 | 在 ES2 (UE5.5) 與 Geri (UE4.27) 各做一次 instance invoke。 | log 出現 `GameThreadDispatch: validation OK — hook fired N times`，以前 timeout 回 `-5` 的 invoke 現在會成功。 |
-| 3 | 在活躍 session 比較 static-native PE fast path 與 game-thread dispatch 的延遲。 | 有狀態的 UFunction 仍走 dispatch，不會誤落進 fast path。 |
-| 5 | 各做一次 pointer-return 與 FString-return 的 invoke。 | pointer 回傳顯示 `0x` 前綴；FString 回傳顯示 "see After: dump above" 提示。 |
+
+⚠ 只有這一步留在本檔：它的 PASS 是「影響可不可接受」，那是人的判斷。同組原本的另外四步都已離開——
+b636、b637+644 於 2026-08-24 關閉，b642 於 2026-08-21 關閉，b648 不是「非人工不可」（它的 PASS 是
+grep 一行 log），已移到 todo.md。
 
 ## 第 5 步 — 目前沒有可測的環境
 
@@ -281,21 +274,12 @@ session 的順序很好用，保留。
 
 ### ⬜ U2 —— CPN 遊戲的 FName 陣列 stride
 
-*優先度 **低** · 需要：WITH_CASE_PRESERVING_NAME 開啟的 UE5.5+/5.7 遊戲。TQ2 實測 case_preserving=false（20-0 sweep），Solarpunk 亦為 false，DumperTest 因引擎旗標不可能；目前 30+ 款測過的遊戲中沒有任何一款符合。*
+*優先度 **低** · 需要：一款 WITH_CASE_PRESERVING_NAME 開啟的遊戲。*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 對候選遊戲注入後下 get_offsets，看 case_preserving（每款只要一次呼叫，可以便宜地掃很多款） | 找到 case_preserving=true 的遊戲<br>⚠ 必須同時看 probe_ran=true；probe_ran=false 時的 false 只代表還沒探測，不是結論 |
-| 2 | 若找到，Live Walker 展開任一 actor 的 Tags（TArray<FName>） | 每個元素都是完整正確的 FName；不是第二個之後從前一個的中段讀起（stride 16，非 8） |
-
-### ⬜ G3 —— Extra Scan → Apply 的 rescan 閘門
-
-*build 3121 · 優先度 **低** · 需要：有項目未解析（例如 GWorld 掃不到）才會觸發 Extra Scan → Apply 的遊戲；目前 34 款測試遊戲全部都能解析 GWorld。*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在可觸發的遊戲上按 Extra Scan，再按 Apply，然後 grep offsets-0.log 的 ValidateAndFixOffsets: Starting。 | 該行恰好出現一次。 |
-| 2 | 同一次 Apply 後 grep apply_rescan: Applied GEngine=0x。 | GEngine 先前未解析時，該行仍會出現。 |
+| 1 | 對候選遊戲注入後下 get_offsets，看 case_preserving（每款只要一次呼叫，可以便宜地掃很多款）。 | 找到 case_preserving=true 的遊戲。<br>⚠ 必須同時看 probe_ran=true，否則 false 只代表沒偵測。 |
+| 2 | 若找到，Live Walker 展開任一 actor 的 Tags（TArray<FName>）。 | 每個元素都是完整正確的 FName；不是第二個之後從前一個的中段讀起（stride 16，非 8）。 |
 
 -----
 

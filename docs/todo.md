@@ -1439,8 +1439,11 @@ finding, and I could not exclude an artifact of the run whose control was broken
 because if it ever reappears this is the second sighting, and the reproduction recipe plus the
 `write_mem` discriminator are written down.
 
-⚠ Step 4 is closed; **step 1 (old-DLL contract refusal) and step 5 (AA3, permanent rescan failure)
-remain open.**
+⚠ ~~Step 4 is closed; step 1 (old-DLL contract refusal) and step 5 (AA3, permanent rescan
+failure) remain open.~~ **STALE — all three closed.** Step 4 `[AA2-STEP4-CHURN-2026-08-23]`;
+steps 1 and 5 `[AA2-CONTRACT-AA3-STOP-2026-08-23]` (todo.md:1262), whose body states *"AA2/AA3
+is closed end to end"*. This sentence sits inside the older step-4 section and was superseded by
+the newer one inserted above it — it re-opened the row for two readers before being caught.
 
 ### ✅ AA12/AA13 step 3 CLOSED 2026-08-23 `[AA12-STEP3-EMPTY-2026-08-23]` — the legitimate empty case, with a negative control
 
@@ -5912,6 +5915,21 @@ AFTER RELEASE
 Same probe, same address, opposite answer. Without it, "0x02 came back" is only evidence that
 *something* writes there.
 
+
+> ### ⭐ MOVED HERE FROM THE 繁中 CHECKLIST 2026-08-24 — arm (a) re-scoped, and it is NOT human-only
+>
+> The 繁中 file's *M1–M5 步驟 1* section was deleted 2026-08-24 because arm (b) is closed exactly as
+> written and arm (a) fails that file's one rule: **a row belongs there only if Auto + Computer Use
+> cannot finish it.**
+>
+> ⚠ **But arm (a) is not the arm that closed.** `[SEETHRU-ARMS-AB-2026-08-23]` ran
+> `tools/verify/seethrough_arm_a.py`, which tests *"moving RESTORES a hidden actor"*. The 繁中 arm (a)
+> was *"close the game **while** moving"* — a different question, and still open.
+>
+> ▶ **It needs one rig that concatenates two that already work**: the movement loop
+> (`seethrough_arm_a.py:97-99`, `teleport_relative` over the same pipe connection that owns the
+> See-through session) and the posted close (`seethrough_arm_b.py:147-148`). No person required.
+> Recorded here rather than dropped with the section.
 ℹ️ ✅ **Step 1 (See-through's four disable arms) is CLOSED 2026-08-23** — arms (c)+(d) passed
 2026-08-22, arms **(a)** and **(b)** on 2026-08-23, see `[SEETHRU-ARMS-AB-2026-08-23]` below.
 ✅ **Step 3 (close the game with a Solide hold live) is CLOSED 2026-08-23
@@ -12448,6 +12466,15 @@ statistics term in `Linie.cpp:31` (Welford's running `M2`), and the `Map="M2"` t
 `CoordCsvCodecTests.cs:346` / `CoordLuaParserTests.cs:81`. `A2` on `DumperTestActor.h:139,164` is
 audit #5 **D3**/Aura's, which was never renamed, so it stands.
 
+- **`b648` — GameThreadDispatch hook validation on two more engines** (moved here from the 繁中
+  checklist 2026-08-24, because it is **not human-only**). Do one instance invoke on **ES2**
+  (UE5.5) and one on **Geri** (UE4.27). PASS = the log carries
+  `GameThreadDispatch: validation OK — hook fired N times`, and instance invokes that previously
+  timed out at `-5` now succeed. That is a **log grep**, not a judgement.
+  ⚠ **The blocker the 繁中 file recorded was wrong**: it said the named title was not granted.
+  Both are granted at full tier and both were injected and swept on this machine on 2026-08-23,
+  so nothing environmental is in the way. Lower-priority extras: a UE 4.18–4.24 title (smaller
+  vtable / lower slot) and a heavily-modified publisher fork.
 - **Dump Explorer cross-game identity gate** (build 2538+; UI/C#-only, no DLL or pipe change).
   The live match joins on bare class NAMES, and every UE title has `Object` / `Actor` / `Pawn` /
   `PlayerController`, so loading game A's `.jsonl` against game B did not fail — it "succeeded",
