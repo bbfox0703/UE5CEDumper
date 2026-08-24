@@ -45,7 +45,7 @@ had shipped — the agent was right and the correction was wrong.
 ℹ️ Recorded separately so it is not mistaken for a fixture defect: invoking any **parameterised**
 `DumperTestActor` UFunction over the pipe returns `ProcessEvent error code -4`, while every
 **zero-parameter** one returns 0. The split is exact and hits the pre-existing `AD4_*` functions as
-hard as the new `Spawn_*` getters, so it belongs to the parameterised-invoke path. Not diagnosed.
+hard as the new `Spawn_*` getters, so it belonged to the parameterised-invoke path, not to this fixture. **DIAGNOSED AND FIXED 2026-08-24** (build 3350): `invoke_function` sized its param buffer from the caller's `parms_size`, which **defaults to 0**, so omitting the field handed ProcessEvent a zero-length heap buffer and it wrote the return value past the end. Half the fault was mine for not sending the field; the other half is that the DLL had `ufuncAddr` and could read `UFunction::ParmsSize` itself, and the protocol doc called the field *optional (default 0)*.
 
 ## 2026-08-24 - The b637 return-value fix had a sibling it never covered: int64 (build 3348)
 

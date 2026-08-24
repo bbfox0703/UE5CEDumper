@@ -357,7 +357,7 @@ re-run the process-suspend form.**
 > **parameterised** `DumperTestActor` UFunction over the pipe returns `ProcessEvent error code -4`,
 > while every **zero-parameter** one returns 0. That split is exact and it hits the pre-existing
 > `AD4_GetContestWrites` / `AD4_SetDamageContention` just as hard as the new `Spawn_*` getters, so
-> it is a property of the parameterised-invoke path, not of this fixture. Not diagnosed here.
+> it belonged to the parameterised-invoke path, not to this fixture. **DIAGNOSED AND FIXED 2026-08-24** (build 3350): `invoke_function` sized its param buffer from the caller's `parms_size`, which **defaults to 0**, so omitting the field handed ProcessEvent a zero-length heap buffer and it wrote the return value past the end. Half the fault was mine for not sending the field; the other half is that the DLL had `ufuncAddr` and could read `UFunction::ParmsSize` itself, and the protocol doc called the field *optional (default 0)*.
 >
 > ▶ **The seven rows C1 was blocking should be re-triaged as RUNNABLE**, and the C3 entry asking for
 > `USTRUCT FDumperTestEmpty` is already retired (67 natural zero-field structs, `[U4-STEP3-2026-08-24]`).
