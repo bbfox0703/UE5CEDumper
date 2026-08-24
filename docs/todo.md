@@ -9873,6 +9873,56 @@ changed: `scripts/ue5_dissect.lua`'s `callDLL` (was an INFINITE timeout, now 500
   ⚠ Conditions: Elliot at its **main menu**, 85 K objects — not the 250 K+ the row asks for.
   DragonSword would still be a stronger sample, so treat this as "no sign of strain at 85 K"
   rather than a bound proven at 250 K.
+- ✅ **The 5000 ms budget at ~250K objects — CLOSED 2026-08-24** `[EXECCODEEX-BUDGET-2026-08-24]`.
+  **OCTOPATH TRAVELER**, launched through its deployed **winmm** proxy, **273,956 objects**, UE **418**,
+  `GObjects=0x7FF62FA35C10 GNames=0x21676B30010`, DLL build **3343**, CE **7.7**.
+
+  ```
+  /Script/Engine.Actor                          1563 ms   115 elements    (first call: carries one-time init)
+  /Script/Engine.SpringArmComponent              328 ms    83 elements   3.95 ms/element
+  /Script/Engine.GameStateBase                   468 ms   124 elements   3.77 ms/element
+  /Script/Engine.AudioComponent                  688 ms   170 elements   4.05 ms/element
+  /Script/Engine.PlayerController                687 ms   185 elements   3.71 ms/element
+  /Script/Engine.SkeletalMeshComponent          1454 ms   379 elements   3.84 ms/element
+  /Script/Engine.CharacterMovementComponent     1765 ms   379 elements   4.66 ms/element   <- heaviest
+  ```
+  Every structure built, `ok=true`, **zero `[UE5Dissect WARN]`**, no `Execution timeout`. The heaviest
+  class reaches **35 % of the 5000 ms budget**.
+
+  ⚠ **THE ROW'S OWN CAVEAT WAS RIGHT, SO THE CHEAPNESS IS RECORDED RATHER THAN HIDDEN.** A big pool
+  does *not* stress this path: the dissect costs **one `callDLL` per FIELD**, and OCTOPATH's 273,956
+  objects sit behind only **705 classes** (measured; the earlier note said 699). So the *object count*
+  is nearly irrelevant and the *element count* is the whole story. That is why seven classes were
+  measured instead of one — a single `Actor` run would have "proven" a bound on 115 elements and read
+  as a bound at 250 K objects.
+
+  ⭐ **What the numbers actually license.** Steady state is a tight **3.7–4.7 ms/element** across six
+  classes, so the budget is reached at roughly **1,070–1,350 elements** — about **3× the largest class
+  observed here**. The claim this row can support is therefore *"no single `executeCodeEx` call comes
+  near 5000 ms at this element scale"*, **not** *"5000 ms is sufficient for any UE class"*. A title
+  with a >1,000-property Blueprint class would still be worth a look.
+
+  ⚠ **`Actor`'s first run (13.6 ms/element) is an outlier and must not be averaged in** — it carries
+  the one-time `dofile`, first `callDLL`, and offset detection. A *second* `Actor` call returned in
+  **0 ms**, i.e. the structure was reused, so repeat timings on the same path are **not** independent
+  samples. Measure a fresh path each time.
+
+  ⚠ **The 379/379 coincidence was checked, not waved through.** `SkeletalMeshComponent` and
+  `CharacterMovementComponent` both reported exactly 379 elements, which looks like structure reuse.
+  Re-running three fresh classes with the struct **name** printed showed each path produces its own
+  correctly-named structure (`struct=GameStateBase`, `struct=SpringArmComponent`,
+  `struct=AudioComponent`), so the mechanism is one-structure-per-path and the match is coincidence —
+  both are large components inheriting the same `USceneComponent`/`UActorComponent` chain.
+
+  ⛔⛔ **OPERATIONAL, CONFIRMED BY THE MAINTAINER 2026-08-24: on OCTOPATH our `dxgi.dll` STOPS THE GAME
+  FROM RUNNING — it must be `winmm`.** This sharpens `[OCTOPATH-G2T3-2026-08-18]`'s "dxgi instant-exits
+  under the early loader lock" from a startup quirk into a hard per-game rule. ⚠ **And it compounds
+  `[PROXYREFRESHOWNER-2026-08-24]`**: that bug did not merely destroy OCTOPATH's ReShade `dxgi.dll`, it
+  *deployed our dxgi proxy in its place* — so a launch in that state would not have started at all.
+  Restored to ReShade before this run (5,255,448 B, sha `b2945c29e7095491`), and the run used winmm.
+  ⚠ Note the ownership gate added to `proxy_refresh.py` does **not** protect against this second
+  hazard: if our dxgi is ever deployed to OCTOPATH deliberately, refresh will keep it current forever,
+  because it *is* ours. A per-game "never deploy dxgi here" rule would be the fix; not attempted.
 - ⛔ **The prescribed negative control DOES NOT WORK — attempted 2026-08-18, do not re-run as
   written.** Suspending the game process does **not** make `executeCodeEx` time out; it succeeds
   normally, so anyone following this row would see "no timeout" and wrongly conclude the path is

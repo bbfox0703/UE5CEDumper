@@ -265,7 +265,7 @@ re-run the process-suspend form.**
   silent-pass traps: without an active ProcessEvent hook the export takes a direct synchronous path
   and looks like a pass, and Stark's default invoke deadline is **5000 ms — identical to CE's**, so
   at defaults the two race and CE's path is never exercised. DumperTest **Development** + CE.
-- 🟡 **`executeCodeEx` 5000 ms budget at 250K** — ⚠ likely to pass without stressing anything:
+- ✅ **`executeCodeEx` 5000 ms budget at 250K — CLOSED 2026-08-24** `[EXECCODEEX-BUDGET-2026-08-24]`; seven classes measured, heaviest 1765 ms / 379 elements = 35% of budget, steady state 3.7-4.7 ms/element. ⛔ **On OCTOPATH our `dxgi.dll` STOPS THE GAME FROM RUNNING — use `winmm`** (maintainer, 2026-08-24) — ⚠ likely to pass without stressing anything:
   OCTOPATH has 273,956 objects but only **699 classes**, and the dissect's cost is one `callDLL`
   **per field**, so record the **element count** alongside the elapsed time or a cheap run reads as
   a proven bound. ⚠ Refresh the **stale winmm proxy** first or every number is the old binary's.
