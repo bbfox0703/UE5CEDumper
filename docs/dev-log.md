@@ -22,6 +22,35 @@ builds ≤696 in
 
 -----
 
+## 2026-08-24 - The b637 return-value fix had a sibling it never covered: int64 (build 3348)
+
+**`[RETINT64-2026-08-24]`.** Found while closing the b637/b644 verification row, not by looking for
+it. That row asks a human to confirm a pointer return "shows a `0x` prefix" — a compile-time string
+literal already pinned by C# tests, and blind to what build 637 actually fixed, which is a **read
+width**: `readUFunctionReturn` has no `'pointer'` type, so the pre-fix spelling fell through to the
+signed int32 default and read **four bytes of an eight-byte slot**.
+
+Replacing that check with one that measures the width (`scripts/tests/return_read_test.lua`, the real
+helper driven against byte-accurate stub memory) immediately showed the fix was incomplete.
+`BakedScriptGenerator.cs:331` is `readType = displayType == "pointer" ? "qword" : displayType` — it
+rewrites **only** `"pointer"`. `MapToHelperType` also emits `"int64"`, from two routes
+(`Int64Property` at :522 and the size-8 `EnumProperty` case at :519), and that word reached the
+helper verbatim where **no `'int64'` branch existed**. Measured: `0x0000000123456789` read back as
+**591751049**. `UInt64Property` was unaffected — it maps to `"pointer"` and so rode the fix.
+
+Fix: `'int64'` joins the 8-byte branch. **No sign folding**, and that is a property of the width
+rather than an oversight — Lua integers are 64-bit two's complement, so the bytes CE returns already
+*are* the signed value (`FF FF FF FF FF FF FF FF` -> `-1`, measured). At 64 bits `'int64'` and
+`'uint64'` read the same bits and only the caller's format specifier differs; the 32-bit case is
+different precisely because CE widens 4 bytes into a positive Lua number, which is AA20.
+
+Two things worth carrying forward. **`-1` is a bad discriminator** — it passes even with the fix
+removed, because a 4-byte signed read of `FF FF FF FF` is also `-1`; the test needs a value wider
+than 32 bits. And **a Lua-only fix does not ship until the UI is republished**:
+`scripts/ue5_invoke_helper.lua` is an `EmbeddedResource` of the UI (`UE5DumpUI.csproj:146`), served
+through `GetManifestResourceStream`, and is not copied into `dist\` as a loose file. Verified after
+republishing by byte-searching the AOT exe for the new branch.
+
 ## 2026-08-23 (evening) - The proxy advisory hid winmm; found by reading import tables, not code (build 3337)
 
 **`[PROXYALTWINMM-2026-08-23]`.** Working the A6 offline bucket — the "Lushfoil proxy did not load"

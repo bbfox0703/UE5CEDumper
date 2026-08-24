@@ -190,19 +190,32 @@ io.write('\n-- 4. Zero -- indistinguishable, so it cannot be the fixture -------
 q, p = readBoth(0)
 check('both read 0', q == 0 and p == 0, true)
 
-io.write('\n-- 5. int64 -- the SAME defect, for a type the b637 fix did not cover\n')
--- MapToHelperType (BakedScriptGenerator.cs:522) maps Int64Property -> "int64", and
--- the size-8 signed-int case (:519) does too. readType only rewrites "pointer", so
--- 'int64' reaches the helper VERBATIM -- and readUFunctionReturn has NO 'int64'
--- branch, so it falls through to the signed int32 default, exactly like the pre-b637
--- 'pointer' spelling did. [RETINT64-2026-08-24]
+io.write('\n-- 5. int64 -- the sibling type the b637 fix missed [RETINT64]\n')
+-- MapToHelperType maps Int64Property -> "int64" (BakedScriptGenerator.cs:522) and the
+-- size-8 EnumProperty case -> "int64" (:519). readType only rewrites "pointer", so
+-- 'int64' reaches the helper VERBATIM. Before the fix there was no 'int64' branch and it
+-- fell through to the signed int32 default -- the same defect build 637 fixed for
+-- pointers, still live for the sibling type. [RETINT64-2026-08-24]
 local BIG = 0x0000000123456789      -- needs 33 bits
 poke(ADDR, BIG, 8)
-local as_i64   = readUFunctionReturn(RET_OFF, 'int64')
-local as_qword = readUFunctionReturn(RET_OFF, 'qword')
-check("'int64' is not a branch, so it TRUNCATES", as_i64, 0x23456789)
-check('  while qword is exact', as_qword, BIG)
-check('  i.e. an Int64Property return reads WRONG', as_i64 ~= as_qword, true)
+check("int64 reads all 8 bytes", readUFunctionReturn(RET_OFF, 'int64'), BIG)
+check('  and agrees with qword on the same bytes',
+      readUFunctionReturn(RET_OFF, 'int64'), readUFunctionReturn(RET_OFF, 'qword'))
+
+-- Signedness here is a property of the WIDTH, not of a flag: Lua integers are 64-bit
+-- two's complement, so the eight bytes CE returns ARE the signed value. This case would
+-- expose a wrong "fix" that widened the read and then re-applied an unsigned fold.
+poke(ADDR, -1, 8)
+check('int64 of all-FF is -1, not 2^64-1', readUFunctionReturn(RET_OFF, 'int64'), -1)
+check("  and formats as -1", ('%d'):format(readUFunctionReturn(RET_OFF, 'int64')), '-1')
+
+-- The pre-fix behaviour kept as a standing regression witness: the 4-byte default still
+-- truncates, so if 'int64' ever falls through again these two diverge.
+poke(ADDR, BIG, 8)
+check('the 4-byte default still truncates (unchanged)',
+      readUFunctionReturn(RET_OFF, 'int32'), 0x23456789)
+check('  so int64 and int32 MUST disagree on this value',
+      readUFunctionReturn(RET_OFF, 'int64') ~= readUFunctionReturn(RET_OFF, 'int32'), true)
 
 io.write(('\n%d checks, %d failed\n'):format(RUN, FAILED))
 os.exit(FAILED == 0 and 0 or 1)

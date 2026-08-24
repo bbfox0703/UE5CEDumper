@@ -12765,10 +12765,46 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   Reached from `MapToHelperType` by **two** routes (`BakedScriptGenerator.cs:519,522`):
   `Int64Property` -> `"int64"`, and the size-8 signed-int case -> `"int64"`.
 
-  **Fix shape** (not applied here -- verification is the current programme): add `'int64'` to
-  the helper's 8-byte branch and extend its `@param` list. ⚠ Note `readQword` is **unsigned**,
-  so a genuinely negative `int64` needs the sign applied rather than just a wider read -- do not
-  "fix" it by only adding the spelling to the qword branch without deciding that.
+  ### ✅ **FIXED 2026-08-24** — `'int64'` joins the 8-byte branch
+
+  `scripts/ue5_invoke_helper.lua`: `elseif valueType == 'uint64' or valueType == 'qword' or
+  valueType == 'int64' then`, plus the `@param` list. One line of behaviour.
+
+  ⭐ **The signedness worry recorded above turned out to be a NON-issue, and the reason is worth
+  keeping.** `readQword` is indeed unsigned, but no sign folding is needed — **Lua integers are
+  64-bit two's complement**, so the eight bytes CE returns *are* the signed value. Measured before
+  writing the fix rather than assumed:
+
+  | bytes | assembled in Lua 5.4 |
+  |---|---|
+  | `FF FF FF FF FF FF FF FF` | **-1** (`math.type` = integer) |
+  | `89 67 45 23 01 00 00 00` | 4886718345 |
+  | `00 00 00 00 00 00 00 80` | -9223372036854775808 |
+
+  Contrast the 32-bit case, where CE widens 4 bytes into a *positive* Lua number and the `signed`
+  flag genuinely changes the answer (that is AA20). At 64 bits `'int64'` and `'uint64'` read the
+  **same bits**; only the caller's format specifier (`%d` vs `0x%X`) differs. ▶ So the warning above
+  was right to demand a decision and wrong about which way it goes — a "fix" that widened the read
+  and then re-applied an unsigned fold would have been the actual bug.
+
+  **Tests** — `scripts/tests/return_read_test.lua` case 5, now 18 checks: the 8-byte read, agreement
+  with `qword` on the same bytes, `-1` from all-`FF`, and the 4-byte default still truncating as the
+  standing regression witness. **Shown able to fail**: removing `'int64'` from the branch turns 3 of
+  them red; restoring it returns 18/18.
+  ⚠ **`-1` is a BAD discriminator and the suite says so** — it passes even when armed, because a
+  4-byte signed read of `FF FF FF FF` is *also* `-1`. The value that discriminates is one needing
+  more than 32 bits. Same shape as the low-pointer case in this file's §3.
+
+  ⛔ **A LUA-ONLY FIX DOES NOT SHIP UNTIL THE UI IS REPUBLISHED.** `scripts/ue5_invoke_helper.lua`
+  is an **`EmbeddedResource`** of the UI (`UE5DumpUI.csproj:146-149`, logical name
+  `UE5DumpUI.Resources.CE.ue5_invoke_helper.lua`), served to *Tools -> Export / Inject CE Helper Lua*
+  through `GetManifestResourceStream`. It is **not** copied into `dist\` as a loose file, so editing
+  `scripts/` alone changes nothing a user can run. Republished with `-Mode Publish` for this fix.
+
+  ℹ️ **Not reachable from the local fixture**: `tools/ue-sample` has `int64 I64` as a UPROPERTY but
+  **no int64-returning UFUNCTION**, so there is no end-to-end DumperTest repro. The C1 spawner draft's
+  `int64 Spawn_LastRecycledAddr() const` would be the first one. The defect is nonetheless proven at
+  the layer it lives in, by the Lua suite above.
 - **`walk_functions_batch` follow-up** — Effort: **S**. Sister to `walk_class_batch`;
   DumpAll still does `WalkFunctions` single-call per class. Same byte-equivalence safety
   net. **Skip unless profiling shows it as the new bottleneck.**

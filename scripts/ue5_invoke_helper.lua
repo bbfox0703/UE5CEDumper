@@ -669,7 +669,14 @@ if not readUFunctionReturn then
   --- @param valueType string  One of: 'int32' (default, SIGNED), 'int16'
   ---                          (SIGNED), 'uint32'/'dword', 'uint16'/'word',
   ---                          'float', 'double', 'bool', 'byte',
-  ---                          'uint64'/'qword'.
+  ---                          'uint64'/'qword', 'int64'.
+  ---                          'int64' reads the same eight bytes as 'qword';
+  ---                          Lua integers are 64-bit two's complement, so the
+  ---                          value is already signed. It is spelled separately
+  ---                          because the generator emits that word for
+  ---                          Int64Property and for 8-byte EnumProperty, and an
+  ---                          unrecognised spelling silently falls through to
+  ---                          the 4-byte default. [RETINT64-2026-08-24]
   ---                          The signed spellings are the ones a UFunction
   ---                          return value normally wants: CE reads unsigned
   ---                          unless told otherwise, so -1 used to come back
@@ -689,7 +696,21 @@ if not readUFunctionReturn then
       return readDouble(addr)
     elseif valueType == 'bool' or valueType == 'byte' then
       return readByte(addr)
-    elseif valueType == 'uint64' or valueType == 'qword' then
+    elseif valueType == 'uint64' or valueType == 'qword' or valueType == 'int64' then
+      -- 'int64' MUST be here and not in the int32 default below. It was missing, so an
+      -- Int64Property return -- and an 8-byte EnumProperty -- fell through to the signed
+      -- FOUR-byte read and came back truncated: 0x0000000123456789 read as 591751049.
+      -- That is the same defect build 637 fixed for pointers; its one-line fix
+      -- (BakedScriptGenerator.cs:331) rewrote only "pointer" -> 'qword' and left "int64"
+      -- to reach here verbatim. UInt64Property was unaffected because it maps to
+      -- "pointer". [RETINT64-2026-08-24]
+      --
+      -- No sign fixing is needed, and that is a property of the WIDTH, not an oversight:
+      -- Lua integers are 64-bit two's complement, so the eight bytes CE hands back ARE
+      -- the signed value already (0xFFFFFFFFFFFFFFFF reads as -1). Contrast the 32-bit
+      -- case below, where CE widens 4 bytes into a positive Lua number and the `signed`
+      -- flag genuinely changes the result. At 64 bits 'int64' and 'uint64' read the same
+      -- bits; only the caller's format specifier (%d vs 0x%X) differs.
       return readQword(addr)
     elseif valueType == 'int16' then
       return readSmallInteger(addr, true)          -- SIGNED
