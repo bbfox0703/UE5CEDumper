@@ -13668,6 +13668,121 @@ doing it while CE runs would be undone.
 | 2 | 附加 CE，點 *UE5CEDumper: Inject && Connect*，並 grep `init-0.log` 的 `is loaded but is not ours`。 | 正常注入，且該行出現並指名那個外來模組。FAIL = 舊訊息 "already loaded … no injection needed"，之後 UI 連不上。 |
 | 3 | 再用一款路徑含非 ASCII 字元的遊戲重做一次，看同一則訊息。 | 訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號。 |
 
+> ### 🟡 STEP 3's FIXTURE BUILT 2026-08-24 `[B29-NONASCII-FIXTURE-2026-08-24]` — the sample exists now; the run needs a CE-plugin decision, and step 3 looks likely to FAIL
+>
+> The blocker was *"步驟 3（非 ASCII 路徑）仍缺樣本"* — no sample. `tools/verify/b29_nonascii_fixture.py`
+> builds one: **`D:\測試\DumperTest`**, a real UE game folder, with the maintainer's ReShade
+> `dxgi.dll` copied in beside the exe. Measured on the running process:
+>
+> ```
+> QueryFullProcessImageNameW -> D:\測試\DumperTest\DumperTest\Binaries\Win64\DumperTest-Win64-Shipping.exe
+> dxgi.dll                      D:\測試\DumperTest\DumperTest\Binaries\Win64\dxgi.dll   <-- third-party, from the game folder
+> dxgi.dll                      C:\WINDOWS\system32\dxgi.dll                            <-- chain-loaded by ReShade
+> ```
+>
+> ⛔ **A JUNCTION DOES NOT WORK, and it was the obvious first idea.** `mklink /J` is what closed
+> `AC17`/`VOLUMEROOT` (a cross-volume junction standing in for a real mount point), so it was tried
+> first here. Launched through the junction the process reports
+> `D:\UE_Analyze_data\For Testing\…` — **Windows resolves the reparse point** and nothing non-ASCII
+> ever reaches the module list. ▶ A rig built on a junction would have reported a confident PASS
+> having tested an ASCII path. Recorded in the rig's header so it is not re-tried.
+>
+> ⭐ **A directory of HARDLINKS is a real directory.** The package is 767 MB; the fixture is 26
+> hardlinks plus the one real `dxgi.dll` copy — `status` reports **2 files with `nlink == 1`**, i.e.
+> ~5 MB of actual disk for a 767 MB game, and the non-ASCII path now survives. The wrapper is copied
+> rather than linked so nothing here can reach the maintainer's own ReShade install.
+>
+> ⛔ **Why the row was NOT run to completion.** The message
+> `CEPlugin: '%ls' is loaded but is not ours (path=%ls)` is emitted **only** from
+> `OnInjectAndConnect` ([Methode.cpp:291](dll/src/Methode.cpp:291) / [:388](dll/src/Methode.cpp:388)),
+> the CE-plugin Type-5 menu callback, and `Methode.cpp` is compiled into `UE5Dumper.dll` itself
+> ([dll/CMakeLists.txt:256](dll/CMakeLists.txt:256)). Reading it requires **registering our DLL as a
+> Cheat Engine plugin** — a persistent change to CE's configuration that re-creates the very
+> `UE5Dumper.dll`-under-CE's-folder state `[STALEDLL-2026-08-18]`(a) was closed by *deleting*, and
+> which blocked the `.CT DLL discovery` row until 2026-08-22. That is a maintainer call, not a side
+> effect of a verification run.
+>
+> #### ⚠⚠ PREDICTED FAILURE, from source — `[NONASCIILS-2026-08-24]` (MED). File this BEFORE the run
+>
+> Step 3's expected result is *"訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號"*. Three
+> measurements say it probably will not be:
+>
+> 1. **`Sein::WriteLog` formats with `vsnprintf`** ([Sein.cpp:499](dll/src/Sein.cpp:499)) — a
+>    **narrow** formatter. `%ls` therefore converts the `wchar_t*` through the CRT's current locale.
+> 2. **Nothing in `dll/src` ever calls `setlocale`** (grep: zero hits), so the conversion runs in
+>    whatever locale the host left — the default `"C"` for most UE games, where any character above
+>    127 cannot be represented.
+> 3. **`Heiter.cpp` was already fixed for exactly this**, and its comment names the row's own example:
+>    *"GetModuleFileNameA converts through the ANSI code page, which DESTROYS any character the code
+>    page cannot represent: a real install at `…\EVERSPACE™ 2\…` logged as `EVERSPACE? 2`"*. Its fix
+>    was to convert first — `Utf8Helpers::EncodeUtf16(...)` then `%s`
+>    ([Heiter.cpp:341-343](dll/src/Heiter.cpp:341)) — **which is what `Methode.cpp:255` does not do.**
+>
+> ✅ **The `EncodeUtf16` route is confirmed working**, measured today on the fixture: with the DLL
+> injected into the non-ASCII game, `init-0.log` reads
+> `UE5Dumper DLL loaded | … | process: D:\測試\DumperTest\…` — **intact, no `?`**. So the logger's
+> UTF-8 file writing is fine; it is the **`%ls` argument path** that is unconverted.
+>
+> ⚠ **And it is a FAMILY, not one line.** Six `%ls` sites log a PATH or a module name:
+> `Methode.cpp:255`, `Genau.cpp:115`, `Lugner.cpp:50` + `:53`, `Lugner_Dinput8.cpp:55` + `:58`,
+> `Macht.cpp:520`. The proxy ones matter most — `Lugner*` logs the real DLL it chain-loads, which on
+> a non-ASCII install is precisely a path a user would need to read back.
+>
+> ▶ **Fix shape**: give each of those the `Heiter.cpp` treatment — `Utf8Helpers::EncodeUtf16(p,
+> wcslen(p)).c_str()` with `%s`. ⚠ Do **not** "fix" it by calling `setlocale` in a DLL: that mutates
+> CRT state for the whole host process.
+>
+> ℹ️ `PipeServer: Started on %ls` (`Fern.cpp:506`) is the one `%ls` that is safe by construction — its
+> argument is the compile-time ASCII pipe name. Confirmed intact in the fixture's `pipe-0.log`; it is
+> a positive control for "`%ls` works when the input is ASCII", not evidence about non-ASCII.
+
+### ⚠ NEW 2026-08-24 `[INJECTOWNER-2026-08-24]` (MED) — `inject.py` still uses the pre-fix rule B29 removed from the DLL
+
+Found while staging `[B29-NONASCII-FIXTURE-2026-08-24]`: injecting into a game that has a
+third-party ReShade `dxgi.dll` is **refused outright**.
+
+```
+STALE MODULE(S) ALREADY MAPPED:
+   dxgi.dll  5,455,872 bytes  D:\測試\DumperTest\DumperTest\Binaries\Win64\dxgi.dll
+inject.py: FAILED -- refusing to inject. LoadLibraryW would return the module listed above
+instead of loading the file you asked for … Use a FRESH process, or pass --allow-stale …
+```
+
+**It is a false positive, and the rule is the defect B29 fixed, verbatim.**
+`tools/verify/inject.py`'s `already_ours()` says so in its own comment:
+
+```python
+# Names that, if already mapped from somewhere other than System32, are ours.
+PROXY_NAMES = ("dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll")
+```
+
+Compare the pre-fix `Methode.cpp` that `git show 229df1d8^` preserves — *"Case 2: proxy DLL — only
+count if NOT loaded from System32/SysWOW64 … → already loaded, no injection needed"*. The DLL was
+moved to an **ownership** test (`IsOurModule(modPath)`, version-info based); the rig was not.
+
+**Three things wrong with the outcome, in order of cost:**
+
+1. **The advice cannot work.** *"Use a FRESH process"* is unfollowable — a wrapper in the game folder
+   loads on **every** launch, so every future process has it too.
+2. **`--allow-stale` is the wrong escape hatch and its message is wrong here.** It prints *"this is a
+   refcount bump, NOT a load"*, which is false in this case: the mapped module is `dxgi.dll` and the
+   file being injected is `UE5Dumper.dll`, so `LoadLibraryW` performs a **real load**. Verified —
+   with `--allow-stale` the injection succeeded and the DLL logged a fresh
+   `UE5Dumper DLL loaded | build: 1.0.0.3338`.
+3. **It blocks real work on real machines.** SBDR carries the maintainer's ReShade today, and the
+   B29 fixture reproduces it deliberately. Any verification run on such a title hits this first.
+
+▶ **Fix shape**: mirror the DLL. Read the mapped module's version info and accept it as ours only if
+it identifies as UE5CEDumper — the same predicate `Methode.cpp`'s `IsOurModule` and the C#
+`DumperModuleDetector` already implement. Keep the System32 exclusion as a cheap pre-filter, not as
+the decision. ⚠ **Keep the guard** — the case it was written for is real and still matters (a stale
+`UE5Dumper.dll` mapped from CE's folder, `[STALEDLL-2026-08-18]`); it is the *ownership* test that is
+missing, not the guard.
+
+⭐ **Why this is worth a finding rather than a footnote:** it is `working-lessons` §2.x's shape — a
+defect fixed in the product and left standing in the tool that verifies the product. A rig carrying
+the bug it exists to detect will mask that bug's return.
+
 ### ✅ DragonSword GObjects layout CLOSED 2026-08-23 `[DSLAYOUT-BASEANCHOR-2026-08-23]` — the archive already held the proof, and the checkbox was looking for the wrong thing
 
 The remaining PARTIAL asked: when the **FUObjectArray base** anchor hits, does the layout picker choose
