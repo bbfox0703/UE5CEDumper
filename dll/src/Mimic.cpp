@@ -652,6 +652,48 @@ static void HandleInvoke() {
                  g_invokeMailbox.functionFlags, fi.name.c_str(), fi.functionFlags);
     }
 
+    // Clear the ReturnValue slot before dispatching, so the After dump cannot be
+    // mistaken for a result.
+    //
+    // WHY: paramsData is a PERSISTENT global. Whatever the caller wrote for the INPUTS
+    // is still sitting in it, and on at least two titles the return slot came back
+    // holding a copy of an input -- ES2 showed Before/After identical (stale 0x49), and
+    // on DumperTest `Abs(-3.5)` came back with a buffer of `-3.5, 0, -3.5`. A slot that
+    // MIRRORS THE INPUT makes "the function ran and wrote this" indistinguishable from
+    // "the function never executed", which is not a cosmetic problem: it is what made a
+    // b636 latency measurement unpublishable on 2026-08-23 ([B636-NOACCIDENT-2026-08-23]).
+    // PointerPanelViewModel's own docstring states the same hazard in the same words.
+    //
+    // ZERO rather than a 0xCD-style sentinel, deliberately: a struct return that the
+    // callee only partially fills reads sanely when the remainder is zero and reads as
+    // garbage when it is 0xCD, and zeroing is what UE itself does to a param buffer
+    // before ProcessEvent.
+    //
+    // ⚠ RESIDUAL, stated so nobody over-trusts this: a function that legitimately
+    // returns 0 is STILL indistinguishable by slot contents alone. The slot answers
+    // "was it written", not "did it run" -- for that, read the ProcessEvent return code
+    // and the route line logged just below. Pick a fixture with a non-zero expected
+    // return when the question is whether the call happened.
+    if (flagsResolved && fi.returnValueOffset != 0xFFFF) {
+        for (const auto& prm : fi.params) {
+            if (!prm.isReturn || prm.offset < 0 || prm.size <= 0) continue;
+            const size_t off = static_cast<size_t>(prm.offset);
+            const size_t len = static_cast<size_t>(prm.size);
+            // Bounds are checked against the real buffer, not against ParmsSize: a
+            // forked layout can report a ParmsSize larger than the mailbox slab, and a
+            // memset past the end would corrupt whatever follows it in the struct.
+            if (off + len > sizeof(g_invokeMailbox.paramsData)) {
+                LOG_WARN("Mailbox: INVOKE return slot +%zu size %zu exceeds paramsData "
+                         "(%zu) — not clearing", off, len,
+                         sizeof(g_invokeMailbox.paramsData));
+                break;
+            }
+            memset(g_invokeMailbox.paramsData + off, 0, len);
+            LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
+            break;
+        }
+    }
+
     int32_t result;
     if (isStaticNative) {
         LOG_INFO("Mailbox: INVOKE -> static-native fast path "

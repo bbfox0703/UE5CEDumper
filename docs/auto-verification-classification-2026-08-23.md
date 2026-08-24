@@ -310,7 +310,36 @@ re-run the process-suspend form.**
 
 ---
 
-## BUCKET C — fixtures (11 additions unlock 19 rows)
+## BUCKET C — ~~fixtures (11 additions unlock 19 rows)~~ **C1 ALREADY SHIPPED — MEASURED 2026-08-24**
+
+> ⭐ **THE C1 SPAWNER EXISTS IN THE PACKAGED DumperTest AND WORKS.** It was not built by this
+> programme and it is not in this repo's copy of the sample source, which is why two separate
+> sessions concluded it was missing. Both were wrong.
+>
+> **Measured, not inferred** (`[C1-SPAWNER-EXISTS-2026-08-24]`, DumperTest Development, DLL 3349):
+> `list_all_functions` reports **17** `DumperTestActor` UFunctions including `Spawn_Holders`,
+> `Spawn_Decoys`, `Spawn_DestroyHolders`, `Spawn_CountHolders`, `Spawn_Generation`,
+> `Spawn_LateInstance`, `Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`, `Spawn_ManyComponents` —
+> the whole drafted set below, plus `Spawn_Decoys` which the draft did not even ask for. And it is
+> **not a declaration stub**: three `Spawn_LateInstance` calls moved the live
+> `DumperTestLateSpawn` population **2 -> 5**.
+>
+> ⚠ **THE TRAP THAT MADE THIS INVISIBLE, and it will mislead the next session too.**
+> `tools/ue-sample/DumperTest/Source/DumperTest/DumperTestActor.h` is dated **2026-08-19** and
+> contains none of it; the packaged `DumperTest.exe` is dated **2026-08-23** and contains all of it.
+> **The repo's copy of the sample source is STALE relative to the binary that is actually used for
+> verification.** Grepping `tools/ue-sample` is therefore *not* a valid way to answer "does the
+> fixture exist" — ask the running game with `list_all_functions`.
+>
+> ℹ️ Separate observation, recorded so it is not mistaken for a spawner defect: invoking any
+> **parameterised** `DumperTestActor` UFunction over the pipe returns `ProcessEvent error code -4`,
+> while every **zero-parameter** one returns 0. That split is exact and it hits the pre-existing
+> `AD4_GetContestWrites` / `AD4_SetDamageContention` just as hard as the new `Spawn_*` getters, so
+> it is a property of the parameterised-invoke path, not of this fixture. Not diagnosed here.
+>
+> ▶ **The seven rows C1 was blocking should be re-triaged as RUNNABLE**, and the C3 entry asking for
+> `USTRUCT FDumperTestEmpty` is already retired (67 natural zero-field structs, `[U4-STEP3-2026-08-24]`).
+
 
 Ranked by rows-per-package-build.
 

@@ -2477,7 +2477,10 @@ direction, both shipped (dev-log builds 838-872).
   the selected class is `KismetMathLibrary` / `KismetSystemLibrary`, and update
   lessons-learned / test-games. (Not a feature to enable calling them — a UX redirect.)
 
-- **Mimic: zero the ReturnValue slot before invoke** — Effort: **S** · Risk: low. ES2
+- ✅ **Mimic: zero the ReturnValue slot before invoke — DONE 2026-08-24** (build 3349, `Mimic.cpp`), which is what unblocked `[B636-FASTPATH-2026-08-24]`. ⚠ Scope, measured rather than assumed: the defect was **mailbox-only**. Fern's pipe path already builds a fresh `std::vector<uint8_t> paramBuf(bufSize, 0)` per call (`Fern.cpp:5329`); only the mailbox reuses the persistent global `g_invokeMailbox.paramsData`, which is why a stale input could sit in the return slot. One insertion covers both mailbox branches because it runs before the `isStaticNative` split. Zero, not a `0xCD` sentinel: a partially-filled struct return reads sanely with zeros and as garbage with `0xCD`, and zeroing is what UE itself does. ⚠ Residual: a function that legitimately returns 0 is still indistinguishable by slot contents alone — the slot answers "was it written", not "did it run".
+  <details><summary>original entry</summary>
+
+  Effort: **S** · Risk: low. ES2
   showed Before/After dumps identical (stale `0x49`) so we can't tell "wrote 73" from
   "didn't touch ReturnValue". Overwrite the slot with a sentinel / zero before calling PE
   so the After dump is unambiguous. ~2-line patch in `Mimic.cpp` (both fast path + game-
@@ -12603,8 +12606,39 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   `GameThreadDispatch: validation OK — hook fired N times`; previously-`-5`-timing-out
   instance invokes should now succeed. Lower-priority extras: a UE 4.18-4.24 game (smaller
   vtable / lower slot) + a heavily-modified publisher fork.
-- 🟡 **Static-native PE fast path** (build 636) — **the "by accident" half is CLOSED 2026-08-23
-  `[B636-NOACCIDENT-2026-08-23]`, OFFLINE and structurally; the latency half is NOT established.**
+- ✅ **Static-native PE fast path** (build 636) — **BOTH halves now closed.** The "by accident"
+  half closed 2026-08-23 `[B636-NOACCIDENT-2026-08-23]` offline; **the latency half closed
+  2026-08-24 `[B636-FASTPATH-2026-08-24]`**, DumperTest dev, DLL **3349**,
+  `py tools/verify/b636_latency.py`.
+
+  ⭐ **A latency number was never the test, and that is why the 08-23 attempt was right to stop.**
+  With a healthy game thread both routes are fast, so the measurement cannot tell a real bypass
+  from a queue that happens to drain quickly. The discriminating experiment **suspends the game
+  thread** and repeats:
+
+  | | thread running | thread **SUSPENDED** |
+  |---|---|---|
+  | static-native `KismetMathLibrary::Sqrt` | 3.0 ms, returns 4.0 | **2.8 ms, returns 4.0** |
+  | queued `DumperTestActor::V8_RemoveOneTableRow` | 58.1 ms | **TIMEOUT at 6.0 s** |
+
+  A fast path that secretly queued would time out in the top-right cell. The bottom-right cell is
+  what proves the suspend actually bit — without it the top row is unfalsifiable.
+
+  ⭐ **The ambiguity that killed the last attempt is gone, and the raw bytes show it.** The buffer
+  is pre-filled with `0xAA` and the input written over it; the reply reads
+
+  ```
+  00000000 00003040 | 00000000 00001040 | aaaaaaaa aaaaaaaa
+     16.0 (input)         4.0 (return)      pre-fill, untouched
+  ```
+
+  Three independent ambiguities are excluded at once: it is **not `0xAA`** (so the slot really was
+  written), **not `16.0`** (so it is not the input mirror that made `Abs(-3.5)` unpublishable), and
+  **not `0`** (so a legitimately-zero return cannot be confused with a call that never ran). The
+  surviving `0xAA` tail is what proves the pre-fill happened at all.
+
+  ℹ️ Fixture chosen for exactly that: `Sqrt(16.0) = 4.0` — a result that is neither zero, nor the
+  input, nor a value the buffer could hold by accident.
 
   ⭐ **"Don't fall into the fast path by accident" cannot happen, and the proof needs no game.**
   `direct_call` is **caller-supplied and defaults to false** — `Fern.cpp:5290`
