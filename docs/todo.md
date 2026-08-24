@@ -1558,6 +1558,25 @@ force_field DumperTestHolder.HolderValue = 777.0 -> held=130 resolved=True trunc
 explained by *"the walk never reached them"*. An absence is only evidence when the detector is known
 to have looked. The rig now fails a truncated run for the negative half instead of scoring it.
 
+> ### ℹ️ 2026-08-24 — the caveat above was UNREACHABLE on this machine, and a corroborating re-run
+>
+> Not a new closure; L3 and L4 were closed on 08-23 and re-running them was **my failure to triage**
+> — the third time today (see also `[B19-BACKDATE]`, withdrawn). What the re-run did expose is a real
+> defect in the rig of record: **`solide_l3_derivation.py` died with `UnicodeEncodeError` on a cp950
+> console, on the very line that prints the truncation caveat.** The console here is cp950, every
+> report line carries box-drawing and ⚠ glyphs, and the run aborted mid-report at
+> *"truncated -- the cap fired, so 'decoys untouched' is NOT ..."*. A rig that crashes while
+> delivering its own caveat is worse than one that never printed it. Fixed with
+> `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`.
+> ⚠ Preserve the file's **BOM** when patching it — a `utf-8` read/write round trip turns it into a
+> literal `﻿` in the source and the file stops parsing.
+>
+> The re-run itself, at counts chosen to stay under the cap (`--base 150 --derived 40 --decoys 30`),
+> is the cleanest form of the evidence: **`held=190`, `truncated=false`**, against
+> **derivation predicts 190 / substring predicts 180** — Holder 12/12 and DerivedHolder 12/12 carry
+> the forced value, Decoy **0/12**, and `reset_field` returned 12/12 to their **own** prior value.
+> With no cap in play, "the decoys were untouched" is decidable rather than merely observed.
+
 ### L4 — each instance restored to its OWN base
 
 `HolderValue` is seeded **1000 + global index**, distinct per instance by construction; the sample

@@ -359,7 +359,38 @@ re-run the process-suspend form.**
 > `AD4_GetContestWrites` / `AD4_SetDamageContention` just as hard as the new `Spawn_*` getters, so
 > it belonged to the parameterised-invoke path, not to this fixture. **DIAGNOSED AND FIXED 2026-08-24** (build 3350): `invoke_function` sized its param buffer from the caller's `parms_size`, which **defaults to 0**, so omitting the field handed ProcessEvent a zero-length heap buffer and it wrote the return value past the end. Half the fault was mine for not sending the field; the other half is that the DLL had `ufuncAddr` and could read `UFunction::ParmsSize` itself, and the protocol doc called the field *optional (default 0)*.
 >
-> ▶ **The seven rows C1 was blocking should be re-triaged as RUNNABLE**, and the C3 entry asking for
+> ### ✅ RE-TRIAGED 2026-08-24 — FIVE of the seven were ALREADY CLOSED, one has a wrong premise
+>
+> Tags verified by literal grep: Solide **L3** and **L4** `[SOLIDE-L3L4-2026-08-23]` (todo.md:1518) ·
+> **AA2/AA3 step 4** `[AA2-STEP4-CHURN-2026-08-23]` (:1376) · **AA12/AA13 step 3**
+> `[AA12-STEP3-EMPTY-2026-08-23]` (:1445) · **AE4-AE7 step 4** `[ORPHANGATE-2026-08-22]` +
+> `[AE4-TIMING-2026-08-24]`. **The C1 table below was written before the fixture was packaged the
+> same day**, and it is the source of the stale re-emission.
+>
+> **U4 class-to-class recycling — PREMISE WRONG, not open.** Nothing is under test: the walk cache
+> has **zero** erase/clear (`Ubel.h:134-136`, *"immortal for the process"*), and the shipped U4 fix
+> is the insert-time `ShouldPublishClassWalk` gate, which by construction returns **true** on the
+> exact input the residual defines (a recycled address with a *sane* `PropertiesSize`). There is no
+> build state in which it goes green.
+>
+> **AE4-AE7 step 4's procedure is causally disconnected** from what it claims to test:
+> `ProxyDeployViewModel.cs` has **zero** hits for pipe / GObjects across 1,563 lines, so
+> `Spawn_Holders(200000)` cannot affect anything that panel executes.
+>
+> ▶ **One row is genuinely open: FREEZESCOPE step 6** — and DQ7R is **no longer needed**, because
+> `Spawn_ManyComponents` is in the packaged DumperTest.
+>
+> ⚠ **A probe trap that produces a FALSE NEGATIVE on the fixture**, and is very likely how it was
+> missed twice: in the packaged exe **UClass names are UTF-16LE while UFunction names are ASCII**.
+> Measured: `DumperTestHolder` -> **ascii 0**, utf16le 2; `Spawn_Holders` -> ascii 1, utf16le 0. So
+> `grep -a DumperTestHolder <exe>` returns nothing and reads as *"the class does not exist"*. Probe
+> with `.encode('utf-16-le')`, or just ask the running game.
+>
+> ⚠ **Any rig that omitted `parms_size` was silently corrupting the game's heap before build 3350**
+> (see the invoke fix). `ad4_contested.py` and `aa2_step4_churn.py` read it from `walk_functions` and
+> were never exposed — keep doing that rather than leaning on the new clamp.
+>
+> ▶ ~~**The seven rows C1 was blocking should be re-triaged as RUNNABLE**~~
 > `USTRUCT FDumperTestEmpty` is already retired (67 natural zero-field structs, `[U4-STEP3-2026-08-24]`).
 
 

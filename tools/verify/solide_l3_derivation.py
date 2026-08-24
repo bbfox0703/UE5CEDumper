@@ -77,6 +77,15 @@ def read_field(c, addr, name=FIELD):
 
 
 def main(argv=None):
+    # ⚠ Every print here carries box-drawing and warning glyphs, and this machine's console
+    # is cp950: the run DIED mid-report with UnicodeEncodeError on the very line that
+    # explains why a truncated hold is inconclusive. A rig that crashes while delivering
+    # its own caveat is worse than one that never printed it.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", type=int, default=300)
