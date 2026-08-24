@@ -371,6 +371,41 @@ not launch yourself for this purpose.
 Walker and Value Search are two consumers of the same DLL, so they can share a decoding bug. The
 tool doing the write is conveniently also outside that path — use it to read as well as to write.
 
+### 1.ab A HEADING IS NOT EVIDENCE — in this register the closure is recorded somewhere else
+
+⚠⚠ **`docs/todo.md` records a closure in a DIFFERENT PLACE from the row it closes**, usually under
+its own `✅ … [SOMETAG-2026-08-NN]` heading thousands of lines away. The original `⬜`/`🟡` heading
+is **not** updated as a matter of course. So reading a heading — or a summary built from headings,
+or a handover paragraph quoting one — tells you nothing about whether the work is outstanding.
+
+**Measured, in a single session (2026-08-24): five times.** The worst was audit **L10 step 2**. Its
+section heading read, in these words, *"Step 2 is still open, on a NEW blocker"*, and the block
+ended with *"▶ Next session starts here"*. Both were **false the following day**: the step is
+closed three times over elsewhere in the same file — `[AF16-PROPSSORT-2026-08-22]` (Props half),
+`[AF16-XREF-2026-08-23]` (Xref half, the blocker cleared by `tools/verify/af16_xref_fixture.py`
+finding a fixture *by construction*), and `[AF16-BYCONSTRUCTION-2026-08-24]` (the numeric-vs-string
+residual, closed as **unreachable**). A seven-agent workflow was spun up to solve a problem that
+had already been solved twice.
+
+**The rule, and it is cheap:**
+
+1. **Before planning ANY row, grep the whole file for its finding ids** — `AF16`, `AE4`, `[TAG-…]`
+   — and read every hit, not just the one under the heading you started from. A `✅ CLOSED` block
+   naming the id anywhere in the file closes it.
+2. **The per-step TABLE inside a section is the ground truth, not the heading.** Headings like
+   *"4-of-6"* and *"STEPS 1-4, 7, 8, 9 DONE"* go stale the moment one more step lands.
+3. ⭐ **When you close a step, edit the HEADING in the same commit.** This is the whole fix. Closing
+   AE4 step 2 while leaving the heading saying *"only step 2 is still PARTIAL"* is how the next
+   session gets misdirected — and that heading survived a maintainer pass, an automated sweep, and
+   two of my own reads of the same section.
+4. **A stale heading is worth a commit on its own.** Mark it superseded with pointers to the real
+   closures; keep the body only when it still carries something (L10's five dead ends are worth
+   keeping *because each is now explained*, and the explanations are what stop a sixth attempt).
+
+ℹ️ The same trap wears a second face: `docs/pending-verification_zh-TW.md` is the operational
+mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
+done — worth checking, never sufficient on its own.
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
