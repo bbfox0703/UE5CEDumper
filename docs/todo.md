@@ -8279,7 +8279,7 @@ class-to-class recycling (a recycled address whose new occupant has a *sane* `Pr
 **A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
 `FullPath` / `SuperName`, which are never witnessed.
 
-### 🟡 6-of-6 STEPS ATTEMPTED (steps 3 + 4 CLOSED — 4 on 2026-08-20, its mutual-exclusion half and step 3's orphan cancel on 2026-08-24; **only step 2 is still PARTIAL**) — AE4–AE7: the Proxy Deploy panel, two buttons at once
+### ✅ ALL SIX STEPS CLOSED (step 2 on 2026-08-24 `[AE4S2-BUSYBAR-2026-08-24]`; steps 3 + 4 on 2026-08-20 / 2026-08-24; step 4's gate arm is pinned offline, see below) — AE4–AE7: the Proxy Deploy panel, two buttons at once
 
 *No game needed — just the UI and a folder with a couple of detected games. See dev-log build 3038.
 Every step is a click sequence; the unit tests cover the logic, not what the panel looks like doing it.*
@@ -8386,7 +8386,47 @@ ersion.dll`, our proxy with **no exe beside it**. **Find leftovers** → `Found 
 > clicking). The **blocking** is what step 4 asserts and it is measured; the message on that path is
 > established from source, not from the screen, and is written up as the finding below.
 >
-> #### ⚠ NEW FINDING `[ORPHANBUSYMSG-2026-08-24]` (LOW) — the leftover delete sits OUTSIDE the busy-naming scheme, in both directions
+> #### ✅ FIXED 2026-08-24 — `[ORPHANBUSYMSG-2026-08-24]` (LOW) — the leftover delete sat OUTSIDE the busy-naming scheme, in both directions
+>
+> **Fixed the same day it was found.** `DeleteSelectedOrphansAsync` now reports through
+> `BusyMessage()` and takes `TryBeginExclusive("Delete leftovers")`, so **eight** commands share the
+> gate where seven did. The scope is taken **after** the confirmation, not at the top of the method
+> — holding it across the modal would make the panel report itself busy while the dialog is open,
+> which `TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate` explicitly pins against. That placement
+> also shuts a window the pre-check alone left open: something invoked *while the dialog was up*
+> used to find the delete setting `IsRemovingOrphans` unconditionally on the way out.
+>
+> ⚠⚠ **The fix shape below is quoted as found and its ⚠ caveat is WRONG — do not follow it.** It
+> says `IsRemovingOrphans` is load-bearing because "the leftover card's Cancel binds to it". It does
+> not. That Cancel binds to `IsScanningOrphans`, and the comment at `ProxyDeployPanel.axaml:152`
+> says so in as many words: *"NOT to the shared IsScanning and NOT to IsRemovingOrphans"* — the very
+> line the caveat cites. **Nothing in any `.axaml` binds `IsRemovingOrphans` at all** (`grep -rn
+> IsRemovingOrphans ui/UE5DumpUI/Views/` returns only that comment). The flag was kept anyway, for
+> the real reasons: it is half of `IsBusy` and the orphan tests assert on it. Working-lessons §2.4,
+> exactly — re-derive the PREMISE, not just the location.
+>
+> ⭐ **A third half of the defect went unreported and is also fixed: the delete showed NO busy bar
+> at all.** Blast radius checked rather than assumed — inside this panel `IsScanning` is bound only
+> by the progress bar (`ProxyDeployPanel.axaml:238`) and read at `:576` to skip the drive-list
+> auto-load. So the one visible change is that a leftover delete finally renders the bar.
+>
+> ⚠ **The existing tests could not have caught the naming half, and one of them PINNED the defect.**
+> `AScan_IsRefused_WhileAnOrphanDeleteIsRunning` asserted only `Contains("Busy")` — which the
+> `?? "another operation"` fallback also satisfies, so it was green on the broken wording.
+> `AnOrphanDelete_IsRefused_WhileAScanIsRunning` asserted the generic
+> `"Wait for the current operation"` **verbatim**, i.e. it asserted the defect. Both now assert the
+> holder's own label and `DoesNotContain("another operation")`.
+>
+> **Two independent negative controls, each isolating one half:**
+>
+> | control | armed by | result |
+> |---|---|---|
+> | NC-A | top message → back to the generic string | **only** `AnOrphanDelete_IsRefused_WhileAScanIsRunning` fails |
+> | NC-B | `TryBeginExclusive` removed, hand-rolled shape restored | **only** `AScan_IsRefused_WhileAnOrphanDeleteIsRunning` fails |
+>
+> Both reverted; **4,712 UI tests green, 0 failed**.
+>
+> <details><summary>the original finding, as recorded</summary>
 >
 > `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:163](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:163))
 > does three things: tests `IsScanning || IsRemovingOrphans`, sets **`_busyWith = what`**, sets
@@ -8411,6 +8451,11 @@ ersion.dll`, our proxy with **no exe beside it**. **Find leftovers** → `Found 
 > `IsRemovingOrphans = true` in the `try`. ⚠ **`IsRemovingOrphans` is separately load-bearing** — the
 > leftover card's Cancel binds to it (`ProxyDeployPanel.axaml:152-158`, deliberately *not* to the
 > shared `IsScanning`), so it must keep being set, not be replaced by the scope.
+>
+> </details>
+>
+> ℹ️ The `Seven commands` count above was right when written and is now **eight** — derive it with
+> `grep -c 'TryBeginExclusive("' ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs`, never quote it.
 
 > ### 🟡 STEPS 2 AND 3 CLOSED 2026-08-19 — by the maintainer, on their own machine
 >

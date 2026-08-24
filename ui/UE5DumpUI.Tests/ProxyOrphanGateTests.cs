@@ -139,7 +139,13 @@ public class ProxyOrphanGateTests
         Assert.True(busyDuringDelete, "the delete must hold the gate while it runs");
         Assert.Equal(findCallsBefore, svc.FindCalls);          // the scan never reached the service
         Assert.NotNull(refusedWith);
-        Assert.Contains("Busy", refusedWith!, StringComparison.OrdinalIgnoreCase);
+        // NAMES THE HOLDER. `Contains("Busy")` alone passed before [ORPHANBUSYMSG-2026-08-24]
+        // too: the delete hand-rolled its predicate and never set `_busyWith`, so the refusal
+        // came out of BusyMessage()'s `?? "another operation"` fallback — still starting with
+        // "Busy", still naming nothing. Asserting the operation's own label is what tells the
+        // two apart, and the explicit DoesNotContain pins the fallback as the failure mode.
+        Assert.Contains("Delete leftovers", refusedWith!, StringComparison.Ordinal);
+        Assert.DoesNotContain("another operation", refusedWith!, StringComparison.Ordinal);
         Assert.False(vm.IsBusy);                                // released on the way out
     }
 
@@ -162,8 +168,12 @@ public class ProxyOrphanGateTests
                  .WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.Equal(0, svc.RemoveCalls);                       // nothing was recycled
-        Assert.Contains("Wait for the current operation",
-                        vm.LastOperationResult ?? "", StringComparison.OrdinalIgnoreCase);
+        // ...and the refusal names the ORPHAN SCAN as the holder. This used to assert the generic
+        // "Wait for the current operation to finish" — i.e. the test pinned the very wording
+        // [ORPHANBUSYMSG-2026-08-24] identified as the defect, which is why fixing it turned this
+        // assertion red. It now asserts the label the scan passes to TryBeginExclusive.
+        Assert.Contains("Find leftovers", vm.LastOperationResult ?? "", StringComparison.Ordinal);
+        Assert.DoesNotContain("another operation", vm.LastOperationResult ?? "", StringComparison.Ordinal);
 
         svc.ScanGate.SetResult();
         await scanning;

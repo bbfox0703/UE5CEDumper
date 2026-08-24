@@ -955,11 +955,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task DeleteSelectedOrphansAsync(CancellationToken ct)
     {
-        // IsScanning is shared with Scan Steam / Scan Drives / Refresh in this panel, and a delete
-        // running concurrently with a scan would have the first finisher clear the flag for both.
+        // A cheap pre-check, so a delete that is going to be refused never puts a modal on screen.
+        // It reports through BusyMessage() like the other seven: this used to say the generic
+        // "Wait for the current operation to finish", which names nothing — almost exactly the
+        // wording AE5's fix exists to replace. [ORPHANBUSYMSG-2026-08-24]
         if (IsScanning || IsRemovingOrphans)
         {
-            LastOperationResult = "Wait for the current operation to finish";
+            LastOperationResult = BusyMessage();
             return;
         }
 
@@ -978,6 +980,36 @@ public partial class ProxyDeployViewModel : ViewModelBase
             LastOperationResult = "Cancelled — nothing was removed";
             return;
         }
+
+        // ── The gate, taken HERE and not at the top of the method ────────────────────────────
+        //
+        // AFTER the confirmation, deliberately: holding it across the modal would make the panel
+        // report itself busy for as long as the dialog is open, and
+        // `TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate` pins that it must not. So the check
+        // above is a pre-filter and THIS is the gate — which also closes a window that pre-filter
+        // alone left open: something invoked while the dialog was up (hotkey, property-changed)
+        // used to find the delete setting `IsRemovingOrphans` unconditionally on the way out.
+        //
+        // Sharing `TryBeginExclusive` is the point. The delete used to hand-roll the predicate and
+        // so never set `_busyWith`, leaving it the one operation in this panel that was unnamed as
+        // the blocker as well as the blocked: everything else fell through `BusyMessage()`'s
+        // `?? "another operation"` fallback and said `Busy: another operation is running`.
+        // [ORPHANBUSYMSG-2026-08-24]
+        //
+        // ⚠ The finding that reported this claimed `IsRemovingOrphans` was load-bearing because
+        // "the leftover card's Cancel binds to it". It does not — that Cancel binds to
+        // `IsScanningOrphans`, and the comment at ProxyDeployPanel.axaml:152 says so in as many
+        // words ("NOT to the shared IsScanning and NOT to IsRemovingOrphans"). Nothing in any
+        // .axaml binds `IsRemovingOrphans` at all. It is kept because it is half of `IsBusy` and
+        // the orphan tests assert on it, NOT for the stated reason.
+        //
+        // Blast radius of now setting the shared flag here, checked rather than assumed: inside
+        // this panel `IsScanning` is bound only by the progress bar (ProxyDeployPanel.axaml:238)
+        // and read at :576 to skip the drive-list auto-load. So the visible change is that a
+        // leftover delete finally SHOWS the busy bar — it showed none before, which is the
+        // unreported third half of this defect.
+        using var busy = TryBeginExclusive("Delete leftovers");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         int ok = 0, fail = 0, files = 0, dirs = 0;
         var live = LiveBinariesDirs();
