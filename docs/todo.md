@@ -11260,6 +11260,46 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   log folder; the per-FOLDER sweep covers every OTHER folder and skips `keep` (`Sein.cpp:629`).
   Everything the rig writes carries a `ZZRET-` prefix and `clean` refuses to touch anything else.
 
+  ### ✅ The C# store sweep too `[RETENTION-CSHARP-2026-08-24]` — a DIFFERENT sweep with a DIFFERENT trigger
+
+  ⚠⚠ **CORRECTION TO THE RUN ABOVE: its `Bookmarks` case was VACUOUS, and I published it before
+  noticing.** That case was triggered by launching the **game**, and the C++ sweep (`Sein`) never
+  looks at `Bookmarks\` at all — so *"the 400-day-old bookmark survived"* was true of a sweep that
+  was never pointed at it. **A no-sweep control is only worth anything when a must-die case in the
+  SAME sweep dies beside it.** The C# sweep lives in `AppDataFolderMaintenance.PruneAged` and runs
+  from each **store's constructor**, so it needs the **UI**, not a game.
+
+  `py tools/verify/retention_backdate.py csharp` — **7 of 7 correct:**
+
+  | file | age | want | why |
+  |---|---|---|---|
+  | `snapshots.ZZRETDOOM.db` | -25d | **die** | past `Constants.DataMaxAgeDays` = 21 |
+  | `snapshots.ZZRETLIVE.db` | -19d | live | inside the window |
+  | `snapshots.ZZRETGRP.db` | -25d | live | **old, but its GROUP has a fresh sibling** |
+  | `snapshots.ZZRETGRP.db-wal` | -1d | live | the sibling that keeps the group alive |
+  | `snapshots-ZZRETNOTOURS.db` | -400d | live | no dot after the prefix -> `GameKeyOf` refuses it |
+  | `bookmarks.ZZRETBM.json` | -400d | live | `BookmarkStore` passes `maxAgeDays: 0` |
+  | `teleport-coords.zzretcoord.json` | -400d | live | `CoordinateLibraryStore` passes `maxAgeDays: 0` |
+
+  ⭐ **The group pair is the one worth having.** `SelectExpired` keys on `GameKeyOf` and expires a
+  game's whole set on the **newest** member (`AppDataRetentionPolicy.cs:91-105`), which is the
+  invariant CLAUDE.md states as *"a game's files move and expire as a GROUP"* — a `.db` migrated or
+  expired without its `-wal` has silently dropped every transaction the WAL held. A 25-day-old `.db`
+  surviving purely because its `-wal` is one day old is that rule, observed.
+
+  ⭐ **Second, independent witness, scoped to the run.** `PruneAged` logs at
+  `AppDataFolderMaintenance.cs:192`, and this run produced
+  `[2026-08-24 16:39:01] AppDataFolderMaintenance: deleted 1 'snapshots' file(s) unused for 21+ days`
+  — **count 1**, matching exactly one doomed group. ⚠ The first version of that check grepped
+  *every* log and proudly printed lines from four days earlier: a witness that can never fail, i.e.
+  the very shape this rig exists to avoid. It is now bounded to lines written after the fixtures were
+  planted, and it **fails** if the count is not 1.
+
+  ✅ **This also closes AF11 step 6's negative control** — *"backdate a library past 21 days and
+  restart; it must still be there (`maxAgeDays: 0`, same as `Bookmarks\`)"* — verified at **-400 days**,
+  alongside a must-die case in the same sweep, which is what makes it a control rather than an
+  observation.
+
 - ✅ **The proxy dedup guard says when it is not armed** (build 2603, B47) — **VERIFIED 2026-08-05,
   build 2645 — and the 2026-08-04 ✅ was credited to the WRONG SESSION.**
   > **The correction, because it is the same trap as B34 and B14.** The 08-04 note said *"DQ7R ran

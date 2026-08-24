@@ -298,7 +298,122 @@ def b19():
                 p.unlink()
 
 
+
+# ======================================================================
+# The C# half. DIFFERENT SWEEP, DIFFERENT TRIGGER.
+# ======================================================================
+# ⚠ THIS EXISTS BECAUSE THE FIRST RUN'S Bookmarks CASE WAS VACUOUS. It was triggered by
+# launching the GAME, and the C++ sweep (Sein) never looks at Bookmarks\ at all -- so
+# "the 400-day-old bookmark survived" was true of a sweep that was never pointed at it.
+# The C# sweep lives in AppDataFolderMaintenance.PruneAged and runs from each STORE's
+# constructor, i.e. it needs the UI. A no-sweep control is only meaningful when a
+# must-die case in the SAME sweep dies alongside it.
+CS_CASES = [
+    # (subfolder, filename, days, must_die, why)
+    ("Snapshots", "snapshots.ZZRETDOOM.db", -25.0, True,
+     "a snapshot group past DataMaxAgeDays=21"),
+    ("Snapshots", "snapshots.ZZRETLIVE.db", -19.0, False,
+     "inside the window"),
+    ("Snapshots", "snapshots.ZZRETGRP.db", -25.0, False,
+     "OLD, but its group has a fresh sibling -- groups expire together"),
+    ("Snapshots", "snapshots.ZZRETGRP.db-wal", -1.0, False,
+     "the fresh sibling that keeps the whole group alive"),
+    ("Snapshots", "snapshots-ZZRETNOTOURS.db", -400.0, False,
+     "no dot after the prefix, so GameKeyOf refuses it -- never a candidate"),
+    ("Bookmarks", "bookmarks.ZZRETBM.json", -400.0, False,
+     "Bookmarks retention is 0 = OFF"),
+    ("TeleportCoords", "teleport-coords.zzretcoord.json", -400.0, False,
+     "TeleportCoords retention is 0 = OFF (AF11 step 6's negative control)"),
+]
+
+
+def csharp():
+    import subprocess
+    root = pathlib.Path(__file__).resolve().parents[2]
+    t0 = time.time()
+    planted = []
+    for sub, name, days, must_die, why in CS_CASES:
+        d = ROOT / sub
+        if not d.is_dir():
+            say("  note: %s does not exist -- skipping its case(s)" % d)
+            continue
+        f = write(d / name, "{}\n")
+        backdate(f, days)
+        planted.append((f, must_die, why))
+    if not planted:
+        raise SystemExit("csharp: no target folder exists; open the UI once first")
+    say("planted %d case(s)" % len(planted))
+
+    say("")
+    say("launching the UI to run the store constructors ...")
+    subprocess.Popen([str(root / "dist" / "UE5DumpUI.exe")],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(12)
+    subprocess.run(["taskkill", "/F", "/IM", "UE5DumpUI.exe"],
+                   capture_output=True, text=True)
+    time.sleep(1)
+
+    fails = []
+    for f, must_die, why in planted:
+        gone = not f.exists()
+        ok = gone == must_die
+        say("%-4s %-5s %-9s %-38s %s" % ("OK" if ok else "FAIL",
+                                         "DIE" if must_die else "LIVE",
+                                         "gone" if gone else "present", f.name, why))
+        if not ok:
+            fails.append("%s: expected %s, got %s (%s)"
+                         % (f.name, "gone" if must_die else "present",
+                            "gone" if gone else "present", why))
+    if not any(m for _, m, _ in planted if m) or \
+       not any((not f.exists()) for f, m, _ in planted if m):
+        fails.append("NOTHING died -- the C# sweep did not run (did a store get "
+                     "constructed?), so every LIVE result here is vacuous")
+
+    # Independent witness: PruneAged's own line (AppDataFolderMaintenance.cs:192).
+    # ⚠ MUST be scoped to THIS run. The first version grepped every log and proudly
+    # printed lines from four days earlier, which is a witness that can never fail --
+    # exactly the shape this whole rig exists to avoid. Only lines written since the
+    # fixtures were planted count.
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
+    hits = []
+    for lg in LOGS.rglob("*.log"):
+        try:
+            txt = lg.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for ln in txt.splitlines():
+            if "AppDataFolderMaintenance: deleted" in ln and ln[1:20] >= since:
+                hits.append(ln.strip()[:130])
+    say("")
+    if hits:
+        for h in hits:
+            say("witness (this run): %s" % h)
+        # The COUNT is the sharp part: one doomed group -> "deleted 1".
+        if not any("deleted 1 " in h for h in hits):
+            fails.append("the sweep logged a deletion count that is not 1, but exactly "
+                         "one fixture group was doomed -- something else was swept too")
+    else:
+        say("witness (this run): NONE -- no AppDataFolderMaintenance line since %s" % since)
+        fails.append("the sweep left no log line for this run, so the only evidence is "
+                     "the files themselves")
+
+    for f, _, _ in planted:
+        if f.exists():
+            f.unlink()
+    say("")
+    if fails:
+        say("FAIL (%d)" % len(fails))
+        for x in fails:
+            say("  - %s" % x)
+        return 1
+    say("PASS -- the C# store sweep expired the aged snapshot group, kept the one inside "
+        "the window, kept a group held alive by a fresh sibling, ignored a non-matching "
+        "name, and left both zero-retention folders alone")
+    return 0
+
+
 if __name__ == "__main__":
     v = sys.argv[1] if len(sys.argv) > 1 else "check"
-    raise SystemExit({"plant": plant, "check": check, "clean": clean, "b19": b19}
+    raise SystemExit({"plant": plant, "check": check, "clean": clean,
+                      "b19": b19, "csharp": csharp}
                      .get(v, lambda: (_ for _ in ()).throw(SystemExit(__doc__)))())
