@@ -6266,7 +6266,56 @@ finding fewer than 30 fails rather than passing everything).
 was itself being truncated** — and it is the notice `[AF12/AF13]` step 3 is written to look for.
 `ToolTip.Tip` is the half that certainly works; `TextWrapping` needs a bounded width inside a
 `WrapPanel`, hence the `MaxWidth`. ⚠ **The wrap half is owed a visual check** and is noted as such in
-the markup rather than claimed.
+the markup rather than claimed. — ✅ **DONE 2026-08-24, see `[PARAMSSORT-B-WRAP-2026-08-24]` below.**
+
+> ### ✅ (b)'s WRAP HALF CLOSED 2026-08-24 `[PARAMSSORT-B-WRAP-2026-08-24]` — checked at the exact width the defect names
+>
+> The owed check was *"`TextWrapping` needs a bounded width inside a `WrapPanel`, hence the
+> `MaxWidth` … visual confirmation is owed"*. Done on the AOT build (`dist/UE5DumpUI.exe`
+> v1.0.0.3338), DumperTest **Development**, at the window's **true minimum width**.
+>
+> Both halves work, at 812 DIP:
+>
+> ```
+> 423 object(s) matched · scanned 652 ⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a
+> page and a later Changed/Decreased refine can re-read only what was kept; use more distinctive values.
+> ```
+> * **wrap** — two lines, ends on its own full stop, **no ellipsis and nothing clipped** ✅
+> * **tooltip** — hovering the notice shows the identical sentence in full ✅
+> * bounded by construction too: `MaxWidth="760"` (`SnapshotPanel.axaml:371`) against the window's
+>   `MinWidth="800"` (`MainWindow.axaml:10`), so the text can never be wider than the panel.
+>
+> ⚠⚠ **THE MEASUREMENT ALMOST DIDN'T MEAN ANYTHING, AND THE REASON GENERALISES TO EVERY FUTURE
+> COMPUTER-USE RESIZE.** This monitor runs at **DPI 216 (225%)** — `GetDpiForWindow` says so. A
+> `SetWindowPos` issued from a **DPI-unaware** process is *virtualised*: asking for 820 px returned a
+> `GetWindowRect` of exactly `820 x 950`, which looked like a successful narrow resize and was not —
+> the window was really ~1828 physical px. Calling **`SetProcessDPIAware()` first** is what made the
+> numbers real, and the window then refuses to go below **1828 px = 812 DIP**, i.e. its
+> `MinWidth="800"` plus non-client border. ▶ **Without the DPI call the run would have "verified" the
+> wrap at a width nearly 2.2× wider than the one the defect is about** — a clipped-text check at the
+> wrong width is precisely the vacuous pass this row existed to avoid.
+>
+> ⭐ **The fixture question was answered BEFORE the click, and it changed the plan.**
+> `tools/verify/snapshot_cap_fixture.py` exists because *"an absence proves nothing until the channel
+> is shown able to carry the thing"*, and here it earned that:
+>
+> | corpus | verdict |
+> |---|---|
+> | DumperTest **Shipping** (`0CAB57A7081C3000`, fresh capture: 628 obj / 11,344 fields) | ⛔ **largest group 125** — the notice CANNOT fire; a no-notice run here measures nothing |
+> | DumperTest **Development** (`6A8AA8DF10F1F000`, fresh capture: 652 obj / 12,297 fields) | ✅ **264 fields at 0.0** on `TraceQueryTestResults` (gidx 22761) — above 256, below 1024, inside the discriminating window |
+>
+> So the run was moved to Development on the rig's say-so, not on a guess. A Group match on
+> `0` + `0` then produced the notice on the first attempt.
+>
+> ⚠ **The archived corpus is stale and this is worth knowing before the next attempt.**
+> `snapshots.6A7EA60310F17000.db` — the one the rig's 2026-08-21 note measured — belongs to a
+> DumperTest binary that has since been **rebuilt**: Shipping now hashes `0CAB57A7081C3000` and
+> Development `6A8AA8DF10F1F000`, so **neither current flavour loads it** and the Snapshot panel
+> opens empty. A fresh capture is required, and Development reproduces the same 264-field group, so
+> nothing is lost — but "the corpus is on disk" is not the same as "the corpus matches the game".
+>
+> ℹ️ The Shipping capture made while establishing this was deleted through the panel's **Delete
+> Selected** (`Snapshot deleted.`, list empty afterwards), so the app-data folder is as it was found.
 
 **(c) The checklist named a column header that does not exist.** Step 1 says to click Detect Stats'
 **✓** header. `DetectStatsPanel.axaml:59` binds `str.Detect.ColConfirm`, which `en.axaml:47` defines
