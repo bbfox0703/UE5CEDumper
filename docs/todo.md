@@ -8118,7 +8118,7 @@ class-to-class recycling (a recycled address whose new occupant has a *sane* `Pr
 **A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
 `FullPath` / `SuperName`, which are never witnessed.
 
-### 🟡 6-of-6 STEPS ATTEMPTED (step 4 closed 2026-08-20; step 2 still PARTIAL) — AE4–AE7: the Proxy Deploy panel, two buttons at once
+### 🟡 6-of-6 STEPS ATTEMPTED (steps 3 + 4 CLOSED — 4 on 2026-08-20, its mutual-exclusion half and step 3's orphan cancel on 2026-08-24; **only step 2 is still PARTIAL**) — AE4–AE7: the Proxy Deploy panel, two buttons at once
 
 *No game needed — just the UI and a folder with a couple of detected games. See dev-log build 3038.
 Every step is a click sequence; the unit tests cover the logic, not what the panel looks like doing it.*
@@ -8180,6 +8180,75 @@ Every step is a click sequence; the unit tests cover the logic, not what the pan
 > operation because the Dispatcher shut down` at `ClassicDesktopStyleApplicationLifetime.StartCore` —
 > instead of exiting quietly. The first instance is unaffected and keeps running. Worth a look because
 > `crash.log` is documented as *the* AOT startup diagnostic, and a benign duplicate launch pollutes it.
+>
+> ### ✅ STEP 3's ORPHAN CANCEL + STEP 4's MUTUAL EXCLUSION CLOSED 2026-08-24 `[AE4-TIMING-2026-08-24]` — the two "finished before the click" gaps, closed by a bigger fixture
+>
+> Both gaps had the **same** cause, recorded twice in the table above: *"the scan finished before the
+> click **twice** (14 s then <3 s)"* and *"the delete completes faster than one input event"*. Neither
+> is a property of the feature — both are a property of the **fixture being one tree**.
+>
+> ⭐ **600 leftover trees, staged in 1.7 s and costing ~0 disk.** `ae20_orphans.py create --count 600
+> --link` hardlinks every proxy to a single staging copy: `st_nlink = 601` on the staged file, so all
+> 600 entries share one set of extents — **2.9 MB instead of 1.7 GB**, which is what makes a count
+> this large practical at all. ⚠ The links are made from a copy staged *under the Steam library*,
+> **never from `dist\proxy\version.dll`** — a hardlink is not subordinate to its "original", every
+> link is equal, and the Recycle Bin will move any of them; linking from the repo would put the
+> shipped proxy one fixture-delete away. Verified after the run: `dist\proxy\version.dll` intact at
+> `nlink = 1`.
+>
+> **Step 3 — the orphan scan's Cancel, on the correct card.** With 600 trees the scan lasts ~7 s, so
+> the button is reachable:
+>
+> ```
+> mid-scan:  Checking 140 folder(s) — 110 leftover(s) found      <- live progress
+>            "Find leftovers" greyed; a Cancel appears ON THE LEFTOVER CARD
+> after:     Scan cancelled
+> ```
+> * the Cancel is on the **leftover card**, not a ghost on the drive card ✅ (the B45 failure)
+> * ⭐ **Two witnesses, and the second is the load-bearing one.** A completed scan always logs
+>   `Orphan scan: N candidate folder(s) examined, M leftover(s) found` — present at **10:36:47**
+>   (`640 examined, 600 found`) for the run that finished. The cancelled run logs only
+>   `Found 2 Steam library folder(s)` and **no completion line at all**. So the scan demonstrably did
+>   not run to the end, independently of the status text that claims it was cancelled.
+>
+> **Step 4 — "a delete blocks a scan and vice versa", both directions.**
+>
+> | direction | how | result |
+> |---|---|---|
+> | **a scan blocks a delete** | Find leftovers → tick 4 → **Scan Steam** → immediately **Delete checked (4)** | refused: `Wait for the current operation to finish`; the scan completed normally (`Found 19 UE game(s)`) and nothing was deleted |
+> | **a delete blocks a scan** | tick 4 → Delete → confirm → immediately **Scan Steam** | **no scan started** — the log across the whole delete window (10:41:05.8 → 10:41:06.03) contains no scan-start line, only the delete's own per-row re-plan; the delete finished cleanly (`Cleaned 4 of 4 leftover(s) — 4 file(s) recycled, 16 folder(s) removed`) |
+>
+> ⚠ **What the second row does NOT show is the refusal TEXT.** `LastOperationResult` is overwritten by
+> the delete's own summary ~300 ms later, and a 4-row delete cannot be made to outlast one screenshot
+> round-trip (there is no select-all on the leftover card, so ticking 40+ rows is not reachable by
+> clicking). The **blocking** is what step 4 asserts and it is measured; the message on that path is
+> established from source, not from the screen, and is written up as the finding below.
+>
+> #### ⚠ NEW FINDING `[ORPHANBUSYMSG-2026-08-24]` (LOW) — the leftover delete sits OUTSIDE the busy-naming scheme, in both directions
+>
+> `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:163](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:163))
+> does three things: tests `IsScanning || IsRemovingOrphans`, sets **`_busyWith = what`**, sets
+> `IsScanning = true`. **Seven** commands use it and report through
+> `BusyMessage()` → `Busy: {_busyWith} is running — wait for it to finish`.
+>
+> `DeleteSelectedOrphansAsync` ([:959](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:959)) does not.
+> It hand-rolls the same predicate and then:
+>
+> * reports **`"Wait for the current operation to finish"`** — a generic line that names nothing, and
+>   almost exactly the wording step 1 says the fix exists to replace (*"not the old 'Wait for scan to
+>   finish'"*). **Measured on screen**, above;
+> * never sets `_busyWith`, so while a delete is running the other seven fall through
+>   `BusyMessage()`'s own `?? "another operation"` fallback — **`Busy: another operation is running`**.
+>
+> ⭐ So the leftover delete is the one operation in the panel that is unnamed **as the blocker and as
+> the blocked**. The exclusion itself is correct in both directions — this is wording only, hence LOW.
+>
+> **Fix shape** (not applied — this session verifies): give the delete the same scope as everything
+> else — `using var busy = TryBeginExclusive("Delete leftovers"); if (busy is null) { LastOperationResult
+> = BusyMessage(); return; }` — and let `BusyScope.Dispose` clear it, instead of the hand-rolled
+> `IsRemovingOrphans = true` in the `try`. ⚠ **`IsRemovingOrphans` is separately load-bearing** — the
+> leftover card's Cancel binds to it (`ProxyDeployPanel.axaml:152-158`, deliberately *not* to the
+> shared `IsScanning`), so it must keep being set, not be replaced by the scope.
 
 > ### 🟡 STEPS 2 AND 3 CLOSED 2026-08-19 — by the maintainer, on their own machine
 >

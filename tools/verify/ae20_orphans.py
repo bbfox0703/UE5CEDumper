@@ -48,6 +48,7 @@ WHY SYNTHETIC, AND WHY THAT IS NOT A COMPROMISE HERE
 """
 import ctypes
 import hashlib
+import os
 import pathlib
 import shutil
 import sys
@@ -88,7 +89,7 @@ def proxy_sources(spec):
     return out or None
 
 
-def create(count, spec="version"):
+def create(count, spec="version", link=False):
     if not OURS.is_file():
         say("MISSING %s" % OURS)
         return 1
@@ -98,11 +99,46 @@ def create(count, spec="version"):
     if trees():
         say("REFUSING: %d %s* tree(s) already exist -- run clean first" % (len(trees()), PREFIX))
         return 1
+
+    # ⭐ HARDLINKS, for the counts that make a timing window. AE4-AE7 step 3's orphan-scan
+    # cancel and step 4's mutual-exclusion half both need the operation to last longer than
+    # one input event, which needs HUNDREDS of trees -- and at 2.9 MB per proxy that is
+    # gigabytes of identical bytes. A hardlink is a second directory entry for the SAME
+    # extents: the scanner's `HasExportQuorum` reads a real proxy, and the disk cost is ~0.
+    #
+    # ⚠ LINKED FROM A STAGING COPY, NEVER FROM dist\proxy. A hardlink is not a subordinate
+    # of its "original" -- every link is equal, and the Recycle Bin will happily move one.
+    # Linking straight from the repo would put dist\proxy\version.dll one delete away from
+    # a fixture, so one real copy is made under the library first and everything links to
+    # THAT. Worst case destroys a throwaway.
+    staging = None
+    if link:
+        staging = LIB / (PREFIX + "_src")
+        staging.mkdir(parents=True, exist_ok=True)
+        staged = []
+        for s in srcs:
+            dst = staging / s.name
+            if not dst.is_file():
+                shutil.copy2(s, dst)
+            staged.append(dst)
+        srcs = staged
+        say("hardlink source staged at %s (one real copy per proxy)" % staging)
+
+    failed_links = 0
     for i in range(count):
-        b = bin_of(LIB / f"{PREFIX}{i:03d}")
+        b = bin_of(LIB / f"{PREFIX}{i:04d}")
         b.mkdir(parents=True)
         for s in srcs:
-            shutil.copy2(s, b / s.name)
+            dst = b / s.name
+            if link:
+                try:
+                    os.link(s, dst)
+                    continue
+                except OSError:
+                    failed_links += 1   # different volume / FS without hardlinks
+            shutil.copy2(s, dst)
+    if link and failed_links:
+        say("NOTE: %d hardlink(s) fell back to a real copy" % failed_links)
     say("created %d synthetic leftover tree(s) under %s%s%s###" % (count, LIB, chr(92), PREFIX))
     say("  each = <root>%sZZOrphan%sBinaries%sWin64%s{%s}, NO shipping exe beside it"
         % (chr(92), chr(92), chr(92), chr(92), ", ".join(s.name for s in srcs)))
@@ -209,6 +245,9 @@ def clean():
     if not ts:
         say("nothing to clean")
         return 0
+    # The hardlink staging copy is a ZZAe20Orphan_src sibling and is matched by trees(),
+    # so it is removed with the rest -- checked here so a future reader does not add a
+    # second sweep for it.
     for t in ts:
         assert t.name.startswith(PREFIX) and t.parent == LIB, "refusing %s" % t
         # The `readonly` verb leaves files rmtree cannot delete. Clearing the bit here is what
@@ -234,7 +273,7 @@ if __name__ == "__main__":
             n = int(sys.argv[sys.argv.index("--count") + 1])
         if "--dlls" in sys.argv:
             spec = sys.argv[sys.argv.index("--dlls") + 1]
-        sys.exit(create(n, spec))
+        sys.exit(create(n, spec, link="--link" in sys.argv))
     if cmd == "readonly":
         sys.exit(readonly(sys.argv[2], sys.argv[3], "--off" not in sys.argv))
     if cmd == "lock":
