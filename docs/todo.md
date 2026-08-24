@@ -4,13 +4,65 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **Coming back? Read [handover-2026-08-22.md](handover-2026-08-22.md) first.** It is the single
 > entry point: current state, the grants and how to launch each fixture, the traps, and a ranked
-> "start here". `build_number.txt` is **3315**, `dist/` is republished AOT-trimmed, and **all twelve**
-> pre-build CI gates are green (`py tools/check_all.py` — ⚠ *twelve*, not the four this file used to
-> imply).
+> "start here". ⚠ **The build number and the gate count both drifted in this very paragraph**
+> (it said `3315` and *twelve*; on 2026-08-24 they are **3350** and **13**). Do not read either from
+> here — `cat dist/build_number.txt`, and take the gate count from `py tools/check_all.py`'s own
+> `N gate(s) run` line. `dist/` is republished AOT-trimmed.
 > ⚠ Its two predecessors are **archived**: [archive/handover-2026-08-20.md](archive/handover-2026-08-20.md)
 > and [archive/handover-2026-08-19.md](archive/handover-2026-08-19.md). Everything in them that is
 > still operationally true was carried forward; go back to them only for the *history* of the
 > 2026-08-19/20 verification programme.
+
+> ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
+>
+> ⚠⚠ **A heading in this file is NOT evidence.** Closures are recorded under their own
+> `✅ … [TAG-2026-08-NN]` block, often thousands of lines from the row they close, and the original
+> `⬜`/`🟡` heading is **not** updated as a matter of course. On 2026-08-24 that misdirected five
+> planning attempts in one session — the worst being a heading that read *"Step 2 is still open, on
+> a NEW blocker"* over a step closed the next day, twice. See working-lessons **§1.ab**.
+>
+> A 7-agent sweep re-read all **40** open-marked sections against the whole file. **24 headings
+> assert something the file itself records as closed.** They are listed below with the closure tag
+> to grep. ⚠ **The markers were deliberately NOT flipped**: an agent sweep is ~half wrong before
+> refutation, and mis-marking an OPEN row as closed is the dangerous direction. What IS
+> machine-checked is that **every cited tag exists** — 21 of 24 carry a tag and all of them resolve
+> in `docs/todo.md` or the archive; **0 missing**. The remaining 3 cite no tag and are unverified.
+>
+> ⭐ **The rule this replaces guesswork with:** before planning a row, `grep` its finding ids across
+> the WHOLE file. And **when you close a step, edit its heading in the same commit** — that is the
+> only thing that stops this table regrowing.
+>
+> | heading line | what it asserts | closure tag(s) to grep |
+> |---|---|---|
+> | 1757 | **AA12/AA13 step 3** the legitimately-empty case / ⬜ still needs **Cheat Engin | `AA12-STEP3-EMPTY-2026-08-23`, `AA2-STEP4-CHURN-2026-08-23` |
+> | 1880 | ⬜ What is left — a package build, which is the maintainer's step | `AD4-CONTESTED-2026-08-23`, `C1-SPAWNER-EXISTS-2026-08-24`, `MG2-CONTAINER-2026-08-23`, `V1A-REALLOC-2026-08-23`, `V8-DLLHALF-2026-08-23` |
+> | 3452 | 8 / `AC17` / **C** / **Needs a real mount point.** Mount a fixed volume into a | `VOLUMEROOT-2026-08-19`, `ZHTW-SWEEP-2026-08-22 *(archive)*` |
+> | 3483 | survives real `.CT` traffic without throwing — is tested by two *distinct* com | `MB3-THROW-2026-08-23` |
+> | 3998 | ⛔ V8 BLOCKED 2026-08-20 `[V8-ROWMAP-2026-08-20]` — the RowMap probe fails on D | `V8-DLLHALF-2026-08-23`, `V8-PAINTED-2026-08-23`, `Y11-OPAQUEDROP-2026-08-22` |
+> | 4029 | ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L10 (T1e Views/app root): AF7 / | `AE4-TIMING-2026-08-24`, `GRIDRECYCLE-2026-08-21`, `L10-HEADLESS-2026-08-20`, `L10-OWNER-2026-08-21` |
+> | 5136 | 🟡 L3 steps 2 + 3 — step 3's CONDITION HAS NEVER FIRED; step 2 is CE-only `[L3- | `L3-STEP2-CE-2026-08-21 *(archive)*`, `V11-SYM-2026-08-20` |
+> | 6058 | 🟡 G11 steps 3–4 ANSWERED 2026-08-22 `[G11-TIERS-2026-08-22]` — Tier 2 has neve | `G11-AVOWED-2026-08-23`, `G11-STVOYAGER-2026-08-23` |
+> | 6135 | 🟡 第 3 步 CE batch — opened 2026-08-22 `[STEP3-BATCH-2026-08-22]`, three rows re | `CTDISC-SLOTS-2026-08-22` |
+> | 6531 | 🟡 ALL BUT TWO STEPS DONE 2026-08-20 `[PEHOOK-2026-08-17]` — a validation failu | `PEHOOK3C-STAGE-2026-08-23` |
+> | 7487 | ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate | `DSA-2026-08-16`, `G12-PIPE-2026-08-17`, `G12S2-STAGE-2026-08-23`, `G3-STAGE-2026-08-23`, `G3-VOID-2026-08-20` |
+> | 7689 | 🟡 GROUP 5 opened 2026-08-18 `[CE-2026-08-18]` — plugin bridge live, freeze rec | ⚠ **none cited — unverified** |
+> | 8486 | 🟡 4-of-5 CLOSED 2026-08-19 — A6: Force now holds the class AND its subclasses | `A6-CDO-2026-08-22`, `A6-DERIV-2026-08-19`, `A6-DERIVE-2026-08-22`, `A6-SPAWN-DQ7R-2026-08-23` |
+> | 8569 | 🟡 A5 + AE9 CLOSED, V6 corrected to a HALF-pass 2026-08-19 — the fourteen-MED b | `AF1-ENUMCOUNT-2026-08-23`, `AF2-CLASSCAP-2026-08-23`, `G1-AMBER-2026-08-24`, `U7-CJKCUT-2026-08-24`, `V6U8-FNAMEPAIR-2026-08-22` |
+> | 9079 | 🟡 STEPS 1-4, 7, 8, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the  | `FZ6-CAP-2026-08-24` |
+> | 10286 | 🟡 PARTIAL 2026-08-10 — GObjects layout fix (build 2782), DragonSword Awakening | `DSLAYOUT-BASEANCHOR-2026-08-23`, `DSLAYOUT-GREP-2026-08-24` |
+> | 11304 | ① Log-derivable — still open: B29 (log half) / B18 / B19 / B10 / B8 (🟡 deferre | `B19-LOCKED-2026-08-22`, `B8-DEFERRED-2026-08-23`, `ELLIOT-B4-2026-08-18`, `LIVE-2026-08-23`, `NONASCIILS-2026-08-24` |
+> | 12546 | ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump E | ⚠ **none cited — unverified** |
+> | 13968 | 1 / 把 `DetectVersion: PE resource failed, falling back to memory string scan`  | `UE3-GALGUN-2026-08-23` |
+> | 14372 | 🟡 …and the LWC half's blocker is now MEASURED rather than assumed `[U3U17-LWC- | `U3U17-LWC-ELLIOT-OUT-2026-08-23` |
+> | 14444 | 🟡 U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（GAS 半 **CLOSED 2026-08-23**；LWC 半只差容器樣 | `U3U17-GAS-2026-08-23`, `U3U17-LWC-2026-08-24` |
+> | 14453 | 🟡 G1 / X3 / U7 / AF2 — step 3 CLOSED 2026-08-23 `[AF2-CLASSCAP-2026-08-23]`; s | `G1-AMBER-2026-08-24`, `U7-CJKCUT-2026-08-24` |
+> | 14545 | 🟡 G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示（步驟 3 **CLOSED 2026-08-23**；步驟 2 第二個宿主 | ⚠ **none cited — unverified** |
+> | 15296 | ⬜ G12（heuristic 分支）—— 走 fallback 時 offset 仍正確 | `G12-PIPE-2026-08-17`, `G12S2-STAGE-2026-08-23` |
+>
+> ℹ️ Line numbers are as of 2026-08-24 and drift on every edit — match on the TEXT, not the number.
+> The sweep also produced **27 blocked** items, each with a *measured* reason (no sample on this
+> machine, premise unsatisfiable, structurally impossible), and **10 runnable**. Those live in the
+> sections themselves; this table is only about headings that lie.
 
 > ## ▶ If the ask is "carry on fixing bugs", do NOT start here
 >
