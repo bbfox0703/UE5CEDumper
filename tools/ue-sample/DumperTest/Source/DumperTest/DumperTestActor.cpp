@@ -18,6 +18,11 @@
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
 #include "TimerManager.h"
+#include "Engine/DataTable.h"          // runtime-built tables (V8 / MG2)
+#include "GameFramework/Pawn.h"        // AD4 contention target
+#include "Kismet/GameplayStatics.h"    // GetPlayerPawn
+#include "Components/SceneComponent.h" // Spawn_ManyComponents (ActorComponent is abstract)
+#include "UObject/UObjectGlobals.h"     // ForceGarbageCollection
 
 #define LOCTEXT_NAMESPACE "DumperTest"
 
@@ -126,6 +131,22 @@ ADumperTestActor::ADumperTestActor()
 	Set_Struct.Add(FDumperTestVec3f{ 6301.f, 6302.f, 6303.f });
 	Set_Struct.Add(FDumperTestVec3f{ 6311.f, 6312.f, 6313.f });
 
+	// ---- MG2 / V1a seeds -------------------------------------------------
+	// Kept well UNDER the 128 array limit on purpose: MG2 step 1 is precisely
+	// "a container whose real row count is NOT truncated", so the header count
+	// and the rendered rows must agree exactly, before and after a removal.
+	Set_Name.Add(FName(TEXT("Alpha")));
+	Set_Name.Add(FName(TEXT("Beta")));
+	Set_Name.Add(FName(TEXT("Gamma")));
+	Set_Name.Add(FName(TEXT("Delta")));
+
+	for (int32 i = 0; i < 6; ++i)
+	{
+		Map_Churn.Add(4000 + i, 500 + i);
+	}
+	Arr_Churn = { 7001, 7002, 7003, 7004 };
+
+
 	// Struct-element container: an FText one level deep inside a TArray, so a
 	// B28 regression that only shows up under the deep descent still has a home.
 	{
@@ -206,6 +227,30 @@ void ADumperTestActor::BeginPlay()
 		Payload->Populate();
 	}
 
+	// MG2 step 2 — TSet<UObject*> with REAL, resolvable pointers. Built here and
+	// not in the constructor because Payload is a runtime NewObject: a set full of
+	// nulls would render identically whether or not object-set walking works.
+	Set_Object.Empty();
+	if (Payload)
+	{
+		Set_Object.Add(Payload);
+	}
+	for (int32 i = 0; i < 3; ++i)
+	{
+		if (UDumperTestPayload* Extra = NewObject<UDumperTestPayload>(
+			    this, *FString::Printf(TEXT("SetPayload_%d"), i)))
+		{
+			Extra->Populate();
+			Extra->PayloadValue = 8100 + i;
+			Set_Object.Add(Extra);
+		}
+	}
+
+	// V8 / MG2 step 2 — the tables. Runtime-built, so no cooked asset is needed
+	// and the row count is a parameter rather than a content decision.
+	Table_Small = BuildTable(TEXT("DumperTestTable_Small"), 8);
+	Table_Big   = BuildTable(TEXT("DumperTestTable_Big"), 100);
+
 	if (UWorld* W = GetWorld())
 	{
 		W->GetTimerManager().SetTimer(TickHandle, this, &ADumperTestActor::OnSecondTick, 1.0f, /*loop*/ true);
@@ -238,6 +283,19 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 	// exact confusion the split-clock design was built to end. From Tick, a dead timer
 	// shows as a frozen TickCount beside a climbing frames, which is the diagnosis.
 	// Cheap after the first success: a cached bool, two derefs and an IsA.
+	// AD4 step 4 — the contention writer. When armed, the "game" re-asserts
+	// damageability every frame, so a Solide God Mode hold and this writer race
+	// continuously and the badge can reach ON (contested). Costs one bool test
+	// per frame when disarmed, which is the default.
+	if (bContestDamage)
+	{
+		if (APawn* P = UGameplayStatics::GetPlayerPawn(this, 0))
+		{
+			P->SetCanBeDamaged(true);
+			++ContestWrites;
+		}
+	}
+
 	EnsureHeartbeatHud();
 }
 
@@ -345,3 +403,332 @@ void ADumperTestActor::EnsureHeartbeatHud()
 }
 
 #undef LOCTEXT_NAMESPACE
+
+// ============================================================
+// MG2 / V8 / V1a / AD4 — runtime fixtures and their mutators.
+//
+// All reachable through the dumper's `invoke_function`, so every one of these
+// rows becomes scriptable instead of "wait until a commercial game happens to
+// contain the right UPROPERTY". See the header for why this is deliberately NOT
+// a UCheatManager (it is compiled out of Shipping).
+// ============================================================
+
+UDataTable* ADumperTestActor::BuildTable(const TCHAR* Name, int32 Rows)
+{
+	// UNIQUE name per build -- see TableSerial in the header for why reusing an
+	// existing name is not safe here.
+	const FString Unique = FString::Printf(TEXT("%s_%d"), Name, ++TableSerial);
+	UDataTable* Table = NewObject<UDataTable>(this, *Unique);
+	if (!Table)
+	{
+		return nullptr;
+	}
+
+	// RowStruct must be set BEFORE AddRow: AddRow copies RowData through the
+	// struct's layout, so a null RowStruct yields a table that looks populated
+	// and reads back as garbage.
+	Table->RowStruct = FDumperTestTableRow::StaticStruct();
+
+	for (int32 i = 0; i < Rows; ++i)
+	{
+		FDumperTestTableRow Row;
+		Row.Index = i;
+		Row.Label = FName(*FString::Printf(TEXT("Row_%03d"), i));
+		Row.Value = 100.f + static_cast<float>(i);
+		// 走一步 + the index, so every row is distinguishable AND the
+		// B28 trigger is present inside a DataTable row.
+		// The literal is NOT inlined: DumperTestStrings::Odd3_OneNull already holds
+		// exactly this string, and check_ue_sample_values follows ONE hop from a field
+		// to a NAMED constant. An inlined escape is invisible to that hop, so the
+		// README row for `Caption` could not be attributed to any source line.
+		Row.Caption = FText::FromString(FString::Printf(TEXT("%s %d"), DumperTestStrings::Odd3_OneNull, i));
+
+		Table->AddRow(Row.Label, Row);
+	}
+
+	return Table;
+}
+
+void ADumperTestActor::MG2_RemoveOneMapEntry()
+{
+	// Remove the LOWEST key rather than the last inserted: a walker that reads a
+	// stale inline copy tends to still show early entries, so dropping a low one
+	// is the harder case to fake.
+	TArray<int32> Keys;
+	Map_Churn.GetKeys(Keys);
+	if (Keys.Num() == 0)
+	{
+		return;
+	}
+	Keys.Sort();
+	Map_Churn.Remove(Keys[0]);
+}
+
+void ADumperTestActor::MG2_RemoveOneSetEntry()
+{
+	// COPY the name out before removing. `const FName&` from a range-for aliases
+	// the set's own element storage, and TSet::Remove destroys that element while
+	// still holding the reference it was handed -- self-aliasing removal that
+	// happens to work today is not a fixture anyone should trust.
+	FName Victim = NAME_None;
+	for (const FName& N : Set_Name)
+	{
+		Victim = N;
+		break;   // exactly one, so the caller can count
+	}
+	if (!Victim.IsNone())
+	{
+		Set_Name.Remove(Victim);
+	}
+}
+
+void ADumperTestActor::V1a_GrowContainers(int32 Count)
+{
+	if (Count <= 0)
+	{
+		return;
+	}
+
+	// Append rather than Reserve+append: the point is to blow past the existing
+	// slack so the allocation MOVES, which is the event a Next Scan candidate has
+	// to survive by being discarded rather than by reading the old address.
+	const int32 Base = Arr_Churn.Num();
+	for (int32 i = 0; i < Count; ++i)
+	{
+		Arr_Churn.Add(7100 + Base + i);
+		Map_Churn.Add(4100 + Base + i, 600 + i);
+	}
+}
+
+void ADumperTestActor::V1a_ShrinkContainers()
+{
+	// Empty(0) releases the allocation instead of keeping slack, so the old
+	// element addresses become genuinely unreadable rather than merely stale.
+	Arr_Churn.Empty(0);
+	Map_Churn.Empty(0);
+}
+
+void ADumperTestActor::V8_RebuildBigTable(int32 Rows)
+{
+	Rows = FMath::Clamp(Rows, 1, 5000);
+	Table_Big = BuildTable(TEXT("DumperTestTable_Big"), Rows);
+}
+
+void ADumperTestActor::V8_RemoveOneTableRow()
+{
+	if (!Table_Big)
+	{
+		return;
+	}
+	TArray<FName> Names = Table_Big->GetRowNames();
+	if (Names.Num() > 0)
+	{
+		Table_Big->RemoveRow(Names[0]);
+	}
+}
+
+void ADumperTestActor::AD4_SetDamageContention(bool bEnabled)
+{
+	bContestDamage = bEnabled;
+	if (!bEnabled)
+	{
+		ContestWrites = 0;   // so the next armed window counts from zero
+	}
+}
+
+int32 ADumperTestActor::AD4_GetContestWrites() const
+{
+	return ContestWrites;
+}
+
+
+// ============================================================================
+// The spawner. Objects that appear and disappear ON DEMAND.
+//
+// Read the class comments in the header first: ADumperTestHolder /
+// ADumperTestDerivedHolder / ADumperTestHolderDecoy are a DISCRIMINATING SET, and
+// what makes them worth having is that Decoy's NAME contains the base's while its
+// TYPE does not derive from it.
+// ============================================================================
+
+void ADumperTestActor::Spawn_Holders(int32 Count, bool bDerived)
+{
+	UWorld* W = GetWorld();
+	if (!W || Count <= 0)
+	{
+		return;
+	}
+
+	FActorSpawnParameters P;
+	// ALWAYS spawn. The default handling silently refuses a spawn that would
+	// overlap, so a request for 300 would quietly deliver some smaller number and
+	// every count downstream would be measuring the collision solver instead of the
+	// feature under test.
+	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	P.Owner = this;
+
+	UClass* Cls = bDerived ? ADumperTestDerivedHolder::StaticClass()
+	                       : ADumperTestHolder::StaticClass();
+
+	const FVector  Loc = GetActorLocation();
+	const FRotator Rot = FRotator::ZeroRotator;
+	const int32    Base = SpawnedHolders.Num();
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		ADumperTestHolder* H = W->SpawnActor<ADumperTestHolder>(Cls, Loc, Rot, P);
+		if (!H)
+		{
+			continue;
+		}
+		// DISTINCT per instance, and derived from the GLOBAL index rather than the
+		// loop index, so a second call does not restart the sequence and hand two
+		// live instances the same value.
+		H->HolderIndex = Base + i;
+		H->HolderValue = 1000.f + static_cast<float>(Base + i);
+		H->bHolderFlag = ((Base + i) % 2) == 0;
+		SpawnedHolders.Add(H);
+	}
+	++SpawnGeneration;
+}
+
+void ADumperTestActor::Spawn_Decoys(int32 Count)
+{
+	UWorld* W = GetWorld();
+	if (!W || Count <= 0)
+	{
+		return;
+	}
+
+	FActorSpawnParameters P;
+	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	P.Owner = this;
+
+	const FVector Loc = GetActorLocation();
+	for (int32 i = 0; i < Count; ++i)
+	{
+		ADumperTestHolderDecoy* D =
+			W->SpawnActor<ADumperTestHolderDecoy>(ADumperTestHolderDecoy::StaticClass(),
+			                                      Loc, FRotator::ZeroRotator, P);
+		if (D)
+		{
+			// A value a "held" field would visibly overwrite, so the decoy staying
+			// untouched is observable rather than merely asserted.
+			D->HolderValue = -1.f;
+			SpawnedHolders.Add(D);
+		}
+	}
+	++SpawnGeneration;
+}
+
+void ADumperTestActor::Spawn_DestroyHolders()
+{
+	for (TObjectPtr<AActor>& A : SpawnedHolders)
+	{
+		if (AActor* Raw = A.Get())
+		{
+			Raw->Destroy();
+		}
+	}
+	SpawnedHolders.Empty();
+
+	// FORCE the collection. Destroy() only marks the actor pending-kill and removes
+	// it from the level; the UObject keeps its GObjects slot until a GC runs. Every
+	// row that cares here cares about the SLOT being freed and reused, so leaving
+	// that to the engine's own schedule would make the test a race.
+	if (GEngine)
+	{
+		GEngine->ForceGarbageCollection(true);
+	}
+	++SpawnGeneration;
+}
+
+int32 ADumperTestActor::Spawn_CountHolders() const
+{
+	int32 N = 0;
+	for (const TObjectPtr<AActor>& A : SpawnedHolders)
+	{
+		if (IsValid(A.Get()))
+		{
+			++N;
+		}
+	}
+	return N;
+}
+
+int32 ADumperTestActor::Spawn_Generation() const
+{
+	return SpawnGeneration;
+}
+
+void ADumperTestActor::Spawn_LateInstance()
+{
+	UDumperTestLateSpawn* L = NewObject<UDumperTestLateSpawn>(this);
+	if (!L)
+	{
+		return;
+	}
+	L->LateValue = 5000 + LateSpawns.Num();
+	LateSpawns.Add(L);
+	++SpawnGeneration;
+}
+
+void ADumperTestActor::Spawn_RecycleChurn(int32 Rounds)
+{
+	Rounds = FMath::Clamp(Rounds, 1, 512);
+
+	for (int32 r = 0; r < Rounds; ++r)
+	{
+		// ALTERNATE the class. Refilling a freed slot with the SAME class does not
+		// test an identity guard at all -- the stale pointer still resolves to the
+		// same class and reads plausibly. A foreign class in the recycled slot is
+		// the whole defect.
+		UObject* O = ((r % 2) == 0)
+			? static_cast<UObject*>(NewObject<UDumperTestPayload>(this))
+			: static_cast<UObject*>(NewObject<UDumperTestPayloadB>(this));
+		if (!O)
+		{
+			continue;
+		}
+		LastRecycledAddr = static_cast<uint64>(reinterpret_cast<UPTRINT>(O));
+
+		// Hold only the newest, so the previous one becomes collectable and its slot
+		// is a candidate for the next allocation.
+		LateSpawns.Empty();
+		LateSpawns.Add(O);
+
+		if (GEngine)
+		{
+			GEngine->ForceGarbageCollection(true);
+		}
+	}
+	++SpawnGeneration;
+}
+
+int64 ADumperTestActor::Spawn_LastRecycledAddr() const
+{
+	return static_cast<int64>(LastRecycledAddr);
+}
+
+void ADumperTestActor::Spawn_ManyComponents(int32 Count)
+{
+	Count = FMath::Clamp(Count, 1, 20000);
+	for (int32 i = 0; i < Count; ++i)
+	{
+		// USceneComponent, NOT UActorComponent. UActorComponent is declared
+		// `UCLASS(..., abstract, ...)` (ActorComponent.h:131), so NewObject on it
+		// fails at runtime -- the pool would never grow and the row would read as
+		// "the cap never fires" rather than as a broken fixture. USceneComponent is
+		// concrete and still derives from UActorComponent, which is what a
+		// derived-pool count is counting.
+		USceneComponent* C = NewObject<USceneComponent>(this);
+		if (!C)
+		{
+			continue;
+		}
+		// Register, or it is a UObject that merely happens to be a component type
+		// and never joins the actor's component set.
+		C->RegisterComponent();
+	}
+	++SpawnGeneration;
+}

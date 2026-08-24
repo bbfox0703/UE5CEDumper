@@ -12,6 +12,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"   // FTableRowBase — the V8 / MG2 row shape
 #include "DumperTestTypes.generated.h"
 
 /// Deliberately NON-contiguous so an enum-name lookup cannot pass by accident
@@ -54,7 +55,7 @@ struct FDumperTestStat
 };
 
 // ============================================================
-// FDumperTestVec3f — deliberately 4-ALIGNED POD (audit #5 MG3).
+// FDumperTestVec3f — deliberately 4-ALIGNED POD (audit #5 M3).
 //
 // Three floats: no FText, no pointer, no double. That matters. FDumperTestStat
 // above carries an FText, i.e. a TSharedRef, i.e. 8 bytes of alignment — which
@@ -84,3 +85,26 @@ FORCEINLINE uint32 GetTypeHash(const FDumperTestVec3f& V)
 {
 	return HashCombine(HashCombine(GetTypeHash(V.X), GetTypeHash(V.Y)), GetTypeHash(V.Z));
 }
+
+/// Row shape for the two runtime-built `UDataTable`s (V8, MG2 step 2).
+///
+/// It is a ROW STRUCT, so it must derive from `FTableRowBase` — that is what lets
+/// `UDataTable::AddRow` copy it in. Built at RUNTIME rather than shipped as a
+/// content asset, which is the whole trick: `AddRow`/`RemoveRow` sit OUTSIDE
+/// `WITH_EDITOR` (DataTable.h:316-319), so a packaged Shipping build can construct
+/// a table of any size with no cooked asset and no editor round-trip.
+///
+/// Carries an FText on purpose, for the same reason `FDumperTestStat` does: if B28
+/// ever regresses, a DataTable row is another place it can surface.
+USTRUCT()
+struct FDumperTestTableRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32 Index = 0;
+	UPROPERTY() FName Label;
+	UPROPERTY() float Value = 0.f;
+
+	/// 走一步 — odd (3), contains U+4E00. Escaped, per the file header rule.
+	UPROPERTY() FText Caption;
+};

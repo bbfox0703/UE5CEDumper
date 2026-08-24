@@ -21,6 +21,41 @@ never promise "an even-length FText containing U+4E00 is on screen right now".
 
 -----
 
+## ⛔ THIS DIRECTORY IS A MIRROR. RE-SYNC IT BEFORE YOU TRUST IT, AND AFTER YOU EDIT THE PROJECT
+
+The project that actually gets built and packaged lives at **`D:\Unreal Projects\DumperTest`** on the
+maintainer's machine. This directory is a copy, and on **2026-08-24 it was found to be four days
+stale** — and the gap was not cosmetic.
+
+**What the drift cost.** The 08-23 package added a whole spawner (`Spawn_Holders`, `Spawn_Decoys`,
+`Spawn_DestroyHolders`, `Spawn_ManyComponents`, `Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`,
+`Spawn_LateInstance`, `Spawn_Generation`) plus `ADumperTestDerivedHolder` / `ADumperTestHolderDecoy`
+— **36 declarations**, and the classes that make Solide L3 falsifiable. None of it was here.
+**Two separate sessions grepped this directory, concluded the fixture did not exist, and planned a
+C++ authoring task that was already done.** One of them then "corrected" an agent who had it right.
+
+⚠ **And the real hazard was worse than a wasted plan: this copy was BUILDABLE.** The section below
+invites a rebuild, and rebuilding from a stale mirror silently produces a package **without** the
+spawner — destroying the fixture that five verification rows depend on.
+
+### The rules that follow from that
+
+1. **Never answer "does fixture X exist?" by grepping this directory.** Ask the running game:
+   `list_all_functions` / `walk_class` over the pipe. That is the only source that describes the
+   binary you are actually testing.
+2. ⚠ **Probing the packaged `.exe` needs care too**: **UClass names are UTF-16LE in there, while
+   UFunction names are ASCII.** Measured — `DumperTestHolder`: ascii **0**, utf16le 2;
+   `Spawn_Holders`: ascii 1, utf16le 0. So `grep -a DumperTestHolder <exe>` finds nothing and reads
+   as *"the class does not exist"*. Use `.encode('utf-16-le')`.
+3. **After editing the live project, copy the changed files back here in the same sitting.** Until
+   that happens the fixture exists only on one machine's D: drive and inside a binary — not in git,
+   and not on the other development PC.
+4. The stock Third-Person template files (`DumperTest.cpp/.h`, `DumperTestCharacter.*`,
+   `DumperTestGameMode.*`) are deliberately **not** mirrored — they are whatever the template
+   generates. Only the dumper-specific sources belong here.
+
+-----
+
 ## Build it (one pass, ~20 minutes)
 
 > **The project MUST be named `DumperTest`.** The sources use the `DUMPERTEST_API` export macro,
@@ -329,6 +364,48 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Opt_Float_Set` | 99.5 | |
 | `Opt_Str_Set` | `OptionalPresent` | |
 | `Opt_Int_Unset` | *(unset)* | **NEGATIVE criterion** — a scan for **0** must NOT surface it (the `bIsSet` gate) |
+
+### The C1 spawner — instances ON DEMAND, and the discriminating set
+
+Added 2026-08-23, mirrored here 2026-08-24. Everything below is created by invoking a
+`Spawn_*` UFunction on `ADumperTestActor`; nothing exists in bulk at BeginPlay. ⚠ Pass
+`parms_size` on the invoke (read it from `walk_functions`) — see the mirror warning at the top.
+
+| field | value | check |
+|---|---|---|
+| `SpawnedHolders` | `TArray<TObjectPtr<AActor>>` | the GC root for `Spawn_Holders`; without it the holders are collected mid-test |
+| `LateSpawns` | `TArray<TObjectPtr<UObject>>` | the GC root for `Spawn_LateInstance` |
+| `HolderValue` | seeded **1000 + global index** — DISTINCT per instance | **Solide L4.** One shared base restored to every instance is invisible if they all start equal; distinct values are the only way that defect shows |
+| `HolderIndex` | the same index as an `int32` | a second, independently-typed witness of the same identity |
+| `bHolderFlag` | `false` | a bool on a class that exists in bulk — the bitfield side of a Force |
+| `LateValue` | `0` on `UDumperTestLateSpawn` | **AA12/AA13 step 3.** That class has **zero live instances until `Spawn_LateInstance` is called, and no subclasses** — a legitimately empty result that must NOT be reported as success. The previous attempt used `NiagaraComponent`, which had two live instances, so the empty case was never exercised |
+| `BValue` / `BScalar` | `int32` / `float` on payload **B** | **U4 recycling.** `Spawn_RecycleChurn` alternates payload A and B so a freed GObjects slot is refilled by a **different class** — same-class respawn does not test the guard |
+
+**The three Holder classes are a DISCRIMINATING SET, not three samples** — and this is the
+fixture that makes Solide's derivation claim falsifiable at all:
+
+| class | name contains `DumperTestHolder` | derives from `ADumperTestHolder` |
+|---|---|---|
+| `ADumperTestHolder` | yes | yes (itself) |
+| `ADumperTestDerivedHolder` | **no** | **yes** — a substring test MISSES it |
+| `ADumperTestHolderDecoy` | **yes** | **no** — a substring test CATCHES it |
+
+⭐ A derivation walk holds `{Holder, Derived}` and skips `Decoy`; a substring match holds
+`{Holder, Decoy}` and skips `Derived`. **No single result satisfies both**, so the wrong
+implementation cannot pass. ⚠ Keep the spawn counts so the derived total stays **under the
+1024/256 caps** — a truncated hold makes *"the decoys were untouched"* mean nothing, because the
+walk may simply never have reached them.
+
+### Churn + DataTable — the things that CHANGE between two scans
+
+| field | value | check |
+|---|---|---|
+| `Set_Name` | `TSet<FName>` | **MG2 step 1, set flavour** — remove one element and the rendered row count must follow the header count |
+| `Set_Object` | `TSet<TObjectPtr<UObject>>` | the object-pointer set shape |
+| `Table_Small` / `Table_Big` | `UDataTable`, **8** and **100** rows | **V8 / MG2 step 2** — `V8_RebuildBigTable(Rows)` rebuilds `Table_Big`; 100 is the V8 default |
+| `Map_Churn` / `Arr_Churn` | grow together, one entry per call | a container that changes **between** two scans, for Next-Scan pruning and Snapshot Mode B |
+| `Index` (on `FDumperTestTableRow`) | `int32` row index | the scalar leaf inside a DataTable row |
+| `Caption` (on `FDumperTestTableRow`) | 走一步 — **odd (3) chars, contains U+4E00** | the B28 FText trigger **inside a DataTable row**, i.e. reached through a container rather than off the actor directly |
 
 ### Numerics, flags, layout
 
