@@ -9094,7 +9094,35 @@ suite can reach this.
 > and it independently re-confirms `AA2/AA3` step 3's narrowed assertion: `classWitness=0x0` is
 > *correct* on a derived listing and a real pointer on an exact one.
 >
-> ### ⛔ Step 6 has no fixture on DumperTest — measured, not assumed
+> ### ✅ Step 6's DLL half CLOSED 2026-08-24 `[FZ6-CAP-2026-08-24]` — the fixture DOES exist now
+>
+> `Spawn_ManyComponents` ships in the packaged DumperTest (the repo's copy of the sample source is
+> stale and does not show it — see `[C1-SPAWNER-EXISTS-2026-08-24]`). Driving it over the mailbox
+> pushes the derived pool past the cap, which is exactly what the block below says could not be done
+> here. DLL 3350, `list_instances(..., derived=True)`:
+>
+> | class | BEFORE | AFTER `Spawn_ManyComponents(1500)` |
+> |---|---|---|
+> | `ActorComponent` | total **286**, pages 5, `outflags=0` | total **1024**, pages 16, **`outflags=1`** |
+> | `SceneComponent` | total **257**, pages 5, `outflags=0` | total **1024**, pages 16, **`outflags=1`** |
+>
+> The BEFORE row is the negative control: same command, same class, flag **clear** — so `outflags=1`
+> is the cap firing and not a bit that is always set.
+>
+> ⚠ **The attribution caveat, which survives and must not be glossed.** `LIST_INSTANCES_MAX_DERIVED`
+> is **1024** and `LIST_INSTANCES_MAX_PAGES` is **16** at 64 derived entries per page — so the DLL's
+> cap and the helper's page ceiling land on the **same number** (`Mimic.h:414-421`, and the comment
+> at :406 says so outright). Over the **CE Lua helper** path, no reachable pool size separates *"the
+> DLL reported truncation"* from *"the helper ran out of pages"*. ▶ Over the **mailbox** path used
+> here the helper is not in the loop at all, and `outflags` is the DLL's own `LI_OUT_TRUNCATED` bit,
+> so this result is attributable — but it does **not** transfer to the helper's `CAPPED` message.
+>
+> ℹ️ Still owed, unchanged: the emitted script's honesty line firing **at runtime** and the
+> stay-open behaviour. Those are the CE half, and they are where the ambiguity above bites.
+> ℹ️ Rig hygiene: `list_instances` returns the raw page `blob`, and printing the whole dict buried
+> the four numbers that matter under ~2 KB of hex. Print `total`/`pages`/`outflags` only.
+>
+> ### ~~⛔ Step 6 has no fixture on DumperTest — measured, not assumed~~ (superseded above)
 >
 > Step 6 needs the log line to end in `CAPPED`, which requires a derived pool larger than the DLL's
 > **1024-entry derived cap** (`ue5_freeze_helper.lua`: *"two result caps … 2000 exact / 8-byte
