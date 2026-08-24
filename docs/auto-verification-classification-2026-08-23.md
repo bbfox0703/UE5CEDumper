@@ -141,7 +141,7 @@ The six segment ranges stopped short of `docs/todo.md`'s trailing closure sectio
 
 ## BUCKET A — runnable headless today (31 rows, grouped by sitting)
 
-### A1. One DumperTest `dev` launch, no UI, no CE — **9 rows** ⭐ cheapest batch left
+### A1. One DumperTest `dev` launch, no UI, no CE — ~~**9 rows**~~ **6 WERE ALREADY CLOSED when this doc was written or later that day** (L5 `[L5-CADENCE-2026-08-23]`, L1 `[L1-GODRACE-2026-08-23]`, L8 `[L8-NOPUMP-2026-08-23]`, L10 `[L10-HEADLESS-2026-08-20]`, L12 `[L12-STRLEAK-2026-08-23]`, M4 `[M4-TOTZOMBIE-2026-08-23]`); **M5 CLOSED 2026-08-24** `[M5-JOINORDER-2026-08-24]`. **Remaining: B10 correctness half, B8 deferred half.** ⚠ Triage against todo.md before running any bucket here — B6 was 6-of-9 stale, B7 2-of-5, A1 7-of-9.
 ```
 py tools/verify/launch_dumpertest.py dev
 py tools/verify/inject.py
@@ -156,7 +156,7 @@ Then over one `pipe_client.py` session (UI **must** be disconnected — `kMaxPip
 | DLL LOW **L10** | Grausam teardown | `set_foreground_lock` on → new window state → off → graceful shutdown; grep `init-0.log` |
 | DLL LOW **L12** | Fern `str_params` malloc leak | 10k mistyped-string params + psutil private bytes |
 | **M4** | Tot latch zombifying a Solide hold | `force_field` → drop socket → reconnect → `get_forced_fields` → poke the field → confirm the worker restores it |
-| **M5** | `UE5_Shutdown` worker-join ordering | hold active, `PostMessage(WM_CLOSE)` (not `taskkill /F`), assert sub-second exit + empty `CrashDumps` |
+| ~~**M5**~~ **CLOSED 2026-08-24** `[M5-JOINORDER-2026-08-24]` | `UE5_Shutdown` worker-join ordering | This entry's recipe was right except for one word: **"assert sub-second exit" is wrong** — UE's own teardown is ~1.5–1.7 s on this host with or without a hold, so a literal reading files a UE property as an M5 defect. Measured hold vs no-hold instead (1.612/1.334 vs 1.717/1.650 s: a hold is no slower). Detector shown able to report a hang via a suspended game thread + `IsHungAppWindow`. |
 | **B10** correctness half | struct types / enum names / bool masks | `walk_class` on `DumperTestActor`, assert `bFlagA/B/C` masks = 1/2/4 |
 | **B8** deferred half | Fly disable while game thread quiet | launch with `-ExecCmds="t.IdleWhenNotForeground 1"` (dev only — silently dropped in Shipping), `fly_set` on → `front_window.py front <other>` → off → grep `walk-0.log` |
 

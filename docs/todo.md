@@ -12333,10 +12333,42 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     force-field hold, disconnect the UI mid-hold, reconnect → `get_forced_fields` must still list the
     hold AND the value must still be held (a zombie job lists but stops re-asserting, so checking the
     list alone is not enough — read the value in CE). ⬜
-  - **M5 — `UE5_Shutdown` worker-join ordering** (joined hold workers before stopping the pipe, so a
-    mutator arriving in the window respawned an unjoined worker). Acceptance: with a hold active,
-    close the game while the UI is still connected → no hang, no crash on exit. Evidence is the
-    absence of a hang; there is no positive log line. ⬜
+  - ✅ **M5 — `UE5_Shutdown` worker-join ordering — PASS 2026-08-24 `[M5-JOINORDER-2026-08-24]`.**
+    `tools/verify/m5_shutdown_join.py` (control / run / baseline), DumperTest dev, DLL 3345.
+    Hold active (`Actor.bCanBeDamaged`, **held=60**), **two** live pipe connections (the UI holds
+    two of `kMaxPipeInstances=3`), closed with a **posted `WM_CLOSE`** — never `taskkill /F`, which
+    skips the DLL's shutdown path entirely and makes the test vacuous.
+    **No hang and no minidump in any of 5 closes.**
+
+    ⚠⚠ **The acceptance said "evidence is the ABSENCE of a hang", so the detector had to be
+    shown able to REPORT one — and on the first attempt it silently could not.** `control` suspends
+    the game thread and posts `WM_CLOSE`: the process must then NOT exit. Attempt 1 reported a clean
+    exit in 2.188 s, i.e. **a control that failed to arm** — `main_tid` was computed as `min(tid)`
+    and suspend.py's header line reads *"DumperTest.exe (50348): **141 threads** — EARLIEST CREATED
+    FIRST"*, so the parser returned **141**, the thread COUNT, and suspended nothing. Reading the row
+    suspend.py already labels (`tid=30576 … <-- main thread (UE game thread)`) gives the real control:
+    no exit in 5.0 s **and `IsHungAppWindow` False -> True**, so the hang is witnessed by the OS
+    rather than inferred from a timeout. Only then does the clean `run` mean anything.
+
+    ⭐ **The "sub-second exit" clause is WRONG and is corrected here, not quietly passed.** The
+    first real run measured **1.970 s** — a FAIL against the wording. But UE tears down rendering,
+    audio and the engine on any close, and none of that is ours. The only number that can accuse the
+    DLL is the hold-vs-no-hold delta on the same host, so `baseline` was added and both were measured
+    twice, alternating, each on a fresh process:
+
+    | | exit time |
+    |---|---|
+    | baseline (no hold) | 1.717 s · 1.650 s |
+    | hold active (held=60) | 1.612 s · 1.334 s |
+
+    **A hold makes shutdown no slower — marginally faster, i.e. inside noise.** So ~1.5–1.7 s is
+    UE's own teardown cost and the DLL contributes nothing measurable. Read the acceptance as *"no
+    worse than the no-hold baseline"*; a literal sub-second reading would have filed a UE property as
+    an M5 defect.
+
+    ℹ️ **What this does NOT claim:** the ordering defect needs a mutator arriving inside a window of
+    a few microseconds, and nothing here forces that. What is shown is that the ordinary
+    shutdown-with-a-hold-active path is clean, repeatably, with the pipe still connected.
   - ✅ **DLL LOW L5 — PASS 2026-08-23 `[L5-CADENCE-2026-08-23]`.** Welford gap underflow.
     `tools/verify/linie_cadence_gap.py`, DumperTest dev / DLL 3337, 10 s window at 60 FPS.
     ⭐ **A real before/after, not an assertion.** The rig's own docstring records the PRE-fix
