@@ -8501,6 +8501,30 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
 
 ### 🟡 A5 + AE9 CLOSED, V6 corrected to a HALF-pass 2026-08-19 — the fourteen-MED batch, all UI-visible: A5 / V6 / AE9 / U8 / V7 / U7 / G1 / X3 / AB6 / AF4 / AF2 / AF6 / AE8 / AF1 (builds 3016-3031)
 
+> ### ✅ U7 and X3 CLOSED 2026-08-24 — the batch's last two residues
+>
+> **U7 — `[U7-CJKCUT-2026-08-24]`.** The residue was the COMBINED case: a non-ASCII StrProperty whose
+> preview also exceeds the 50-byte cut. Both halves passed separately on DQ7R, but no title here had
+> both in one field, for a documented reason — localized games store display text as `FText`, so
+> their `FString`s are short identifiers. Manufactured instead: `Str_Even22_TwoNull` (22 CJK chars =
+> **66 UTF-8 bytes**) added to the DumperTest sample and all three configs repackaged.
+>
+> ```
+> preview   "統一言語日本語テスト日本語テスト…"
+> glyphs    16      the 50-byte cut backs up to a boundary at 48
+> ellipsis  present, INSIDE the quotes
+> U+FFFD    0       no split 3-byte sequence
+> rows      1, and no `error` key
+> ```
+>
+> ⭐ **The failure mode is not an ugly preview, it is ZERO ROWS**: a byte-naive `resize(50)` emits a
+> split sequence and nlohmann's strict `dump()` turns the whole `search_properties` reply into
+> `{"error":…}`. 50 mod 3 == 2, so with uniform 3-byte CJK the cut *always* lands mid-sequence.
+>
+> **X3 — `[G1-AMBER-2026-08-24]`.** X3 is the offset banner, not a CJK row; it closed with G1 the
+> same day. ⚠ `auto-verification-classification-2026-08-23.md` mislabels X3 as the CJK item, which
+> sent one triage down the wrong path.
+
 Eight of the fourteen now carry a PASS block below (A5 · V6 · AE9 · V7 · AF4 · AB6 · AE8 · AF6) —
 but **V6's is a HALF-pass and is corrected below**: its evidence covers the manual-Refresh half only,
 and the auto-refresh half its own step prescribes was **not observed and could not have been**. The
@@ -10193,6 +10217,30 @@ changed: `scripts/ue5_dissect.lua`'s `callDLL` (was an INFINITE timeout, now 500
 > tries this form should expect to lose its CE instance, and should not have an unsaved `.CT` in it.
 
 ### 🟡 PARTIAL 2026-08-10 — GObjects layout fix (build 2782), DragonSword Awakening
+
+> ### ✅ Bullet 2 CLOSED 2026-08-24 `[DSLAYOUT-GREP-2026-08-24]` — the cross-title grep finds NO regression
+>
+> Headless, no game launch. `Could not detect layout, using default` across **all 31 log folders**
+> on this machine: **exactly 2 files**, and both are the same 2026-08-22 DumperTest session
+> (`offsets-20260822-120815.log`, `offsets-20260822-123340.log`).
+>
+> ⭐ **Those two are the guard WORKING, not the defect.** Both records read:
+>
+> ```
+> ObjectArray: GObjects@0x2479D7D49C8: +00:002704000001271B …
+> ObjectArray: Strict validation failed for all presets, trying relaxed fallback...
+> ObjectArray: Could not detect layout, using default
+> ObjectArray: chunkTable@0x2704000001271B: +00:0000000000000000 +08:0000000000000000
+> ```
+>
+> The GObjects anchor's first qword **is** `0x2704000001271B`, which is not a valid pointer, and the
+> chunk table it points at is all zeros. The anchor itself was wrong in that session, so refusing to
+> pick a layout is the correct answer. ⚠ Not a pass by absence: the string appears in **0** of the
+> other 29 folders and in **0** of DumperTest's own later sessions, so it is session-specific rather
+> than never-emitted.
+>
+> ℹ️ Bullet 1 is separately closed and its checkbox text is simply stale: it says to match an
+> address suffix `…F8B0`, which ASLR moves between runs.
 
 **Verified in-game on build 2786, same day** — see [test-games.md](test-games.md) for the log lines
 and numbers. Strict tier accepted `preset Default` with `Max=10551296` (impossible under the old
