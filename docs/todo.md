@@ -11721,8 +11721,54 @@ on it read dead memory.
   >
   > **Not exercised: Group and Map.** *+ From fields* leaves Group empty and stamps every row with
   > the current map, so both columns held one value across all five rows and no ordering could be
-  > observed. Label carried the load as the text-column control. Anyone re-running this should set
-  > distinct groups (row editor → Group → Apply) to close that half.
+  > observed. Label carried the load as the text-column control.
+  >
+  > ### CLOSED 2026-08-24 `[B16-GROUPMAP-2026-08-24]` -- both columns exercised, both directions
+  >
+  > DumperTest Development (UE504, 25,212 objects), `dist\UE5DumpUI.exe` **57,380,352 B = 54.7 MiB
+  > AOT-trimmed** build 3343, DLL 3343. Rig: `tools/verify/b16_coord_sort.py`.
+  >
+  > **All six predicted orders matched exactly, read off the grid:**
+  >
+  > | sort state | predicted = observed |
+  > |---|---|
+  > | baseline (no click) | `B-two D-four A-one E-five C-three F-six` |
+  > | X ascending | `E-five C-three F-six A-one D-four B-two` |
+  > | **Group ascending** | `B-two D-four A-one E-five C-three F-six` |
+  > | **Group descending** | `F-six C-three E-five A-one D-four B-two` |
+  > | **Map ascending** | `C-three A-one E-five B-two F-six D-four` |
+  > | **Map descending** | `D-four F-six B-two E-five A-one C-three` |
+  >
+  > ⚠⚠ **THE PROCEDURE THIS BULLET PRESCRIBED CANNOT FAIL, AND WAS NOT USED.** "Set distinct
+  > groups (row editor → Group → Apply)" then clicking Group is **structurally vacuous on the
+  > ascending click**: the VM's display order is ALREADY group-ascending -- `CompareForDisplay`
+  > (`TeleportViewModel.cs:3468`) does `string.Compare(a.Group, b.Group, OrdinalIgnoreCase)` then
+  > natural Label, and the wired header comparer (`TeleportPanel.axaml.cs:29`) is
+  > `DataGridSortComparers.Ordinal(r => r.Group)`, which **despite its name IS `OrdinalIgnoreCase`**
+  > (`DataGridSortComparers.cs:53`) -- the same comparison on the same field. A stable sort
+  > reproduces the baseline, and so does a header that does nothing.
+  > ▶ **What was run instead:** sort by **X first**, THEN click Group ascending. The order had to
+  > *travel* from `E-five...` back to `B-two...`, which a dead header cannot do. That transition is
+  > the actual evidence, not the final order.
+  >
+  > ⭐ **The dataset was designed so every state is identifiable from ROW 1 ALONE** (`B-two` /
+  > `C-three` / `D-four` / `E-five` / `F-six`), so no reading depends on spotting a difference deep
+  > in a six-row list. The rig asserts that no two predictions collide beyond the known
+  > baseline/Group-asc pair.
+  >
+  > ⛔ **Staging is the whole job, and the shipped file cannot do it.** The live
+  > `teleport-coords.dumpertest.json` had `group` **empty on all five rows** and `map` **identical on
+  > all five** -- which is exactly *why* the 08-12 run left this half open. `Map` has **no row-editor
+  > field at all**, so the JSON is the only way in; the rig keeps the original at
+  > `.json.b16-original` and restores it.
+  >
+  > ⚠ **SCOPE CORRECTION -- this was never part of the B16 defect.** The fix's own comment
+  > (`TeleportPanel.axaml.cs:22`) says *"Label/Group/Map worked"*: the five dead columns sorted on a
+  > NESTED path (`Entry.X`) or a mismatched one (`Distance` vs `DistanceText`), while Group/Map bind
+  > and sort the same direct path and were always live. So this row is a **completeness check on two
+  > columns the fix says already worked**, not a test of the trimming defect. Worth the five minutes
+  > -- wiring a custom comparer *replaced* Avalonia's default on these two -- but it must not be
+  > recorded as "the B16 defect class is now fully verified".
 
 - ✅ **Second launch raises the first window** (build 2610, B42) — **VERIFIED 2026-08-04 (maintainer).** Run `dist\UE5DumpUI.exe`, then run
   it again (double-click the exe, or the shortcut). **PASS** = the existing window comes to the
