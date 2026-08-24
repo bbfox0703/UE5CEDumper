@@ -43,7 +43,25 @@ works in **all three flavours**. The analyst never opened `DumperTestSubsystem.c
 collision restore and Grausam's foreground lock"**. The fixture was built for this row. The
 register's "需要：背景時真的會停止 tick 的遊戲…Elliot 背景仍在 tick，測不到" is simply out of date.
 
-### ⛔ CAPABILITY LIMIT, measured 2026-08-23 — Avalonia MENU items are not clickable
+### ⚠️ REFUTED 2026-08-24 — Avalonia menu items ARE clickable; do not use this to defer a row
+
+⛔ **The "CAPABILITY LIMIT" below is contradicted by direct measurement and must not be relied on.**
+On 2026-08-24, `Tools ▸ Install CE autorun Helper` was clicked by coordinate and **fired on the
+first attempt, twice** — `StatusText` changed both times (`CE autorun helper installed to
+D:\ZZCePortable\auto…`, then the denied-write fallback), the UI log carried the matching
+`Installed CE autorun helper: … autoLocated=True/False` lines, and the second click drove a real
+`SaveFileDialog`. That is the exact evidence the note below says never appears. It closed **X12**
+(`[X12-AUTORUNDENY-2026-08-24]`), a row this very limit would have deferred.
+
+⚠ **What is NOT established is which item fails and why**, so do not flip the conclusion the other
+way either. Two candidate explanations for the 2026-08-23 observation, neither confirmed: the items
+tried may have been ones that **no-op when their precondition is absent** (several Tools actions
+push through the AOBMaker bridge, and AOBMaker was **Offline** for most of that session — it was
+*Connected* for the run above), or the click simply missed. ▶ **Re-test the specific item, with its
+preconditions met, and read `StatusText` + the UI log — never infer "menus don't work" from one
+item.** The original text is kept verbatim below because its *method* rule is still exactly right.
+
+### ⛔ (original, 2026-08-23) — Avalonia MENU items are not clickable
 
 Every `B_UI_DRIVE` estimate below assumes the UI can be driven. **Top-level menus cannot.** Measured
 on `Tools ▾` and `Export ▾`, four items, by coordinate click and by keyboard:
