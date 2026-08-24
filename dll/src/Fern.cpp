@@ -5325,8 +5325,43 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "Function not found: " + funcName).dump();
             }
 
-            // Build parameter buffer (zero-filled, then overlay hex bytes)
+            // Build parameter buffer (zero-filled, then overlay hex bytes).
+            //
+            // ⚠ THE SIZE IS NOT THE CALLER'S TO GET WRONG. `parms_size` arrives from the
+            // request and DEFAULTS TO 0, so a client that simply omits it used to allocate
+            // a ZERO-LENGTH buffer and hand it to ProcessEvent — which then writes the
+            // return value past the end of a heap allocation IN THE GAME'S PROCESS. The
+            // damage is silent; all the caller sees is `-4 (exception during call)` from
+            // the SEH net, if it is lucky enough for the write to fault at all.
+            //
+            // Measured 2026-08-24: every parameterised `DumperTestActor` UFunction failed
+            // this way (`parms=0` in the invoke log against a `parms_size=4` the very same
+            // DLL reports through `list_all_functions`), while zero-parameter ones passed —
+            // which reads like "parameterised invokes are broken" and is really a buffer
+            // the caller never sized.
+            //
+            // The authoritative number is already in the process: we hold `ufuncAddr`, and
+            // `Ubel::ResolveFunctionInfo` reads `UFunction::ParmsSize`. Take the LARGER of
+            // the two rather than replacing the caller's value: a caller asking for MORE
+            // is harmless slack (the hex overlay is already clamped to the buffer), while a
+            // caller asking for less — or for nothing — is the overflow above.
             size_t bufSize = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
+            {
+                FunctionInfo fi{};
+                if (Ubel::ResolveFunctionInfo(ufuncAddr, fi) && fi.parmsSize > 0) {
+                    const size_t authoritative = static_cast<size_t>(fi.parmsSize);
+                    if (authoritative > bufSize) {
+                        if (bufSize > 0) {
+                            LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
+                                     "%s::%s reports ParmsSize=%zu — using the larger; the "
+                                     "smaller would overflow the buffer ProcessEvent writes",
+                                     bufSize, className.c_str(), funcName.c_str(),
+                                     authoritative);
+                        }
+                        bufSize = authoritative;
+                    }
+                }
+            }
             std::vector<uint8_t> paramBuf(bufSize, 0);
 
             if (!paramsHex.empty()) {

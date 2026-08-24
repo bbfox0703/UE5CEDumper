@@ -1443,7 +1443,12 @@ state-changing operations but works for simple getters).
   "func_name": "Attack",           // required
   "instance_addr": "0x7FF6AA000",  // optional (one of instance_addr / class_name required)
   "class_name": "BP_Player_C",     // optional
-  "parms_size": 16,                // optional (default 0)
+  "parms_size": 16,                // optional -- the DLL reads UFunction::ParmsSize
+                                   // itself and uses the LARGER of the two. Omitting it
+                                   // is safe as of build 3350; before that it defaulted
+                                   // to 0, and a zero-length buffer handed to
+                                   // ProcessEvent overflowed the game's heap and came
+                                   // back only as "-4 (exception during call)".
   "params_hex": "3F800000",        // optional (hex param bytes; scalars only)
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data
