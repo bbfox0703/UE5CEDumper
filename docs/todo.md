@@ -6805,6 +6805,24 @@ LOWERING the cap, not by finding a host*):
 budgets two wildcards (ModRM + disp32 low byte), but when the compiler parks the `UFunction*` in an
 **extended** register x64 makes a **SIB byte mandatory**, so the instruction is one byte longer and
 the fixed `00`s land early. Measured at `ProcessEvent+0x36F` in the Development build:
+> ### ℹ️ 2026-08-24 — the binary this was measured on is GONE, and the claim was RE-CONFIRMED rather than carried
+>
+> All three DumperTest configs were repackaged 2026-08-24, so the 08-23 Development exe this row was
+> file-verified against **no longer exists anywhere** (searched `D:\UE_Analyze_data`). An impact sweep
+> called that an irreversible loss. It is not — the measurement **reproduces on the current build**,
+> which is the only thing that mattered:
+>
+> | config | `r12` form | `rdx` form |
+> |---|---|---|
+> | Development | **1** | 2 |
+> | Shipping | **0** | 2 |
+> | DebugGame | 1 | 2 |
+>
+> So *"Development uses `r12`, the Shipping build of the same project uses `rdx`"* still holds, on
+> binaries that exist. ⚠ What must NOT be carried forward on assertion is the **`+0x268` vtable slot**:
+> its ground truth came from the **paired PDB**, and Shipping ships **no PDB at all** (Development and
+> DebugGame have 3 each), so that half is only re-derivable on the two debug-bearing configs.
+
 `41 F7 84 24 B0 00 00 00 00 04 00 00` = `test dword ptr [r12+0xB0], 0x400`; the Shipping build of the
 same project uses `rdx` and matches today. Ground truth for the slot came from the **paired PDB**:
 `UObject::ProcessEvent` is vtable entry **77 = +0x268** in BOTH configs, and the fallback's `0x220` is
