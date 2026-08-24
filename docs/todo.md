@@ -3422,7 +3422,7 @@ matters is simply "do normal mailbox commands still work".
 > this row is about. It is not: `//Script` works. The `Package` column is also clipped in the default
 > layout, so the leading `//` is easy to misread as `/`. Use the AutoCompleteBox suggestion (it offers
 > `//Game`), not a hand-typed guess.
-| 7 | `AF25` | ✅ **PASS 2026-08-20 `[AF25-CT-2026-08-20]`** — generated the real `.CT` from Teleport → CE Export → **Save .CT…** (34 rows, 281 KB) and read the emitted command numbers back. The file carries a section headed *"--- Teleport (17 rows) ---"*, and `writeInteger(mb + 0x00, 8)` appears **exactly 17 times** — the count matches the section header, so `CmdTeleport` is still **8** after the move to `CeMailboxLayout`. The other three agree three ways (DLL enum ↔ C# constant ↔ emitted script): **10** `CMD_MOVEMENT` ×8, **11** `CMD_FLY` ×11, **15** `CMD_TIME` ×4. `check_mailbox_contract.py` is green alongside. ⚠ "Run one" (an actual teleport) was **not** done — that needs CE plus a game with a controllable pawn. | |
+| 7 | `AF25` | ✅ **PASS 2026-08-20 `[AF25-CT-2026-08-20]`** — generated the real `.CT` from Teleport → CE Export → **Save .CT…** (34 rows, 281 KB) and read the emitted command numbers back. The file carries a section headed *"--- Teleport (17 rows) ---"*, and `writeInteger(mb + 0x00, 8)` appears **exactly 17 times** — the count matches the section header, so `CmdTeleport` is still **8** after the move to `CeMailboxLayout`. The other three agree three ways (DLL enum ↔ C# constant ↔ emitted script): **10** `CMD_MOVEMENT` ×8, **11** `CMD_FLY` ×11, **15** `CMD_TIME` ×4. `check_mailbox_contract.py` is green alongside. ⚠ "Run one" (an actual teleport) was **not** done — that needs CE plus a game with a controllable pawn. — ✅ **DONE 2026-08-22, and the premise was wrong too**: `[MB3-CT-2026-08-22]` ticked real `.CT` teleport records on **DumperTest**, which *does* have a controllable pawn (`ADumperTestCharacter : ACharacter`), with the pawn's pose as the witness. `[AF25-OPCODE-2026-08-22]` closed the opcode half. Struck from the B6 bucket 2026-08-24. | |
  Byte-identical script and working teleport. `CmdTeleport` moved to `CeMailboxLayout` but the value is unchanged (8), and the generator tests already assert the emitted text — this is belt-and-braces. |
 | 8 | `AC17` | **C** | **Needs a real mount point.** Mount a fixed volume into a folder (`mountvol`, or Disk Management → Change Drive Letter and Paths → Add → empty NTFS folder), put a leftover proxy under it, then run Proxy Deploy → leftover cleanup → Execute. | The file goes to the Recycle Bin. Before this fix the fixed-drive pre-filter answered about the HOST volume (`DriveInfo` normalizes through `Path.GetPathRoot`), so it always said "Fixed" for mount-point paths and judged nothing. A removable volume mounted the same way should now be REFUSED. |
 
@@ -3447,7 +3447,14 @@ matters is simply "do normal mailbox commands still work".
 > ⚠ **Substitution named rather than hidden.** The row's example pair is "Teleport save/recall **and**
 > an Invoke". Teleport was **not** the second family — Freeze/LIST_INSTANCES was. Teleport needs a
 > **controllable pawn**, which DumperTest does not have, and that same requirement is what still
-> blocks `AF25`'s "run one" below. What the row is actually asserting — that the restructured poller
+> blocks `AF25`'s "run one" below.
+> ⛔ **BOTH HALVES OF THAT SENTENCE ARE NOW FALSE — corrected 2026-08-24, because it is a premise
+> that keeps re-blocking teleport rows.** DumperTest **does** have a controllable pawn
+> (`ADumperTestCharacter : ACharacter`; `tools/verify/seethrough_arm_a.py` drives it with
+> `teleport_relative`), and `AF25`'s "run one" was **closed 2026-08-22** — `[MB3-CT-2026-08-22]`
+> ticked real `.CT` teleport records with the pawn's pose as the witness (900 → 1000 → 900.000 /
+> 1110.000 / 92.013), and `[AF25-OPCODE-2026-08-22]` closed the opcode half. Nothing below this line
+> is still blocked on a pawn. What the row is actually asserting — that the restructured poller
 > survives real `.CT` traffic without throwing — is tested by two *distinct* command families either
 > way; a third would not add a new kind of evidence, only a third data point.
 >

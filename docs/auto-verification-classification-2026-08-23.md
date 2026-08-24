@@ -239,8 +239,42 @@ A ❌ whose fix has shipped is an **owed re-run**, not a closed row.
 - 🟡 **`AE4–AE7` step 2** — still PARTIAL, and the note above is misleading: its blocker is **not** the Satisfactory row. Deploy / Undeploy / Refresh / Update All each finish inside one screenshot round-trip, and the proposal to lengthen them by inflating GObjects is **already refuted in todo.md** — `ProxyDeployViewModel` makes *zero* pipe calls and `DeployAsync` is file I/O on game folders, so pool size is irrelevant.
 - ✅ **`B29 step 3`** — **CLOSED 2026-08-24.** Fixture built (`tools/verify/b29_nonascii_fixture.py`), row **run and FAILED** (`[NONASCIILS-2026-08-24]`, MED), then **fixed and re-verified the same day**. ⚠ The "maintainer decision" caveat here was **wrong twice**: the maintainer confirmed the CE plugin may be registered freely, and registering it at an **absolute path to `dist\`** creates no second artifact to go stale, so it does not re-create `[STALEDLL]`(a) at all (`tools/verify/ce_plugin_register.py`; unregistered again afterwards). ⚠ A `mklink /J` junction genuinely does **not** work — Windows resolves the reparse point — but a **directory of hardlinks** does, at ~0 disk for a 767 MB game. ⚠⚠ The prediction was right and the **symptom was worse than predicted**: not `EVERSPACE? 2` mojibake but a **completely blank record**, ASCII prefix included. And **4 of 13** `%ls` sites needed the fix, not the "six" first written — the most exposed being `Macht.cpp:520`, reachable from the ordinary MA1 fallback with no CE plugin involved.
 
-### B6. Cheat Engine sitting — **9**
-`AF25 step 7` teleport "run one" · `L3 step 2 (AD10)` AOBMaker push must still carry the AOB · `Y13` dump-window clamp text (assert on the **emitted text**, no tick needed) · `Y10` baked-invoke untick re-run (read `.Active` from the Lua Engine, never the checkbox icon) · `AA2/AA3 step 5` permanent rescan failure (`read_mem.py` as the second detector — the console line alone does not prove the writes stopped) · `AA4–AA7 step 4` (`dofile` **first**, then kill the game, then `createFromPath` — that puts the raise inside `createFromClass`) · `B5` mailbox flavour (3 CE `createThread`s inside the ~3 s proxy scan window) · `executeCodeEx` negative control (freeze the **game thread** via `suspend.py`, not the process) · `executeCodeEx` 5000 ms budget at 250K objects (OCTOPATH, 273,956 objects, **winmm** proxy).
+### B6. Cheat Engine sitting — **9 listed, 7 struck, 2 open + 1 partial**
+
+⚠ **Triaged row-by-row 2026-08-24 before running anything, and 7 of the 9 did not need running.**
+Every tag below was then re-grepped by hand rather than taken on the triage's word.
+
+**Struck — already closed:**
+`AF25 step 7` (`[AF25-OPCODE-2026-08-22]`, `[MB3-CT-2026-08-22]`) · `L3 step 2 / AD10`
+(`[L3-STEP2-CE-2026-08-21]`) · `Y13` (`[Y10-STEP4-2026-08-22]`, `[Y10-Y13-EMIT-2026-08-20]`, plus 4
+unit tests in `AuditL11HonestyTests.cs`) · `Y10` (`[UNTICKPAIR-2026-08-22]`, `[Y10-STEP4-2026-08-22]`
+— "The row is complete.") · `AA2/AA3 step 5` (`[AA2-CONTRACT-AA3-STOP-2026-08-23]`) · `AA4–AA7 step 4`
+(`[DUMPERTEST-CE-2026-08-18]`).
+
+⛔ **Struck — REFUTED, not closed:** the `executeCodeEx` negative control **as written above**
+("freeze the game thread… " was already the *rewrite*; the original prescribed suspending the
+**process**). [todo.md:9869](todo.md) records it attempted 2026-08-18 and **unable to fail**:
+`executeCodeEx` runs the target on a **newly created remote thread**, so `NtSuspendProcess` — which
+only freezes threads that already exist — leaves it running, and the dissect's calls are pure memory
+work needing no game thread. Measured `elapsed=1422 ms ok=true` inside an 18 s suspension. **Do not
+re-run the process-suspend form.**
+
+**Genuinely remaining:**
+- ⬜ **`executeCodeEx` negative control, REWRITTEN form** — highest value in the bucket: the only row
+  here never observed failing, and its PASS condition is a string **CE itself** produces. ⚠ Two
+  silent-pass traps: without an active ProcessEvent hook the export takes a direct synchronous path
+  and looks like a pass, and Stark's default invoke deadline is **5000 ms — identical to CE's**, so
+  at defaults the two race and CE's path is never exercised. DumperTest **Development** + CE.
+- 🟡 **`executeCodeEx` 5000 ms budget at 250K** — ⚠ likely to pass without stressing anything:
+  OCTOPATH has 273,956 objects but only **699 classes**, and the dissect's cost is one `callDLL`
+  **per field**, so record the **element count** alongside the elapsed time or a cheap run reads as
+  a proven bound. ⚠ Refresh the **stale winmm proxy** first or every number is the old binary's.
+- ⬜ **`B5` mailbox flavour** — ⚠ **probably mis-bucketed**: `mailbox_poke.py` drives the mailbox by
+  `WriteProcessMemory` with **no CE at all**, so this is bucket A, not B. The "3 CE `createThread`s"
+  is inherited from the direct-export flavour and is the wrong instrument — the mailbox is
+  asynchronous by construction, so one poke inside the window suffices. ⚠ It also has a third
+  outcome that reads like a pass: if the poke lands *after* the scan, `EnsureInitialized`
+  early-returns and **no log lines appear at all** — that is a staging miss, never a result.
 
 ### B7. Misc UI — **5**
 `Dump Explorer` identity gate cases (2) and (3) — case (3)'s "needs an actual DQ7R patch" is wrong: the gate keys on module name + `pe_hash`, so flipping one padding byte in a copied exe manufactures it in a minute · `Solide capped badge` · `B16` Group/Map sort columns · `b637/b644` Return Value diagnostic strings · `G1` amber banner (staged DLL, UI reads it).
