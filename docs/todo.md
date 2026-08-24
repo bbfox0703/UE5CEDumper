@@ -8852,7 +8852,7 @@ suite can reach this.
 4. Regression check on a normal game where GWorld *does* resolve: the 🌍 handoffs still behave as
    before — this change should be invisible there.
 
-### 🟡 STEPS 1-4, 7, 8, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too (**8 CLOSED 2026-08-24**; 5 needs damage, 6 has no fixture)
+### 🟡 STEPS 1-4, 7, 8, 9 DONE — `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too (**8 CLOSED 2026-08-24**; **5 CLOSED 2026-08-24** `[FZ5-PAWNBIT-2026-08-24]` — headless, no damage needed; 6 has no fixture)
 
 *Needs a game with a **player pawn** and any inherited `AActor` bool (`bCanBeDamaged`, `bHidden`,
 `bReplicates`) — i.e. any UE game. Runs in the same sitting as `[FREEZESTUCK-2026-08-18]` above.*
@@ -8957,7 +8957,7 @@ suite can reach this.
 > | 2 | Click **Freeze** and read the dialog before typing anything | a **Scope:** line reading `every live Actor and every subclass (N inherit this field)`, plus a ⚠ line saying the field is declared on `Actor` and how to narrow it. Neither existed before |
 > | 3 | Create the script and read the generated CFG | it contains `derived            = true,` |
 > | 4 ⚠ THE ONE THAT MATTERS | tick the record, then check `Logs\<Game>\pipe-0.log` | `LIST_INSTANCES class='Actor' page=0 scope=derived` and a **returned count in the hundreds/thousands**, not `1/1`. Before the fix this was `1/1` in a 25,179-object level |
-> | 5 | with `bCanBeDamaged` frozen to `false`, take damage on the **player pawn** | the pawn is unharmed. Pre-fix the freeze held one incidental `ChaosDebugDrawActor` and the pawn died normally — that is the whole finding |
+> | 5 | ✅ **CLOSED 2026-08-24** `[FZ5-PAWNBIT-2026-08-24]` — NOT by taking damage. `py tools/verify/freezescope_step5_pawn.py` reads the pawn's OWN `bCanBeDamaged` bit with `ReadProcessMemory`. | `0x74 → 0x70 → 0x74` (mask `0x04`, offset +90): armed clears it, release restores it, the other 7 bits never move. Negative controls: `StaticMeshActor` **held=30** and `WorldSettings` held=1 both leave the pawn's bit SET, and `ChaosDebugDrawActor` — the very class the pre-fix freeze held — resolves to **held=0**. |
 > | 6 ⚠ the honesty half | if the log line ends in `CAPPED`, read the Lua Engine | it printed `CAP REACHED, so that is a floor, not a total: more instances exist and are NOT held`, and the Lua Engine window **stayed open** instead of auto-closing over the notice |
 > | 7 ⚠ control | edit the CFG to `derived = false`, re-tick | `scope=exact` in the log and the old narrow pool returns — the flag is a real switch, not decoration |
 > | 8 ⚠ control, backward compatibility | tick an **older saved .CT** whose freeze script predates contract 3 | it still runs and still holds its exact-class pool. The flag defaults off and the handler clears it, so an old script must be unaffected |
