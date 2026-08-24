@@ -339,7 +339,8 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Text_Localized` | 統一言語 | Same glyphs, different `FTextHistory` (LOCTEXT). Disagreement with `Text_Even4_TwoNull` means the fault is history traversal, not decoding |
 | `Text_Empty` | *(empty)* | the empty display-string path |
 | `Name_Cjk` | 統一 | FName holding CJK — the FNamePool path (Serie), which is neither reader above |
-| `Str_*` | same four strings | **CONTROL GROUP** — FString never had B28. If an `Str_` is wrong too, the fault is not B28 and the FText result means nothing |
+| `Str_*` | same four strings | **CONTROL GROUP** — FString never had B28. If an `Str_` is wrong too, the fault is not B28 and the FText result means nothing . `Str_Even22_TwoNull` below is **not** part of this group |
+| `Str_Even22_TwoNull` | 統一言語日本語テスト日本語テスト日本語テスト | **audit #5 U7** — 22 chars, **66 UTF-8 bytes**. Property Search cuts previews at **50 BYTES**, not chars (`Utf8Helpers::TruncateUtf8(s, 50)`, `Ubel.cpp:5950`), and 50 mod 3 == 2 so the cut lands on byte 3 of glyph 17. PASS = the first **16** glyphs then `…` **inside** the quotes. FAIL on a byte-naive build is not an ugly preview but **zero rows**: a split 3-byte sequence makes the whole `search_properties` reply `{"error":…}` |
 
 **PASS** = every `Text_*` reads as CJK. **FAIL** = short ASCII punctuation soup (`,{1`, `-N?e`).
 
@@ -360,10 +361,14 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Map_IntToVec3f` | 1:(6201 6202 6203) 2:(6211 6212 6213) 3:(6221 6222 6223) | **MG3.** `FDumperTestVec3f` is a 4-aligned POD (`X` `Y` `Z` floats, no FText/pointer/double), so its value sits at +4. The defect's size guess reads +8 — **the only container here that is wrong at element 0**, so scanning 6201 fails outright. Also **A4**'s target: a scalar leaf inside a map's struct side |
 | `Set_Big` | 9000..9199 (200 entries) with 9005 removed | **A2 + MG2.** 200 entries push the `TBitArray` past its 128-bit inline buffer onto the heap; 9005 is a LOW index (5), so a build reading the frozen inline words still lists it. MG2: the rendered row count must equal the header count |
 | `Set_Struct` | (6301 6302 6303) (6311 6312 6313) | **A4**, set side — a struct element whose scalar leaf the Deep pass must reach |
+| `Map_IntToVecLwc` | 1:(6401000.1234 6402000.2345 6403000.3456) 2:(6411000.1234 6412000.2345 6413000.3456) | **U3/U17 step 3, map side** — a 24-byte 3×**double** LWC `FVector` as a container element; `Map_IntToVec3f` is three 4-byte floats and structurally cannot reach it. Width control on the same build: both render through the same decoder in the same reply. ⚠ Narrowing control: assert **`6403000.3456`**, never `6403000.5` — the tails were chosen because every one of them CHANGES through float32, so a silent narrow is visible |
+| `Set_VecLwc` | (6501000.1234 6502000.2345 6503000.3456) (6511000.1234 6512000.2345 6513000.3456) | **U3/U17 step 3, set side** — its own stride/alignment path, and the first 24-byte **8-aligned** set element here. Magnitudes ~6.5e6 exceed UE4's `WORLD_MAX` (2,097,152), i.e. a coordinate a 12-byte `FVector3f` could not hold — which is why LWC exists |
 | `Opt_Int_Set` | **24680** | V1c — appears under the optional's field name; Next Scan prunes |
 | `Opt_Float_Set` | 99.5 | |
 | `Opt_Str_Set` | `OptionalPresent` | |
 | `Opt_Int_Unset` | *(unset)* | **NEGATIVE criterion** — a scan for **0** must NOT surface it (the `bIsSet` gate) |
+| `Opt_Text_Set` | 選択言語最新 | **audit #5 U11** — the only `TOptional<FText>`. `Opt_Str_Set` takes the string-inner arm and the `Text_*` family the plain TextProperty arm, so neither exercises this one. A broken build renders an **empty** row |
+| `Opt_Text_Unset` | *(unset)* | the FText sibling of `Opt_Int_Unset`. ⚠ **WEAK half, and labelled as such**: on zeroed UObject memory a sentinel and the true `bIsSet` byte agree, so it passes on a correct build AND on a sentinel-based one. `Opt_Text_Set` alone carries U11 |
 
 ### The C1 spawner — instances ON DEMAND, and the discriminating set
 
@@ -419,6 +424,8 @@ walk may simply never have reached them.
 | `F64` | 2718.281828 | |
 | `bFlagA` / `bFlagB` / `bFlagC` | 1 / 0 / 1 | three bitfields in one byte — bool masks |
 | `Grade` | `Elite` (=2) | enum with a **hole** at 3..6 (`Legend`=7), so index≠value cannot pass by accident |
+| `WideGrade` | `Wide_Base` (=24000) | **Y15 step 6** — a **4-byte** EnumProperty (`enum class : int32`); `Grade` is `: uint8`, i.e. ONE byte, and cannot stand in. ⭐ A freeze targets `Wide_Target` (=16064), which **shares its low byte `0xC0`** with 24000 — so a 1-byte write leaves the field **bit-identical** and FAIL cannot be confused with "the write never landed". Byte 1 of 24000 is `0x5D`, non-zero, so a short write is not hidden by zero neighbours |
+| `WideGuard` | `0x7F7F7F7F` | the **over**-wide-write guard ONLY. ⚠ It cannot detect a SHORT write — a 1-byte write leaves bytes +1..+3 of `WideGrade` itself stale and never reaches this field |
 | `FixedArr` (8 elements) | 100..800 | `ArrayDim > 1` — a different property shape from TArray |
 | `Health` — `BaseValue` / `CurrentValue` | Base 100, Current ticking | nested StructProperty in GAS-attribute shape → also the "Flatten GAS attributes" CE-export toggle |
 | `Payload` → `PayloadText` / `PayloadString` / `PayloadValue` | 統一言語, same as FString, 909090 | Related Objects edge · Locate-in-GWorld through a pointer · Solide force-to-null (strong ptr, so allowed) |

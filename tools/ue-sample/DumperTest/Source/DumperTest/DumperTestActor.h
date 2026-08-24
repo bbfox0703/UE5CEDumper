@@ -504,6 +504,52 @@ public:
 	UPROPERTY() TArray<TObjectPtr<AActor>>  SpawnedHolders;
 	UPROPERTY() TArray<TObjectPtr<UObject>> LateSpawns;
 
+	// ========================================================
+	// APPENDED-AT-END FIXTURES (U7 / U11 / U3-U17 / Y15).
+	//
+	// Deliberately NOT slotted beside their topical siblings. README.md's own rule:
+	// new members go at the END so every offset the docs quote (TickCount +0x518,
+	// FrozenInt +0x51C, Opt_Int_Set +0x468, Set_Int +0x358) still points at the
+	// same field. Slotting Str_Even22_TwoNull into the Str_* block would move all four.
+	// ========================================================
+
+	/// U7 -- 22 CJK chars = 66 UTF-8 bytes. Property Search cuts previews at
+	/// 50 BYTES (Ubel.cpp:5950), and this is the ONLY field here where that cut
+	/// lands mid-sequence: the four Str_* above are 18 bytes at most, so they can
+	/// never reach it.
+	UPROPERTY() FString Str_Even22_TwoNull;
+
+	/// U11 -- the only TOptional<FText>. Opt_Str_Set takes the string-inner arm and
+	/// the Text_* family takes the plain TextProperty arm, so neither exercises the
+	/// text-inner arm this one is for.
+	UPROPERTY() TOptional<FText> Opt_Text_Set;
+
+	/// Deliberately LEFT UNSET -- the FText sibling of Opt_Int_Unset.
+	/// WEAK half, and labelled as such: on zeroed UObject memory a sentinel and the
+	/// true bIsSet byte agree, so this passes on a correct build AND on a
+	/// sentinel-based one. Opt_Text_Set alone carries U11.
+	UPROPERTY() TOptional<FText> Opt_Text_Unset;
+
+	/// U3/U17 step 3, map side -- a 24-byte 3x DOUBLE (LWC) FVector as a container
+	/// element. Map_IntToVec3f is FDumperTestVec3f, three 4-byte FLOATS, and
+	/// structurally cannot reach the 24-byte case.
+	UPROPERTY() TMap<int32, FVector> Map_IntToVecLwc;
+
+	/// U3/U17 step 3, set side -- its own stride/alignment path. Set_Struct is
+	/// 12-byte and 4-aligned; this is the first 24-byte 8-ALIGNED set element here.
+	UPROPERTY() TSet<FVector> Set_VecLwc;
+
+	/// Y15 step 6 -- the 4-byte EnumProperty WRITE target. Engine enums of this
+	/// width live on CDO-only classes, and CDOs are dropped before the instance cap,
+	/// so a freeze on one resolves 0 instances and no byte is ever written.
+	/// ADumperTestActor has live non-CDO instances.
+	UPROPERTY() EDumperTestWideGrade WideGrade;
+
+	/// The OVER-wide-write guard ONLY. It cannot detect a SHORT write: a 1-byte
+	/// write leaves bytes +1..+3 of WideGrade itself stale and never reaches here.
+	/// The short-write discriminator is Wide_Base and Wide_Target sharing a low byte.
+	UPROPERTY() int32 WideGuard = 0;
+
 	/// Bumped on every spawn/destroy round so a harness can prove churn ACTUALLY
 	/// HAPPENED rather than assuming its invoke landed. A changed count with a flat
 	/// generation means something other than these functions moved the numbers.

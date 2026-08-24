@@ -48,6 +48,19 @@ namespace DumperTestStrings
 	// it on its first run - which is the whole argument for that gate existing.
 	static const TCHAR* Odd3_OneNull = TEXT("\u8D70\u4E00\u6B65");
 
+	// U7. 22 chars (even), exactly TWO low-byte-00 (一 U+4E00, 言 U+8A00).
+	// 66 UTF-8 bytes, and the Property Search preview is cut at 50 BYTES
+	// (Utf8Helpers::TruncateUtf8(s, 50), Ubel.cpp:5950). 50 mod 3 == 2, so byte 50
+	// is a CONTINUATION byte and a naive resize(50) splits a 3-byte sequence.
+	// Built from escape groups this file already carries, so the risk is copy-paste
+	// rather than 22 fresh escapes.
+	static const TCHAR* Even22_TwoNull = TEXT("\u7D71\u4E00\u8A00\u8A9E\u65E5\u672C\u8A9E\u30C6\u30B9\u30C8\u65E5\u672C\u8A9E\u30C6\u30B9\u30C8\u65E5\u672C\u8A9E\u30C6\u30B9\u30C8");
+
+	// U11. 6 chars (even), exactly TWO low-byte-00 (言 U+8A00, 最 U+6700).
+	// Shares no substring with any other literal here, in either direction, so a
+	// harness that reads the WRONG FText is visible instead of silently agreeing.
+	static const TCHAR* Even6_TwoNull = TEXT("\u9078\u629E\u8A00\u8A9E\u6700\u65B0");
+
 	// 日本語テスト — U+65E5 U+672C U+8A9E U+30C6 U+30B9 U+30C8.
 	// 6 chars (even), NOT ONE low byte is 00 (E5 2C 9E C6 B9 C8).
 	static const TCHAR* Even6_NoNull = TEXT("\u65E5\u672C\u8A9E\u30C6\u30B9\u30C8");
@@ -212,6 +225,36 @@ ADumperTestActor::ADumperTestActor()
 	RawInt_Ticking    = 700000;
 	RawFloat_Ticking  = 300.25f;
 	RawDouble_Ticking = 50000.5;
+
+	// ---- appended-at-END fixtures (see the matching block in the header) ----
+
+	// U7 -- the only string here that is BOTH non-ASCII AND past the 50-BYTE cut.
+	Str_Even22_TwoNull = DumperTestStrings::Even22_TwoNull;
+
+	// U11 -- FText::FromString, NOT NSLOCTEXT: that carries the same history as
+	// Text_Even2_OneNull, so a failure isolates to the optional arm rather than to
+	// history traversal (Text_Localized already owns that question).
+	Opt_Text_Set = FText::FromString(DumperTestStrings::Even6_TwoNull);
+	// Opt_Text_Unset is left alone on purpose -- the FText half of the negative criterion.
+
+	// U3/U17 step 3. Magnitudes ~6.4e6 exceed UE4's WORLD_MAX (2,097,152), i.e. a
+	// coordinate a 12-byte FVector3f could not hold as a world position -- which is
+	// the whole reason LWC exists. The .1234/.2345/.3456 tails are the point: every
+	// one of them CHANGES when narrowed through float32 (6403000.3456 -> 6403000.5),
+	// so a silent narrow-to-float anywhere in decoder -> wire -> UI is visible. A
+	// round number like 62010.5 round-trips through float32 exactly and would be blind.
+	Map_IntToVecLwc.Add(1, FVector(6401000.1234, 6402000.2345, 6403000.3456));
+	Map_IntToVecLwc.Add(2, FVector(6411000.1234, 6412000.2345, 6413000.3456));
+
+	Set_VecLwc.Add(FVector(6501000.1234, 6502000.2345, 6503000.3456));
+	Set_VecLwc.Add(FVector(6511000.1234, 6512000.2345, 6513000.3456));
+
+	// Y15 step 6 -- seeded at Wide_Base; a freeze targets Wide_Target. The two share
+	// their low byte, so a 1-byte write leaves the field BIT-IDENTICAL and the
+	// failure cannot be confused with "the write never landed".
+	WideGrade = EDumperTestWideGrade::Wide_Base;
+	WideGuard = 0x7F7F7F7F;
+
 }
 
 void ADumperTestActor::BeginPlay()
