@@ -9899,6 +9899,88 @@ changed: `scripts/ue5_dissect.lua`'s `callDLL` (was an INFINITE timeout, now 500
   **game thread specifically** and invoke through `Stark`'s ProcessEvent dispatch, which cannot
   complete without it. Rewrite the row that way before spending another session on it.
 
+  ⛔ **THAT REWRITE WAS RUN 2026-08-24 AND IT DOES NOT WORK EITHER — do not follow this paragraph.**
+  Suspending the game thread does not produce a timeout; it **hangs Cheat Engine indefinitely**,
+  because the game thread holds the target's **loader lock** and `executeCodeEx`'s
+  `CreateRemoteThread` blocks on it — *before* the wait CE's timeout governs. The DLL log is empty
+  for the call: the remote thread never entered the export. Full evidence and what a third form would
+  need: `[EXECCODEEX-NEGCTL-2026-08-24]` below.
+
+> ### ⛔ THE REWRITTEN NEGATIVE CONTROL ALSO DOES NOT WORK 2026-08-24 `[EXECCODEEX-NEGCTL-2026-08-24]` — a SECOND non-viable form, for a different reason
+>
+> The row's prescribed control was refuted in 2026-08-18 (suspend the **process** — cannot fail,
+> because `executeCodeEx` runs on a **newly created** remote thread that the suspension never froze).
+> The register's replacement was *"freeze the **game thread** via `suspend.py`, not the process"*.
+> **That was run today and it does not work either.** It does not produce a timeout — it **hangs
+> Cheat Engine indefinitely**, and it hangs it in a place CE's timeout structurally cannot reach.
+>
+> **The run was armed properly first** — `tools/verify/execcodeex_negctl.py arm`, and both documented
+> silent-pass traps were closed and *observed*, not assumed:
+>
+> ```
+> [1] hook_active=True   fire_count=136   responsive=True        <- trap 1 closed: the export will QUEUE,
+>                                                                   not take the direct synchronous path
+> [2] set_invoke_timeout(60000) -> True                          <- trap 2 closed: Stark's default is 5000,
+>                                                                   IDENTICAL to CE's, so at defaults they race
+> [3] hook fired 192 times in 1.5 s                              <- the hook is genuinely live
+> [4] tid=44084 SUSPENDED (suspend.py's own "main thread" marker)
+>     WITNESSES while stalled: responsive=False  fire_count frozen at 600  (pipe still answering)
+> ```
+>
+> **What happened.** `ue5_callDLL('UE5_CallProcessEvent', 'int', 0x2759BD24980, 0x275AE40AD00, 0)` —
+> the shipped helper, extracted **verbatim** from `scripts/UE5CEDumper.CT:485-512` so the run
+> exercised the real text rather than a reconstruction. CE resolved the export
+> (`export resolved=true addr=140728754596288`) and then **never returned**:
+>
+> | elapsed | observation |
+> |---|---|
+> | 20 s | no `elapsed=` line; CE's 5000 ms deadline already blown 4× |
+> | 50 s | still nothing |
+> | 80 s | still nothing — **past Stark's raised 60 s deadline too** |
+> | — | `IsHungAppWindow` = **True** for both the Cheat Engine and Lua Engine windows |
+> | after `resume-tid` | game thread recovers (`responsive=True`, `fire_count` 600 → 856) but **CE stays hung**, still `True` 30 s later |
+>
+> ⭐ **THE DECIDING EVIDENCE — the DLL log is EMPTY for that call.** The last
+> `UE5_CallProcessEvent: dispatching to game thread` is at **12:17:32.655**, which is the rig's own
+> warm invoke, and it *completed* (`invoke completed result=0`). Nothing at all around 12:20 when CE
+> called. **So CE's remote thread never entered our export.**
+>
+> **Why that kills the method, and it is not a CE defect:** `executeCodeEx` allocates in the target
+> and calls `CreateRemoteThread`. Creating a thread in a target requires that process's **loader
+> lock** (for the `DLL_THREAD_ATTACH` notifications). Suspending the UE game thread while it holds
+> the loader lock leaves the lock held, so `CreateRemoteThread` blocks **in the kernel** — *before*
+> the `WaitForSingleObject` that CE's timeout parameter governs. A timeout on the wait cannot bound a
+> block that happens at creation.
+>
+> ⚠ **So do NOT record this as "the 5000 ms timeout is broken".** The measurement supports a narrower
+> claim: with the game thread suspended, the call never reaches the wait, so this staging cannot
+> exercise the timeout **either way**. Whether the timeout bounds a call that genuinely starts is
+> still unmeasured.
+>
+> #### ▶ WHAT A THIRD FORM WOULD NEED
+>
+> The requirement is a target function that **starts and then blocks**, without touching the loader
+> lock. Suspension of any thread is out — it is the loader lock that bites, not the game thread
+> specifically. Candidates, cheapest first:
+>
+> 1. **Keep the game thread RUNNING but saturated**, so `Stark::EnqueueInvoke` waits on a queue that
+>    drains too slowly rather than on a frozen thread. The remote thread then starts normally, enters
+>    the export, and CE's wait is genuinely the shortest deadline. Needs a way to flood the dispatch
+>    queue — a DumperTest UFUNCTION that sleeps on the game thread would do it in one line, and is a
+>    **fixture addition**, which is why this is filed rather than run.
+> 2. **A deliberately slow export** reachable from `ue5_callDLL` — same shape, no game required, but
+>    it is a test-only export in shipping code, which the repo has avoided elsewhere.
+>
+> ⚠ **And the row's own value should be re-examined before anyone builds that.** Build 2792 shipped
+> **two** things: a finite timeout *and* reason capture. The reason-capture half is already pinned
+> offline — `ue5_callDLL` reports CE's own `why` string (`UE5CEDumper.CT:497-507`), and
+> `docs/ce-plugin-sdk-notes.md` §13 documents the six reasons. What remains unproven is only that a
+> *started* call is bounded at 5000 ms, which is CE's behaviour rather than ours.
+>
+> ℹ️ **Operational note: CE had to be killed.** It stayed `IsHungAppWindow=True` after the resume and
+> did not recover. No table was open and nothing was saved, so nothing was lost — but a session that
+> tries this form should expect to lose its CE instance, and should not have an unsaved `.CT` in it.
+
 ### 🟡 PARTIAL 2026-08-10 — GObjects layout fix (build 2782), DragonSword Awakening
 
 **Verified in-game on build 2786, same day** — see [test-games.md](test-games.md) for the log lines
