@@ -1036,6 +1036,7 @@ could not be checked yet.
 | "cannot be visually verified in an unattended session" | computer-use drove all five steps, including hand-corrupting a settings file to a value no control can produce |
 | "needs a real scaling change, the one row a script cannot do" (`AF21`) | the desktop is *permanently* at 225%; and the row's own gesture (hang it off the **right** edge) provably **cannot** expose the defect, so following it yields a confident false PASS |
 | "needs a game with a `UDataTable` over 64 rows" (`V8`) | five existing tests already pin every step's substance; only "is it rendered" is left |
+| "needs CE installed under `%ProgramFiles%` with the app non-elevated — no unattended session can stage it" (`X12`, 2026-08-24) | **wrong in BOTH directions.** `TryFindCheatEngineDirAsync` resolves CE's folder from the **running `cheatengine*` process's own path**, so any CE we start decides the target — a 97 MB copy we own is as real as the installed one. *And* the installed `C:\Program Files\Cheat Engine\autorun` is **writable non-elevated on this host** (measured with a probe file), so the prescribed setup would not have reproduced the denial anyway |
 
 ⭐ **Why it rots in exactly this direction.** A deferral is written at the moment of *least*
 knowledge about the thing — right after diagnosing the defect, before anyone has tried. It then
@@ -1050,6 +1051,26 @@ has ever been checked. Cheap: all five above collapsed in minutes.
 `AF21`'s row named a gesture that exercises the *permissive* side of the guard, so a careful tester
 following it exactly gets a pass and learns nothing. When a row prescribes a specific manipulation,
 check that the manipulation lands in the band where the two builds actually differ.
+
+⭐ **Two capability beliefs retired the same day (2026-08-24), both of which had been silently
+shrinking what counted as automatable:**
+
+* **Avalonia's top-level menu items ARE clickable by computer use.** A carried note said the header
+  opens but the item click runs nothing, which would have made every `Tools ▸ …` row human-only.
+  Measured on `Tools ▸ Install CE autorun Helper`: it fired on the first attempt, twice, and drove
+  a `SaveFileDialog`. ▶ **Re-test a carried UI-capability claim before letting it reclassify a row.**
+* **`wmic` is GONE on this Windows build (26200)** — `subprocess` raises `WinError 2`, which reads
+  like a missing script rather than a missing OS component. Enumerate processes with a Toolhelp
+  snapshot + `QueryFullProcessImageNameW` (see `tools/verify/x12_ce_autorun_denied.py`), which is
+  also what the app's own `GetRunningProcesses` does, so the rig and the code agree by construction.
+
+⚠ **Staging a "not writable" target does NOT require an ACL edit** — and reaching for `icacls` on a
+real install is both a security-settings change and unnecessary. The write under test is a
+`File.WriteAllTextAsync` onto a fixed file name, so a **read-only file** raises the very
+`UnauthorizedAccessException` a permission denial raises. One attribute, instantly reversible.
+⛔ But check WHICH mechanism the code actually reaches: for `AE20` the sibling trick — a **share
+lock** — was silently defused, because that code re-plans from disk first and a file it cannot open
+simply leaves the plan.
 
 
 

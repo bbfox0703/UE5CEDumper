@@ -8567,6 +8567,66 @@ needs ≥2 files before "partly done" is even expressible) and `readonly <tree> 
 the run re-discovering the re-plan. `clean` now clears the read-only bit first — otherwise a failed
 arm strands a tree that the next `create` refuses to run beside.
 
+### ✅ X12 CLOSED 2026-08-24 `[X12-AUTORUNDENY-2026-08-24]` — the denied-write fallback, live; "maintainer-only" was wrong in both directions
+
+Audit X12 (`MainWindowViewModel.InstallCeAutorunAsync`): when the auto-place into a running Cheat
+Engine's `autorun\` is refused, the app must take the **manual save-dialog fallback**
+(`FileWriteFault.IsPlacementDenied`) rather than report failure. The classifier was unit-tested; the
+**live** denied-write path never was, and the row sat as *"a maintainer step (CE installed under
+`%ProgramFiles%`, app run non-elevated), which no unattended session can stage"*.
+
+⭐ **That blocker was false twice over, and both halves were measured, not argued.**
+
+1. `TryFindCheatEngineDirAsync` resolves CE's folder from the **running `cheatengine*` process's own
+   path** — not the registry, not `%ProgramFiles%`. So whichever CE we start *decides* the folder
+   under test, and a copy we own is as real as the installed one.
+2. The installed `C:\Program Files\Cheat Engine\autorun` is **writable non-elevated on this host**
+   (probe file created and deleted). The prescribed setup would therefore have produced a *success*,
+   not the denial — following the row exactly yields a confident false PASS, §2.13's sharpest case.
+
+**Rig** `tools/verify/x12_ce_autorun_denied.py` — a 97 MB portable CE copy at `D:\ZZCePortable`
+(`stage`), its `autorun\` emptied of CE's own extras, target toggled by `allow` / `deny`.
+⚠ **No ACL edits.** The auto-place is a `File.WriteAllTextAsync` onto a fixed name, so a **read-only
+file** raises the same `UnauthorizedAccessException` a permission denial raises — one attribute,
+fully reversible, and nothing about the machine's security configuration changes.
+
+**CONTROL first — writable, same CE, same folder:**
+
+```
+Installed CE autorun helper: D:\ZZCePortable\autorun\ue5_autorun.lua
+  (9,309 chars, dll=D:\Github\UE5CEDumper\dist\UE5Dumper.dll, autoLocated=True)
+```
+No dialog. This is what makes the arm mean something: a save dialog *also* appears when CE is not
+found at all (`ceDir == null`), and the two are only distinguishable by which sentence the status
+bar shows. Here CE was demonstrably found — the log names our portable folder.
+
+**ARM — same everything, target read-only:**
+
+```
+[WARN] CE autorun auto-place denied (Access to the path
+       'D:\ZZCePortable\autorun\ue5_autorun.lua' is denied.); falling back to manual save dialog
+Installed CE autorun helper: D:\Github\UE5CEDumper\out\ue5_autorun.lua
+  (9,309 chars, …, autoLocated=False)
+```
+
+* the **save dialog appeared**, defaulting to `ue5_autorun.lua` with the `CE autorun Lua (*.lua)`
+  filter — the name CE expects ✅
+* `autoLocated=False`, and the status bar warned `⚠ Written to D:\Github\UE5CEDumper\out, which is
+  …` (not CE's autorun folder) ✅
+* the fallback file is **byte-identical** to what the auto-place wrote in the control
+  (`sha256 6625bed7…`, 9,309 bytes both) — the fallback is not a degraded path ✅
+* **the denied target was not touched**: still `-r--r--r--`, still the control's mtime and bytes ✅
+
+**Nothing outside the copy was modified.** `C:\Program Files\Cheat Engine\autorun` still holds its
+48 files and **no `ue5_autorun.lua`**, before and after. `D:\ZZCePortable` removed, CE closed.
+
+⭐ **A carried capability belief died here and it had been shrinking the automatable set:** *"Avalonia
+top-level menu items are not clickable by computer use — the header opens, the item click runs
+nothing."* `Tools ▸ Install CE autorun Helper` fired on the **first attempt, twice**, and drove a
+`SaveFileDialog`. Every row filed as human-only *because it lives behind a menu* is worth re-testing.
+Recorded in working-lessons §2.13, together with `wmic` being absent on this Windows build (26200) —
+it raises `WinError 2`, which reads like a broken script rather than a missing OS component.
+
 ### ✅ SPENT — 🌍 Locate-in-GWorld where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
 
 > **Steps 1, 2 and 4 CLOSED 2026-08-23 `[AE10-LOCATE-2026-08-23]`; step 3's premise does not hold.**
