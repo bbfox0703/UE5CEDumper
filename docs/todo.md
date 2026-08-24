@@ -5168,6 +5168,7 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | U11 | ⛔ **NO SAMPLE ON DumperTest — checked 2026-08-20 `[U11-NOSAMPLE-2026-08-20]`.** The repo's own TOptional fixture declares `Opt_Int_Set`, `Opt_Float_Set`, `Opt_Str_Set` (FString) and `Opt_Int_Unset` — **and no `TOptional<FText>` at all** (grepped the full 75,342-line SDK export; the only other OptionalProperty in it is World Partition's `CellBounds`, a `TOptional<FBox>`). Since the fix is specific to FText — it used to read an inline FString at `FText+0x10`, where UE stores the `uint32` Flags — an FString or FBox optional exercises a different path and proves nothing. ⚠ **Do not assume DumperTest covers this**; it is cited elsewhere (e.g. `[SDKHDR]`) as *the* TOptional sample, which is true only for the non-Text cases. Needs a title with a display/label `TOptional<FText>`; `search_properties` reports `inner_type`, so candidates can be screened over the pipe. | | |
+> | | ✅ **U11 CLOSED 2026-08-24** `[U11-OPTTEXT-2026-08-24]` — **the sample now exists**. `TOptional<FText> Opt_Text_Set` + `Opt_Text_Unset` were added to `ADumperTestActor` and all three configs repackaged. DumperTest dev, DLL 3350, one `walk_instance`: `Opt_Text_Set` = **`"選択言語最新"`** (the exact 6 glyphs seeded) and `Opt_Text_Unset` = `(unset)`. ⭐ The defect this row exists for was reading an inline FString at **`FText+0x10`**, where UE stores the `uint32` Flags — under it this renders garbage or empty, never the exact string. And the isolation the row demanded is in the SAME reply: `Opt_Str_Set` = `"OptionalPresent"` and `Opt_Int_Unset` = `(unset)`, so the optional machinery is working generally and the result belongs to the **FText arm** specifically. | | |
 > | U11 | ⛔ **LUSHFOIL (UE 5.6) SCREENED 2026-08-21 — 9 optionals, NONE with an FText inner.** ⭐ **This is the run that proves the METHOD, which Avowed could not**: Avowed's zero was consistent with either "no optionals" or "the screen does not work", and `FOptionalProperty` post-dates UE 5.0 so a UE 5.04 title cannot distinguish them. Lushfoil is UE 5.6 and returns **9** — `MovieSceneShotMetaData` ×5 (4× Bool, 1× Int), `MaterialInterface::CachedTexturesSamplingInfo` / `WorldPartitionRuntimeCellData::CellBounds` / `FontFace::PlatformRasterizationModeOverrides` (Struct), `NiagaraSystem::LargeWorldCoordinateTileUpdateMode` (Enum). So the screen reaches optionals; this title simply has no FText one. ⚠ Note `CellBounds` is the very `TOptional<FBox>` `[U11-NOSAMPLE]` found in DumperTest's SDK export — the same engine-side optional, on a different title, still not the FText path. ⚠ Also note **`game_only=true` returns 0 here**: all 9 are engine classes, so a game-only screen would have reported a false absence. Screen with `game_only=false`. | | |
 > | U11 | ⛔ **AVOWED SCREENED 2026-08-21 — ZERO optionals of ANY inner type**, `game_only` both ways, so it cannot supply the fixture either. Method (one pipe call, reusable): `search_properties` with an empty `query` and `types:["OptionalProperty"]`, then read `inner_type` off each row. Sanity-checked in the same session — `types:["BoolProperty"]` and `["StructProperty","TextProperty"]` both return rows on the same connection, so the zero is the title's, not the query's. ⭐ **Screen only UE ≥ 5.1 titles**: `FOptionalProperty` post-dates UE 5.0, and Avowed is UE 5.04 — as is DumperTest, which is why `[U11-NOSAMPLE]` found what it found. ⚠ Field names are `prop_type` / `prop_name` / `inner_type`, not `type` / `property_name`. | | |
 > | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
@@ -13900,7 +13901,29 @@ ordering table, instead of the claim that measurement refuted.
 |---|---|---|
 | 1 | ✅ **2026-08-22 通過**（DumperTest + CE 7.7.0.10568）。`SLOT=8`，報告寫的正是「folder of the most recent UE5CEDumper.CT in CE's recent-files list」，且 slot 6（CE 自己的資料夾）列為 `[no DLL]`，這一列自己警告的 FAIL 情境已結構性不可能。⭐ 另有一個獨立見證：self-heal 只有**名稱吻合**的 slot 才會觸發，而它把 `dll-path.txt` 重寫成 **.CT 自己的** header。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠⚠ **順序會決定是哪個 slot 答**（2026-08-22 兩種都量過，見上一節）：先接 process 再載入 .CT ⇒ dialog 帶著 .CT 路徑 ⇒ **slot 2** 答；先載入再接 process ⇒ `openProcess` 用**裸的行程名**覆蓋掉 dialog ⇒ 落到 **slot 8**。兩者都指向同一個正確資料夾，都不是缺陷。 |
 
-### 🟡 U3 / U17 — the GAS half CLOSED 2026-08-23 `[U3U17-GAS-2026-08-23]`; the LWC host is FOUND, only its container is not
+### ✅ U3 / U17 — BOTH halves closed: GAS 2026-08-23 `[U3U17-GAS-2026-08-23]`, **LWC 2026-08-24** `[U3U17-LWC-2026-08-24]`
+
+> ### ✅ The LWC container arrived, and it was the only thing missing
+>
+> This header used to end *"the LWC host is FOUND, only its container is not"*. `TMap<int32, FVector>`
+> and `TSet<FVector>` were added to `ADumperTestActor` and all three configs repackaged.
+> DumperTest dev, DLL 3350, one `walk_instance`:
+>
+> | | |
+> |---|---|
+> | `Map_IntToVecLwc` | `{X=6401000.1234, Y=6402000.2345, Z=6403000.3456}` and `{X=6411000.1234, …}`, `map_stride` **40** |
+> | `Set_VecLwc` | `set_elem_size` **24**, `set_elem_struct_type` `Vector`, `{X=6501000.1234, …}` |
+>
+> ⭐ **The wire bytes decode as DOUBLES, proven from the raw hex rather than from the rendered text.**
+> `vh = 1DC9E507FA6A58414A0C020FF46B5841` unpacks little-endian as `X = 6401000.1234`,
+> `Y = 6402000.2345`. Read as **float32** the same bytes give `3.457e-34, 13.5261, 6.41e-30, 13.5264` —
+> so a 4-byte misread produces recognisable garbage, not a plausible number.
+>
+> ⭐ **The narrowing control is the reason the values look odd, and it bites**: all three tails CHANGE
+> through float32 — `6403000.3456` becomes **`6403000.5`**. A round value such as `62010.5`
+> round-trips through float32 exactly and would be blind to a silent narrow anywhere in
+> decoder -> wire -> UI. `Map_IntToVec3f` (three 4-byte floats) renders through the same decoder in the
+> same reply as the width control.
 
 Run on **Elliot** (`Elliot-Win64-Shipping`, UE504, 85,079 objects, dxgi proxy) with the AOT `dist` UI
 v1.0.0.3315, at the main menu — which the row explicitly permits (*"CDO 走訪即可，主選單就夠"*).
