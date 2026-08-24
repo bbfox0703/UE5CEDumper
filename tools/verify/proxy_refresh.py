@@ -95,16 +95,28 @@ def report():
     dm = dist_map()
     say(f"dist/proxy: " + ", ".join(f"{k}={v.stat().st_size:,}" for k, v in sorted(dm.items())))
     rows = deployed()
-    stale = 0
+    stale = foreign = 0
     for d, exe, q in rows:
         cur = dm.get(q.name.lower())
         if not cur:
+            continue
+        # Ownership BEFORE freshness, and for the same reason `refresh()` gates on it
+        # ([PROXYREFRESHOWNER-2026-08-24]): `deployed()` selects by FILENAME, and a third-party
+        # wrapper can legitimately own one of our four names. This line used to be missing here,
+        # so OCTOPATH's real ReShade `dxgi.dll` was reported as "*** STALE ***" -- a word that
+        # means "run refresh on it", i.e. the report ADVISED the destruction the refresh gate
+        # exists to prevent. A foreign DLL is not out of date; it is not ours to date.
+        if (product_name(str(q)) or "").lower() != "ue5cedumper":
+            foreign += 1
+            say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
+                f"FOREIGN (not ours — left alone)   exe={exe.name}")
             continue
         same = sha(q) == sha(cur)
         stale += 0 if same else 1
         say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
             f"{'CURRENT' if same else '*** STALE ***'}   exe={exe.name}")
-    say(f"\n{len(rows)} deployed proxy(ies), {stale} stale")
+    tail = f", {foreign} foreign (skipped)" if foreign else ""
+    say(f"\n{len(rows)} deployed proxy(ies), {stale} stale{tail}")
     return stale
 
 

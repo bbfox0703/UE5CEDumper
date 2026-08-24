@@ -259,7 +259,20 @@ public class ProxyDeployConcurrencyTests : IDisposable
     [InlineData("Undeploy")]
     public async Task EveryLongOperation_HoldsTheGate_NotJustTheScans(string which)
     {
-        var (vm, svc) = Ready();
+        // Every case must reach an await INSIDE the gate, or the mid-flight assertion below is
+        // unreachable and the test decays into `Assert.False(IsScanning)` after the fact — which
+        // a build that never sets the flag passes just as happily. It used to be exactly that:
+        // the assertion was guarded by `if (!running.IsCompleted)`, and Refresh and UpdateAll
+        // both completed synchronously against the default harness, so the two commands AE5 was
+        // ABOUT were the two this test silently skipped. Measured 2026-08-24 by running the real
+        // Update All over 9 stale proxies: it finished inside one screenshot round-trip, so the
+        // panel's bar is not observable by eye for these either — this assertion is the only
+        // thing standing behind "the busy indicator appears for them".
+        //   * UpdateAll — needs a proxy ALREADY on disk, else every game hits the
+        //                 `!File.Exists(targetDll)` continue and DeployAsync is never called.
+        //   * Refresh   — makes no gated service call of its own; park the status refresh.
+        var (vm, svc) = Ready(deployed: which == "UpdateAll");
+        if (which == "Refresh") svc.ParkRefreshes = true;
 
         Task running = which switch
         {
@@ -269,11 +282,13 @@ public class ProxyDeployConcurrencyTests : IDisposable
             _          => vm.UndeploySelectedCommand.ExecuteAsync(null),
         };
 
-        // Refresh and UpdateAll complete synchronously against this stub (nothing to update), so
-        // assert on the outcome rather than on a flag that may already have been released.
-        if (!running.IsCompleted) Assert.True(vm.IsScanning);
+        Assert.False(running.IsCompleted,
+            $"{which} never suspended, so the gate was never observed being HELD — the assertion below would be vacuous");
+        Assert.True(vm.IsScanning,
+            $"{which} ran without holding the gate; the panel's progress bar binds to this flag, so it would stay invisible");
 
         svc.Gate.SetResult();
+        foreach (var pending in svc.PendingRefreshes) pending.TrySetResult();
         await running;
         Assert.False(vm.IsScanning);   // released on every path
     }
