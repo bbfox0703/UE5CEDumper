@@ -11201,12 +11201,64 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   frozen until the sweep finishes — that is the unbounded join, and `UE5_Shutdown` runs on CE's own
   thread, which is why it freezes CE rather than just the game.
 
-- ⬜ **Log retention no longer dies at the first undeletable file** (build 2603, B19). Provoke it:
-  open any archived `%LOCALAPPDATA%\UE5CEDumper\Logs\<proc>\*.log` in a program that holds it open,
-  and make sure at least one OTHER archive in the same folder is older than 21 days (backdate it).
-  Start a game with the DLL. **PASS** = the backdated file is gone and the held one remains.
-  **FAIL** = both remain — the sweep aborted at the held file, which it did on every launch because
-  enumeration order is stable.
+- ✅ **Log retention no longer dies at the first undeletable file** (build 2603, B19) --
+  **PASS 2026-08-24** `[B19-BACKDATE-2026-08-24]`. `py tools/verify/retention_backdate.py b19`,
+  DumperTest dev, DLL 3348.
+
+  ```
+  planted  ZZRET-aaa-held.log   (held open, sorts FIRST)
+  planted  ZZRET-zzz-after.log  (deletable, sorts LAST)
+    OK: the open handle really does make it undeletable
+  held  file: present   <- correct, it is locked
+  after file: GONE      <- the sweep continued past the lock
+  ```
+
+  ⭐ **Enumeration order is the whole test, which is why the names are `aaa-`/`zzz-`.** The defect
+  was one shared `std::error_code` between the iteration and the per-file `fs::remove`, so a failed
+  remove ended the loop -- and NTFS order being stable, it ended it at the same file every launch.
+  If the deletable file were enumerated FIRST, the pre-fix code would have deleted it and the run
+  would pass on a broken build. The rig also **asserts the lock works** (it tries `os.unlink` and
+  requires an `OSError`) before drawing any conclusion, so the arm cannot be vacuous -- Python's
+  `open()` on Windows does not pass `FILE_SHARE_DELETE`.
+
+  ### ✅ The whole age sweep, verified the same way `[RETENTION-BACKDATE-2026-08-24]`
+
+  The row above was the only live check the retention sweep had. Backdating turns the rest of it
+  into a headless test too -- **a backdated mtime is not a simulation of the input, it IS the
+  input**, since `PruneAgedLogs` / `PruneStaleProcessFolders` read nothing else.
+  `retention_backdate.py plant` -> launch+inject -> `check`. **10 of 10 correct:**
+
+  | case | age | want | got |
+  |---|---|---|---|
+  | folder `doomed` | newest -25d | die | gone |
+  | folder `survivor` | newest -19d | live | present |
+  | folder `edge-old` | newest **-21d-6h** | die | gone |
+  | folder `edge-new` | newest **-21d+6h** | live | present |
+  | folder `mixed` | oldest -25d, **newest -1d** | live | present |
+  | folder `empty` | no files | die | gone |
+  | file `old.log` | -25d | die | gone |
+  | file `new.log` | -19d | live | present |
+  | file `old.txt` | -25d | live | present |
+  | `Bookmarks` `ancient.json` | **-400d** | live | present |
+
+  ⭐ **What each control rules out, because "the file disappeared" on its own proves nothing.**
+  `survivor` rules out *"it deleted everything"*. The **edge pair straddling 21 days by 6 hours**
+  puts the boundary where `Grimoire.h:21` says it is, rather than merely "somewhere between 19 and
+  25 days". `mixed` proves a folder's age is the **newest file inside** (`Sein.cpp:441-444`) and not
+  the oldest, nor the folder's own mtime. `old.txt` -- 25 days old, in the same folder as a file
+  that died -- proves the per-file sweep discriminates on the `.log` extension instead of nuking
+  anything old. And the 400-day-old bookmarks file surviving confirms that store's retention is
+  genuinely **0 = off** (CLAUDE.md: *"do not 'finish' it by enabling the sweep"*).
+
+  ⚠ **The rig refuses to pass when the sweep never ran** -- measured, not just coded: planting and
+  checking *without* launching a game reports `0 of the must-die cases died` and fails with
+  *"NOTHING died -- the sweep did not run at all, so every 'LIVE' result above is vacuous"*. Without
+  that guard, a rig that triggers nothing scores 6 LIVE out of 10 and looks half-right.
+
+  ℹ️ Two shapes are exercised by different halves: the per-FILE sweep only touches the folder the
+  running process OWNS (`Sein.cpp:628` passes `s_processDir`), so those cases live in the game's own
+  log folder; the per-FOLDER sweep covers every OTHER folder and skips `keep` (`Sein.cpp:629`).
+  Everything the rig writes carries a `ZZRET-` prefix and `clean` refuses to touch anything else.
 
 - ✅ **The proxy dedup guard says when it is not armed** (build 2603, B47) — **VERIFIED 2026-08-05,
   build 2645 — and the 2026-08-04 ✅ was credited to the WRONG SESSION.**
