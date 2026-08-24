@@ -32,6 +32,13 @@ import subprocess
 import sys
 import time
 
+# The ownership predicate, shared rather than reimplemented: PE VERSIONINFO ProductName ==
+# "UE5CEDumper", which is exactly what Methode.cpp's IsOurModule reads. A refresh that
+# decides by FILENAME will happily overwrite a third-party ReShade/SpecialK dxgi.dll.
+# [PROXYREFRESHOWNER-2026-08-24]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from b29_product_name import product_name   # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DIST = ROOT / "dist" / "proxy"
 BACKUPS = ROOT / "out" / "proxy-backups"
@@ -112,6 +119,21 @@ def refresh(match):
             continue
         if sha(q) == sha(cur):
             say(f"  {d.name}: {q.name} already current — nothing to do")
+            continue
+        # ⛔ OWNERSHIP GATE — [PROXYREFRESHOWNER-2026-08-24]. Everything above this line
+        # decides by FILENAME, and a game folder can legitimately hold a third-party DLL
+        # under one of our four names: ReShade ships `dxgi.dll`, and so do SpecialK and
+        # Ultimate ASI Loader. Without this check the "refresh" DESTROYS it — measured on
+        # 2026-08-24, when this rig overwrote OCTOPATH TRAVELER's real ReShade `dxgi.dll`
+        # (5,255,448 B, ProductName "ReShade") with our 2,893,824 B proxy. It was
+        # recoverable only because of the backup two lines below, which is luck, not design.
+        #
+        # This is the same predicate `Methode.cpp`'s `IsOurModule` uses and the same helper
+        # `inject.py` now imports, so the three cannot drift.
+        pn = product_name(str(q))
+        if (pn or "").lower() != "ue5cedumper":
+            say(f"  ⛔ SKIPPED {d.name}: {q.name} is NOT ours "
+                f"(ProductName={pn!r}) — a third-party wrapper, left untouched")
             continue
         if running(exe.name):
             say(f"  REFUSED: {exe.name} is RUNNING; replacing a mapped DLL achieves nothing. "

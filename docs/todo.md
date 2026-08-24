@@ -14086,6 +14086,67 @@ uselessness, and that would silently re-open `[STALEDLL]`. The guard is intact.
 defect fixed in the product and left standing in the tool that verifies the product. A rig carrying
 the bug it exists to detect will mask that bug's return.
 
+### ⚠⚠ NEW 2026-08-24 `[PROXYREFRESHOWNER-2026-08-24]` (MED-HIGH, **DESTRUCTIVE**) — `proxy_refresh.py` overwrote a third-party ReShade DLL, and I triggered it
+
+Same root cause as `[INJECTOWNER-2026-08-24]` — *decide by filename, not by ownership* — but this one
+is far worse, because `inject.py` merely **refused** to act while this one **destroys a file the user
+installed**.
+
+**Measured, not theorised: it happened during this session.** Running the row's own prescribed
+precondition, `py tools/verify/proxy_refresh.py refresh "OCTOPATH"`:
+
+```
+backed up dxgi.dll (5,255,448 B, sha b2945c29e709) -> OCTOPATH_TRAVELER.dxgi.dll.20260824-123841.bak
+refreshed OCTOPATH TRAVELER :: dxgi.dll  -> 2,893,824 B  (dist 3343)      <-- ReShade, DESTROYED
+backed up winmm.dll (2,903,552 B, sha 681a4221b587) -> …winmm.dll.20260824-123841.bak
+refreshed OCTOPATH TRAVELER :: winmm.dll -> 2,906,112 B  (dist 3343)      <-- ours, correct
+```
+
+⭐ **And I had verified the ProductName thirty seconds earlier**, which is what makes this a clean
+demonstration rather than a near miss:
+
+```
+dxgi.dll   5255448 B  ProductName='ReShade'      OURS=False
+winmm.dll  2903552 B  ProductName='UE5CEDumper'  OURS=True
+```
+
+The rig overwrote the `ReShade` file anyway, because `refresh()` selected on `q.name.lower()` against
+`dist_map()` — a **filename** match — with no ownership test anywhere in the path.
+
+**Restored byte-identically** from the rig's own backup: 5,255,448 B, sha `b2945c29e7095491`,
+`ProductName='ReShade'`. ⚠ **That recovery was luck, not design** — it worked only because the rig
+happens to back up before overwriting. Nothing in the flow *required* a recoverable copy to exist,
+and a user with `out/proxy-backups` cleaned would have lost their ReShade install silently.
+
+**Fix applied.** An ownership gate before the overwrite, using the shared helper rather than a
+reimplementation, so `Methode.cpp`'s `IsOurModule`, `inject.py` and this rig cannot drift:
+
+```
+⛔ SKIPPED OCTOPATH TRAVELER: dxgi.dll is NOT ours (ProductName='ReShade') — a third-party wrapper, left untouched
+   OCTOPATH TRAVELER: winmm.dll already current — nothing to do
+```
+
+Shown able to fail in the strongest possible way: **the pre-fix behaviour was measured on the real
+file**, and the post-fix run leaves it byte-identical.
+
+⚠ **THE HAZARD WAS LIVE, not hypothetical.** A survey of every deployed proxy on this machine:
+
+| | |
+|---|---|
+| ours | **10** |
+| **third-party** | **1** — `OCTOPATH TRAVELER\…\dxgi.dll`, ProductName `ReShade`, 5,255,448 B |
+
+So an **unscoped** `proxy_refresh.py refresh` — or any future scoped run naming OCTOPATH — would have
+destroyed it. It is also exactly the file `[B29-PRODUCTNAME-2026-08-23]` relies on as its
+third-party fixture, and the same one `b29_nonascii_fixture.py` copies.
+
+⭐ **The pattern, for the third time today.** `IsOurModule` was added to the DLL when `B29` showed a
+name test cannot tell our proxy from a wrapper. The **rigs never followed**: `inject.py` still refused
+on any wrapper (`[INJECTOWNER]`), `call_export.py` still cannot see our DLL in proxy mode because it
+looks for the literal name `UE5Dumper.dll` (`[B5-MAILBOX-2026-08-24]`), and `proxy_refresh.py`
+overwrote one. ▶ **When a predicate is fixed in the product, grep `tools/verify/` for the old rule
+the same day** — three separate rigs carried it for months after the product stopped.
+
 ### ✅ DragonSword GObjects layout CLOSED 2026-08-23 `[DSLAYOUT-BASEANCHOR-2026-08-23]` — the archive already held the proof, and the checkbox was looking for the wrong thing
 
 The remaining PARTIAL asked: when the **FUObjectArray base** anchor hits, does the layout picker choose
