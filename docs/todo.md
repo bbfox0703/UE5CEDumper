@@ -8488,6 +8488,85 @@ runnable games. The launchable 5.8 host is the staged build at
 `D:\Unreal Projects\StackOBot\Saved\StagedBuilds\Windows\…` (161 MB, boots to **40,708 objects**,
 `ue_version 508`).
 
+### ✅ AE20 CLOSED 2026-08-24 `[ORPHANCANCEL-ONDISK-2026-08-24]` — re-run on disk; the FIRST run passed without discriminating, and finding that out is the result
+
+`[ORPHANCANCEL-2026-08-20]`'s fix was pinned only at the view-model seam with a stubbed service —
+the row's own caveat was *"Not re-run on disk … the DLL-recycling and folder-pruning behaviour
+under a real cancel is unchanged-by-inspection rather than re-measured"*. Re-measured now, UI
+**3338**, `tools/verify/ae20_orphans.py`, all trees synthetic under `ZZAe20Orphan###`.
+
+**Run 1 — the row's own procedure (40 trees × 1 DLL, tick 4, cancel). Passed, and proves nothing.**
+
+```
+Recycled leftover proxy …ZZAe20Orphan000\…\version.dll   09:09:37.521
+Recycled leftover proxy …ZZAe20Orphan001\…\version.dll   09:09:37.592
+Recycled leftover proxy …ZZAe20Orphan002\…\version.dll   09:09:37.662
+Cleanup cancelled after 3 of 4 leftover(s) — 3 file(s) recycled, 12 folder(s) removed   .673
+```
+
+3 log lines, tally 3 — they agree, the summary says *cancelled*, and row `…003` stayed listed,
+**unticked**, reading `Interrupted — 0 file(s) recycled, 0 folder(s) removed; the rest was left in
+place`. Every stated expectation met.
+
+⭐ **And it is not evidence of the fix.** The cancel landed in the **11 ms gap between rows**, so the
+interrupted row had recycled *nothing* — and a row that recycled nothing contributes zero under the
+pre-fix arithmetic too. The fix moved `files += result.FilesRecycled` **out of `if (result.Success)`**;
+a run only discriminates when a **non-successful row has already recycled something**. Run 1 never
+created that state. Recording it as the closure would have been the "a number without its
+conditions" failure in working-lessons §1, one clean-looking screenshot away.
+
+**Run 2 — locking a DLL does NOT create that state either (a real finding about the rig, not the app).**
+
+Two trees × `version.dll` + `dxgi.dll`, one `dxgi.dll` held open with `dwShareMode == 0` *after* the
+scan. Expected `locked` → `Success=false` with `recycled=1`. Measured instead:
+
+```
+Cleaned 2 of 2 leftover(s) — 3 file(s) recycled, 4 folder(s) removed
+```
+
+no `is locked` warning anywhere in the log, and the DLL still on disk. **`RemoveOrphanProxyAsync`
+re-plans from disk at delete time**, and the identity re-check cannot open a share-locked file, so it
+drops out of `plan.FilesToRecycle` entirely — the row then succeeds at everything it is still asked
+to do, and `ResolveRemovalOutcome`'s `locked` branch is **unreachable through a share lock**. Correct
+behaviour, and a dead end for this measurement.
+
+**Run 3 — read-only reaches the branch, deterministically, with no timing at all.**
+
+A read-only file still *opens*, so it survives the re-plan and reaches the loop's own
+`(fi.Attributes & FileAttributes.ReadOnly) != 0 → readOnly.Add(…); continue;`. Same fixture, bit set
+**after** the scan on `…Orphan000\…\dxgi.dll` only (verified: the other three staged files
+`ReadOnly=False`).
+
+```
+Recycled leftover proxy …ZZAe20Orphan000\…\version.dll    <- the UNSUCCESSFUL row's contribution
+Recycled leftover proxy …ZZAe20Orphan001\…\dxgi.dll
+Recycled leftover proxy …ZZAe20Orphan001\…\version.dll
+Removed empty folder …ZZAe20Orphan001\…\Win64 / Binaries / ZZOrphan / ZZAe20Orphan001
+Cleaned 1 of 2 leftover(s) — 3 file(s) recycled, 4 folder(s) removed; 1 still listed with the reason
+```
+
+* log `Recycled leftover proxy` lines = **3**; summary = **3 file(s) recycled** ✅ **they agree**
+* row `…Orphan000` is **not successful** (`Cleaned 1 of 2`) yet **contributed 1 of those 3** — this is
+  exactly the arithmetic the fix moved out of the success branch
+* it stays listed, **unticked**, its future-tense plan replaced by
+  `Read-only, left alone deliberately: dxgi.dll. Remove it by hand if you meant to protect it.`
+* on disk: `version.dll` gone, the read-only `dxgi.dll` kept, **folder chain un-pruned** — the
+  half-state is visible rather than hidden
+* pre-fix this same run prints **`2 file(s) recycled`** against 3 log lines (`files += …` skipped for
+  a `Success == false` row) — the 3-vs-2 shape of the original finding
+
+⭐ **This is the `APartlyLockedRow_AlsoCountsWhatItRecycled` case on real disk** — the sibling hole
+the finding never mentioned and the fix found by moving the tally: *a row that recycles one DLL and
+then hits a lock was already going unreported, with no cancel involved.* It was pinned at the seam
+and is now measured end to end through the real Recycle Bin. 16/16 `ProxyOrphanDeleteRefreshTests`
+still green; 13/13 gates.
+
+⚠ **The rig gained two verbs and one of them is a trap-marker**: `create --dlls version,dxgi` (a row
+needs ≥2 files before "partly done" is even expressible) and `readonly <tree> <dll>`. `lock` is kept
+**and documented as the one that does not work** for this purpose, so the next session does not spend
+the run re-discovering the re-plan. `clean` now clears the read-only bit first — otherwise a failed
+arm strands a tree that the next `create` refuses to run beside.
+
 ### ✅ SPENT — 🌍 Locate-in-GWorld where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
 
 > **Steps 1, 2 and 4 CLOSED 2026-08-23 `[AE10-LOCATE-2026-08-23]`; step 3's premise does not hold.**

@@ -190,11 +190,11 @@ Run the `wevtutil` Application query **before** each arm so the detector is show
 
 ## BUCKET B — UI / Cheat Engine drive (34 rows, grouped)
 
-### B1. ⭐ Two "the fix landed, nobody re-measured" re-runs — do these first
+### B1. ✅ CLOSED 2026-08-24 — two "the fix landed, nobody re-measured" re-runs
 A ❌ whose fix has shipped is an **owed re-run**, not a closed row.
 
-- **AC11 step 2** — `ProxyDeployService.cs:1007` `IsTargetUnreplaceable` now maps `UnauthorizedAccessException` to the locked arm. Launch Elliot (dxgi loaded) → Proxy Deploy → tick → **Force Overwrite** (required; `PlanDeploy` returns `AlreadyCurrent` otherwise) → Deploy. Expect `ErrorLocked`, not `ErrorOther`. Cross-check `tools/verify/ac11_locked_rename.py`.
-- **AE20** — `[ORPHANCANCEL]` is pinned only at the VM seam with a stubbed service; the row says *"Not re-run on disk"*. `py tools/verify/ae20_orphans.py` → Find leftovers → tick 4 → Delete → Cancel. Diff the log's `Recycled leftover proxy` count against the summary tally — that mismatch **was** the defect.
+- ✅ **AC11 step 2** — CLOSED 2026-08-23 (`1e73cf1b`). `ProxyDeployService.cs:1007` `IsTargetUnreplaceable` now maps `UnauthorizedAccessException` to the locked arm. ⚠ `tools/verify/ac11_locked_rename.py` was itself modelling the **pre-fix** filter and reporting a permanent false FAIL; the rig was corrected in the same commit.
+- ✅ **AE20** — CLOSED 2026-08-24 `[ORPHANCANCEL-ONDISK-2026-08-24]`, see todo.md. ⚠ **The procedure written here — "tick 4 → Delete → Cancel, diff the log against the tally" — PASSES WITHOUT DISCRIMINATING**, and that is the row's real lesson. The cancel lands in the ~11 ms gap *between* rows, so the interrupted row recycled nothing, and a row that recycled nothing contributes zero under the pre-fix arithmetic too. The fix moved `files += result.FilesRecycled` out of `if (result.Success)`, so a run only measures it when a **non-successful row has already recycled something**. Two further facts, both measured: a **share lock cannot** create that state (the delete-time re-plan cannot open the file, so it silently leaves the plan and the row succeeds), and **read-only can** (it still opens, survives the re-plan, and hits the `readOnly` branch) — `ae20_orphans.py create --dlls version,dxgi` + `readonly <tree> <dll>`.
 
 ### B2. ⭐ Two rows unblocked by a stale premise, no fixture needed
 - **X12 (CE autorun denied-write)** — filed "maintainer only, needs elevation", but `MainWindowViewModel.cs:3201` resolves CE's folder from the **running `cheatengine*` process's path**. A user-owned portable CE copy + `icacls … /deny (W)` on its `autorun\` hits `FileWriteFault.IsPlacementDenied` (`FileWriteFault.cs:17`) with **no UAC anywhere**. This trick generalises to any row filed as needing an unwritable install folder.
