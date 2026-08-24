@@ -121,18 +121,50 @@ def loaded_modules(pid):
     return out
 
 
-# Names that, if already mapped from somewhere other than System32, are ours.
+# Names worth ASKING about. This is a cheap PRE-FILTER only — it never decides
+# anything, exactly as Methode.cpp's own `nameLooksLikeOurs` does not.
 PROXY_NAMES = ("dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll")
 
 
 def already_ours(pid):
-    """Modules in `pid` that look like a build of ours (an auto-loaded proxy counts)."""
+    """Modules in `pid` that really ARE a build of ours (an auto-loaded proxy counts).
+
+    ⚠ OWNERSHIP, NOT PATH. [INJECTOWNER-2026-08-24] This used to read:
+
+        # Names that, if already mapped from somewhere other than System32, are ours.
+        elif low in PROXY_NAMES and "system32" not in lpath: hits.append(...)
+
+    which is the PRE-FIX rule `B29` removed from the DLL, verbatim — `git show
+    229df1d8^:dll/src/Methode.cpp` has the same "not from System32 ⇒ ours" test. The DLL
+    was moved to a version-info OWNERSHIP check (`IsOurModule`); this rig was not, so it
+    refused to inject into any game carrying a third-party ReShade / SpecialK /
+    Ultimate-ASI-Loader wrapper — and its advice ("use a FRESH process") is unfollowable,
+    because such a wrapper loads on EVERY launch. Measured on a ReShade `dxgi.dll`:
+    refused outright, while `LoadLibraryW("…UE5Dumper.dll")` was never at risk.
+
+    The predicate is now the same one the DLL uses — PE VERSIONINFO `ProductName ==
+    "UE5CEDumper"`, enumerating `\\VarFileInfo\\Translation` rather than assuming a
+    language block — imported from `b29_product_name` so the two cannot drift.
+
+    ⭐ THE GUARD ITSELF STAYS. The case it was written for is real and still matters: a
+    STALE `UE5Dumper.dll` mapped from CE's install folder makes `LoadLibraryW` a silent
+    refcount bump on the old binary (`[STALEDLL-2026-08-18]`). Only the *ownership* test
+    was missing.
+    """
+    try:
+        from b29_product_name import product_name
+    except ImportError:                       # keep the injector usable if the helper moves
+        product_name = None
+
     hits = []
     for name, path, size in loaded_modules(pid):
-        low, lpath = name.lower(), path.lower()
-        if low == "ue5dumper.dll":
-            hits.append((name, path, size))
-        elif low in PROXY_NAMES and "system32" not in lpath and "syswow64" not in lpath:
+        low = name.lower()
+        if low != "ue5dumper.dll" and low not in PROXY_NAMES:
+            continue                          # pre-filter: not a name we could own
+        if product_name is None:
+            hits.append((name, path, size))   # cannot decide -> report, do not silently pass
+            continue
+        if (product_name(path) or "").lower() == "ue5cedumper":
             hits.append((name, path, size))
     return hits
 

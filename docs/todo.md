@@ -13916,6 +13916,25 @@ the decision. ⚠ **Keep the guard** — the case it was written for is real and
 `UE5Dumper.dll` mapped from CE's folder, `[STALEDLL-2026-08-18]`); it is the *ownership* test that is
 missing, not the guard.
 
+#### ✅ FIXED 2026-08-24 — and the predicate was already in the tree
+
+`already_ours()` now imports **`b29_product_name.product_name`** rather than reimplementing the
+check, so the rig and `Methode.cpp`'s `IsOurModule` cannot drift: PE VERSIONINFO `ProductName ==
+"UE5CEDumper"`, enumerating `\VarFileInfo\Translation` instead of assuming a language block. The
+name list survives as a **pre-filter only**, exactly as `nameLooksLikeOurs` is in the DLL. If the
+helper cannot be imported the module is REPORTED rather than silently passed — an undecidable case
+must not become a quiet yes.
+
+⭐ **Both directions measured, on one DumperTest carrying a real ReShade `dxgi.dll`:**
+
+| | before | after |
+|---|---|---|
+| game with a THIRD-PARTY `dxgi.dll` | ❌ refused, advice unfollowable | ✅ `loaded : HMODULE… LoadLibraryW returned non-NULL` |
+| inject again with OUR `UE5Dumper.dll` mapped | ✅ refused | ✅ **still refuses**, naming `UE5Dumper.dll` |
+
+The second row is the one that matters: it is easy to "fix" this by weakening the guard into
+uselessness, and that would silently re-open `[STALEDLL]`. The guard is intact.
+
 ⭐ **Why this is worth a finding rather than a footnote:** it is `working-lessons` §2.x's shape — a
 defect fixed in the product and left standing in the tool that verifies the product. A rig carrying
 the bug it exists to detect will mask that bug's return.
