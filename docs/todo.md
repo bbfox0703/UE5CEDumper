@@ -13735,6 +13735,75 @@ doing it while CE runs would be undone.
 > ℹ️ `PipeServer: Started on %ls` (`Fern.cpp:506`) is the one `%ls` that is safe by construction — its
 > argument is the compile-time ASCII pipe name. Confirmed intact in the fixture's `pipe-0.log`; it is
 > a positive control for "`%ls` works when the input is ASCII", not evidence about non-ASCII.
+>
+> ### ❌ STEP 3 RUN AND **FAILED** 2026-08-24 `[NONASCIILS-2026-08-24]` (MED) — the prediction above is CONFIRMED, and the symptom is worse than it said
+>
+> ⬆ **The block above is superseded.** It was filed as a prediction *before* the run, deliberately.
+> The run has now happened: **UE5Dumper.dll registered as a CE plugin** (see below), CE 7.7 attached
+> to the fixture, `Plugins ▸ UE5CEDumper: Inject & Connect` clicked. Step 3's expected result —
+> *"訊息裡的路徑完整顯示，不再變成 `EVERSPACE? 2` 這種問號"* — **does not hold**.
+>
+> **What the log actually contains** (`Logs\cheatengine-x86_64\init-0.log`, build 3338):
+>
+> ```
+> [11:27:18.675] [INFO] [CEP] CEPlugin: OnInjectAndConnect triggered
+> [11:27:18.677] [INFO] [CEP]                                            <-- ENTIRELY EMPTY
+> [11:27:18.678] [INFO] [CEP] CEPlugin: 'WINMM.dll' … (path=C:\WINDOWS\SYSTEM32\WINMM.dll) …
+> [11:27:18.679] [INFO] [CEP] CEPlugin: 'VERSION.dll' … (path=C:\WINDOWS\SYSTEM32\VERSION.dll) …
+> [11:27:18.683] [INFO] [CEP] CEPlugin: 'dxgi.dll' … (path=C:\WINDOWS\system32\dxgi.dll) …
+> ```
+>
+> ⭐ **Not mojibake — a BLANK RECORD.** The empty line sits exactly where module index **24**, the
+> third-party `dxgi.dll` at `D:\測試\…`, is processed (`EnumProcessModulesEx` order puts it *before*
+> WINMM at 26 — verified by replaying the plugin's own enumeration). The arithmetic is exact: **4**
+> proxy-named non-ours modules → **4** records → 1 empty (first) + 3 correct. The CJK bytes appear in
+> the file in **no encoding at all** — UTF-8, UTF-16LE and CP950 all absent, and there is no `?`
+> substitution either. Even the ASCII prefix `CEPlugin: 'dxgi.dll' is loaded but is not ours (path=`
+> is gone. **Anyone grepping for a mangled path finds nothing whatsoever.**
+>
+> ⭐⭐ **THE CONTROL, and it is a single-variable one.** The *same* ReShade `dxgi.dll` (identical
+> bytes, sha256 `b2945c29e7095491…`) was staged at an **ASCII** path, `D:\ZZAsciiCtl\DumperTest`, and
+> the same menu item clicked against it:
+>
+> | | wrapper named? | records naming a module | EMPTY records |
+> |---|---|---|---|
+> | `D:\ZZAsciiCtl\…` (ASCII) | ✅ `'dxgi.dll' … (path=D:\ZZAsciiCtl\…\dxgi.dll)` | **8** | **0** |
+> | `D:\測試\…` (non-ASCII) | ❌ never named | 6 | **2** |
+>
+> Same module, same code, same format string, same session — **only the path's characters differ**.
+>
+> **Mechanism, settled (`/MT` makes it deterministic, not merely likely):**
+> `Sein::WriteLog` formats with narrow `vsnprintf` ([Sein.cpp:499](dll/src/Sein.cpp:499)). UCRT's
+> `_wctomb_internal` returns `EILSEQ` for any wide value **> 0xFF** in the `"C"` locale; `printf`'s
+> wide-string loop then sets `_characters_written = -1` and the tail writes `buffer[0] = 0`.
+> `Sein.cpp:499` discards the return value, so an **empty** `msgBuf` is spliced in.
+>
+> #### ⚠ FOUR CORRECTIONS TO WHAT I WROTE IN THE PREDICTION — do not re-quote the earlier wording
+>
+> 1. **The symptom was wrong, in the worse direction.** I wrote "mangled or truncated". It is
+>    **empty**. ⚠ With one exception that mangles *silently*: **U+0080–U+00FF** passes the C-locale
+>    cast and emits the raw **Latin-1** byte, which is invalid UTF-8 inside a UTF-8 log (measured:
+>    `EVERSPACE® 2` → `… 43 45 AE 20 32 …`). ⭐ And the irony: `Methode.cpp:199-203`'s own comment
+>    cites **™ (U+2122)**, which is > 0xFF — so its own example produces a blank line, not the
+>    `EVERSPACE? 2` it describes.
+> 2. **My stated REASON was wrong, and the truth is firmer.** I wrote *"runs in whatever locale the
+>    host left"*. Every DLL target sets `MSVC_RUNTIME_LIBRARY "MultiThreaded"` = **`/MT`**
+>    ([dll/CMakeLists.txt:107](dll/CMakeLists.txt:107) and 6 more), a statically linked CRT with a
+>    **private** locale the host cannot reach. `"C"` is **guaranteed**. Host locale,
+>    `_configthreadlocale`, and the fact that this site runs inside CE (an FPC program) are all
+>    irrelevant.
+> 3. **The `Heiter.cpp` analogy is a FALSE PARALLEL.** Heiter's comment blames `GetModuleFileNameA` —
+>    a Win32 **ANSI** conversion with a `'?'` default char, a different mechanism with a different
+>    symptom. Heiter never had a wide string reaching a narrow formatter. Cite it as *"the correct
+>    fix pattern"*, never as evidence about `%ls`.
+> 4. **Blast radius is 4 of 13 `%ls` sites, not "six".** Corrected list in the fix section below —
+>    and the named site is the **least** reachable of them.
+>
+> ⛔ **One agent-raised "anomaly" REFUTED before it could propagate.** The audit flagged that the run
+> logs `InjectDLL returned FALSE` while the DLL demonstrably loaded 260 ms earlier. That is
+> **documented, expected behaviour**: [Methode.cpp:374-380](dll/src/Methode.cpp:374) spells out that
+> CE's BOOL "can be true on a real failure and false while the DLL is loaded and working", which is
+> precisely why the code does its own module walk. Not a defect; not filed.
 
 ### ⚠ NEW 2026-08-24 `[INJECTOWNER-2026-08-24]` (MED) — `inject.py` still uses the pre-fix rule B29 removed from the DLL
 
