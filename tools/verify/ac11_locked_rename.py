@@ -194,36 +194,46 @@ def main():
         child.wait(timeout=10)
 
     # ---------------- the verdict ---------------------------------------------
-    say("\n-- what DeployAsync would REPORT --")
-    say("   its filter catches ONLY  HResult 0x80070020 (ERROR_SHARING_VIOLATION = 32)")
-    say("                     or  a message containing \"being used\"")
-    for label, e in (("OLD direct copy", e_direct), ("NEW staged publish", e_staged)):
-        if e == ERROR_SHARING_VIOLATION:
-            say("   %-19s-> %-24s-> IOException      -> \"File locked (game running?)\""
-                % (label, err_name(e)))
-        elif e == ERROR_ACCESS_DENIED:
-            say("   %-19s-> %-24s-> UnauthorizedAccess -> generic \"Access to the path ... is denied\""
-                % (label, err_name(e)))
-        elif e == 0:
-            say("   %-19s-> SUCCEEDED (the lock did not stop it)" % label)
+    #
+    # UPDATED 2026-08-23. This block used to model the PRE-FIX filter
+    #   catch (IOException ex) when (HResult == 0x80070020 || Message.Contains('being used'))
+    # and therefore FAILED whenever the two publish shapes produced DIFFERENT OS errors --
+    # which they always do, and always will: a direct copy opens the target (SHARING_VIOLATION)
+    # while a rename must first delete it (ACCESS_DENIED). That disagreement is an OS fact, not
+    # a defect, and the fix accepted it instead of trying to remove it: ProxyDeployService now
+    # catches `Exception ex when (IsTargetUnreplaceable(ex))` (:1188), which maps
+    # UnauthorizedAccessException AND the sharing-violation IOException to the same locked arm.
+    #
+    # So the question is no longer 'do the two shapes agree' but 'is each shape's error one the
+    # filter recognises'. Left unchanged, this rig reported a permanent false FAIL against code
+    # that was already fixed.
+    say('')
+    say('-- what DeployAsync reports NOW (IsTargetUnreplaceable, ProxyDeployService.cs:1007) --')
+    CAUGHT = {ERROR_SHARING_VIOLATION: 'IOException (sharing violation)',
+              ERROR_ACCESS_DENIED:     'UnauthorizedAccessException'}
+    for label, e in (('OLD direct copy', e_direct), ('NEW staged publish', e_staged)):
+        if e == 0:
+            say('   %-19s-> SUCCEEDED (the lock did not stop it)' % label)
+        elif e in CAUGHT:
+            say('   %-19s-> %-24s-> %-32s-> LOCKED arm' % (label, err_name(e), CAUGHT[e]))
         else:
-            say("   %-19s-> %s -> generic handler" % (label, err_name(e)))
+            say('   %-19s-> %-24s-> NOT recognised -> generic ErrorOther' % (label, err_name(e)))
 
-    if e_direct != e_staged:
-        fails.append("[STAGELOCK-2026-08-20] the two publish shapes DISAGREE on a locked "
-                     "target: old=%s new=%s -- DeployAsync reports the wrong thing"
-                     % (err_name(e_direct), err_name(e_staged)))
+    for label, e in (('direct copy', e_direct), ('staged publish', e_staged)):
+        if e != 0 and e not in CAUGHT:
+            fails.append('the %s failed with %s, which IsTargetUnreplaceable does NOT map to the '
+                         'locked arm -- the user would get a generic ErrorOther' % (label, err_name(e)))
     if e_staged == 0:
-        fails.append("the staged publish SUCCEEDED over a mapped image -- unexpected")
+        fails.append('the staged publish SUCCEEDED over a mapped image -- unexpected')
     if leftovers:
-        fails.append("a .ue5dump-stage survived the failed publish")
+        fails.append('a .ue5dump-stage survived the failed publish')
 
     say("")
     if fails:
         for f in fails:
             say("FAIL: %s" % f)
         return 1
-    say("PASS: both shapes fail identically on a locked target, no staging residue")
+    say("PASS: every locked-target failure maps to the LOCKED arm, no staging residue")
     return 0
 
 

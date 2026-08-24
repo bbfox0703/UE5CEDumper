@@ -11327,6 +11327,39 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
   empty, since those point at different halves. Effort **S** once reproducible.
 
 
+### ✅ AC11 step 2 CLOSED 2026-08-23 `[AC11-STAGELOCK-2026-08-23]` — and the RIG was reporting a false FAIL
+
+B1 calls this an *"owed re-run"*: the fix shipped, nobody re-measured. Re-measured on build 3338
+with the existing headless rig `tools/verify/ac11_locked_rename.py` — **no game and no UI needed**;
+it runs entirely in `out/ac11/` and maps its own target with
+`LOAD_LIBRARY_AS_IMAGE_RESOURCE|DONT_RESOLVE_DLL_REFERENCES`, so a real `SEC_IMAGE` section exists
+without running our `DllMain`.
+
+| | observed |
+|---|---|
+| **A — negative control** (nothing mapped) | both publish shapes **succeed**, no residue — so an "error 5" below cannot just mean a broken path |
+| **B — target mapped as an image** | OLD direct `File.Copy` → `ERROR_SHARING_VIOLATION`; NEW staged copy+rename → `ERROR_ACCESS_DENIED` |
+| the mapping | **both** reach the **LOCKED arm** via `IsTargetUnreplaceable` |
+| residue | no `.ue5dump-stage` survived either failure |
+
+⭐⭐ **The rig FAILED on first run, and the rig was wrong — not the code.** Its verdict still modelled
+the **pre-fix** filter (`catch (IOException ex) when HResult == 0x80070020 || Message.Contains("being
+used")`) and therefore failed whenever the two shapes produced *different* OS errors. They always do,
+and always will: a direct copy opens the target (`SHARING_VIOLATION`) while a rename must first
+**delete** it, and a file carrying an image section refuses deletion with `STATUS_CANNOT_DELETE` →
+`ERROR_ACCESS_DENIED`. **That disagreement is an OS fact, not a defect** — and the fix accepted it
+rather than trying to remove it: `ProxyDeployService` now catches
+`Exception ex when (IsTargetUnreplaceable(ex))` ([:1188](ui/UE5DumpUI/Services/ProxyDeployService.cs:1188)),
+mapping `UnauthorizedAccessException` **and** the sharing-violation `IOException` to the same arm.
+⇒ The right question is no longer *"do the two shapes agree"* but *"is each shape's error one the
+filter recognises"*. The rig now asserts that, and its docstring records why. Left as it was, it
+would have reported a permanent false FAIL against already-fixed code.
+
+ℹ️ The **code** half was already pinned: `IsTargetUnreplaceable` is `internal static` and pure, and
+`ProxyDeployTests.IsTargetUnreplaceable_CatchesBothWriteShapes` covers it — **91 ProxyDeploy tests
+green**. So this row needed only the OS-level half, which is why it never required the UI drive B1
+prescribes.
+
 ### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Solide `capped` badge · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644
 
 *Every ID this heading names is a live check that lives in the bullets below and nowhere else. The
