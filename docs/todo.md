@@ -11339,228 +11339,60 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   case became the second doomed group, and it duly went red against a perfectly correct sweep. A
   stale expectation is the same defect class this rig hunts, so that was fixed rather than bumped.
 
-  ### ⛔ STILL UNTESTED: there is a THIRD sweep, and it is an ATTRIBUTION HAZARD
+  ### ✅ The THIRD sweep -- the UI's own `LoggingService` `[RETENTION-LOGSVC-2026-08-24]`
 
-  Recon found that `Logs\` is swept by **two** independent subsystems, not one. Besides the C++
-  `Sein` pair, the UI's **`LoggingService`** runs its own retention from its constructor
-  (`App.axaml.cs:62`): `PruneAgedLogs` (`LoggingService.cs:83`, per category),
-  `CleanupOldLogFolders` (`:105`, whole folders, `dir.Delete(true)`), and `PruneOrphanedLogs`, all at
-  `Constants.LogMaxAgeDays`. **None of it is exercised above.**
+  `Logs\` is swept by **two independent subsystems**, not one, and only this one says what it did.
+  `py tools/verify/retention_backdate.py logsvc` -- **11 of 11 correct**, UI only, **no game**:
 
-  ⚠ **And it deletes folders under the same `Logs\` root while logging nothing**, so a rig that has
-  both a game and the UI running cannot attribute a missing folder to either. The C++ arm above is
-  safe only because it ran with **no UI**, and the C# arm only because its fixtures live in
-  `Snapshots\` / `Bookmarks\` / `TeleportCoords\`, which `LoggingService` does not touch. ▶ A future
-  `LoggingService` arm must run with **no game injected**, and should cover the cases recon names:
-  the orphan sweep in the UI's own folder, the per-category sweep, the `*.log` glob guard, and
-  `zzrig-0.log` at 30 days — which must **die**, because `-0.log` is a slot name and the live set is
-  only `{init,pipe,view}-0.log`.
+  | case | contents | want | rules out |
+  |---|---|---|---|
+  | folder `lsstale` | `.log` -30d + `.txt` -30d | **die** | positive control |
+  | folder `lsfresh` | `.log` -5d | live | "delete every non-UI folder" |
+  | folder `lsmixed` | `.log` -30d + `.txt` **now** | live | folder judged by its own mtime |
+  | ...its `.log` inside | -30d | **die** | ⭐ the file sweep never reaching non-UI folders |
+  | ...its `.txt` inside | now | live | the `*.log` glob widening |
+  | folder `lsempty` | no files, dir mtime -30d | **die** | -- |
+  | folder `lsemptyfresh` | no files, dir mtime **now** | live | ⭐ "empty folders are always deleted" |
+  | `UE5DumpUI\zzret-orphan.log` | -30d | **die** | the orphan sweep being dead |
+  | `UE5DumpUI\zzret-recent.log` | -5d | live | it ignoring age |
+  | `UE5DumpUI\zzret-keep.txt` | -30d | live | the glob |
+  | `UE5DumpUI\zzret-0.log` | -30d | **die** | ⭐ that `-0.log` is protective |
 
-- ✅ **The proxy dedup guard says when it is not armed** (build 2603, B47) — **VERIFIED 2026-08-05,
-  build 2645 — and the 2026-08-04 ✅ was credited to the WRONG SESSION.**
-  > **The correction, because it is the same trap as B34 and B14.** The 08-04 note said *"DQ7R ran
-  > through `version.dll` (a real proxy session, so the guard is compiled in)"*. It did not. That
-  > line is inside `#ifdef UE5_PROXY_BUILD` (`Heiter.cpp:262-270`), and **not one 08-04 DQ7R session
-  > logged `DllMain ProxyStart` or `Loaded real version.dll`** — every one was hand-injected, so the
-  > guard was not in the loaded binary at all. Its absence proved nothing. *An absence is only
-  > evidence once you have shown the producing code was present and running.*
-  >
-  > **The real evidence is the 2026-08-05 10:29:30 run**, which IS a proxy session —
-  > `DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)` →
-  > `Loaded real version.dll: C:\WINDOWS\system32\version.dll` — and
-  > `first-loaded-wins guard is NOT armed` is absent there. `Local\…_<PID>` succeeded where `Global\`
-  > needed a privilege the game does not have. PASS, for the right reason this time.
-  *Original instructions below.* Any proxy session:
-  grep `init-0.log` for `first-loaded-wins guard is NOT armed`. **PASS** = the line is ABSENT
-  (`Local\` + PID succeeds where `Global\` needed a privilege the game does not have). Its presence
-  is not a failure of this fix — it is the fix reporting a condition that used to be silent — but
-  it is worth investigating if it appears.
+  ⭐ **The `lsmixed` folder is three predicates in one launch**: the folder lived (so its age is
+  the newest file inside, `NewestWriteUtc` globbing `"*"` so a `.txt` counts), the `.log` inside it
+  died (so `PurgeOrphanedLogs` really does reach **non-UI** folders -- `LoggingService.cs:415` calls
+  it per directory **with no live-name guard at all**), and the `.txt` beside it lived.
 
-- ✅ **The PERF split no longer measures its own probe** (build 2610, B35) — **VERIFIED 2026-08-04 session logs (DQ7R / Elliot / CE), build 2622.**
-  *This item had no verification entry when it shipped — a gap in the filing, found while
-  sweeping these logs.* `grep 'PERF Snapshot capture'` gives
-  `wall 5,256.2 ms … split dll 2,733.5 / ipc 692.4 / ui 1,830.3 ms`. The three parts sum to the
-  wall time exactly, transport (dll+ipc = 3,425.9) is **less** than wall, and `ui` is a large
-  non-zero. The pre-fix signature was the opposite: transport **exceeded** wall, so `ui` clamped
-  to 0 and `ipc` absorbed the probe's own 93–125 ms round-trip. These are the numbers
-  [multipipe-eval.md](multipipe-eval.md) reasons from.
+  ⭐ **`zzret-0.log` dying is the counter-intuitive one, and the two sweeps disagree by design.**
+  `PruneAgedLogs` *does* skip anything ending `-0.log` (`LoggingService.cs:363`) -- but its glob is
+  `{prefix}-*.log` for `prefix` in `{init,pipe,view}`, so it **never sees** this file. The orphan
+  sweep globs `*.log` and skips only the live NAME LIST (`{init,pipe,view}-0.log`). ▶ **A `-0.log`
+  suffix is not protective in general**; the three real live files are protected by being named, and
+  a running game's own `-0.log` protects itself by having an mtime of *now* -- which is exactly what
+  the call site's comment says.
 
-- ✅ **CJK FText no longer renders as ASCII mojibake** (build 2599, B28) — **VERIFIED 2026-08-05 on
-  the DumperTest sample, Shipping package, DLL build 2650.** All **eight** FText fields render as
-  CJK in Live Walker, and every control holds:
+  ⭐ **`lsempty` + `lsemptyfresh` is a pair because one alone proves nothing.** "The empty folder
+  died" is equally explained by *"empty folders are always deleted"* -- which is precisely what the
+  **C++** side does (`Sein.cpp:484`, the `!sawFile` branch removes them outright). Only the fresh
+  empty folder surviving shows C# takes the `dir.LastWriteTimeUtc` fallback instead. **The two
+  implementations genuinely differ here**, and now both are pinned.
 
-  | field | rendered | role |
-  |---|---|---|
-  | `Text_Even2_OneNull` 統一 · `Text_Even2_TwoNull` 一言 · `Text_Even4_TwoNull` 統一言語 | correct | the trigger cases (even length, U+xx00) |
-  | `Text_Odd3_OneNull` · `Text_Even6_NoNull` 日本語テスト | correct | length/parity controls |
-  | `Text_Ascii` `DumperTest FText ASCII` | correct | **the other-direction control** — a fix that swung to always-UTF-16 would have broken this |
-  | `Text_Localized` 統一言語 | correct | different `FTextHistory`, agrees with `Text_Even4_TwoNull` ⇒ the fault was never history traversal |
-  | `Str_*` ×4, `Name_Cjk` | correct | FString + FNamePool paths, unaffected as expected |
-
-  **This closes the one open item that could show the user WRONG DATA.** The counter-check on
-  STVoyager's UTF-8 FText is a separate, licensee-specific case and stays open.
-
-  > **Two observations from the same screen, neither of them B28:**
-  > 1. `Text_Empty` renders as **`No`**. An `FText::GetEmpty()` should read as empty; `No` looks
-  >    like a truncated `None` or a mis-typed render. Cheap to chase, cosmetic, but it is the empty
-  >    display-string path and nothing else covers it. **NEW, unfiled.**
-  > 2. The package under test was built from a **stale** `DumperTestActor.cpp` (退一步 where the
-  >    repo had 走一步), so the odd-length control was not the documented one. It renders correctly
-  >    either way, so B28's result stands — but see the identity-record note below; this is exactly
-  >    what `capture_package_identity.py --project` now detects.
-
-  *Original instructions below.*
-  > **❌ NOT tested by the 2026-08-05 DQ7R pass, and the near-miss is worth recording so the next
-  > attempt does not repeat it.** The rows inspected (`Name` / `DisplayName` / `ListName` = 忘名)
-  > are **`StrProperty`** — FString, which goes through the UTF-16-only reader and **never had this
-  > bug**. B28 lives in `ReadFTextString` alone. The hex confirms the FString path is fine and says
-  > nothing about B28: `D8 5F | 0D 54 | 00 00 | 6F 00 | 78 00 | 00 00` = 忘(U+5FD8) 名(U+540D) NUL
-  > 'o' 'x' NUL, `ArrayNum=6`, i.e. the game stores a fixed 6-TCHAR field with an **embedded NUL at
-  > index 2**; the reader stops at the NUL and renders 忘名 — correct. Second miss: neither 忘
-  > (U+5FD8) nor 名 (U+540D) has a **low byte of 0x00**, so this string could not have tripped the
-  > trigger even as an FText.
-  >
-  > **What to do instead:** find a row whose Type column literally reads **`TextProperty`**. DQ7R's
-  > 2026-08-05 walk logs contain **zero FText field reads** (the only `TextProperty` hits are the
-  > class names `TextPropertyTestObject` / the `TextProperty` meta-class), so one has to be hunted:
-  > Property Search for a TextProperty on a UI/dialogue/item-description class. Trigger characters
-  > whose low byte IS 0x00, all common in JP/CN: **一** U+4E00 · **最** U+6700 · **言** U+8A00 ·
-  > **退** U+9000 · **紀** U+7D00 — and the string must be an **even** number of characters.
-  Affects **FText-typed values only** (`ReadFTextString`); FString goes
-  through the UTF-16-only reader and never had the bug. **To test:** any game with Chinese/Japanese
-  UI text — set the game to a CJK language, find an FText property in Live Walker or Property
-  Search. **PASS** = the value reads as CJK. **FAIL** = short ASCII punctuation soup (`,{1`, `-N?e`)
-  where CJK belongs. Worth checking specifically on a string with an **even** character count
-  containing a `U+xx00` character (一, 第…一, 統一) — that is the exact trigger. Counter-check that
-  the fix did not swing the other way: **Star Trek Voyager (UE5.6)** stores its FText as UTF-8, and
-  its Chinese must still read correctly.
-
-- ✅ **Fly/Noclip no longer leaves the pawn ghosted** (build 2596, B8) — **DEFERRED HALF CLOSED
-  2026-08-23 `[B8-DEFERRED-2026-08-23]`**, DumperTest dev / DLL 3337:
+  ⚠ **The rig refuses to run while a game is injected**, because `Sein` sweeps the same root and
+  **logs nothing** -- a missing folder would have two possible authors. With the UI alone the
+  witness is unambiguous, and this sweep does log:
 
   ```
-  20:24:47.820  Fly: SetActorEnableCollision(0) invoked        <- collision OFF (noclip on)
-  20:24:53.898  Fly: noclip = 0                                <- disable, game thread FROZEN
-  20:24:53.912  Fly: worker stopped
-  20:24:53.912  [WARN] Fly: DISABLED but the pawn's collision is still OFF (game thread
-                       unresponsive) — waiting for it to resume to restore it
-  20:24:53.913  Fly: waiting for the game thread to resume so the pawn's collision can be restored
-  20:24:58.729  Fly: SetActorEnableCollision(1) invoked        <- the retry fires
-  20:24:58.729  Fly: game thread resumed after 4750 ms — pawn collision restored
+  [2026-08-24 16:56:54] Deleted old log folder (>21d): ZZRET-lsempty
+  [2026-08-24 16:56:54] Deleted old log folder (>21d): ZZRET-lsstale
   ```
 
-  All four elements of the fix observed: collision goes off; the disable **notices** the
-  unresponsive game thread instead of optimistically committing; it says it is waiting; and on
-  resume it **retries and applies** the restore. The pawn is not left ghosted.
+  ℹ️ That line is younger than the feature: it used to dereference a null `_initLogger`, throw into
+  the adjacent best-effort `catch`, and was **never once written** -- the folders were being deleted
+  silently (`LoggingService.cs:101-104`). It is a witness precisely because that was fixed.
 
-  ⭐⭐ **The row's own framing is what kept this stuck, and it should not be re-used.** It says
-  the deferred half *"needs a game that actually goes quiet when backgrounded"* — Elliot would
-  not, and the hunt for a title that does was the blocker. But the code branches on
-  **`Stark::IsGameThreadResponsive()`**, and `tools/verify/suspend.py suspend-tid` flips that
-  **deterministically** on any title, DumperTest included. Backgrounding is a proxy for the
-  condition; suspending the game thread *is* the condition. No `-DumperTestIdle` was needed.
-
-  ⚠ **Grep for the right string.** The disable path logs `Fly: DISABLED but the pawn's collision
-  is still OFF`; the *worker* tick logs `collision … deferred`. Searching for the worker's
-  wording against the disable path produced a false FAIL on the first run even though the
-  behaviour was already correct.
-
-- 🟡 (original entry) **Fly/Noclip no longer leaves the pawn ghosted** (build 2596, B8) — **MAIN PATH VERIFIED**
-  > **⚠ READ THIS BEFORE RE-TESTING — the deferred half is NOT reachable by closing the game.**
-  > Closing a game never calls Fly's disable at all: `UE5_Shutdown` does not run on game close
-  > (proven — zero `UE5_Shutdown: Cleaning up` lines in any session), so `Dunste::SetEnabled(false)`
-  > never executes and `DISABLED but the pawn's collision is still OFF` can never be printed.
-  > Confirmed in the 22:33 Elliot run: Fly was ON, the game was closed, and there is **no
-  > `Fly: DISABLED` line at all**. That run is a B14 test, not a B8 test.
-  >
-  > The deferred half needs the **Disable button clicked while the game thread is quiet**. The
-  > 22:01 Elliot run did click Disable — and `SetActorEnableCollision(1) invoked` proves the game
-  > thread was still ticking, so Elliot does not appear to idle when unfocused. Alt-tab duration is
-  > not the variable; whether the title honours `t.IdleWhenNotForeground` is.
-  >
-  > **So this needs a game that actually goes quiet when backgrounded.** If none is to hand it is
-  > reasonable to close it as accepted-unverified: the code path is the same one Schlacht has been
-  > running in production since build 2364, and the main path is verified.
-  (Elliot, 2026-08-04, noclip ON). The log shows the fixed ordering exactly:
-  `Fly: worker stopped` → `Fly: SetActorEnableCollision(1) invoked` → `Fly: DISABLED`. Join
-  before restore, and the restore is committed from the invoke *actually running*. **The
-  DEFERRED path is still ⬜** — the game thread stayed responsive, so
-  `DISABLED but the pawn's collision is still OFF` was never reached. To finish it, alt-tab
-  away for >500 ms before clicking Disable on a title that idles when unfocused.
-  *Original instructions:* The whole answer is in the
-  log, and the trigger is the *ordinary* way to turn Fly off on an idle-when-unfocused title.
-  **To test:** Teleport tab → Fly ON + Noclip → fly through a wall → **alt-tab to the UI** (wait
-  >500 ms so ProcessEvent goes quiet) → click Disable. Grep **`walk-0.log`** for `Fly:` —
-  NOT `init-0.log`: `Dunste.cpp` sets `LOG_CAT "FLY"`, which `Sein.cpp`'s `s_catMap` routes to
-  `LF_Walk`. Confirmed against real logs 2026-08-06.
-  **PASS** = `Fly: DISABLED but the pawn's collision is still OFF (game thread unresponsive)`,
-  then — after you click back into the game — `Fly: game thread resumed after N ms — pawn collision
-  restored`. **FAIL** = the old shape: a plain `Fly: DISABLED` and nothing else, after which the
-  pawn falls through the world. Corroborate in-game: walk into a wall, it should stop you.
-  Second, cheaper check on any Fly session: `Fly: collision disable deferred` may appear, but it
-  must not repeat — it is rate-limited to once per stall.
-
-- ⬜ **`WalkClassEx` memo — the win is already instrumented** (build 2596, B10). **Blocked on a
-  BASELINE**, not on instrumentation: the retained logs hold exactly one
-  `PERF Snapshot capture` line (`wall 5,256.2 ms`, 2026-08-04, post-fix), so there is nothing
-  pre-2596 to compare it against. Either keep this number as the new baseline and compare the
-  next capture of the SAME snapshot on the same game, or settle the correctness half alone
-  (struct types / enum names / bool masks still populate). Snapshot capture is
-  wrapped in a `DiagnosticsProbe`, so no new logging is needed: grep
-  **`Logs\UE5DumpUI\view-0.log`** (or the game folder's `ui-view-*.log`) for
-  `PERF Snapshot capture` — it is a UI-side probe, NOT in `pipe-0.log`. Corrected 2026-08-06. **PASS** = `wall … ms` is materially lower than the same capture on a
-  pre-2596 build (the memo removes a 100–300 × `FieldInfo` deep copy per struct-array *element*),
-  and correctness is unchanged — property grids still show struct types, enum names and bool masks,
-  which are exactly the fields `WalkClassEx` adds on top of `WalkClass`. **FAIL** = those columns go
-  blank (the memo would be serving a pre-enrichment entry), or a crash under a parallel scan (a
-  handed-out reference being invalidated — the reason `try_emplace` landed first).
-
-- ℹ️ **Attempted 2026-08-18 on DumperTest Development first — do not retry there** (it passed later, on
-  Elliot; see the ✅ row below).
-  The single-call-that-blocks-for-seconds requirement is **unmeetable on that package**, measured
-  rather than assumed. Its GObjects pool is 25,179 objects, and the two heaviest whole-pool commands
-  the UI can issue finish far inside `MonitorLoop`'s 200 ms poll:
-
-  | command (all classes, deep, native-C, no noise filter) | UI-reported duration |
-  |---|---|
-  | `begin_value_scan` `NumericNoByte` / `Bigger` / `0` — 50,000 candidates | **113 ms** |
-  | `begin_value_scan` `FString` / `Contains` / `"a"` — 1,060 candidates | **52 ms** |
-
-  Both appear in `pipe-0.log` as single `begin_value_scan` commands, so this is one call, not
-  chunking — it is simply over before a poll can land. **Move B4 to a large title**; GROUP 6 already
-  says Elliot's 482 MB image "is what makes the race windows real; the sample is too small", and that
-  reasoning applies here exactly. Recorded as *not tested*, per the run plan's rule 4.
-
-- ✅ **DONE 2026-08-18 `[ELLIOT-B4-2026-08-18]` — CE mailbox survives a dead UI client** (build 2592,
-  B4). **The arming line has never been captured before**; this run has it, on Elliot (85,068
-  objects), dist 3262, DLL injected by its deployed `dxgi` proxy.
-
-  **Two vehicles were tried, and the first one FAILED for a reason worth keeping** (below). The one
-  that works is a **single synchronous** pipe command: `begin_value_scan`, ~700 ms with *Parallel
-  scan* and *Batch read* unticked. The kill was fired **from the log** rather than on a timer
-  (`tools/verify/kill_on_marker.py`) — a fixed sleep fired before the command started on the first
-  two attempts and proved nothing:
-
-  ```
-  12:06:38.041 Received: {"cmd":"begin_value_scan","data_type":"FString","scan_type":"Contains",…}
-  12:06:38.665 PipeServer: Client disconnected
-  12:06:38.818 [WARN]  PipeServer: client gone mid-command (err=109) — aborting in-flight op
-  12:06:38.826 [ERROR] PipeServer: Failed to write response
-  12:06:38.826 PipeServer: per-command cancel cleared — no connection that raised it is still live
-  ```
-
-  * **The ARMING line is present** — `client gone mid-command (err=109)` (109 = `ERROR_BROKEN_PIPE`),
-    777 ms after the command arrived. Per this row's own rule, that is what makes everything below
-    mean anything, and it is the line every previous attempt lacked.
-  * **The in-flight op really was aborted** (`Failed to write response`).
-  * **The follow-up command reports a NON-ZERO count**: a fresh UI, reconnected, ran Instance Finder
-    on `Actor` → **`Found 2 instances (scanned 85,068, non-null 84,410, named 84,410 (100.0%))`**.
-    The FAIL signature — `0` answered while `scanned` shows the whole pool — is excluded.
-  * ⚠ **`per-command cancel is latched` did NOT appear on the next command, and that is a PASS, not
-    a miss.** The DLL cleared the cancel at disconnect (*"no connection that raised it is still
-    live"*), so it never survived to poison a later command at all. The row was written expecting
-    the *next* command to hit the latch and clear it; the shipped behaviour is stronger. **Reword the
-    row rather than re-running it.**
+  ℹ️ Not exercised on disk: the UI-folder exemption (`LoggingService.cs:591-593`) would mean
+  displacing the live `Logs\UE5DumpUI\`. It is pinned by `LoggingServiceRetentionTests.cs`; recorded
+  as a deliberate omission rather than silently skipped.
 
   ### ⛔ Add a THIRD trap to the list below: `trigger_scan` is ASYNC
   The obvious vehicle — the multi-second startup scan — **cannot arm the latch**, and this was

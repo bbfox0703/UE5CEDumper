@@ -432,8 +432,160 @@ def csharp():
     return 0
 
 
+
+# ======================================================================
+# The THIRD sweep: the UI's own LoggingService. Logs\ again, but C#.
+# ======================================================================
+# Sein (C++) and LoggingService (C#) BOTH sweep Logs\, and only the C# one logs what it
+# did. So this verb must run with NO GAME INJECTED -- otherwise a missing folder has two
+# possible authors and nothing here is attributable.
+#
+#   App.axaml.cs:62 -> new LoggingService(...)
+#     LoggingService.cs:105  CleanupOldLogFolders  -- whole folders, dir.Delete(true),
+#                                                     UI's own folder exempt by NAME,
+#                                                     age = NewestWriteUtc = newest file
+#                                                     under "*" (so .txt counts too);
+#                                                     an EMPTY folder falls back to the
+#                                                     folder's OWN mtime -- unlike Sein,
+#                                                     which deletes empty ones outright.
+#     LoggingService.cs:106  PurgeOrphanedLogs     -- then files. In the UI's OWN folder
+#                                                     with live={init,pipe,view}-0.log;
+#                                                     in EVERY OTHER folder with NO live
+#                                                     guard at all (:415).
+LOGSVC_FOLDERS = [
+    # name,               files [(fname, days)],                     folder must_die
+    ("ZZRET-lsstale",     [("zzret-a.log", -30.0), ("zzret-b.txt", -30.0)], True),
+    ("ZZRET-lsfresh",     [("zzret-a.log", -5.0)],                          False),
+    ("ZZRET-lsmixed",     [("zzret-a.log", -30.0), ("zzret-keep.txt", -0.01)], False),
+]
+LOGSVC_UIFILES = [
+    ("zzret-orphan.log", -30.0, True,  "an aged .log in the UI's own folder"),
+    ("zzret-recent.log",  -5.0, False, "inside the window"),
+    ("zzret-keep.txt",   -30.0, False, "not a .log -- the *.log glob"),
+    # ⭐ The sharp one. PruneAgedLogs skips anything ending -0.log, but its glob is
+    # "{prefix}-*.log" for prefix in {init,pipe,view}, so it never SEES this file. The
+    # orphan sweep globs *.log and skips only the live NAME LIST, which this is not in.
+    # So a -0.log suffix is not protective in general.
+    ("zzret-0.log",      -30.0, True,  "a -0.log that is NOT one of the three live names"),
+]
+
+
+def logsvc():
+    import subprocess
+    root = pathlib.Path(__file__).resolve().parents[2]
+    if subprocess.run(["tasklist", "/FI", "IMAGENAME eq DumperTest.exe", "/FO", "CSV", "/NH"],
+                      capture_output=True, text=True).stdout.lower().count("dumpertest"):
+        raise SystemExit("logsvc: a game is running. Sein sweeps the same folder and logs "
+                         "nothing, so nothing here would be attributable. Kill it first.")
+    t0 = time.time()
+    ui = LOGS / "UE5DumpUI"
+    if not ui.is_dir():
+        raise SystemExit("logsvc: %s does not exist -- run the UI once first" % ui)
+
+    folders, files = [], []
+    for name, contents, must_die in LOGSVC_FOLDERS:
+        d = LOGS / name
+        for fname, days in contents:
+            backdate(write(d / fname), days)
+        folders.append((d, must_die))
+        # the .log inside the SURVIVING mixed folder must itself be swept
+        if name.endswith("mixed"):
+            files.append((d / "zzret-a.log", True,
+                          "aged .log inside a SURVIVING folder -- the orphan sweep "
+                          "reaches non-UI folders (LoggingService.cs:415)"))
+            files.append((d / "zzret-keep.txt", False,
+                          "the fresh .txt that kept its folder alive"))
+    for fname, days, must_die, why in LOGSVC_UIFILES:
+        backdate(write(ui / fname), days)
+        files.append((ui / fname, must_die, why))
+
+    # An EMPTY folder is judged by its OWN mtime here (files.Length == 0 fallback),
+    # which is where C# and C++ genuinely differ -- Sein deletes empty ones outright.
+    d = LOGS / "ZZRET-lsempty"
+    d.mkdir(parents=True, exist_ok=True)
+    backdate(d, -30.0)
+    folders.append((d, True))
+    # ...and its COMPLEMENT, which is what makes the pair discriminating. Without it,
+    # "the empty folder died" is equally well explained by "empty folders are always
+    # deleted" -- which is exactly what the C++ side does (Sein.cpp:484, the !sawFile
+    # branch removes them outright). Only an empty folder with a FRESH own-mtime
+    # surviving shows that C# reaches the dir.LastWriteTimeUtc fallback instead.
+    d2 = LOGS / "ZZRET-lsemptyfresh"
+    d2.mkdir(parents=True, exist_ok=True)
+    backdate(d2, -0.01)
+    folders.append((d2, False))
+
+    say("planted %d folder case(s), %d file case(s)" % (len(folders), len(files)))
+    say("")
+    say("launching the UI (no game) ...")
+    subprocess.Popen([str(root / "dist" / "UE5DumpUI.exe")],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(14)
+    subprocess.run(["taskkill", "/F", "/IM", "UE5DumpUI.exe"], capture_output=True, text=True)
+    time.sleep(1)
+
+    fails = []
+    for path, must_die in folders:
+        gone = not path.exists()
+        ok = gone == must_die
+        say("%-4s %-5s %-9s folder %s" % ("OK" if ok else "FAIL",
+                                          "DIE" if must_die else "LIVE",
+                                          "gone" if gone else "present", path.name))
+        if not ok:
+            fails.append("folder %s: wanted %s" % (path.name, "gone" if must_die else "present"))
+    for path, must_die, why in files:
+        gone = not path.exists()
+        ok = gone == must_die
+        say("%-4s %-5s %-9s %-22s %s" % ("OK" if ok else "FAIL",
+                                         "DIE" if must_die else "LIVE",
+                                         "gone" if gone else "present", path.name, why))
+        if not ok:
+            fails.append("%s: wanted %s (%s)" % (path.name, "gone" if must_die else "present", why))
+
+    # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did -- and the
+    # line is recent: it used to dereference a null logger and was never once written,
+    # so the folders were deleted silently (LoggingService.cs:101-104).
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
+    hits = []
+    for lg in ui.glob("init-*.log"):
+        try:
+            for ln in lg.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "Deleted old log folder" in ln and ln[1:20] >= since:
+                    hits.append(ln.strip()[:130])
+        except OSError:
+            pass
+    say("")
+    for h in hits:
+        say("witness: %s" % h)
+    if not hits:
+        fails.append("no 'Deleted old log folder' line for this run -- the folder sweep "
+                     "left no trace, so its results rest on the files alone")
+
+    for path, _ in folders:
+        if path.exists():
+            for sub in path.rglob("*"):
+                if sub.is_file():
+                    sub.unlink()
+            path.rmdir()
+    for path, _, _ in files:
+        if path.exists():
+            path.unlink()
+
+    say("")
+    if fails:
+        say("FAIL (%d)" % len(fails))
+        for f in fails:
+            say("  - %s" % f)
+        return 1
+    say("PASS -- LoggingService swept aged folders, kept fresh ones, reached .log files "
+        "inside a SURVIVING non-UI folder, honoured the *.log glob, and deleted a -0.log "
+        "that is not one of its three live names")
+    return 0
+
+
 if __name__ == "__main__":
     v = sys.argv[1] if len(sys.argv) > 1 else "check"
     raise SystemExit({"plant": plant, "check": check, "clean": clean,
-                      "b19": b19, "csharp": csharp}
+                      "b19": b19, "csharp": csharp,
+                      "logsvc": logsvc}
                      .get(v, lambda: (_ for _ in ()).throw(SystemExit(__doc__)))())
