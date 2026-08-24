@@ -161,6 +161,28 @@ The six segment ranges stopped short of `docs/todo.md`'s trailing closure sectio
 > `UScriptStruct`s** in the DumperTest pool (500 surveyed: 432 with fields, 68 without), so the
 > drafted `USTRUCT() struct FDumperTestEmpty` at §C3 is **unnecessary**.
 >
+> ### ✅ BUCKET A IS SPENT AS OF 2026-08-24 — every runnable row is closed
+>
+> Closed by this programme on 08-24, on top of the 12 that were already closed when the bucket was
+> triaged: `U4 step 3` `[U4-STEP3-2026-08-24]` · `U3/U17 step 5` `[U17-STEP5-2026-08-24]` ·
+> `AF16 --top` `[AF16-BYCONSTRUCTION-2026-08-24]` · `M5` `[M5-JOINORDER-2026-08-24]` ·
+> `b636` latency `[B636-FASTPATH-2026-08-24]` (which needed a **DLL fix** first — the mailbox never
+> cleared the ReturnValue slot) · `M1/M2/M3` restore-set arms (a)(b)(c) `[M123-RESTORESET-2026-08-24]`.
+>
+> **`AE10` was already SPENT** — its own heading says *"Steps 1, 2 and 4 CLOSED 2026-08-23; step 3's
+> premise does not hold. Nothing here is still owed."* Listing it as open above was stale.
+> **`G11` steps 1 and 2 likewise** — step 1 closed on an 8-title sweep, and the "TQ2 evidence about to
+> be purged" urgency was **wrong**: those logs are dated 2026-08-23, so the 21-day sweep reaches them
+> around 2026-09-13.
+>
+> **What is left is three things that are NOT runs, and none of them is scheduling:**
+>
+> | | why it is not a run |
+> |---|---|
+> | `AC13 step 4` positive half | Attempted, abandoned, and **fully documented with two named walls** at todo.md — *"Recorded so nobody re-spends it."* What remains is a **product change** (surface the transport figure where a disconnect cannot destroy the observable), not a verification. Correctly 🟡. |
+> | `M1/M2/M3` arm (d) | **Structurally unobservable.** After the process exits there is no memory to read and "is this actor visible" has no referent. |
+> | `Lushfoil` proxy-not-loading | Triage **recommends closing as unreproducible** — the evidence is assembled (dev-log), the actionable outcome already shipped (`[PROXYALTWINMM-2026-08-23]` surfaces winmm, which Lushfoil statically imports), and the prescribed 3 launches is a coin flip. ▶ A maintainer decision, not something to run. |
+>
 > **Genuinely still open** (and *six of nine cannot fail as written* — each needs a rig designed
 > before it can be run): `b636` static-native latency · `M1/M2/M3` Schlacht restore-set arms (a)+(b) ·
 > `M1-M5 step 1 arm (a)` re-scoped (close-while-moving) · `AE10 no_path` · `AC13 step 4` (offline
