@@ -7103,6 +7103,49 @@ behaves as it did before 3253.
 > | 4 ⚠ control | any **GAS** title — a `FGameplayAttributeData` preview | still `BaseValue` / `CurrentValue`, no pointer halves | **the regression guard**: GAS really does have a vtable, and "just delete the skip" would show four values here |
 > | 5 | a struct with NO resolvable layout | still `f:[…]` | the byte-blind fallback is retained on purpose, not dead |
 
+> ### ✅ **Step 5 REWRITTEN and CLOSED 2026-08-24** `[U17-STEP5-2026-08-24]` — DumperTest dev, DLL 3348
+>
+> ⚠⚠ **As written, step 5 CANNOT FAIL.** "A struct with no resolvable layout still renders
+> `f:[…]`" passes identically on a build where the entire layout path is dead — if the decoder
+> always returned nothing, *every* struct everywhere would render `f:[…]` and the step would pass
+> with flying colours while the feature it guards was gone. Confirming a **fallback** still fires
+> says nothing about the **primary** path being alive.
+>
+> ⭐ **Replaced with a three-way result on ONE build, then a red/green control.** Live
+> `DumperTestActor` (not the CDO — the CDO's containers are empty and quietly answer nothing):
+>
+> | surface | clean DLL 3348 | staged: layout decoder killed |
+> |---|---|---|
+> | `walk_instance` StructProperty | `Health = {BaseValue=100, CurrentValue=70}` — **named** | **`None`** — no value at all |
+> | `search_properties` preview | `f:[100.0000, 44.0000]` — unnamed floats | `f:[100.0000, 44.0000]` — **UNCHANGED** |
+>
+> All four StructPropertys behaved alike (`PrimaryActorTick`, `AttachmentReplication`,
+> `ReplicatedMovement`, `Health`). Control: `InterpretStructByLayout` -> `return ""`, rebuild,
+> reinject — the walk rows go to `None`; revert, rebuild — they come back named. Red, then green.
+>
+> ⛔ **Two corrections to the premise, both found BY the control rather than by reading.**
+> 1. **`InterpretStructAt` is NOT the single point of failure.** Staging it alone left
+>    `walk_instance` **fully alive**, because there are two independent entry points:
+>    `Ubel.cpp:2005` reaches the decoder *through* `InterpretStructAt`, while `Ubel.cpp:4965` —
+>    the `walk_instance` path — calls `InterpretStructByLayout` **directly**. Only the shared leaf
+>    kills both.
+> 2. **On `walk_instance` there is no `f:[…]` fallback at all** — the value simply disappears. The
+>    `f:[…]` rendering lives on the *Property Search preview* surface, and that surface is
+>    **byte-blind by construction**: its StructProperty branch (`Ubel.cpp:6060-6069`) calls
+>    `InterpretValue` directly and never touches the layout, because it holds only a struct-type
+>    NAME and no `UScriptStruct*`. Its output is therefore **unchanged by the staged build** — which
+>    is the positive proof, not an assumption. ▶ **Running step 5 against the Property Search
+>    preview column measures nothing on any build, forever.**
+>
+> ℹ️ **Step 4 is NOT discharged by this run, though the shape matches.** `Health` is
+> `FDumperTestAttribute`, documented in `DumperTestTypes.h:28` as *"in the shape of a GAS
+> `FGameplayAttributeData`"* — but it is a plain two-float USTRUCT with **no vtable**, and the vtable
+> is precisely what gives step 4 its discriminating power ("GAS really does have a vtable, and 'just
+> delete the skip' would show four values here"). Step 4 still needs a real GAS title.
+> ℹ The live drift (`CurrentValue` read 52 / 37 / 44 / 70 across the session) is the fixture's own
+> 1 Hz decrement (`DumperTestActor.h:242`), and it incidentally proves both surfaces are reading the
+> same live memory rather than a cache.
+
 ### 🔲 A3 — one FVector per class was ever indexed (build 3168)
 
 *Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned
@@ -8101,6 +8144,36 @@ target compiles `Ubel.cpp`. **Every step below is about the call sites, not the 
 3. **U4 — the honest half.** Confirm a legitimately field-less class (or an `FDateTime` /
    `FTimespan` struct, which `InjectIntrinsicStructFields` covers) still walks and still caches:
    exactly ONE cold-walk log line across repeated visits. The gate must reject garbage, not emptiness.
+
+   ### ✅ **CLOSED 2026-08-24** `[U4-STEP3-2026-08-24]` — DumperTest dev, DLL 3345, **no CE, no fixture**
+   `tools/verify/u4_step3_zerofield.py`. The predicate is `ShouldPublishClassWalk`
+   (`Ubel.h:550`) = `propsSizeReadOk && IsSanePropertiesSize(...)`, whose own comment forbids
+   gating on `Fields.empty()` or `Name.empty()`. So the question is exactly *"is emptiness still
+   cached, while garbage is still refused?"*
+
+   | | result |
+   |---|---|
+   | subject | `RigVMExtendedExecuteContext` — `props_size=560`, **0 reflected fields** |
+   | walked 4x after the survey | **0** cold-walk lines, **0** `refusing to cache` -> every call hit the memo |
+   | NEGATIVE CONTROL: an instance address walked 4x | **4** `refusing to cache` -> refused every time, never memoized |
+
+   The observation cannot be faked: a COLD walk logs two lines (`Ubel.cpp:904` and `:980`) while a
+   cache HIT logs neither, because `WalkClass` returns from the memo before reaching them — so
+   *"walked 4x, logged 0"* **is** the memo, observed rather than asserted. And the control is what
+   stops `0` reading as "the walk silently did nothing".
+
+   ⭐ **THE SURVEY ANSWERED THE FIXTURE QUESTION, AND THE ANSWER IS "NO FIXTURE".** 500 `ScriptStruct`
+   objects: **432 with fields, 68 with none, 67 usable** (named + `props_size>0`). The classification
+   doc's drafted `USTRUCT() struct FDumperTestEmpty` (`auto-verification-classification-2026-08-23.md:352`)
+   is **not needed** — which also removes one item from the C-bucket fixture list and its UE repackage.
+
+   ⚠ **The survey is half the test, and reading it wrong manufactures a fixture out of nothing.**
+   `walk_class` returns its payload **nested under `"class"`**; reading `fields` off the TOP level
+   yields `[]` for every object. Measured while writing the rig: that mistake reported
+   **500/500** "zero-field" structs — including `Vector`, `Guid` and `Box` — versus **68/500** read
+   correctly. It would have picked a garbage subject while looking like a rich survey, which is why
+   a candidate must be **named** and have **`props_size > 0`**: a struct with real storage and a
+   resolved name cannot be a failed read masquerading as an empty one.
 4. **U6/F3 — the in-session recycle, the point of the whole commit.** Bookmark an actor, travel to
    another level **while staying connected**, then re-walk the bookmark. It must show the new
    occupant's name or `""` — never the destroyed actor's name. This is the failure that previously
