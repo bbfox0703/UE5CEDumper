@@ -12593,8 +12593,77 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   whose whole job is to compare offsets. Fixed and re-run.
 
   ▶ **The 繁中 mirror's row 4 carries the same unrunnable wording** and has been corrected there too.
-- **Verify Return Value diagnostic** (build 637/644): pointer-return shows `0x` prefix;
-  FString-return shows the "see After: dump above" hint.
+- **Verify Return Value diagnostic** (build 637/644) -- **CLOSED 2026-08-24**
+  `[B637-RETWIDTH-2026-08-24]`. The row asked for two things; one was already done and the
+  other could not fail as written, so it was replaced.
+
+  **FString-return "see After: dump above" hint -- CLOSED by citation.**
+  `[L11-7A-UI-2026-08-21]` (todo.md:3677) already tested BOTH emit branches with a control:
+  two functions from the same dialog, same defaults, same Verify tick, differing only in
+  whether the return ends inside the dump window -- `see After: dump above` **absent** for
+  `ComposeTransforms` and **present** for `MakeTransform` (table at todo.md:3688). The live
+  half was read in CE on 08-20: `-> ReturnValue (fstruct@172, size=12B) -- complex return;
+  see After: dump above` with `_DUMP_LEN = 184` = 172 + 12 exactly (todo.md:3921).
+  `StrProperty` and `StructProperty` both resolve through `IsComplexReturnType` to the same
+  literal, so the FString spelling adds no new path.
+
+  ⚠⚠ **The pointer half as written CANNOT FAIL, so it was NOT run.** "The line shows a `0x`
+  prefix" is a test of a **compile-time string literal** (`BakedScriptGenerator.cs:463`)
+  that C# unit tests already pin -- they would go red long before a human reached CE. And it
+  is **blind to the defect build 637 actually fixed**, which is a READ WIDTH, not a prefix:
+  `readUFunctionReturn` has no `'pointer'` type, so the pre-fix spelling fell through to the
+  signed-int32 default and read **4 bytes of an 8-byte pointer slot**. A `0x` prefix appears
+  either way.
+
+  ⭐ **What was run instead: `scripts/tests/return_read_test.lua`** -- the REAL
+  `readUFunctionReturn` out of `scripts/ue5_invoke_helper.lua`, driven against
+  **byte-accurate** stub memory, comparing the post-fix `'qword'` against the pre-fix
+  fall-through on the *same bytes*. **15 checks, 0 failed**, no CE and no game:
+
+  | case | `'qword'` (fix) | fall-through (pre-fix) |
+  |---|---|---|
+  | high pointer `0x7FF762E5AAA0` | `0x7FF762E5AAA0` | **`0x62E5AAA0`** -- a different address |
+  | low dword's top bit set | exact | **NEGATIVE** (`-1562006880`) |
+  | low pointer `0x400000` | `0x400000` | `0x400000` -- **agree** |
+  | zero | 0 | 0 -- **agree** |
+
+  ⭐ **Shown able to fail, which is the only reason the 15 greens mean anything.** Disabling
+  the helper's `qword` branch (the pre-b637 behaviour) turns it red: **4 failures, exit 1**,
+  printing exactly the historical symptom `0x62E5AAA0` instead of `0x7FF762E5AAA0`. Reverting
+  returns 15/15. Note rows 3 and 4 keep PASSING while armed -- that is the rig documenting its
+  own blind spot: **a low or zero pointer proves nothing**, which is presumably how the defect
+  survived to build 637.
+
+  ℹ️ **Why the memory model had to be rewritten rather than reused.** `invoke_helper_test.lua`
+  keeps `I32` and `U64` in **separate** stores keyed by address. Correct for what it tests, but
+  here it would have made the control a tautology -- a 4-byte read would return `nil` or an
+  unrelated planted value instead of the **low half of the 8-byte value actually in memory**, so
+  "the pre-fix path truncates" would be *modelled* rather than *measured*. `MEM` holds bytes and
+  every reader assembles from them.
+
+  The full chain is confirmed end to end: `ObjectProperty` -> `MapToHelperType`
+  (`BakedScriptGenerator.cs:526-529`) -> `"pointer"` -> `readType = "qword"` (`:331`) ->
+  `readUFunctionReturn` `'qword'` branch -> `readQword` -> 8 bytes -> `0x%X`.
+
+  ### ⚠⚠ NEW DEFECT FOUND WHILE CLOSING THIS -- `[RETINT64-2026-08-24]` (MED)
+
+  **The b637 fix special-cased only `"pointer"`, and `"int64"` has the identical bug, live
+  today.** `readType = displayType == "pointer" ? "qword" : displayType` rewrites *only*
+  `"pointer"`, so `"int64"` reaches the helper **verbatim** -- and `readUFunctionReturn` has
+  **no `'int64'` branch** (its chain is float / double / bool / byte / uint64|qword / int16 /
+  word|uint16 / uint32|dword / else-int32-SIGNED). So it falls through to the signed 4-byte
+  default, exactly like the pre-b637 `'pointer'` spelling.
+
+  Measured, case 5 of the rig: an 8-byte value `0x0000000123456789` reads back as
+  **`591751049`** (`0x23456789`) instead of **`4886718345`**.
+
+  Reached from `MapToHelperType` by **two** routes (`BakedScriptGenerator.cs:519,522`):
+  `Int64Property` -> `"int64"`, and the size-8 signed-int case -> `"int64"`.
+
+  **Fix shape** (not applied here -- verification is the current programme): add `'int64'` to
+  the helper's 8-byte branch and extend its `@param` list. ⚠ Note `readQword` is **unsigned**,
+  so a genuinely negative `int64` needs the sign applied rather than just a wider read -- do not
+  "fix" it by only adding the spelling to the qword branch without deciding that.
 - **`walk_functions_batch` follow-up** — Effort: **S**. Sister to `walk_class_batch`;
   DumpAll still does `WalkFunctions` single-call per class. Same byte-equivalence safety
   net. **Skip unless profiling shows it as the new bottleneck.**
