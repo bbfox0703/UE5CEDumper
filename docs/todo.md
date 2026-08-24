@@ -7068,7 +7068,7 @@ compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a
 > ⚠ **Do not verify with an FVector scan.** It is the one data type the defect never touched, so a
 > green FVector run proves nothing — that is what step 2 is for, as a control rather than as evidence.
 
-### 🟡 NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome) — **the LYING is fixed and verified; steps 4-5 still need a fixture**
+### 🟡 NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome) — **the LYING is fixed and verified; STEP 5 CLOSED 2026-08-24, only step 4 is left**
 
 *Needs a **real Cheat Engine** plus a connected game. See dev-log build 3125. The Lua rig stubs every
 CE global, so what is unproven is precisely the CE-side behaviour: whether the window stays up and
@@ -7099,7 +7099,8 @@ whether the record ends ticked or unticked.*
 > passes *despite* them, because the injection really did work; a user following the on-screen
 > messages would reasonably have concluded the feature was broken.
 >
-> Steps 4-5 remain: 4 needs a spawn, 5 needs a pre-1.2 helper.
+> Steps 4-5 remain: 4 needs a spawn, 5 needs a pre-1.2 helper. *(Step 5 CLOSED 2026-08-24 — the
+> pre-1.2 helper was in git all along, `[AA12-STEP5-OLDHELPER-2026-08-24]` below.)*
 >
 > ### ✅ THE BAIL-OUT HALF IS CLOSED 2026-08-21 `[AA12-BAILOUT-2026-08-21]` — the row's actual title
 >
@@ -7149,6 +7150,81 @@ whether the record ends ticked or unticked.*
 > openings and the row at the remembered y-coordinate had changed. Caught by reading the title bar
 > (`0000A9AC-DumperTest.exe`) before ticking — worth doing every time, since a freeze against the
 > wrong process fails for a reason that looks like a product defect.
+>
+> ### ✅ STEP 5 PASSES 2026-08-24 `[AA12-STEP5-OLDHELPER-2026-08-24]` — an OLD helper is reported as unknown, with a control that proves the close path works
+>
+> The last open step of AA12/AA13, and the only thing that had ever blocked it was *"needs a
+> pre-1.2 helper"*. **An old version of our own artifact is never a missing fixture in a git repo**:
+> `git show 04d40803^:scripts/ue5_freeze_helper.lua` is version **1.1** — a period artifact from
+> commit `661c3925` (2026-08-16), not a reconstruction. Extracted to
+> `out/aa12/ue5_freeze_helper_1_1.lua`, 683 lines, 29,535 bytes.
+>
+> ⭐ **Why 1.1 is the right one, mechanically:** the branch under test is `sok2 == nil`, and 1.1's
+> `handle.start` ends on `handle._rescanTimer.Enabled = true` and **returns nothing**
+> (`ue5_freeze_helper_1_1.lua:646-663`). So `pcall` yields `sok=true, sok2=nil` — neither success
+> nor failure, the fourth state the generator refuses to guess at.
+>
+> **Environment.** DumperTest **Shipping** (24,478 objects, GObjects `0x7FF6D350BB50`, GWorld
+> `0x7FF6D368BC70` — alive, not the dead-engine trap), DLL **3338**, CE **7.7.0.10568** with the
+> AOBMaker plugin **Connected**, and the script produced by the real **Freeze** button
+> (`DumperTestActor · TickCount · IntProperty · 0x698 · 9999`, scope *"every live DumperTestActor
+> and every subclass"*). Not a generator fixture — the button, through `CreateAAScriptAsync`.
+>
+> ⚠ **The helper must be a TABLE FILE, not a global.** A first attempt loaded 1.1 with `dofile`,
+> which defines `freezeProperty` perfectly well — and the script still refused, because
+> `AppendHelperLoader` resolves it with **`findTableFile('ue5_freeze_helper.lua')`**
+> ([FreezeScriptGenerator.cs:238](ui/UE5DumpUI/Services/FreezeScriptGenerator.cs:238)), a table-file
+> lookup with *no filesystem fallback*. Embedded properly with the bridge's own documented
+> incantation — `findTableFile` (delete-if-exists) + `createTableFile` +
+> `Stream.copyFrom(createStringStream(...))` + a `Stream.Size` check
+> ([IAobMakerBridge.cs:80-88](ui/UE5DumpUI/Core/IAobMakerBridge.cs:80)) — verified `29535 == 29535`.
+>
+> **THE ARM — all three of the step's assertions hold:**
+>
+> ```
+> TABLEFILE_PRESENT=true
+> ACTIVE_BEFORE=false
+> [Freeze] this table has an older ue5_freeze_helper.lua: it cannot report whether anything
+>          was frozen. Re-inject it via UE5DumpUI -> Tools -> Inject Freeze Helper into
+>          Current CE Table.
+> ACTIVE_IMMEDIATELY_AFTER=true
+> ...
+> RECORD_STILL_TICKED=true   (must be true)
+> HELPER_VERSION_IN_STATE=1.1
+> ```
+> * the *"older … re-inject it"* line, **verbatim** ✅
+> * the Lua Engine window was **left open** ✅
+> * the record was **left ticked** ✅ — re-read long after the 50 ms deferred-untick timer, so this
+>   is the settled state and not a snapshot taken before the timer could fire
+>
+> ⭐ **THE CONTROL, and it is what makes "the window stayed open" mean anything.** A window that
+> stays open is equally consistent with an auto-close that never works at all. So the *same record
+> and the same script* were re-ticked with only the table file swapped to the **current** helper
+> (58,802 bytes vs 1.1's 29,535 — `versionLess('1.1','1.5')` makes the newer chunk redefine over the
+> resident one, `ue5_freeze_helper.lua:273-294`):
+>
+> | | ARM — helper 1.1 | CONTROL — helper 1.5 |
+> |---|---|---|
+> | *"older … re-inject it"* line | ✅ printed | **absent** |
+> | Lua Engine window | **left OPEN** | **CLOSED** by the script |
+> | record | ticked | ticked |
+> | `TickCount` | — | **held at 9999** across two reads 12 s apart, on a field that had been climbing (84 → 348 before the freeze) |
+>
+> So the close path provably fires in this very session, and the old-helper branch is what suppressed
+> it. `sok2 == true and scount ~= 0 and not scapped` behaved on both sides of the gate.
+>
+> ⭐ **A third state came free and re-confirms `[AA12-BAILOUT-2026-08-21]`.** Before any table file
+> existed, the same script showed `[Freeze] ue5_freeze_helper.lua not found in this table.` and
+> **unticked itself** (`ACTIVE_IMMEDIATELY_AFTER=true` → unticked by the deferred timer). All three
+> states — **missing / old / current** — are distinguishable and each behaved to spec.
+>
+> ℹ️ **A CE-side exception, and it is NOT ours — measured, not assumed.** Twice CE raised
+> `Unhandled exception: [TCustomForm.SetFocus] frmLuaEngine:TfrmLuaEngine Can not focus
+> (EInvalidOperation)` and auto-saved the table. Both times the tick had been driven **from inside
+> the Lua Engine window**, i.e. our `synchronize(getLuaEngine().Close())` closing the form that was
+> itself the active one. Unticking and re-ticking the record from the **address-list checkbox** — the
+> normal user path — raised **nothing**, twice. Recorded so the next reader does not chase it as a
+> freeze defect; it is an artifact of driving CE the way a verification session drives it.
 
 >
 > ### 🟡 STEP 3 ATTEMPTED 2026-08-20 — the fixture was WRONG, and finding out is itself a result
