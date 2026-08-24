@@ -1,8 +1,8 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "d8f36b20",
+  "source_commit": "8dde289f",
   "source_sha256": "10ca85586024439b49dc3415009a864b8f4a6704fa46b30c150463266d58b09e",
-  "captured_utc": "2026-08-24T11:22:54+00:00",
+  "captured_utc": "2026-08-24T11:45:35+00:00",
   "build_command": "\"C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "D:\\UE_Analyze_data\\For Testing\\DumperTest",
   "configs": {
@@ -43,6 +43,25 @@
         "RawDouble": 0
       },
       "exe_mtime": "2026-08-24T11:17:27+00:00"
+    },
+    "DebugGame": {
+      "file": "DumperTest-Win64-DebugGame.exe",
+      "size": 279396352,
+      "sha256": "15349c6b571141cdd118da380769521dbf024c2e159f04d0a11c4ddc37557116",
+      "reflected_present": {
+        "DumperTestActor": 6,
+        "DumperTestSubsystem": 3,
+        "DumperTestPayload": 5,
+        "Text_Even2_TwoNull": 1,
+        "Opt_Int_Unset": 2,
+        "FrozenInt": 2
+      },
+      "raw_absent": {
+        "RawInt": 0,
+        "RawFloat": 0,
+        "RawDouble": 0
+      },
+      "exe_mtime": "2026-08-24T11:13:56+00:00"
     }
   },
   "problems": [],
