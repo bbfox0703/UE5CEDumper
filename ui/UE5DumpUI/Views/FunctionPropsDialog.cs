@@ -356,9 +356,19 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         var hiddenNote = fieldsOnly && _allProps.Count > shown.Count
             ? $"  ({_allProps.Count - shown.Count} locals/temporaries hidden)" : "";
         // Path 2 (native disasm): flag the heuristic source + any unmapped accesses.
+        // "blueprint_no_script" is a REFUSAL, not an empty result, and it must not read like
+        // one. The DLL reaches it when a script/Blueprint function has no usable Script buffer:
+        // its `Func` points at the shared interpreter, so disassembling it would analyse
+        // UObject::ProcessInternal and attribute the interpreter's field accesses to this
+        // function. Before the gate went in (Aura.cpp, AnalyzeNativeFunctionProps) this case
+        // arrived here as "disasm" and printed "[native disasm — heuristic, N unmapped]" —
+        // claiming to have disassembled the function it never looked at.
         var methodNote = _lastMethod == "disasm"
             ? "  [native disasm — heuristic"
               + (_lastUnmapped > 0 ? $", {_lastUnmapped} unmapped]" : "]")
+            : _lastMethod == "blueprint_no_script"
+            ? "  [Blueprint function with no readable bytecode — NOTHING was analysed, "
+              + "so this is not \"no properties\"]"
             : "";
         // AF7: and say so when the decoder stopped early, because "no writer found"
         // is what this dialog is read for. Amber, not green — a truncated list must

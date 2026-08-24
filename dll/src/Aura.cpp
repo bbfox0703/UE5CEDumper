@@ -5970,6 +5970,37 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     EnsureUFunctionFuncOffset();
     if (DynOff::UFUNCTION_FUNC == 0) return "none";
 
+    // ⛔ NATIVE-ONLY GATE — the same one GetFunctionCodeAddr applies a few lines above,
+    // for the reason spelled out there: a script/Blueprint UFunction points `Func` at the
+    // SHARED interpreter (UObject::ProcessInternal), not at its own code. That is a
+    // perfectly valid code pointer, so the LooksLikeCodePointer check below CANNOT tell
+    // the two apart.
+    //
+    // Without this, a Blueprint function whose Script is unreadable reaches here — the
+    // selector in WalkFunctionPropertyRefs routes on `Script` alone and never consults
+    // FunctionFlags — and we disassemble the INTERPRETER, then map ITS [this+off]
+    // accesses against the function's owner class. Any interpreter displacement that
+    // collided with a real property offset would have been reported as a genuine
+    // reference by that function. GetFunctionCodeAddr's comment names the failure exactly:
+    // "pushing the interpreter dispatcher and reporting a misleading success".
+    //
+    // And the UI made it worse than silence: `method="disasm"` prints
+    // "[native disasm — heuristic, N unmapped]", i.e. it CLAIMS to have disassembled the
+    // function. Observed on DQ7R: `GetRemainingExpToNextLevel` (BC,BP,Const) reported
+    // "0 properties … 2 unmapped" on the native path.
+    //
+    // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
+    // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
+    // `(flags & FUNC_Native) == 0` would refuse every function on any build where the
+    // FunctionFlags offset does not resolve, deleting Path 2 wholesale to fix a case we
+    // have no evidence of there. So: refuse only when the flags were READ and say script.
+    // The confirmed failure has readable flags by construction — the UI rendered
+    // "BC,BP,Const" for it, and that string is derived from these very bits.
+    constexpr uint32_t FUNC_Native = 0x00000400;
+    const uint32_t funcFlags = ReadFunctionFlags(funcAddr);
+    if (funcFlags != 0 && (funcFlags & FUNC_Native) == 0)
+        return "blueprint_no_script";
+
     uintptr_t exec = 0;
     if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec) ||
         !Macht::LooksLikeCodePointer(exec))

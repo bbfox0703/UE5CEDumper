@@ -55,8 +55,16 @@ public sealed class FunctionPropRefsResult
 
     /// <summary>
     /// How the props were recovered: "bytecode" (Path 1 Kismet scan, exact),
-    /// "disasm" (Path 2 native x64 disassembly, heuristic), or "none" (native
-    /// but analysis unavailable — Func offset unresolved on this build).
+    /// "disasm" (Path 2 native x64 disassembly, heuristic), "none" (native
+    /// but analysis unavailable — Func offset unresolved on this build), or
+    /// "blueprint_no_script".
+    ///
+    /// <para>⚠ The last one is a REFUSAL and the caller must not render it as an empty
+    /// result: a script/Blueprint UFunction with no usable Script buffer points
+    /// <c>Func</c> at the shared interpreter (<c>UObject::ProcessInternal</c>), so Path 2
+    /// would disassemble the INTERPRETER and attribute its field accesses to this
+    /// function. Zero props here means "not looked at", not "touches nothing" — which is
+    /// the opposite of what this dialog is read for.</para>
     /// </summary>
     public string Method { get; init; } = "bytecode";
 
