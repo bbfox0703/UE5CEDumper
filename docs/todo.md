@@ -4049,7 +4049,27 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
-> ### ⭐ THE BLUEPRINT-BYTECODE HOST IS FOUND — DQ7R. Step 2 is still open, on a NEW blocker. `[AF-BCHOST-2026-08-22]`
+> ### ⛔ SUPERSEDED 2026-08-23/24 — READ THE CLOSURES, NOT THIS. Kept only as the record of a blocker that WAS cleared. `[AF-BCHOST-2026-08-22]`
+>
+> ⚠⚠ **This block says "Step 2 is still open" and that has been FALSE since the next day.** Step 2
+> is closed in BOTH halves, on the AOT binary this row insists on:
+> **Xref** → `[AF16-XREF-2026-08-23]` (todo.md, search that id) — the fixture was found by
+> construction with `tools/verify/af16_xref_fixture.py`, 58 candidates on DQ7R, two fixtures used
+> (26 rows and 9 rows), all six headers sort, no cell-recycling corruption.
+> **Props** → `[AF16-PROPSSORT-2026-08-22]`. **Residual (numeric-vs-string)** → closed
+> `[AF16-BYCONSTRUCTION-2026-08-24]` as *unreachable*, with an offline substitute shown able to fail.
+>
+> ⭐ **Every one of the five dead ends below is now EXPLAINED, and the explanations are the payload
+> — that is the only reason this block still exists.** Attempts 1/4/5 (Xref → 0) asked a
+> **Kismet bytecode** question ([Aura.cpp:5541](dll/src/Aura.cpp:5541)) about fields whose
+> references are native, where 0 is the *correct* answer — the dialog's own footer says so.
+> Attempts 2/3 (Props → 0) hit the **`Class fields only` checkbox, which is CHECKED by default**
+> and hid every local; and a `BC,Native` function takes the native-disasm path, so the flag to
+> filter on is `BC` **without** `Native`.
+>
+> ⛔ **Do not plan a session off this block.** It read as the one remaining runnable row on
+> 2026-08-24 and cost a re-derivation before the closures were found. If you are here from a
+> stale summary, stop and grep the three ids above.
 >
 > **The precondition is answered.** The handover could not name a game with Blueprint bytecode, and
 > DumperTest structurally cannot serve (its `Funcs` column is empty). **DQ7R can**: `Interesting
@@ -4076,7 +4096,9 @@ spot-check rather than a 30-column sweep.
 > filed as neither a defect nor a pass. ⛔ **Do not read it as a finding**; there is no evidence the
 > xref is wrong, and DQ7R's graphs may genuinely not touch these fields in a detectable pattern.
 >
-> ▶ **Next session starts here, and should not re-run the five dead ends above.** Find a field or
+> ~~▶ **Next session starts here**~~ ⛔ **DONE — this instruction is spent.** It was carried out on
+> 2026-08-23 and it WORKED; the answer is in `[AF16-XREF-2026-08-23]`. Left below only because the
+> column lists at the end of the paragraph are still accurate. The original text: find a field or
 > function that certainly HAS references — `Interesting Props` scoring, or a UMG
 > `WidgetBlueprint`, whose graphs are almost pure Blueprint variable traffic — and get **≥2 rows**
 > on screen. Only then is the "click each of the 6 headers 3–4×" check meaningful. Both dialogs'
