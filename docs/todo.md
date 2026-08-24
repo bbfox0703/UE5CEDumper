@@ -13723,11 +13723,57 @@ already recorded the split from an earlier host; DQ7R independently gives the sa
   **`FText`**, not `FString`, so CJK `StrProperty` tends to be short identifiers — that is *why* this
   combination is hard to find, and it is worth writing down rather than re-searching each time.
 
-**Step 1 (G1, partial offsets) — ⛔ no fixture on the shipped build.** `unmeasured:` appears in exactly
-4 archived files, all under `Logs\DumperTest\`, and all from build **`91d09b94-dirty`** — the same
-uncommitted experimental build already flagged for producing bogus `data_scan` GObjects. No clean build
-on any host has ever reported a partial offset measurement, so the amber
-"Dynamic offsets only partially measured" banner cannot be provoked here without manufacturing it.
+**Step 1 (G1, partial offsets) -- CLOSED 2026-08-24 `[G1-AMBER-2026-08-24]`, by manufacturing it.**
+
+The blocker below was accurate and is kept for the record: `unmeasured:` appears in exactly 4 archived
+files, all under `Logs\DumperTest\`, all from build **`91d09b94-dirty`** -- the same uncommitted
+experimental build already flagged for bogus `data_scan` GObjects. No clean build on any host has ever
+reported a partial offset measurement. ⛔ **That is precisely why the row's own procedure had to be
+abandoned rather than run again.**
+
+⚠⚠ **THE WRITTEN STEP CANNOT FAIL, AND THE REGISTER HAS "RUN" IT 13+ TIMES.** It says *"open the
+Pointers tab on a game whose offset detection partially fails"*, with the caveat *"no banner is not a
+pass; run `get_offsets` and confirm it reports `validated: true`"*. On every host available, detection
+does **not** partially fail -- so the caveat branch is the one that always executes, and it passes by
+confirming that **nothing happened**. A build where the banner is entirely broken passes it identically.
+
+⭐ **What was run instead: a two-state pair, one variable.** Same game, same UI binary
+(`dist\UE5DumpUI.exe` 54.7 MiB AOT-trimmed), same tab, two DLLs differing by one line:
+
+| DLL | `get_offsets` on the wire | the System (Pointers) tab |
+|---|---|---|
+| **staged 3344** | `validated=False`, `probe_ran=True`, `fallback_reason='unmeasured:elemsize'` | amber banner **PRESENT** |
+| **clean 3345** | `validated=True`, `fallback_reason=''` | banner **ABSENT**, layout closes up |
+
+Banner text read off the screen, verbatim:
+
+```
+⚠ Dynamic offsets only partially measured (unmeasured:elemsize) - the rest are UE-version
+defaults. Values below and every export derived from them may be wrong.
+```
+
+Amber border `#E6A817` on `#3A3323`, text `#E6C877` -- i.e. `PointerPanel.axaml:110-116`'s Border, not
+a red refusal. The absence is measured too, not just eyeballed: with the clean DLL the *Invoke timeout*
+row moves from y=286 to y=256 because the Border stops taking layout space.
+
+**Both of the row's residues are now covered.** (a) a real `validated=false` with a probe-naming
+`fallback_reason` travelled the wire and reached the VM; (b) the **rendered** Border was observed --
+the axaml binding, which no unit test reaches.
+
+ℹ️ **What the staging did and did NOT simulate, stated plainly.** The staged line is
+`unmeasured |= UNMEASURED_PROP_ELEMSIZE;` immediately before `const bool allMeasured` in
+`Genau::ValidateAndFixOffsets` -- so `validated`, the reason string, the wire encoding, the VM and the
+Border are all the **real** code path, but the *probe failure itself* is simulated: every offset stayed
+at its correctly measured value (`fproperty_elemsize` = **52**, confirmed on the wire). That was
+deliberate, not lazy -- the genuine give-up branch keeps a **wrong** default, and an ElementSize
+landing on PropertyFlags is the ~1 GiB per-element allocation `Ubel.cpp:4206` documents (audit #5 U1),
+so corrupting it for real would risk the process while testing something else entirely. What remains
+unproven is only that a *probe* can fail on some real game -- not that the flag or the banner work.
+
+The staged source was reverted **before** the test ran (the staged DLL was copied to
+`out/g1-staged/`), so the tree was clean throughout and no `[G1-STAGE]` marker can reach a commit.
+ℹ️ Incidental: `PipeClient.assert_build()` correctly refused the staged DLL (*"reports build '3344',
+but dist is '3345'"*) -- the stale-build guard doing its job on a deliberately mismatched build.
 
 
 ### 🟡 G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示（步驟 3 **CLOSED 2026-08-23**；步驟 2 第二個宿主複現同一半；步驟 1 出貨版無樣本）—— 見 `[AF2-CLASSCAP-2026-08-23]`
@@ -13736,7 +13782,7 @@ on any host has ever reported a partial offset measurement, so the amber
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 在 offset 偵測部分失敗的遊戲上打開 Pointers tab。 | 出現琥珀色橫幅「Dynamic offsets only partially measured (unmeasured:…)」並列出探針名稱。<br>⚠ 沒有橫幅不等於通過；要對同一 process 跑 get_offsets 確認回報 validated: true 才算。 |
+| 1 | ✅ **CLOSED 2026-08-24** `[G1-AMBER-2026-08-24]` — 不是在真遊戲上等到，而是用 staged DLL 造出來。舊步驟（「在 offset 偵測部分失敗的遊戲上打開 Pointers tab」）**永遠不可能失敗** — 本機沒有任何遊戲會部分失敗，所以永遠跑到 caveat 分支，「什麽事都沒發生」也算過。 | staged 3344：`validated=False` / `fallback_reason='unmeasured:elemsize'`，琥珀色橪幅**出現**；clean 3345：`validated=True`，橪幅**消失**。詳見 todo.md `[G1-AMBER-2026-08-24]`。 |
 | 2 | 在在地化遊戲用 Property Search 找一個超過 50 bytes 的非 ASCII（CJK）StrProperty。 | 有結果列回來，preview 以「…」結尾（修正前是整個搜尋 0 列並報錯）。 |
 | 3 | Experimental → Detect Player Stats，先在候選 class 超過 30 的遊戲跑一次。 | 超過上限的列以琥珀色顯示「? not checked」（不是「· guess」），狀態列顯示「30 of N classes live-probed」。<br>⚠ 再到候選 class 少於 30 的遊戲跑一次，正確結果是完全沒有這個後綴——兩邊都做才算測完。 |
 
