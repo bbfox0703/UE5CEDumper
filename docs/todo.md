@@ -7325,11 +7325,48 @@ Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
   read that function's full signature with `Properties Size 4` and its single `Value FloatProperty`.
   **Header matched the highlighted row**; it did not stay on the preceding instance's class.
   *(A held `Down` advanced only one row — key-repeat does not reach this list, so use `repeat`.)*
-* **3 — PASS.** No loading indicator stuck after the panel settled during that fast traversal.
+* **3 — BOTH HALVES NOW CLOSED.** *(a)* **PASS live:** no loading indicator stuck after the panel
+  settled during that fast traversal. *(b)* **CLOSED offline 2026-08-25 `[AE23-SPINNER-2026-08-25]`**
+  — see the block below.
 * **6 — PASS.** Typing `Light` then `SkyLight` into the tree filter with a node selected left the
   Class/Struct panel **fully populated** on the previous class — it neither blanked nor flickered.
 * **4 — not run** (needs a level travel to make a class address go stale; human-gated).
 * **5 — not run** (the cross-tab handoff; nothing pushed a class into Class/Struct in this session).
+
+> #### ✅ STEP 3'S SECOND HALF CLOSED 2026-08-25 `[AE23-SPINNER-2026-08-25]` — offline, because the observer was the problem
+>
+> The unverified half was *"the spinner does not vanish EARLY while a load is still running"*, and
+> the recorded reason it stayed open is worth keeping: **on this machine a class load finishes
+> faster than a screenshot can sample it.** Even `DOLLPlayerController` (Properties Size 2224, a
+> long inherited field list) was fully drawn in a zero-wait capture, so the spinner was never *seen*
+> at all — and a check that never observed the thing APPEAR cannot report on when it disappears.
+>
+> ⭐ **That is a limit of the OBSERVER, not a property of the code.** What the half claims is
+> `IsLoading` staying true for the whole duration of a load, and a gated stub makes the load take
+> exactly as long as the test wants. `ClassStructViewModelConcurrencyTests` already had the harness
+> (`GatedDumpService.GateWalk`), so this cost two tests, not a rig.
+>
+> | test | claim |
+> |---|---|
+> | `IsLoading_StaysTrueForTheWholeLoad_NotJustAtTheStart` | the flag is false before, true while the walk is parked, **still true after the load has been pending a while**, false after — and the class actually loaded, so the run is not vacuous |
+> | `ASupersededLoadFinishing_DoesNotClearTheSpinner_ViaTreeSelection` | the failure this row is actually about: under fast selection two loads overlap, and the OLDER one settling must not take the spinner down while the newer is still in flight |
+>
+> ⚠ **Negative controls, each isolating its own claim:**
+>
+> | armed by | result |
+> |---|---|
+> | `IsLoading = true` removed | **3** tests red, including *"the spinner is not up while the load is parked mid-flight"* |
+> | the `if (gen == _loadId)` ownership guard removed from the `finally` | **exactly the 2** stale-load tests red; the whole-duration test stays green, correctly — it involves no stale load |
+>
+> ⚠⚠ **An overlap I did not spot by reading, and the control is what found it.** NC-1 reddened
+> THREE tests where I expected two: `StaleWalk_DoesNotClearIsLoadingOfNewerLoad` already existed and
+> asserts the same property as the second test above. The difference is real but narrow and is now
+> written into the test itself: the existing one drives `LoadClassCommand` (the **cross-tab** entry),
+> the new one drives `OnObjectSelected` (**tree selection**) — which is what AE2/AE3 is about. Both
+> funnel into `LoadClassCoreAsync`, so the guard under test is the same.
+>
+> ℹ️ Still not proven, stated plainly: that the XAML binds the spinner to `IsLoading`. This is a
+> ViewModel closure. 4,728 UI tests green; `ClassStructViewModel.cs` byte-identical to HEAD.
 
 ### (superseded) NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
 
@@ -12427,7 +12464,7 @@ not discriminated** on this dialog. It needs a field with a >=10 reference count
 |---|---|---|
 | 1 | ✅ **2026-08-22 通過**。過濾字串 `DOLLGameCharacter`,依序點 ScriptStruct → Function → instance → Class 四種列:標頭分別變成 `DOLLGameCharacterParameters`(72)／`MakeDOLLGameCharacterParameters`(72)／`DOLLGameCharacter`(1712)／`DOLLGameCharacterManager`(56),欄位都有載入。⭐ **四個 Properties Size 各不相同、欄位清單也不同**,所以是真的重新載入,不是看起來有換。 | 每次點擊 Class/Struct 標頭都跟著換，欄位有載入內容。 |
 | 2 | ✅ **2026-08-22 通過**。**過濾字串 `DOLLGameCharacter`**(10 列:7 個 class-like + 3 個 instance,確實交錯,滿足那條 ⚠)。↓×9 再 ↑×3 共 12 次快速切換、中間跨過 instance 列,停在 class-like 列上:標頭 = `DOLLGameCharacterSeedCorrectParameters`(36),與反白列相符,欄位(Tikara/MaxHP/MaxMP…)都在。 | Class/Struct 標頭與反白的那一列相符。<br>⚠ 清單若只有單一種類（全 instance 或全 class-like）跑再多次都證明不了；要記錄用的過濾字串。 |
-| 3 | 🟡 **只驗到一半**。「穩定後不會卡住」✅:多次快速捲動後 spinner 都不殘留。⚠ **「載入中不會提前消失」沒驗到,而且原因要記下來**:這台機器上 class 載入比我的取樣還快 —— 連 `DOLLPlayerController`(Properties Size **2224**、繼承一長串欄位)在**零等待**的截圖裡都已經畫完,spinner **一次都沒被我看到**。沒看到它出現,就不能說它的消失時機正確(鐵則 1)。要補這半需要一個會慢到看得見的載入。 | 面板穩定後 spinner 不會卡著不消失；載入還在跑時也不會提前閃掉。 |
+| 3 | ✅ **兩半都關了**。「穩定後不會卡住」2026-08-22 實機通過;「載入中不會提前消失」2026-08-25 離線關閉 `[AE23-SPINNER-2026-08-25]`——那半是 ViewModel 性質,不是畫面性質,截圖取樣不到不代表測不到。 | 見下方區塊 |
 | 4 | 🟡 **真的切了關卡,但前提條件做不出來 —— 而且現在知道為什麼**(`[AE-LEVELRELOAD-2026-08-22]`)。授權重開後實際在 DQ7R 裡從標題畫面讀取存檔進到魚灣村,**關卡確實載入了**(物件池 **149,408 → 199,194**,+49,786,`view-0.log` 有兩行 `Loaded … named objects`)。但選中的節點在載入前後**walk 出完全一樣的結果**(`WBP_Common_TutorialTitleDeco_C`,54 fields,Properties Size 704,前後兩次都一樣),**沒有出現錯誤行,因為根本沒有失敗**。<br>⭐ **原因是這一步的前提本身有問題**:點 instance 節點走的是 `get_object` → **它的 UClass** → `walk_class`,而 UE **切關卡釋放的是 instance,不是 UClass**。Blueprint class 只要在轉換兩側都用得到就一直在,重掃後 `TutorialTitleDeco` 仍有 11 筆、class 活著、還多了幾個新 instance。所以「切關卡讓 class 位址失效」**對這種 class 行不通**。要做出來得找一個**只存在於轉換前**的 Blueprint、且它的 package 會被卸載。<br>⚠ 而且就算前提做出來了,步驟 5 已證明**再點一次已選中的列根本不發事件**,所以「再次點擊會重新嘗試載入」得改用「先選別列再選回來」才驗得到,原文的操作方式驗不出來。 | 出現錯誤訊息行，且再次點擊會重新嘗試載入（不是靜默忽略、停留在舊 class）。 |
 | 5 | ✅ **2026-08-23 通過（缺陷已修，build 3322）**。原本是 ❌ 失敗並開出 `[TREERECLICK-2026-08-22]`；修法是 handoff 先清掉樹狀選取，因此樹不再宣稱一個畫面上沒有的選取，而且再點同一節點變成真正的變更、會重新載入。實測：選 `Actor`(544) → `Walk Class` 推 `DOLLSoubiState`(168)、**`Actor` 高亮消失** → 再點 `Actor` → 高亮回來且面板重載 544。wire 佐證 `ui-pipe-0.log` id=90 `walk_class` 與 id=88 同位址（缺陷時這一筆完全不存在）。詳見 `[TREERECLICK-2026-08-22]` 一節。 |
 | 6 | ✅ **2026-08-22 通過,而且有線上證據**。選中節點後在樹狀 Filter 框連續打 `Def` → `ault`(兩段、中間停頓),樹縮成 `Filtered: 1 / 3`,**面板沒有被清空**(仍是 `DOLLPlayerController` 2224、欄位齊全)。⭐ 更強的證據在 `pipe-0.log`:打字期間**完全沒有新的 `walk_class`**,所以「不會重複重走 class」是量到的,不是看起來沒事。 | 不會重複重走 class，面板也不會被清空。 |
