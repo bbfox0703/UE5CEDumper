@@ -979,6 +979,13 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # sein_retention_test #includes Sein.cpp and exercises the retention sweep AB9 moved
+    # off the loader lock. It drives the DLL's only recursive delete, against a fixture
+    # under %TEMP% guarded by a four-condition safety gate.
+    if (-not (Invoke-CppSelfTest -TargetName "sein_retention_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # ----- C# tests -----
     # A missing test csproj is NOT a skip: it is checked into the repo, so its
     # absence means a broken tree or a wrong path, and reporting it as a skip

@@ -599,4 +599,32 @@ if(BUILD_DLL_TESTS)
     endif()
 
     target_link_libraries(grausam_window_test PRIVATE minhook user32)
+
+    # ---- sein_retention_test: AB9, the log retention sweep -----------------------------
+    #
+    # #includes Sein.cpp to reach its file statics (s_logDir / s_processDir /
+    # s_processDirReady / s_sweepDone), which is the only way to point the sweep at a
+    # fixture without adding a test-only hook to shipping code.
+    #
+    # WARNING: this target drives the DLL's only recursive delete. The test carries a
+    # safety gate that refuses to run unless its root is under %TEMP%, pid-named, and
+    # carrying a sentinel it wrote -- a fixture bug aimed at the real log tree under
+    # LOCALAPPDATA would destroy the log corpus. Do not weaken it.
+    #
+    # shell32/ole32 (SHGetKnownFolderPath) come from MSVC's default
+    # CMAKE_CXX_STANDARD_LIBRARIES, so no extra link config is needed.
+    add_executable(sein_retention_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/sein_retention_test.cpp
+    )
+
+    target_include_directories(sein_retention_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    if(MSVC)
+        set_property(TARGET sein_retention_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc)
+    endif()
 endif()

@@ -267,6 +267,21 @@ static void AutoStartBody()
 }
 #endif
 
+// AB9 — the log retention sweep, off the loader lock.
+//
+// ⚠ THIS MUST LIVE IN THE COMMON REGION, i.e. AFTER the #endif above and outside both
+// halves of the UE5_PROXY_BUILD split. Heiter.cpp defines AutoStartThreadProc TWICE —
+// once inside `#ifdef UE5_PROXY_BUILD` and once in its `#else` — while the CreateThread
+// call site below is common code. Putting this proc beside either copy compiles the DLL
+// it happens to match and breaks the other four flavours with an undeclared identifier,
+// and NO test target compiles Heiter.cpp, so only a `-Target DLL` build catches it.
+//
+// RunThreadGuarded for the same reason the auto-start proc uses it: std::filesystem
+// throws, and a throw out of a raw thread proc is std::terminate. (B14)
+static DWORD WINAPI RetentionSweepThreadProc(LPVOID) {
+    Routine::RunThreadGuarded("Sein Retention", [] { Sein::RunRetentionSweep(); });
+    return 0;
+}
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     switch (reason) {
     case DLL_PROCESS_ATTACH: {
@@ -389,6 +404,17 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                      "down with it. The CE-plugin entry points still work; they inject into "
                      "the GAME, which is where the poller belongs.");
             g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
+
+            // Retention runs INLINE here, and that is deliberate, not an oversight.
+            // AB1: in a CE host the module is NOT pinned (see the PIN below, which is in
+            // the other branch for exactly this reason), so creating ANY thread here
+            // risks CE's FreeLibrary unmapping the image out from under it. A ~140 ms
+            // stall inside a plugin-list refresh costs nothing.
+            // ⚠ And it must not simply be SKIPPED: PruneAgedLogs only ever prunes the
+            // CURRENT process's folder, so skipping it here leaves CE's own log folder
+            // growing forever — no other process would ever prune it, and only
+            // PruneStaleProcessFolders (which needs a whole idle folder) could.
+            Sein::RunRetentionSweep();
         } else {
             // Our threads live in this image, so the image must not become unmappable
             // while they run. Nothing in this repo calls FreeLibrary on us — but "nothing
@@ -418,6 +444,27 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                 CloseHandle(hAutoStart);
             } else {
                 LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
+            }
+
+            // AB9 — retention on its own thread, so the sweep is off the loader lock.
+            //
+            // ⚠ UNCONDITIONAL within this branch, i.e. OUTSIDE the `if (hAutoStart)`
+            // above. Putting it after the CloseHandle inside that `if` would run
+            // retention only while auto-start thread creation is SUCCEEDING and stop it
+            // silently when that starts failing — a feature switched off by an unrelated
+            // failure, which is the B19 shape.
+            //
+            // The module PIN a few lines above has already run, so this thread cannot be
+            // left executing in an unmapped image. A thread created during
+            // DLL_PROCESS_ATTACH does not begin until the loader lock is released, which
+            // is precisely the property being bought here.
+            HANDLE hSweep = CreateThread(nullptr, 0, RetentionSweepThreadProc, nullptr, 0, nullptr);
+            if (hSweep) {
+                CloseHandle(hSweep);   // detached, like the auto-start thread (AB8)
+            } else {
+                LOG_WARN("DllMain: retention sweep thread failed (err=%lu) — running it inline",
+                         GetLastError());
+                Sein::RunRetentionSweep();
             }
         }
         break;

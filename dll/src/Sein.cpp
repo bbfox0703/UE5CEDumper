@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cerrno>
 #include <mutex>
+#include <atomic>
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
@@ -111,6 +112,13 @@ static LogFileState   s_files[LF_COUNT];
 static bool           s_filesOpen   = false;
 static fs::path       s_logDir;                 // base: %LOCALAPPDATA%\UE5CEDumper\Logs
 static fs::path       s_processDir;             // per-process subfolder
+// TRUE only once s_processDir has actually been CREATED. Not derivable from
+// `s_processDir.empty()`: it is assigned at :572 BEFORE create_directories at :574,
+// so on the create-failure bail it is non-empty and names a directory that does not
+// exist — and PruneStaleProcessFolders' own-folder guard is `fs::equivalent(entry,
+// keep, ec)`, which is INERT against a nonexistent `keep`. Sweeping then could
+// delete the folder we are about to log into. (AB9)
+static bool           s_processDirReady = false;
 
 // Early buffering: lines logged before InitProcessMirror opens files
 static std::vector<std::pair<LogFile, std::string>> s_earlyBuffer;
@@ -573,6 +581,7 @@ void InitProcessMirror(const std::wstring& processName) {
     std::error_code ec;
     fs::create_directories(s_processDir, ec);
     if (ec) return;
+    s_processDirReady = true;
 
     // Open all 5 category files. Each archives its own previous -0.log first.
     //
@@ -623,10 +632,60 @@ void InitProcessMirror(const std::wstring& processName) {
     // only record of the run for no gain. The retention sweeps below are unaffected
     // by our own files and still run.
 
-    // Retention sweep. Runs AFTER the files are open, so the live -0.log of every
-    // category already exists and the archives are the only *.log left to age out.
-    PruneAgedLogs(s_processDir);
-    PruneStaleProcessFolders(s_logDir, s_processDir);
+    // The retention sweep used to run HERE, inline, under the loader lock. It is now
+    // RunRetentionSweep() below, called by DllMain — see AB9 and the contract in Sein.h.
+    // The ordering constraint it had is preserved by that call site being later still:
+    // the sweep must run AFTER the files are open, so the live -0.log of every category
+    // already exists and the archives are the only *.log left to age out.
+}
+
+// Latched one-shot. The sweep is pure maintenance and there is nothing to gain from
+// running it twice in a process; the latch is what lets DllMain call it from either the
+// inline (CE host) or the threaded path without either having to know about the other.
+static std::atomic<bool> s_sweepDone{false};
+
+void RunRetentionSweep() {
+    // ORDER IS THE POINT: copy under the lock, RELEASE, then sweep unlocked.
+    //
+    // Holding s_mutex across the sweep would MOVE the stall — off the loader lock and onto
+    // every thread that logs — which is not the fix. And it is worse than that, measured
+    // 2026-08-24 rather than reasoned: the obvious shape (one lock_guard at the top of this
+    // function) SELF-DEADLOCKS. The !ready branch below calls LOG_WARN, WriteLog takes
+    // s_mutex unconditionally, and std::mutex is not recursive — sein_retention_test dies
+    // with a fastfail (exit 127) in its readiness case under exactly that edit. Nothing the sweep touches
+    // is shared state: PruneAgedLogs only deletes *.log ARCHIVES in our own folder (the
+    // live -0.log files are open and carry a current mtime), and PruneStaleProcessFolders
+    // is explicitly told to keep ours.
+    fs::path logDir, procDir;
+    bool ready = false;
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        logDir  = s_logDir;
+        procDir = s_processDir;
+        ready   = s_processDirReady;
+    }
+
+    if (!ready) {
+        // Not an error worth a dialog, but it must not be SILENT: it means the sweep was
+        // called before InitProcessMirror succeeded, so retention did not run this session.
+        LOG_WARN("Sein::RunRetentionSweep: per-process folder not ready — retention skipped");
+        return;
+    }
+
+    // Latch AFTER the readiness check, so an early call does not consume the one-shot and
+    // leave a later, valid call doing nothing.
+    if (s_sweepDone.exchange(true)) return;
+
+    // Timed and LOGGED. Before AB9 this work was inline in InitProcessMirror and its cost
+    // was only ever visible as a gap between two unrelated DllMain lines; now that it is
+    // deferred and silent, nothing would show it ran at all — and "it ran" is exactly what
+    // a live check of this change needs to see. The line is also the measurement: if the
+    // sweep is ever suspected of being slow again, the number is already in the log.
+    const ULONGLONG t0 = ::GetTickCount64();
+    PruneAgedLogs(procDir);
+    PruneStaleProcessFolders(logDir, procDir);
+    LOG_INFO("Sein::RunRetentionSweep: retention sweep done in %llu ms (off the loader lock)",
+             static_cast<unsigned long long>(::GetTickCount64() - t0));
 }
 
 void Shutdown() {
