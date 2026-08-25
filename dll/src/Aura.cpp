@@ -2251,6 +2251,29 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     // Build outside the lock — WalkClassEx is non-trivial and may itself
     // touch caches. Insert under lock at the end.
     std::vector<ContainerCacheEntry> entries;
+    // ⚠ DO NOT MEMOIZE A BUILD THAT CAME FROM AN UNREADABLE CLASS.
+    //
+    // The emplace below is permanent — nothing ever evicts from this map — so a single
+    // transient read fault on `cls` pins an EMPTY result for the rest of the process, and
+    // every later scan of that class silently finds nothing. This is reachable today: the
+    // callers guard only `!cls` (e.g. Aura.cpp's `if (!ReadSafe(obj + OFF_UOBJECT_CLASS,
+    // cls) || !cls) continue;`) and pass class pointers read straight out of live objects.
+    //
+    // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
+    // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
+    // not walk", and caching anything derived from it would be caching a failure.
+    //
+    // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
+    // so on a healthy class this is a cache hit, not a second walk.
+    //
+    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
+    // return-type refactor across five caches; see its row. This is the separate, present-
+    // tense defect found while scoping it.
+    static const std::vector<ContainerCacheEntry> s_emptyContainers;
+    if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyContainers;
+
     CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
                                entries, /*depth*/ 0);
 
@@ -3215,6 +3238,29 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
         auto it = s_classRefCache.find(cls);
         if (it != s_classRefCache.end()) return it->second;
     }
+
+    // ⚠ DO NOT MEMOIZE A BUILD THAT CAME FROM AN UNREADABLE CLASS.
+    //
+    // The emplace below is permanent — nothing ever evicts from this map — so a single
+    // transient read fault on `cls` pins an EMPTY result for the rest of the process, and
+    // every later scan of that class silently finds nothing. This is reachable today: the
+    // callers guard only `!cls` (e.g. Aura.cpp's `if (!ReadSafe(obj + OFF_UOBJECT_CLASS,
+    // cls) || !cls) continue;`) and pass class pointers read straight out of live objects.
+    //
+    // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
+    // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
+    // not walk", and caching anything derived from it would be caching a failure.
+    //
+    // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
+    // so on a healthy class this is a cache hit, not a second walk.
+    //
+    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
+    // return-type refactor across five caches; see its row. This is the separate, present-
+    // tense defect found while scoping it.
+    static const ClassReferenceMeta s_emptyRefMeta;
+    if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyRefMeta;
 
     ClassReferenceMeta meta;
     CollectRefMetaRecursive(cls, 0, "", meta, 0);
