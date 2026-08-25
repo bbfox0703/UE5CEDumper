@@ -50,12 +50,12 @@ public sealed class PipeClient : IPipeClient
     public event Action<bool>? ConnectionStateChanged;
     public event Action<JsonObject>? EventReceived;
     public event Action<PipeLogEntry>? Activity;
+    // Raised per response that carries the flag (raw observation — NOT
+    // edge-suppressed here). The two-lane router (LaneRoutingPipeClient) owns the
+    // single combined latch that dedupes for the UI: per-lane suppression here was
+    // the audit-X7 cause of the "game thread paused" banner sticking ON when the
+    // lane that saw the pause went idle after the game resumed.
     public event Action<bool>? GameThreadStalledChanged;
-
-    // Last game-thread-stalled value we raised, so a busy paging burst (every
-    // response carries the flag) fires the event only on a true→false / false→true
-    // transition instead of once per line. Touched only from the single ReadLoop.
-    private bool _lastStalled;
 
     // id -> (command name, TX tick) so the RX line can show which command it
     // answers and the round-trip ms. Only populated when Activity has a
@@ -63,6 +63,42 @@ public sealed class PipeClient : IPipeClient
     private readonly ConcurrentDictionary<int, (string cmd, long tx)> _txMeta = new();
 
     private static string NowStr() => DateTime.Now.ToString("HH:mm:ss.fff");
+
+    /// <summary>Why a pipe write failed — see <see cref="ClassifySendFailure"/>.</summary>
+    internal enum SendFailure
+    {
+        /// <summary>The caller's own token was cancelled.</summary>
+        CallerCancelled,
+        /// <summary>DisconnectAsync / Dispose is tearing this client down.</summary>
+        Disconnecting,
+        /// <summary>Nobody asked — the pipe died under us (game closed / DLL unloaded).</summary>
+        PipeDied,
+        /// <summary>Still connected, nothing cancelled: a real I/O error on a live pipe.</summary>
+        TransportError,
+    }
+
+    /// <summary>
+    /// Classify a failed write. Pure, and split out precisely because the collapsed form
+    /// was the audit #5 AC10 defect: the filters read
+    /// <c>!IsConnected || _cts.IsCancellationRequested</c> and reported ALL of it as
+    /// cancellation.
+    ///
+    /// The order matters and is not arbitrary. Both deliberate teardowns cancel
+    /// <c>_cts</c> BEFORE clearing <c>IsConnected</c>, so <paramref name="clientCancelled"/>
+    /// already covers them; the only other writer of <c>IsConnected = false</c> is
+    /// ReadLoopAsync's finally on an unplanned exit. That makes <c>!connected</c> —
+    /// checked LAST, after both cancellation reasons — a clean signal for unexpected
+    /// death, which the read loop's own finally hands to every other in-flight request as
+    /// an IOException. Fold it back into the cancel branch and an unexpected disconnect
+    /// becomes indistinguishable from a user pressing Cancel.
+    /// </summary>
+    internal static SendFailure ClassifySendFailure(bool callerCancelled, bool clientCancelled, bool connected)
+    {
+        if (callerCancelled)  return SendFailure.CallerCancelled;
+        if (clientCancelled)  return SendFailure.Disconnecting;
+        if (!connected)       return SendFailure.PipeDied;
+        return SendFailure.TransportError;
+    }
 
     public PipeClient(ILoggingService log, string laneTag = "")
     {
@@ -94,9 +130,6 @@ public sealed class PipeClient : IPipeClient
         _writer = new StreamWriter(_pipe, Encoding.UTF8) { AutoFlush = true };
 
         IsConnected = true;
-        // Reset the stall latch so the first response after a (re)connect always
-        // raises, even if the game was already paused before this connection.
-        _lastStalled = false;
         ConnectionStateChanged?.Invoke(true);
         _log.Info(Constants.LogCatPipe, "Pipe connected");
 
@@ -144,8 +177,35 @@ public sealed class PipeClient : IPipeClient
         // Transport timing starts here and ends at the response — the ONE extra
         // measurement that lets DiagnosticsProbe split a heavy operation into
         // dll / ipc / ui. See PipeTransportStats for why that split matters.
-        long _txStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        //
+        // audit #5 AC13 — the record used to sit in a finally around `await tcs.Task`
+        // ALONE, so everything before that await (the write-lock wait, WriteLineAsync,
+        // and every throw out of the IOException/ObjectDisposedException classifier)
+        // bypassed it and a request that DIED IN THE WRITE contributed 0 ms. That is
+        // the opposite of what the finally's own comment asked for — "a cancelled or
+        // faulted request still consumed transport time, and dropping those would
+        // flatter the IPC figure exactly when the pipe is misbehaving" — because a
+        // misbehaving pipe is exactly when writes fail, so the samples most worth
+        // having were the ones being dropped. The comment had the intent right and
+        // the placement wrong, so the body moved rather than the comment.
+        //
+        // The not-connected guard deliberately stays ABOVE the timer: nothing was
+        // sent, so there is no transport time to attribute, and a 0 ms sample would
+        // deflate the average just as the missing write-failures inflated it.
+        long txStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            return await SendCoreAsync(request, writer, ct);
+        }
+        finally
+        {
+            PipeTransportStats.Record(System.Diagnostics.Stopwatch.GetTimestamp() - txStart);
+        }
+    }
 
+    private async Task<JsonObject> SendCoreAsync(JsonObject request, StreamWriter writer,
+                                                 CancellationToken ct)
+    {
         int id = Interlocked.Increment(ref _nextId);
         request["id"] = id;
 
@@ -184,18 +244,53 @@ public sealed class PipeClient : IPipeClient
                 _writeLock.Release();
             }
         }
-        catch (IOException) when (!IsConnected || _cts.IsCancellationRequested)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            // Pipe closed during write (disconnect in progress) — cancel this request
+            // A write can fail for three reasons that callers must be able to tell
+            // apart. The old filters lumped them together as `!IsConnected ||
+            // _cts.IsCancellationRequested` and threw a TOKEN-LESS
+            // OperationCanceledException for all of them (audit #5 AC10).
+            //
+            // The `!IsConnected` half fires ONLY on unexpected pipe death: both
+            // deliberate teardowns (DisconnectAsync, Dispose) cancel _cts BEFORE
+            // they clear IsConnected, so the cancellation half already covers them,
+            // and the only other writer of `IsConnected = false` is ReadLoopAsync's
+            // finally on an unplanned exit. That is precisely the case this file's
+            // own finally at the bottom of ReadLoopAsync says must surface as an
+            // IOException, "so callers surface it as an error rather than a silent
+            // cancel" — and the late-death reap 20 lines below already does exactly
+            // that when the write happens to SUCCEED on the dying pipe. Reporting it
+            // as a cancel when the write loses the race and as a failure when it wins
+            // is the inconsistency being removed here.
+            //
+            // Drain the bookkeeping first: the old code left _pending/_txMeta
+            // populated on any unfiltered exception, orphaning the entry until the
+            // next disconnect.
             _txMeta.TryRemove(id, out _);
             _pending.TryRemove(id, out _);
-            throw new OperationCanceledException("Pipe disconnected during send");
-        }
-        catch (ObjectDisposedException) when (!IsConnected || _cts.IsCancellationRequested)
-        {
-            _txMeta.TryRemove(id, out _);
-            _pending.TryRemove(id, out _);
-            throw new OperationCanceledException("Pipe disconnected during send");
+
+            switch (ClassifySendFailure(ct.IsCancellationRequested, _cts.IsCancellationRequested, IsConnected))
+            {
+                // The CALLER cancelled. Carry ct, so a caller matching on
+                // `oce.CancellationToken == ct` recognises its own cancellation (the
+                // export commands thread a real token through as of L6/X6).
+                case SendFailure.CallerCancelled:
+                    throw new OperationCanceledException("Pipe send cancelled by caller", ex, ct);
+
+                // A deliberate DisconnectAsync/Dispose. Still a cancel — the behaviour
+                // callers already rely on — but with the token that caused it.
+                case SendFailure.Disconnecting:
+                    throw new OperationCanceledException("Pipe disconnected during send", ex, _cts.Token);
+
+                // The pipe died under us. Same exception type the read loop's finally
+                // hands to every other in-flight request for the same event.
+                case SendFailure.PipeDied:
+                    throw new IOException("Pipe disconnected during send", ex);
+
+                // Live pipe, real I/O error. Preserve it exactly as thrown.
+                default:
+                    throw;
+            }
         }
 
         // Late-death reap (audit #4): the IsConnected guard at entry is a TOCTOU —
@@ -212,24 +307,29 @@ public sealed class PipeClient : IPipeClient
                 orphan.TrySetException(new IOException("Pipe disconnected during send"));
         }
 
-        try
-        {
-            return await tcs.Task;
-        }
-        finally
-        {
-            // finally, not after the await: a cancelled or faulted request still
-            // consumed transport time, and dropping those would flatter the IPC
-            // figure exactly when the pipe is misbehaving.
-            PipeTransportStats.Record(System.Diagnostics.Stopwatch.GetTimestamp() - _txStart);
-        }
+        // The transport-time record lives in SendAsync's finally, which wraps this whole
+        // method — so a cancel or fault HERE is counted, and so is one in the write above
+        // (audit #5 AC13).
+        return await tcs.Task;
     }
 
     private async Task ReadLoopAsync()
     {
+        // Capture the reader into a local, for exactly the reason SendAsync captures the
+        // writer (audit #5 AC14). The loop used to test `_reader != null` on the FIELD and
+        // then await `_reader.ReadLineAsync` on the FIELD, and Dispose() calls CloseStreams()
+        // — which nulls it — WITHOUT awaiting this loop, so the null can land between the
+        // test and the dereference. The resulting NullReferenceException is not covered by
+        // the IOException / ObjectDisposedException filters below; it falls through to the
+        // generic handler and logs a "ReadLoop error" for what is an ordinary shutdown.
+        // A disposed local instead throws ObjectDisposedException, which IS filtered.
+        // Capturing once is correct: _reader is assigned in ConnectAsync before this task
+        // starts and is only ever nulled, never replaced, for the life of the loop.
+        var reader = _reader;
+
         try
         {
-            while (!_cts.IsCancellationRequested && _reader != null)
+            while (!_cts.IsCancellationRequested && reader != null)
             {
                 // Telemetry split (snapshot capture profiling): the response line read, the
                 // "Pipe RX" debug log of it, and the JSON DOM parse each scale with payload
@@ -237,7 +337,7 @@ public sealed class PipeClient : IPipeClient
                 // inject the ms into the response object so a snapshot_chunk caller can read
                 // them back (harmless to every other response).
                 var readSw = System.Diagnostics.Stopwatch.StartNew();
-                var line = await _reader.ReadLineAsync(_cts.Token);
+                var line = await reader.ReadLineAsync(_cts.Token);
                 readSw.Stop();
                 if (line is null)
                 {
@@ -257,15 +357,12 @@ public sealed class PipeClient : IPipeClient
                     if (obj == null) continue;
 
                     // App-wide game-thread liveness hint: the DLL rides
-                    // `game_thread_stalled` on every success envelope. Raise only
-                    // on a transition so a paging burst doesn't spam the UI thread.
-                    // Absent (old DLL / push event) → leave the last state as-is.
-                    if (obj["game_thread_stalled"]?.GetValue<bool>() is bool stalled
-                        && stalled != _lastStalled)
-                    {
-                        _lastStalled = stalled;
+                    // `game_thread_stalled` on every success envelope. Report the
+                    // raw observation on every response; the router's combined
+                    // latch (GameThreadStalledLevel) dedupes so a paging burst
+                    // doesn't spam the UI. Absent (old DLL / push event) → no report.
+                    if (obj["game_thread_stalled"]?.GetValue<bool>() is bool stalled)
                         GameThreadStalledChanged?.Invoke(stalled);
-                    }
 
                     if (obj["event"] != null)
                     {

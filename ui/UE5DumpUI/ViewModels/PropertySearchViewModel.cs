@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Linq;
-using Avalonia.Input.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -60,6 +59,42 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// rows; the fast shallow direct-field search is the default behaviour.
     /// </summary>
     [ObservableProperty] private bool _deepSearch;
+
+    /// <summary>Configurable result cap. The class walk is always exhaustive; this only
+    /// bounds the returned list. Clamped 100..50000 by the NumericUpDown and again DLL-side.
+    ///
+    /// <para>[PROPSEARCHCAP-2026-08-19] The panel had no Max at all and every search was
+    /// pinned to the wire default of 200 — very low for a query like <c>Health</c> on a real
+    /// game, and the reason a wanted field could sit past the cap with nothing the user could
+    /// do about it. Audit #5 <b>Z10</b> fixed the half that was dishonest (the status line
+    /// advised "raise Max" on a panel with no Max) by removing the advice; this adds the
+    /// lever, so the advice can come back — see the cap suffix in <c>SearchAsync</c>.</para>
+    ///
+    /// <para>⚠ Default stays <b>200</b>, deliberately, and is NOT raised to Instance Finder's
+    /// 5000. Property search returns a row per matching property per class and resolves a
+    /// preview value for each, so its rows are far heavier than an instance address; the point
+    /// of this work is that the user can raise it when they need to, not that everyone pays
+    /// for it by default.</para></summary>
+    [ObservableProperty] private int _propertySearchCap = Constants.DefaultPropertySearchCap;
+
+    /// <inheritdoc cref="PropertySearchCap"/>
+    /// <remarks>[SNAPINTERVAL-2026-08-20] façade — NumericUpDown.Value is decimal? and an
+    /// emptied box drives it to null, which a compiled binding cannot convert to int. Absorbs
+    /// the empty box only; the range belongs to the control's Minimum/Maximum. Notifies
+    /// UNCONDITIONALLY so a rejected entry repaints instead of leaving the box blank while a
+    /// different value is in force. See Helpers/NumericInput.cs.</remarks>
+    public decimal? PropertySearchCapValue
+    {
+        get => (decimal)PropertySearchCap;
+        set
+        {
+            PropertySearchCap = NumericInput.KeepCurrentIfEmpty(value, PropertySearchCap);
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnPropertySearchCapChanged(int value) => OnPropertyChanged(nameof(PropertySearchCapValue));
+
     [ObservableProperty] private bool _isSearching;
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private ObservableCollection<PropertySearchMatch> _results = new();
@@ -185,6 +220,23 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
+    /// <summary>Drop search results + the forced-fields mirror so a reconnect never
+    /// shows rows (and live UClass* addresses) from the previous game (audit X5).
+    /// Client-side ONLY: the DLL's force-holds die with the process, so this clears
+    /// the mirror without calling the (gone) pipe — do NOT reset holds here.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        SelectedResult = null;   // detach before clearing the selection-bound grid
+        _allResults = new List<PropertySearchMatch>();
+        Results.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        ForcedFields.Clear();
+        HasForcedFields = false;
+        StatusText = "";
+    }
+
     /// <summary>
     /// Re-probe AOBMaker pipe so the Freeze button enablement reflects the
     /// current state. Called on tab activation + before each Freeze click;
@@ -306,11 +358,20 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     internal static FreezeScriptParams BuildFreezeParams(PropertySearchMatch match, string literal)
         => new()
         {
-            // Prefer the defining class — that's where the property is
-            // actually declared; freezing on it covers all subclasses.
-            ClassName      = !string.IsNullOrEmpty(match.DefiningClassName)
-                             ? match.DefiningClassName
-                             : match.ClassName,
+            // Prefer the defining class — that's where the property is actually
+            // declared. Note what that does and does NOT buy: the OFFSET is valid on
+            // every subclass, but the class NAME alone reaches only the declaring
+            // class, and until build 3262 the generated script asked the DLL for an
+            // exact-name pool. So an inherited field ("Actor") froze whichever stray
+            // Actor the level held and never the pawn — the claim that this "covers
+            // all subclasses" was the comment describing an intent the code did not
+            // implement. The script now sets the helper's `derived` scope, which is
+            // what makes the sentence true. (`[FREEZESCOPE-2026-08-18]`)
+            //
+            // Shared with FreezeValueDialog so the class the user is TOLD about and
+            // the class the script is KEYED on cannot drift apart.
+            ClassName      = FreezeScriptGenerator.HeldClassName(
+                                 match.ClassName, match.DefiningClassName),
             PropertyName   = match.PropName,
             PropertyOffset = match.PropOffset,
             UeTypeName     = match.PropType,
@@ -420,7 +481,19 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (r.Code < 0)
                 StatusText = $"Force {m.PropName}: DLL error {r.Code}.";
             else if (r.Held == 0)
-                StatusText = $"Force {m.PropName}: 0 live instances of {m.ClassName} or any subclass matched — nothing held.";
+                // "nothing held" was wrong, and wrong in the dangerous direction.
+                // Solide::AddForce only DISCARDS a job when the field resolved on at
+                // least one instance and was type-refused everywhere — that path
+                // returns a negative code and is handled above. Reaching here with
+                // code 0 means the job was KEPT and the re-assert worker was STARTED,
+                // so the hold is armed and begins writing into the game the moment a
+                // matching instance spawns. Telling the user it did nothing, while the
+                // "Forced fields (N held)" strip below simultaneously lists it, is the
+                // two-surfaces-disagree shape this whole audit keeps finding.
+                // (audit #5 Z11)
+                StatusText = $"⏳ Force {m.PropName} = ARMED but holding nothing yet — no live instance of "
+                           + $"{m.ClassName} or any subclass exists right now. It will apply automatically "
+                           + $"as soon as one spawns; use \"Forced fields\" below to release it.";
             else
             {
                 var what = kind == "bool" ? (on ? "ON" : "OFF")
@@ -516,13 +589,24 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 trimmedQuery,
                 types: types.Length > 0 ? types : null,
                 gameOnly: GameClassesOnly,
-                deep: DeepSearch);
+                deep: DeepSearch,
+                limit: PropertySearchCap);
 
             // Cache the full set so the client-side ResultFilter can refine
             // without another DLL roundtrip.
             _allResults = new List<PropertySearchMatch>(result.Results);
             // Build the class histogram over the FULL result, then filter.
-            ClassFilter.Rebuild(_allResults.Select(m => m.ClassName));
+            //
+            // countsPartial is NOT optional here. The picker presents its per-class hit
+            // counts as a class census of the result, and fifteen lines below this the
+            // SAME method reads the very same flags to print its own cap warning — so
+            // omitting it left the panel warning "this list is capped" in one place
+            // while the picker beside it implied a complete tally. The `⚠ Counts are
+            // partial` string has existed in en.axaml the whole time and could never
+            // appear on this panel. (audit #5 Z4; ValueSearchViewModel already does
+            // this correctly.)
+            ClassFilter.Rebuild(_allResults.Select(m => m.ClassName),
+                                countsPartial: result.Truncated || result.Aborted);
             ApplyResultFilter();
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
@@ -532,11 +616,25 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // side, finds nothing, and concludes the field does not exist. The DLL
             // now reports what it actually walked, so the counts no longer contradict
             // the suffix. (Built here rather than in en.axaml to match the existing
-            // StatusText line it extends.)
+            // StatusText line it extends — every other clause of this same sentence is
+            // VM-composed, and Res.Get returns "" with no Application, which would make
+            // exactly this text untestable headless.)
+            //
+            // The advice used to read "narrow the query or raise Max" on a panel with no Max
+            // control — the string had been lifted from Instance Finder, which really does own
+            // one — so half of it pointed at a lever the user could not find, and audit #5 Z10
+            // removed that half. [PROPSEARCHCAP-2026-08-19] added the lever, so it is back —
+            // but ONLY while the cap can actually go higher. At the ceiling "raise Max" would
+            // be the same lie in a new place, which is the failure this pair of changes exists
+            // to avoid; the honest advice there is to narrow.
+            string advice = "narrow it with a longer property name or a Type filter";
+            if (!GameClassesOnly)
+                advice += ", or tick \"Game classes only\" to skip engine classes";
+            advice += PartialResultNotice.RaiseMaxClause(PropertySearchCap, Constants.MaxSearchCap);
             var capSuffix = result.Aborted
-                ? "  ⚠ SCAN CANCELLED - this list is partial"
+                ? PartialResultNotice.Cancelled()
                 : result.Truncated
-                    ? $"  ⚠ STOPPED at the {result.Total}-row cap - more matches exist, narrow the query or raise Max"
+                    ? PartialResultNotice.RowCap(result.Total, "matches", advice)
                     : "";
             StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects){deepSuffix}{capSuffix}";
             _log.Info($"SearchProperties: '{trimmedQuery}'{typeSuffix} -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");
@@ -620,17 +718,23 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         NavigateToPivot?.Invoke(match.ClassName, match.PropName);
     }
 
+    /// <summary>
+    /// Copy the matched property's offset.
+    ///
+    /// <para>Routed through <see cref="IPlatformService.CopyToClipboardAsync"/> like
+    /// every other copy in the app. It used to reach into
+    /// <c>Application.Current…MainWindow.Clipboard</c> from the ViewModel and
+    /// fire-and-forget the returned <c>Task</c> — which broke the platform-abstraction
+    /// rule and, worse, discarded the failure: a clipboard that refused the write
+    /// produced an unobserved faulted task, so the button silently did nothing and
+    /// left no trace anywhere ([PASTECRASH-2026-08-18]).</para>
+    /// </summary>
     [RelayCommand]
-    private void CopyOffset(PropertySearchMatch? match)
+    private async Task CopyOffsetAsync(PropertySearchMatch? match)
     {
         if (match == null) return;
-        Avalonia.Input.Platform.IClipboard? clipboard = null;
-        if (Avalonia.Application.Current?.ApplicationLifetime
-                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            clipboard = desktop.MainWindow?.Clipboard;
-        }
-        clipboard?.SetTextAsync(match.OffsetHex);
+        if (_platform is null || !await _platform.CopyToClipboardAsync(match.OffsetHex))
+            _log.Warn($"Copy Offset did nothing — the clipboard refused the write ({match.OffsetHex}).");
     }
 
     /// <summary>
@@ -688,19 +792,29 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0;
         try
         {
             foreach (var match in targets)
             {
                 ct.ThrowIfCancellationRequested();
-                // Skip rows already scanned (XrefInfo persists across filter changes).
-                if (!string.IsNullOrEmpty(match.XrefInfo)) { cached++; continue; }
+                // Skip rows already scanned (XrefInfo persists across filter changes) —
+                // but NOT a row whose previous sweep hit the deadline: re-running that
+                // one can still find something, so treating it as done would make the
+                // partial answer permanent. (audit #5 Z9)
+                if (!string.IsNullOrEmpty(match.XrefInfo) && !XrefFormat.IsPartialCell(match.XrefInfo))
+                { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindPropertyXrefsAsync(match.FieldAddr, true, 200, ct);
-                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs);
+                    // res.Scan.DeadlineHit is the whole reason this isn't just res.Xrefs:
+                    // the DLL latches it on a real 30 s budget, and a timed-out sweep
+                    // written as a bare "0" reads as "no function touches this field, so
+                    // freezing it is safe". (audit #5 Z9)
+                    bool deadline = res.Scan?.DeadlineHit ?? false;
+                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
                     if (res.Xrefs.Count > 0) withFuncs++;
+                    if (deadline) partial++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -712,7 +826,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 StatusText = $"Find Funcs: {done}/{targets.Count} scanned ({withFuncs} referenced)…";
             }
             StatusText = $"Find Funcs done: {withFuncs}/{targets.Count} referenced by a function"
-                       + (cached > 0 ? $" ({cached} cached)." : ".");
+                       + (cached > 0 ? $" ({cached} cached)." : ".")
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

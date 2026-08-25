@@ -189,7 +189,29 @@ def main():
                 "DumperTest/* over and re-package, or the values you are about to verify "
                 "are not the ones documented." % (proj_hash[:12], repo_hash[:12]))
 
-    for cfg in ("Development", "Shipping"):
+    # Police EVERY config that is actually packaged, not a hardcoded pair.
+    #
+    # This loop used to read `("Development", "Shipping")`, which left **DebugGame
+    # completely unpoliced**: it could be stale, or built from different sources, or
+    # missing a fixture entirely, and nothing here would have said so. Found 2026-08-24,
+    # when all three configs were rebuilt and only two of them could be attested.
+    #
+    # Discovery rather than a longer hardcoded list, because the failure mode of a list is
+    # exactly what happened: a config gets added to the packaging step and nobody thinks to
+    # add it here. `--check` already compares the stored config SET against the observed one
+    # (`want` vs `have` below), so a config that appears or disappears is caught either way.
+    #
+    # The canonical two are still DEMANDED: discovery must not turn "Development vanished"
+    # into a quietly smaller, still-passing record.
+    KNOWN_CONFIGS = ("Development", "Shipping", "DebugGame", "Test")
+    present = [c for c in KNOWN_CONFIGS if os.path.isdir(os.path.join(args.root, c))]
+    for required in ("Development", "Shipping"):
+        if required not in present:
+            record["problems"].append(
+                "%s: config directory is missing from %s -- the package is incomplete"
+                % (required, args.root))
+
+    for cfg in present:
         exe = find_exe(args.root, cfg)
         if not exe:
             record["problems"].append("%s: no Binaries/Win64 exe found" % cfg)

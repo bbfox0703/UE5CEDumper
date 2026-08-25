@@ -1,4 +1,4 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:UE5DumpUI.ViewModels"
              xmlns:m="using:UE5DumpUI.Models"
@@ -80,7 +80,7 @@
                     IsVisible="{Binding HasData}"
                     Padding="8,4"
                     ToolTip.Tip="Toggle automatic refresh"/>
-      <NumericUpDown Value="{Binding AutoRefreshIntervalSec}"
+      <NumericUpDown Value="{Binding AutoRefreshIntervalSecValue}"
                      Minimum="{Binding AutoRefreshMinSec}"
                      Maximum="60" Increment="1"
                      IsVisible="{Binding HasData}"
@@ -536,10 +536,36 @@
               Background="#1E1E1E"
               FontFamily="Consolas" FontSize="12"
               HorizontalScrollBarVisibility="Auto"
-              LoadingRow="FieldGrid_LoadingRow"
               BeginningEdit="FieldGrid_BeginningEdit"
               CellEditEnded="FieldGrid_CellEditEnded"
               SelectionChanged="FieldGrid_SelectionChanged">
+      <!-- Row tint and dimming, bound to the ROW ITEM. [LWREFRESH-2026-08-21]
+
+           This replaces FieldGrid_LoadingRow, which set Row.Background/Foreground imperatively.
+           That handler runs only when a row is REALIZED, which was fine while every refresh
+           replaced the row objects — and stopped being fine the moment the refresh started reusing
+           them so the grid would stop scrolling up a row per Refresh.
+
+           ⚠ The handler could NOT be kept as a fallback: `e.Row.Background = …` writes at
+           LocalValue priority, which outranks a Style setter, so even its Transparent branch would
+           have pinned every non-matching row and this binding would never have shown. It is
+           deleted, not disabled.
+
+           Colours are the same three the handler used: #3CFFC800 tint, #666666 guessed, #D4D4D4
+           normal. Selection still paints over the tint, because the DataGridRow theme drives
+           :selected from its own BackgroundRectangle rather than from Background. -->
+      <DataGrid.Styles>
+        <Style Selector="DataGridRow" x:DataType="m:LiveFieldValue">
+          <Setter Property="Background"
+                  Value="{Binding IsSearchMatch,
+                                  Converter={x:Static conv:BoolToBrushConverter.Instance},
+                                  ConverterParameter=#3CFFC800|none}"/>
+          <Setter Property="Foreground"
+                  Value="{Binding IsGuessed,
+                                  Converter={x:Static conv:BoolToBrushConverter.Instance},
+                                  ConverterParameter=#666666|#D4D4D4}"/>
+        </Style>
+      </DataGrid.Styles>
       <DataGrid.ContextMenu>
         <ContextMenu x:DataType="vm:LiveWalkerViewModel">
           <MenuItem Header="{StaticResource str.Pivot.ThisProperty}"
@@ -555,16 +581,43 @@
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}" SortMemberPath="Name"
                             Width="220" MinWidth="140" IsReadOnly="True"/>
-        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
-                            Binding="{Binding TypeName}" SortMemberPath="TypeName"
-                            Width="115" IsReadOnly="True"/>
+        <!-- A TemplateColumn only so the cell has an element to hang ToolTip.Tip on;
+             a DataGridTextColumn's Binding= has none. 115px clips readily — the case
+             that prompted it was "DataTableRows" rendering as "DataTableRo", and UE
+             type names are long by nature (SoftObjectProperty,
+             MulticastInlineDelegateProperty). Same [V8PREVIEWCLIP-2026-08-23] shape as
+             the Value column beside it, which is why this template is deliberately
+             IDENTICAL to that one: same VerticalAlignment and Margin, so the two
+             columns cannot drift apart visually. SortMemberPath / IsReadOnly carry
+             over from the text column unchanged. -->
+        <DataGridTemplateColumn Header="{StaticResource str.ClassStruct.Type}"
+                                SortMemberPath="TypeName"
+                                CanUserSort="True"
+                                Width="115" IsReadOnly="True">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:LiveFieldValue">
+              <TextBlock Text="{Binding TypeName}"
+                         ToolTip.Tip="{Binding TypeTooltip}"
+                         VerticalAlignment="Center" Margin="4,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.Value}"
                                 SortMemberPath="DisplayValue"
                                 CanUserSort="True"
                                 Width="200" MinWidth="100">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
+              <!-- ToolTip.Tip is load-bearing, not a nicety: this column is a fixed
+                   200px and has no trimming ellipsis, so a longer value is invisible
+                   with nothing on screen saying so. [V8PREVIEWCLIP-2026-08-23] — a
+                   DataTable's "showing 64 of 100" badge is appended after
+                   "{DataTable: 100 rows, <struct>}", which alone overflows, so the
+                   badge could not be read at the default width on any table.
+                   Bound to ValueTooltip (null when empty), NOT to DisplayValue, so a
+                   blank cell does not pop an empty tooltip. -->
               <TextBlock Text="{Binding DisplayValue}"
+                         ToolTip.Tip="{Binding ValueTooltip}"
                          VerticalAlignment="Center" Margin="4,0"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

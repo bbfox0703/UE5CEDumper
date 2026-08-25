@@ -477,6 +477,169 @@ do
 end
 
 -- ============================================================
+-- AA31: the Debug Camera SAMPLE must untick the record on the error path.
+--
+-- CE compiles each {$lua} block as its own chunk in one shared state; extract the
+-- header's sample blocks the way CE's autoassembler splits them (line-EXACT
+-- {$LUA}/{$ASM} markers, not a substring search), then RUN the [ENABLE] block.
+-- Asserting on the doc's text would be tautological.
+-- ============================================================
+
+local function extractSampleBlocks(path)
+  local blocks, body = {}, nil
+  for line in io.lines(path) do
+    local t = line:match('^%s*(.-)%s*$'):upper()
+    if t == '{$LUA}' then
+      body = {}
+    elseif t == '{$ASM}' then
+      if body then blocks[#blocks + 1] = table.concat(body, '\n') end
+      body = nil
+    elseif body then
+      body[#body + 1] = line
+    end
+  end
+  return blocks
+end
+
+--- Run one block as CE does: its own chunk in the shared state, with syntaxcheck
+--- and memrec injected as chunk locals (autoassembler prepends the local + varargs).
+local function runAsCeChunk(body, memrec)
+  local chunk, e = load('local syntaxcheck,memrec=...\n' .. body, 'ce-block')
+  if not chunk then return false, 'compile: ' .. tostring(e) end
+  return pcall(chunk, false, memrec)
+end
+
+function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s) end
+
+case('AA31: the Debug Camera [ENABLE] sample unticks the record when the call returns -1')
+do
+  resetWorld()
+  DLL = function() I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
+  local blocks = extractSampleBlocks(HELPER)
+  check(#blocks >= 2, 'the header carries the [ENABLE]/[DISABLE] sample', '#blocks=' .. #blocks)
+  local memrec = { Active = true }
+  local ok, err = runAsCeChunk(blocks[1], memrec)
+  check(ok, 'AA31: the [ENABLE] sample runs without raising', err)
+  eq(memrec.Active, false, 'AA31: a -1 result unticked the record')
+end
+
+case('AA31: the sample unticks when the call RAISES (mailbox gone)')
+do
+  resetWorld()
+  SYMBOLS['g_invokeMailbox'] = nil          -- findMailbox raises -> setDebugCamera raises
+  local blocks = extractSampleBlocks(HELPER)
+  local memrec = { Active = true }
+  local ok = runAsCeChunk(blocks[1], memrec)
+  check(ok, 'AA31: the sample catches the raise rather than propagating it')
+  eq(memrec.Active, false, 'AA31: a raised error also unticked the record')
+  SYMBOLS['g_invokeMailbox'] = MB           -- restore for later cases
+end
+
+case('AA31: a SUCCESSFUL enable (state 1) leaves the record ticked -- the control')
+do
+  resetWorld()
+  DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end     -- camera ON
+  local blocks = extractSampleBlocks(HELPER)
+  local memrec = { Active = true }
+  local ok = runAsCeChunk(blocks[1], memrec)
+  check(ok, 'the sample runs')
+  eq(memrec.Active, true, 'AA31: a real success keeps the record ticked')
+end
+
+-- ============================================================
+-- AA32: FString buffers are reclaimed on the next invoke (bounded, not unbounded).
+-- ============================================================
+
+local function liveAllocs()
+  local n = 0; for _ in pairs(ALLOCS) do n = n + 1 end; return n
+end
+
+case('AA32: string-param buffers are reclaimed on the next invoke, not accumulated')
+do
+  resetWorld()
+  invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'hello' } })
+  eq(liveAllocs(), 1, 'one string buffer live after the first invoke')
+  invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'world' } })
+  eq(liveAllocs(), 1, 'still one -- the previous buffer was reclaimed, not accumulated')
+  for _ = 1, 10 do
+    invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'x' } })
+  end
+  check(liveAllocs() <= 1, 'AA32: bounded across many invokes', liveAllocs())
+end
+
+case('AA32: a subsequent NON-string invoke also reclaims the prior string buffer')
+do
+  resetWorld()
+  invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'hi' } })
+  eq(liveAllocs(), 1, 'one buffer after the string invoke')
+  invokeUFunction('C', 'G', 8, { { name = 'n', type = 'int32', offset = 0, value = 1 } })
+  eq(liveAllocs(), 0, 'AA32: the next invoke reclaimed it even though it had no strings')
+end
+
+case('AA32: the opt-in freeInvokeStringBuffers() still frees the current set')
+do
+  resetWorld()
+  invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'hi' } })
+  eq(liveAllocs(), 1, 'one buffer live')
+  eq(freeInvokeStringBuffers(), 1, 'AA32: the manual free still reports one released')
+  eq(liveAllocs(), 0, 'and it is gone')
+end
+
+-- ============================================================
+-- AA33: a param write must not run past the params region / mailbox.
+-- ============================================================
+
+case('AA33: an int32 whose offset+width overruns the region is refused')
+do
+  resetWorld()
+  local ok, e = invokeUFunction('C', 'F', 16, { { name = 'n', type = 'int32', offset = 14, value = 7 } })
+  eq(ok, false, 'AA33: refused (14 + 4 > 16)')
+  contains(e, 'params region', 'AA33: and says why')
+  eq(I32[MB + OFF_PARAMS + 14], nil, 'AA33: nothing was written out of bounds')
+end
+
+case('AA33: an in-bounds param at the exact region edge still writes -- the control')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 16, { { name = 'n', type = 'int32', offset = 12, value = 7 } })
+  eq(ok, true, 'AA33: 12 + 4 = 16 fits')
+  eq(I32[MB + OFF_PARAMS + 12], 7, 'AA33: and it landed')
+end
+
+case('AA33: an fstring whose 16-byte struct would overrun is refused (past the mailbox)')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 1024,
+                             { { name = 's', type = 'fstring', offset = 1016, value = 'hi' } })
+  eq(ok, false, 'AA33: 1016 + 16 = 1032 > 1024 -> refused before writing past OFF_PARAMS+1024')
+end
+
+-- ============================================================
+-- AA34: a MISSING string param must not become the literal "0".
+-- ============================================================
+
+case('AA34: a missing fstring value is an empty FString, not the literal "0"')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0 } })  -- no value
+  eq(ok, true, 'runs')
+  eq(I32[MB + OFF_PARAMS + 8], 1, 'AA34: ArrayNum = 1 (empty + null), NOT 2 ("0" + null)')
+  local dataPtr = U64[MB + OFF_PARAMS]
+  check(dataPtr ~= nil and dataPtr ~= 0, 'Data points at a buffer')
+  eq(BYTES[dataPtr], 0, 'AA34: the first char is the null terminator, not "0" (0x30)')
+end
+
+case('AA34: a provided string is still written verbatim -- the control')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 16, { { name = 's', type = 'fstring', offset = 0, value = 'Hi' } })
+  eq(ok, true, 'runs')
+  eq(I32[MB + OFF_PARAMS + 8], 3, 'ArrayNum = #"Hi" + 1')
+  local dataPtr = U64[MB + OFF_PARAMS]
+  eq(BYTES[dataPtr], string.byte('H'), 'AA34: the real first char survives')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)

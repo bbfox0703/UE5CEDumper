@@ -81,7 +81,7 @@ public static class TimeDilationScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Time] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
@@ -114,7 +114,7 @@ public static class TimeDilationScriptGenerator
             Line(sb, "if state < 0 then");
             Line(sb, $"  showMessage('[Time] {label} -- {(target == Target.Global ? "no WorldSettings (enter a level first)" : "no player pawn (enter gameplay first)")}.')");
             // Applied nothing -> the row must not stay ticked.
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");

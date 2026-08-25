@@ -173,7 +173,7 @@ public class MainWindowInjectHelperTests
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => "";
         public string GetLogDirectoryPath() => "";
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "test";
         public void CloseImeForWindow(IntPtr windowHandle) { }
@@ -195,5 +195,41 @@ public class MainWindowInjectHelperTests
         public void Debug(string category, string message) { }
         public void StartProcessMirror(string processName) { }
         public void StopProcessMirror() { }
+    }
+
+    /// <summary>
+    /// Neither helper may reach CE with a CR in it. [FREEZEINJECT-CRLF-2026-08-20]
+    ///
+    /// ⚠ The FREEZE half is the one that was reported, but the INVOKE half is the one
+    /// that matters for a fresh clone: both files are `i/lf` in the index with
+    /// core.autocrlf=true, so which of them arrives CRLF is a property of the CHECKOUT.
+    /// Today the freeze helper is CRLF here and the invoke helper is not — asserting only
+    /// the reported one would pass on this machine and miss the next.
+    /// </summary>
+    [Fact]
+    public async Task InjectCeHelperLua_SendsLfOnly()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true, NextInjectResult = true };
+        var vm = BuildVm(aobMaker: bridge);
+
+        await vm.InjectCeHelperLuaCommand.ExecuteAsync(null);
+
+        Assert.NotNull(bridge.LastInjectContent);
+        Assert.DoesNotContain('\r', bridge.LastInjectContent!);
+        Assert.Contains('\n', bridge.LastInjectContent!);   // not simply emptied
+    }
+
+    [Fact]
+    public async Task InjectFreezeHelperLua_SendsLfOnly()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true, NextInjectResult = true };
+        var vm = BuildVm(aobMaker: bridge);
+
+        await vm.InjectFreezeHelperLuaCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, bridge.InjectCalls);
+        Assert.NotNull(bridge.LastInjectContent);
+        Assert.DoesNotContain('\r', bridge.LastInjectContent!);
+        Assert.Contains('\n', bridge.LastInjectContent!);
     }
 }

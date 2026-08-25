@@ -100,7 +100,7 @@
                             OnContent="{StaticResource str.Snapshot.Auto.On}" Margin="0,0,14,0"/>
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Interval}" Foreground="#CCCCCC"
                          VerticalAlignment="Center" Margin="0,0,4,0"/>
-              <NumericUpDown Value="{Binding AutoSnapshotIntervalSec}" Minimum="60" Maximum="86400"
+              <NumericUpDown Value="{Binding AutoSnapshotIntervalSecValue}" Minimum="60" Maximum="86400" ClipValueToMinMax="True"
                              Increment="60" FormatString="0" MinWidth="120" FontSize="12"
                              IsEnabled="{Binding CanEditAutoSettings}"
                              ToolTip.Tip="{StaticResource str.Tip.Snapshot.Auto.Interval}" Margin="0,0,14,0"/>
@@ -111,7 +111,7 @@
                         ToolTip.Tip="{StaticResource str.Tip.Snapshot.Auto.Retention}" Margin="0,0,8,0"/>
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Count}" Foreground="#CCCCCC"
                          VerticalAlignment="Center" Margin="0,0,4,0"/>
-              <NumericUpDown Value="{Binding AutoSnapshotCount}" Minimum="1" Maximum="10000"
+              <NumericUpDown Value="{Binding AutoSnapshotCountValue}" Minimum="1" Maximum="10000" ClipValueToMinMax="True"
                              Increment="1" FormatString="0" MinWidth="110" FontSize="12"
                              IsEnabled="{Binding CanEditAutoSettings}" Margin="0,0,14,0"/>
               <CheckBox Content="{StaticResource str.Snapshot.Auto.AdjustQuota}"
@@ -138,12 +138,12 @@
       <TextBlock Text="{StaticResource str.Snapshot.MinFreeDisk}" Foreground="#999"
                  VerticalAlignment="Center" Margin="12,0,0,0"
                  ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
-      <NumericUpDown Value="{Binding SnapshotMinFreePercent}" Minimum="0" Maximum="99" Increment="1"
+      <NumericUpDown Value="{Binding SnapshotMinFreePercentValue}" Minimum="0" Maximum="99" ClipValueToMinMax="True" Increment="1"
                      FormatString="0" MinWidth="90" FontSize="12" VerticalAlignment="Center"
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
       <TextBlock Text="%" Foreground="#999" VerticalAlignment="Center"/>
       <TextBlock Text="/" Foreground="#777" VerticalAlignment="Center"/>
-      <NumericUpDown Value="{Binding SnapshotMinFreeGb}" Minimum="0" Maximum="100000" Increment="10"
+      <NumericUpDown Value="{Binding SnapshotMinFreeGbValue}" Minimum="0" Maximum="100000" ClipValueToMinMax="True" Increment="10"
                      FormatString="0" MinWidth="110" FontSize="12" VerticalAlignment="Center"
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
       <TextBlock Text="GB" Foreground="#999" VerticalAlignment="Center"/>
@@ -165,7 +165,8 @@
     </StackPanel>
 
     <!-- Snapshot list (fixed height; diff grid gets the remaining space) -->
-    <DataGrid Grid.Row="4" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
+    <DataGrid x:Name="SnapshotsGrid"
+              Grid.Row="4" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
               IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
               CanUserResizeColumns="True" CanUserSortColumns="True"
               HorizontalScrollBarVisibility="Auto">
@@ -277,7 +278,8 @@
       </Expander>
 
       <!-- Diff results — fills the rest of the lower star row below the compare Expander -->
-      <DataGrid ItemsSource="{Binding DiffRows}" SelectedItem="{Binding SelectedDiffRow}"
+      <DataGrid x:Name="DiffGrid"
+                ItemsSource="{Binding DiffRows}" SelectedItem="{Binding SelectedDiffRow}"
                 IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                 CanUserResizeColumns="True" CanUserSortColumns="True"
                 HorizontalScrollBarVisibility="Auto">
@@ -357,7 +359,17 @@
             <Button Content="{StaticResource str.Snapshot.Group.Clear}" Command="{Binding ClearGroupCommand}" Padding="8,4" Margin="0,0,8,0"/>
             <ProgressBar IsIndeterminate="True" Width="120" Height="4" VerticalAlignment="Center" Margin="0,0,8,0"
                          IsVisible="{Binding IsGroupMatching}"/>
-            <TextBlock Text="{Binding GroupStatusText}" Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+            <!-- The cap notice can be ~230 characters (PartialResultNotice.PerSlotWitnessCap,
+                 the SAME string the live Group Scan shows). The live panel gives it both
+                 TextWrapping and a ToolTip (ValueSearchPanel.axaml:52-59); this one had
+                 neither, so at the window's 800 DIP MinWidth the sentence that exists to tell
+                 you results were truncated was itself truncated. ToolTip.Tip is the half that
+                 always works. ⚠ TextWrapping inside a WrapPanel only bites once the text has a
+                 bounded width, hence MaxWidth — visual confirmation is owed.
+                 [PARAMSSORT-2026-08-22] -->
+            <TextBlock Text="{Binding GroupStatusText}" Foreground="#4EC9B0" FontSize="12"
+                       VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="760"
+                       ToolTip.Tip="{Binding GroupStatusText}"/>
           </WrapPanel>
           <!-- 2-4 value rows: width scope + predicate + value (+ Between upper bound) -->
           <ItemsControl ItemsSource="{Binding GroupInputs}" IsEnabled="{Binding !IsGroupMatching}">
@@ -403,7 +415,8 @@
 
         <!-- Results master-detail: one row per matched object; expand for per-slot
              locked offsets + handoffs (reuses GroupCandidate / GroupSlotMatch). -->
-        <DataGrid ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
+        <DataGrid x:Name="GroupGrid"
+                  ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
                   IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                   RowDetailsVisibilityMode="VisibleWhenSelected"
                   CanUserResizeColumns="True" CanUserSortColumns="True"

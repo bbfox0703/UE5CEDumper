@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
 using UE5DumpUI.Views;
@@ -24,6 +26,7 @@ public class App : Application
     private BookmarkStore? _bookmarkStore;
     private CoordinateLibraryStore? _coordLibraryStore;
     private WindowsLogCompressionService? _logCompression;
+    private DispatcherFaultGuard? _faultGuard;
 
     public override void Initialize()
     {
@@ -57,6 +60,21 @@ public class App : Application
             // Initialize services
             var logDir = _platform.GetLogDirectoryPath();
             _logging = new LoggingService(logDir);
+
+            // The clipboard is now guarded at BOTH ends. Reads (Ctrl+V) surface as
+            // dispatcher faults and are handled by the guard below; WRITES go through
+            // the platform service, which needs somewhere to report a refused copy.
+            _platform.Logger = _logging;
+
+            // Attach the dispatcher fault guard as soon as there is somewhere to
+            // log to, and before any window exists — a clipboard/IME fault must
+            // never again take the process down with it ([PASTECRASH-2026-08-18]).
+            // The guard swallows ONLY faults the classifier positively identifies
+            // as platform input-layer ones; everything else still crashes and still
+            // reaches crash.log. Constructed and attached in ONE call so the
+            // subscription cannot be dropped on its own — see AppComposition.
+            _faultGuard = AppComposition.AttachDispatcherFaultGuard(_logging, Dispatcher.UIThread);
+
             // Two-connection lane router (interactive + bulk) — see
             // LaneRoutingPipeClient / docs/multipipe-eval.md §9.
             _pipeClient = new LaneRoutingPipeClient(_logging);
@@ -153,14 +171,24 @@ public class App : Application
 
             desktop.ShutdownRequested += (_, _) =>
             {
+                AppLifecycle.Phase = AppPhase.ShuttingDown;
                 _logging?.Info(Constants.LogCatInit, "UE5DumpUI shutting down...");
                 // Flush any pending debounced option change before teardown.
                 mainVm.FlushOptions();
                 _pipeClient?.Dispose();
                 _aobMakerBridge?.Dispose();
                 _platform?.Dispose();
+
+                // Detach BEFORE the logger dies. Past this point the guard could
+                // still be invoked but could no longer report what it decided, and a
+                // swallow nobody can see is worse than the crash it prevents.
+                _faultGuard?.Detach(Dispatcher.UIThread);
                 (_logging as IDisposable)?.Dispose();
             };
+
+            // Everything the window needs is wired; from here a crash is NOT a
+            // startup crash, and crash.log must stop calling it one.
+            AppLifecycle.Phase = AppPhase.Running;
         }
 
         base.OnFrameworkInitializationCompleted();

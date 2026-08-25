@@ -64,6 +64,31 @@ function ue5_recordDllDir(dir)
     end)
 end
 
+-- Report the RESOLVED DLL's size beside the path it chose, so a stale build is
+-- visible. This table cannot read the DLL's real build stamp here: it is not a C ABI
+-- export (only logged to init-0.log and carried on the pipe), the DLL is not injected
+-- yet at path-report time, and CE Lua has no stat-by-path API. The file SIZE is the
+-- cheap signal that separates a current build (several MB) from an old one -- the
+-- Feb-2026 build in CE's install folder was ~0.5 MB. See docs/todo.md
+-- [STALEDLL-2026-08-18]. A global so both the inject [ENABLE] chunk and the startup
+-- replay (different Lua chunks) can call it.
+function ue5_dllFileSize(path)
+    if type(path) ~= "string" or path == "" then return nil end
+    local f = io.open(path, "rb")
+    if not f then return nil end
+    local ok, sz = pcall(function() return f:seek("end") end)
+    f:close()
+    if not ok then return nil end
+    return sz
+end
+
+-- Human-readable size, e.g. "2,857,472 bytes (2.7 MB)". Never throws.
+function ue5_dllSizeText(path)
+    local sz = ue5_dllFileSize(path)
+    if not sz then return "unknown (could not read the file)" end
+    return string.format("%d bytes (%.1f MB)", sz, sz / (1024 * 1024))
+end
+
 -- ============================================================
 -- Locate UE5Dumper.dll
 -- ============================================================
@@ -104,12 +129,24 @@ pcall(function() _trainerDir = extractFilePath(TrainerOrigin or "") or "" end)
 _slot("trainer folder (only set in trainer mode)", _trainerDir,
       "Cheat Engine was not launched as a trainer")
 
--- 2/3. CE's file dialogs. The only channel that has ever carried this .CT's own
---      folder -- filled in by File &gt; Open / File &gt; Save, and NOT by
---      double-clicking the .CT or picking it from the recent-files menu, which
---      is the whole bug. Both are undocumented published components of CE's main
---      form, so both are guarded (the Save read used to be bare: a throw there
---      aborted the chunk before the log was even open).
+-- 2/3. CE's file dialogs. Both are undocumented published components of CE's
+--      main form, so both are guarded (the Save read used to be bare: a throw
+--      there aborted the chunk before the log was even open).
+--
+--      MEASURED 2026-08-22 on CE 7.7.0.10568, correcting what this comment used
+--      to claim. File &gt; Load Recent DOES fill both dialogs: on a freshly
+--      launched CE they read "", and immediately after picking this table from
+--      Load Recent they both read its full path. So the recent-files menu is NOT
+--      a channel that leaves these empty.
+--
+--      What DOES empty them is openProcess(): attaching writes the bare process
+--      name ("DumperTest-Win64-Shipping") over the path, and extractFilePath of
+--      a name with no separator is "". That is why the order matters --
+--        attach then load  -> dialogs hold the .CT path  -> slot 2 answers
+--        load then attach  -> dialogs hold a bare name   -> falls through to the
+--                             recent-files slot below
+--      Both resolve to the table's own folder, so the chain is correct either
+--      way; do not "fix" one of them into the other.
 local _openPath, _savePath = "", ""
 pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
 pcall(function() _savePath = getMainForm().SaveDialog1.FileName or "" end)
@@ -563,6 +600,8 @@ function ue5_inject()
         return false
     end
     ue5_log("DLL path: %s", DLL_PATH)
+    -- Size beside the path so a stale/old DLL is not resolved silently ([STALEDLL]).
+    ue5_log("DLL size: %s", ue5_dllSizeText(DLL_PATH))
 
     -- 0. Pre-check: verify CE has attached to a game process.
     -- getOpenedProcessID() returns 0 when no process is attached.
@@ -811,7 +850,8 @@ ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
 -- log -- and because the log opens with "w", the previous SUCCESSFUL run's log
 -- survived and read as if nothing had gone wrong.
 if DLL_PATH then
-    ue5_log("DLL_PATH = %s  (slot %s)", DLL_PATH, tostring(_DLL_FOUND_SLOT))
+    ue5_log("DLL_PATH = %s  (slot %s, size %s)", DLL_PATH, tostring(_DLL_FOUND_SLOT),
+            ue5_dllSizeText(DLL_PATH))
 else
     ue5_logError("UE5Dumper.dll NOT FOUND -- ticking [Inject DLL + Start Pipe Server] will show where it looked.")
     ue5_log("%s", ue5_renderDllSearch())

@@ -1,5 +1,7 @@
+using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
@@ -718,8 +720,26 @@ public class SnapshotViewModelTests : IDisposable
         _lastLog = new MockLoggingService();
         var vm = new SnapshotViewModel(new CaptureStub(), _store, _lastLog);
         vm.SetEngineState(new EngineState { PeHash = "GVM", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" });
-        await vm.RefreshCommand.ExecuteAsync(null);   // deterministic load (don't rely on the fire-and-forget refresh)
+        // Drain the refresh SetEngineState itself started. Running RefreshCommand here
+        // instead did not replace that refresh, it raced it — two concurrent
+        // UiCollection.Reset passes over one ObservableCollection (see DrainAsync).
+        await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
         return vm;
+    }
+
+    /// <summary>Await the refresh the VM ITSELF started, with a real deadline.
+    /// SetEngineState's refresh is fire-and-forget, so a test that followed it with
+    /// an awaited RefreshCommand ran BOTH over the same Snapshots collection:
+    /// measured 25/4000 in-process iterations saw duplicated rows or a torn null
+    /// slot (surfacing as an NRE inside OnIsGroupModeChanged, naming nothing).
+    /// Bounded at 10s because a hang is not a test result.</summary>
+    private static async Task DrainAsync(Task? pending, string what)
+    {
+        Assert.True(pending is not null, $"{what}: the VM never started it (seam unassigned)");
+        var finished = await Task.WhenAny(
+            pending!, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.True(ReferenceEquals(finished, pending), $"{what} did not finish within 10s");
+        await pending!;   // observe any fault it captured
     }
 
     [Fact]
@@ -746,6 +766,129 @@ public class SnapshotViewModelTests : IDisposable
         var c = vm.GroupCandidates[0];
         Assert.Equal(1, c.InstanceIndex);                  // only object 1 holds 24 AND 10
         Assert.All(c.Slots, s => Assert.True(s.Locked));
+    }
+
+    /// <summary>
+    /// The snapshot corpus caps each slot's witness list, and it must SAY SO — with the same
+    /// sentence the live Group Scan uses, naming the cap that actually applied.
+    ///
+    /// <para><b>Why this is worth four arms.</b> "The notice appeared" is satisfied by a flag
+    /// hardwired true; "no notice appeared" is satisfied by one hardwired false. Only the PAIR
+    /// discriminates, and only if both arms return a real candidate so the difference between
+    /// them is the sentence and nothing else. Arm C then ties the sentence to the truth: the
+    /// number it prints must equal the number of leaves actually kept. That is the failure this
+    /// project keeps finding — <c>[SOLIDEHELD-2026-08-21]</c> reported "held on 145 instances"
+    /// about a field it had not written, <c>[CADENCEGAP-2026-08-22]</c> reported a period twice
+    /// the truth beside a fire count that contradicted it — the report and the reality computed
+    /// by different code paths.</para>
+    ///
+    /// <para>Arm D is the checklist's step 4: raising Value Search's per-slot cap must not move
+    /// the snapshot's. It is asserted structurally rather than by driving two view-models,
+    /// because the guarantee IS structural — <c>SnapshotStore</c> calls
+    /// <c>GroupMatch.Run</c> without a cap argument, so the default
+    /// <c>Constants.GroupPerSlotCap</c> is the only value that can ever apply. Pass a fifth
+    /// argument at either call site and this fails.</para>
+    ///
+    /// <para>⚠ What it does NOT cover: that the sentence is legible on screen. It is a VM
+    /// string here. <c>SnapshotPanel.axaml</c> renders it in a <c>WrapPanel</c> and until
+    /// 2026-08-22 gave it neither <c>TextWrapping</c> nor a <c>ToolTip</c>, so the notice about
+    /// truncation was itself truncated.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(0, false)]   // exactly at the cap  -> no notice   (the control)
+    [InlineData(1, true)]    // one over the cap    -> notice
+    public async Task GroupMatch_SaysWhenASlotWasTruncated(int overCap, bool expectNotice)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        int cap = Constants.GroupPerSlotCap;          // derived, never hardcoded
+        int n = cap + overCap;
+
+        _store.SetActiveGame("GCAP");
+        long id = await _store.CreateSnapshotAsync(
+            new SnapshotMeta { Label = "cap", Scope = "NumericNoByte", PeHash = "GCAP", GameSessionId = "GCAP-T" }, ct);
+
+        // One object, n IntProperty fields, every one holding 7. Both slots then match every
+        // field, so each slot's witness list is n long and the cap decides what survives.
+        var fields = new (string, string, int, string)[n];
+        for (int i = 0; i < n; i++) fields[i] = ($"F{i}", "IntProperty", 0x20 + 4 * i, "07000000");
+        await _store.WriteChunkAsync(id, new[] { GMakeObj(1, "BP_Capped_C", fields) }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, n, ct);
+
+        _lastLog = new MockLoggingService();
+        var vm = new SnapshotViewModel(new CaptureStub(), _store, _lastLog);
+        vm.SetEngineState(new EngineState { PeHash = "GCAP", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" });
+        await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
+
+        vm.IsGroupMode = true;
+        Assert.NotNull(vm.GroupSnapshot);
+        vm.GroupInputs[0].ScanType = ValueScanType.Exact; vm.GroupInputs[0].Value = "7";
+        vm.GroupInputs[1].ScanType = ValueScanType.Exact; vm.GroupInputs[1].Value = "7";
+        await vm.RunGroupMatchCommand.ExecuteAsync(null);
+
+        // BOTH arms must produce a candidate. Without this the "no notice" arm could be
+        // satisfied by matching nothing at all, which is not the state being tested.
+        Assert.True(vm.GroupCandidates.Count == 1,
+            $"n={n} cap={cap}: expected 1 candidate, got {vm.GroupCandidates.Count}. " +
+            $"status='{vm.GroupStatusText}'");
+
+        var sentence = PartialResultNotice.PerSlotWitnessCap(cap);
+        if (expectNotice)
+        {
+            Assert.Contains(sentence, vm.GroupStatusText, StringComparison.Ordinal);
+            // Arm C — the sentence must not be able to lie. It names `cap`; the slot must
+            // really have kept exactly that many leaves.
+            // ⚠ MatchedOffsets, NOT MatchCount. MatchCount is the DLL's own count and the
+            // snapshot builder leaves it at 0 (ValueScanModels.cs:399-404 and :446) — asserting
+            // it would have read 0 in BOTH arms and compared nothing at all.
+            var slot = vm.GroupCandidates[0].Slots[0];
+            Assert.Equal(cap, slot.MatchedOffsets.Count);
+        }
+        else
+        {
+            Assert.DoesNotContain(sentence, vm.GroupStatusText, StringComparison.Ordinal);
+            // and it really did keep everything, so "no notice" is the truth and not silence
+            Assert.Equal(n, vm.GroupCandidates[0].Slots[0].MatchedOffsets.Count);
+        }
+    }
+
+    /// <summary>
+    /// Step 4 of the checklist: the snapshot cap is fixed and does NOT follow Value Search's
+    /// setting. Structural, because the guarantee is structural — nothing can reach the store
+    /// to change it.
+    /// </summary>
+    [Fact]
+    public void SnapshotGroupMatch_NeverTakesAPerSlotCapFromTheCaller()
+    {
+        var src = File.ReadAllText(FindRepoFile(Path.Combine("ui", "UE5DumpUI", "Services", "SnapshotStore.cs")));
+        var calls = Regex.Matches(src, @"GroupMatch\.Run\(([^;]*?)\)\s*\)");
+
+        // Guard the guard: if the pattern stops matching, the assertion below is vacuous.
+        Assert.True(calls.Count >= 2,
+            $"found {calls.Count} GroupMatch.Run call site(s) in SnapshotStore.cs — expected the " +
+            "known 2 (Mode A and Mode B). The scan has probably stopped matching.");
+
+        foreach (Match c in calls)
+        {
+            // 4 arguments: leaves, slots, out perSlot, out capHit. A 5th is a cap.
+            int commas = c.Groups[1].Value.Count(ch => ch == ',');
+            Assert.True(commas == 3,
+                "SnapshotStore passes a per-slot cap to GroupMatch.Run: " +
+                c.Value.Replace("\r", " ").Replace("\n", " ") +
+                " — the snapshot corpus's cap must stay Constants.GroupPerSlotCap so it cannot " +
+                "drift from what result.PerSlotCap reports, and so Value Search's setting cannot " +
+                "silently move it.");
+        }
+    }
+
+    private static string FindRepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException("could not locate " + relative + " from " + AppContext.BaseDirectory);
     }
 
     [Fact]
@@ -822,7 +965,7 @@ public class SnapshotViewModelTests : IDisposable
         var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService());
         // Current live session is GVM-NEW; the snapshot is from GVM-OLD (a previous run).
         vm.SetEngineState(new EngineState { PeHash = "GVM", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "NEW" });
-        await vm.RefreshCommand.ExecuteAsync(null);
+        await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
         vm.GroupSnapshot = vm.Snapshots[0];
 
         // Cross-session: every per-slot handoff (Live / Copy / Locate-GWorld / Locate-GameEngine)
@@ -912,7 +1055,7 @@ public class SnapshotViewModelTests : IDisposable
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _appData;
         public string GetLogDirectoryPath() => Path.Combine(_appData, "Logs");
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST-MACHINE";
         public void CloseImeForWindow(IntPtr windowHandle) { }

@@ -175,7 +175,7 @@
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="240"/>
         <DataGridTextColumn Header="Function" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="240"/>
-        <DataGridTextColumn Header="Params" Binding="{Binding ParamsLabel}" SortMemberPath="ParamsLabel" Width="90"/>
+        <DataGridTextColumn Header="Params" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
         <!-- Period: mean inter-arrival cadence (Phase E); "Timer" in the Kind column
              marks a regular timer-like callback. -->
         <DataGridTextColumn Header="Period" Binding="{Binding PeriodLabel}" SortMemberPath="MeanPeriodMs" Width="72"/>

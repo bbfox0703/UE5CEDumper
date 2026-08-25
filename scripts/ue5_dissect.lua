@@ -16,12 +16,23 @@
 
 -- ----------------------------------------------------------------
 -- Module state
+--
+-- Kept in a CE-GLOBAL table, not chunk-locals. CE keeps ONE Lua state for the
+-- whole session and never rebuilds it (docs/CE-Bugs-Minesweeper.md 5), and this
+-- file is loaded via Table -> Add File, so a second load would otherwise start
+-- with fresh empty caches -- re-creating every structure already in CE's global
+-- list (audit #5 AA21) and re-registering the dissect override while the previous
+-- registration still stands, leaving disableAutoCallback able to unregister only
+-- the newest (audit #5 AA22). One shared global table makes a re-load idempotent:
+-- the caches and the single pair of callback ids survive it.
 -- ----------------------------------------------------------------
-local dissect = {}            -- public API table
-local structList = {}         -- saved CE structure references
-local structCache = {}        -- name -> CE structure (avoids duplicates)
-local callbackIdOverride = nil
-local callbackIdNameLookup = nil
+_ue5_dissect_state = _ue5_dissect_state or {
+  structList  = {},   -- saved CE structure references
+  structCache = {},   -- name -> CE structure (avoids duplicates)
+  -- callbackIdOverride / callbackIdNameLookup are added on demand (nil until enabled)
+}
+local ST = _ue5_dissect_state
+local dissect = {}            -- public API table (re-created per load; state is global)
 local MAX_STRUCT_DEPTH = 6    -- prevent infinite StructProperty recursion
 local UOBJECT_VTABLE_SIZE = 8 -- 64-bit pointer
 
@@ -172,6 +183,28 @@ local function getTypeInfo(typeName, fieldSize)
 end
 
 -- ----------------------------------------------------------------
+-- Packed-bool bitmask helpers (shared shape with ue5_freeze_helper.lua's
+-- writeBool / Solitar::ApplyBoolBit / FieldValueConverter.ApplyBoolMask -- one
+-- rule in four tiers). A UE bool is either a NATIVE bool (its own whole byte) or
+-- a PACKED bitfield (`uint8 bFoo:1`, up to eight sharing a byte, each owning one
+-- bit named by a power-of-two FieldMask). Only the eight single-bit masks are
+-- packed; 0 (no mask reported) and 0xFF (UE's native-bool marker, FieldMask=255
+-- when bIsNativeBool) both mean the whole byte is this bool's.
+-- ----------------------------------------------------------------
+local BOOL_BIT_MASKS = {
+    [1] = true, [2] = true, [4] = true, [8] = true,
+    [16] = true, [32] = true, [64] = true, [128] = true,
+}
+local function isPackedBoolMask(mask)
+    return type(mask) == "number" and BOOL_BIT_MASKS[mask] == true
+end
+local function maskToBitIndex(mask)
+    local bitIdx, m = 0, mask
+    while m > 1 do m = math.floor(m / 2); bitIdx = bitIdx + 1 end
+    return bitIdx
+end
+
+-- ----------------------------------------------------------------
 -- Walk a UClass via DLL and return a Lua field table
 -- ----------------------------------------------------------------
 local function walkClassFields(classAddr)
@@ -235,7 +268,18 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
     namePrefix = namePrefix or ""
     maxDepth = maxDepth or MAX_STRUCT_DEPTH
 
-    if depth > maxDepth then return end
+    if depth > maxDepth then
+        -- Do NOT drop a too-deep nested struct silently: leave a visible marker so the
+        -- dissect shows something was omitted rather than just ending short. (audit #5
+        -- AA23) offsetBase is this struct's base; namePrefix is the accumulated path
+        -- (it already ends in ".", so the note reads e.g. "Foo.Bar.<omitted>").
+        local e = ceStruct.addElement()
+        e.Offset  = offsetBase
+        e.Name    = namePrefix ..
+            string.format("(nested structs beyond depth %d omitted)", maxDepth)
+        e.Vartype = vtByte
+        return
+    end
 
     local fields = walkClassFields(classAddr)
 
@@ -247,11 +291,12 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
         if f.typeName == "StructProperty" then
             local innerClass = callDLL("UE5_GetFieldStructClass", f.faddr)
             if innerClass ~= 0 then
-                -- Resolve struct type name for display prefix
-                local sBuf = allocateMemory(128)
-                callDLL("UE5_GetObjectName", innerClass, sBuf, 128)
-                local sName = readString(sBuf, 128, false) or "Struct"
-                deAlloc(sBuf)
+                -- Recurse into the inner struct. The prefix is displayName, not the
+                -- struct's TYPE name -- the old code allocated a target buffer and did
+                -- a CreateRemoteThread round-trip (UE5_GetObjectName) per StructProperty
+                -- field to read that type name into `sName`, then never used it (the
+                -- recursion uses displayName). Dead work that also LEAKED sBuf if the
+                -- call raised. (audit #5 AA24)
                 addFieldsToStruct(ceStruct, innerClass, absOffset,
                     displayName .. "." , depth + 1, maxDepth)
             else
@@ -263,19 +308,25 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 if f.size > 4 then e.Bytesize = f.size end
             end
 
-        -- BoolProperty: get bitmask and set ChildStructStart
+        -- BoolProperty: a packed bitfield bool is shown as its single bit.
         elseif f.typeName == "BoolProperty" then
             local e = ceStruct.addElement()
             e.Offset  = absOffset
             e.Name    = displayName
             e.Vartype = vtByte
             local mask = callDLL("UE5_GetFieldBoolMask", f.faddr)
-            if mask ~= 0 then
-                e.ChildStructStart = mask
-                -- Compute bit index for display
-                local bitIdx = 0
-                local m = mask
-                while m > 1 do m = math.floor(m / 2); bitIdx = bitIdx + 1 end
+            -- CE renders a single bit via vtBinary + BitStart + BitSize (celua.txt,
+            -- StructureElement). The old code stored the mask in ChildStructStart --
+            -- which means "byte offset inside a child struct", NOT a bitmask -- so CE
+            -- ignored it and the row still displayed the whole byte, mis-labelled
+            -- "(bit 7, mask 0xFF)" for native bools too (the bit-index loop treated
+            -- 0xFF as a mask). Only a genuine single-bit packed mask (0x01..0x80) gets
+            -- the bit treatment; 0 / 0xFF keep the whole-byte vtByte. (audit #5 AA26)
+            if isPackedBoolMask(mask) then
+                local bitIdx = maskToBitIndex(mask)
+                e.Vartype  = vtBinary
+                e.BitStart = bitIdx
+                e.BitSize  = 1
                 e.Name = string.format("%s (bit %d, mask 0x%02X)", displayName, bitIdx, mask)
             end
 
@@ -370,6 +421,35 @@ local function detectOuterOffset(probeAddr)
 end
 
 -- ----------------------------------------------------------------
+-- Is `addr` a UClass (so instances of it are UObjects that carry the header)?
+--
+-- addUObjectHeader staples the UObject base layout (VTable/Class/Outer/...) onto a
+-- structure. That is right for an instance of a UClass and WRONG for a plain struct
+-- value: dissect.createFromPath -> UE5_FindObject resolves ANY UObject by path, a
+-- UScriptStruct included (e.g. /Script/CoreUObject.Vector, X/Y/Z doubles at
+-- 0x00/0x08/0x10), and a Vector value has no UObject header -- stapling one lands
+-- ObjectIndex/FNameIndex/Outer rows over real members. (audit #5 AA37)
+--
+-- A UScriptStruct is ITSELF a UObject, so UE5_GetObjectClass(addr) ~= 0 does NOT
+-- tell a class from a struct. Its META-class name does: every UClass-family meta
+-- ends in "Class" (Class, BlueprintGeneratedClass, WidgetBlueprintGeneratedClass,
+-- ...) while the non-class UStructs are "ScriptStruct" / "Function" / "Enum". The
+-- DLL uses the same "Class"-name idiom in UE5_FindClass. Only createFromClass's
+-- site needs this (its probe is a CLASS); the override callback's probe is an
+-- INSTANCE already gated by GetObjectClass ~= 0 -- see there.
+-- ----------------------------------------------------------------
+local function probeIsUClass(addr)
+    if not addr or addr == 0 then return false end
+    local meta = callDLL("UE5_GetObjectClass", addr)
+    if meta == 0 then return false end
+    local name = withBuf(256, function(buf)
+        callDLL("UE5_GetObjectName", meta, buf, 256)
+        return readString(buf, 256, false) or ""
+    end)
+    return #name >= 5 and name:sub(-5) == "Class"
+end
+
+-- ----------------------------------------------------------------
 -- Add standard UObject header fields (VTable, index, class, name, outer)
 -- ----------------------------------------------------------------
 local function addUObjectHeader(ceStruct, probeAddr)
@@ -430,9 +510,9 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     end
 
     -- Check cache — reuse if already built
-    if structCache[structName] then
+    if ST.structCache[structName] then
         log("Reusing cached struct: %s", structName)
-        return structCache[structName]
+        return ST.structCache[structName]
     end
 
     log("Creating struct: %s (class=0x%X)", structName, classAddr)
@@ -448,7 +528,12 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     -- (audit #5 AA25, promoted from latent by the AA5/AA6 fix above.)
     local built, buildErr = pcall(function()
         addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)   -- walk class fields recursively
-        addUObjectHeader(ceStruct, classAddr)                        -- add UObject base fields
+        -- The UObject header belongs only when instances of classAddr are UObjects,
+        -- i.e. classAddr is a UClass. createFromPath can land a UScriptStruct here
+        -- (Vector/Rotator/...), whose values have no header. (audit #5 AA37)
+        if probeIsUClass(classAddr) then
+            addUObjectHeader(ceStruct, classAddr)                    -- add UObject base fields
+        end
     end)
 
     ceStruct.endUpdate()
@@ -468,8 +553,8 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
 
     -- Register globally
     ceStruct.addToGlobalStructureList()
-    structList[#structList + 1] = ceStruct
-    structCache[structName] = ceStruct
+    ST.structList[#ST.structList + 1] = ceStruct
+    ST.structCache[structName] = ceStruct
 
     log("Struct created: %s (%d elements, %d bytes)", structName, ceStruct.Count, propsSize)
     return ceStruct
@@ -553,7 +638,12 @@ local function dissectOverrideBody(ceStruct, instanceAddr)
     ceStruct.beginUpdate()
     addFieldsToStruct(ceStruct, classAddr, 0, "", 0)
     -- Probe the INSTANCE, not the class: both are UObjects, but the instance is
-    -- the object this structure actually describes.
+    -- the object this structure actually describes. This site is ALREADY gated for
+    -- AA37 -- instanceAddr reached here only past the GetObjectClass ~= 0 check
+    -- above, so it is a UObject and the header is valid. probeIsUClass is NOT used
+    -- here: its meta-name test is for a CLASS probe, and an instance's class name
+    -- (e.g. "PlayerCharacter") does not end in "Class", so it would wrongly suppress
+    -- the header for ordinary instances.
     addUObjectHeader(ceStruct, instanceAddr)
     ceStruct.endUpdate()
 
@@ -583,14 +673,35 @@ end
 -- these fire per expanded node, and the hygiene rule exists so the Lua Engine
 -- window never covers Cheat Engine. (audit #5 AA4)
 local warnedCallbackFailure = false
+local callbackFailStreak = 0
+-- After this many CONSECUTIVE failures the DLL is treated as gone and the callbacks
+-- unregister THEMSELVES, so CE returns to its own autoGuessStruct for the rest of the
+-- session instead of routing every dissect through a dead barrier (audit #5 AA27). The
+-- AA4 barrier already makes each failure DECLINE cleanly rather than break CE's dissect;
+-- this additionally sheds the per-node pcall overhead and the stale override once the DLL
+-- is clearly gone (unloaded / game exited). One later success resets the streak.
+local CALLBACK_MAX_FAIL_STREAK = 3
 local function callbackBarrier(what, fn, ...)
     local ok, a, b = pcall(fn, ...)
-    if ok then return a, b end
+    if ok then
+        callbackFailStreak = 0   -- a working call clears a transient failure run
+        return a, b
+    end
     if not warnedCallbackFailure then
         warnedCallbackFailure = true
         warn("auto-dissect %s failed, letting CE handle it: %s\n" ..
-             "         (reported once; run dissect.disableAutoCallback() to unregister)",
-             what, tostring(a))
+             "         (reported once; auto-unregisters after %d consecutive failures, " ..
+             "or run dissect.disableAutoCallback())",
+             what, tostring(a), CALLBACK_MAX_FAIL_STREAK)
+    end
+    callbackFailStreak = callbackFailStreak + 1
+    if callbackFailStreak >= CALLBACK_MAX_FAIL_STREAK and ST.callbackIdOverride then
+        -- The DLL is gone: stop intercepting CE's dissect. disableAutoCallback is a
+        -- dissect.* method resolved at call time, so the forward reference is fine.
+        dissect.disableAutoCallback()
+        warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
+             "guessing is back. Re-run dissect.enableAutoCallback() once UE5Dumper.dll " ..
+             "is injected again.", callbackFailStreak)
     end
     return nil
 end
@@ -629,23 +740,25 @@ end
 -- PUBLIC: Enable/disable auto-dissect callbacks
 -- ----------------------------------------------------------------
 function dissect.enableAutoCallback()
-    if callbackIdOverride then
+    if ST.callbackIdOverride then
         log("Auto callback already registered")
         return
     end
-    callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
-    callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
+    ST.callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
+    ST.callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
+    warnedCallbackFailure = false   -- fresh registration: allow the one-time warning again
+    callbackFailStreak    = 0
     log("Auto dissect callbacks registered")
 end
 
 function dissect.disableAutoCallback()
-    if callbackIdOverride then
-        unregisterStructureDissectOverride(callbackIdOverride)
-        callbackIdOverride = nil
+    if ST.callbackIdOverride then
+        unregisterStructureDissectOverride(ST.callbackIdOverride)
+        ST.callbackIdOverride = nil
     end
-    if callbackIdNameLookup then
-        unregisterStructureNameLookup(callbackIdNameLookup)
-        callbackIdNameLookup = nil
+    if ST.callbackIdNameLookup then
+        unregisterStructureNameLookup(ST.callbackIdNameLookup)
+        ST.callbackIdNameLookup = nil
     end
     log("Auto dissect callbacks unregistered")
 end
@@ -654,12 +767,12 @@ end
 -- PUBLIC: Clear all created structures
 -- ----------------------------------------------------------------
 function dissect.clearAll()
-    for _, s in ipairs(structList) do
+    for _, s in ipairs(ST.structList) do
         pcall(function() s:removeFromGlobalStructureList() end)
         pcall(function() s:Destroy() end)
     end
-    structList = {}
-    structCache = {}
+    ST.structList = {}
+    ST.structCache = {}
     log("All structures cleared")
 end
 

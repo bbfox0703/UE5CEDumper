@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -6,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Views;
@@ -25,6 +28,24 @@ namespace UE5DumpUI.Views;
 /// </summary>
 public sealed class FunctionPropsDialog : ManagedDialogWindow
 {
+    /// <summary>
+    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF18).
+    /// A code-built grid is not exempt from the rule the XAML panels follow: these
+    /// are all DataGridTemplateColumns, so no binding roots the sort path and the
+    /// reflection sort is trimmed away. Shared verbatim with
+    /// <see cref="PropertyXrefDialog"/>'s twin grid where the property names agree.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, IComparer> XrefSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["WriteCount"]  = DataGridSortComparers.Number<FunctionPropRef>(r => r.WriteCount),
+            ["Occurrences"] = DataGridSortComparers.Number<FunctionPropRef>(r => r.Occurrences),
+            ["Scope"]       = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Scope),
+            ["Confidence"]  = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Confidence),
+            ["Name"]        = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Name),
+            ["Type"]        = DataGridSortComparers.Ordinal<FunctionPropRef>(r => r.Type),
+        };
+
     private readonly IDumpService _dump;
     private readonly IPlatformService _platform;
     private readonly string _funcName;
@@ -38,6 +59,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private List<FunctionPropRef> _allProps = new();
     private string _lastMethod = "bytecode";
     private int _lastUnmapped;
+    private bool _lastBudgetHit;
 
     /// <summary>Resolve owner window + show. No-op without an address/platform/window.</summary>
     public static async Task ShowForFunctionAsync(
@@ -181,7 +203,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.WriteCount ?? 0) > 0 ? "#E0A050" : "#808080")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -194,7 +216,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Text = x?.Occurrences.ToString() ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -209,7 +231,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.IsClassField ?? false) ? "#4EC9B0" : "#808080")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         // Confidence column — only meaningful for native disasm (Path 2); hidden
         // for the exact bytecode path. Low-confidence rows are tinted amber.
@@ -227,7 +249,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                         (x?.IsLowConfidence ?? false) ? "#E0A050" : "#4EC9B0")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         };
         _grid.Columns.Add(_confCol);
         _grid.Columns.Add(new DataGridTemplateColumn
@@ -241,7 +263,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Text = x?.Name ?? "",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
         _grid.Columns.Add(new DataGridTemplateColumn
         {
@@ -255,8 +277,14 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
                     Foreground = new SolidColorBrush(Color.Parse("#569CD6")),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(4, 0),
-                }, supportsRecycling: true),
+                }, supportsRecycling: false),
         });
+        // AOT-safe sort comparers (audit #5 AF18). Every column above is a
+        // DataGridTemplateColumn — no column-level Binding at all — so nothing roots
+        // its SortMemberPath and the reflection sort is trimmed: all six headers were
+        // clickable and inert in the shipped trimmed build. Same rule and same helper
+        // as the XAML panels (Helpers/DataGridSortComparers.cs class doc).
+        _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) => _btnCopy.IsEnabled = _grid.SelectedItem is FunctionPropRef;
         _grid.DoubleTapped += (_, _) => OnCopyClicked(null, null!);
         root.Children.Add(_grid);
@@ -284,6 +312,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             _allProps = res.Props;
             _lastMethod = res.Method;
             _lastUnmapped = res.Unmapped;
+            _lastBudgetHit = res.BudgetHit;
 
             // Confidence column is only meaningful for the native disasm path.
             _confCol.IsVisible = res.Method == "disasm";
@@ -327,14 +356,28 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         var hiddenNote = fieldsOnly && _allProps.Count > shown.Count
             ? $"  ({_allProps.Count - shown.Count} locals/temporaries hidden)" : "";
         // Path 2 (native disasm): flag the heuristic source + any unmapped accesses.
+        // "blueprint_no_script" is a REFUSAL, not an empty result, and it must not read like
+        // one. The DLL reaches it when a script/Blueprint function has no usable Script buffer:
+        // its `Func` points at the shared interpreter, so disassembling it would analyse
+        // UObject::ProcessInternal and attribute the interpreter's field accesses to this
+        // function. Before the gate went in (Aura.cpp, AnalyzeNativeFunctionProps) this case
+        // arrived here as "disasm" and printed "[native disasm — heuristic, N unmapped]" —
+        // claiming to have disassembled the function it never looked at.
         var methodNote = _lastMethod == "disasm"
             ? "  [native disasm — heuristic"
               + (_lastUnmapped > 0 ? $", {_lastUnmapped} unmapped]" : "]")
+            : _lastMethod == "blueprint_no_script"
+            ? "  [Blueprint function with no readable bytecode — NOTHING was analysed, "
+              + "so this is not \"no properties\"]"
             : "";
+        // AF7: and say so when the decoder stopped early, because "no writer found"
+        // is what this dialog is read for. Amber, not green — a truncated list must
+        // not look like a settled answer.
+        var budgetNote = _lastBudgetHit ? PartialResultNotice.DisassemblyBudget() : "";
         _statusLabel.Text = $"{shown.Count} propert{(shown.Count == 1 ? "y" : "ies")} "
-                          + $"({writers} written){hiddenNote}{methodNote}";
+                          + $"({writers} written){hiddenNote}{methodNote}{budgetNote}";
         _statusLabel.Foreground = new SolidColorBrush(Color.Parse(
-            shown.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
+            _lastBudgetHit ? "#E0A050" : shown.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
     }
 
     private async void OnCopyClicked(object? sender, RoutedEventArgs e)

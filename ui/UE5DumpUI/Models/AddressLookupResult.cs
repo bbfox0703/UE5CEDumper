@@ -119,6 +119,17 @@ public sealed class ContainerScanStats
     public long DurationMs { get; init; }
     public bool DeadlineHit { get; init; }
 
+    /// <summary>
+    /// The recursive DEEP descent ran (the shallow pass found nothing and the caller
+    /// opted in via <c>container_depth &gt; 1</c>). It matters to the reader because the
+    /// deep pass is bounded by a per-container element probe cap as well as by the
+    /// deadline — so a deep MISS is not proof of absence even when
+    /// <see cref="DeadlineHit"/> is false. The DLL has always emitted this and the UI
+    /// dropped it, which is half of why the "[scanned X/Y]" suffix could not do the one
+    /// job it was added for. (audit #5 Z12)
+    /// </summary>
+    public bool DeepScan { get; init; }
+
     public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal;
 }
 

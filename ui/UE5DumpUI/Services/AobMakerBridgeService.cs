@@ -457,6 +457,20 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     // --- Per-request reconnect (CE Plugin disconnects after each request) ---
 
+    /// <summary>
+    /// Open a fresh connection to the CE-plugin pipe. Never throws — every public
+    /// method turns a false into the same user-visible "AOBMaker not connected".
+    ///
+    /// That is exactly why the failure must be LOGGED here (audit #5 AC3): six of the
+    /// seven call sites do nothing but <c>IsAvailable = false; return false;</c>, so a
+    /// bare catch made "CE isn't running", "the plugin isn't loaded", "another client
+    /// owns the single pipe instance", "the ACL refused us" and "the caller cancelled"
+    /// one indistinguishable outcome with zero diagnostics anywhere.
+    ///
+    /// Split by level on purpose: not-running is the overwhelmingly common case and a
+    /// tab switch probes on every activation, so it stays at Debug; anything else is a
+    /// real fault and gets a Warn that names the exception type.
+    /// </summary>
     private async Task<bool> ReconnectAsync(CancellationToken ct)
     {
         try
@@ -467,9 +481,32 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             await _pipe.ConnectAsync(ConnectTimeoutMs, ct);
             return true;
         }
-        catch
+        catch (OperationCanceledException)
         {
-
+            // The caller withdrew (tab switch / window close). Not a fault, and NOT
+            // rethrown: every call site is written against a bool.
+            _log?.Debug(Constants.LogCatInit,
+                $"AOBMaker bridge: connect to '{PipeName}' cancelled by caller");
+            CleanupPipe();
+            return false;
+        }
+        catch (TimeoutException)
+        {
+            // ConnectAsync's own deadline: nothing is listening. Cheat Engine is not
+            // running, or it is but the AOBMaker plugin was never loaded.
+            _log?.Debug(Constants.LogCatInit,
+                $"AOBMaker bridge: no server on \\\\.\\pipe\\{PipeName} within {ConnectTimeoutMs} ms " +
+                "(Cheat Engine not running, or the AOBMaker plugin is not loaded)");
+            CleanupPipe();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // Everything else means a server EXISTS and we still could not reach it —
+            // pipe busy (all instances taken), access denied, broken pipe. Those need
+            // a different remedy from "start CE", so they must read differently.
+            _log?.Warn(Constants.LogCatInit,
+                $"AOBMaker bridge: connect to '{PipeName}' failed ({ex.GetType().Name}): {ex.Message}");
             CleanupPipe();
             return false;
         }

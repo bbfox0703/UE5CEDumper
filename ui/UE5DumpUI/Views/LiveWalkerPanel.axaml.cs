@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -21,14 +21,39 @@ public partial class LiveWalkerPanel : UserControl
 {
     private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromArgb(60, 255, 200, 0));
 
-    // AOT-safe sort comparer for the FieldGrid's only template data column
-    // ("Value"). Text columns sort out-of-box via their Binding path; the
-    // Value column has no column-level binding, so its reflection sort is
-    // trimmed under AOT — wire an explicit comparer (aot-pitfalls.md §4.5).
+    // AOT-safe sort comparers for the FieldGrid's TEMPLATE data columns ("Value" and
+    // "Type"). Text columns sort out-of-box via their Binding path; a template column
+    // has no column-level binding, so its reflection sort is trimmed under AOT — wire
+    // an explicit comparer (aot-pitfalls.md §4.5).
+    //
+    // ⚠ "Type" joined this list on 2026-08-23 and did NOT start as a template column.
+    // It was a DataGridTextColumn, therefore binding-rooted and safe, until
+    // [V8PREVIEWCLIP-2026-08-23] converted it so the cell would have an element to hang
+    // ToolTip.Tip on (a DataGridTextColumn's Binding= is not an element). That
+    // conversion silently removed the column-level binding that was rooting TypeName,
+    // and a sort header that animates and does nothing is invisible in every
+    // JIT test host — only the trimmed binary misbehaves.
+    //   DataGridSortWiringTests caught it the same minute, which is exactly what that
+    // guard exists for. Worth remembering as a shape: making a column PRETTIER can
+    // break its SORT, because the two ride on the same attribute.
     private static readonly IReadOnlyDictionary<string, IComparer> FieldsSortComparers =
         new Dictionary<string, IComparer>
         {
             ["DisplayValue"] = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.DisplayValue),
+            ["TypeName"]     = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.TypeName),
+        };
+
+    // FunctionGrid's "Params" column (audit #5 AF20). This file wired 1 of its 3
+    // DataGrids; the missed one is subtler than a template column: "Params" IS a
+    // DataGridTextColumn, but its value comes from a <MultiBinding> in ELEMENT
+    // syntax, which is a reflection binding rather than a compiled one — so nothing
+    // roots NumParms and the header was inert in the shipped trimmed build. The
+    // third grid (the reverse-lookup results) binds and sorts on the same path for
+    // every column, so it is rooted and needs no dictionary.
+    private static readonly IReadOnlyDictionary<string, IComparer> FunctionsSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["NumParms"] = DataGridSortComparers.Number<FunctionInfoModel>(r => r.NumParms),
         };
 
     // Audit fix #18: track the currently-subscribed VM so we can `-=` from
@@ -42,6 +67,7 @@ public partial class LiveWalkerPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("FieldGrid")?.WireSortComparers(FieldsSortComparers);
+        this.FindControl<DataGrid>("FunctionGrid")?.WireSortComparers(FunctionsSortComparers);
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttached;
         DetachedFromVisualTree += OnDetached;
@@ -379,14 +405,16 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
-    private void FieldGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
-    {
-        if (e.Row.DataContext is LiveFieldValue field)
-        {
-            e.Row.Background = field.IsSearchMatch ? HighlightBrush : Brushes.Transparent;
-            e.Row.Foreground = field.IsGuessed ? GuessedForeground : NormalForeground;
-        }
-    }
+    // FieldGrid_LoadingRow was HERE and is deliberately gone. [LWREFRESH-2026-08-21]
+    //
+    // It painted Row.Background/Foreground on realization, which cannot react to a property change
+    // on a row that is reused rather than replaced — and reusing rows is what stops the grid
+    // drifting a row upward on every Refresh. The tint now comes from a bound DataGridRow style in
+    // LiveWalkerPanel.axaml.
+    //
+    // ⚠ Do not reinstate it "as a safety net": `e.Row.Background = …` writes at LocalValue
+    // priority, which outranks a Style setter, so its Transparent branch alone would pin every
+    // non-matching row and silently kill the binding.
 
     private void FieldGrid_BeginningEdit(object? sender, DataGridBeginningEditEventArgs e)
     {

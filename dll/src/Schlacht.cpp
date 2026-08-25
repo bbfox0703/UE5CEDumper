@@ -242,6 +242,22 @@ bool ResolveCameraPose(uintptr_t pc, double outLoc[3], double outFwd[3]) {
 
 // ---- hit-actor extraction (the fragile, per-game part — LIVE-VERIFY) ----
 
+// Walk Outer until an AActor turns up. A trace hit is very often reported as the
+// PRIMITIVE COMPONENT that was struck, and a component's Outer is the actor that
+// owns it — which is what SetActorHiddenInGame needs. Bounded because Outer chains
+// end at the package and a corrupt object must not spin the worker.
+//
+// Returns the input unchanged when it is already an actor, so this is free for every
+// build where the direct read was already correct.
+uintptr_t ResolveToActor(uintptr_t obj) {
+    for (int hop = 0; obj && hop < 4; ++hop) {
+        uintptr_t cls = Ubel::GetClass(obj);
+        if (cls && Aura::ClassDerivesFromAny(cls, {"Actor"})) return obj;
+        obj = Ubel::GetOuter(obj);
+    }
+    return 0;
+}
+
 // Pull the hit AActor* out of a returned FHitResult buffer slice. UE4 stores it
 // as `Actor` (TWeakObjectPtr — first int32 is the GObjects ObjectIndex, resolved
 // via Aura::GetByIndex). UE5 replaced it with `HitObjectHandle`
@@ -249,6 +265,25 @@ bool ResolveCameraPose(uintptr_t pc, double outLoc[3], double outFwd[3]) {
 // the leading int32 as an ObjectIndex. Returns 0 when it can't be resolved.
 uintptr_t ExtractHitActor(const std::vector<uint8_t>& buf, const FunctionParam& outHit) {
     if (outHit.offset < 0) return 0;
+    // One-shot layout dump. Which member of FHitResult we read, and at what offset, is
+    // the whole question behind [SEETHRUNOOP-2026-08-22]: on UE 5.4 this resolves to a
+    // component. Guessing at the struct from the outside is how a fix deletes working
+    // code, so the DLL prints what it actually sees, once.
+    {
+        static bool s_dumped = false;
+        if (!s_dumped) {
+            s_dumped = true;
+            std::string names;
+            for (const auto& sf : outHit.structFields) {
+                names += sf.name;
+                names += "@";
+                names += std::to_string(sf.offset);
+                names += " ";
+            }
+            LOG_INFO("SeeThrough: OutHit param off=%d size=%d, %zu struct field(s): %s",
+                     outHit.offset, outHit.size, outHit.structFields.size(), names.c_str());
+        }
+    }
     auto readIndexAt = [&](int32_t sub) -> uintptr_t {
         int32_t at = outHit.offset + sub;
         if (at < 0 || at + 4 > static_cast<int32_t>(buf.size())) return 0;
@@ -257,12 +292,26 @@ uintptr_t ExtractHitActor(const std::vector<uint8_t>& buf, const FunctionParam& 
         if (idx <= 0) return 0;                 // 0/negative = null weak ptr
         return Aura::GetByIndex(idx);
     };
-    // UE4: FHitResult.Actor (WeakObjectProperty)
-    for (const auto& sf : outHit.structFields)
-        if (IEq(sf.name, "Actor")) return readIndexAt(sf.offset);
-    // UE5: FHitResult.HitObjectHandle (FActorInstanceHandle) — leading weak ref.
-    for (const auto& sf : outHit.structFields)
-        if (IEq(sf.name, "HitObjectHandle")) return readIndexAt(sf.offset);
+    // Try each candidate member in order and take the first that RESOLVES TO AN
+    // ACTOR. Reading one member and hoping was the bug: on UE 5.4 the leading int32
+    // of HitObjectHandle resolves to the hit's UStaticMeshComponent, not its owner,
+    // so every hit failed InvokeSetHidden's Actor guard and See-through hid nothing
+    // at all while reporting success. [SEETHRUNOOP-2026-08-22]
+    //
+    // Measured FHitResult layout on UE 5.4 (DumperTest), which is why `Component` is
+    // in the list — it sits right there and its Outer IS the owning actor:
+    //   ... PhysMaterial@176 HitObjectHandle@184 Component@216 BoneName@232 ...
+    //   HitObjectHandle -> 'StaticMeshComponent', whose outer is 'StaticMeshActor_43'
+    //
+    // ⭐ This cannot regress a build where the old read already worked: ResolveToActor
+    // is the IDENTITY at hop 0 for anything that is already an AActor, and `Actor` /
+    // `HitObjectHandle` are still tried first, in the same order as before.
+    static const char* const kCandidates[] = { "Actor", "HitObjectHandle", "Component" };
+    for (const char* want : kCandidates)
+        for (const auto& sf : outHit.structFields)
+            if (IEq(sf.name, want))
+                if (uintptr_t a = ResolveToActor(readIndexAt(sf.offset)))
+                    return a;
     return 0;
 }
 
@@ -286,7 +335,26 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
     if (!actor) return false;
     uintptr_t cls = Ubel::GetClass(actor);
     // Cheap liveness/sanity guard: a freed/garbage actor won't walk to AActor.
-    if (!cls || !Aura::ClassDerivesFromAny(cls, {"Actor"})) return false;
+    if (!cls || !Aura::ClassDerivesFromAny(cls, {"Actor"})) {
+        // ⚠ SAY WHAT WAS REJECTED. This guard used to return false in total silence,
+        // and on UE 5.4 it rejects EVERY hit — the object coming out of FHitResult is
+        // a UStaticMeshComponent, not an AActor, so See-through hides nothing at all.
+        // That went unnoticed for as long as it did because the tally counted intent
+        // ([SEETHRUTALLY-2026-08-22]) and this branch said nothing, so there was no
+        // channel at all reporting the failure. One-shot: the condition is per-build,
+        // not per-tick, and the worker runs at 10 Hz. [SEETHRUNOOP-2026-08-22]
+        static bool s_warnedNotActor = false;
+        if (!s_warnedNotActor) {
+            s_warnedNotActor = true;
+            LOG_WARN("SeeThrough: the traced hit is NOT an AActor — class '%s' at 0x%llX. "
+                     "Nothing can be hidden on this build; the FHitResult read needs fixing "
+                     "[SEETHRUNOOP]. Owner hop: outer='%s'",
+                     cls ? Ubel::GetName(cls).c_str() : "<null class>",
+                     static_cast<unsigned long long>(actor),
+                     Ubel::GetName(Ubel::GetOuter(actor)).c_str());
+        }
+        return false;
+    }
     FunctionInfo fi;
     if (!FindFuncByName(cls, "SetActorHiddenInGame", fi)) {
         static bool s_warned = false;   // one-shot: persistent condition, don't spam
@@ -438,13 +506,36 @@ void Tick() {
 
     // Diff against the currently-hidden set: un-hide those no longer occluding, hide
     // the newly-occluding ones. Nothing to do (and nothing logged) when unchanged.
+    //
+    // ⚠ RECORD WHAT WAS APPLIED, NOT WHAT WAS INTENDED. `InvokeSetHidden` returns
+    // false when the object is not an AActor (its own ClassDerivesFromAny guard) or
+    // when SetActorHiddenInGame is cooked out — and until 2026-08-22 BOTH call sites
+    // discarded that bool and `desired` was recorded wholesale. So `hiddenActors`,
+    // `hiddenCount`, the pipe's `hidden_count`, the UI's "Active — hiding the
+    // occluder in front of your character" and the log's "disabled (N restored)"
+    // all reported INTENT. Measured on DumperTest (UE 5.4): hidden_count read 1 for
+    // a UStaticMeshComponent whose own bHiddenInGame never moved in either state —
+    // the feature was a complete no-op and every channel said it was working.
+    // That is also why the verification row could not be falsified from outside.
+    // [SEETHRUTALLY-2026-08-22]; the reason a COMPONENT arrives here at all is the
+    // separate, unfixed [SEETHRUNOOP-2026-08-22].
     std::unordered_set<uintptr_t> old;
     { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; }
-    for (uintptr_t a : old)     if (!desired.count(a)) InvokeSetHidden(a, false);
-    for (uintptr_t a : desired) if (!old.count(a))     InvokeSetHidden(a, true);
+
+    std::unordered_set<uintptr_t> applied;
+    for (uintptr_t a : old) {
+        if (desired.count(a)) {
+            applied.insert(a);          // still occluding, and we know this one took
+        } else {
+            InvokeSetHidden(a, false);  // best effort; drop it either way — a failed
+        }                               // un-hide means the actor died or the setter
+    }                                   // went away, and the disable sweep is the net
+    for (uintptr_t a : desired)
+        if (!old.count(a) && InvokeSetHidden(a, true))
+            applied.insert(a);
 
     std::lock_guard<std::mutex> lk(s_mutex);
-    s_state.hiddenActors = std::move(desired);
+    s_state.hiddenActors = std::move(applied);
     s_state.code = STR_OK;
     s_state.hasTarget = true;
     s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
@@ -684,6 +775,9 @@ int32_t GetStatus(SeeThroughStatus& out) {
     out.hiddenCount = s_state.hiddenCount;
     out.pierceCount = s_state.pierceCount;
     out.state       = s_state.state;
+    // Under the same lock as hiddenCount, so a caller can never see a count that
+    // disagrees with the list it came with.
+    out.hiddenActors.assign(s_state.hiddenActors.begin(), s_state.hiddenActors.end());
     return s_state.code;
 }
 

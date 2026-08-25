@@ -19,6 +19,16 @@ public partial class InterestingFunctionsPanel : UserControl
         {
             ["FinalScore"]    = DataGridSortComparers.Number<ScoredFunctionRow>(r => r.FinalScore),
             ["CategoryLabel"] = DataGridSortComparers.Ordinal<ScoredFunctionRow>(r => r.CategoryLabel),
+            // Params (PARAMSSORT-2026-08-22). The cell shows "{NumParms} ({ParmsSize}B)"
+            // but the column now sorts on NumParms, so nothing roots the sort path and a
+            // comparer is required. It previously sorted on ParamsLabel — which was AOT-safe
+            // (binding and sort path agreed, so the property was rooted) and WRONG: the
+            // ordinal order of the label puts "11 (72B)" above "2 (9B)". Measured on
+            // DumperTest 2026-08-22: 3,142 functions, two with >=10 parameters, so the
+            // inversion is reachable on a stock host. AF20 fixed the Live Walker twin only,
+            // because the audit asked "is the header inert under trimming?" and these three
+            // were not inert — just wrong.
+            ["NumParms"] = DataGridSortComparers.Number<ScoredFunctionRow>(r => r.NumParms),
         };
 
     public InterestingFunctionsPanel()

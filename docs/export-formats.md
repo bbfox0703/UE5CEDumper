@@ -339,7 +339,11 @@ struct ClassName : public SuperName
 - Sorts fields by offset, inserts padding for gaps
 - Queries superclass name via `WalkClassAsync()`
 - BoolProperty with bitmask: appends `[Mask: 0xXX]` comment
-- Unknown types: `uint8_t[0x{size:X}]` blob
+- Unknown types (and an unresolved `StructProperty`): a `uint8_t Name[0x{size:X}];` blob. The extent
+  goes **after** the identifier — C++ has no `uint8_t[0xN] Name;` form, and emitting one made every
+  `OptionalProperty` in the header a syntax error. `MapCppDecl` returns the element type and the
+  array suffix as separate halves so the two cannot be concatenated in the wrong order; a zero size
+  degrades to `[0x1]` because MSVC rejects a zero-length array (C2466).
 
 ---
 

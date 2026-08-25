@@ -1,6 +1,14 @@
 # Unattended verification session — handoff and run plan
 
-**Written 2026-08-17 · dist build 3262 · 64 checklist rows classified · A=16 · B=35 · C=12 · D=1**
+**Written 2026-08-17 · dist build 3262 · classification re-derived 2026-08-19, audit L11 appended → [§10](#10-the-繁中-checklists-57-remaining-items--one-row-each-2026-08-19)**
+
+> ⚠ **The old headline said "64 checklist rows · A=16 · B=35 · C=12 · D=1". It is retired, not
+> updated** — it counted register rows, and nothing recorded which 64, so it could not be re-derived.
+> **§10 restates the classification against a denominator that can be**: the `###` items left in
+> `pending-verification_zh-TW.md` — **57** after the 2026-08-19 prune (46 → 40), L10's five, the four
+> `[TAG]` mirrors and L11's eight. Current split, **derived from §10's table and never from here**:
+> **A=11 · B=29 · C=15 · D=2**. §7 lists **three** D_MANUAL rows, one more than that D=2 — `AB1/AB2`'s APC sub-step
+> is impossible but its parent item is otherwise closed, so it is no longer a 繁中 item to count.
 
 This is the *operational* companion to [todo.md § Pending live-game verification](todo.md) and
 [pending-verification_zh-TW.md](pending-verification_zh-TW.md). Those two own **what** to verify and
@@ -21,13 +29,16 @@ Earlier sittings: `AA14–AA20` **5/5** · `AB1/AB2` **5/5** · `AB3/AB5` **1–
 `X2` **1–3**. This sitting: **`Y1` fully closed** (`[ELLIOT-Y1c-2026-08-18]`), steps 1–4 including
 the null control. Results live in `todo.md`; several rows had their *instructions* corrected too.
 
-### ⛔ TWO THINGS THIS SITTING PRODUCED THAT ARE NOT YET FIXED
+### ⛔ ONE THING THIS SITTING PRODUCED THAT IS NOT YET FIXED
 
-1. **`[PEHOOKONCE-2026-08-18]`** — a FAILED ProcessEvent *detection* is permanent for the process
-   (`offset=-1`; every retry is gated `>= 0` or `== -2`), and the message it prints tells the user to
-   do the one thing that cannot work. **Triggered simply by calling `pe_profile_start` before the
-   scan** — which is easy to do from a script. Full write-up + fix shape in `todo.md`.
-2. The Y1b conclusion *"`paramsData` is cleared by the invoke path"* was **refuted** — see below.
+1. The Y1b conclusion *"`paramsData` is cleared by the invoke path"* was **refuted** — see below.
+
+> **`[PEHOOKONCE-2026-08-18]` — FIXED 2026-08-18, live check pending.** It used to be listed here as
+> open: a failed ProcessEvent *detection* was permanent for the process, so `pe_profile_start` before
+> the scan poisoned the hook for good. The sentinel is now re-armable and detection re-runs after a
+> scan. **The fix-shape paragraph that used to live in `todo.md` is gone with it** — what is there
+> now is the verification batch (`## Pending live-game verification`, grep the tag), steps 1–5.
+> `[PEHOOK-2026-08-17]` moved the same way, with a detection fix on top (steps 1–8).
 
 ### ▶ THE ORDER THAT MATTERS WHEN STAGING ANY INVOKE ROW
 
@@ -38,10 +49,16 @@ scan**. Always:
 init  →  trigger_scan  →  one invoke (teleport_get_pov)  →  pe_profile_start
 ```
 
-Doing `pe_profile_start` first poisons the hook for the whole process (finding 1 above). Verified as
-a one-variable negative control: same binary, same game — scan-first gave `hook_active: true`,
-profiler-first gave `false` permanently. **This, not `MH_ERROR_MEMORY_ALLOC`, was what made Elliot's
-hook look "intermittent" in the previous sitting.**
+This was originally forced on us: doing `pe_profile_start` first **poisoned the hook for the whole
+process**. Verified as a one-variable negative control — same binary, same game: scan-first gave
+`hook_active: true`, profiler-first gave `false` permanently. **This, not `MH_ERROR_MEMORY_ALLOC`,
+was what made Elliot's hook look "intermittent" in the previous sitting.**
+
+⚠ **That permanence was FIXED on 2026-08-18 (`[PEHOOKONCE-2026-08-18]`), which changes what you
+should do here.** Scan-first stays the recommended order for getting work done. But **profiler-first
+is now step 2 of that tag's verification batch — the step marked ⚠ THE ONE THAT MATTERS** — so on a
+proxy-mode title you are *supposed* to run it profiler-first once and watch it converge to
+`hook_active: true` after the scan. Do the negative control first, then switch to the safe order.
 
 ### ▶ WITNESSING AN INVOKE — what is now known to work
 
@@ -237,16 +254,17 @@ computer-use refuse every click. Reopen it freely.
 
 ### ✅ GROUP 5 IS DONE (2026-08-18)
 
-**Closed this sitting:** `M1/M3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
+**Closed this sitting:** `MG1/MG3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
 4-byte enum) · `U4/U6/F3` · `executeCodeEx` basic path (all 3 steps) · `AA7` step 4 → **AA4–AA7 is
 now 5-of-5** · `B26` · `Fern::Stop` graceful path (open since build 2813) · the `.CT` breadcrumb
-discovery half. `M2`/`U16` are PARTIAL and say why on their rows.
+discovery half. `MG2`/`U16` are PARTIAL and say why on their rows.
 
 **Two rows moved to a bigger title, with measurements rather than impressions:**
 * **`B4`** — DumperTest cannot produce a command that blocks for seconds. The two heaviest whole-pool
   value scans measured **113 ms** and **52 ms** against `MonitorLoop`'s 200 ms poll. Run it on Elliot.
-* **`Y1`** — needs a game-thread invoke, and DumperTest's PE hook never fires
-  (`[PEHOOK-2026-08-17]`). Run it on a title with a verified hook.
+* **`Y1`** — needed a game-thread invoke, and DumperTest's PE hook never fired
+  (`[PEHOOK-2026-08-17]`). Run it on a title with a verified hook. **(Y1 is now CLOSED; kept for the
+  DumperTest caveat, which is itself dated — see the note below.)**
 
 **Still open from GROUP 5, needing a specific condition:** `B18` step 3 (a title whose GObjects is
 *not* AOB-resolvable) · the `.CT` **registry/recent-files** slot (a cheaper slot answered — see
@@ -263,9 +281,15 @@ Maintainer's call to delete it.
 
 ### Operational facts learned the hard way this session — they cost round trips
 
-* **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires**
-  (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke must run on another title**.
+* **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires with pre-2026-08-18
+  DLLs** (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke ran on another title**.
   **Lushfoil is verified good** (`✓ PE hook verified`). Use it as the invoke host.
+  ⚠ **Dated.** A detection fix shipped 2026-08-18: the pattern scan missed on that binary because the
+  `FUNC_Native` test carries a mandatory SIB byte, and the true slot is `+0x268` (PDB-confirmed), not
+  the version table's `0x220`. The scan is file-verified against the binary's own bytes, but
+  **nothing has yet watched the DLL do it in the running process** — that is step 7 of the
+  `[PEHOOK-2026-08-17]` batch in todo.md. **Until step 7 is observed, keep Lushfoil as the invoke
+  host**; after it, DumperTest becomes usable for invoke-dependent rows.
 * ⚠ **Read CE's checkbox correctly** (maintainer, 2026-08-18): a **big red ✗ = the record is ACTIVE**.
   Inactive is an *empty* box. It is not a failure marker, so never infer one from it.
 * **A failed record therefore looks like a working one.** Open **CE → Lua Engine** *before* concluding
@@ -484,7 +508,7 @@ staleness**: the packages were rebuilt 2026-08-14 and `package-identity.json` wa
 
 | Wanted | Unlocks | Call |
 |---|---|---|
-| A **churn container** — `TArray<FDumperTestStat> Arr_Churn` + `TMap<int32,FDumperTestStat> Map_Churn` + `UFUNCTION`s to grow / remove-at / reserve | **A12** steps 2-4 · **A11** steps 2-5 · **V1a** step 1 · makes M1/M2/M3/A2/U1/V1/V2 step 5 literal | **The only high-value one.** It converts three C_HYBRID rows to fully automatable. Every container today is filled once in `BeginPlay` and never resized. Worth one ~20-min packaging cycle **if this batch will recur** — not before the first run. |
+| A **churn container** — `TArray<FDumperTestStat> Arr_Churn` + `TMap<int32,FDumperTestStat> Map_Churn` + `UFUNCTION`s to grow / remove-at / reserve | **A12** steps 2-4 · **A11** steps 2-5 · **V1a** step 1 · makes MG1/MG2/MG3/A2/U1/V1/V2 step 5 literal | **The only high-value one.** It converts three C_HYBRID rows to fully automatable. Every container today is filled once in `BeginPlay` and never resized. Worth one ~20-min packaging cycle **if this batch will recur** — not before the first run. |
 | `UPROPERTY() FName Name_Slot = FName(TEXT("Slot_7"))` | **U8** only (1 of 4 sub-checks in A5/V6/AE9/U8) | Defer. The sample's only FName UPROPERTYs carry no `Number` component. Huntable in a commercial title instead. |
 | `UPROPERTY() FVector3f Vec3f_Known` | **AB3/AB5** step 5 only | Defer, probably unnecessary — the exe already carries `Vector3f` 90× narrow. Probe with `search_properties` first. |
 | Three `UFUNCTION`s (a `TArray<AActor*>&` out-param, an `FText` param, a hardcoded `-1` return) | would make **AA14–AA20** a repeatable fixture | Defer. That batch runs on Elliot. The sample has **zero** `UFUNCTION`s today. |
@@ -699,7 +723,7 @@ Each is committed separately with its evidence; grep `todo.md` for the tag in br
 
 | Row | State | Tag |
 |---|---|---|
-| U1 / M1 / M3 | ✅ log half. U1's degraded branch **not tested** — it cannot fire on this sample | `[DUMPERTEST-LOG-2026-08-17]` |
+| U1 / MG1 / MG3 | ✅ log half. U1's degraded branch **not tested** — it cannot fire on this sample | `[DUMPERTEST-LOG-2026-08-17]` |
 | D1 / D3 | ✅ re-confirmed on the **2026-08-14** package (the old evidence described a superseded build) | `[DUMPERTEST-LOG-2026-08-17]` |
 | AA38 | ✅ steps 1/2/3/5. **Step 4 (modular build) not tested** — Satisfactory is the candidate | `[AA38-PYTHON-2026-08-17]` |
 | F9 | ✅ all six. Step 6 used `limit=10` on a 58-actor level, **not** a streaming map | `[F9-PIPE-2026-08-17]` |
@@ -723,7 +747,7 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | G8/G9 step 3 | ✅ **CLOSED** on DQ7R — the sample was missing, not the capability | `[DQ7R-PIPE-2026-08-17]` |
 | G2 step 2 | 🟡 a refutation was claimed and then **WITHDRAWN** — scan rate varies 2.4×, so no extrapolation can decide it. Needs instrumenting Elliot | `[DQ7R-PIPE-2026-08-17]` |
 | **Proxy load** | ⛔ **NEW: `DeployedCurrent` ≠ loaded.** OCTOPATH's proxy is byte-perfect and silently never runs | `[PROXYLOAD-2026-08-17]` |
-| **SDK header** | ⛔ **NEW: the export does not compile** (`uint8_t[0x8] Name;` for every `TOptional`) | `[SDKHDR-UI-2026-08-17]` |
+| **SDK header** | ⛔ **NEW: the export does not compile** (`uint8_t[0x8] Name;` for every `TOptional`). *(Fixed 2026-08-19 — extent now follows the identifier; live check is `[SDKHDR-2026-08-18]` in todo.md)* | `[SDKHDR-UI-2026-08-17]` |
 | G11 step 1 | 🟡 third title run but it does **not** discharge the step (DQ7R's PE hash changed) | `[DQ7R-PIPE-2026-08-17]` |
 | U2 sweep | ✅ DQ7R is a third confirmed **non-CPN** title | `[DQ7R-PIPE-2026-08-17]` |
 | AE4 steps 3/5/6 + 1 | ✅ **PASS** (step 1 by a stated substitution) | `[AE4-UI-2026-08-17]` |
@@ -733,18 +757,20 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | D2 step 4 | ✅ **SETTLED** — and the step's premise was wrong | `[D2-UI-2026-08-17]` |
 | **AC1 all 7 steps** | ✅ **CLOSED** on a synthetic folder — **Light Maze never touched** | `[AC1-UI-2026-08-17]` |
 | AE4 step 4 | ✅ removal half (3 detectors incl. the Recycle Bin); gate arm not observable | `[AC1-UI-2026-08-17]` |
-| A5 · V6 · AE9 · AF4 | ✅ **PASS** (AF4 has no unit test by design) | `[GRP4-UI-2026-08-17]` |
+| A5 · AE9 · AF4 | ✅ **PASS** (AF4 has no unit test by design) | `[GRP4-UI-2026-08-17]` |
+| V6 | 🟡 **HALF-PASS** — manual-Refresh half only; the auto-refresh half was unperformable on 3262 and stays open (see row 6 below and todo.md) | `[GRP4-UI-2026-08-17]` |
 | U3 + U17 | ✅ **CLOSED** — the old bug's own output is the control | `[GRP4-UI-2026-08-17]` |
 | D2 (樣本心跳) | ✅ **PASS** — DLL and game HUD agree to the digit over a measured 34 s | `[GRP4-UI-2026-08-17]` |
 | Dump Explorer 跨遊戲身分閘 | ✅ **PASS** on the two DumperTest flavours | `[GRP4-UI-2026-08-17]` |
 
 | Y9 · V7 · AF6 · AB6 · AE8 · D1/D3 step 6 | ✅ **PASS** | `[Y9-UI-2026-08-17]` · `[GRP4-UI-2026-08-17]` |
 | AE2/AE3 | 🟡 **4 of 6** (steps 4 and 5 not run) | `[AE23-UI-2026-08-17]` |
-| **PE hook** | ⛔ **NEW: detection FAILS on DumperTest**, verified good on Lushfoil | `[PEHOOK-2026-08-17]` |
+| **PE hook** | ⛔ **detection FAILED on DumperTest**, verified good on Lushfoil. *(Fix shipped 2026-08-18 — SIB-tolerant pattern, true slot `+0x268`; pending step 7 in todo.md)* | `[PEHOOK-2026-08-17]` |
 | Skia ABI soak | ✅ see below | `[GRP4-UI-2026-08-17]` |
 
-**GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, and `A5/V6/AE9`'s
-`U8` sub-check (the sample has no `FName` with a `Number` component).
+**GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, the `U8` sub-check
+of the `A5/V6/AE9` batch (the sample has no `FName` with a `Number` component), and — recorded
+2026-08-19 — **`V6`'s auto-refresh half**, which the 2026-08-17 sitting could not have run on 3262.
 
 **Skia ABI soak — PASS, incidentally.** The AOT `dist` UI ran ~2.5 h across two instances under
 heavy text/grid load: a 14,813-row Value Search with server-side re-sorts, a 58,618-object tree
@@ -759,7 +785,9 @@ soak is looking for is precisely a font/text-shaping ABI break under sustained l
    *and* a findable `++UE[45]+Release-` tag. Only **DQ7R / DQ I&II / OCTOPATH** have both; Elliot,
    which the register named, has neither half of the tag and can never produce a tier line.
 2. **The exported SDK header does not compile** (`uint8_t[0x8] Name;` for every `TOptional`), which no
-   existing check could see because headers are read and never compiled. Open.
+   existing check could see because headers are read and never compiled. **Fixed 2026-08-19** — and
+   the "read but never compiled" half is closed too: `tools/verify/compile_sdk_header.py` now runs
+   `cl /Zs` over the real emitter's output. Live re-export tracked as `[SDKHDR-2026-08-18]`.
 3. **A duplicate UI launch writes an unhandled exception into `crash.log`** — the file documented as
    *the* AOT startup diagnostic.
 
@@ -773,7 +801,7 @@ Ordered by items closed per environment launch. **Every group ends by killing wh
 
 ### ▶ GROUP 0 — no environment · ~50 min · A
 Grep and staging only; closes work *and* stages later groups. Run first.
-`U1/M1/M3` steps 1-3 · `D1/D3` steps 1-5 · `G12(heuristic)` corpus grep · `DSA layout` step 3 ·
+`U1/MG1/MG3` steps 1-3 · `D1/D3` steps 1-5 · `G12(heuristic)` corpus grep · `DSA layout` step 3 ·
 build the pre-fix DLL for `Genau RIP decode` in a **fresh** `git worktree` (⚠ not
 `.claude/worktrees/suspicious-cannon-a8dec8`) with `-NoBumpBuildNumber`.
 Staging steps that touch outside files are in §4 — **ask first**.
@@ -810,7 +838,7 @@ Run `AB1/AB2` **first** — B29 is downstream of the plugin being installed.
 `AB1/AB2` · `B4` · `AA7` · `executeCodeEx 基本路徑` · `U4/U16/U6/F3` · `AA1` (bitfield byte must read
 **0x05 → 0x07**) · `Y15` (skip step 6) · `Y1` · `Fern::Stop / B18` · `B26` (⚠ confirm the AOBMaker
 bridge pipe answers first, or step 1 passes vacuously) · `B5` (.CT half) ·
-`M1/M2/M3/A2/U1/V1/V2` (UI half).
+`MG1/MG2/MG3/A2/U1/V1/V2` (UI half).
 **→ kill DumperTest, close CE, close the UI.**
 
 ### ▶ GROUP 6 — Cheat Engine + Elliot · ~3.5 h · B (+1 C)
@@ -868,7 +896,22 @@ not-ours branch) · `b719 / b648 / b636 / b642 / b637+644` steps 2-3 on Geri + E
 
 -----
 
-## 7. D_MANUAL — 1 row
+## 7. D_MANUAL — 3 rows
+
+**G2 step 2** (the version ladder's **UE5** branch). Added 2026-08-19. Three of the four Tier-1
+combinations are witnessed (`utf16`+UE4, `ascii`+UE4, and a Tier-0 early exit); only `++UE5+Release-`
+is left, and **no installed title can produce it**. `py tools/verify/tier1_host_survey.py` swept all
+18 installed UE executables offline: three can emit a Tier-1 line and all three are UE4. A host must
+clear Tier 0 **and** carry the UE5 needle — Light Maze / Lushfoil / Manor Lords have the needle but
+stop at Tier 0; Solarpunk / TQ2 / ES2 / STVoyager / Satisfactory / DSA / Avowed lack it entirely.
+⚠ **Screen with that tool before installing anything for this row** — engine version does not predict it.
+
+**The `cbInjectDLLWithAPC` half of AB1/AB2 step 4.** Added 2026-08-19, and it is why that item's
+繁中 section could be deleted while this sub-step stays alive. It is **not reachable on a public
+Cheat Engine**, on two independent signals: `formsettingsunit.pas` guards the checkbox with
+`{$ifdef privatebuild}` and `MainUnit2.pas` hardcodes `useapctoinjectdll := false` in the `{$else}`
+branch (so writing the registry value achieves nothing), and the checkbox is absent from
+7.7.0.10568's Settings. Needs a `privatebuild` Cheat Engine. Everything else in AB1/AB2 is closed.
 
 **G3** (Extra Scan → Apply rescan gate). Measured, not assumed: Extra Scan is offered only when
 `IsPointerMissing(GObjects) || GWorldMethod == "not_found"`, and every UE title in the local corpus
@@ -924,3 +967,130 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 - **CE's address edit boxes ignore `Ctrl+A`** — use `Home`, `shift+End`, then type.
 - **Screenshots: no `scale` argument.** Scale is clamped but click coordinates are not, so a scaled
   screenshot puts every click ~25% off — which looks like the app ignoring input.
+
+-----
+
+## 10. The 繁中 checklist's 61 remaining items — one row each (2026-08-19)
+
+**Denominator, stated so it cannot drift again: the `###` item count of
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **61**.** ⚠ **The headline and this
+sentence both said `57` while the table below already had 61 rows** — caught by the 2026-08-19
+closing sweep, and the third time this particular number has lagged its own table. **Re-derive
+before quoting it; never carry it forward by hand.** Two figures that circulated in planning notes
+are now dead and must not be re-quoted: **"24 of 49"** and **"40 of 57"** (with `A=11 · B=29 ·
+C=15 · D=2`) — both predate rows the L10/L11/L12 batches appended. The live answer is the totals
+block at the end of this section. That file was pruned
+46 → 40 on 2026-08-19, took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
+AF16–AF23, AF21) the same day → 45, then **lost `A5`** (closed on the maintainer's own run) and
+**gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → 49, then
+audit **L11**'s eight (F5, W8, V11, Y10/Y13, Y12, V10, Y11, V8) → 57, then audit **L12**'s four INFO-tier mirrors (`AC13/AC14`, `AC15/AE27/AF25`, `MB3`, `AC17`) → **61**.
+Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
+`###` under 「怎麼用這份清單」. This is **not** the same denominator as this file's older
+"64 checklist rows" headline, which counted register rows; that number is retired.
+
+**Same four categories as §5–§7 — no parallel scheme.**
+**A** = fully headless (pipe client / log grep / binary probe, no GUI). **B** = needs the UI or CE on
+screen but **no human judgement** — Auto + computer-use can drive it end to end. **C** = needs a
+bounded human action (§6 names each one). **D** = impossible today (§7).
+
+**A category is the item's HARDEST step**, because an item does not close until its hardest step does.
+Where a cheaper step exists, the last column says so — that is the row to run first.
+
+| # | 繁中 item | cat | why that category / cheapest next step |
+|---|---|---|---|
+| 1 | `AE4–AE7` (step 4 only) | **B** | The `IsRemovingOrphans` arm: a delete must be in flight when a scan is clicked. The previous attempt failed only because the delete finished inside one round-trip — **stage a leftover set big enough to be slow**, then it is pure clicking |
+| 2 | `A6` (steps 3, 5) | **A** | Both are pipe + log: `force_field` on a same-prefix sibling pair, then `get_forced_fields` + the `FindInstancesDerivedFrom base=…` line; step 5 is `reset_all_fields` then re-read. Step 5 wants a title that spawns something after the reset |
+| 3 | `AD4` (step 4 only) | **C** | `ON (contested)` needs the game to damage-reset the flag while ↻ is spammed. Combat, mid-batch. Nothing else on the item is left |
+| 4 | `A3` | **A** | ⭐ **Cheaper than hoped.** Already scheduled headless in GROUP 1 on DumperTest — a Float/NumericAll `scan_for_value` over the pipe and a grep of the reply for `.Velocity` / `.Scale3D`. No UI, and no hunt for a suitable vector: the assertion is *which field names appear*, not which value matches. Driving it through the UI also works and is still unattended |
+| 5 | ~~`Skia ABI`~~ → `AUTOREFRESH` | **B** | ⭐ **`Skia ABI` CLOSED 2026-08-19** by the maintainer's own accumulated sessions (recorded in todo.md; not agent-observed) and deleted from the 繁中 list. Its slot is taken by the new `AUTOREFRESH` item, also **B**: Live Walker Auto must cycle rather than freeze at 0, and must come back after a disconnect→reconnect. ⚠ **Its step 3/4 need TWO games in one UI session** — sequence them inside one group, never in parallel |
+| 6 | `V6 / U8` | **B** | ⭐ **`A5` CLOSED 2026-08-19** on the maintainer's own re-search (recorded in todo.md; not agent-observed) and its step deleted from the 繁中 list. ⭐ **`AE9` CLOSED too** — its 2026-08-17 PASS covers both halves (New Scan returns the picker to `Scan order`; and on a 14,813-candidate `Bigger` set, picking `Value` genuinely re-sorted — an `Exact` predicate returns identical values and structurally cannot test a re-sort, which is why `Bigger` was used). Step deleted from the 繁中 list; the batch is now `V6 / U8`. What is left is **U8**, sample-blocked — DumperTest has no `FName` with a `Number` component (fold into GROUP 7's sweep) — plus **V6's auto-refresh half, which is BLOCKED** behind `[AUTOREFRESH-2026-08-19]` reaching a published build; the other PC is still on `dist` 1.0.0.3262. ⚠ **V6's 2026-08-17 ✅ was a HALF-pass** and is corrected in todo.md — it covers the manual-Refresh half only |
+| 7 | `AE2 / AE3` (steps 4, 5) | **C** | Step 5 is B (a handoff, then re-click the node). **Step 4 is the human one**: travel to another level on a streaming title so a walked class goes stale, then re-click the same row |
+| 8 | `G2` | **D** | Step 1 (split the version-scan timing with a separator log line) is **A** and runnable now. Step 2 cannot close — the UE5 Tier-1 branch has **no host on this machine**; see §7 |
+| 9 | `W1 / W7` | **C** | Not a game action — **install FModel** (or leave a runnable CUE4Parse `UsmapParser` on disk) and name its path. Writing our own parser is explicitly refused: it would reproduce the shared misreading the item exists to rule out |
+| 10 | `G11` | **A** | Promoted in §8.1 — DumperTest-Development re-detects across both rev boundaries, so the whole row is `get_pointers` plus a `scan-0.log` grep |
+| 11 | `V7 / AF4 / AB6` | **B** | All three are panel behaviour. ⚠ Force V7's failure by **suspending the game process from Python**, not by destroying an actor |
+| 12 | `D2`（顯示配對）(steps 1, 4) | **B** | Step 1 = read the unfiltered master row and check the default pair is non-zero and carries `(+N)`. Step 4 = press Live / Addr / Pivot / Locate on `All fields` leaves and see where they land. Both are clicks with mechanical pass conditions |
+| 13 | `B10` | **B** | Snapshot capture from the panel, then grep `view-0.log` for `PERF Snapshot capture`, then open a property grid. ⚠ The number is a **new baseline**, not a comparison — no pre-2596 figure survives |
+| 14 | `B19` | **A** | Hold one archive open from Python, backdate a sibling past 21 days, launch an injected game, list the folder. No GUI at any point |
+| 15 | `Dump Explorer 跨遊戲身分閘 (2)(3)` | **B** | Case (2) is B and §8.2 promoted it to the two DumperTest flavours — no second commercial title needed. Case (3) is **opportunistic**: it waits for a title to actually ship a patch, so it cannot be scheduled |
+| 16 | `AF6 / AE8` | **B** | Type an out-of-range integer into Force and read the refusal; trigger a refused scan and read the diagnostics list. ⚠ The batch's `AF1` is deliberately excluded — it needs a malformed `UEnum` that cannot be produced on demand |
+| 17 | `Genau RIP decode (b2544)` | **A** | Build the pre-fix DLL in a **fresh** worktree with `-NoBumpBuildNumber`, inject both, diff two `scan-0.log`s. ⚠ Compare **module-relative RVAs** — ASLR rebases every launch — and do **not** use `sweep.sh`'s pattern diff, which skips `Symbol*`/`CallFollow` and so returns a clean diff for "not measured" |
+| 18 | `U16` (step 1 only) | **B** | Step 2 (the `walk-0.log` grep) is already discharged: 138 `ResolveEnumValue` lines, none with `N != M`. What is left is CE's DropDownList on a **large** enum, and it is sample-blocked — the biggest table measured anywhere is 26 members |
+| 19 | `AA2 / AA3` | **C** | Reach a world with many live instances, then cause churn — kill-and-respawn or cross a streaming boundary. Try scripted long-distance `teleport_relative` first; it may remove the human |
+| 20 | `G10 / MA1` | **B** | GROUP 6 (Elliot + CE). ⚠ Step 1 needs a **deliberately invalidated hint** first, or there is no `Hint MISS` line and the step is undecidable — absence is not a pass |
+| 21 | `ST1` | **C** | Steps 1–2 are B. **Steps 3–4 need a human**: leave one invoke queued and then *play normally for a few minutes* — idling at a menu does not drain the queue, and the drain is the assertion |
+| 22 | `AA12 / AA13` | **C** | Step 3 waits for an instance of the pre-chosen class to **spawn**, then wants the value confirmed genuinely held — not merely the record left ticked |
+| 23 | `B18` | **B** | Pure timing off `Stop entry` → `Stop watches+scan joins done`. Sample-blocked: needs a title whose **GObjects does not resolve by AOB**, or Extra Scan never runs long enough to cancel |
+| 24 | `.CT DLL discovery` | **B** | Move `dll-path.txt`, set `UE5_DEBUG=1`, open the Lua Engine first, load the `.CT` from CE's recent-files list. ⚠ Confirm no `UE5Dumper.dll` sits in CE's install folder first — the cheaper slot answers and the step then silently measures nothing (`[STALEDLL-2026-08-18]`) |
+| 25 | `M1–M5 / Solide 256-cap` | **C** | The See-through half is **eyes-on-screen by construction** — the DLL's own hidden-count is explicitly not acceptance, so a human must confirm no actor stayed invisible across four different shutdown paths. Separately needs >256 live instances of one class |
+| 26 | `A12` | **C** | Steps 5–6 are A (a non-container control and a log grep). Steps 1–4 need a container **grown until it reallocates** and an element removed *before* the match — gameplay |
+| 27 | `A11` | **C** | Same bout as A12. ⚠ **Step 5 is the one not to skip** — append into slack *without* a realloc; it is what catches an over-eager fix that kills the candidates it should keep |
+| 28 | `MG2 / TSet 迴歸` | **C** | Step 2 is B (expand `TSet<FName>` / `TSet<UObject*>` and a `UDataTable`) but needs a **real game** — DumperTest has none of the three. Step 1 removes an element in-game, and needs a container **under** the array limit or the count is undecidable (`[CONTAINERCAP-2026-08-18]`) |
+| 29 | `U3 / U17` (steps 3, 4) | **B** | Both are CDO-level expansions, so a main menu suffices — no save, no gameplay. §8.4 promoted step 4 to **TQ2** (it carries `GameplayAttributeData` + an ASC). Step 3 needs a genuine UE5 **LWC 24-byte** `FVector` title; the earlier closure ran on a 12-byte float vector and cannot stand in |
+| 30 | `G1 / X3 / U7 / AF2` | **B** | U7 (a CJK `StrProperty`) and AF2 (whose `<30`-class control is DumperTest, as a **separate** launch) are drivable now. ⚠ **G1/X3's amber-banner half has no host** — ten more titles swept clean; treat that half as D until one appears |
+| 31 | `AE10` | **B** | §8.5 promoted it to **Titan Quest II**, installed and already carrying a save from 2026-08-14, so Continue reaches a level without a human |
+| 32 | `B25` | **A** | §8.6 — two **synthetic marker exes**. Both branches read only the module's PE VERSIONINFO and two literals, so no game is involved at all |
+| 33 | `B29` | **B** | §8.7 — step 2 needs **no wrapper install**: every DX12 UE title already has System32's `dxgi.dll` mapped, which is exactly the not-ours branch. Step 3 needs a title whose path carries non-ASCII characters |
+| 34 | `GObjects layout — DragonSword` | **B** | Drivable but **stochastic**: only a launch that resolves GObjects from the `…F8B0` base anchor has evidential value, and the anchor varies per launch. Budget a retry loop; a `…F8C0` launch must be discarded, not recorded |
+| 35 | `G12（heuristic 分支）` | **A** | Discovery is a corpus grep for `Cannot find Guid or Vector struct`, runnable before any launch. Step 2 (Live Walker enum + `TArray` inner type) is B once a host is identified |
+| 36 | `B8（deferred 半）` | **C** | Steps 1–2 are B — `-DumperTestIdle` is already compiled into the packaged Development binary (§8.8) and the evidence is a `walk-0.log` grep. **Step 3 is visual**: a human must see the character stopped by the wall. ⛔ Closing the game never tests this half |
+| 37 | `V1a 容器重配置 / NumericAll` | **C** | Step 1 rides A11/A12's bout. **Step 2 is a judgement with no mechanical PASS line** — the checklist says so outright, so it cannot be automated even in principle |
+| 38 | `b719 / b648 / b636 / b642 / b637+644` | **C** | Steps 2–5 are B and run in GROUP 10 on Geri + ES2. Step 1 needs Geri played until NPCs die and respawn with a Route B freeze running, plus a level change, plus an FPS-impact judgement for which no threshold exists |
+| 39 | `U2` | **C** | Step 1 (the `get_offsets` `case_preserving` screen) is **A** and sweeps many titles cheaply — do that first. Only if it returns all-false does the C arm apply: build UE from source with `WITH_CASE_PRESERVING_NAME=1`, hours of work. ⚠ Do **not** re-run TQ2 — measured non-CPN, 20-0 |
+| 40 | `G3` | **D** | §7. Needs an Avowed-shaped forked-engine title where a pointer genuinely fails to resolve; all 34 local titles resolve GWorld, and the two pointer-missing processes report `GWorld=0` since the AA38 fix |
+
+| 41 | `AF16–AF23`（AOT 排序） | **B** | Pure clicking — but **only on a `-Mode Publish` binary**, which makes it the one row where using the usual dev build silently produces a false PASS: the reflection sort survives JIT and is trimmed only in what ships. 30 columns were unwired; the register lists three spot-check rows rather than all 30 because `DataGridSortWiringTests` machine-enforces the pairing offline. Fold into any GROUP that already has the UI up, after a publish |
+| 42 | `AF10 / AF11` | **A** | Fully headless. AF10 = launch the exe twice and read `$LASTEXITCODE`. AF11 = plant files at the app-data root, start the UI, list `TeleportCoords\`. ⚠ AF11 needs its **negative control** (a pre-existing destination file must NOT be overwritten) or it only proves the happy path |
+| 43 | `AF7 / AF8` | **A** | Both pipe + log, both **sample-blocked** and that is the likely outcome: AF8 needs a title exposing an `Int8Property`, AF7 a native UFunction big enough to exhaust the disassembler budget. Cheapest next step for AF7 is a corpus grep of existing `scan-0.log`s for `AnalyzeNativeFunctionProps ... BUDGET` — if no title has ever logged it, say so and stop |
+| 44 | `AF12 / AF13 / AF22` | **B** | AF22 is two dialog reads with its own control (open Force, then open Freeze, and check the wording DIFFERS). AF12/AF13 need a snapshot where one slot matches >256 fields on some object — a very common value on a big capture |
+| 45 | `AF21` | **C** | The human action is a **Windows display-scaling change to 150%**, which nothing in the rig can do. Everything after that is dragging a window and restarting. Run it last, and run the 100% control too |
+
+*Rows 46–49 are the four `[TAG]` items mirrored into 繁中 on 2026-08-19. They were fixed the same day and their live checks had existed only in todo.md's register.*
+
+| # | 繁中 item | cat | why that category / cheapest next step |
+|---|---|---|---|
+| 46 | `PIPEBUSY` | **A** | No GUI needed at all: **three** `pipe_client.py` instances reach `kMaxPipeInstances=3` on their own, then it is two greps of `pipe-0.log`. The register stages it as UI-plus-one-client, which is the same code path but B. ⚠ Deliberately breaks the standing "never run `pipe_client.py` while the UI is connected" rule if staged that way — kill the extra client when the row ends |
+| 47 | `SLOTSYM` | **B** | CE's Lua console plus tick/untick on two records. DumperTest's `&GEngine` AOB validates, so it takes the SLOT path. ⚠ Set `UE5_DEBUG=1` **before** the first tick or the `dbg` refcount lines that step 2 asserts on never print |
+| 48 | `CLASSTOTAL` | **B** | ⭐ **Cheapest first step is A** — one `list_classes` over the pipe against Elliot, and the row is decided if `total_classes` > 5,000. The B part is only 鐵則 4 (the status-line *string* must actually be seen). Step 3 needs a **second, small** game, so schedule it beside another `<5,000`-class launch rather than on its own |
+| 49 | `PROXYLOAD` | **B** | Three launches: OCTOPATH (imports `version`, must stay "not observed"), DQ7R or DQ I&II (must read "loaded"), then OCTOPATH again on `winmm`. ⚠ Two of the three are **negative/positive controls for each other** — running only the first proves nothing, because "not observed" is also what a broken lookup returns |
+
+*Rows 50–57 are audit **L11**, the last LOW batch (2026-08-19).*
+
+| 50 | `F5` | **A** | Pure `pipe_client.py` + a `watch` on the second connection, no GUI. ⭐ **Run this one first in any batch that injects at all**: it is the only change in L11 inside the game's process, it touches the pipe every other feature rides on, and **no test target compiles `Fern.cpp`**, so the two-`WriteFile` split has never executed. Row 3 of the register item is the regression control and is free — just use the UI normally afterwards |
+| 51 | `W8` | **B** | Export a `.usmap` on any Blueprint-heavy shipped title and compare the "N structs" line. The PASS is a large number, so it does not need a parser — but if FModel is installed for row 9 (`W1 / W7`), read the file there in the same sitting and both rows advance |
+| 52 | `V11` | **B** | Two clicks with CE up, then the same two with CE closed, on two cards. Fold into any GROUP that already has CE attached — it shares its whole setup with rows 47 and 53 |
+| 53 | `Y10 / Y13` | **B** | CE + a baked Verify-mode invoke. ⚠ Its step 3 needs CE **detached mid-session**, which is a rig action (not a human judgement), so it stays B — but sequence it LAST in its CE group, because re-attaching costs a fresh symbol resolve. Needs a UFunction with a complex return past byte 32; the return is the last param, so two 8-byte inputs plus an `FString` return is enough |
+| 54 | `Y12` | **B** | CE closed, one clipboard copy, one right-click Paste. The cheapest row in the batch |
+| 55 | `V10` | **B** | **Sample-gated, and the gate is the whole difficulty**: it needs a title where the first scan leaves GObjects or GWorld unresolved. §7 already records that all 34 local titles resolve GWorld, so check that before scheduling — this may close as "no sample", which is a result |
+| 56 | `Y11` | **B** | Sample-gated on a UFunction taking an `FText` / `TArray` / `TMap` parameter. Cheapest next step is a corpus grep of an existing `list_all_functions` dump for those param types before launching anything |
+| 57 | `V8` | **B** | Sample-gated on a `UDataTable` with more than 64 rows — common in JRPGs, so pair it with a DQ / OCTOPATH launch that is already scheduled |
+| 58 | `AC13 / AC14` | **B** | Close the UI while still connected and grep `pipe-0.log` for `Pipe: ReadLoop error` (must be ABSENT — it was an NRE logging an ordinary shutdown as a fault). The AC13 half needs a write to fail, so kill the game mid-request; both share one injected session
+| 59 | `AC15 / AE27 / AF25` | **B** | Three pure regression confirmations — identical results, not new behaviour. The Proxy Deploy scan half needs no game at all, so it can ride any UI-only slot; the Package-filter and teleport-script halves want a game attached
+| 60 | `MB3` | **B** | ⭐ **Run first in any batch that injects.** The CE mailbox poller was restructured and **nothing compiles `Mimic.cpp`**, so no line of it has executed; the risk is ordinary dispatch, not the throw path. Cheaper first step is **A**: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with no CE, so one scripted command settles the regression question before CE is ever opened
+| 61 | `AC17` | **C** | Needs a volume **mounted into a folder** (`mountvol` / Disk Management), which is a one-off human setup rather than a game action. Once mounted the rest is clicking. A removable volume mounted the same way is the negative control and is the half that actually proves the fix
+
+### Totals — and the direct answer to "how much of this can Auto drive?"
+
+⚠ **Derived from the table above, never hand-edited.** The previous revision of this block summed to
+**40** while the table already had 45 rows — it was not updated when rows 41–45 were appended. Re-run:
+`py -c` over `## 10.`, matching `^\|\s*(\d+)\s*\|.*?\|\s*\*\*([ABCD])\*\*\s*\|` and counting by group 2.
+
+| cat | count | items |
+|---|---|---|
+| **A** — fully headless | **11** | 2, 4, 10, 14, 17, 32, 35, 42, 43, 46, 50 |
+| **B** — Auto + computer-use, no human judgement | **32** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60 |
+| **C** — needs a bounded human action | **16** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39, 45, 61 |
+| **D** — impossible today | **2** | 8, 40 |
+
+**43 of 61 (70%) need no human judgement at all** — 11 of them with no GUI whatsoever. That is the
+honest headline. But read the C column before planning a batch: **six of the sixteen are one short
+gameplay bout** (`A11` + `A12` + `V1a` step 1 share a single one; `AA2/AA3`, `AA12/AA13`, `AD4`,
+`ST1` and `b719…` each need combat, a spawn, damage, or a queue drain), so one scheduled session with
+the maintainer present converts most of that category.
+
+⚠ **Where the boundary actually falls, because it is easy to get wrong.** A step is **not** B merely
+because the clicks are automatable. Three rows here are C *specifically* because their PASS condition
+is a judgement about the game's visible behaviour rather than a string on screen or in a log:
+`M1–M5`'s See-through toggles (was any actor left invisible — the DLL's own hidden-count is
+explicitly rejected as acceptance), `B8` step 3 (is the character stopped by the wall), and `V1a`
+step 2 (is this result volume workable). Automating the clicks there produces a run, not a result.

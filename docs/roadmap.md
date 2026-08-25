@@ -261,17 +261,20 @@ Known limitations (documented in README): no auto-rename detection (renamed fiel
 
 PropertySearch rows gain a **Freeze** button that ships an AA Script
 into CE locking the property at a constant across **every live instance**
-of the owning class. Different from the CE-XML export (Route A — kept
+of the owning class **and of every subclass of it** (2026-08-19 — an
+exact-class pool held only the class that DECLARES an inherited field,
+which for `bCanBeDamaged` is `Actor` and never the player's pawn).
+Different from the CE-XML export (Route A — kept
 in [todo Speculative](todo.md)) which pins a single pointer chain to a
 single instance: the freeze script enumerates instances by class+offset
 every 5 s, so respawns / new spawns / destroys are handled transparently.
 
 | Component | What it does |
 |---|---|
-| `Mimic::CMD_LIST_INSTANCES` (mailbox cmd 6) | Paginates live (non-CDO) `UObject*` pointers of a class via `Aura::FindInstancesByClass(exactMatch=true)`. 128 ptrs / page, hard cap 2000 instances. |
-| `scripts/ue5_freeze_helper.lua` (embedded, **v1.2**) | `freezeProperty(cfg) → handle` API; tick timer (50 ms default) + rescan timer (5 s default); type writers for bool / int8-64 / uint8-64 / float / double; shares `_ue5_invoke_busy` reentrancy flag with invoke helper. **`handle.start()` returns `(ok, err, count)`** (1.2, build 3125) so a caller can separate a HARD failure (no DLL / contract mismatch → untick + keep the window open) from a freeze that is legitimately **armed with no live instances yet** (stays ticked; applies as they spawn). A pre-1.2 helper returns `nil` there and generated scripts report that as "cannot report", never as a verdict. *In-game verification pending (key: FreezeOutcome)* |
-| `FreezeScriptGenerator` | Renders AA Script with editable `CFG = {...}` block, per-script keyed handle table so multiple Freeze scripts coexist. |
-| `FreezeValueDialog` | Single-input modal with type-aware validation (bool accepts true/false/1/0). |
+| `Mimic::CMD_LIST_INSTANCES` (mailbox cmd 6) | Paginates live (non-CDO) `UObject*` pointers of a class. **Two scopes, chosen by `cmdFlags & LI_IN_DERIVED` (mailbox contract 3):** clear = `Aura::FindInstancesByClass(exactMatch=true)`, 8-byte entries, 128/page, cap 2000; set = `Aura::FindInstancesDerivedFrom` (the class **and every subclass**), 16-byte entries carrying a per-instance `UClass*` witness, 64/page, cap 1024. The flag defaults OFF and is cleared after every use, so a pre-contract-3 `.CT` keeps the exact-match pool byte for byte. A capped pool is reported back as `LI_OUT_TRUNCATED`. |
+| `scripts/ue5_freeze_helper.lua` (embedded, **v1.3**) | `freezeProperty(cfg) → handle` API; tick timer (50 ms default) + rescan timer (5 s default); type writers for bool / int8-64 / uint8-64 / float / double; shares `_ue5_invoke_busy` reentrancy flag with invoke helper. **`handle.start()` returns `(ok, err, count, capped)`** (1.2 added the first three, build 3125; 1.3 added `capped`) so a caller can separate a HARD failure (no DLL / contract mismatch → untick + keep the window open) from a freeze that is legitimately **armed with no live instances yet** (stays ticked; applies as they spawn), and can say when `count` is a floor rather than a total. **1.3 also adds `cfg.derived`** (default TRUE — hold every subclass, because a Property Search row for an inherited field is keyed to the class that DECLARES it) and **`cfg.memrec`** (an abandoned freeze disables its own CE record instead of leaving a checkbox claiming a cheat nothing is applying). *In-game verification pending (key: FreezeOutcome)* |
+| `FreezeScriptGenerator` | Renders AA Script with editable `CFG = {...}` block (incl. `derived`), per-script keyed handle table so multiple Freeze scripts coexist, and wires the CE record through as `CFG.memrec`. |
+| `FreezeValueDialog` | Single-input modal with type-aware validation (bool accepts true/false/1/0), plus a **Scope** line naming every object the freeze will write to and a warning when the field is inherited (so "freeze my pawn's `bCanBeDamaged`" is not read as one object). |
 | `Tools -> Inject/Export Freeze Helper Lua` | Sister entries to the invoke-helper Tools menu — one-click AOBMaker inject or manual file export. |
 
 Supported property types (v1): BoolProperty, ByteProperty, Int8/16/32/64Property, UInt16/32/64Property, EnumProperty, FloatProperty, DoubleProperty. **Not supported**: StructProperty / FString / FName / containers (deferred).

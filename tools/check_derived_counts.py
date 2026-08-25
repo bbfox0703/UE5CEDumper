@@ -85,18 +85,29 @@ CHECKS = [
             ("docs/architecture.md",      r"Named Pipe JSON IPC protocol \((\d+) commands\)"),
             ("docs/dll-spec.md",          r"For the JSON protocol \((\d+) commands"),
             ("docs/naming-convention.md", r"Named Pipe JSON IPC \((\d+) commands\)"),
+            # The SOURCE header. It is not a doc, and that is exactly why it drifted to
+            # "~30" against a real 99 and stayed there: the registry covered every file
+            # that derives FROM this one and not this one. (audit #5 AD7/AD22)
+            ("dll/src/Fern.h",            r"Named Pipe JSON IPC server \((\d+) commands\)"),
         ],
     ),
     dict(
         key="c_abi_exports",
         label="C ABI exports",
-        derive=lambda r: count_matching(r, "dll/src/Frieren.h", r"dllexport"),
-        derive_cmd="grep -c dllexport dll/src/Frieren.h",
+        # Matches the DECLARATION, not the bare word. A loose `dllexport` counted any line
+        # mentioning it, so a comment in Frieren.h describing this very check incremented the
+        # count it describes (found while wiring AD7's claim). Same number on a clean tree,
+        # immune to prose.
+        derive=lambda r: count_matching(r, "dll/src/Frieren.h", r"__declspec\(dllexport\)"),
+        derive_cmd="grep -c '__declspec(dllexport)' dll/src/Frieren.h",
         claims=[
             ("CLAUDE.md",                 r"loadLibrary / callFunction \((\d+) C ABI exports\)"),
             ("CLAUDE.md",                 r"C ABI exports \(\*\*(\d+)\*\* — derive it"),
             ("docs/architecture.md",      r"ExportAPI — (\d+) C ABI exports"),
             ("docs/naming-convention.md", r"ExportAPI: (\d+) C ABI exports"),
+            # The header the count is DERIVED FROM — same blind spot as Fern.h above; it
+            # claimed "~30" while being the very file the grep counts. (audit #5 AD7)
+            ("dll/src/Frieren.h",         r"ExportAPI: (\d+) C ABI exports"),
         ],
     ),
     dict(

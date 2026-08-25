@@ -33,8 +33,14 @@ public static class Constants
     // startup. Matches Grimoire::LOG_RETENTION_DAYS on the DLL side.
     public const long LogMaxSizeBytes = 8 * 1024 * 1024;     // 8MB per file
 
-    // Per-process mirror logging
-    public const int MaxProcessFolders = 20;           // Clean up oldest beyond this
+    // Per-process mirror logging.
+    //
+    // There is deliberately NO folder-COUNT cap here (audit #5 AF9 removed
+    // MaxProcessFolders = 20). The comment above is the whole policy, and a count cap
+    // sat four lines below it contradicting it: a per-process folder is named after the
+    // GAME, so the count is "distinct games played in the window" and cannot run away,
+    // while the eviction was recursive and took the DLL's five log categories with it —
+    // files Sein.cpp's age-only sweep had deliberately kept.
     public const int LogMaxAgeDays = 21;               // Keep this in sync with Grimoire::LOG_RETENTION_DAYS
 
     // ---- Log compression (compact /C /EXE:LZX, in place) -------------------------
@@ -100,6 +106,21 @@ public static class Constants
     public const string LogCatPipe = "pipe";
     public const string LogCatView = "view";
 
+    // ---- Crash diagnostics -------------------------------------------------
+    //
+    // Single-file crash report at the %LOCALAPPDATA%\UE5CEDumper ROOT (not under
+    // Logs\ — the retention sweep walks only that folder and globs only *.log).
+    // Under Native AOT this is the ONLY diagnostic surface for a fault that kills
+    // the process before, or instead of, anything reaching the normal log files.
+    public const string CrashLogFileName = "crash.log";
+
+    // Above this uptime, a crash report still claiming the "Startup" phase is
+    // reporting a STALE marker rather than a real startup failure — no startup of
+    // this app takes a minute. CrashReportFormatter.Headline says so explicitly
+    // instead of repeating the phase; see [PASTECRASH-2026-08-18], where the
+    // hard-coded phrase "startup crash" mislabelled a 31-minute-in crash.
+    public const int CrashStartupPhaseMaxSeconds = 60;
+
     // Pipe Communication
     public const int PipeConnectTimeoutMs = 5000;
     public const int DefaultPageSize = 200;
@@ -150,10 +171,19 @@ public static class Constants
     public const int BookmarkSlotCount = 8;
 
     // Per-game Teleport coordinate library — teleport-coords.<module>.json under
-    // %LOCALAPPDATA%\UE5CEDumper. Keyed by the EXE MODULE NAME, not the PE hash:
-    // bookmarks store offsets and should die on a game patch, but a hand-curated
-    // coordinate list must survive one. See docs/teleport-coord-library-spec.md D1.
+    // %LOCALAPPDATA%\UE5CEDumper\TeleportCoords\. Keyed by the EXE MODULE NAME, not the
+    // PE hash: bookmarks store offsets and should die on a game patch, but a
+    // hand-curated coordinate list must survive one. See
+    // docs/teleport-coord-library-spec.md D1.
+    //
+    // It is the THIRD per-game family and it used to write to the flat app-data ROOT,
+    // which the App-data layout rule forbids — the root is for files that are app-wide
+    // and FIXED IN NUMBER, and this one grows by up to four files per game forever
+    // (.json + .bak + .preimport.bak + .preclear.bak). Moved to its own subfolder
+    // beside Snapshots\ and Bookmarks\ (audit #5 AF11); AppDataFolderMaintenance moves
+    // anything left at the root on first use, per game, as a GROUP.
     public const string CoordLibraryFilePrefix = "teleport-coords";
+    public const string CoordLibrarySubFolder  = "TeleportCoords";
 
     // Soft warning threshold for a CE-Lua export (CE's AA-script EDITOR gets
     // sluggish long before the pipe does: 4000 entries is ~480 KB, ~4.6% of the
@@ -277,6 +307,31 @@ public static class Constants
     // Default instance-search result cap (InstanceFinderUiOptions.InstanceSearchCap
     // and the InstanceFinder panel's own default).
     public const int DefaultInstanceSearchCap = 5000;
+
+    // Default Property Search result cap (PropertySearchUiOptions.PropertySearchCap and
+    // the panel's own default). [PROPSEARCHCAP-2026-08-19]
+    //
+    // ⚠ Deliberately NOT DefaultInstanceSearchCap. A property-search row is a match per
+    // property per class WITH a resolved preview value, so it is far heavier than an
+    // instance address; 200 was the long-standing wire default and stays the default here.
+    // What changed is that the panel now has a control to raise it.
+    public const int DefaultPropertySearchCap = 200;
+
+    // Default Classes-tab row cap (GameClassFilterUiOptions.ClassListCap and the panel's own
+    // default). [CLASSCAP-2026-08-21] — the panel's own status line has always advised "raise
+    // the cap" and there was no control to raise, the third instance of the Z10 shape.
+    //
+    // ⚠ 5,000 is the long-standing wire default and stays the default: a class row carries a
+    // walked property/function summary, so a big pool is not free. Avowed has 7,409 game classes
+    // (and 5,102 game-only), so a real title genuinely lands past it.
+    public const int DefaultClassListCap = 5000;
+
+    // Shared floor/ceiling for EVERY row cap the user can set — Instance Finder, Property
+    // Search, Classes. The ceiling is also enforced DLL-side in Fern.cpp per command; the UI
+    // clamp is a convenience, not the guarantee. Keep this in step with those clamps —
+    // PropertySearchCapClampTests and ClassListCapTests each pin their own pairing.
+    public const int MinSearchCap = 100;
+    public const int MaxSearchCap = 50000;
 
     // UI
     public const int DefaultWindowWidth = 1400;

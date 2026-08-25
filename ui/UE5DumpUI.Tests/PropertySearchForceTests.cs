@@ -122,15 +122,47 @@ public class PropertySearchForceTests
         Assert.Equal(0, dump.ForceCalls);
     }
 
+    /// <summary>
+    /// held == 0 with code == 0 is NOT "the force did nothing" — it is "the force is
+    /// armed and waiting". <c>Solide::AddForce</c> discards a job only when the field
+    /// resolved somewhere and was type-refused everywhere, and that path returns a
+    /// NEGATIVE code (asserted separately below). Reaching zero-held with code 0 means
+    /// the job was kept and the re-assert worker started, so the hold begins writing
+    /// into the game the moment a matching instance spawns.
+    ///
+    /// <para>This test used to assert the opposite ("nothing held") — it encoded the
+    /// defect. The two states must read differently, because the "Forced fields (N held)"
+    /// strip on the same panel lists the armed hold while the status line denied it.
+    /// (audit #5 Z11)</para>
+    /// </summary>
     [Fact]
-    public async Task Force_zero_held_reports_nothing_held()
+    public async Task Force_zero_held_with_ok_code_says_the_hold_is_ARMED_not_that_nothing_happened()
     {
-        var dump = new RecordingDump { NextForce = new() { Held = 0, Resolved = false } };
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = 0, Resolved = false } };
         var vm = new PropertySearchViewModel(dump, new NoopLog());
 
         await vm.ForceBoolOnCommand.ExecuteAsync(NewMatch("BoolProperty", "bInvincible"));
 
-        Assert.Contains("nothing held", vm.StatusText);
+        Assert.Contains("ARMED", vm.StatusText);
+        // ...and it must NOT claim the operation was a no-op.
+        Assert.DoesNotContain("nothing held", vm.StatusText);
+        // The user needs to know it will fire later, and how to undo it.
+        Assert.Contains("spawns", vm.StatusText);
+        Assert.Contains("release", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The genuinely-futile case still reports as an error, unchanged: a
+    /// negative code is the "resolved but type-refused everywhere" verdict.</summary>
+    [Fact]
+    public async Task Force_negative_code_still_reports_a_DLL_error_not_an_armed_hold()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = -7, Resolved = false } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(NewMatch("BoolProperty", "bInvincible"));
+
+        Assert.Contains("DLL error", vm.StatusText);
+        Assert.DoesNotContain("ARMED", vm.StatusText);
     }
 
     /// <summary>The class name on a Property Search row is the DEFINING class, and the

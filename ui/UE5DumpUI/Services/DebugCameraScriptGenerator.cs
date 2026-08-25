@@ -53,7 +53,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, "if not mb or mb == 0 then");
         Line(sb, "  showMessage('[DebugCamera] g_invokeMailbox not found -- is " +
                   "UE5Dumper.dll injected?')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write: if the layout moved we would
@@ -87,7 +87,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
                   "-- no live CheatManager, or the game refused the toggle.')");
         // Nothing was applied on this branch, so the record must not stay ticked.
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "elseif DEBUG == 0 then");
         Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
         Line(sb, "end");

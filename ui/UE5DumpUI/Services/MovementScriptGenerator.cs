@@ -72,7 +72,7 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
@@ -104,7 +104,7 @@ public static class MovementScriptGenerator
             // Nothing was applied, so the row must not stay ticked (same rule as the
             // timeout path above; this one was missed for the same reason).
             Line(sb, $"  showMessage('[Movement] {label} -- no pawn / no CharacterMovement (enter gameplay first)')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");
@@ -158,7 +158,7 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
@@ -176,8 +176,8 @@ public static class MovementScriptGenerator
             enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, 3)        -- knobId 3 = GravityDirection");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sx)})   -- X");
-        Line(sb, $"writeDouble(mb + 0x330, {Lua(sy)})   -- Y");
-        Line(sb, $"writeDouble(mb + 0x338, {Lua(sz)})   -- Z");
+        Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData1}, {Lua(sy)})   -- Y");
+        Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData2}, {Lua(sz)})   -- Z");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)        -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdMovement})       -- CMD_MOVEMENT (write LAST)");
         CeLuaHygiene.AppendMailboxWait(sb, "Movement",
@@ -189,7 +189,7 @@ public static class MovementScriptGenerator
             Line(sb, "if state < 0 then");
             // Applied nothing -> the row must not stay ticked.
             Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.4+) or no pawn.')");
-            Line(sb, "  if memrec then memrec.Active = false end");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");

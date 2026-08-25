@@ -186,6 +186,78 @@ public partial class ProxyDeployViewModel : ViewModelBase
         => $"Busy: {_busyWith ?? "another operation"} is running — wait for it to finish";
 
     /// <summary>
+    /// True exactly while the panel holds its exclusive gate — i.e. while one of the
+    /// long operations is running and can be cancelled. Drives the toolbar Cancel
+    /// button's <c>IsEnabled</c>.
+    ///
+    /// <para>Deliberately the SAME predicate <see cref="TryBeginExclusive"/> tests, not
+    /// a second one that could drift from it (§2.3: a cheap proxy signal beside a
+    /// predicate a sibling already computes correctly).</para>
+    /// </summary>
+    public bool IsBusy => IsScanning || IsRemovingOrphans;
+
+    partial void OnIsScanningChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsRemovingOrphansChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+
+    /// <summary>
+    /// Cancel whichever long operation is running.
+    ///
+    /// <para>
+    /// Seven commands in this panel take a <c>CancellationToken</c>, pass it to the
+    /// service, check it in their loops and carry a whole "cancelled" reporting path —
+    /// and only two of them (<c>ScanDrives</c>, <c>ScanOrphans</c>) declared
+    /// <c>IncludeCancelCommand</c>, so for the other five nothing in the app could ever
+    /// call <c>Cancel()</c> and every one of those paths was unreachable. That included
+    /// the destructive one: <see cref="DeleteSelectedOrphansAsync"/> recycles a chain of
+    /// files per row and re-checks the token between rows, and there was no way to stop
+    /// it once started. (audit #5 AE20)
+    /// </para>
+    /// <para>
+    /// One button rather than seven: the panel is exclusive (only one of these can be
+    /// running), so "cancel the current operation" is unambiguous. The fan-out is safe
+    /// because <c>AsyncRelayCommand.ExecuteAsync</c> builds a FRESH
+    /// <c>CancellationTokenSource</c> per execution, so cancelling a finished run cannot
+    /// poison the next one, and <c>Cancel()</c> is a no-op when there is no source.
+    /// </para>
+    /// <para>
+    /// Deliberately does NOT gate on <c>CanBeCanceled</c>, which was the first shape and
+    /// measured wrong: that property is <c>IsRunning &amp;&amp; …</c>, and <c>IsRunning</c>
+    /// reads <c>ExecutionTask</c>, which the toolkit assigns only AFTER invoking the
+    /// command body. A body that reaches no real await before the cancel point therefore
+    /// runs with <c>CanBeCanceled == false</c> and the gate skipped it — the delete loop
+    /// ran to completion. The CTS exists before the body is invoked, so cancelling
+    /// unconditionally covers that window too.
+    /// </para>
+    /// <para>
+    /// This does NOT make cancellation instantaneous. Each command observes the token
+    /// between units of work (one game, one orphan row, one library folder), so the
+    /// in-flight unit finishes first — which is also what keeps a half-deleted chain
+    /// from being reported as untouched.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    private void CancelOperation()
+    {
+        foreach (var c in CancellableOperations()) c.Cancel();
+    }
+
+    /// <summary>Every command in this panel whose generated <c>AsyncRelayCommand</c>
+    /// owns a cancellation token. Kept as one list so adding a token to a command and
+    /// forgetting to make it cancellable is a single, greppable omission.</summary>
+    private IEnumerable<CommunityToolkit.Mvvm.Input.IAsyncRelayCommand> CancellableOperations()
+    {
+        yield return ScanCommand;
+        yield return ScanDrivesCommand;
+        yield return LoadDrivesCommand;
+        yield return ScanOrphansCommand;
+        yield return DeleteSelectedOrphansCommand;
+        yield return RefreshCommand;
+        yield return DeploySelectedCommand;
+        yield return UndeploySelectedCommand;
+        yield return UpdateAllCommand;
+    }
+
+    /// <summary>
     /// Which proxy DLL the user wants to deploy. Bound to the RadioButtons
     /// at the top of the panel. Changing this triggers a status refresh so
     /// the DataGrid reflects the deploy state of the newly-selected DLL.
@@ -250,7 +322,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
         set { if (value) ScanDrivesMode = true; }
     }
 
-    /// <summary>Whether any games are selected for batch operations.</summary>
+    /// <summary>Whether any games are selected for batch operations.
+    ///
+    /// <para>audit #5 AE29 — ⚠ NO VIEW BINDS THIS TODAY, and it has no per-row hook, so it is
+    /// only correct immediately after the five bulk sites that re-raise it (Select All / Clear /
+    /// Invert / rescan). Its sibling <see cref="HasOrphanSelection"/> IS bound and DOES have one
+    /// (<see cref="OnOrphanRowChanged"/>). The dead <c>NotifySelectionChanged()</c> that existed
+    /// solely to raise this — documented "called from View", called from nowhere — has been
+    /// removed. Before binding this to anything, subscribe to each <c>DetectedGame</c>'s
+    /// <c>PropertyChanged</c> the way the orphan list does, or ticking one row will not update
+    /// it.</para></summary>
     public bool HasSelection => Games.Any(g => g.IsSelected);
 
     public ProxyDeployViewModel(IProxyDeployService deploy, ILoggingService log,
@@ -628,8 +709,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>True when the delete button should be enabled.</summary>
     public bool HasOrphanSelection => SelectedOrphanCount > 0;
 
-    /// <summary>Re-raise the orphan selection computed properties. Called by the view when a row
-    /// checkbox toggles, because a change inside a collection item is not observed by the collection.</summary>
+    /// <summary>Re-raise the orphan selection computed properties, because a change inside a
+    /// collection item is not observed by the collection itself.
+    ///
+    /// <para>audit #5 AE28 — this used to say "Called by the view when a row checkbox toggles".
+    /// No view calls it, and the design is better than that: the trigger is
+    /// <see cref="OnOrphanRowChanged"/>, a per-row <c>PropertyChanged</c> subscription taken out
+    /// when the scan populates <c>Orphans</c>. The other three call sites are the scan finishing
+    /// and the cleanup loop's success and cancel paths. Naming a view call-site that does not
+    /// exist is how someone later "restores" it and double-raises, or removes the real
+    /// subscription believing the view covers it.</para></summary>
     public void NotifyOrphanSelectionChanged()
     {
         OnPropertyChanged(nameof(SelectedOrphanCount));
@@ -866,11 +955,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task DeleteSelectedOrphansAsync(CancellationToken ct)
     {
-        // IsScanning is shared with Scan Steam / Scan Drives / Refresh in this panel, and a delete
-        // running concurrently with a scan would have the first finisher clear the flag for both.
+        // A cheap pre-check, so a delete that is going to be refused never puts a modal on screen.
+        // It reports through BusyMessage() like the other seven: this used to say the generic
+        // "Wait for the current operation to finish", which names nothing — almost exactly the
+        // wording AE5's fix exists to replace. [ORPHANBUSYMSG-2026-08-24]
         if (IsScanning || IsRemovingOrphans)
         {
-            LastOperationResult = "Wait for the current operation to finish";
+            LastOperationResult = BusyMessage();
             return;
         }
 
@@ -889,6 +980,36 @@ public partial class ProxyDeployViewModel : ViewModelBase
             LastOperationResult = "Cancelled — nothing was removed";
             return;
         }
+
+        // ── The gate, taken HERE and not at the top of the method ────────────────────────────
+        //
+        // AFTER the confirmation, deliberately: holding it across the modal would make the panel
+        // report itself busy for as long as the dialog is open, and
+        // `TheConfirmDialog_IsNotTheGate_AndThatIsDeliberate` pins that it must not. So the check
+        // above is a pre-filter and THIS is the gate — which also closes a window that pre-filter
+        // alone left open: something invoked while the dialog was up (hotkey, property-changed)
+        // used to find the delete setting `IsRemovingOrphans` unconditionally on the way out.
+        //
+        // Sharing `TryBeginExclusive` is the point. The delete used to hand-roll the predicate and
+        // so never set `_busyWith`, leaving it the one operation in this panel that was unnamed as
+        // the blocker as well as the blocked: everything else fell through `BusyMessage()`'s
+        // `?? "another operation"` fallback and said `Busy: another operation is running`.
+        // [ORPHANBUSYMSG-2026-08-24]
+        //
+        // ⚠ The finding that reported this claimed `IsRemovingOrphans` was load-bearing because
+        // "the leftover card's Cancel binds to it". It does not — that Cancel binds to
+        // `IsScanningOrphans`, and the comment at ProxyDeployPanel.axaml:152 says so in as many
+        // words ("NOT to the shared IsScanning and NOT to IsRemovingOrphans"). Nothing in any
+        // .axaml binds `IsRemovingOrphans` at all. It is kept because it is half of `IsBusy` and
+        // the orphan tests assert on it, NOT for the stated reason.
+        //
+        // Blast radius of now setting the shared flag here, checked rather than assumed: inside
+        // this panel `IsScanning` is bound only by the progress bar (ProxyDeployPanel.axaml:238)
+        // and read at :576 to skip the drive-list auto-load. So the visible change is that a
+        // leftover delete finally SHOWS the busy bar — it showed none before, which is the
+        // unreported third half of this defect.
+        using var busy = TryBeginExclusive("Delete leftovers");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         int ok = 0, fail = 0, files = 0, dirs = 0;
         var live = LiveBinariesDirs();
@@ -909,14 +1030,29 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 // read "Delete checked (1)" — the retry has to be something the user asks for.
                 row.IsSelected = false;
 
+                // ⚠ Counted UNCONDITIONALLY. [ORPHANCANCEL-2026-08-20] These used to be inside
+                // the success branch, so anything a non-successful row had already recycled went
+                // unreported — and the log then showed three "Recycled leftover proxy" lines under
+                // a summary that claimed two. A partly-locked row has the same problem as an
+                // interrupted one: work happened, and the tally has to say so.
+                files += result.FilesRecycled;
+                dirs += result.DirsRemoved;
+
                 if (result.Success)
                 {
                     ok++;
-                    files += result.FilesRecycled;
-                    dirs += result.DirsRemoved;
                     DropOrphanRow(row);
                 }
-                else fail++;
+                else if (!result.Cancelled)
+                {
+                    fail++;
+                }
+
+                // Interrupting is not failing, so the row is neither counted as a failure nor
+                // dropped: its half-pruned chain is precisely what the user needs left on screen.
+                // Rethrow so the outer handler prints the cancelled summary — which now includes
+                // what this row managed to do.
+                if (result.Cancelled) throw new OperationCanceledException(ct);
             }
             NotifyOrphanSelectionChanged();
             SetOperationResult(DescribeCleanup(ok, picked.Count, files, dirs, fail, cancelled: false), fail);
@@ -1453,14 +1589,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private void InvertSelection()
     {
         foreach (var g in Games) g.IsSelected = !g.IsSelected;
-        OnPropertyChanged(nameof(HasSelection));
-    }
-
-    /// <summary>
-    /// Notify that selection changed (called from View).
-    /// </summary>
-    public void NotifySelectionChanged()
-    {
         OnPropertyChanged(nameof(HasSelection));
     }
 

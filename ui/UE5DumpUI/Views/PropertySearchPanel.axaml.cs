@@ -56,7 +56,14 @@ public partial class PropertySearchPanel : UserControl
         // Reuse the Freeze value dialog (per-type validation), then convert the returned
         // literal to the double the force_field command carries — DLL-side too:
         // Solide::AddForce takes a double, so this is the wire's width, not a UI choice.
-        var dialog = new FreezeValueDialog(match);
+        //
+        // Purpose.Force, NOT the default (audit #5 AF22). The validation is shared; the
+        // WORDING is not. Shown verbatim, this dialog titled itself "Freeze property
+        // value" and labelled its confirm button "Create freeze script" for a flow that
+        // creates no script and instead writes the field on every live instance
+        // immediately — and its scope caveat told the user to narrow the freeze by
+        // editing a CFG block that does not exist on this path.
+        var dialog = new FreezeValueDialog(match, FreezeValueDialog.Purpose.Force);
         Window? owner = null;
         if (Avalonia.Application.Current?.ApplicationLifetime
                 is IClassicDesktopStyleApplicationLifetime desktop)
@@ -138,7 +145,7 @@ public partial class PropertySearchPanel : UserControl
 
     private async System.Threading.Tasks.Task<string?> PromptFreezeValueAsync(PropertySearchMatch match)
     {
-        var dialog = new FreezeValueDialog(match);
+        var dialog = new FreezeValueDialog(match, FreezeValueDialog.Purpose.Freeze);
         // Find the owning Window so the dialog modals correctly.
         Window? owner = null;
         if (Avalonia.Application.Current?.ApplicationLifetime

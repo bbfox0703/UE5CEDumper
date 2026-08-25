@@ -1,19 +1,19 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "270ac0d",
-  "source_sha256": "36801960f1e4d774fbb9aba5dc1ef286a66991e653422da37f8bf01944990985",
-  "captured_utc": "2026-08-12T01:02:31+00:00",
+  "source_commit": "8dde289f",
+  "source_sha256": "10ca85586024439b49dc3415009a864b8f4a6704fa46b30c150463266d58b09e",
+  "captured_utc": "2026-08-24T11:45:35+00:00",
   "build_command": "\"C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "D:\\UE_Analyze_data\\For Testing\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279211008,
-      "sha256": "3d605598dd1012321ac4a0cff0c219c9aaab7d91864dfa85a47bea17655d2383",
+      "size": 279267328,
+      "sha256": "61909cad164ea87b632bb2817191ca645c4212442edb78d983772d8560141872",
       "reflected_present": {
         "DumperTestActor": 5,
         "DumperTestSubsystem": 2,
-        "DumperTestPayload": 2,
+        "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
         "Opt_Int_Unset": 1,
         "FrozenInt": 2
@@ -23,16 +23,16 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-08-05T12:13:21+00:00"
+      "exe_mtime": "2026-08-24T10:54:38+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132310016,
-      "sha256": "bc23ccd5ef05e4187ee47b581121c032a373874f9cddaf7b2fc00b9a7649fdcf",
+      "size": 132401152,
+      "sha256": "2e65da279a614ba4b52e65fc3c4890a19a197f4def2ad713fe9676aa5170a754",
       "reflected_present": {
         "DumperTestActor": 2,
         "DumperTestSubsystem": 1,
-        "DumperTestPayload": 2,
+        "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
         "Opt_Int_Unset": 1,
         "FrozenInt": 2
@@ -42,12 +42,31 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-08-05T12:15:00+00:00"
+      "exe_mtime": "2026-08-24T11:17:27+00:00"
+    },
+    "DebugGame": {
+      "file": "DumperTest-Win64-DebugGame.exe",
+      "size": 279396352,
+      "sha256": "15349c6b571141cdd118da380769521dbf024c2e159f04d0a11c4ddc37557116",
+      "reflected_present": {
+        "DumperTestActor": 6,
+        "DumperTestSubsystem": 3,
+        "DumperTestPayload": 5,
+        "Text_Even2_TwoNull": 1,
+        "Opt_Int_Unset": 2,
+        "FrozenInt": 2
+      },
+      "raw_absent": {
+        "RawInt": 0,
+        "RawFloat": 0,
+        "RawDouble": 0
+      },
+      "exe_mtime": "2026-08-24T11:13:56+00:00"
     }
   },
   "problems": [],
   "built_from": {
     "path": "D:\\Unreal Projects\\DumperTest\\Source\\DumperTest",
-    "source_sha256": "36801960f1e4d774fbb9aba5dc1ef286a66991e653422da37f8bf01944990985"
+    "source_sha256": "10ca85586024439b49dc3415009a864b8f4a6704fa46b30c150463266d58b09e"
   }
 }

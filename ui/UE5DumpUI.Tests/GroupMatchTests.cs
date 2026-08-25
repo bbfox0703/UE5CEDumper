@@ -57,7 +57,7 @@ public class GroupMatchTests
     {
         var leaves = new[] { L(0x20, "IntProperty", 24), L(0x24, "IntProperty", 10) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 24), Abs(GroupMatch.Predicate.Exact, 10) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -71,11 +71,11 @@ public class GroupMatchTests
             L(0xC, "FloatProperty", 513.3599853516),
         };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 513), Abs(GroupMatch.Predicate.Exact, 513) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
 
         // A float that rounds to 514 is NOT matched by an Exact-513 slot.
         var miss = new[] { L(0x8, "FloatProperty", 513.7), L(0xC, "FloatProperty", 513.7) };
-        Assert.False(GroupMatch.Run(miss, slots, out _));
+        Assert.False(GroupMatch.Run(miss, slots, out _, out _));
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class GroupMatchTests
         // Two slots both want 24; two distinct leaves hold 24 -> SDR exists.
         var leaves = new[] { L(0x20, "IntProperty", 24), L(0x24, "IntProperty", 24) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 24), Abs(GroupMatch.Predicate.Exact, 24) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class GroupMatchTests
         // Two slots want 24 but only ONE leaf holds it -> no distinct assignment.
         var leaves = new[] { L(0x20, "IntProperty", 24), L(0x24, "IntProperty", 99) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 24), Abs(GroupMatch.Predicate.Exact, 24) };
-        Assert.False(GroupMatch.Run(leaves, slots, out _));
+        Assert.False(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -102,7 +102,7 @@ public class GroupMatchTests
         // Values appear in the opposite offset order vs the slots.
         var leaves = new[] { L(0x20, "IntProperty", 10), L(0x24, "IntProperty", 24) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 24), Abs(GroupMatch.Predicate.Exact, 10) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class GroupMatchTests
         // 70000 cannot fit an Int16; it must bind the Int32 leaf, and 24 binds Int16.
         var leaves = new[] { L(0x0, "Int16Property", 24), L(0x4, "IntProperty", 70000) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 70000), Abs(GroupMatch.Predicate.Exact, 24) };
-        Assert.True(GroupMatch.Run(leaves, slots, out var per));
+        Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
         // The 70000 slot matched only the Int32 leaf (index 1).
         Assert.Equal(new[] { 1 }, per[0]);
     }
@@ -122,7 +122,7 @@ public class GroupMatchTests
         // 3.5 cannot be an integer field; only the Float leaf is eligible.
         var leaves = new[] { L(0x0, "IntProperty", 3), L(0x4, "FloatProperty", 3.5) };
         var slots = new[] { Abs(GroupMatch.Predicate.Exact, 3.5), Abs(GroupMatch.Predicate.Exact, 3) };
-        Assert.True(GroupMatch.Run(leaves, slots, out var per));
+        Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
         Assert.Equal(new[] { 1 }, per[0]); // 3.5 -> Float leaf only
     }
 
@@ -138,7 +138,7 @@ public class GroupMatchTests
             Abs(GroupMatch.Predicate.Exact, 5, sc: GroupMatch.Scope.NumericNoByte),
             Abs(GroupMatch.Predicate.Exact, 5, sc: GroupMatch.Scope.NumericNoByte),
         };
-        Assert.False(GroupMatch.Run(leaves, noByte, out _));
+        Assert.False(GroupMatch.Run(leaves, noByte, out _, out _));
 
         // All: both leaves eligible -> SDR exists.
         var all = new[]
@@ -146,7 +146,7 @@ public class GroupMatchTests
             Abs(GroupMatch.Predicate.Exact, 5, sc: GroupMatch.Scope.NumericAll),
             Abs(GroupMatch.Predicate.Exact, 5, sc: GroupMatch.Scope.NumericAll),
         };
-        Assert.True(GroupMatch.Run(leaves, all, out _));
+        Assert.True(GroupMatch.Run(leaves, all, out _, out _));
     }
 
     [Fact]
@@ -154,9 +154,9 @@ public class GroupMatchTests
     {
         var leaves = new[] { L(0x0, "IntProperty", 50), L(0x4, "IntProperty", 200) };
         Assert.True(GroupMatch.Run(new[] { leaves[0], leaves[1] },
-            new[] { Between(1, 100), Between(100, 300) }, out _));
+            new[] { Between(1, 100), Between(100, 300) }, out _, out _));
         // 50 is NOT in [60,100] -> first slot empty -> no match.
-        Assert.False(GroupMatch.Run(leaves, new[] { Between(60, 100), Between(100, 300) }, out _));
+        Assert.False(GroupMatch.Run(leaves, new[] { Between(60, 100), Between(100, 300) }, out _, out _));
     }
 
     [Fact]
@@ -165,11 +165,11 @@ public class GroupMatchTests
         // Default Round mode: a whole target matches any float that rounds to it.
         var leaf = new[] { L(0x0, "FloatProperty", 513.36), L(0x4, "IntProperty", 7) };
         Assert.True(GroupMatch.Run(leaf,
-            new[] { Abs(GroupMatch.Predicate.Exact, 513), Abs(GroupMatch.Predicate.Exact, 7) }, out _));
+            new[] { Abs(GroupMatch.Predicate.Exact, 513), Abs(GroupMatch.Predicate.Exact, 7) }, out _, out _));
         // A fractional float that rounds to 514 is NOT matched by Exact-513.
         var miss = new[] { L(0x0, "FloatProperty", 513.7), L(0x4, "IntProperty", 7) };
         Assert.False(GroupMatch.Run(miss,
-            new[] { Abs(GroupMatch.Predicate.Exact, 513), Abs(GroupMatch.Predicate.Exact, 7) }, out _));
+            new[] { Abs(GroupMatch.Predicate.Exact, 513), Abs(GroupMatch.Predicate.Exact, 7) }, out _, out _));
     }
 
     [Fact]
@@ -182,30 +182,30 @@ public class GroupMatchTests
         {
             Abs(GroupMatch.Predicate.Exact, 513, FloatRoundMode.Trunc),
             Abs(GroupMatch.Predicate.Exact, 7,   FloatRoundMode.Trunc),
-        }, out _));
+        }, out _, out _));
         Assert.False(GroupMatch.Run(leaf, new[]
         {
             Abs(GroupMatch.Predicate.Exact, 514, FloatRoundMode.Trunc),
             Abs(GroupMatch.Predicate.Exact, 7,   FloatRoundMode.Trunc),
-        }, out _));
+        }, out _, out _));
 
         Assert.True(GroupMatch.Run(leaf, new[]
         {
             Abs(GroupMatch.Predicate.Exact, 514, FloatRoundMode.Ceil),
             Abs(GroupMatch.Predicate.Exact, 7,   FloatRoundMode.Ceil),
-        }, out _));
+        }, out _, out _));
         Assert.False(GroupMatch.Run(leaf, new[]
         {
             Abs(GroupMatch.Predicate.Exact, 513, FloatRoundMode.Ceil),
             Abs(GroupMatch.Predicate.Exact, 7,   FloatRoundMode.Ceil),
-        }, out _));
+        }, out _, out _));
     }
 
     [Fact]
     public void LessThanTwoSlots_ReturnsFalse()
     {
         var leaves = new[] { L(0x0, "IntProperty", 24) };
-        Assert.False(GroupMatch.Run(leaves, new[] { Abs(GroupMatch.Predicate.Exact, 24) }, out _));
+        Assert.False(GroupMatch.Run(leaves, new[] { Abs(GroupMatch.Predicate.Exact, 24) }, out _, out _));
     }
 
     // ============================================================
@@ -222,7 +222,7 @@ public class GroupMatchTests
             L2(0x14, "IntProperty", 100, 100),  // Max HP     -> Unchanged
         };
         var slots = new[] { Rel(GroupMatch.Predicate.Decreased), Rel(GroupMatch.Predicate.Unchanged) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -235,7 +235,7 @@ public class GroupMatchTests
             L2(0x14, "IntProperty", 100, 120),  // Max HP     -> also changed
         };
         var slots = new[] { Rel(GroupMatch.Predicate.Decreased), Rel(GroupMatch.Predicate.Unchanged) };
-        Assert.False(GroupMatch.Run(leaves, slots, out _));
+        Assert.False(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -243,7 +243,7 @@ public class GroupMatchTests
     {
         var leaves = new[] { L2(0x0, "IntProperty", 80, 100), L2(0x4, "IntProperty", 5, 5) };
         var slots = new[] { Rel(GroupMatch.Predicate.Increased), Rel(GroupMatch.Predicate.Unchanged) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -251,7 +251,7 @@ public class GroupMatchTests
     {
         var leaves = new[] { L2(0x0, "FloatProperty", 1.0, 2.0), L2(0x4, "IntProperty", 7, 7) };
         var slots = new[] { Rel(GroupMatch.Predicate.Changed), Rel(GroupMatch.Predicate.Unchanged) };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -280,7 +280,7 @@ public class GroupMatchTests
             Rel(GroupMatch.Predicate.Unchanged),
             Abs(GroupMatch.Predicate.Exact, 30),
         };
-        Assert.True(GroupMatch.Run(leaves, slots, out _));
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
     }
 
     [Fact]
@@ -289,9 +289,9 @@ public class GroupMatchTests
         // Exact 80 must match on the NEWEST value (100 -> 80), not the oldest (100).
         var leaves = new[] { L2(0x0, "IntProperty", 100, 80), L2(0x4, "IntProperty", 5, 5) };
         Assert.True(GroupMatch.Run(leaves,
-            new[] { Abs(GroupMatch.Predicate.Exact, 80), Abs(GroupMatch.Predicate.Exact, 5) }, out _));
+            new[] { Abs(GroupMatch.Predicate.Exact, 80), Abs(GroupMatch.Predicate.Exact, 5) }, out _, out _));
         Assert.False(GroupMatch.Run(leaves,
-            new[] { Abs(GroupMatch.Predicate.Exact, 100), Abs(GroupMatch.Predicate.Exact, 5) }, out _));
+            new[] { Abs(GroupMatch.Predicate.Exact, 100), Abs(GroupMatch.Predicate.Exact, 5) }, out _, out _));
     }
 
     [Fact]
@@ -305,10 +305,37 @@ public class GroupMatchTests
         for (int i = 0; i < 40; i++) leaves.Add(L(i * 4, "IntProperty", 100 + i));
         var slots = new List<GroupMatch.Slot> { Between(0, 100000), Between(0, 100000) };
 
-        Assert.True(GroupMatch.Run(leaves, slots, out var perSlot));
+        Assert.True(GroupMatch.Run(leaves, slots, out var perSlot, out bool uncappedHit));
         Assert.Equal(40, perSlot[0].Count);      // every satisfying leaf kept
+        // AF13: nothing was dropped, so the truncation flag must stay FALSE. This is
+        // the negative control for the assertion below — without it, a flag hardwired
+        // to true would pass the "capped" case and tell the user every scan was partial.
+        Assert.False(uncappedHit);
 
-        Assert.True(GroupMatch.Run(leaves, slots, out var capped, perSlotCap: 8));
+        Assert.True(GroupMatch.Run(leaves, slots, out var capped, out bool cappedHit, perSlotCap: 8));
         Assert.Equal(8, capped[0].Count);        // an explicit cap still bounds it
+        Assert.True(cappedHit);                  // …and it SAYS so (audit #5 AF13)
+    }
+
+    [Fact]
+    public void PerSlotCapHit_is_reported_even_when_the_object_does_not_match()
+    {
+        // The case the flag exists for. A slot truncated at the cap and the object then
+        // failed the distinct-assignment test — so the user sees a MISS, and the miss
+        // may be an artifact of the cap rather than an answer. Setting the flag only on
+        // the true return (the obvious implementation) would stay silent exactly here.
+        //
+        // 12 leaves all satisfy slot 0; cap 1 keeps one of them. Slot 1 wants the same
+        // single leaf, so after truncation no distinct pair exists and Run returns false.
+        var leaves = new List<GroupMatch.Leaf>();
+        for (int i = 0; i < 12; i++) leaves.Add(L(i * 4, "IntProperty", 500));
+        var slots = new List<GroupMatch.Slot>
+        {
+            Abs(GroupMatch.Predicate.Exact, 500),
+            Abs(GroupMatch.Predicate.Exact, 500),
+        };
+
+        Assert.False(GroupMatch.Run(leaves, slots, out _, out bool hit, perSlotCap: 1));
+        Assert.True(hit);
     }
 }

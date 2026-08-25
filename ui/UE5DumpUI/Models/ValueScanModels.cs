@@ -13,9 +13,13 @@ namespace UE5DumpUI.Models;
 /// candidates pending per-version Translation offset detection. See
 /// memory project_value_search_caveats for the TArray&lt;T&gt; gap.
 ///
-/// Native C++ fields (non-UPROPERTY) are unreachable from this scan
-/// regardless of data type — the UI Value Search tab MUST surface that
-/// limitation in its banner.
+/// Native C++ fields (non-UPROPERTY) carry no reflection metadata, so no
+/// <c>ValueScanDataType</c> reaches them through the property walk. They ARE
+/// reachable with the opt-in Native-C scan (<c>nativeC: true</c>), which reads
+/// each object's unmanaged holes raw at the requested width — numeric types
+/// only. The UI Value Search tab MUST surface both: the limitation and the
+/// toggle that lifts it. "Unreachable regardless of data type" was written
+/// before Native-C shipped and is no longer true. (audit #5 AE31)
 /// </summary>
 public enum ValueScanDataType
 {
@@ -468,6 +472,22 @@ public class GroupScanBeginResult
     public int   ScannedObjects { get; set; }
     public long  DurationMs     { get; set; }
     public bool  DeadlineHit    { get; set; }
+    /// <summary>At least one object matched a slot with MORE fields than the per-slot
+    /// leaf cap kept, so that slot's witness list — and the "All fields" popup built
+    /// from it — is a page, and a later Changed/Decreased refine can only re-read what
+    /// was kept.
+    ///
+    /// <para>Not the same claim as <see cref="DeadlineHit"/>: that one bounds how many
+    /// OBJECTS were examined, this one bounds how many WITNESSES an examined object
+    /// kept. Until the DLL added <c>per_slot_cap_hit</c> (audit #5 AE13) the fact
+    /// existed only as a <c>LOG_WARN</c> line in the DLL's own log, so no DTO could
+    /// carry it and the UI presented a capped list as complete. False on an older DLL,
+    /// which is the correct default — it means "no evidence of truncation".</para></summary>
+    public bool  PerSlotCapHit  { get; set; }
+    /// <summary>The cap the DLL actually applied, after its own 8..4096 clamp. Not
+    /// derivable client-side: the request omits the key when it equals the UI default.
+    /// 0 from a DLL that predates the key.</summary>
+    public int   PerSlotCap     { get; set; }
     public List<GroupCandidate> Candidates { get; set; } = new();
     public List<ClassCount> ClassHistogram { get; set; } = new();
     public int ClassDistinct { get; set; }
@@ -479,6 +499,10 @@ public class GroupScanRefineResult
     public ulong SessionId  { get; set; }
     public int   Total      { get; set; }
     public long  DurationMs { get; set; }
+    /// <summary>Inherited from the Begin scan via the DLL session — a refine prunes the
+    /// stored pool and never re-runs the matcher, so it cannot recompute this. (AE13)</summary>
+    public bool  PerSlotCapHit { get; set; }
+    public int   PerSlotCap    { get; set; }
     public List<GroupCandidate> Candidates { get; set; } = new();
     public List<ClassCount> ClassHistogram { get; set; } = new();
     public int ClassDistinct { get; set; }
@@ -491,5 +515,9 @@ public class GroupScanWindowResult
     public int   Total         { get; set; }
     public int   FilteredTotal { get; set; }
     public int   Offset        { get; set; }
+    /// <summary>Repeated on every window so a panel that only ever queries — after a
+    /// sort change, a filter, a Load More — still learns the set was capped. (AE13)</summary>
+    public bool  PerSlotCapHit { get; set; }
+    public int   PerSlotCap    { get; set; }
     public List<GroupCandidate> Candidates { get; set; } = new();
 }

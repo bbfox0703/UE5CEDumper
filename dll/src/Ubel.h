@@ -251,6 +251,67 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out);
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
 
+// ── Resolving a UFunction BY NAME on a class, INCLUDING inherited ones ──────
+// [INVOKEINHERIT-2026-08-20]
+//
+// WalkFunctions above walks one UClass's OWN UStruct::Children chain and stops there.
+// That is right for LISTING — the UI attributes each function to its declaring class, and
+// inheriting would repeat AActor's 140 entries under every actor class — but it is wrong
+// for RESOLVING, and the by-name resolvers were built straight on top of it. The result:
+// `SetActorHiddenInGame` on a StaticMeshActor came back "Function not found" for a function
+// the tool's own listing had produced, while the same call on an instance whose class IS
+// Actor worked. AActor declares 140 functions, APawn 33, ACharacter 48 — none of them
+// reachable by name on any derived instance, which on a real game means K2_TeleportTo,
+// SetActorLocation and Jump among ~221 others.
+//
+// The traversal lives here, in the header, ON PURPOSE: no test target compiles Ubel.cpp
+// (nor Frieren.cpp / Mimic.cpp, the two call sites), so a rule left in a .cpp could not be
+// pinned at all. Taking the per-class listing and the super read as callables lets a test
+// drive a synthetic class chain and keeps this free of any memory access.
+//
+// ⚠ Both passes run over the WHOLE chain before the other begins. An exact match on a base
+// class must beat a case-insensitive match on a derived one, so this cannot be written as
+// "try both at each level on the way up".
+template <class ListFuncs, class ReadSuper>
+inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
+                                   ListFuncs listFuncs, ReadSuper readSuper,
+                                   FunctionInfo& out, int* levelsWalked = nullptr) {
+    if (levelsWalked) *levelsWalked = 0;
+    if (!classAddr || !funcName || !funcName[0]) return false;
+
+    // Collect the chain first. A malformed/mid-teardown SuperStruct can point at itself or
+    // form a cycle, so bound it the way Dunste::FindFuncByName already does.
+    constexpr int kMaxSuperDepth = 64;
+    std::vector<std::vector<FunctionInfo>> levels;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        levels.push_back(listFuncs(cls));
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == 0 || super == cls) break;
+        cls = super;
+    }
+    if (levelsWalked) *levelsWalked = static_cast<int>(levels.size());
+
+    // Pass 1: exact, most-derived first, so an override beats the base it overrides.
+    for (const auto& level : levels)
+        for (const auto& f : level)
+            if (f.name == funcName) { out = f; return true; }
+
+    // Pass 2: case-insensitive, same order. Kept as a separate sweep — see the note above.
+    std::string want(funcName);
+    std::transform(want.begin(), want.end(), want.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const auto& level : levels) {
+        for (const auto& f : level) {
+            std::string have = f.name;
+            std::transform(have.begin(), have.end(), have.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (have == want) { out = f; return true; }
+        }
+    }
+    return false;
+}
+
 // Resolve a SINGLE UFunction* to its (name, fullName, functionFlags, numParms,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler
@@ -293,10 +354,10 @@ int32_t GetIndex(uintptr_t uobjectAddr);
 // --- String-reading helpers (Phase 2 Value Search) ---
 //
 // Read an FString (TArray<TCHAR>) at instanceAddr + offset into UTF-8.
-// Returns "" on failure or out-of-range length. Caps at 256 wide chars
-// per the existing ReadFString implementation — the cap protects
-// against garbage Count values from freed memory; cheat-relevant
-// strings (item names, save keys) fit well under it.
+// Returns "" on failure or out-of-range length. Caps at kMaxFStringChars
+// (8192) wide chars — the cap bounds the allocation against a garbage Count
+// from freed memory, not string length, so long descriptions/dialogue lines
+// resolve rather than reading as "(empty)" (audit #5 U10).
 std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 
 // Read an FName at instanceAddr + offset and resolve it to a string
@@ -747,6 +808,46 @@ inline std::string NormalizeGuessedTypeToProperty(const std::string& guessedType
     if (guessedType == "Byte"   || guessedType == "Byte?")   return "ByteProperty";
     if (guessedType == "Int64"  || guessedType == "Int64?")  return "Int64Property";
     return "";  // Padding / Pointer? / unknown -> drop
+}
+
+// === Enum raw-value read (audit #5 U9) ===
+//
+// Read a UEnum member's raw integer value from `size` bytes at `p`. UE stores every
+// enum member value as int64 in UEnum::Names, and the standard UHT-generated sentinel
+// for `enum class : uint8` is `MAX = 255`. A byte-width enum (size 1) MUST therefore be
+// read UNSIGNED: read through int8_t it sign-extends 255 -> -1 (and any enumerator
+// >= 128 similarly), which never matches the table, so the member renders as a raw
+// negative integer instead of its name. Wider underlying widths (2/4/8) keep their
+// natural signedness, matching the array-enum sibling (Ubel.cpp ReadArrayElements) so
+// both enum read paths agree. Pure — pinned in dll_helpers_test.
+inline int64_t ReadEnumRawValue(const uint8_t* p, int32_t size) {
+    if (!p) return 0;
+    switch (size) {
+        case 1: { uint8_t  v; std::memcpy(&v, p, 1); return v; }   // UNSIGNED (U9)
+        case 2: { int16_t  v; std::memcpy(&v, p, 2); return v; }
+        case 4: { int32_t  v; std::memcpy(&v, p, 4); return v; }
+        case 8: { int64_t  v; std::memcpy(&v, p, 8); return v; }
+        default: return 0;
+    }
+}
+
+// === FString / FUtf8String length cap (audit #5 U10) ===
+//
+// The largest character count ReadFString / ReadFUtf8String will accept. The cap's
+// real job is to bound the allocation against a GARBAGE Count read out of freed memory
+// (a corrupt ~2^31 Count would otherwise try to allocate ~4 GB and throw). It is NOT a
+// display-length limit: the buffer read is `Count * elemWidth` — the ACTUAL string
+// length — so raising the cap costs nothing for the common short string and only lets a
+// genuinely long one (a 400-char description that used to render as "(empty)") resolve.
+// 8192 matches the FText path's own gate (TryDecodeFStringAt: num > 8192) so the two
+// string decoders agree on "implausibly long". Pure — pinned in dll_helpers_test.
+inline constexpr int32_t kMaxFStringChars = 8192;
+
+// True when `count` is a plausible in-object FString/FUtf8String character count:
+// strictly positive and within kMaxFStringChars. Rejects the 0/negative empty case and
+// a garbage-huge Count in one predicate, so both readers share one rule.
+inline bool IsPlausibleStringCount(int32_t count) {
+    return count > 0 && count <= kMaxFStringChars;
 }
 
 // Heuristically guess field types for a raw byte gap [gapStart, gapEnd) of the

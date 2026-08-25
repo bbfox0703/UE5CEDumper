@@ -139,6 +139,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (value) LocateFailureMessage = "";
         OnPropertyChanged(nameof(ShowBookmarkBar));
+
+        // Data is showing again — the point at which a suspended auto-refresh can
+        // meaningfully come back. Hooked HERE rather than in UpdateDisplay for the exact
+        // reason this method's own comment gives above: "Start from GWorld" and the four
+        // container views set HasData directly and never reach UpdateDisplay, and the
+        // GWorld root is the first thing most reconnects do.
+        if (value) ResumeAutoRefreshIfPending();
+    }
+
+    /// <summary>
+    /// The other half of the resume trigger. Paired with <see cref="OnHasDataChanged"/>
+    /// so the re-arm is ORDER-INDEPENDENT: the population paths set these two in
+    /// different orders and <see cref="AutoRefreshCadence.ShouldResume"/> needs both, so
+    /// whichever lands second is the one that fires. Neither alone is sufficient.
+    /// </summary>
+    partial void OnCurrentAddressChanged(string value)
+    {
+        if (!string.IsNullOrEmpty(value)) ResumeAutoRefreshIfPending();
     }
 
     /// <summary>Show the bookmark toolbar when there's a live object OR any saved
@@ -224,8 +242,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _functionFilterMemory.Schedule(value);
     }
 
+    /// <summary>Clear the function-filter box. Flushes the keyword memory first — the
+    /// sibling of what <see cref="ClearFieldSearchForNavigation"/> already does for the
+    /// FIELD search box (<c>FlushPendingSearchKeyword</c>); the function box had the
+    /// Schedule half wired and neither flush. (audit #5 AE16)</summary>
     [RelayCommand]
-    private void ClearFunctionFilter() => FunctionFilter = "";
+    private void ClearFunctionFilter()
+    {
+        _functionFilterMemory.Flush();
+        FunctionFilter = "";
+    }
     private string _currentClassAddr = "";
     private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
     private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
@@ -524,6 +550,36 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // Auto-refresh
     [ObservableProperty] private bool _isAutoRefreshing;
     [ObservableProperty] private int _autoRefreshIntervalSec = Constants.DefaultAutoRefreshIntervalSec;
+
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? (measured: Avalonia 12.1.1), and
+    // clearing the text box drives it to null with no way to opt out at the control. Bound straight
+    // at the non-nullable properties above, a COMPILED binding — which this app uses everywhere —
+    // cannot convert that and paints a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // in a validation line under the control, leaving the field blank while the old value is still
+    // the one in force. Binding a decimal? instead means no conversion is attempted.
+    //
+    // ⚠ These only absorb the empty box; they do not clamp. Range belongs to whoever already states
+    // it (the control's Minimum/Maximum, or a view-model guard such as OnAutoRefreshIntervalSecChanged),
+    // and several of these inputs have no meaningful range at all. See Helpers/NumericInput.cs.
+
+    /// <inheritdoc cref="AutoRefreshIntervalSec"/>
+    public decimal? AutoRefreshIntervalSecValue
+    {
+        get => (decimal)AutoRefreshIntervalSec;
+        set
+        {
+            AutoRefreshIntervalSec = NumericInput.KeepCurrentIfEmpty(value, AutoRefreshIntervalSec);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
     [ObservableProperty] private int _autoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
     [ObservableProperty] private string _autoRefreshStatusText = "sec";
     private DispatcherTimer? _autoRefreshTimer;
@@ -531,6 +587,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private int _countdownRemaining;
     private bool _isAutoRefreshBenchmarked;
     private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
+    // Auto-refresh was ON when something out of the user's control stopped it (pipe
+    // disconnect / tab switch). Re-armed by ResumeAutoRefreshIfPending once the panel
+    // is rooted on data again — a user untick or a navigation re-root never sets it.
+    private bool _autoRefreshResumePending;
     private bool _isEditing; // True while a cell is being edited (suppresses auto-refresh)
 
     // Bookmark slots (4 fixed slots)
@@ -678,6 +738,50 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                          or NotifyCollectionChangedAction.Reset)
                 ClearForwardStack();
         };
+
+        // An open cell editor cannot outlive the rows it was opened on. Avalonia tears
+        // such an edit down WITHOUT raising CellEditEnded, and CellEditEnded is the ONLY
+        // place the view clears IsEditing — so a stranded `true` silently vetoed every
+        // auto-refresh tick for the rest of the session ([AUTOREFRESH-2026-08-19]).
+        // Subscribing to the collection covers every repopulation site at once, for the
+        // same reason the Breadcrumbs hook above does: SIX populate methods set HasData
+        // and rebuild the grid without going through UpdateDisplay, and a hand-placed
+        // clear at each would miss the seventh someone adds next.
+        HookFieldsRebuild(Fields);
+    }
+
+    private ObservableCollection<LiveFieldValue>? _hookedFields;
+
+    private void HookFieldsRebuild(ObservableCollection<LiveFieldValue> fields)
+    {
+        if (ReferenceEquals(_hookedFields, fields)) return;
+        if (_hookedFields != null) _hookedFields.CollectionChanged -= OnFieldsRebuilt;
+        _hookedFields = fields;
+        fields.CollectionChanged += OnFieldsRebuilt;
+    }
+
+    private void OnFieldsRebuilt(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Reset  == Clear() + re-Add, the full-rebuild branch of UpdateDisplay.
+        // Replace == `Fields[i] = newFields[i]`, its in-place branch (kept because it
+        //            preserves DataGrid scroll). It swaps the row OBJECT out from under
+        //            any open editor, so it kills the edit just as dead as a Clear does —
+        //            and it is the branch a same-object Refresh actually takes, i.e. the
+        //            common one. Missing it left the latch strandable on the hot path.
+        // Add/Remove are deliberately NOT here: appending a row does not invalidate an
+        // editor open on a different one.
+        if (e.Action is NotifyCollectionChangedAction.Reset
+                     or NotifyCollectionChangedAction.Replace)
+            IsEditing = false;
+    }
+
+    /// <summary>The collection OBJECT is swapped wholesale by the field-search apply
+    /// path, which orphans a subscription made on the previous one — re-hook, and treat
+    /// the swap itself as a rebuild.</summary>
+    partial void OnFieldsChanged(ObservableCollection<LiveFieldValue> value)
+    {
+        HookFieldsRebuild(value);
+        IsEditing = false;
     }
 
     public void SetEngineState(EngineState state)
@@ -1146,6 +1250,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Scalar arrays are re-fetched in full above; only pointer/struct arrays fall back to the
+        // capped inline preview, so compare the elements actually shown against the true count.
+        label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
+        var arrTruncStatus = ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
+
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = parentAddr,
@@ -1174,7 +1284,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
-        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}";
+        var received = field.MapElements?.Count ?? 0;
+        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}"
+            + ContainerTruncation.BadgeSuffix(received, field.MapCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1188,13 +1300,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
+        var mapTruncStatus = ContainerTruncation.StatusLine(received, field.MapCount);
+        if (mapTruncStatus.Length > 0) StatusText = mapTruncStatus;
+
         PopulateMapContainerFields(field.MapElements ?? new(), field);
     }
 
     private void NavigateToSetContainer(LiveFieldValue field)
     {
         var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
-        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}";
+        var received = field.SetElements?.Count ?? 0;
+        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}"
+            + ContainerTruncation.BadgeSuffix(received, field.SetCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1208,12 +1325,34 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
+        var setTruncStatus = ContainerTruncation.StatusLine(received, field.SetCount);
+        if (setTruncStatus.Length > 0) StatusText = setTruncStatus;
+
         PopulateSetContainerFields(field.SetElements ?? new(), field);
     }
 
-    private void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
+    /// <summary>Preview text for the synthetic RowMap field injected into a DataTable's
+    /// field grid. Pure so the truncation badge can be pinned without a dispatcher —
+    /// <see cref="TryLoadDataTableRowsAsync"/>, its only caller, runs fire-and-forget and
+    /// lands on the UI thread.</summary>
+    internal static string DataTableFieldPreview(DataTableWalkResult dt) =>
+        $"{{DataTable: {dt.RowCount} rows, {dt.RowStructName}}}"
+        + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
+
+    /// <summary>internal for the audit #5 V8 drill test: the DataTable branch of
+    /// NavigateToContainer is otherwise reachable only through a fire-and-forget
+    /// dispatcher hop that populates <c>_cachedDataTableRows</c>.</summary>
+    internal void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
     {
-        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]";
+        // The DataTable drill is the container path the [CONTAINERCAP] badge sweep did
+        // not reach, and it was the worst of the family: the crumb printed RowCount —
+        // the TRUE total the DLL reports — over a grid holding only the rows that fit
+        // WalkDataTableRowsAsync's fixed page (64). A 5,000-row table therefore
+        // announced "5000" and showed 64, so a row that simply had not been fetched
+        // read as a row the table does not contain (audit #5 V8).
+        var received = dtResult.Rows.Count;
+        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]"
+            + ContainerTruncation.BadgeSuffix(received, dtResult.RowCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1227,14 +1366,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             DataTableData = dtResult,
         });
-        _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
+        _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={received}/{dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
+
+        // FixedCap wording, not StatusLine: the Array Limit slider does NOT govern this
+        // view (WalkDataTableRowsAsync uses its own page size), so sending the user to
+        // that slider would be a second false statement on top of the first.
+        var dtTruncStatus = ContainerTruncation.FixedCapStatusLine(received, dtResult.RowCount, "rows");
+        if (dtTruncStatus.Length > 0) StatusText = dtTruncStatus;
 
         PopulateDataTableRowFields(dtResult);
     }
 
     private void PopulateDataTableRowFields(DataTableWalkResult dtResult)
     {
-        CurrentObjectName = "RowMap";
+        // Header carries the badge too — on CurrentObjectName, matching the Array / Map /
+        // Set populate siblings — so a Back-navigation into this view (which re-enters
+        // here without re-running NavigateToDataTableContainer) still says it.
+        CurrentObjectName = "RowMap"
+            + ContainerTruncation.BadgeSuffix(dtResult.Rows.Count, dtResult.RowCount);
         CurrentClassName = $"DataTable<{dtResult.RowStructName}>";
         HasData = true;
         ShowCeXml = false;
@@ -1294,7 +1443,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var typeLabel = !string.IsNullOrEmpty(sourceField.ArrayStructType)
             ? sourceField.ArrayStructType : sourceField.ArrayInnerType;
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.ArrayCount);
         CurrentClassName = $"Array<{typeLabel}>";
         HasData = true;
         ShowCeXml = false;
@@ -1355,7 +1505,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var keyLabel = !string.IsNullOrEmpty(sourceField.MapKeyType) ? sourceField.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(sourceField.MapValueType) ? sourceField.MapValueType : "?";
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.MapCount);
         CurrentClassName = $"Map<{keyLabel}, {valLabel}>";
         HasData = true;
         ShowCeXml = false;
@@ -1507,7 +1658,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void PopulateSetContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
     {
         var elemLabel = !string.IsNullOrEmpty(sourceField.SetElemType) ? sourceField.SetElemType : "?";
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.SetCount);
         CurrentClassName = $"Set<{elemLabel}>";
         HasData = true;
         ShowCeXml = false;
@@ -4924,7 +5076,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void RestoreSelectedField(string? name, int offset)
     {
-        if (string.IsNullOrEmpty(name)) return;
+        // ⚠ CLEAR, don't just return. Refresh replaces the rows in place
+        // (`Fields[i] = newFields[i]`), which the DataGridCollectionView splits into a
+        // Remove+Add per row; each one nudges CURRENCY, and the TwoWay SelectedItem
+        // binding writes whatever row currency landed on back into SelectedField. So by
+        // the time we get here the grid may already have invented a selection the user
+        // never made — measured against the real DataGrid as ~N CurrentChanged events
+        // with currency settling near the end of the list.
+        //
+        // That is the reported defect: search "RemoteRole", press Refresh, and the UI
+        // selects an unrelated row (0x720 CachedConnectionPlayerId) that is merely near
+        // the bottom of the realized range. `[LWREFRESH-2026-08-21]`
+        //
+        // All three callers are inside RefreshAsync and pass the SAME name captured
+        // before the walk, so an empty name provably means "nothing was selected before"
+        // — and the honest restore of "nothing" is null, not "leave the phantom".
+        if (string.IsNullOrEmpty(name)) { SelectedField = null; return; }
 
         LiveFieldValue? exact = null, byName = null;
         foreach (var f in Fields)
@@ -4935,7 +5102,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
 
         var hit = exact ?? byName;
-        if (hit == null) return;
+        // Same reasoning when the previously-selected field is GONE from the new walk:
+        // we cannot restore what the user had, and a grid-invented row is worse than an
+        // empty selection because the next action (copy address, drill, freeze) would
+        // silently act on it.
+        if (hit == null) { SelectedField = null; return; }
 
         SelectedField = hit;
         ScrollToFieldRequested?.Invoke(hit.Name);
@@ -5355,6 +5526,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     partial void OnAutoRefreshIntervalSecChanged(int value)
     {
+        OnPropertyChanged(nameof(AutoRefreshIntervalSecValue));
         // Enforce minimum interval (dynamic minimum from benchmark)
         if (value < AutoRefreshMinSec)
         {
@@ -5393,8 +5565,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Start 1-second countdown timer for status display
         StopCountdownTimer();
+        _autoRefreshResumePending = false;   // we ARE running now; nothing left to resume
         _countdownRemaining = interval;
-        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
+        AutoRefreshStatusText = AutoRefreshCadence.LabelFor(_countdownRemaining);
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _countdownTimer.Tick += OnCountdownTick;
         _countdownTimer.Start();
@@ -5410,21 +5583,44 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// One second of the status countdown. Delegates the rule to
+    /// <see cref="AutoRefreshCadence.Step"/>, which re-arms at zero — the shipped
+    /// version decremented and clamped here while the ONLY reset lived past the
+    /// refresh tick's early-return guard, so a permanently-skipped tick pinned the
+    /// label at "0s" forever with the Auto toggle still reading ON
+    /// (<c>[AUTOREFRESH-2026-08-19]</c>).
+    /// </summary>
     private void OnCountdownTick(object? sender, EventArgs e)
     {
-        if (_isAutoRefreshing_InProgress)
-        {
-            AutoRefreshStatusText = "sec · refreshing...";
-            return;
-        }
+        var step = AutoRefreshCadence.Step(
+            _countdownRemaining,
+            AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec),
+            CurrentSkipReason());
 
-        _countdownRemaining--;
-        if (_countdownRemaining < 0) _countdownRemaining = 0;
-        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
+        _countdownRemaining = step.Remaining;
+        AutoRefreshStatusText = step.Label;
     }
 
-    public void StopAutoRefreshTimer()
+    /// <summary>Why the next auto-refresh tick would (or would not) do any work.</summary>
+    private AutoRefreshSkip CurrentSkipReason()
+        => AutoRefreshCadence.Classify(_isAutoRefreshing_InProgress, _isEditing, HasData, CurrentAddress);
+
+    public void StopAutoRefreshTimer() => StopAutoRefreshTimer(resumable: false);
+
+    /// <param name="resumable">
+    /// True when something OUTSIDE the user's control stopped auto-refresh — the pipe
+    /// dropping, or switching away from the Live Walker tab. The panel then re-arms
+    /// itself (<see cref="ResumeAutoRefreshIfPending"/>) once it is rooted on data
+    /// again, so a reconnect or a trip to another tab does not silently leave Auto off.
+    /// False for a user untick and for every navigation re-root: those must stay off
+    /// until the user ticks Auto again.
+    /// </param>
+    public void StopAutoRefreshTimer(bool resumable)
     {
+        // Capture before the teardown clears both witnesses.
+        bool wasRunning = _autoRefreshTimer != null || IsAutoRefreshing;
+
         if (_autoRefreshTimer != null)
         {
             _autoRefreshTimer.Stop();
@@ -5438,7 +5634,71 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Reset dynamic minimum and benchmark state on stop (tab switch, navigation, etc.)
         AutoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
         _isAutoRefreshBenchmarked = false;
-        AutoRefreshStatusText = "sec";
+        AutoRefreshStatusText = AutoRefreshCadence.LabelIdle;
+
+        // MUST be last: the `IsAutoRefreshing = false` above re-enters this method
+        // through OnIsAutoRefreshingChanged with resumable:false, which would clear
+        // the flag again if it were set any earlier.
+        //
+        // Only a stop of a RUNNING timer may write the flag. A stop that had nothing to
+        // stop leaves it alone — otherwise the very path the maintainer walked would
+        // eat it: disconnect arms the resume, then the first navigation after the
+        // reconnect (StartFromWorld / NavigateToAddress / Locate / bookmark) calls the
+        // plain non-resumable overload and would clear it a moment before UpdateDisplay
+        // got the chance to act on it.
+        if (wasRunning)
+            _autoRefreshResumePending = resumable;
+    }
+
+    /// <summary>
+    /// Re-arm auto-refresh after the reason it was suspended has gone away — a
+    /// reconnect that re-roots the panel, or coming back to the Live Walker tab.
+    /// No-op unless something out of the user's control stopped it AND there is now
+    /// an object to refresh; see <see cref="AutoRefreshCadence.ShouldResume"/>.
+    /// </summary>
+    public void ResumeAutoRefreshIfPending()
+    {
+        if (!AutoRefreshCadence.ShouldResume(_autoRefreshResumePending, IsAutoRefreshing,
+                                             HasData, CurrentAddress))
+            return;
+
+        _autoRefreshResumePending = false;
+        IsAutoRefreshing = true;   // -> OnIsAutoRefreshingChanged -> StartAutoRefreshTimer
+    }
+
+    /// <summary>Drop the live walk state so a reconnect never shows an object (and
+    /// its live addresses) from the previous game, and STOP the auto-refresh timer so
+    /// it can't re-walk a dead pipe (audit X5). Deliberately preserves the persisted
+    /// per-game <see cref="BookmarkSlots"/> / <c>_activePeHash</c> / SearchHistory —
+    /// those are reloaded on reconnect and must survive a disconnect.</summary>
+    public void ClearOnDisconnect()
+    {
+        // resumable: the PIPE stopped auto-refresh, not the user. X5 correctly stops the
+        // timer (it would otherwise re-walk a dead pipe, and after a reconnect to a
+        // DIFFERENT game it would walk the previous game's addresses) — but stopping it
+        // with no way back left Auto silently off for the rest of the session. The panel
+        // re-arms itself from OnHasDataChanged / OnCurrentAddressChanged once it is
+        // rooted on data again — NOT from UpdateDisplay, which "Start from GWorld" and
+        // the container views never reach.
+        StopAutoRefreshTimer(resumable: true);   // also sets IsAutoRefreshing = false
+        _exportCts?.Cancel();
+
+        Breadcrumbs.Clear();
+        Fields.Clear();
+        Functions.Clear();
+        References.Clear();
+        ClearForwardStack();
+        _replacedSpine = null;
+        _cachedWorld = null;
+        _selectedFieldsSnapshot.Clear();
+        SelectedFieldsCount = 0;
+
+        SelectedField = null;
+        CurrentAddress = "";
+        CurrentObjectName = "";
+        CurrentClassName = "";
+        HasData = false;
+        LocateFailureMessage = "";
     }
 
     /// <summary>
@@ -5455,6 +5715,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // StopAutoRefreshTimer already handles both _autoRefreshTimer and
         // _countdownTimer (via StopCountdownTimer) — single call covers it.
         StopAutoRefreshTimer();
+
+        if (_hookedFields != null)
+        {
+            _hookedFields.CollectionChanged -= OnFieldsRebuilt;
+            _hookedFields = null;
+        }
 
         _searchHistoryDebounce?.Dispose();
         _searchHistoryDebounce = null;
@@ -5474,7 +5740,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Anti-flooding: skip if a refresh is already in progress or no data to refresh.
         // Uses a dedicated flag (_isAutoRefreshing_InProgress) to prevent re-entrant calls
         // from the DispatcherTimer firing while a previous refresh is still awaiting.
-        if (_isAutoRefreshing_InProgress || _isEditing || !HasData || string.IsNullOrEmpty(CurrentAddress)) return;
+        if (CurrentSkipReason() != AutoRefreshSkip.None)
+        {
+            // A SKIPPED tick still has to re-arm the countdown. The shipped version
+            // returned here with the reset stranded further down, so a tick that kept
+            // skipping froze the label at "0s" forever and reported nothing at all
+            // ([AUTOREFRESH-2026-08-19]). OnCountdownTick now shows the reason.
+            _countdownRemaining = AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec);
+            return;
+        }
 
         _isAutoRefreshing_InProgress = true;
         try
@@ -5506,9 +5780,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _log.Info($"Auto-refresh: benchmark {durationSec}s, clamped interval to {newMin}s");
                 }
             }
-
-            // Reset countdown after refresh completes
-            _countdownRemaining = Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec);
         }
         catch
         {
@@ -5516,6 +5787,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            // Re-arm in the FINALLY, not on the success path: a throwing RefreshAsync
+            // would otherwise strand the countdown at 0 exactly like a skipped tick did.
+            _countdownRemaining = AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec);
             _isAutoRefreshing_InProgress = false;
         }
     }
@@ -5984,7 +6258,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ClearDisplayedNode()
     {
-        Fields.Clear();
+        Fields.Clear();   // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
         Breadcrumbs.Clear();
         SelectedField = null;
         HasData = false;
@@ -6093,9 +6367,42 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (Fields.Count == newFields.Count && Fields.Count > 0
             && Fields[0].Name == newFields[0].Name)
         {
-            // Same layout — replace in-place (preserves scroll position)
+            // Same layout — copy the fresh values ONTO the existing rows.
+            //
+            // ⚠ This used to be `Fields[i] = newFields[i]` under a comment claiming it
+            // "preserves scroll position". Measured on DumperTest, it does the opposite: the
+            // DataGridCollectionView splits each indexer assignment into Remove+Add and the grid
+            // ends up EXACTLY ONE ROW higher per Refresh, cumulatively — the reported "the match
+            // sits one row below the viewport". [LWREFRESH-2026-08-21]
+            //
+            // Two alternatives were measured and rejected before this one: a single Clear+Add
+            // (one Reset) jumps the grid to the TOP, which is worse; and restoring a captured
+            // anchor afterwards cannot work at all, because ScrollIntoView means "make visible",
+            // not "put at top", and is a no-op for a drift smaller than the viewport.
+            //
+            // The rows keep their identity, so the collection raises nothing and the grid does not
+            // move. LiveFieldValue is observable for exactly the members that can differ between
+            // two walks of the same object, which is what repaints the cells.
             for (int i = 0; i < newFields.Count; i++)
-                Fields[i] = newFields[i];
+                Fields[i].CopyLiveValuesFrom(newFields[i]);
+
+            // The marker above ran over newFields, which are now discarded, so re-run it over the
+            // rows the grid is actually showing. Not optional and not merely tidy: clearing the
+            // keyword marks zero matches on newFields while the surviving rows would keep their
+            // old flags, leaving a highlight on rows that no longer match anything.
+            MarkSearchMatches(Fields, SearchText);
+
+            // The editing latch used to be cleared by the Replace notification this loop no longer
+            // raises. Clearing it here keeps the previous guarantee exactly — a stranded `true`
+            // vetoes every auto-refresh tick for the rest of the session, silently, and that is a
+            // far worse failure than ending an edit a beat early.
+            //
+            // ⚠ It may now be over-cautious rather than necessary: the latch was stranded because
+            // Avalonia tears an open editor down when the ROW OBJECT is replaced without raising
+            // CellEditEnded, and the row object is no longer replaced. Whether the editor survives
+            // a value copy is unverified, so this keeps the old, safe behaviour rather than betting
+            // on the new one.
+            IsEditing = false;
         }
         else
         {
@@ -6173,7 +6480,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 TypeName = "DataTableRows",
                 Offset = dtResult.RowMapOffset,
                 Size = 0,
-                TypedValue = $"{{DataTable: {dtResult.RowCount} rows, {dtResult.RowStructName}}}",
+                // Badge here too: this row is what the user clicks to drill in, so the
+                // "only 64 of these are actually fetched" fact belongs BEFORE the click,
+                // not only after it (audit #5 V8).
+                TypedValue = DataTableFieldPreview(dtResult),
                 DataTableRowCount = dtResult.RowCount,
                 DataTableStructName = dtResult.RowStructName,
                 DataTableFNameSize = dtResult.FNameSize,
@@ -6290,8 +6600,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (_allFunctions.Count == 0) return false;
 
         // Clear filter first — a previously typed filter could hide the
-        // target row even though it's in the underlying list.
-        if (!string.IsNullOrEmpty(FunctionFilter)) FunctionFilter = "";
+        // target row even though it's in the underlying list. Flush before blanking:
+        // this is a NAVIGATION clear, the case the keyword-search rule names. (AE16)
+        if (!string.IsNullOrEmpty(FunctionFilter))
+        {
+            _functionFilterMemory.Flush();
+            FunctionFilter = "";
+        }
 
         // Auto-expand the section so the user can actually see the target
         // row without an extra click after a cross-tab navigation.

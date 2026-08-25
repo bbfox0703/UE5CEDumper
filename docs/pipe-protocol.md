@@ -382,6 +382,27 @@ Object-aware "group scan": find objects (blocks) that **simultaneously** hold AL
 { "id": 63, "cmd": "end_group_scan", "session_id": 99 }
 ```
 
+**`per_slot_cap_hit` / `per_slot_cap` (build 3266)** — on the responses to **all three** of
+`begin_group_scan`, `refine_group_scan` and `query_group_candidates`.
+
+- `per_slot_cap_hit` (bool): at least one block had MORE leaves satisfying a slot than the cap
+  kept, so that slot's witness list — the `(+N)` annotation, the `query_group_slot_leaves`
+  answer, and what a later prev-value refine can re-read — is a **page**, not the whole match.
+- `per_slot_cap` (int): the cap the DLL actually applied, **after** its own 8–4096 clamp. The
+  client cannot derive it: `per_slot_cap` is omitted from the request when it equals the UI
+  default, so the request does not name the number the server used.
+
+Both are **inherited by the session**, not recomputed: a refine prunes the stored pool and never
+re-runs the matcher, and a window query is a pure projection, so a truncation that happened at
+`begin` is invisible to either unless it is carried. Absent on an older DLL ⇒ parse as `false`/`0`
+("no evidence of truncation"), which is the only claim a missing key supports.
+
+*Why it exists:* this is a different fact from `deadline_hit`, and it is the one that explains the
+report class this area keeps producing. `deadline_hit` bounds how many **objects** were examined;
+`per_slot_cap_hit` bounds how many **witnesses** an examined object kept — so the result set is
+complete while a slot's field list is not. `Orden::MatchGroup` has always computed it and
+`ScanForValueGroup` only ever wrote it to `LOG_WARN`, where no user could see it (audit #5 AE13).
+
 #### `query_group_slot_leaves` (build 2719) — name the fields a row cannot show
 
 A candidate usually satisfies the group in **many** ways at once, and a row displays exactly **one** assignment (see `match_count` below). Every other matching field existed on the wire only as a raw integer inside `matched_offsets`, and an integer cannot tell anyone that offset `1308` is `FrozenInt` — so correctly-matched fields were repeatedly read as misses. This names them.
@@ -991,6 +1012,15 @@ first match.
 {
   "id": 8, "ok": true, "found": false,
   "query_addr": "228F1251BE8",
+  // container_scan describes the pass that produced the answer. When "deep_scan" is
+  // true BOTH passes ran and their stats are FOLDED: counters + classes_primed from the
+  // deep pass (the one that answered), duration_ms SUMMED (the caller waited for both),
+  // deadline_hit the OR of the two. Until audit #5 Z12 the deep stats replaced the
+  // shallow ones only when the deep pass found NOTHING — so a deep SUCCESS reported
+  // counters describing a pass unrelated to the answer and dropped the deep pass's own
+  // deadline flag. ⚠ "deep_scan": true also means a SECOND bound applied that no counter
+  // here expresses: the per-container element probe cap (request "container_elem_cap",
+  // default 256). A deep miss is therefore not proof of absence.
   "container_scan": {
     "objects_scanned": 28116, "objects_total": 28116,
     "classes_primed": 4382, "duration_ms": 51,
@@ -1413,7 +1443,12 @@ state-changing operations but works for simple getters).
   "func_name": "Attack",           // required
   "instance_addr": "0x7FF6AA000",  // optional (one of instance_addr / class_name required)
   "class_name": "BP_Player_C",     // optional
-  "parms_size": 16,                // optional (default 0)
+  "parms_size": 16,                // optional -- the DLL reads UFunction::ParmsSize
+                                   // itself and uses the LARGER of the two. Omitting it
+                                   // is safe as of build 3350; before that it defaulted
+                                   // to 0, and a zero-length buffer handed to
+                                   // ProcessEvent overflowed the game's heap and came
+                                   // back only as "-4 (exception during call)".
   "params_hex": "3F800000",        // optional (hex param bytes; scalars only)
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data

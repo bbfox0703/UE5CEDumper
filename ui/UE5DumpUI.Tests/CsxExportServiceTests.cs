@@ -98,21 +98,23 @@ public class StubDumpService : IDumpService
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PackedConstsResult> SetPackedConstsAsync(int alignBits = 0, ulong ptrMaskBits = 0, bool force = false, int serialOff = -1, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<AddressLookupResult> FindByAddressAsync(string addr, int containerElemCap = 256, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<AddressLookupResult> FindByAddressAsync(string addr, int containerElemCap = 256, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<RelatedObjectsResult> GetRelatedObjectsAsync(string addr, int maxResults = 128, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<CurrentTargetResult> DetectCurrentTargetAsync(int maxCandidates = 8, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<GameEngineResult> ResolveGameEngineAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<GWorldPathResult> FindPathFromGWorldAsync(string target, string? objectAddr = null, int maxDepth = 5, CancellationToken ct = default, string rootKind = "gworld", bool deep = false, int containerDepth = 1) => throw new NotImplementedException();
-    public Task<FindPropertyXrefsResult> FindPropertyXrefsAsync(string propAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<FindPropertyXrefsResult> FindPropertyXrefsAsync(string propAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<FunctionPropRefsResult> WalkFunctionPropsAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<FunctionPropRefsResult> WalkFunctionPropsAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
+    // virtual: the USMAP exporter collects enums before it collects classes, so a test of
+    // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.
+    public virtual Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, bool deep = false, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries, string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<ClassListResult> ListClassesAsync(bool gameOnly = true, int limit = 5000, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<ClassListResult> ListClassesAsync(bool gameOnly = true, int limit = 5000, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<NoiseClassInfo>> DetectNoiseClassesAsync(IReadOnlyList<string> classNames, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<NoiseClassInfo>>(new List<NoiseClassInfo>());
     public virtual Task<AllFunctionsResult> ListAllFunctionsAsync(bool gameOnly = true, int limit = 100000, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ValueScanBeginResult> BeginValueScanAsync(ValueScanDataType dataType, ValueScanType scanType, string value, string? value2 = null, bool gameOnly = true, int maxResults = 50000, FloatRoundMode roundMode = FloatRoundMode.Round, bool caseSensitive = false, bool parallel = true, bool batchRead = true, bool deep = false, bool nativeC = false, bool newestFirst = false, int pageSize = 1000, int deadlineMs = 15000, bool autoSkipNoise = false, CancellationToken ct = default) => throw new NotImplementedException();

@@ -110,32 +110,51 @@ bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
 bool IsFloatType(const std::string& t) {
     return t == "FloatProperty" || t == "DoubleProperty";
 }
-bool IsIntType(const std::string& t) {
-    return t == "IntProperty" || t == "Int64Property"
-        || t == "ByteProperty" || t == "UInt8Property" || t == "Int8Property";
-}
+// IsIntType now lives in Solide.h, derived from IntWidthOf so the gate and the
+// width/sign table cannot drift apart (audit #5 AF8).
 bool IsNumericType(const std::string& t) { return IsFloatType(t) || IsIntType(t); }
 
+// Width + signedness come from Solide.h's IntWidthOf so the read and the write
+// cannot disagree about a type (audit #5 AF8: Int8Property was written signed and
+// read UNSIGNED, so a negative hold never converged and the worker rewrote the
+// same byte forever while reporting drift).
 bool ReadNumeric(uintptr_t addr, const FieldInfo& fi, double& out) {
     if (IsFloatType(fi.TypeName)) return ReadFloatAt(addr, fi.Size, out);
-    if (fi.TypeName == "IntProperty") {
-        int32_t v = 0; if (!Macht::ReadSafe(addr, v)) return false; out = v; return true;
+    const IntWidth w = IntWidthOf(fi.TypeName);
+    switch (w.bytes) {
+        case 4: { int32_t v = 0; if (!Macht::ReadSafe(addr, v)) return false;
+                  out = static_cast<double>(v); return true; }
+        case 8: { int64_t v = 0; if (!Macht::ReadSafe(addr, v)) return false;
+                  out = static_cast<double>(v); return true; }
+        case 1:
+            if (w.isSigned) { int8_t v = 0; if (!Macht::ReadSafe(addr, v)) return false;
+                              out = static_cast<double>(v); return true; }
+            else            { uint8_t v = 0; if (!Macht::ReadSafe(addr, v)) return false;
+                              out = static_cast<double>(v); return true; }
+        default: return false;   // not an integer type we hold — never guess a width
     }
-    if (fi.TypeName == "Int64Property") {
-        int64_t v = 0; if (!Macht::ReadSafe(addr, v)) return false; out = static_cast<double>(v); return true;
-    }
-    // ByteProperty / UInt8Property / Int8Property
-    uint8_t v = 0; if (!Macht::ReadSafe(addr, v)) return false; out = static_cast<double>(v); return true;
 }
 bool WriteNumeric(uintptr_t addr, const FieldInfo& fi, double value) {
     if (IsFloatType(fi.TypeName)) return WriteFloatAt(addr, fi.Size, value);
-    if (fi.TypeName == "IntProperty") {
-        int32_t v = static_cast<int32_t>(std::llround(value)); return Macht::WriteBytes(addr, &v, 4);
+    const IntWidth w = IntWidthOf(fi.TypeName);
+    if (w.bytes == 0) return false;
+
+    // Refuse a target the field cannot represent instead of truncating into it. A
+    // truncated write reads back as a different number, so the drift check can never
+    // be satisfied — the same non-convergence AF8 caused, reached a different way.
+    double lo = 0.0, hi = 0.0;
+    IntRangeOf(w, lo, hi);
+    if (!(value >= lo && value <= hi)) return false;
+
+    const int64_t r = std::llround(value);
+    switch (w.bytes) {
+        case 4: { int32_t v = static_cast<int32_t>(r); return Macht::WriteBytes(addr, &v, 4); }
+        case 8: { int64_t v = r;                       return Macht::WriteBytes(addr, &v, 8); }
+        case 1:
+            if (w.isSigned) { int8_t  v = static_cast<int8_t>(r);  return Macht::WriteBytes(addr, &v, 1); }
+            else            { uint8_t v = static_cast<uint8_t>(r); return Macht::WriteBytes(addr, &v, 1); }
+        default: return false;
     }
-    if (fi.TypeName == "Int64Property") {
-        int64_t v = static_cast<int64_t>(std::llround(value)); return Macht::WriteBytes(addr, &v, 8);
-    }
-    uint8_t v = static_cast<uint8_t>(std::llround(value)); return Macht::WriteBytes(addr, &v, 1);
 }
 
 // ---- local-pawn resolution (for FindStealthMeter; copied from Hemmung) ----
@@ -248,7 +267,14 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
         if (!Macht::ReadSafe(addr, cur)) return false;
         if (cur != 0) {
             uintptr_t z = 0;
-            if (Macht::WriteBytes(addr, &z, sizeof(uintptr_t)) && drifted) *drifted = true;
+            // A FAILED write must not count as held. Discarding this result — using it only
+            // to set `drifted` — is what let an unwritable instance be reported as one of
+            // "N held". [SOLIDEHELD-2026-08-21]
+            if (!Macht::WriteBytes(addr, &z, sizeof(uintptr_t))) {
+                refusal = FR_ERR_WRITE;
+                return false;
+            }
+            if (drifted) *drifted = true;
         }
         return true;
     }
@@ -265,7 +291,22 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     double target = restore ? b->second : job.value;
     double eps = IsFloatType(fi.TypeName) ? (std::max)(1e-4, std::fabs(target) * 1e-5) : 0.5;
     if (std::fabs(cur - target) > eps) {
-        if (WriteNumeric(addr, fi, target) && drifted) *drifted = true;
+        // ⚠ The write RESULT decides whether this instance is held. `WriteNumeric` returns
+        // false when the value does not fit the field's width — an int8 asked to hold 200 —
+        // and the old code used that false only to suppress `drifted`, then returned true
+        // anyway. The range check did its job (nothing was written, and 200 did NOT wrap to
+        // -56), but the caller counted the instance and the UI reported "held on N instances,
+        // value 200". Measured 2026-08-21: byte unchanged at 0x00 while the reply said
+        // code=0 held=145 value=200.0. The report and the reality were computed by different
+        // paths — audit #4's root cause, in a third place. [SOLIDEHELD-2026-08-21]
+        //
+        // K_BOOL already did this correctly (`if (rc < 0) return false;`); this brings the
+        // other two branches into line with it.
+        if (!WriteNumeric(addr, fi, target)) {
+            refusal = FR_ERR_WRITE;
+            return false;
+        }
+        if (drifted) *drifted = true;
     }
     sampleOwner = obj; sampleOffset = fi.Offset;
     return true;

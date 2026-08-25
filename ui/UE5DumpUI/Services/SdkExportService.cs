@@ -181,11 +181,25 @@ public static class SdkExportService
     // --- Type Mapping ---
 
     /// <summary>
-    /// Map a UE property type name to a C++ type string, using FieldInfoModel metadata.
+    /// One C++ member declaration, split into the two halves a declarator actually has:
+    /// <see cref="Type"/> goes <b>before</b> the identifier and <see cref="ArraySuffix"/>
+    /// (<c>""</c>, or <c>"[0xN]"</c>) goes <b>after</b> it.
+    ///
+    /// <para>They are separate because C++ has no <c>uint8_t[0x40] CellBounds;</c> form. The raw-byte
+    /// fallbacks used to bake the extent into the type string and the field writer emitted
+    /// <c>{type} {name};</c>, so every <c>OptionalProperty</c> and every unresolved
+    /// <c>StructProperty</c> became a syntax error — 5 of them in a real 75,342-line export, which
+    /// is enough to stop the whole header compiling. The padding emitter always placed the extent
+    /// after the identifier, which is why its 7,543 declarations were fine.</para>
     /// </summary>
-    internal static string MapCppType(FieldInfoModel field)
+    internal readonly record struct CppDecl(string Type, string ArraySuffix);
+
+    /// <summary>
+    /// Map a UE property to its C++ declaration, using FieldInfoModel metadata.
+    /// </summary>
+    internal static CppDecl MapCppDecl(FieldInfoModel field)
     {
-        return MapCppTypeCore(
+        return MapCppDeclCore(
             field.TypeName, field.StructType, field.ObjClassName,
             field.InnerType, field.InnerStructType, field.InnerObjClass,
             field.KeyType, field.KeyStructType, field.ValueType, field.ValueStructType,
@@ -194,11 +208,11 @@ public static class SdkExportService
     }
 
     /// <summary>
-    /// Map a UE property type name to a C++ type string, using LiveFieldValue metadata.
+    /// Map a UE property to its C++ declaration, using LiveFieldValue metadata.
     /// </summary>
-    internal static string MapCppType(LiveFieldValue field)
+    internal static CppDecl MapCppDecl(LiveFieldValue field)
     {
-        return MapCppTypeCore(
+        return MapCppDeclCore(
             field.TypeName, field.StructTypeName, field.PtrClassName,
             field.ArrayInnerType, field.ArrayStructType, "",
             field.MapKeyType, field.MapKeyStructType, field.MapValueType, field.MapValueStructType,
@@ -206,14 +220,30 @@ public static class SdkExportService
             field.BoolFieldMask, field.Size);
     }
 
-    private static string MapCppTypeCore(
+    /// <summary>
+    /// The raw-byte fallback: a property we have no C++ spelling for is declared as a byte array
+    /// of its measured size. One place, deliberately — an unresolved <c>StructProperty</c> and an
+    /// unknown property type are the same situation, and two copies of this could disagree.
+    /// </summary>
+    private static CppDecl RawBytes(int size)
+    {
+        // A zero/negative size cannot be an array at all (MSVC rejects `x[0]` with C2466), so it
+        // degrades to a single byte. Emitting `[0x0]` would reproduce the very failure this
+        // function exists to prevent: a header that does not compile.
+        int extent = size > 0 ? size : 1;
+        return new CppDecl("uint8_t", $"[0x{extent:X}]");
+    }
+
+    private static CppDecl MapCppDeclCore(
         string typeName, string structType, string objClassName,
         string innerType, string innerStructType, string innerObjClass,
         string keyType, string keyStructType, string valueType, string valueStructType,
         string elemType, string elemStructType, string enumName,
         int boolFieldMask, int size)
     {
-        return typeName switch
+        // `null` means "no C++ spelling for this" and is the ONLY route to the raw-byte fallback,
+        // so the extent can never be smuggled into a type string again.
+        string? cppType = typeName switch
         {
             "IntProperty" => "int32_t",
             "Int8Property" => "int8_t",
@@ -255,7 +285,7 @@ public static class SdkExportService
 
             "StructProperty" => !string.IsNullOrEmpty(structType)
                 ? $"struct {structType}"
-                : $"uint8_t[0x{size:X}]",
+                : null,   // unresolved struct → raw bytes, extent AFTER the identifier
 
             "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass)}>",
             "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "")}, {MapInnerCppType(valueType, valueStructType, "")}>",
@@ -270,8 +300,11 @@ public static class SdkExportService
             "MulticastSparseDelegateProperty" => "FMulticastSparseDelegate",
             "FieldPathProperty" => "FFieldPath",
 
-            _ => $"uint8_t[0x{size:X}]", // unknown type → raw bytes
+            // Unknown type (OptionalProperty is the common one) → raw bytes.
+            _ => null,
         };
+
+        return cppType is not null ? new CppDecl(cppType, "") : RawBytes(size);
     }
 
     private static string FormatPtrType(string prefix, string className, string fallback)
@@ -356,7 +389,7 @@ public static class SdkExportService
         EmitStructBody(
             sb,
             classInfo.Fields.Select(f => new SdkField(
-                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppType(f))).ToList(),
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
             superName, classInfo.SuperPropertiesSize, propsSize);
     }
 
@@ -365,7 +398,7 @@ public static class SdkExportService
     /// keeping two copies of it. They had two, and both carried the same two defects.
     /// </summary>
     private readonly record struct SdkField(
-        string Name, int Offset, int Size, string TypeName, int BoolMask, string CppType);
+        string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl);
 
     /// <summary>
     /// Emit the member list, padding and closing brace for one struct.
@@ -422,7 +455,9 @@ public static class SdkExportService
             {
                 foreach (var f in group)
                 {
-                    sb.Append("    ").Append(f.CppType).Append(' ').Append(f.Name).Append(';')
+                    // `type name[extent];` — the extent MUST follow the identifier. See CppDecl.
+                    sb.Append("    ").Append(f.Decl.Type).Append(' ').Append(f.Name)
+                      .Append(f.Decl.ArraySuffix).Append(';')
                       .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask))
                       .AppendLine();
                 }
@@ -496,7 +531,7 @@ public static class SdkExportService
         EmitStructBody(
             sb,
             fields.Select(f => new SdkField(
-                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppType(f))).ToList(),
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
             superName, superPropsSize, propsSize);
     }
 

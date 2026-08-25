@@ -310,6 +310,33 @@ public static class CeLuaHygiene
     /// <c>strlen</c> — so callers must reject it upstream (see
     /// <see cref="Models.CoordText.HasBlockedChars"/>).
     /// </summary>
+    /// <summary>
+    /// Fold a Lua payload to LF before it is handed to CE as a table file.
+    ///
+    /// WHY THIS EXISTS (<c>[FREEZEINJECT-CRLF-2026-08-20]</c>)
+    /// "Inject Freeze Helper" reported
+    /// <c>Stream size mismatch: wrote 58345, stream has 57208</c> — and the write had
+    /// actually SUCCEEDED. The helper is 58,345 bytes with 1,137 CRLF endings, CE stores
+    /// the text LF-normalised, and 58345 − 1137 = 57208 exactly. So the post-write check
+    /// was comparing a CRLF byte count against an LF stream and calling a good write a
+    /// failure. Normalising here makes the two numbers the same thing.
+    ///
+    /// ⚠ It must be done in CODE, not by rewriting the .lua on disk. These files are
+    /// <c>i/lf</c> in the index with <c>core.autocrlf=true</c> and no <c>.gitattributes</c>,
+    /// so the working tree's line endings are a property of the CHECKOUT, not of the repo:
+    /// today the freeze helper happens to be CRLF and the invoke helper LF — which is the
+    /// only reason the invoke helper injects cleanly — and a fresh clone can flip either.
+    /// A fix that depends on what a checkout produced is not a fix.
+    ///
+    /// Lone CR is folded too, so a payload that ever arrives classic-Mac-ended cannot
+    /// reintroduce the mismatch by a different route.
+    /// </summary>
+    public static string NormalizeTableFilePayload(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s!.Replace("\r\n", "\n").Replace('\r', '\n');
+    }
+
     public static string EscapeLuaString(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";
@@ -478,7 +505,7 @@ public static class CeLuaHygiene
     private static void AppendBail(StringBuilder sb, MailboxTimeout mode, string indent)
     {
         if (mode != MailboxTimeout.SilentReturn)
-            sb.Append(indent).Append("if memrec then memrec.Active = false end\n");
+            AppendDeferredUntick(sb, indent);
         sb.Append(indent).Append("return\n");
     }
 
@@ -630,7 +657,7 @@ public static class CeLuaHygiene
         {
             case MailboxTimeout.UntickAndReturn:
                 sb.Append(indent).Append("    showMessage('[").Append(tag).Append("] ' .. _msg)\n");
-                sb.Append(indent).Append("    if memrec then memrec.Active = false end\n");
+                AppendDeferredUntick(sb, indent + "    ");
                 sb.Append(indent).Append("    return\n");
                 break;
             case MailboxTimeout.FlagAndBreak:
@@ -704,9 +731,50 @@ public static class CeLuaHygiene
         StringBuilder sb, string luaMessageExpr, string indent = "")
     {
         sb.Append(indent).Append("showMessage(").Append(luaMessageExpr).Append(")\n");
-        sb.Append(indent).Append("if memrec then memrec.Active = false end\n");
+        AppendDeferredUntick(sb, indent);
         sb.Append(indent).Append("return\n");
     }
+
+    /// <summary>
+    /// The one Lua line that actually unticks a memory record from inside its own
+    /// <c>[ENABLE]</c> block. [FREEZEUNTICK-2026-08-20]
+    ///
+    /// <para><b>An immediate <c>memrec.Active = false</c> in <c>[ENABLE]</c> does nothing.</b>
+    /// That is not a guess — it falls out of <c>TMemoryRecord.setActive</c> in CE's
+    /// <c>memoryrecordunit.pas</c>, which does, in this order:</para>
+    /// <code>
+    ///   if state = fActive then exit;          // (1) no-op when already in that state
+    ///   if processingThread &lt;&gt; nil then exit;  // (2) no-op while processing
+    ///   ...
+    ///   if autoassemble(script, ..., state, ...) then   // (3) OUR [ENABLE] BLOCK RUNS HERE
+    ///     fActive := state;                    // (4) and only NOW does it become true
+    /// </code>
+    /// <para>While our script is running at (3), <c>fActive</c> is still <c>false</c>. So
+    /// <c>memrec.Active = false</c> hits (1) — <c>state = fActive</c>, both false — and returns
+    /// having changed nothing. Then (4) sets it true. The record ends up ticked no matter what the
+    /// bail-out asked for. Measured in CE 7.7 first, then confirmed against the 7.5 source: a
+    /// freeze record whose ENABLE bailed out with <c>helper not found</c> applied nothing (the
+    /// value kept ticking) yet read <c>Active=true</c> from CE's own Lua Engine.</para>
+    ///
+    /// <para>A <b>deferred</b> untick works because by the time the timer fires, (4) has already
+    /// run: <c>state(false) ≠ fActive(true)</c> clears (1), and the activation is finished so
+    /// (2) is clear too. This is the same mechanism that makes the momentary shape's
+    /// end-of-block timer work — it was never the "momentary" part that mattered, only the
+    /// deferral, which is why the stateful bail-outs needed it just as much.</para>
+    ///
+    /// <para>⚠ Emitted as ONE line on purpose. These scripts are read by users inside Cheat
+    /// Engine, and this appears at 32 bail-out sites; six lines apiece would bury the actual
+    /// logic. The <c>local</c> is scoped by the surrounding <c>if</c>, so repeats in one chunk
+    /// cannot collide.</para>
+    /// </summary>
+    public static string DeferredUntickLua(string indent = "") =>
+        indent + "if memrec then local _u=createTimer(nil,false) _u.Interval=50 "
+               + "_u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end"
+               + "  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op";
+
+    /// <summary><see cref="DeferredUntickLua"/>, appended with its newline.</summary>
+    public static void AppendDeferredUntick(StringBuilder sb, string indent = "")
+        => sb.Append(DeferredUntickLua(indent)).Append('\n');
 
     /// <summary>Emit the success-path close: closes the Lua Engine window unless
     /// <c>DEBUG</c> is on. Pass <paramref name="extraCondition"/> to gate on an
@@ -720,5 +788,77 @@ public static class CeLuaHygiene
             : $"{extraCondition} and DEBUG == 0";
         sb.Append(indent).Append("if ").Append(cond)
           .Append(" then ").Append(CloseCall).Append(" end\n");
+    }
+
+    /// <summary>
+    /// A CE Lua GLOBAL table used to reference-count SLOT-backed registered symbols
+    /// across the separate <c>[ENABLE]</c>/<c>[DISABLE]</c> Lua chunks (chunk locals
+    /// do not cross, and CE's Lua state persists for the whole session — see
+    /// docs/CE-Bugs-Minesweeper.md §5).
+    ///
+    /// <para>A count is required, not an address marker: two records that both resolve
+    /// the same <c>&amp;GWorld</c>/<c>&amp;GEngine</c> slot register the IDENTICAL
+    /// address, so the buffer branch's <c>cur == marker</c> ownership test cannot tell
+    /// one holder from another and would let the FIRST record's disable unregister the
+    /// symbol out from under a second still-ticked one. Refcounting is the only thing
+    /// that makes "a second live record's symbol survives" true here.</para>
+    /// </summary>
+    private const string SlotSymRefTable = "UE5_slotSymRefcount";
+
+    /// <summary>
+    /// Emit the ENABLE half of a SLOT-backed CE symbol: bump the per-symbol reference
+    /// count, then (re)register <paramref name="sym"/> to <paramref name="addrExpr"/>
+    /// (a game address, never freed). Self-contained — it clears any prior registration
+    /// of the same name itself, so the caller need not pre-unregister. Pairs with
+    /// <see cref="AppendSlotSymbolRelease"/>; both go through here so the slot paths in
+    /// different generators (and the two ends of one record) cannot drift.
+    /// </summary>
+    public static void AppendSlotSymbolRegister(
+        StringBuilder sb, string sym, string addrExpr, string indent = "")
+    {
+        Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
+        Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = ({SlotSymRefTable}['{sym}'] or 0) + 1");
+        // Clear any prior registration before republishing so registerSymbol can never
+        // stack a second entry for this name (the case AppendSlotSymbolRelease's loop
+        // also defends against on the way out).
+        Line(sb, indent, $"if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
+        Line(sb, indent, $"registerSymbol('{sym}', {addrExpr})");
+    }
+
+    /// <summary>
+    /// Emit the DISABLE half of a SLOT-backed CE symbol: drop the per-symbol reference
+    /// count and unregister the symbol ONLY when the last holder releases it, so a
+    /// second still-ticked record keeps resolving.
+    ///
+    /// <para><b>The message follows the FACT, not the intent.</b> The predecessor here
+    /// printed <c>'&lt;sym&gt; unregistered'</c> unconditionally — the "report and reality
+    /// computed by different code paths" defect (audit #4a) — while on the slot path the
+    /// unregister was skipped entirely (it was nested inside a buffer-only guard). This
+    /// re-reads <c>getAddressSafe</c> AFTER the unregister and claims success only when
+    /// the symbol is actually gone. The bounded loop also removes a stacked registration
+    /// were one ever to exist, and can never hang.</para>
+    /// </summary>
+    /// <param name="tag">Script tag for the diagnostic, e.g. <c>"GWorld"</c>.</param>
+    public static void AppendSlotSymbolRelease(
+        StringBuilder sb, string sym, string tag, string indent = "")
+    {
+        Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
+        Line(sb, indent, $"local _rc = ({SlotSymRefTable}['{sym}'] or 0) - 1");
+        Line(sb, indent, "if _rc < 0 then _rc = 0 end");
+        Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = _rc");
+        Line(sb, indent, "if _rc > 0 then");
+        Line(sb, indent, $"  dbg('[{tag}] {sym} still held by ' .. _rc .. ' other record(s) -- left registered')");
+        Line(sb, indent, "else");
+        Line(sb, indent, "  local _tries = 0");
+        Line(sb, indent, $"  while getAddressSafe('{sym}') and _tries < 8 do");
+        Line(sb, indent, $"    unregisterSymbol('{sym}')");
+        Line(sb, indent, "    _tries = _tries + 1");
+        Line(sb, indent, "  end");
+        Line(sb, indent, $"  if getAddressSafe('{sym}') then");
+        Line(sb, indent, $"    dbg('[{tag}] {sym} could NOT be unregistered after ' .. _tries .. ' attempt(s) -- it still resolves')");
+        Line(sb, indent, "  else");
+        Line(sb, indent, $"    dbg('[{tag}] {sym} unregistered')");
+        Line(sb, indent, "  end");
+        Line(sb, indent, "end");
     }
 }

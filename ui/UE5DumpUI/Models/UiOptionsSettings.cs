@@ -154,6 +154,7 @@ public sealed class PropertySearchUiOptions
 {
     public bool GameClassesOnly { get; set; } = true;
     public bool DeepSearch { get; set; }
+    public int PropertySearchCap { get; set; } = Constants.DefaultPropertySearchCap;
 }
 
 public sealed class TeleportUiOptions
@@ -209,6 +210,7 @@ public sealed class ConsoleUiOptions
 public sealed class GameClassFilterUiOptions
 {
     public bool GameClassesOnly { get; set; } = true;
+    public int ClassListCap { get; set; } = Constants.DefaultClassListCap;
 }
 
 public sealed class ProxyDeployUiOptions

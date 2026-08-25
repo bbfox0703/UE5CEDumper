@@ -9,6 +9,8 @@
 #include "Sein.h"
 #include "BuildStamp.h"
 #include "Grimoire.h"
+#include "Tot.h"
+#include "Voll.h"
 #include "Utf8Helpers.h"
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 
@@ -30,6 +32,10 @@ extern "C" bool UE5_AutoStart();
 // mangle differently and fail to link.
 extern "C" bool UE5_AutoStartBlocking();
 extern "C" bool UE5_StartPipeServer();
+
+// Detach-on-destroy per Routine's contract. One handle, file-scope: this path runs once, from
+// the single auto-start thread, so there is nothing to serialise against.
+static Routine::SafeThread s_autoStartWatcher;
 extern "C" void UE5_Shutdown();
 
 // Note: the dxgi proxy resolves the real dxgi exports LAZILY, from its asm
@@ -42,9 +48,12 @@ extern "C" void UE5_Shutdown();
 // Mailbox — shared memory interface for CE Lua
 #include "Mimic.h"
 
-// Handle for the auto-start thread — stored so we can wait for it during
-// active shutdown (UE5_Shutdown, not DLL_PROCESS_DETACH, see below).
-static HANDLE g_hAutoStartThread = nullptr;
+// No handle is kept for the auto-start thread (audit #5 AB8). Nothing ever joins
+// it: DLL_PROCESS_DETACH is a deliberate no-op (a join under the loader lock would
+// deadlock) and UE5_Shutdown lives in another translation unit that could not reach
+// a file-static here anyway. The two comments that used to claim a shutdown join
+// were wrong, and the stored HANDLE was leaked for the process lifetime. The thread
+// runs detached; its CreateThread handle is closed immediately below.
 
 #ifdef UE5_PROXY_BUILD
 // ── Proxy mutual exclusion ─────────────────────────────────────────────────
@@ -61,6 +70,11 @@ static HANDLE g_primaryProxyMutex = nullptr;
 // False when CreateMutexW itself failed — the guard is then not armed at all and a
 // second proxy in this process would run alongside us. Logged once Sein exists. (B47)
 static bool   g_primaryProxyMutexArmed = false;
+// GetLastError() captured AT the CreateMutexW call (audit #5 AB10/AB11). The B47
+// warning below is logged only after Sein::Init + several Win32/CRT calls, each of
+// which clobbers the thread's last-error, so a live GetLastError() there names the
+// wrong API. Stored here at the point of failure so the warning blames the right one.
+static DWORD  g_primaryProxyMutexErr = 0;
 #endif
 
 #ifdef UE5_PROXY_BUILD
@@ -162,27 +176,82 @@ static void AutoStartBody()
             const wchar_t* leaf = wcsrchr(hostPath, L'\\');
             leaf = leaf ? leaf + 1 : hostPath;
             if (IsCheatEngineExeName(leaf)) {
-                LOG_WARN("DllMain AutoStart: host process is '%ls' — Cheat Engine is never "
+                // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — and this leaf is
+                // NOT ASCII by construction: IsCheatEngineExeName anchors only the first 11
+                // characters (`_wcsnicmp(leaf, L"cheatengine", 11)`), leaving the rest free.
+                // Users rename CE builds routinely — `cheatengine-x86_64-SSE4-AVX2.exe` is
+                // itself the rename this gate was widened for — so `cheatengine-測試.exe`
+                // would lose the entire warning explaining why auto-start was skipped.
+                const std::string leafU8 = Utf8Helpers::EncodeUtf16(leaf, wcslen(leaf));
+                LOG_WARN("DllMain AutoStart: host process is '%s' — Cheat Engine is never "
                          "a scan target; skipping auto-start (CE plugin, not yet enabled, "
-                         "or the DLL was injected into CE by hand?)", leaf);
+                         "or the DLL was injected into CE by hand?)", leafU8.c_str());
                 g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
                 return;
             }
         }
     }
 
-    // Check if another UE5Dumper instance is already running (e.g., proxy DLL)
-    // by trying to open the named pipe. If it exists, skip auto-start.
+    // Is another UE5Dumper instance already serving? [RELAUNCHPIPE-2026-08-19]
+    //
+    // ⚠ This is the SECOND copy of that defect, on the CE / manual-inject path. It used to skip
+    // the whole auto-start — init AND pipe server — permanently, on one CreateFileW. On a title
+    // that RELAUNCHES ITSELF the holder is the process that is busy dying, so the survivor was
+    // left un-scanned and unreachable for the rest of its life. Measured with two DumperTest
+    // instances: the second logged `skipping auto-start` and never recovered when the first
+    // exited. (The OCTOPATH report hit the sibling copy in Frieren's UE5_StartPipeServer, which
+    // the proxy path calls directly — same bug, different entry point.)
     HANDLE testPipe = CreateFileW(
         Grimoire::PIPE_NAME,
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
-    if (testPipe != INVALID_HANDLE_VALUE) {
+
+    const bool pipeExists = (testPipe != INVALID_HANDLE_VALUE);
+    DWORD holderPid = 0;
+    if (pipeExists) {
+        ULONG pid = 0;
+        if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
-        LOG_WARN("DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skipping auto-start");
-        // SKIPPED, not FAILED: a pipe server IS up (owned by the other instance),
-        // so a CE Lua poller should proceed to connect rather than report an error.
+    }
+
+    if (Voll::DecideStart(pipeExists, holderPid, GetCurrentProcessId())
+            == Voll::StartAction::DeferAndWatch) {
+        LOG_WARN("DllMain AutoStart: pipe is held by PID %lu — deferring auto-start, and watching "
+                 "for it to free", static_cast<unsigned long>(holderPid));
+        // SKIPPED, not FAILED: a pipe server IS up (owned by the other instance), so a CE Lua
+        // poller should proceed to connect rather than report an error. It stays SKIPPED only
+        // until the watcher below actually runs the auto-start.
         g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
+
+        // Deliberately NOT "just let the normal path run and let Frieren's watcher handle the
+        // pipe". Falling through would make this process pay a full GObjects scan while another
+        // instance owns everything — which is the cost this guard exists to avoid. Waiting first
+        // and scanning only if the pipe actually frees keeps that saving and still recovers.
+        s_autoStartWatcher = std::thread([holderPid]() {
+            for (int i = 0; i < Voll::kClaimWatchMaxTries; ++i) {
+                if (Tot::ShutdownRequested()) return;
+                Sleep(Voll::kClaimWatchPollMs);
+
+                HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+                                           OPEN_EXISTING, 0, nullptr);
+                if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
+                // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
+                // theirs. Only "not found" means the pipe is really gone.
+                if (GetLastError() == ERROR_PIPE_BUSY) continue;
+
+                LOG_WARN("AutoStartWatcher: pipe freed by PID %lu after %d ms — running the "
+                         "auto-start that was deferred",
+                         static_cast<unsigned long>(holderPid),
+                         (i + 1) * Voll::kClaimWatchPollMs);
+                UE5_AutoStartBlocking();
+                LOG_INFO("AutoStartWatcher: deferred auto-start returned");
+                return;
+            }
+            LOG_WARN("AutoStartWatcher: PID %lu still holds the pipe after %d s — giving up. "
+                     "This process is not initialised and nothing can connect to it.",
+                     static_cast<unsigned long>(holderPid),
+                     (Voll::kClaimWatchMaxTries * Voll::kClaimWatchPollMs) / 1000);
+        });
         return;
     }
 
@@ -198,6 +267,21 @@ static void AutoStartBody()
 }
 #endif
 
+// AB9 — the log retention sweep, off the loader lock.
+//
+// ⚠ THIS MUST LIVE IN THE COMMON REGION, i.e. AFTER the #endif above and outside both
+// halves of the UE5_PROXY_BUILD split. Heiter.cpp defines AutoStartThreadProc TWICE —
+// once inside `#ifdef UE5_PROXY_BUILD` and once in its `#else` — while the CreateThread
+// call site below is common code. Putting this proc beside either copy compiles the DLL
+// it happens to match and breaks the other four flavours with an undeclared identifier,
+// and NO test target compiles Heiter.cpp, so only a `-Target DLL` build catches it.
+//
+// RunThreadGuarded for the same reason the auto-start proc uses it: std::filesystem
+// throws, and a throw out of a raw thread proc is std::terminate. (B14)
+static DWORD WINAPI RetentionSweepThreadProc(LPVOID) {
+    Routine::RunThreadGuarded("Sein Retention", [] { Sein::RunRetentionSweep(); });
+    return 0;
+}
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     switch (reason) {
     case DLL_PROCESS_ATTACH: {
@@ -227,8 +311,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             swprintf_s(mutexName, L"Local\\UE5CEDumper_PrimaryProxy_%lu",
                        GetCurrentProcessId());
             g_primaryProxyMutex = CreateMutexW(nullptr, FALSE, mutexName);
+            // Capture last-error NOW: everything below (and the deferred B47 warning)
+            // clobbers it, so reading it later blames the wrong call. (AB10/AB11)
+            const DWORD mutexErr = GetLastError();
             if (g_primaryProxyMutex != nullptr &&
-                GetLastError() == ERROR_ALREADY_EXISTS) {
+                mutexErr == ERROR_ALREADY_EXISTS) {
                 // Cannot log — Sein is deliberately not initialized in passive mode, and
                 // initializing it is exactly what this branch must avoid. The first
                 // instance records the pairing from its own side instead (below).
@@ -239,6 +326,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // invisible: two proxies in one process would BOTH run, and the only symptom
             // is interleaved logs in one folder.
             g_primaryProxyMutexArmed = (g_primaryProxyMutex != nullptr);
+            if (!g_primaryProxyMutexArmed) g_primaryProxyMutexErr = mutexErr;
         }
 #endif
 
@@ -285,7 +373,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             if (!g_primaryProxyMutexArmed) {
                 LOG_WARN("Proxy: first-loaded-wins guard is NOT armed (CreateMutexW failed, "
                          "err=%lu) — a second UE5CEDumper proxy in this process would run "
-                         "alongside this one", GetLastError());
+                         "alongside this one", g_primaryProxyMutexErr);
             }
 #endif
         }
@@ -316,6 +404,17 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                      "down with it. The CE-plugin entry points still work; they inject into "
                      "the GAME, which is where the poller belongs.");
             g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
+
+            // Retention runs INLINE here, and that is deliberate, not an oversight.
+            // AB1: in a CE host the module is NOT pinned (see the PIN below, which is in
+            // the other branch for exactly this reason), so creating ANY thread here
+            // risks CE's FreeLibrary unmapping the image out from under it. A ~140 ms
+            // stall inside a plugin-list refresh costs nothing.
+            // ⚠ And it must not simply be SKIPPED: PruneAgedLogs only ever prunes the
+            // CURRENT process's folder, so skipping it here leaves CE's own log folder
+            // growing forever — no other process would ever prune it, and only
+            // PruneStaleProcessFolders (which needs a whole idle folder) could.
+            Sein::RunRetentionSweep();
         } else {
             // Our threads live in this image, so the image must not become unmappable
             // while they run. Nothing in this repo calls FreeLibrary on us — but "nothing
@@ -336,13 +435,36 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             Mimic::StartThread();
 
             // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
-            // is set true by CEPlugin_InitializePlugin within 1 second.
-            // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.
-            g_hAutoStartThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
-            if (g_hAutoStartThread) {
+            // is set true by CEPlugin_InitializePlugin within 1 second. Nothing
+            // joins it (see the note by the removed g_hAutoStartThread), so close
+            // our handle at once and let it run detached rather than leak it. (AB8)
+            HANDLE hAutoStart = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
+            if (hAutoStart) {
                 LOG_INFO("DllMain: auto-start thread created OK");
+                CloseHandle(hAutoStart);
             } else {
                 LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
+            }
+
+            // AB9 — retention on its own thread, so the sweep is off the loader lock.
+            //
+            // ⚠ UNCONDITIONAL within this branch, i.e. OUTSIDE the `if (hAutoStart)`
+            // above. Putting it after the CloseHandle inside that `if` would run
+            // retention only while auto-start thread creation is SUCCEEDING and stop it
+            // silently when that starts failing — a feature switched off by an unrelated
+            // failure, which is the B19 shape.
+            //
+            // The module PIN a few lines above has already run, so this thread cannot be
+            // left executing in an unmapped image. A thread created during
+            // DLL_PROCESS_ATTACH does not begin until the loader lock is released, which
+            // is precisely the property being bought here.
+            HANDLE hSweep = CreateThread(nullptr, 0, RetentionSweepThreadProc, nullptr, 0, nullptr);
+            if (hSweep) {
+                CloseHandle(hSweep);   // detached, like the auto-start thread (AB8)
+            } else {
+                LOG_WARN("DllMain: retention sweep thread failed (err=%lu) — running it inline",
+                         GetLastError());
+                Sein::RunRetentionSweep();
             }
         }
         break;

@@ -749,6 +749,56 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // True if `classObj`'s super-chain (itself included) has an FName exactly equal
 // to any entry in `baseNames`. Bounded 64-hop walk with a self-loop break (the
 // reusable generalization of Edel::ClassifyBySuperChain). Pure read-only.
+// ── Where a Property Search row's Preview value came from ───────────────────
+// [CDOSCOPE-2026-08-20]
+//
+// The preview used to look for an instance whose class is EXACTLY the row's class, and
+// fall back to the class default object marked `(CDO default)` when it found none. Every
+// ACTION on that same row — Force (Solide) and Freeze — is scoped to the class AND EVERY
+// SUBCLASS. So a row could read "CDO default", implying nothing is live, and freezing it
+// would then report `on 2 instance(s)`. Both halves were internally correct; they simply
+// disagreed about what "an instance of this class" means.
+//
+// Measured on DumperTest: `NiagaraComponent · WarmupTickCount · IntProperty · 0x624`
+// previewed `0 (CDO default)` while the freeze on that row hit two live instances.
+//
+// The preview now searches derived instances too, so the two halves agree, and says which
+// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: no
+// test target compiles Aura.cpp, so a decision left there cannot be pinned at all.
+enum class PreviewSource {
+    None,          // nothing to preview
+    Exact,         // a live instance whose class is exactly the row's class
+    Derived,       // a live instance of a SUBCLASS — what the actions would also hit
+    ClassDefault,  // no live instance anywhere in the hierarchy; the CDO is all there is
+};
+
+// Preference order: a live exact-class sample, else a live subclass sample, else the CDO.
+//
+// ⚠ Derived beats the CDO but loses to exact, and both halves of that matter. Preferring
+// the CDO over a live subclass instance would re-create the original defect; preferring a
+// subclass over an exact-class instance would show a value from the wrong object while the
+// right one exists.
+inline PreviewSource ChoosePreviewSource(bool hasExact, bool hasDerived, bool hasClassDefault) {
+    if (hasExact) return PreviewSource::Exact;
+    if (hasDerived) return PreviewSource::Derived;
+    if (hasClassDefault) return PreviewSource::ClassDefault;
+    return PreviewSource::None;
+}
+
+// The suffix appended to the preview text. Empty for an exact-class live reading, which is
+// the unremarkable case and must stay unmarked.
+//
+// ⚠ `(CDO default)` now carries a STRONGER claim than it used to: subclasses really were
+// searched and none was live, so the actions will find nothing either. That is the whole
+// point of the fix — before, it only meant "no instance of exactly this class".
+inline const char* PreviewSourceSuffix(PreviewSource src) {
+    switch (src) {
+        case PreviewSource::Derived:      return " (subclass instance)";
+        case PreviewSource::ClassDefault: return " (CDO default)";
+        default:                          return "";
+    }
+}
+
 bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::string>& baseNames);
 
 // True if `path` (a class full path from Ubel::GetFullName) is in a known UE
@@ -1042,7 +1092,21 @@ struct AllFunctionEntry {
 struct AllFunctionsResult {
     int scannedObjects   = 0;     // GObjects count walked
     int scannedClasses   = 0;     // UClasses considered (post game-only filter)
-    int totalFunctions   = 0;     // sum of WalkFunctions over all classes
+    // Emitted functions. Identical to entries.size() by construction (both the
+    // outer and inner cap tests fire before the push), so it is NOT an honest
+    // pool total and must never be read as one — the pool size cannot be known
+    // without paying the WalkFunctions cost for every remaining class, which is
+    // exactly what the cap exists to avoid. `truncated` below is the honest
+    // signal. (audit #5 Z8)
+    int totalFunctions   = 0;
+    // The walk stopped early, so `entries` is a PAGE, not the pool:
+    //   truncated = hit maxEntries       (more functions exist, unseen)
+    //   aborted   = Tot::Requested()     (client gone / shutdown mid-walk)
+    // Without these a capped scan is indistinguishable from an exhaustive one,
+    // and the Console panel turns it into a positive claim about the game
+    // ("No UFUNCTION(exec) commands found in this game"). (audit #5 Z8)
+    bool truncated       = false;
+    bool aborted         = false;
     std::vector<AllFunctionEntry> entries;
 };
 
@@ -1172,6 +1236,12 @@ struct FunctionPropRefResult {
     // native but analysis unavailable (Func offset unresolved / unreadable).
     std::string method;
     int32_t unmappedAccesses = 0;  // disasm: [reg+off] hits with no matching property
+    // disasm: the decoder stopped at its instruction budget, so the property list
+    // below is a PREFIX of what the function touches (audit #5 AF7). Denken computed
+    // this and Aura logged it, then dropped it — leaving the Xref dialog to present a
+    // truncated list as an exhaustive answer to "which fields does this touch?".
+    // Always false for the bytecode path, which is exact.
+    bool budgetHit = false;
 };
 
 FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr);
@@ -1395,6 +1465,18 @@ struct GroupScanResult {
     std::vector<Radar::FieldDescriptor> descriptors;  // shared via GroupSlotMatch::descriptorIdx
     std::vector<Radar::InstanceRecord>  instances;     // shared via GroupCandidate::instanceIdx
     ValueScanStats                      stats;
+    // At least one block had MORE leaves satisfying a slot than perSlotCap, so the
+    // extras were dropped and a later Changed/Decreased refine can only re-read what
+    // was kept. Deliberately NOT in ValueScanStats: that struct is shared with the
+    // single-value / snapshot / pivot paths, which have no per-slot cap.
+    //
+    // Before audit #5 AE13 this was a function-local bool in ScanForValueGroup whose
+    // only consumer was a LOG_WARN, so the one fact that explains "the scan missed my
+    // field" reached the DLL log and nothing else. It is a bool rather than a count
+    // because the pre-cap magnitude only exists inside Orden::MatchGroup's inner loop;
+    // widening that is a separate change and the bool is what the UI needs to stop
+    // presenting a capped witness list as complete.
+    bool perSlotCapHit = false;
 };
 
 // First scan. `slots` carry the pre-parsed per-slot targets (caller enforces

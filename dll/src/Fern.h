@@ -2,7 +2,13 @@
 
 // ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
-// PipeServer: Named Pipe JSON IPC server (~30 commands)
+// PipeServer: Named Pipe JSON IPC server (99 commands)
+//
+// ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
+// asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until
+// build 3262 — the seventh stale copy that gate was built for, and it survived because the
+// registry covered the docs but not the two SOURCE headers the docs derive from
+// (audit #5 AD7/AD22).
 //
 // Multi-connection model (Path A — docs/multipipe-eval.md §9): the server
 // accepts up to kMaxPipeInstances clients and serves EACH on its own thread

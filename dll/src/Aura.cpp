@@ -1854,6 +1854,15 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     int numCandidates = 0;
 
     for (int32_t i = 0; i < count; ++i) {
+        // audit #5 A7: this is a full-GObjects walk; poll cancellation like every sibling
+        // scan (FindInstancesByClass / FindInstancesDerivedFrom / the value scans) so a
+        // client disconnect or shutdown doesn't block UE5_Shutdown's join for the whole
+        // pass. A cancelled lookup returns "not found": the candidate set is incomplete, so
+        // emitting a nearest-match from it would be arbitrary.
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            LOG_INFO("FindByAddress: aborted (client gone / shutdown) at index %d of %d", i, count);
+            return result;
+        }
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
 
@@ -2242,6 +2251,29 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     // Build outside the lock — WalkClassEx is non-trivial and may itself
     // touch caches. Insert under lock at the end.
     std::vector<ContainerCacheEntry> entries;
+    // ⚠ DO NOT MEMOIZE A BUILD THAT CAME FROM AN UNREADABLE CLASS.
+    //
+    // The emplace below is permanent — nothing ever evicts from this map — so a single
+    // transient read fault on `cls` pins an EMPTY result for the rest of the process, and
+    // every later scan of that class silently finds nothing. This is reachable today: the
+    // callers guard only `!cls` (e.g. Aura.cpp's `if (!ReadSafe(obj + OFF_UOBJECT_CLASS,
+    // cls) || !cls) continue;`) and pass class pointers read straight out of live objects.
+    //
+    // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
+    // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
+    // not walk", and caching anything derived from it would be caching a failure.
+    //
+    // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
+    // so on a healthy class this is a cache hit, not a second walk.
+    //
+    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
+    // return-type refactor across five caches; see its row. This is the separate, present-
+    // tense defect found while scoping it.
+    static const std::vector<ContainerCacheEntry> s_emptyContainers;
+    if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyContainers;
+
     CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
                                entries, /*depth*/ 0);
 
@@ -3206,6 +3238,29 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
         auto it = s_classRefCache.find(cls);
         if (it != s_classRefCache.end()) return it->second;
     }
+
+    // ⚠ DO NOT MEMOIZE A BUILD THAT CAME FROM AN UNREADABLE CLASS.
+    //
+    // The emplace below is permanent — nothing ever evicts from this map — so a single
+    // transient read fault on `cls` pins an EMPTY result for the rest of the process, and
+    // every later scan of that class silently finds nothing. This is reachable today: the
+    // callers guard only `!cls` (e.g. Aura.cpp's `if (!ReadSafe(obj + OFF_UOBJECT_CLASS,
+    // cls) || !cls) continue;`) and pass class pointers read straight out of live objects.
+    //
+    // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
+    // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
+    // not walk", and caching anything derived from it would be caching a failure.
+    //
+    // Costs one WalkClassEx on cache MISSES only, and the builder below calls it anyway —
+    // so on a healthy class this is a cache hit, not a second walk.
+    //
+    // ⚠ This is NOT the A10 fix. A10 is the recycled-UClass* staleness, which needs the
+    // return-type refactor across five caches; see its row. This is the separate, present-
+    // tense defect found while scoping it.
+    static const ClassReferenceMeta s_emptyRefMeta;
+    if (Ubel::WalkClassEx(cls).Address != cls) return s_emptyRefMeta;
 
     ClassReferenceMeta meta;
     CollectRefMetaRecursive(cls, 0, "", meta, 0);
@@ -4645,9 +4700,28 @@ PropertySearchResult SearchProperties(
     if (!result.results.empty()) {
         // 2a. Collect unique preview-source class set (subclasses
         // chosen for instance lookup, NOT the defining classes).
+        // ⚠ Keyed on the DEFINING class (`classAddr`), not on `previewClassAddr`.
+        // [CDOSCOPE-2026-08-20]
+        //
+        // `previewClassAddr` is whichever subclass had the biggest `PropertiesSize`, chosen
+        // with the comment "bias toward leaf classes that actually have live instances" —
+        // a PROXY for having live instances rather than a test of it, and the proxy is wrong
+        // often enough to matter. Measured on DumperTest: the `NiagaraComponent ·
+        // WarmupTickCount` row picked class 0x…797000, which has only a CDO, while
+        // `NiagaraComponent` itself (0x…797800) had two live `NiagaraComponent0` instances.
+        // The row therefore read `0 (CDO default)` — "nothing is live" — while Freeze on that
+        // same row reported `on 2 instance(s)`.
+        //
+        // The defining class is what Force (Solide) and Freeze target, so keying on it is
+        // what makes the preview and the actions answer the same question. Sampling any
+        // instance in that hierarchy is sound for the same reason the original comment gives:
+        // the property sits at the same offset on every subclass.
+        //
+        // Rows with no preview source (`previewClassAddr == 0`: the deep-descent nested
+        // leaves) must still be skipped — that zero is load-bearing.
         std::unordered_set<uintptr_t> needPreviewClasses;
         for (const auto& m : result.results)
-            needPreviewClasses.insert(m.previewClassAddr);
+            if (m.previewClassAddr) needPreviewClasses.insert(m.classAddr);
 
         // 2b. Scan GObjects to find one instance per preview-source class.
         //
@@ -4666,7 +4740,45 @@ PropertySearchResult SearchProperties(
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
         // instance appearing later always wins — the whole point of the finding.
         std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
+
+        // Live instances of a SUBCLASS of a preview class. [CDOSCOPE-2026-08-20]
+        //
+        // Force and Freeze on a Property Search row are scoped to the class AND EVERY
+        // SUBCLASS, so a preview that only looked for an exact-class instance could mark a
+        // row `(CDO default)` — reading as "nothing is live" — while the action on that same
+        // row then reported `on 2 instance(s)`. Measured on DumperTest with
+        // NiagaraComponent::WarmupTickCount. Collected here and applied only where no exact
+        // instance was found, so an exact sample always wins.
+        std::unordered_map<uintptr_t, uintptr_t> derivedMap;
+
+        // Per-UClass verdict cache: cls -> the preview class it derives from, or 0 for none.
+        // Same reasoning as FindInstancesDerivedFrom's derivedCache — GObjects holds 10^5-10^6
+        // objects over 10^3-10^4 distinct classes, so caching by UClass* turns a per-OBJECT
+        // chain walk into a per-CLASS one, which is what makes this affordable at all.
+        std::unordered_map<uintptr_t, uintptr_t> derivesFromCache;
+        auto previewBaseOf = [&](uintptr_t cls) -> uintptr_t {
+            auto it = derivesFromCache.find(cls);
+            if (it != derivesFromCache.end()) return it->second;
+            uintptr_t found = 0;
+            uintptr_t cur = cls;
+            // Bounded the same way Ubel::ResolveFunctionInChain and Dunste::FindFuncByName
+            // are: a malformed or mid-teardown SuperStruct can self-loop.
+            for (int depth = 0; cur && depth < 64; ++depth) {
+                if (needPreviewClasses.count(cur)) { found = cur; break; }
+                uintptr_t super = 0;
+                if (!Macht::ReadSafe(cur + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
+                    || super == 0 || super == cur)
+                    break;
+                cur = super;
+            }
+            derivesFromCache[cls] = found;
+            return found;
+        };
+
         int32_t cnt = GetCount();
+        // ⚠ The early exit counts EXACT hits only. A class whose only live instance is a
+        // subclass must not stop the sweep early — the derived sample it needs may still be
+        // ahead of us, and settling for the CDO there is the defect being fixed.
         for (int32_t i = 0; i < cnt && instanceMap.size() < needPreviewClasses.size(); ++i) {
             // Skipping CDOs means a class with no live instance no longer satisfies the
             // early-exit condition, so this loop can now run the full pool. It is the same
@@ -4680,34 +4792,53 @@ PropertySearchResult SearchProperties(
             if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
             // Skip if this IS a UClass (we want instances, not the class itself)
-            if (!needPreviewClasses.count(cls) || instanceMap.count(cls) || obj == cls) continue;
+            if (obj == cls) continue;
+
+            const bool exact = needPreviewClasses.count(cls) != 0;
+            // Only pay for the chain walk when the class is not one we already want, and
+            // only while some preview class still lacks a derived sample.
+            const uintptr_t base = exact ? cls
+                                 : (derivedMap.size() < needPreviewClasses.size()
+                                        ? previewBaseOf(cls) : 0);
+            if (!base) continue;
+            if (exact ? (instanceMap.count(base) != 0) : (derivedMap.count(base) != 0)) continue;
 
             uint32_t nameIdx = 0;
             if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
                 Serie::GetString(nameIdx).find("Default__") != std::string::npos) {
-                cdoOnlyMap.emplace(cls, obj);   // first CDO seen wins; live instance still preferred
+                // Only the row's OWN class default is offered as the last-resort sample. A
+                // subclass CDO is another class's default, which would be a worse answer than
+                // the row's own and is not what the actions would touch either.
+                if (exact) cdoOnlyMap.emplace(base, obj);   // first CDO wins; live still preferred
                 continue;
             }
 
-            instanceMap[cls] = obj;
+            if (exact) instanceMap[base] = obj;
+            else       derivedMap.emplace(base, obj);
         }
 
         // Fall back to the CDO where nothing live exists — a default value is still the only
         // truth available, and dropping the preview entirely would lose information. But it
         // must not be presented as a live reading: that silent substitution IS the defect
         // this fix removes, so the row says which one it got (marked in 2c below).
-        std::unordered_set<uintptr_t> previewFromCdo;
-        for (const auto& kv : cdoOnlyMap) {
-            if (instanceMap.count(kv.first)) continue;
-            instanceMap[kv.first] = kv.second;
-            previewFromCdo.insert(kv.first);
+        // Exact > derived > class default, decided by Aura::ChoosePreviewSource so the
+        // ordering is stated in a header a test can compile. [CDOSCOPE-2026-08-20]
+        std::unordered_map<uintptr_t, PreviewSource> previewSourceOf;
+        for (uintptr_t pc : needPreviewClasses) {
+            const PreviewSource src = ChoosePreviewSource(
+                instanceMap.count(pc) != 0, derivedMap.count(pc) != 0, cdoOnlyMap.count(pc) != 0);
+            switch (src) {
+                case PreviewSource::Derived:      instanceMap[pc] = derivedMap[pc];  break;
+                case PreviewSource::ClassDefault: instanceMap[pc] = cdoOnlyMap[pc];  break;
+                default: break;   // Exact is already in instanceMap; None has nothing to add
+            }
+            if (src != PreviewSource::None) previewSourceOf[pc] = src;
         }
 
-        // 2c. Read property values and fill previews. ResolvePropertyPreviews
-        // expects the match's classAddr to key into instanceMap, but we
-        // want it to use previewClassAddr instead. Temporarily swap, run,
-        // then swap back so the wire output keeps the defining-class
-        // address as the canonical classAddr.
+        // 2c. Read property values and fill previews. `instanceMap` is now keyed by the
+        // DEFINING class, which is what `ResolvePropertyPreviews` already looks matches up
+        // by — so the old swap of classAddr <-> previewClassAddr around the call is gone.
+        // It existed only to make the lookup use the size-picked subclass.
         if (!instanceMap.empty()) {
             // Resolve EnumProperty: read UEnum* from FField for matches that need it
             for (auto& m : result.results) {
@@ -4715,24 +4846,16 @@ PropertySearchResult SearchProperties(
                     Macht::ReadSafe(m.fieldAddr + DynOff::FENUMPROP_ENUM, m.enumAddr);
                 }
             }
-            // Swap classAddr <-> previewClassAddr around the call.
-            for (auto& m : result.results) {
-                std::swap(m.classAddr, m.previewClassAddr);
-            }
             Ubel::ResolvePropertyPreviews(result.results, instanceMap);
-            for (auto& m : result.results) {
-                std::swap(m.classAddr, m.previewClassAddr);
-            }
             // Mark the rows whose only available sample was the class default object, so a
             // Blueprint default cannot read as a live value. `preview` is a free-text column
             // (bound as a TextBlock, and one of the fields the keyword box ORs over), so the
             // marker needs no wire or UI change and stays greppable by the user.
-            if (!previewFromCdo.empty()) {
-                for (auto& m : result.results) {
-                    if (!m.preview.empty() && previewFromCdo.count(m.previewClassAddr)) {
-                        m.preview += " (CDO default)";
-                    }
-                }
+            for (auto& m : result.results) {
+                if (m.preview.empty()) continue;
+                auto it = previewSourceOf.find(m.classAddr);
+                if (it == previewSourceOf.end()) continue;
+                m.preview += PreviewSourceSuffix(it->second);
             }
         }
     }
@@ -5124,7 +5247,14 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
     int32_t count = GetCount();
     result.scannedObjects = count;
 
-    for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+    // The walk is NOT bounded by the row cap: it runs to the end of GObjects so
+    // `totalClasses` is the HONEST pool total, not a copy of the cap ([CLASSTOTAL]).
+    // Only ROW materialization (the costly WalkClassEx + score + push) stops at the
+    // cap; past it we still count each qualifying class — a handful of cheap reads
+    // per object, the same per-object work EnumerateAllFunctions already does over the
+    // whole pool. `truncated` keeps its exact meaning: the row list is a page, not the
+    // pool.
+    for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:list", "ListClasses: aborted (client gone / shutdown)");
             break;  // return partial result
@@ -5151,7 +5281,14 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         std::string classPath = Ubel::GetFullName(obj);
         if (gameOnly && IsEnginePackage(classPath)) continue;
 
+        // Count EVERY qualifying class — this is the honest total, independent of the
+        // row cap. The expensive per-class walk below is skipped once results fills.
         result.totalClasses++;
+
+        // Row cap reached: keep counting classes (above) but stop building rows.
+        // WalkClassEx / ComputeHeuristicScore / entry alloc are the costly parts, so
+        // nothing heavy runs past the cap.
+        if (static_cast<int>(result.results.size()) >= maxResults) continue;
 
         // Walk class to get property count and size
         const ClassInfo& ci = Ubel::WalkClassEx(obj);
@@ -5167,9 +5304,10 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         result.results.push_back(std::move(entry));
     }
 
-    // The loop above exits on `results.size() == maxResults` as well as on the end
-    // of the array, so a full page means the walk stopped early. Same test (and the
-    // same one-index-of-slack ambiguity) as SearchByName / SearchProperties.
+    // A full page means the walk collected the cap and there were more classes to
+    // collect — same contract (and the same one-index-of-slack ambiguity) as
+    // SearchByName / SearchProperties. `totalClasses` now carries the real count, so a
+    // truncated result reports "shown of total" honestly.
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
     // Sort by heuristic score descending, then alphabetically for ties
@@ -5180,8 +5318,9 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
             return a.className < b.className;
         });
 
-    Sein::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)%s",
-                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects,
+    Sein::Info("PIPE:list", "ListClasses: %d rows of %d classes total (gameOnly=%d, scanned %d objects)%s",
+                 static_cast<int>(result.results.size()), result.totalClasses, gameOnly ? 1 : 0,
+                 result.scannedObjects,
                  result.truncated ? ", STOPPED at the result cap — more classes exist" : "");
     return result;
 }
@@ -5299,9 +5438,10 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:list", "EnumerateAllFunctions: aborted (client gone / shutdown)");
+            result.aborted = true;
             break;  // return partial result
         }
-        if (static_cast<int>(result.entries.size()) >= maxEntries) break;
+        if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
 
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
@@ -5335,7 +5475,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
         std::vector<FunctionInfo> funcs = Ubel::WalkFunctions(obj);
 
         for (const auto& f : funcs) {
-            if (static_cast<int>(result.entries.size()) >= maxEntries) break;
+            if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
 
             AllFunctionEntry entry;
             entry.className     = ci.Name;
@@ -5354,9 +5494,11 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
     Sein::Info("PIPE:list",
         "EnumerateAllFunctions: %d entries from %d classes "
-        "(gameOnly=%d, scanned %d objects, total funcs %d)",
+        "(gameOnly=%d, scanned %d objects, total funcs %d%s%s)",
         static_cast<int>(result.entries.size()), result.scannedClasses,
-        gameOnly ? 1 : 0, result.scannedObjects, result.totalFunctions);
+        gameOnly ? 1 : 0, result.scannedObjects, result.totalFunctions,
+        result.truncated ? ", TRUNCATED at cap" : "",
+        result.aborted ? ", ABORTED" : "");
     return result;
 }
 
@@ -5874,6 +6016,37 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     EnsureUFunctionFuncOffset();
     if (DynOff::UFUNCTION_FUNC == 0) return "none";
 
+    // ⛔ NATIVE-ONLY GATE — the same one GetFunctionCodeAddr applies a few lines above,
+    // for the reason spelled out there: a script/Blueprint UFunction points `Func` at the
+    // SHARED interpreter (UObject::ProcessInternal), not at its own code. That is a
+    // perfectly valid code pointer, so the LooksLikeCodePointer check below CANNOT tell
+    // the two apart.
+    //
+    // Without this, a Blueprint function whose Script is unreadable reaches here — the
+    // selector in WalkFunctionPropertyRefs routes on `Script` alone and never consults
+    // FunctionFlags — and we disassemble the INTERPRETER, then map ITS [this+off]
+    // accesses against the function's owner class. Any interpreter displacement that
+    // collided with a real property offset would have been reported as a genuine
+    // reference by that function. GetFunctionCodeAddr's comment names the failure exactly:
+    // "pushing the interpreter dispatcher and reporting a misleading success".
+    //
+    // And the UI made it worse than silence: `method="disasm"` prints
+    // "[native disasm — heuristic, N unmapped]", i.e. it CLAIMS to have disassembled the
+    // function. Observed on DQ7R: `GetRemainingExpToNextLevel` (BC,BP,Const) reported
+    // "0 properties … 2 unmapped" on the native path.
+    //
+    // ⚠ `!= 0` is load-bearing, and the gate is deliberately THREE-WAY. ReadFunctionFlags
+    // returns 0 when every probe offset failed, i.e. "unknown" — NOT "not native". A plain
+    // `(flags & FUNC_Native) == 0` would refuse every function on any build where the
+    // FunctionFlags offset does not resolve, deleting Path 2 wholesale to fix a case we
+    // have no evidence of there. So: refuse only when the flags were READ and say script.
+    // The confirmed failure has readable flags by construction — the UI rendered
+    // "BC,BP,Const" for it, and that string is derived from these very bits.
+    constexpr uint32_t FUNC_Native = 0x00000400;
+    const uint32_t funcFlags = ReadFunctionFlags(funcAddr);
+    if (funcFlags != 0 && (funcFlags & FUNC_Native) == 0)
+        return "blueprint_no_script";
+
     uintptr_t exec = 0;
     if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec) ||
         !Macht::LooksLikeCodePointer(exec))
@@ -5891,6 +6064,10 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
 
     Denken::NativeAnalysisResult r = Denken::Analyze(exec, reader);
     if (!r.ok) return "none";
+
+    // Carry the decoder's "I stopped early" flag OUT rather than only into the log
+    // (audit #5 AF7). Set before the mapping loop so an early return can't drop it.
+    out.budgetHit = r.budgetHit;
 
     // Map each [this+off] access to a property on the owning class (UFunction's
     // Outer). WalkClass already includes the full inherited super chain with
@@ -8266,7 +8443,7 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
     const auto& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // not a meta scope -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     constexpr int kMaxStructLeafFields = 512;        // per object, defensive
     int added = 0;
     for (const auto& f : ci.Fields) {
@@ -8675,7 +8852,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                          std::vector<GroupLeafMeta>& metas, size_t leafCap) {
     if (widths.empty() || leaves.size() >= leafCap) return;
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;
@@ -8997,7 +9174,13 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         if (deep && static_cast<int32_t>(result.candidates.size()) < maxResults) {
             curClassName = className;
             deepBlocks.clear();
-            WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepVisitor);
+            // audit #5 A9: pass the per-walk element counter so dlim.maxTotalElems actually
+            // bounds this object's deep walk. Without it (the 7th arg defaulted to nullptr)
+            // the budget set at dlim.maxTotalElems above was inert, and a single deep/wide
+            // object (the recorded SEED ~24 s chunk) ran to the global 15 s deadline,
+            // consuming the whole scan budget. Mirrors ScanForValue's deepEmit call.
+            int64_t deepVisited = 0;
+            WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepVisitor, &deepVisited);
             for (auto& kv : deepBlocks) {
                 GroupBlock& blk = kv.second;
                 if (blk.leaves.size() < nSlots) continue;
@@ -9014,6 +9197,11 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         }
     }
 
+    // Report it, don't just log it. The log line below is invisible to the user who is
+    // looking at the results grid, and this is the single fact that explains a slot
+    // whose "All fields" list is short — four "the scan missed my field" reports.
+    // (audit #5 AE13)
+    result.perSlotCapHit = capHit;
     if (capHit) {
         LOG_WARN("ScanForValueGroup: at least one object had more than %d leaves matching a slot "
                  "- the extras were dropped, and a later Changed/Decreased refine can only "
@@ -9220,7 +9408,7 @@ void AppendRawHoleFields(uintptr_t obj, uintptr_t cls, Radar::DataType numericSc
     const std::vector<Radar::DataType>& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // numericScope isn't a meta type -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;

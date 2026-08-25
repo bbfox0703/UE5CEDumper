@@ -26,6 +26,8 @@
 #include "Schlacht.h"
 #include "Grausam.h"  // Grausam::SetForegroundLock — soft-disable the foreground lock on shutdown (L10)
 #include "Tot.h"     // Tot::RequestShutdown — enter the shutdown window before joining workers (M5)
+#include "Routine.h" // Routine::SafeThread — the pipe-claim watcher
+#include "Voll.h"    // Voll::DecideStart — who owns the pipe at startup (RELAUNCHPIPE)
 
 #include <string>
 #include <cstring>
@@ -1002,37 +1004,60 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
     return 0;
 }
 
+// Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
+// traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
+//
+// ⚠ `extern "C++"` is REQUIRED here, and the reason is easy to miss: this file wraps
+// everything from line ~124 to ~2314 in one big `extern "C" {` for the UE5_* exports,
+// so a helper declared in the middle of it inherits **C language linkage** even though
+// it is `static`. Returning `std::vector<FunctionInfo>` from a C-linkage function is
+// MSVC warning C4190 ("has C-linkage specified, but returns UDT which is incompatible
+// with C") — emitted on every clean build, and invisible on an incremental one because
+// Frieren.cpp only recompiles when it is touched. That is why it looked new after a
+// sync: nothing changed, the object cache had simply been hiding it.
+//
+// The twin of this function in Mimic.cpp:529 is byte-for-byte the same and does NOT
+// warn, because Mimic uses per-declaration `extern "C"` and never opens a block. That
+// asymmetry between two identical helpers IS the diagnosis.
+//
+// Nothing was ever broken at runtime — these are `static`, used only as function
+// pointers inside this translation unit, never called from C. But language linkage is
+// part of a function's TYPE in C++, so leaving it wrong is the kind of thing that
+// breaks on a compiler upgrade or under /permissive-, not the kind that stays cosmetic.
+//
+// Negative control 2026-08-24: removing this `extern "C++"` brings C4190 straight back
+// on the next Frieren.cpp recompile; restoring it silences it. Both directions observed.
+extern "C++" {
+static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
+    return Ubel::WalkFunctions(cls);
+}
+static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
+    return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+}
+}  // extern "C++"
+
+// Resolve a UFunction by name on a class OR ANY OF ITS BASES.
+//
+// ⚠ It used to search only the class's OWN declared functions, which is what
+// [INVOKEINHERIT-2026-08-20] was: `SetActorHiddenInGame` on a StaticMeshActor returned
+// "not found" for a function the tool's own listing had just produced, and every one of
+// AActor's 140 functions was unreachable on every derived instance. Ubel::WalkFunctions is
+// still per-class — that is correct for LISTING, which attributes each function to its
+// declaring class — so the climb belongs here, in the resolver, and NOT in the walker.
 uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
     if (!classAddr || !funcName || !funcName[0]) return 0;
 
-    auto funcs = Ubel::WalkFunctions(classAddr);
-
-    // Exact match
-    for (const auto& f : funcs) {
-        if (f.name == funcName) {
-            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (exact match)",
-                     funcName, (unsigned long long)f.address);
-            return f.address;
-        }
+    FunctionInfo hit;
+    int levels = 0;
+    if (Ubel::ResolveFunctionInChain(classAddr, funcName, ChainListFuncs, ChainReadSuper,
+                                     hit, &levels)) {
+        LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (%d class level(s) searched)",
+                 funcName, (unsigned long long)hit.address, levels);
+        return hit.address;
     }
 
-    // Case-insensitive fallback
-    std::string lower(funcName);
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    for (const auto& f : funcs) {
-        std::string fl = f.name;
-        std::transform(fl.begin(), fl.end(), fl.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (fl == lower) {
-            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (case-insensitive)",
-                     funcName, (unsigned long long)f.address);
-            return f.address;
-        }
-    }
-
-    LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d functions walked)",
-             funcName, (int)funcs.size());
+    LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d class level(s) searched, "
+             "own class + supers)", funcName, levels);
     return 0;
 }
 
@@ -1400,6 +1425,50 @@ namespace {
     constexpr uint8_t kPePat2Bytes[10] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };
     constexpr char    kPePat2Mask[11] =   "x??xxxxxxx";
 
+    // SIB-BYTE VARIANTS. ([PEHOOK-2026-08-17])
+    //
+    // The two masks above budget exactly two wildcards — ModRM, then the low byte
+    // of disp32 — before their three fixed 00s. That is only correct while the
+    // UFunction* lives in a LOW register. When the compiler parks it in an
+    // EXTENDED one (r8-r15), ModRM's rm field becomes 100, which on x64 makes a
+    // SIB byte MANDATORY: the instruction grows by one byte, the fixed 00s land
+    // one position early, and the pattern misses a ProcessEvent that is otherwise
+    // textbook.
+    //
+    // MEASURED, DumperTest UE 5.4 **Development** (the sample that failed in the
+    // field), at ProcessEvent+0x36F:
+    //     41 F7 84 24 B0 00 00 00 00 04 00 00
+    //     REX.B  F7  ModRM=84  SIB=24  disp32=0xB0  imm32=0x400
+    //   = test dword ptr [r12+0xB0], 0x400        (r12 holds the UFunction*)
+    // versus the same test in the Shipping build of the same project:
+    //     F7 82 B0 00 00 00 00 04 00 00
+    //   = test dword ptr [rdx+0xB0], 0x400        (matched by kPePat1 as-is)
+    // Same flag, same field (+0xB0 = UFunction::FunctionFlags), same structure —
+    // only the register allocation differs. Ground truth for the slot came from
+    // the paired PDB: UObject::ProcessEvent is vtable entry 77, i.e. **+0x268**,
+    // and the version-table fallback's 0x220 is entry 68,
+    // UObject::GetSubobjectsWithStableNamesForNetworking — a replication callback
+    // that never runs in a single-player sample, which is exactly "fired 0 times".
+    //
+    // Note the 0x400000 test in the SAME function had no SIB (it used rsi), so
+    // only pattern 1 actually failed; pattern 2's variant is added for symmetry
+    // because nothing makes rsi special.
+    //
+    // A relaxed pattern can only regress by matching an EARLIER slot on a binary
+    // that already worked, so that was measured rather than argued: over the 22
+    // shipped UE games in the local corpus plus both DumperTest configs (60
+    // candidate vtables each, harvested from .rdata), **not one binary changed a
+    // first match it already had**. The sole behaviour change is DumperTest
+    // Development going from no match at all to exactly one, at 0x268.
+    //
+    // Deliberately NOT covered, because no sample exercises them: a disp8 form
+    // (structurally impossible while FunctionFlags sits at +0xB0 > 0x7F), and the
+    // register forms A9 / F7 C0 (absent from every sample disassembled).
+    constexpr uint8_t kPePat1SibBytes[11] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
+    constexpr char    kPePat1SibMask[12] =   "x???xxxxxxx";   // 11 chars + NUL
+    constexpr uint8_t kPePat2SibBytes[11] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };
+    constexpr char    kPePat2SibMask[12] =   "x???xxxxxxx";
+
     // Linear pattern search with 'x' = exact / '?' = wildcard mask.
     // Returns true if found within haystack[0..size).
     bool ContainsPattern(const uint8_t* haystack, size_t haystackSize,
@@ -1461,11 +1530,17 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
         if (!Macht::ReadBytesSafe(funcAddr, body, kBodySize)) continue;
 
         // Pattern 1 (FUNC_Native test) must be within first 0x400 bytes —
-        // ProcessEvent's prologue does this very early.
-        if (!ContainsPattern(body, 0x400, kPePat1Bytes, kPePat1Mask, sizeof(kPePat1Bytes))) continue;
+        // ProcessEvent's prologue does this very early. Either encoding counts:
+        // the SIB form is the same instruction with the UFunction* in an extended
+        // register (see the byte-level note above).
+        if (!ContainsPattern(body, 0x400, kPePat1Bytes, kPePat1Mask, sizeof(kPePat1Bytes)) &&
+            !ContainsPattern(body, 0x400, kPePat1SibBytes, kPePat1SibMask, sizeof(kPePat1SibBytes)))
+            continue;
 
         // Pattern 2 (high-flag test) can live deeper into the function body.
-        if (!ContainsPattern(body, kBodySize, kPePat2Bytes, kPePat2Mask, sizeof(kPePat2Bytes))) continue;
+        if (!ContainsPattern(body, kBodySize, kPePat2Bytes, kPePat2Mask, sizeof(kPePat2Bytes)) &&
+            !ContainsPattern(body, kBodySize, kPePat2SibBytes, kPePat2SibMask, sizeof(kPePat2SibBytes)))
+            continue;
 
         LOG_INFO("DetectProcessEvent (pattern): match at vtable+0x%X -> 0x%llX",
                  off, (unsigned long long)funcAddr);
@@ -1532,12 +1607,33 @@ static int DetectProcessEventVTableOffsetByVersion(uintptr_t vtable) {
 
 // Top-level resolver. Pattern-based first, version-table second. Caller is
 // expected to additionally validate by post-install hook-fire-count check.
-static int DetectProcessEventVTableOffset() {
+//
+// Returns a byte offset (>0), Stark::kPeOffsetNotDetected (-2) when there was
+// nothing to look at yet, or Stark::kPeOffsetFailed (-1) when candidates existed
+// and no slot could be named. Those two negatives are NOT interchangeable — see
+// the three failure classes in Stark.h. Collapsing them is [PEHOOKONCE].
+//
+// @param fromVersionTable  set to true when the answer came from the version
+//        TABLE guess rather than the pattern scan. The validator needs to know:
+//        a zero fire count means something different per detector.
+static int DetectProcessEventVTableOffset(bool* fromVersionTable) {
+    if (fromVersionTable) *fromVersionTable = false;
+
     std::vector<uintptr_t> vtables;
     CollectCandidateVTables(vtables, 12);
     if (vtables.empty()) {
-        LOG_ERROR("DetectProcessEvent: no valid UObject vtable available");
-        return -1;
+        // NOT an error, and not terminal. Proxy mode starts the pipe server only
+        // ("proxy DLL mode — starting pipe server only (no scan)"), so GObjects is
+        // unset until a scan runs and there is simply no UObject to read a vtable
+        // from yet. Logged ONCE: detection is re-armed on the ordinary invoke path,
+        // so an ERROR here became one log line per invoke, forever.
+        static std::atomic<bool> s_loggedNoVtable{false};
+        if (!s_loggedNoVtable.exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO("DetectProcessEvent: no UObject vtable available yet (GObjects is "
+                     "not populated — normal before the first scan in proxy mode). "
+                     "Detection stays ARMED and re-runs once objects exist; logged once.");
+        }
+        return Stark::kPeOffsetNotDetected;
     }
 
     // Try the pattern scan across several distinct classes before giving up on it.
@@ -1554,21 +1650,34 @@ static int DetectProcessEventVTableOffset() {
     }
 
     int off = DetectProcessEventVTableOffsetByVersion(vtables[0]);
-    if (off > 0) return off;
+    if (off > 0) {
+        if (fromVersionTable) *fromVersionTable = true;
+        return off;
+    }
 
     LOG_ERROR("DetectProcessEvent: both pattern scan and version fallback failed");
-    return -1;
+    return Stark::kPeOffsetFailed;
 }
 
-static int s_processEventOffset = -2;  // -2 = not yet detected
+// Detected offset, or one of Stark's two negative sentinels. ATOMIC because the
+// detached validator thread writes it (a VALIDATION FAILED verdict re-arms or
+// condemns it) while invoke threads read it.
+static std::atomic<int>  s_processEventOffset{Stark::kPeOffsetNotDetected};
+// True when the current offset came from the version TABLE rather than the
+// pattern scan. Only meaningful while s_processEventOffset >= 0.
+static std::atomic<bool> s_peOffsetFromVersionTable{false};
 
 /// Resolve the actual ProcessEvent function address from any valid UObject's vtable.
 /// Used both for direct calls and for installing the game-thread hook.
+///
+/// Pure resolver: it does NOT detect. The ad-hoc `if (offset == -2) detect;` that
+/// used to sit here was the one detection site outside the serialized path, i.e.
+/// two threads could run the scan concurrently and race the store. Detection now
+/// has exactly one entry point (RunPeDetection), which owns the lock and the
+/// retry budget.
 static uintptr_t ResolveProcessEventAddr() {
-    if (s_processEventOffset == -2) {
-        s_processEventOffset = DetectProcessEventVTableOffset();
-    }
-    if (s_processEventOffset < 0) return 0;
+    const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
+    if (!Stark::PeOffsetUsable(peOffset)) return 0;
 
     // Find any valid UObject to read its vtable. Use GetByIndex (not GetItem->Object)
     // so the UE5.7+ within-item object-ptr offset is applied — on a reordered item the
@@ -1584,7 +1693,7 @@ static uintptr_t ResolveProcessEventAddr() {
     if (!Macht::ReadSafe(testObj, vtable) || !vtable) return 0;
 
     uintptr_t peAddr = 0;
-    if (!Macht::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return 0;
+    if (!Macht::ReadSafe(vtable + peOffset, peAddr) || !peAddr) return 0;
 
     return peAddr;
 }
@@ -1617,6 +1726,87 @@ static constexpr int      kMaxHookAttempts    = 8;
 static constexpr uint64_t kHookRetryCooldownMs = 5000;
 static std::atomic<int>      s_hookAttempts{0};
 static std::atomic<uint64_t> s_lastHookAttemptMs{0};
+
+// ---------------------------------------------------------------------------
+// DETECTION retry state — deliberately its OWN budget, separate from the
+// install-retry counters above. An install failure means "MinHook could not
+// place a trampoline"; a detection failure means "we do not know where
+// ProcessEvent is". Same word, different remedy, and sharing one counter would
+// let a burst of one silence the other. ([PEHOOKONCE-2026-08-18])
+// ---------------------------------------------------------------------------
+static std::mutex            s_peDetectMutex;
+static std::atomic<int>      s_peDetectAttempts{0};    // REAL runs only (see Stark.h)
+static std::atomic<uint64_t> s_lastPeDetectMs{0};
+// CONSECUTIVE validation failures, not a lifetime tally — reset by the next
+// validation that passes. A lifetime tally would let three UNRELATED idle windows
+// across a long session terminally condemn an offset that was right every time,
+// which is the defect this whole change exists to remove, one layer down.
+static std::atomic<int>      s_peValidationFailures{0};
+// Is the CURRENT offset known not to be ProcessEvent? Set when the validator
+// condemns, cleared the moment a validation passes. This is deliberately a STATE,
+// not a history: the off-thread direct call must be refused while a condemned
+// offset is live, and must come back the instant the hook re-validates.
+static std::atomic<bool>     s_peOffsetDistrusted{false};
+
+/// The one and only detection entry point. Serialized, bounded and rate-limited.
+/// No-op (and cheap) when the offset is already usable or terminally failed.
+static void RunPeDetection(bool force) {
+    // HOT-PATH FAST OUT. Every ordinary invoke walks this, so once the offset is
+    // known (or terminally unknown) the whole function must cost one relaxed load
+    // — not a clock read, and never the mutex. Only a re-armed sentinel goes on.
+    if (!Stark::PeOffsetRetryable(s_processEventOffset.load(std::memory_order_relaxed))) return;
+
+    // Cheap pre-check outside the lock.
+    if (!Stark::ShouldRetryPeDetection(s_processEventOffset.load(std::memory_order_relaxed),
+                                       s_peDetectAttempts.load(std::memory_order_relaxed),
+                                       GetTickCount64(),
+                                       s_lastPeDetectMs.load(std::memory_order_relaxed),
+                                       force)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(s_peDetectMutex);
+    // Re-test under the lock: another thread may have detected while we waited.
+    if (!Stark::ShouldRetryPeDetection(s_processEventOffset.load(std::memory_order_relaxed),
+                                       s_peDetectAttempts.load(std::memory_order_relaxed),
+                                       GetTickCount64(),
+                                       s_lastPeDetectMs.load(std::memory_order_relaxed),
+                                       force)) {
+        return;
+    }
+    s_lastPeDetectMs.store(GetTickCount64(), std::memory_order_relaxed);
+
+    bool fromTable = false;
+    const int off = DetectProcessEventVTableOffset(&fromTable);
+
+    // "Nothing to look at yet" spends no budget and leaves the sentinel armed —
+    // the whole point of separating it from a hard failure.
+    if (Stark::PeOffsetRetryable(off)) return;
+
+    // Only the AUTOMATIC path spends the budget — the same rule TryInstallGameThreadHook
+    // uses 60 lines down, and for the same reason (finding B24): a forced attempt
+    // already skips the cap, so counting it there burns the automatic retries on the
+    // user's behalf.
+    const int spent = force ? s_peDetectAttempts.load(std::memory_order_relaxed)
+                            : s_peDetectAttempts.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Provenance FIRST, then the offset with RELEASE. The validator reads the pair
+    // without this mutex, and it must never see a new offset paired with the
+    // previous run's provenance — that pairing is what decides whether a zero fire
+    // count is acted on. Release/acquire is free on x64 and does not rely on TSO.
+    s_peOffsetFromVersionTable.store(fromTable, std::memory_order_relaxed);
+    s_processEventOffset.store(off, std::memory_order_release);
+    if (Stark::PeOffsetUsable(off)) {
+        LOG_INFO("ProcessEvent: offset resolved to vtable+0x%X via the %s (detection run %d/%d)",
+                 off, fromTable ? "version TABLE (a guess — the post-install validator "
+                                  "decides whether it is right)"
+                                : "pattern scan",
+                 spent, Stark::kMaxPeDetectAttempts);
+    } else {
+        LOG_ERROR("ProcessEvent: detection FAILED on this game — candidate vtables exist but "
+                  "no slot could be named. This is terminal for this process; re-deploying "
+                  "the DLL will not change it. Restart the game and re-inject.");
+    }
+}
 
 // `force` = a user-initiated attempt (a feature being switched on). It skips the
 // cooldown and the attempt cap, because the user is standing there waiting and a
@@ -1663,28 +1853,100 @@ static void TryInstallGameThreadHook(bool force = false) {
     LOG_INFO("GameThreadDispatch: hook installed at 0x%llX, validator armed (1500ms)",
              (unsigned long long)peAddr);
 
-    // Detached validator: don't block the caller — UE5_Init must keep
-    // running. The validator just observes and logs; remediation (e.g.
-    // unhook + re-detect with a different strategy) is intentionally out
-    // of scope for v1 since unhook-while-game-thread-may-be-inside-the-
-    // trampoline is itself unsafe (see Stark::RemoveHook comment).
-    std::thread([peAddr]() {
+    // Detached validator: don't block the caller — UE5_Init must keep running.
+    //
+    // It used to only OBSERVE. Nothing acted on the verdict, so a game whose slot
+    // was mis-detected logged one ERROR and then behaved as if the hook were fine
+    // for the rest of the session — every invoke timing out, the panel reporting
+    // "PE hook off · never fired", and the UI advising a re-deploy that cannot
+    // help. ([PEHOOK-2026-08-17])
+    //
+    // It now acts, but only on the version-TABLE path — see
+    // Stark::ShouldActOnValidationFailure for why a zero means something
+    // different per detector. "Acting" never means MH_RemoveHook: unhooking while
+    // a game thread may be inside the trampoline is a guaranteed crash (see
+    // Stark::RemoveHook), so this is Stark's SOFT disable plus a re-armed
+    // sentinel. The physical patch stays, and a later re-install fast-paths back
+    // on at the same address.
+    // ACQUIRE pairs with RunPeDetection's release store, so this offset and the
+    // provenance flag below are guaranteed to come from the SAME detection run.
+    const int  validatedOffset = s_processEventOffset.load(std::memory_order_acquire);
+    const bool fromTable       = s_peOffsetFromVersionTable.load(std::memory_order_relaxed);
+    std::thread([peAddr, validatedOffset, fromTable]() {
         uint64_t before = Stark::GetHookFireCount();
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         uint64_t after  = Stark::GetHookFireCount();
         uint64_t delta  = after - before;
-        if (delta == 0) {
-            LOG_ERROR("GameThreadDispatch: VALIDATION FAILED — hook at 0x%llX fired 0 "
-                      "times in 1500ms. We are almost certainly hooked on the wrong "
-                      "vtable slot. UFunction invokes via this path WILL time out. "
-                      "(If the game is paused/main-menu, ignore; otherwise this is a "
-                      "real misdetection — please collect logs.)",
-                      (unsigned long long)peAddr);
-        } else {
+        if (delta != 0) {
+            // A pass CLEARS both pieces of failure state. Without this the idle-game
+            // false positive recovers its detection and its hook but never its
+            // off-thread direct call, and its failure count keeps creeping toward
+            // the terminal verdict — a transient making a capability permanently
+            // unavailable, i.e. exactly [PEHOOKONCE] rebuilt one layer down.
+            const int hadFailures = s_peValidationFailures.exchange(0, std::memory_order_relaxed);
+            const bool wasDistrusted = s_peOffsetDistrusted.exchange(false, std::memory_order_relaxed);
             LOG_INFO("GameThreadDispatch: validation OK — hook fired %llu times "
                      "in 1500ms (hook=0x%llX)",
                      (unsigned long long)delta, (unsigned long long)peAddr);
+            if (wasDistrusted || hadFailures > 0) {
+                LOG_INFO("GameThreadDispatch: this offset is TRUSTED again — the earlier "
+                         "zero-fire reading (%d consecutive) was an idle game thread, not a "
+                         "mis-detected slot. Off-thread direct calls are re-enabled and the "
+                         "failure count is reset.", hadFailures);
+            }
+            return;
         }
+
+        if (!Stark::ShouldActOnValidationFailure(fromTable)) {
+            // Pattern-scan offset: the trusted detector. A zero here reads as an
+            // idle game thread, and disabling a correct hook over that would be a
+            // worse bug than the one being fixed. Report, keep the hook.
+            LOG_WARN("GameThreadDispatch: hook at 0x%llX (vtable+0x%X) fired 0 times in "
+                     "1500ms, but the offset came from the PATTERN scan — the detector "
+                     "that fingerprints ProcessEvent's own body. Most likely the game "
+                     "thread was idle (paused / loading / minimised). The hook is KEPT. "
+                     "If invokes also time out, collect logs.",
+                     (unsigned long long)peAddr, validatedOffset);
+            return;
+        }
+
+        // Everything from here is under the detection lock, so the counter, the
+        // verdict and the two actions are one indivisible story. Taking it FIRST
+        // (rather than acting and then CAS-ing) is what stops a stale validator
+        // from disabling a hook it never validated: if the offset has already been
+        // replaced, a newer detection owns the state and this verdict is history.
+        std::lock_guard<std::mutex> lock(s_peDetectMutex);
+        if (s_processEventOffset.load(std::memory_order_relaxed) != validatedOffset) {
+            LOG_WARN("GameThreadDispatch: hook at 0x%llX (vtable+0x%X) fired 0 times in 1500ms, "
+                     "but the detected offset has already been replaced since this hook was "
+                     "installed. A newer detection owns the state, so this verdict is reported "
+                     "and NOT acted on.", (unsigned long long)peAddr, validatedOffset);
+            return;
+        }
+
+        const int failures = s_peValidationFailures.fetch_add(1, std::memory_order_relaxed) + 1;
+        const int next = Stark::PeOffsetAfterValidationFailure(fromTable, validatedOffset, failures);
+        LOG_ERROR("GameThreadDispatch: VALIDATION FAILED — hook at 0x%llX (vtable+0x%X) fired "
+                  "0 times in 1500ms, and that offset came from the version TABLE guess, not "
+                  "the pattern scan. Reading this as a MIS-DETECTED vtable slot (failure "
+                  "%d/%d): disabling the hook, refusing the off-thread direct call for the "
+                  "rest of this process (it would call a known-wrong virtual), and %s. "
+                  "Re-deploying the DLL will NOT help — the binary is fine, the slot guess is "
+                  "wrong. (If the game was merely idle, the next invoke re-detects and "
+                  "re-installs by itself, and a queued invoke will simply time out again.)",
+                  (unsigned long long)peAddr, validatedOffset,
+                  failures, Stark::kMaxPeValidationFailures,
+                  Stark::PeOffsetRetryable(next)
+                      ? "re-arming detection"
+                      : "giving up on ProcessEvent for this process");
+
+        // Re-arm (or condemn) the sentinel, distrust the offset so the off-thread
+        // direct call is refused while it is live, then soft-disable so EnqueueInvoke
+        // starts returning -7. All under the lock, so a re-detection cannot
+        // interleave. The distrust lifts again as soon as a validation passes.
+        s_peOffsetDistrusted.store(true, std::memory_order_relaxed);
+        s_processEventOffset.store(next, std::memory_order_release);
+        Stark::RemoveHook();
     }).detach();
 }
 
@@ -1716,7 +1978,7 @@ static void EnsureProcessEventReady() {
                  "game-thread hook install), serialized via call_once — %d "
                  "caller(s) arrived before init began",
                  (unsigned long)GetCurrentThreadId(), arrivals);
-        s_processEventOffset = DetectProcessEventVTableOffset();
+        RunPeDetection(/*force=*/true);
         TryInstallGameThreadHook();
         // Publish the high-water mark INSIDE the once, so it is visible to every
         // waiter call_once releases (and to later callers, via that same
@@ -1724,11 +1986,25 @@ static void EnsureProcessEventReady() {
         s_peArrivalsAtInitEnd.store(s_peInitArrivals.load(std::memory_order_relaxed),
                                     std::memory_order_relaxed);
         LOG_INFO("ProcessEvent: first-time init complete — offset=%d, hook_active=%d",
-                 s_processEventOffset, Stark::IsHookActive() ? 1 : 0);
+                 s_processEventOffset.load(std::memory_order_relaxed),
+                 Stark::IsHookActive() ? 1 : 0);
     });
-    // Bounded, rate-limited retry of a FAILED install (see the policy note above).
-    // call_once cannot re-run, so the retry lives out here on the ordinary path.
-    if (s_processEventOffset >= 0 && !Stark::IsHookActive()) TryInstallGameThreadHook();
+    // call_once cannot re-run, so BOTH retries live out here on the ordinary path.
+    //
+    // (1) DETECTION. The offset is re-armable when the first attempt had no UObject
+    //     to read (proxy mode before a scan) or when the validator condemned a
+    //     version-table guess. Without this the very first attempt decided the
+    //     process's fate forever: `pe_profile_start` before a scan left -1, every
+    //     retry path was gated against it, and no scan/click/invoke could ever
+    //     install the hook again. ([PEHOOKONCE-2026-08-18])
+    RunPeDetection(/*force=*/false);
+    // (2) INSTALL — bounded, rate-limited retry of a FAILED install (its own policy,
+    //     see the note above; a transient MinHook alloc failure is not a detection
+    //     failure and the two must not share a budget).
+    if (Stark::PeOffsetUsable(s_processEventOffset.load(std::memory_order_relaxed)) &&
+        !Stark::IsHookActive()) {
+        TryInstallGameThreadHook();
+    }
 
     // Warn ONLY for arrivals that were genuinely in flight while init ran — that
     // is the historic double-install crash window, and it is what this line
@@ -1775,7 +2051,8 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
 
     // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
     EnsureProcessEventReady();
-    if (s_processEventOffset < 0) return -3;
+    const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
+    if (!Stark::PeOffsetUsable(peOffset)) return -3;
 
     // Prefer game-thread dispatch via hook
     if (Stark::IsHookActive()) {
@@ -1790,6 +2067,26 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
     // 19 s on a live run and buried everything else in the log.
     ReportHookState(false);
 
+    // A MIS-DETECTED offset must never reach the direct call. ([PEHOOK-2026-08-17])
+    //
+    // The direct fallback calls whatever `vtable[offset]` holds with ProcessEvent's
+    // argument list. That is an acceptable gamble while the offset is merely
+    // UNPROVEN — it is the pre-hook state every game passes through. It is NOT
+    // acceptable once the post-install validator has already reported that this
+    // offset does not receive the game's own traffic, because then we have positive
+    // evidence it is some other UObject virtual.
+    //
+    // Without this guard the fix would have made that case WORSE, not better: a
+    // condemned offset is re-armed and re-detected on the very next invoke, but the
+    // INSTALL retry has a 5 s cooldown, so for those 5 s the offset is usable while
+    // the hook is down — exactly the shape that reaches the code below. Before, the
+    // hook stayed up and the invoke merely timed out.
+    //
+    // It is a STATE, not a history: a lifetime "have we ever failed" tally would
+    // refuse this path forever after one idle-game false positive, even once the
+    // hook was re-installed and validating fine.
+    if (s_peOffsetDistrusted.load(std::memory_order_relaxed)) return -3;
+
     // (c) A REPEATING worker invoke must not take the unsafe path. A user's
     // one-shot invoke accepting that risk is their call; a re-assert / feature
     // worker calling ProcessEvent off the game thread ~10x/s for minutes is not a
@@ -1803,7 +2100,7 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
     if (!Macht::ReadSafe(instance, vtable) || !vtable) return -2;
 
     uintptr_t peAddr = 0;
-    if (!Macht::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return -3;
+    if (!Macht::ReadSafe(vtable + peOffset, peAddr) || !peAddr) return -3;
 
     typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
     auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);
@@ -1841,23 +2138,34 @@ extern "C" bool UE5_EnsureGameThreadHook() {
     EnsureProcessEventReady();          // one-time offset detection + first install attempt
     if (Stark::IsHookActive()) return true;
 
-    // The first install can fail transiently — e.g. MH_ERROR_MEMORY_ALLOC, when MinHook
-    // can't place a trampoline near ProcessEvent this session (reachable ±2GB region
-    // occupied by another injected tool / a stale prior injection). Retry through the
-    // ONE install path, forced: this call is always user-initiated (a feature switching
-    // on), so it skips the automatic path's cooldown/cap. Stark::InstallHook is
-    // idempotent + mutex-guarded, so repeated clicks safely re-attempt.
-    if (s_processEventOffset < 0) return false;   // detection genuinely failed — nothing to retry
+    // This call is always user-initiated (a feature switching on), so BOTH retries
+    // below run forced — the user is standing there waiting and the automatic
+    // path's cooldown would read as "the button did nothing".
+
+    // Detection first: the offset can be re-armable because the process had no
+    // UObject yet (proxy mode before a scan). Forcing a fresh attempt here is what
+    // makes "run a scan, then press Start again" real advice rather than the
+    // unreachable instruction it used to be. ([PEHOOKONCE-2026-08-18])
+    RunPeDetection(/*force=*/true);
+    if (!Stark::PeOffsetUsable(s_processEventOffset.load(std::memory_order_relaxed))) {
+        return false;   // still unknown, or terminally failed — nothing to install
+    }
+
+    // Then the install. It can fail transiently — e.g. MH_ERROR_MEMORY_ALLOC, when
+    // MinHook can't place a trampoline near ProcessEvent this session (reachable
+    // ±2GB region occupied by another injected tool / a stale prior injection).
+    // Retry through the ONE install path. Stark::InstallHook is idempotent +
+    // mutex-guarded, so repeated clicks safely re-attempt.
     TryInstallGameThreadHook(/*force=*/true);
     return Stark::IsHookActive();
 }
 
-// ProcessEvent vtable offset once detected (>=0), or a negative sentinel (-2 not
-// yet attempted / -1 detection failed). Lets the UI distinguish "couldn't find
-// ProcessEvent" (retry after an invoke) from "found it but the hook wouldn't
-// install" (MinHook alloc / another tool — restart + re-inject).
+// ProcessEvent vtable offset once detected (>=0), or one of Stark's two negative
+// sentinels: kPeOffsetNotDetected (-2) = not known YET, re-armed, a scan may fix
+// it; kPeOffsetFailed (-1) = terminal for this process. Lets the UI advise the
+// right remedy instead of collapsing three different causes into one message.
 extern "C" int UE5_GetProcessEventOffset() {
-    return s_processEventOffset;
+    return s_processEventOffset.load(std::memory_order_relaxed);
 }
 
 // Direct call entry point — bypasses the game-thread QUEUE for callers (e.g.
@@ -1877,13 +2185,21 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
 
     // Lazy, race-safe one-time detection + hook install (audit #3).
     EnsureProcessEventReady();
-    if (s_processEventOffset < 0) return -3;
+    const int peOffset = s_processEventOffset.load(std::memory_order_relaxed);
+    if (!Stark::PeOffsetUsable(peOffset)) return -3;
+
+    // Same refusal as the queued path: while the validator's verdict stands, this
+    // offset receives none of the game's own ProcessEvent traffic, so calling it is
+    // calling a known-wrong virtual. This entry point has no queue to fall back to,
+    // so it is the one that would actually make the call. Lifted by the next
+    // validation that passes. ([PEHOOK-2026-08-17])
+    if (s_peOffsetDistrusted.load(std::memory_order_relaxed)) return -3;
 
     uintptr_t vtable = 0;
     if (!Macht::ReadSafe(instance, vtable) || !vtable) return -2;
 
     uintptr_t peAddr = 0;
-    if (!Macht::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return -3;
+    if (!Macht::ReadSafe(vtable + peOffset, peAddr) || !peAddr) return -3;
 
     // If this instance's ProcessEvent is the very address MinHook patched, call
     // the trampoline instead — otherwise we re-enter our own detour off the game
@@ -1926,19 +2242,88 @@ uintptr_t UE5_GetMailboxAddr() {
 
 // === Pipe Server ===
 
+// One watcher per process, ever. Re-entering UE5_StartPipeServer (CE Lua can call it by hand)
+// must not stack threads that all race to Start() the same server.
+static std::atomic<bool> s_claimWatcherStarted{false};
+
+// Detach-on-destroy per Routine's contract: at process exit Windows has already stopped
+// every other thread, so there is nothing to join, only a handle to release.
+static Routine::SafeThread s_claimWatcher;
+
+// Wait for whoever holds the pipe to let go, then take it.
+static void WatchForPipeAndClaim(DWORD holderPid) {
+    s_claimWatcher = std::thread([holderPid]() {
+        for (int i = 0; i < Voll::kClaimWatchMaxTries; ++i) {
+            // Shutdown wins over claiming: Tot is how the DLL is told to stop, and a thread
+            // that ignored it would start a server nobody is left to serve.
+            if (Tot::ShutdownRequested()) {
+                LOG_INFO("PipeClaimWatcher: shutdown requested — stopping without claiming");
+                return;
+            }
+            Sleep(Voll::kClaimWatchPollMs);
+
+            HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+                                       OPEN_EXISTING, 0, nullptr);
+            if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
+            // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
+            // theirs. Only "not found" means the pipe is actually gone.
+            if (GetLastError() == ERROR_PIPE_BUSY) continue;
+
+            const bool ok = s_pipeServer.Start();
+            LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
+                     static_cast<unsigned long>(holderPid), (i + 1) * Voll::kClaimWatchPollMs,
+                     ok ? "server started" : "Start() FAILED");
+            return;
+        }
+        LOG_WARN("PipeClaimWatcher: PID %lu still holds the pipe after %d s — giving up. "
+                 "This process has NO pipe server; nothing can connect to it.",
+                 static_cast<unsigned long>(holderPid),
+                 (Voll::kClaimWatchMaxTries * Voll::kClaimWatchPollMs) / 1000);
+    });
+}
+
 bool UE5_StartPipeServer() {
-    // Guard: if another UE5Dumper instance (e.g., proxy DLL) already owns the pipe,
-    // skip starting a competing pipe server to avoid connection failures.
+    // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
+    // skipped for good on a yes — which on a self-relaunching title meant deferring to the
+    // process that was in the middle of dying, and never serving again. [RELAUNCHPIPE-2026-08-19]
     HANDLE testPipe = CreateFileW(
         Grimoire::PIPE_NAME,
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
-    if (testPipe != INVALID_HANDLE_VALUE) {
+
+    const bool exists = (testPipe != INVALID_HANDLE_VALUE);
+    DWORD holderPid = 0;
+    if (exists) {
+        ULONG pid = 0;
+        if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
-        LOG_WARN("UE5_StartPipeServer: pipe already exists (another instance running) — skipping");
-        return true;  // return true so CE Lua doesn't treat it as failure
     }
-    return s_pipeServer.Start();
+
+    switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {
+        case Voll::StartAction::StartNow:
+            return s_pipeServer.Start();
+
+        case Voll::StartAction::AlreadyOurs:
+            LOG_INFO("UE5_StartPipeServer: this process already serves the pipe — nothing to do");
+            return true;
+
+        case Voll::StartAction::DeferAndWatch:
+        default:
+            // ⚠ Still returns TRUE, deliberately. Both callers map this straight onto
+            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED for the
+            // perfectly ordinary case of a second game running — a worse and much more visible
+            // regression than the one being fixed. What changes is that the deferral is no
+            // longer permanent: the watcher claims the pipe as soon as the holder lets go.
+            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu — deferring, and watching for "
+                     "it to free (this process has no server until then)",
+                     static_cast<unsigned long>(holderPid));
+            {
+                bool expected = false;
+                if (s_claimWatcherStarted.compare_exchange_strong(expected, true))
+                    WatchForPipeAndClaim(holderPid);
+            }
+            return true;
+    }
 }
 
 void UE5_StopPipeServer() {

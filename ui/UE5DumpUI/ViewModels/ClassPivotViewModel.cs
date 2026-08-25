@@ -234,6 +234,17 @@ public partial class ClassPivotViewModel : ViewModelBase
         if (IsDataTableSource) PendingLoad = RefreshDataTablesAsync();
     }
 
+    /// <summary>Drop the live DataTable pick (process-scoped, from FindInstances) and
+    /// cancel pending work on disconnect (audit X5). Snapshot-derived rows are
+    /// disk-backed and PRESERVED — a reconnect re-populates via SetEngineState.</summary>
+    public void ClearOnDisconnect()
+    {
+        CancelPendingWork();
+        DataTables.Clear();
+        _dataTable = null;
+        SelectedDataTable = null;   // handler early-returns on null (no pipe call)
+    }
+
     // --- N1: Pivot-scope class denylist (right-click "Hide this class") ---
     // Independent from the SPC / Diff lists — hiding a class here only affects
     // the Pivot class picker.
@@ -410,7 +421,14 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Clear any active class filter so the target class is visible in the picker, then
         // match against the FULL list (_allClasses) — Classes itself is now the filtered
         // view, which might not contain the handoff target.
-        if (!string.IsNullOrEmpty(ClassFilter)) ClassFilter = "";   // OnClassFilterChanged → rebuilds Classes to the full set
+        // Flush before blanking: this is the navigation case CLAUDE.md's keyword-search
+        // rule names explicitly, and a cross-tab handoff arriving right after the user
+        // typed a class keyword is exactly when the debounce is still pending. (AE16)
+        if (!string.IsNullOrEmpty(ClassFilter))
+        {
+            _classFilterMemory.Flush();
+            ClassFilter = "";   // OnClassFilterChanged → rebuilds Classes to the full set
+        }
         var match = _allClasses.FirstOrDefault(c => c.ClassName == className);
         if (match == null)
         {

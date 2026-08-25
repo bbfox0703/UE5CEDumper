@@ -161,6 +161,23 @@ public partial class ConsoleViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    /// <summary>Drop exec discovery + the pinned per-class live instance addresses so
+    /// a reconnect never invokes against the previous game's instances or shows its
+    /// rows/history (audit X5). Client-side only. LoadAsync already clears
+    /// <c>_stickyInstance</c> on a re-discover; this covers the disconnect gap.</summary>
+    public void ClearOnDisconnect()
+    {
+        _allExec = new List<AllFunctionEntry>();
+        SelectedResult = null;
+        Results.Clear();
+        History.Clear();
+        _stickyInstance.Clear();     // live per-class instance addresses — process-scoped
+        _debugCamEntry = null;
+        HasDebugCameraToggle = false;
+        SetDebugCameraState(null);
+        StatusText = "Click Load to discover UFUNCTION(exec) commands in this game.";
+    }
+
     partial void OnFilterTextChanged(string value)
     {
         ApplyFilter();
@@ -261,25 +278,46 @@ public partial class ConsoleViewModel : ViewModelBase
             ApplyFilter();
             DetectDebugCameraToggle();
 
+            // A capped walk cannot support a claim about the GAME, only about the page.
+            // `list_all_functions` stops at its row cap and, until audit #5 Z8, said
+            // nothing about it — so "No UFUNCTION(exec) commands found in this game
+            // (scanned 100,000 functions…)" was written from a scan that may never have
+            // reached the classes in question, and the user stopped looking. The
+            // wording below is a claim about the SCAN whenever the scan was partial.
+            var capSuffix = result.Aborted
+                ? PartialResultNotice.Cancelled("scan")
+                : result.Truncated
+                    ? PartialResultNotice.RowCap(result.Limit, "functions",
+                          "tick \"Game classes only\" to skip engine classes so the cap "
+                          + "reaches further into the game's own classes")
+                    : "";
+
             if (_allExec.Count == 0)
             {
-                StatusText = result.Total > 0
-                    ? $"No UFUNCTION(exec) commands found in this game " +
-                      $"(scanned {result.Total:N0} functions across " +
-                      $"{result.ScannedClasses:N0} classes). The cooker " +
-                      $"may have stripped them, or the game doesn't use " +
-                      $"this pattern."
-                    : "Load returned 0 functions — pipe issue?";
+                StatusText = result.Total <= 0
+                    ? "Load returned 0 functions — pipe issue?"
+                    : result.IsPartial
+                        // Partial scan: say what was searched, NOT what the game has.
+                        ? $"No UFUNCTION(exec) commands in the {result.Total:N0} functions "
+                          + $"scanned so far (across {result.ScannedClasses:N0} classes) — "
+                          + $"this scan did not finish, so it is not evidence the game has "
+                          + $"none.{capSuffix}"
+                        : $"No UFUNCTION(exec) commands found in this game "
+                          + $"(scanned {result.Total:N0} functions across "
+                          + $"{result.ScannedClasses:N0} classes). The cooker "
+                          + $"may have stripped them, or the game doesn't use "
+                          + $"this pattern.";
             }
             else
             {
                 StatusText = $"{_allExec.Count} exec commands discovered " +
                              $"({result.ScannedClasses:N0} classes scanned, " +
-                             $"{result.Total:N0} total UFunctions).";
+                             $"{result.Total:N0} total UFunctions).{capSuffix}";
             }
 
             _log.Info($"Console.Load: exec={_allExec.Count} of total={result.Total} " +
-                      $"(gameOnly={GameOnly}, scanned={result.ScannedObjects:N0} objects)");
+                      $"(gameOnly={GameOnly}, scanned={result.ScannedObjects:N0} objects, " +
+                      $"truncated={result.Truncated}, aborted={result.Aborted})");
         }
         catch (Exception ex)
         {
@@ -323,6 +361,7 @@ public partial class ConsoleViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilter()
     {
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
         FilterText = "";
     }
 

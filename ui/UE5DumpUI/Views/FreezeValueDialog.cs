@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
@@ -32,8 +33,23 @@ namespace UE5DumpUI.Views;
 /// </summary>
 public sealed class FreezeValueDialog : Window
 {
+    /// <summary>
+    /// Which action the value being typed will drive. The dialog is shared: the value
+    /// validation, the type mapping and the scope summary are identical, but the
+    /// ACTION is not, and every string that names it must follow (audit #5 AF22).
+    ///
+    /// <para><see cref="Freeze"/> generates a CE script the user then enables;
+    /// <see cref="Force"/> writes the field immediately through the DLL and holds it on
+    /// every live instance. Reusing the Freeze strings for Force put "Create freeze
+    /// script" on the button of a flow that creates no script, and offered a remedy
+    /// ("edit className in the generated CFG block") that has no CFG block to edit —
+    /// the same unreachable-advice trap as Z10.</para>
+    /// </summary>
+    public enum Purpose { Freeze, Force }
+
     private readonly PropertySearchMatch _match;
     private readonly string _helperType;
+    private readonly Purpose _purpose;
     private TextBox _valueBox = null!;
     private TextBlock _errorLabel = null!;
     private Button _btnOk = null!;
@@ -43,12 +59,20 @@ public sealed class FreezeValueDialog : Window
     /// <c>"true"</c>). Null when the user cancels.</summary>
     public string? ValueLiteral { get; private set; }
 
-    public FreezeValueDialog(PropertySearchMatch match)
+    // ⚠ NO DEFAULT ON `purpose`, deliberately. A default is the shape the original defect
+    // had: the Force flow was `new FreezeValueDialog(match)` and silently inherited every
+    // word of the Freeze wording, including CFG-block advice that means nothing for a
+    // DLL-held value. Both call sites now state which flow they are, and a third that
+    // forgets is a COMPILE ERROR rather than a dialog quietly lying about itself —
+    // strictly stronger than any test, and the lesson working-lessons.md §2.2 recorded
+    // ("make a wired-through field required"). [PARAMSSORT-2026-08-22 sweep]
+    public FreezeValueDialog(PropertySearchMatch match, Purpose purpose)
     {
         _match = match;
         _helperType = HelperTypeFor(match);
+        _purpose = purpose;
 
-        Title = "Freeze property value";
+        Title = Str(Leaf.Title);
         Width = 520;
         MinWidth = 400;
         SizeToContent = SizeToContent.Height;
@@ -62,16 +86,36 @@ public sealed class FreezeValueDialog : Window
             Spacing = 8,
         };
 
-        // Read-only target details
-        root.Children.Add(BuildLabelRow("Class:",    _match.ClassName));
+        // Read-only target details. "Class" is the class the freeze will be KEYED on,
+        // which is not always the one in the row's Class column — see HeldClassName.
+        root.Children.Add(BuildLabelRow("Class:",    FreezeScriptGenerator.HeldClassName(
+                                                         _match.ClassName, _match.DefiningClassName)));
         root.Children.Add(BuildLabelRow("Property:", _match.PropName));
         root.Children.Add(BuildLabelRow("Type:",     $"{_match.PropType} -> {_helperType}"));
         root.Children.Add(BuildLabelRow("Offset:",   _match.OffsetHex));
+        // What the freeze will actually hold. Stated up front because it is the one
+        // thing the user cannot infer from the row: a Property Search row for an
+        // inherited field is keyed to the class that DECLARES it, so freezing "my
+        // pawn's bCanBeDamaged" is really freezing every live Actor in the level.
+        root.Children.Add(BuildLabelRow("Scope:",    ScopeSummary(_match)));
+
+        var scopeWarning = ScopeWarning(_match, Str(Leaf.NarrowHint));
+        if (scopeWarning != null)
+        {
+            root.Children.Add(new TextBlock
+            {
+                Text = scopeWarning,
+                Foreground = new SolidColorBrush(Color.Parse("#DCDCAA")),
+                FontSize = 11,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
 
         // Value input
         var valueLbl = new TextBlock
         {
-            Text = $"Freeze value ({_helperType}):",
+            Text = StrFormat(Leaf.ValueLabel, _helperType),
             Foreground = new SolidColorBrush(Color.Parse("#DCDCAA")),
             FontSize = 12,
             Margin = new Thickness(0, 8, 0, 2),
@@ -125,7 +169,7 @@ public sealed class FreezeValueDialog : Window
 
         _btnOk = new Button
         {
-            Content = "Create freeze script",
+            Content = Str(Leaf.Ok),
             Padding = new Thickness(14, 4),
             IsDefault = true,
         };
@@ -175,6 +219,124 @@ public sealed class FreezeValueDialog : Window
     /// </summary>
     internal static string HelperTypeFor(PropertySearchMatch match)
         => FreezeScriptGenerator.MapToHelperType(match.PropType, match.PropSize);
+
+    /// <summary>
+    /// One line naming every object the freeze will write to.
+    ///
+    /// <para>The generated script asks the DLL for the class <b>and every subclass of
+    /// it</b> (<c>ue5_freeze_helper.lua</c>'s <c>derived</c>), matching what the Force
+    /// submenu on the same row already does. That is the right scope — an exact-class
+    /// pool for an inherited field holds whichever stray ancestor instance the level
+    /// happens to have and misses the pawn entirely — but it is also much wider than
+    /// "the thing I clicked", so the dialog says so before the script exists rather
+    /// than after nothing appears to happen. (`[FREEZESCOPE-2026-08-18]`)</para>
+    /// </summary>
+    internal static string ScopeSummary(PropertySearchMatch match)
+    {
+        var held = FreezeScriptGenerator.HeldClassName(match.ClassName, match.DefiningClassName);
+        if (string.IsNullOrEmpty(held)) return "every live instance of the matched class";
+        return match.InheritedByCount > 0
+            ? $"every live {held} and every subclass ({match.InheritedByCount} inherit this field)"
+            : $"every live {held} and every subclass";
+    }
+
+    /// <summary>
+    /// The caveat, or null when there is nothing to warn about.
+    ///
+    /// <para>Fires when the field is <b>inherited</b> — i.e. the class this freeze is
+    /// keyed on is an ANCESTOR of whatever the user was actually looking at, which is
+    /// the case for every <c>AActor</c> field the Property Search recipes recommend
+    /// (<c>bCanBeDamaged</c>, <c>bHidden</c>, <c>bReplicates</c>). Also fires if the
+    /// row's own class ever differs from the defining class, which post-dedup it does
+    /// not, but the wire is free to change and the warning should not depend on that.
+    /// </para>
+    ///
+    /// <para>Null for a field unique to its class: there is nothing surprising about
+    /// freezing a game-specific field on the class that declares it, and a warning that
+    /// fires every time is a warning nobody reads.</para>
+    /// </summary>
+    /// <param name="narrowHint">How to target fewer classes, IN THE FLOW THE USER IS IN.
+    /// Passed rather than hardcoded because the two flows have different answers and the
+    /// Freeze one is unreachable from Force — there is no generated CFG block to edit
+    /// (audit #5 AF22).
+    /// <para><b>Required, deliberately no default.</b> A warning that does not say how to
+    /// narrow the scope is only an apology (the property
+    /// <c>ScopeWarning_FiresWhenTheFieldIsInherited</c> has pinned since it was written),
+    /// and a default would let a new call site silently drop it — which is the exact
+    /// shape of the defect being fixed. Callers with genuinely no advice pass "".</para>
+    /// </param>
+    internal static string? ScopeWarning(PropertySearchMatch match, string narrowHint)
+    {
+        var held = FreezeScriptGenerator.HeldClassName(match.ClassName, match.DefiningClassName);
+        bool differentRowClass = !string.IsNullOrEmpty(match.ClassName)
+                                 && !string.Equals(match.ClassName, held, StringComparison.Ordinal);
+        if (match.InheritedByCount <= 0 && !differentRowClass) return null;
+
+        var s = $"⚠ {match.PropName} is declared on {held}, not on one specific object — "
+              + $"so this holds the value on EVERY live {held} and subclass at once, not just "
+              + "the one you were looking at.";
+        return string.IsNullOrEmpty(narrowHint) ? s : s + " " + narrowHint;
+    }
+
+    // ---- purpose-scoped strings (en.axaml) -------------------------------------
+
+    /// <summary>Which of the four purpose-scoped strings is wanted. An enum rather than a
+    /// string so <see cref="KeyFor"/> is exhaustive over both axes and a typo cannot
+    /// compile.</summary>
+    internal enum Leaf { Title, ValueLabel, Ok, NarrowHint }
+
+    /// <summary>
+    /// The en.axaml key for one (purpose, leaf) pair — <b>every key written out in full</b>.
+    ///
+    /// <para>This used to interpolate the purpose and the leaf into the key, which is
+    /// shorter and worse. <c>tools/check_axaml_strings.py</c> greps for literal key tokens
+    /// precisely because a missing <c>StaticResource</c> raises at load time and takes the
+    /// panel with it; an interpolated key is invisible to that grep, so the gate saw a
+    /// dangling reference to the constant prefix ahead of the first brace and called all
+    /// eight real keys dead. It went red the moment AF22 landed and would have stayed red,
+    /// hiding every genuine missing key behind the noise. Composing a resource key at
+    /// runtime also leans on <c>Enum.ToString</c>, which is metadata the trimmer has no
+    /// reason to keep — a literal cannot rot that way either.</para>
+    ///
+    /// <para>Keep the arms literal. Rebuilding the string from <c>nameof</c> or a prefix
+    /// constant would defeat the grep again for the same reason. For the same reason the
+    /// prose here never spells a key out: the checker cannot tell a comment from a call
+    /// site, so an example key in a doc comment IS a reference.</para>
+    /// </summary>
+    internal static string KeyFor(Purpose purpose, Leaf leaf) => (purpose, leaf) switch
+    {
+        (Purpose.Freeze, Leaf.Title)      => "str.ValuePrompt.Freeze.Title",
+        (Purpose.Freeze, Leaf.ValueLabel) => "str.ValuePrompt.Freeze.ValueLabel",
+        (Purpose.Freeze, Leaf.Ok)         => "str.ValuePrompt.Freeze.Ok",
+        (Purpose.Freeze, Leaf.NarrowHint) => "str.ValuePrompt.Freeze.NarrowHint",
+        (Purpose.Force,  Leaf.Title)      => "str.ValuePrompt.Force.Title",
+        (Purpose.Force,  Leaf.ValueLabel) => "str.ValuePrompt.Force.ValueLabel",
+        (Purpose.Force,  Leaf.Ok)         => "str.ValuePrompt.Force.Ok",
+        (Purpose.Force,  Leaf.NarrowHint) => "str.ValuePrompt.Force.NarrowHint",
+        // Unreachable from any in-repo call site: both enums are covered above. Reached
+        // only by casting an undeclared value, which is a programmer error — and falling
+        // back to the Freeze wording is the AF22 defect itself, so refuse instead.
+        _ => throw new ArgumentOutOfRangeException(
+                 nameof(purpose), $"No en.axaml wording defined for {purpose}/{leaf}"),
+    };
+
+    private string Str(Leaf leaf)
+    {
+        var key = KeyFor(_purpose, leaf);
+        var s = Res.Get(key);
+        // Res.Get returns "" when Application.Current is null (unit tests construct
+        // no Avalonia app) or the key is missing. Falling back to the Freeze wording
+        // would re-introduce exactly the defect this fixes, so fall back to the KEY —
+        // visibly wrong beats plausibly wrong.
+        return string.IsNullOrEmpty(s) ? key : s;
+    }
+
+    private string StrFormat(Leaf leaf, params object[] args)
+    {
+        var key = KeyFor(_purpose, leaf);
+        var t = Res.Get(key);
+        return string.IsNullOrEmpty(t) ? key : string.Format(t, args);
+    }
 
     /// <summary>
     /// The "big number" a freeze usually wants. Clamped to what the target type can

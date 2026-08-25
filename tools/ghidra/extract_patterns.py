@@ -3,8 +3,10 @@
 verifier can consume:  id \t target \t resolve \t pattern \t io \t opc \t tot \t adj \t pri \t src
 Symbol-export / symbol-call-follow entries are emitted with pattern kind SYMBOL.
 
-With --check, ALSO assert that Himmel.h's own header summary agrees with what was
-parsed, and exit non-zero if it does not. Without the flag the exit code is always 0
+With --check, ALSO (a) assert that Himmel.h's own header summary agrees with what was
+parsed, and (b) recompute every RIP entry's (instrOffset, opcodeLen, totalLen) against
+its own pattern bytes — see the geometry block below — exiting non-zero if either
+disagrees. Without the flag the exit code is always 0
 (printing a discrepancy is not detecting one) — which is exactly how the counts in
 CLAUDE.md / roadmap.md / Features.md / dll-spec.md / architecture.md drifted to four
 different wrong values while Himmel.h's header stayed right. Machine-check the one copy
@@ -253,6 +255,77 @@ if CHECK:
     elif int(m2.group(1)) != len(uniq):
         failures.append("header intro says %s entries, parsed %d" % (m2.group(1), len(uniq)))
 
+    # ── RIP GEOMETRY — recompute (instrOffset, opcodeLen, totalLen) against the pattern's OWN
+    # bytes. Nothing else in the tree does this: the blocktest oracle covers 35 of 158 entries,
+    # and `ASSERT_TABLE_ORDER` only checks priority order, so a triple that points into the
+    # middle of its own instruction compiles, sorts, scans, matches — and resolves to garbage on
+    # every hit, silently. Four entries shipped that way (GOBJ_PS1, GOBJ_PS6, GWLD_TQ_3,
+    # GWLD_TQ_4 — audit #5 AD12/AD13/AD15/AD16); all four are caught by the rules below, and the
+    # recurring slip is a single one: writing the offset of the DISPLACEMENT where the field
+    # wants the offset of the INSTRUCTION.
+    #
+    # The resolver is Macht::ResolveRIP(matchAddr + instrOffset, opcodeLen, totalLen): it reads a
+    # disp32 at instrOffset+opcodeLen and adds it to matchAddr+instrOffset+totalLen. So:
+    #   * the 4 displacement bytes must be WILDCARDED wherever the pattern covers them — a
+    #     literal there is proof the window is misaligned (nothing else could match), and
+    #   * a pattern may stop exactly AT the displacement (GNAM_SAT425_1 does, legitimately — the
+    #     disp is read from process memory, not from the pattern), but stopping 1-3 bytes INTO it
+    #     means the window does not line up with where the pattern actually ends.
+    # ⚠ Do NOT "simplify" this to `instrOffset + totalLen <= len(pattern)`. That is the obvious
+    # rule, it catches PS1 and PS6 — and it FALSE-POSITIVES GNAM_SAT425_1, whose triple is
+    # correct. The partial-window test is what separates the two.
+    def _geom_failures(r):
+        t = r["pattern"].split()
+        n = len(t)
+        io, opc, tot = ev(r["io"]), ev(r["opc"]), ev(r["tot"])
+        out = []
+        if io < 0 or opc < 1 or tot <= opc:
+            out.append("nonsense triple (instrOffset=%d opcodeLen=%d totalLen=%d)" % (io, opc, tot))
+            return out          # everything below would be noise
+        # totalLen = opcodeLen + disp32(4) + immediate. GWLD_DI427_2 is the imm32 case
+        # (`mov qword[rip+d32],imm32`, totalLen 11), so this is not "must be opcodeLen+4".
+        imm = tot - opc - 4
+        if imm not in (0, 1, 2, 4):
+            out.append("totalLen-opcodeLen-4 = %d, which is not a legal immediate size "
+                       "(0/1/2/4) — the disp32 cannot be where this triple says" % imm)
+        if io + opc > n:
+            out.append("the opcode runs past the pattern: needs %d bytes, pattern has %d"
+                       % (io + opc, n))
+            return out
+        d0 = io + opc
+        litdisp = ["[%d]=%s" % (d0 + k, t[d0 + k]) for k in range(4)
+                   if d0 + k < n and t[d0 + k] != "??"]
+        if litdisp:
+            out.append("disp32 at %d..%d is not wildcarded (%s) — instrOffset almost certainly "
+                       "names the displacement instead of the instruction"
+                       % (d0, d0 + 3, " ".join(litdisp)))
+        if d0 < n < io + tot:
+            out.append("the pattern ends at %d, strictly inside the instruction's tail "
+                       "(displacement %d..%d, instruction ends at %d) — a pattern may stop AT "
+                       "the displacement (%d, the disp is read from process memory, not from the "
+                       "pattern) or cover the whole instruction, but stopping between the two "
+                       "means the triple is misaligned"
+                       % (n, d0, io + tot - 1, io + tot, d0))
+        # The byte before the disp32 is the ModRM. RIP-relative addressing is mod=00, rm=101,
+        # i.e. (b & 0xC7) == 0x05. Checked only where the nibble is literal.
+        mi = d0 - 1
+        if 0 <= mi < n:
+            tok = t[mi]
+            hi, lo = tok[0], tok[1]
+            if lo != "?" and (int(lo, 16) & 0x7) != 0x5:
+                out.append("ModRM at %d is %s — rm=%d, but RIP-relative needs rm=101(5)"
+                           % (mi, tok, int(lo, 16) & 0x7))
+            if hi != "?" and (int(hi, 16) & 0xC) != 0x0:
+                out.append("ModRM at %d is %s — mod=%d, but RIP-relative needs mod=00"
+                           % (mi, tok, (int(hi, 16) >> 2) & 0x3))
+        return out
+
+    for r in sorted(uniq, key=lambda r: (r["target"], ev(r["pri"]))):
+        if r["resolve"] not in ("RipBoth", "RipDirect"):
+            continue            # SYMBOL/CallFollow entries carry the degenerate 0,0,0 triple
+        for msg in _geom_failures(r):
+            failures.append("%s (%s): %s" % (r["id"], r["target"], msg))
+
     # CLAUDE.md claims "no dead constants (extract_patterns.py checks)" — make that true.
     if bad:
         failures.append("%d signature(s) reference an unresolved constant: %s" % (len(bad), bad))
@@ -263,9 +336,13 @@ if CHECK:
         print("\nCHECK FAILED:")
         for f in failures:
             print("  *", f)
-        print("\nHimmel.h's header is the ONE authoritative copy of these counts. Fix it first,")
-        print("then regenerate the derived prose in CLAUDE.md / docs/roadmap.md / docs/Features.md")
-        print("/ docs/dll-spec.md / docs/architecture.md (dev-log.md is append-only — leave it).")
+        print("\nFor a COUNT mismatch: Himmel.h's header is the ONE authoritative copy. Fix it")
+        print("first, then regenerate the derived prose in CLAUDE.md / docs/roadmap.md /")
+        print("docs/Features.md / docs/dll-spec.md / docs/architecture.md (dev-log.md is")
+        print("append-only — leave it).")
+        print("For a GEOMETRY failure: instrOffset is the offset of the RIP INSTRUCTION's FIRST")
+        print("byte (its REX/opcode), NOT of the displacement. Write out the pattern's byte map")
+        print("before changing a number — every instance of this so far has been the same slip.")
         sys.exit(1)
     print("CHECK OK: %d AOB + %d CallFollow + %d symbol exports = %d entries, %d source tags"
           % (aob, callfollow, symbols, len(uniq), srctags))

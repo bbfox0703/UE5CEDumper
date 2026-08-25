@@ -62,6 +62,84 @@ public class ProxyOrphanDeleteRefreshTests
 
     // ── The regression ──────────────────────────────────────────────────────
 
+    // ── [ORPHANCANCEL-2026-08-20] an interrupted row must still be accounted for ──
+    //
+    // Cancellation used to escape as an OperationCanceledException from inside the row, so
+    // everything after that await was skipped: the tally, the untick, and the drop. A real run
+    // logged THREE "Recycled leftover proxy" lines under a summary that said two, and left the
+    // third tree half-pruned with its DLL already in the Recycle Bin and its folders intact —
+    // invisible, because the row still advertised the work in the future tense.
+    //
+    // ⭐ Audit #4's root cause verbatim: the report and the reality computed by different paths.
+
+    [Fact]
+    public async Task AnInterruptedRow_StillCountsWhatItDid()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        // B recycles its file, then sees the cancel.
+        svc.CancelPartwayFor.Add(@"C:\g\B\version.dll", (files: 1, dirs: 0));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        // A completed (1 file) + B's interrupted 1 = 2. Reporting 1 is the defect.
+        Assert.Contains("2 file(s) recycled", vm.LastOperationResult);
+        Assert.Contains("cancelled", vm.LastOperationResult, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AnInterruptedRow_StaysOnTheList_Unticked_AndSaysWhatHappened()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        svc.CancelPartwayFor.Add(@"C:\g\B\version.dll", (files: 1, dirs: 0));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        // A is gone (completed); B stays, because its folder chain is half-pruned and that is
+        // exactly what the user needs to still be able to see.
+        var left = Assert.Single(vm.Orphans);
+        Assert.Equal(@"C:\g\B", left.DllDirectory);
+
+        // Unticked, per the loop's own rule: "a pass is over when it is over". A row left ticked
+        // would re-submit itself under a button still labelled "Delete checked (1)".
+        Assert.False(left.IsSelected);
+
+        // And the status has to replace the future-tense promise about a file already recycled.
+        Assert.Contains("Interrupted", left.StatusText);
+    }
+
+    [Fact]
+    public async Task AnInterruptedRow_IsNotCountedAsAFailure()
+    {
+        // Cancelling is the user's own decision, not an error, and calling it one would send them
+        // looking for a locked file that does not exist.
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"));
+        svc.CancelPartwayFor.Add(@"C:\g\A\version.dll", (files: 1, dirs: 2));
+        vm.Orphans[0].IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("failed", vm.LastOperationResult, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1 file(s) recycled", vm.LastOperationResult);
+        Assert.Contains("2 folder(s) removed", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task APartlyLockedRow_AlsoCountsWhatItRecycled()
+    {
+        // The same defect without any cancel: the tally lived inside `if (result.Success)`, so a
+        // row that recycled one of its two DLLs and then hit a lock reported nothing at all.
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"));
+        svc.PartialFailFor.Add(@"C:\g\A\version.dll",
+            (why: "1 file moved to the Recycle Bin; dinput8.dll is in use.", files: 1, dirs: 0));
+        vm.Orphans[0].IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 file(s) recycled", vm.LastOperationResult);
+    }
+
     [Fact]
     public async Task ACleanedRow_LeavesTheList()
     {
@@ -213,6 +291,67 @@ public class ProxyOrphanDeleteRefreshTests
 
     // ── Stub ────────────────────────────────────────────────────────────────
 
+    // ── AE20: the delete could not be stopped ───────────────────────────────
+
+    /// <summary>
+    /// <c>DeleteSelectedOrphansAsync</c> takes a <c>CancellationToken</c>, re-checks it
+    /// between rows and carries a whole cancelled-reporting path — and nothing in the
+    /// app could call <c>Cancel()</c> on it, because the command did not declare
+    /// <c>IncludeCancelCommand</c> and no other caller existed. Five of the panel's
+    /// seven token-taking commands were in that state, this one destructively.
+    ///
+    /// <para>NEGATIVE CONTROL: remove <c>CancelOperationCommand</c> (or the
+    /// <c>DeleteSelectedOrphansCommand</c> entry from its fan-out list) and the loop
+    /// runs to completion — <c>RemoveCalls</c> is 2 and the result line reports a
+    /// finished pass.</para>
+    /// </summary>
+    [Fact]
+    public async Task AE20_TheDestructiveDelete_CanBeCancelledMidRun()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+        svc.OnRemove = () => vm.CancelOperationCommand.Execute(null);
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, svc.RemoveCalls);   // the second row never started
+        // And the tally still reports what DID happen — a cancel that discarded it
+        // would hide a half-pruned chain.
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+    }
+
+    /// <summary>Negative control: with nobody cancelling, the same pass completes.
+    /// Without this the test above would also pass against a delete that simply
+    /// stopped working.</summary>
+    [Fact]
+    public async Task AE20_WithoutACancel_TheSamePassCompletes()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, svc.RemoveCalls);
+        Assert.DoesNotContain("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+    }
+
+    /// <summary>The Cancel button's gate is the panel's own exclusive-gate predicate,
+    /// so it is enabled exactly while something cancellable is running.</summary>
+    [Fact]
+    public async Task AE20_IsBusy_TracksTheExclusiveGate()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"));
+        Assert.False(vm.IsBusy);
+
+        bool busyDuringDelete = false;
+        vm.Orphans[0].IsSelected = true;
+        svc.OnRemove = () => busyDuringDelete = vm.IsBusy;
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.True(busyDuringDelete);
+        Assert.False(vm.IsBusy);
+    }
+
     /// <summary>
     /// Answers the two orphan members; everything else on the interface is unreachable from this
     /// flow and throws rather than returning a plausible default that could mask a wrong call.
@@ -221,8 +360,15 @@ public class ProxyOrphanDeleteRefreshTests
     {
         public IReadOnlyList<OrphanProxy> Found = System.Array.Empty<OrphanProxy>();
         public readonly Dictionary<string, string> FailFor = new(System.StringComparer.OrdinalIgnoreCase);
+        /// <summary>DllPath -> what the row managed before it was interrupted. [ORPHANCANCEL-2026-08-20]</summary>
+        public readonly Dictionary<string, (int files, int dirs)> CancelPartwayFor = new();
+        /// <summary>DllPath -> a row that recycled something and THEN failed. Same accounting hole, no cancel involved.</summary>
+        public readonly Dictionary<string, (string why, int files, int dirs)> PartialFailFor = new();
         public int DirsRemovedPerRow;
         public int RemoveCalls;
+        /// <summary>Runs at the top of each removal — the only moment from which a test
+        /// can cancel the loop the way a user's Cancel click does (audit #5 AE20).</summary>
+        public System.Action? OnRemove;
 
         public Task<IReadOnlyList<OrphanProxy>> FindOrphanProxiesAsync(
             OrphanScanSources sources, IReadOnlySet<string> liveBinariesDirs,
@@ -233,6 +379,16 @@ public class ProxyOrphanDeleteRefreshTests
             OrphanProxy row, IReadOnlySet<string> liveBinariesDirs, CancellationToken ct = default)
         {
             RemoveCalls++;
+            OnRemove?.Invoke();
+            // [ORPHANCANCEL-2026-08-20] A row can be interrupted PART-WAY: it recycled its file and
+            // then saw the cancel. The partial counts are the whole point — they used to be thrown
+            // away with the exception.
+            if (PartialFailFor.TryGetValue(row.DllPath, out var pf))
+                return Task.FromResult(new OrphanRemovalResult(false, pf.why, pf.files, pf.dirs));
+            if (CancelPartwayFor.TryGetValue(row.DllPath, out var partial))
+                return Task.FromResult(new OrphanRemovalResult(
+                    false, "Interrupted — 1 file(s) recycled, 0 folder(s) removed; the rest was "
+                         + "left in place", partial.files, partial.dirs, Cancelled: true));
             return Task.FromResult(FailFor.TryGetValue(row.DllPath, out var why)
                 ? new OrphanRemovalResult(false, why, 0, 0)
                 : new OrphanRemovalResult(true, "1 file moved to the Recycle Bin.", 1, DirsRemovedPerRow));

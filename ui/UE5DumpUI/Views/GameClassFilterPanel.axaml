@@ -17,6 +17,18 @@
                 ToolTip.Tip="{StaticResource str.Tip.GameClassFilter.GameOnly}"
                 Foreground="#CCCCCC" FontSize="12"
                 VerticalAlignment="Center"/>
+      <!-- Configurable row cap. The GObjects walk is always exhaustive and the "of N total"
+           figure counts past it; this bounds only the rows materialized. Clamped 100-50000 here
+           and again DLL-side. [CLASSCAP-2026-08-21] -->
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                  ToolTip.Tip="{StaticResource str.Tip.GameClassFilter.MaxResults}">
+        <TextBlock Text="{StaticResource str.GameClassFilter.MaxResults}"
+                   Foreground="#888" VerticalAlignment="Center"/>
+        <NumericUpDown Value="{Binding ClassListCapValue}"
+                       Minimum="100" Maximum="50000" ClipValueToMinMax="True" Increment="1000"
+                       FormatString="0" Width="120" FontSize="12"
+                       VerticalAlignment="Center"/>
+      </StackPanel>
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#AAB8D0" FontSize="13" FontFamily="Consolas, Menlo, monospace"
                  VerticalAlignment="Center" Margin="8,0"/>
@@ -66,6 +78,16 @@
               BorderThickness="1" BorderBrush="#E06C75"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
+
+    <!-- Suggestions-are-a-sample warning. Only visible when the class walk stopped at
+         its row cap, in which case the two AutoCompleteBox dropdowns above list the
+         Super / Package values found in the loaded page, not the ones that exist.
+         VM-composed (audit #5 AE15 / Z10: Res.Get returns "" with no Application). -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{Binding SuggestionsNote}"
+               IsVisible="{Binding SuggestionsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+               Foreground="#D7BA7D" FontSize="11" TextWrapping="Wrap"
+               Margin="0,0,0,6"/>
 
     <!-- Loading indicator -->
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"

@@ -163,4 +163,79 @@ public class WindowStateTests
         Assert.Equal(1920 + 260, x);
         Assert.Equal(90, y);
     }
+
+    // ── AF21: the guard must be given the PHYSICAL width, not the DIP width ──────────
+    //
+    // MainWindow.OnOpenedValidatePlacement computes
+    //     int rw = (int)Math.Round(_normalWidth * scale);
+    // and the `* scale` IS the AF21 fix. IsVisibleEnough itself was never wrong; it was being
+    // handed a rect two-and-a-bit times too narrow on a HiDPI monitor.
+    //
+    // These pin the CONSEQUENCE, using this machine's real numbers (3840 px wide, 225%, a
+    // 1,124-DIP window = 2,529 physical), because the live rig
+    // tools/verify/af21_hidpi_placement.py derives its arms from exactly this arithmetic.
+
+    private const double Af21Scale = 2.25;
+    private const double Af21DipWidth = 1124.0;
+    private static int Af21PhysWidth => (int)System.Math.Round(Af21DipWidth * Af21Scale);
+
+    // ⚠ NOT SinglePrimary, which is 1920 wide. On a 1920 screen every right-edge probe below
+    // lands entirely past the screen, both widths return false, and the "they agree" assertion
+    // passes for the trivial reason instead of the real one. The live rig ran on 3840x2400 at
+    // 225%; these must be the same screen or they are testing a different question.
+    private static readonly List<(int, int, int, int)> Af21Screen = new() { (0, 0, 3840, 2400) };
+
+    [Fact]
+    public void Af21_OffTheLeft_TheDipWidthAndThePhysicalWidthDisagree()
+    {
+        // x = -1707 is the midpoint of the discriminating band the live rig uses.
+        const int x = -1707;
+
+        Assert.True(WindowPlacement.IsVisibleEnough(x, 146, Af21PhysWidth, 900, Af21Screen),
+            "with the physical width the window is plainly reachable — 822 px of it is on screen");
+
+        Assert.False(WindowPlacement.IsVisibleEnough(x, 146, (int)Af21DipWidth, 900, Af21Screen),
+            "with the DIP width the same window reads as off-screen — this is the AF21 defect, "
+            + "and its consequence was that a legitimate position got discarded");
+    }
+
+    [Fact]
+    public void Af21_OffTheRight_TheyDoNotDisagree_SoTheRowsOwnStepCannotExposeIt()
+    {
+        // ⚠ The register row says to "move the window so roughly a third of it hangs off the RIGHT
+        // edge". That step cannot reveal this defect and the arithmetic is why: off the right the
+        // overlap is (screenW - x) for the physical rect but min(x + w, screenW) - x for the
+        // narrower DIP rect — the DIP value is the LARGER one, so the buggy build is MORE
+        // permissive there. Both accept, the tester sees a pass, and nothing was learned.
+        int accepted = 0;
+        foreach (int x in new[] { 2000, 2400, 2800, 3200 })
+        {
+            bool phys = WindowPlacement.IsVisibleEnough(x, 146, Af21PhysWidth, 900, Af21Screen);
+            bool dip = WindowPlacement.IsVisibleEnough(x, 146, (int)Af21DipWidth, 900, Af21Screen);
+            if (phys) accepted++;
+            Assert.True(phys == dip,
+                $"off the right at x={x} the two widths disagree, which would make the row's own "
+                + "step a valid probe after all — re-check the correction recorded against AF21");
+        }
+
+        // Guard the guard: "they agree" is worthless if they agree on FALSE everywhere, which is
+        // what happens the moment the screen is too narrow for these x values to mean anything.
+        Assert.True(accepted >= 3,
+            $"only {accepted} of the 4 right-edge probes were on screen at all — this assertion has"
+            + " gone vacuous and is no longer evidence about the right edge");
+    }
+
+    [Fact]
+    public void Af21_TheBandIsRealAndBounded()
+    {
+        // Below the band BOTH reject (genuinely off-screen — this is the live rig's arm C, the one
+        // that shows the guard still rejects something and so can fail).
+        const int belowBand = -2809;
+        Assert.False(WindowPlacement.IsVisibleEnough(belowBand, 146, Af21PhysWidth, 900, Af21Screen));
+        Assert.False(WindowPlacement.IsVisibleEnough(belowBand, 146, (int)Af21DipWidth, 900, Af21Screen));
+
+        // Above the band BOTH accept (plainly on screen — arm A).
+        Assert.True(WindowPlacement.IsVisibleEnough(200, 146, Af21PhysWidth, 900, Af21Screen));
+        Assert.True(WindowPlacement.IsVisibleEnough(200, 146, (int)Af21DipWidth, 900, Af21Screen));
+    }
 }

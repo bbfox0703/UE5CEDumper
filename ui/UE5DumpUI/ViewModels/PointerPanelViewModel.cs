@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
@@ -62,6 +63,25 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// any value other than 5000 indicates a user override active for this game.
     /// </summary>
     [ObservableProperty] private int _invokeTimeoutMs = Constants.StarkDefaultInvokeTimeoutMs;
+
+    /// <inheritdoc cref="InvokeTimeoutMs"/>
+    /// <remarks>
+    /// [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? and an emptied box drives it to
+    /// null, which a compiled binding cannot put into an int. ⚠ This one was MISSED by the first
+    /// sweep: it is the only NumericUpDown in the app whose binding carries a modifier
+    /// (<c>{Binding InvokeTimeoutMs, Mode=TwoWay}</c>), and the scan's regex stopped at the
+    /// property name — so the guard test skipped it silently rather than reporting it. Both the
+    /// scan and the guard now allow modifiers.
+    /// </remarks>
+    public decimal? InvokeTimeoutMsValue
+    {
+        get => InvokeTimeoutMs;
+        set
+        {
+            InvokeTimeoutMs = NumericInput.KeepCurrentIfEmpty(value, InvokeTimeoutMs);
+            OnPropertyChanged();
+        }
+    }
     [ObservableProperty] private bool _isApplyingInvokeTimeout;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
@@ -112,6 +132,20 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _scanStatusText = "";
     [ObservableProperty] private bool _scanComplete;
     [ObservableProperty] private string _scanResultText = "";
+
+    /// <summary>Outcome of the last "Register symbol" click (GWorld or &amp;GEngine).
+    /// Bound at the top of PointerPanel.axaml next to <c>ErrorMessage</c>.
+    ///
+    /// <para>Before this existed, <c>CreateSymbolScriptAsync</c>'s bool was branched on
+    /// only to pick <c>_log.Info</c> vs <c>_log.Warn</c> — neither touched a bound
+    /// property — so a button that registered nothing at all looked byte-identical on
+    /// screen to one that worked, and the user's next step (a CE record rooted on the
+    /// symbol) silently resolved to nothing. Success lands here; FAILURE goes to
+    /// <c>ErrorMessage</c>, which the panel already renders in red (audit #5 V11).</para>
+    ///
+    /// <para>One property serves both cards deliberately: every message names its
+    /// symbol, so there is nothing to disambiguate.</para></summary>
+    [ObservableProperty] private string _symbolStatusText = "";
 
     // --- Cache management ---
     [ObservableProperty] private string _peHash = "";
@@ -582,12 +616,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         InvokeTimeoutMs = state.InvokeTimeoutMs > 0 ? state.InvokeTimeoutMs : Constants.StarkDefaultInvokeTimeoutMs;
         _suppressInvokeTimeoutEvent = false;
         HasData = true;
-        // Reset scan state on fresh update
-        IsScanning = false;
-        ScanComplete = false;
-        ScanStatusText = "";
-        ScanResultText = "";
-        CacheStatusText = "";
+        // NOTE: Extra-Scan state is deliberately NOT reset here — see ResetScanState.
         NotifyComputedProperties();
         // Check AOBMaker availability in background (fire-and-forget)
         _ = CheckAobMakerAsync();
@@ -603,6 +632,60 @@ public partial class PointerPanelViewModel : ViewModelBase
             NotifyAobMakerProperties();
         }
         catch { IsAobMakerAvailable = false; }
+    }
+
+    /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on
+    /// disconnect so a reconnect never offers copy/register on the previous game's
+    /// addresses (audit X5). <see cref="Update"/> repopulates on reconnect. Minimal
+    /// by design: resetting the UE-override / invoke-timeout inputs would fire a pipe
+    /// round-trip via their setters, so only <see cref="HasData"/> and the plain status
+    /// strings in <see cref="ResetScanState"/> are reset — none of the latter has a
+    /// setter that talks to the DLL. (The scan strings moved here from <c>Update</c> in
+    /// audit #5 V10; a disconnect really is a fresh session, a pointer refresh is not.)
+    /// The pipe activity log is kept for post-mortem.</summary>
+    public void ClearOnDisconnect()
+    {
+        HasData = false;
+        ResetScanState();
+        NotifyComputedProperties();
+    }
+
+    /// <summary>
+    /// Blank the Extra-Scan / cache status strip. Owned by the FRESH-SESSION paths
+    /// (<see cref="ClearOnDisconnect"/> and MainWindowViewModel's ApplyEngineState),
+    /// never by <see cref="Update"/>.
+    ///
+    /// <para>It used to live at the bottom of <see cref="Update"/> under the comment
+    /// "Reset scan state on fresh update" — but <see cref="Update"/> is not a
+    /// fresh-session signal. It is also the pointer REFRESH, and three of its four
+    /// callers are consequences of the very actions whose result it was erasing
+    /// (audit #5 V10):</para>
+    /// <list type="bullet">
+    /// <item><b>The Extra Scan's own success path.</b> <c>ExtraScanAsync</c> sets
+    ///     <c>ScanResultText = "Found: GObjects: 0x…"</c>, then raises
+    ///     <c>RescanApplied</c>; MainWindowViewModel's handler awaits
+    ///     <c>GetPointersAsync</c> and calls <c>Update</c>, which blanked the result
+    ///     the user had been waiting on — milliseconds after it appeared.</item>
+    /// <item><b><c>ApplyOverrideAsync</c></b> (the UE-version ComboBox) is gated on
+    ///     <c>IsApplyingOverride</c>, not <c>IsScanning</c>, so it is reachable
+    ///     mid-scan. Clearing <c>IsScanning</c> there re-enabled
+    ///     <c>CanExtraScan</c> while the 1.5 s polling loop was still running, i.e.
+    ///     a second concurrent scan one click away.</item>
+    /// <item><b><c>ApplyInvokeTimeoutAsync</c></b> — a pure settings round-trip that
+    ///     has nothing to do with scanning at all.</item>
+    /// </list>
+    /// <para>The scan commands already own these four properties end to end: each
+    /// sets them on entry and clears <c>IsScanning</c> in its own <c>finally</c>.</para>
+    /// </summary>
+    public void ResetScanState()
+    {
+        IsScanning = false;
+        ScanComplete = false;
+        ScanStatusText = "";
+        ScanResultText = "";
+        CacheStatusText = "";
+        SymbolStatusText = "";
+        OnPropertyChanged(nameof(CanExtraScan));
     }
 
     private void NotifyComputedProperties()
@@ -719,6 +802,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     partial void OnInvokeTimeoutMsChanged(int value)
     {
         OnPropertyChanged(nameof(ShowInvokeTimeoutOverrideBadge));
+        // Keep the NumericUpDown façade in step, or a programmatic change leaves the control
+        // painting the previous number. [SNAPINTERVAL-2026-08-20]
+        OnPropertyChanged(nameof(InvokeTimeoutMsValue));
         if (_suppressInvokeTimeoutEvent) return;
         if (_dump == null) return;
         if (!HasData) return;
@@ -1025,12 +1111,8 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        if (success)
-            _log?.Info(Constants.LogCatInit,
-                $"Created CE symbol script '{symbolName}' (AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen})");
-        else
-            _log?.Warn(Constants.LogCatInit,
-                $"Failed to create CE symbol script '{symbolName}'");
+        ReportSymbolRegistration(success, symbolName,
+            $"AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen}");
     }
 
     // --- AOBMaker CE Plugin: register &GEngine as AOB-scan-based CE symbol ---
@@ -1057,13 +1139,55 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        if (success)
-            _log?.Info(Constants.LogCatInit,
-                $"Created CE symbol script '{symbolName}' (AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen})");
-        else
-            _log?.Warn(Constants.LogCatInit,
-                $"Failed to create CE symbol script '{symbolName}'");
+        ReportSymbolRegistration(success, symbolName,
+            $"AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen}");
     }
+
+    /// <summary>
+    /// Surface a "Register symbol" outcome to the USER, not only to the log.
+    ///
+    /// <para>Both call sites used to branch the bool purely to pick <c>_log.Info</c>
+    /// vs <c>_log.Warn</c>, so the panel looked identical whether CE had registered
+    /// the symbol or the bridge never reached CE at all — and the user's next action
+    /// (rooting a CE record on that symbol) then resolved to nothing with no hint why
+    /// (audit #5 V11). Shared so the two cards cannot report differently.</para>
+    /// </summary>
+    /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
+    internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
+    {
+        if (success)
+        {
+            ClearError();
+            SymbolStatusText = OrFallback(
+                Res.Format("str.Pointers.Symbol.Registered", symbolName),
+                $"Registered CE symbol '{symbolName}'.");
+            _log?.Info(Constants.LogCatInit,
+                $"Created CE symbol script '{symbolName}' ({detail})");
+        }
+        else
+        {
+            // The red banner at the top of PointerPanel.axaml — bound since V7.
+            SymbolStatusText = "";
+            SetError(OrFallback(
+                Res.Format("str.Pointers.Symbol.Failed", symbolName),
+                $"Could not register CE symbol '{symbolName}' in Cheat Engine."));
+            _log?.Warn(Constants.LogCatInit,
+                $"Failed to create CE symbol script '{symbolName}' ({detail})");
+        }
+    }
+
+    /// <summary>
+    /// <c>Res.Get</c>/<c>Res.Format</c> return an EMPTY STRING for a key they cannot
+    /// resolve — they do not throw and do not log (the trap
+    /// <c>SelfTestAdviceTests.EveryAdviceKeyExistsInEnAxaml</c> exists to catch). Both
+    /// bindings added for V11 are gated on <c>IsNotNullOrEmpty</c>, so an empty message
+    /// renders as NO message — which is the exact defect V11 was filed for, arriving by a
+    /// second route. A short literal core keeps the report visible whatever the resource
+    /// dictionary does; the en.axaml entry still supplies the full wording when present,
+    /// and <c>PointerSymbolStringsExistTests</c> pins that it is present.
+    /// </summary>
+    private static string OrFallback(string resolved, string fallback)
+        => string.IsNullOrEmpty(resolved) ? fallback : resolved;
 
     // --- Cache management ---
 
@@ -1535,7 +1659,7 @@ public partial class PointerPanelViewModel : ViewModelBase
                 if (probeResult != null)
                 {
                     // First hit — verify + report.
-                    var (actual, hex, passed) = probeResult.Value;
+                    var (actual, hex, passed, invokeResult) = probeResult.Value;
                     if (passed)
                     {
                         SelfTestPassed = true;
@@ -1546,16 +1670,21 @@ public partial class PointerPanelViewModel : ViewModelBase
                     }
                     else
                     {
+                        // A wrong answer has TWO possible causes and the invoke alone
+                        // cannot separate them (working-lessons §4.4). Ask the DLL which
+                        // one this is instead of asserting the wrong one, as the old
+                        // "re-deploy the DLL" text did. ([PEHOOK-2026-08-17])
+                        var cause = await ClassifySelfTestFailureAsync(invokeResult);
                         SelfTestFailed = true;
-                        SelfTestResultText = string.Format(
-                            CultureInfo.InvariantCulture,
-                            "✗ {0} expected {1}, got {2}  →  Hook may be on the wrong vtable slot. " +
-                            "Check init-*.log for 'VALIDATION FAILED' and re-deploy the DLL.\n" +
-                            "Raw buffer: {3}",
+                        SelfTestResultText = Res.Format(
+                            "str.System.SelfTest.Fail",
                             cand.DisplayLabel,
                             FormatActual(cand.Expected, cand.ReturnType),
                             FormatActual(actual, cand.ReturnType),
+                            Res.Get(SelfTestAdvice.KeyFor(cause)),
                             hex);
+                        _log?.Warn(Constants.LogCatInit,
+                            $"Self-Test: {cand.DisplayLabel} FAILED — hook verdict={cause}");
                     }
                     SelfTestHasResult = true;
                     _log?.Info(Constants.LogCatInit,
@@ -1588,10 +1717,49 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Try one candidate. Returns (actualValue, rawHex, passed) on a
-    /// successful invoke (function resolved + call returned), or null when the
-    /// function isn't present on this game.</summary>
-    private async Task<(double actual, string hex, bool passed)?> TrySelfTestCandidate(SelfTestCandidate cand)
+    /// <summary>
+    /// Ask the DLL what its ProcessEvent hook is actually doing, so a failed
+    /// Self-Test can advise the right remedy. Only runs on the failure path — one
+    /// extra pipe round-trip, and only when something is already wrong.
+    ///
+    /// A probe that throws yields <see cref="SelfTestFailureCause.Unknown"/>, not a
+    /// default guess: the whole point is to stop claiming a cause we have not
+    /// measured.
+    /// </summary>
+    private async Task<SelfTestFailureCause> ClassifySelfTestFailureAsync(int invokeResult)
+    {
+        // A refused invoke needs no telemetry to explain and no round-trip to
+        // confirm — nothing ran, so no hook reading is relevant to it.
+        if (invokeResult != 0) return SelfTestFailureCause.NotDispatched;
+
+        try
+        {
+            // limit:0 — the per-command table is irrelevant here; we want the
+            // game_thread block only.
+            var d = await _dump!.GetDiagnosticsAsync(limit: 0);
+            return SelfTestAdvice.Classify(
+                invokeResult:    invokeResult,
+                haveDiagnostics: true,
+                hookActive:      d.GameThread.HookActive,
+                hookHasFired:    d.GameThread.HasFired);
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatInit,
+                $"Self-Test: could not read hook diagnostics ({ex.Message}) — advising without a verdict");
+            return SelfTestFailureCause.Unknown;
+        }
+    }
+
+    /// <summary>Try one candidate. Returns (actualValue, rawHex, passed, result) on
+    /// an invoke that the DLL accepted or refused, or null when the function isn't
+    /// present on this game.
+    ///
+    /// <para><c>result</c> is carried out deliberately. It used to be discarded, so
+    /// a REFUSED invoke (the DLL returning -3 without ever calling ProcessEvent)
+    /// was indistinguishable from a call that ran and wrote nothing — the return
+    /// slot is untouched either way.</para></summary>
+    private async Task<(double actual, string hex, bool passed, int result)?> TrySelfTestCandidate(SelfTestCandidate cand)
     {
         if (_dump == null) return null;
 
@@ -1618,9 +1786,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         // Decode return value from result_hex (DLL returns full params buffer
         // post-call). result=0 means ProcessEvent dispatch reported success;
         // we still verify by reading the return slot to catch wrong-hook cases.
+        // A non-zero result means the call never happened — the caller needs that
+        // to avoid explaining an untouched buffer as a no-op.
         double actual = DecodeReturnFromHex(res.ResultHex, cand.ReturnOffset, cand.ReturnType);
-        bool passed = ValuesMatch(actual, cand.Expected, cand.ReturnType);
-        return (actual, res.ResultHex, passed);
+        bool passed = res.Result == 0 && ValuesMatch(actual, cand.Expected, cand.ReturnType);
+        return (actual, res.ResultHex, passed, res.Result);
     }
 
     /// <summary>Parse N bytes from result_hex at byte offset, interpret as the

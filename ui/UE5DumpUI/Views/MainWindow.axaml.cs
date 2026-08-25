@@ -277,9 +277,21 @@ public partial class MainWindow : Window
     {
         var screens = CurrentScreenWorkingAreas();
         if (screens.Count == 0) return true;
+        // UNIT FIX (audit #5 AF21). WindowPlacement is documented "all coordinates are
+        // PHYSICAL pixels", and `pos` (a PixelPoint) and the working areas already are —
+        // but `_pendingWidth`/`_pendingHeight` are Avalonia Width/Height, i.e. DIPs. On a
+        // 150% display a 1400-DIP window was measured as 1400px instead of 2100px, so the
+        // overlap test judged a legitimately-placed window by a rect two thirds its size
+        // and could reject it; its position then stopped being tracked.
+        //
+        // Converted on the SIZE side because that is the side that was in the wrong unit —
+        // the position and the screens are natively physical, and converting them would
+        // mean converting the whole helper's contract. This is verbatim what the sibling
+        // guard one method up (OnOpenedRestoreCheck) already does with _normalWidth.
+        double scale = RenderScaling > 0 ? RenderScaling : 1.0;
         return Services.WindowPlacement.IsVisibleEnough(
             pos.X, pos.Y,
-            (int)Math.Round(_pendingWidth), (int)Math.Round(_pendingHeight),
+            (int)Math.Round(_pendingWidth * scale), (int)Math.Round(_pendingHeight * scale),
             screens);
     }
 
@@ -677,10 +689,16 @@ public partial class MainWindow : Window
 
         var tag = (tabs.SelectedItem as TabItem)?.Tag as string;
 
-        // Stop Live Walker auto-refresh when switching away from it.
+        // Stop Live Walker auto-refresh when switching away from it — but resumably:
+        // the USER did not turn it off, so coming back to the tab re-arms it instead of
+        // leaving Auto silently ticked-but-dead ([AUTOREFRESH-2026-08-19]).
         if (tag != "LiveWalker" && vm.LiveWalker.IsAutoRefreshing)
         {
-            vm.LiveWalker.StopAutoRefreshTimer();
+            vm.LiveWalker.StopAutoRefreshTimer(resumable: true);
+        }
+        else if (tag == "LiveWalker")
+        {
+            vm.LiveWalker.ResumeAutoRefreshIfPending();
         }
         // NOTE: the field-search keyword is intentionally NOT cleared on tab
         // switch — it's kept. The Live Walker clears it itself when the grid

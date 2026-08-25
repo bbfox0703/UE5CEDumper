@@ -1175,7 +1175,7 @@ public sealed class SnapshotStore : ISnapshotStore
         {
             if (curCls is null || leaves.Count == 0) { Reset(); return; }
             scanned++;
-            if (GroupMatch.Run(leaves, slots, out var perSlot))
+            if (GroupMatch.Run(leaves, slots, out var perSlot, out bool capHit))
             {
                 totalMatched++;
                 if (result.Candidates.Count < max)
@@ -1183,6 +1183,10 @@ public sealed class SnapshotStore : ISnapshotStore
                         curCls, curIdx, curAddr, curName, leaves, slots, perSlot,
                         fName, fOff, fType, fVal, query.Slots));
             }
+            // Sticky across objects, and recorded even when the object did NOT match
+            // (AF13): a slot truncated at the cap is exactly when a miss may be an
+            // artifact rather than an answer.
+            if (capHit) result.PerSlotCapHit = true;
             Reset();
         }
 
@@ -1230,6 +1234,7 @@ public sealed class SnapshotStore : ISnapshotStore
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
         return result;
     }
 
@@ -1416,7 +1421,7 @@ public sealed class SnapshotStore : ISnapshotStore
         {
             if ((++scanned & 0x3FFF) == 0) ct.ThrowIfCancellationRequested();
             if (acc.Leaves.Count == 0) continue;
-            if (GroupMatch.Run(acc.Leaves, slots, out var perSlot))
+            if (GroupMatch.Run(acc.Leaves, slots, out var perSlot, out bool capHit))
             {
                 totalMatched++;
                 if (result.Candidates.Count < max)
@@ -1424,10 +1429,12 @@ public sealed class SnapshotStore : ISnapshotStore
                         acc.ClassName, acc.Index, acc.ObjAddr, acc.NormPath,
                         acc.Leaves, slots, perSlot, acc.FName, acc.FOff, acc.FType, acc.FVal, inputs));
             }
+            if (capHit) result.PerSlotCapHit = true;     // AF13
         }
         result.Total = totalMatched;
         result.ScannedObjects = scanned;
         result.Truncated = totalMatched > result.Candidates.Count;
+        result.PerSlotCap = Constants.GroupPerSlotCap;   // AF12: name the cap in force
     }
 
     // The object-identity portion of an SpcKey (no prop/offset/array) — the grouping

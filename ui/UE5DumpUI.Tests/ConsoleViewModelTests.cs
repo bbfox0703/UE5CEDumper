@@ -200,6 +200,121 @@ public class ConsoleViewModelTests
 
         Assert.Empty(vm.Results);
         Assert.Contains("No UFUNCTION(exec)", vm.StatusText);
+        // A COMPLETE scan may make a claim about the game.
+        Assert.Contains("in this game", vm.StatusText);
+    }
+
+    // ==================================================================
+    // Audit #5 Z8 — a capped list_all_functions cannot support a claim
+    // about the GAME, only about the page that was scanned.
+    // ==================================================================
+
+    /// <summary>
+    /// The panel used to state "No UFUNCTION(exec) commands found in this game (scanned
+    /// 100,000 functions…)" from a walk that stopped at its row cap, possibly before
+    /// ever reaching the classes in question. The DLL emitted no truncation marker of
+    /// any kind, and the one field that could have exposed it (<c>total_functions</c>)
+    /// is identically <c>entries.size()</c> by construction. With the flag on the wire
+    /// the sentence must become a claim about the SCAN.
+    /// </summary>
+    [Fact]
+    public async Task Load_with_no_exec_on_a_TRUNCATED_scan_does_not_claim_the_game_has_none()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 100_000, ScannedObjects = 900_000, ScannedClasses = 9_000,
+                TotalFunctions = 100_000, Truncated = true, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName="A", FuncName="X", FunctionFlags=FUNC_BlueprintCallable },
+                },
+            }
+        };
+        var vm = CreateVm(fake);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Results);
+        // The claim must be scoped to the scan, never to the game.
+        Assert.DoesNotContain("in this game", vm.StatusText);
+        Assert.Contains("scanned so far", vm.StatusText);
+        Assert.Contains("not evidence the game has none", vm.StatusText);
+        // ...and it must name the cap + a lever the panel actually has.
+        Assert.Contains("STOPPED at the 100,000-row cap", vm.StatusText);
+        Assert.Contains("Game classes only", vm.StatusText);
+    }
+
+    /// <summary>An aborted walk is partial for a different reason; same honesty rule.</summary>
+    [Fact]
+    public async Task Load_with_no_exec_on_an_ABORTED_scan_says_cancelled()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 12, ScannedObjects = 900, ScannedClasses = 4,
+                TotalFunctions = 12, Aborted = true, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName="A", FuncName="X", FunctionFlags=FUNC_BlueprintCallable },
+                },
+            }
+        };
+        var vm = CreateVm(fake);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("in this game", vm.StatusText);
+        Assert.Contains("SCAN CANCELLED", vm.StatusText);
+    }
+
+    /// <summary>
+    /// The truncation disclosure is not only for the empty case: a partial scan that DID
+    /// find execs still under-reports, and the user needs to know more may exist.
+    /// </summary>
+    [Fact]
+    public async Task Load_with_exec_rows_on_a_truncated_scan_still_discloses_the_cap()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 100_000, ScannedObjects = 900_000, ScannedClasses = 9_000,
+                TotalFunctions = 100_000, Truncated = true, Limit = 100_000,
+                Functions = BuildSampleEntries(),
+            }
+        };
+        var vm = CreateVm(fake);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.NotEmpty(vm.Results);
+        Assert.Contains("STOPPED at the 100,000-row cap", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ClearOnDisconnect_drops_exec_rows_and_resets_status()
+    {
+        // X5: a reconnect (often to a different game) must not leave the previous
+        // game's exec rows — each carries a live ClassAddr the Run action would use.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 6, ScannedObjects = 100, ScannedClasses = 5, TotalFunctions = 6,
+                Functions = BuildSampleEntries(),
+            }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.NotEmpty(vm.Results);
+
+        vm.ClearOnDisconnect();
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Click Load", vm.StatusText);   // back to the initial prompt
     }
 
     [Fact]

@@ -72,11 +72,25 @@ public static class FreezeScriptGenerator
         Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
         Line(sb, "end");
         Line(sb);
+        // Hand the CE record to the helper. Emitted OUTSIDE the "EDIT VALUES" block on
+        // purpose: it is wiring, not a knob, and `memrec` is a chunk-local the
+        // autoassembler injects — a user copying the CFG table elsewhere would carry a
+        // dangling name with it.
+        //
+        // Without this, a freeze that gives up after MAX_FAIL_STREAK failed rescans
+        // stops writing and leaves the row TICKED (in CE a red X on the checkbox means
+        // ACTIVE, not failed), with its only report going to a Lua Engine window this
+        // generator has already closed. CLAUDE.md's rule for a stateful toggle is that a
+        // bail-out which applied nothing must untick, and a freeze that has stopped
+        // writing is applying nothing. (`[FREEZESTUCK-2026-08-18]`)
+        Line(sb, "-- An abandoned freeze unticks this record instead of lying about it.");
+        Line(sb, "CFG.memrec = memrec");
+        Line(sb);
         Line(sb, "-- Build the freeze handle from CFG and start the timers.");
         Line(sb, "local ok, handleOrErr = pcall(freezeProperty, CFG)");
         Line(sb, "if not ok then");
         Line(sb, "  showMessage('[Freeze] freezeProperty error:\\n' .. tostring(handleOrErr))");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "_ue5_freeze_handles[FREEZE_KEY] = handleOrErr");
@@ -85,11 +99,11 @@ public static class FreezeScriptGenerator
         // own pcall. So this used to report a clean success for a freeze that applied
         // nothing, auto-close the Lua window over it, and leave the record ticked.
         // start() now returns (ok, err, count); read it. (audit #5 AA12 + AA13)
-        Line(sb, "local sok, sok2, serr, scount = pcall(handleOrErr.start)");
+        Line(sb, "local sok, sok2, serr, scount, scapped = pcall(handleOrErr.start)");
         Line(sb, "if not sok then");
         Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
         Line(sb, "  showMessage('[Freeze] start error:\\n' .. tostring(sok2))");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         // Three outcomes, and an older embedded helper is a FOURTH state that must not
@@ -116,19 +130,45 @@ public static class FreezeScriptGenerator
         // teammates / pickups / NPCs are picked up automatically"), so unticking here
         // would turn the feature into the bug. Say it once, ungated -- this is a
         // user-facing fact, not a diagnostic -- and keep the window open.
+        // ⚠ THESE MESSAGES READ CFG.className, NOT THE GENERATION-TIME NAME.
+        // Both this script and the Freeze dialog TELL the user to edit `className` in the
+        // CFG block to narrow the scope — the cap message below says so in as many words —
+        // and until 2026-08-22 every message then went on naming the class they had just
+        // replaced. Measured in CE: with CFG.className changed to a class that does not
+        // exist, the BEHAVIOUR followed the CFG (0 instances found) while the message said
+        // "no live instances of DumperTestActor", a class with plenty of them. The report
+        // and the reality were computed from different sources. [FREEZECFGNAME-2026-08-22]
+        //
+        // `[DISABLE]` is a SEPARATE Lua chunk with no CFG in scope, so its Stopped line
+        // still bakes the name — it is dbg-gated and describes an action already taken.
         Line(sb, "elseif scount == 0 then");
-        Line(sb, $"  print('[Freeze] armed: no live instances of " +
-                 $"{EscapeLua(p.ClassName)} right now -- the freeze applies as they spawn.')");
+        Line(sb, "  print('[Freeze] armed: no live instances of ' .. " +
+                 "tostring(CFG.className) .. ' (or any subclass) right now -- " +
+                 "the freeze applies as they spawn.')");
+        // A CAPPED pool is a success with a caveat, and the caveat has to be louder
+        // than the count: `scount` is then a FLOOR, not a total, and the instances
+        // past the cap are NOT held. A derived sweep off a broad base (Actor, Pawn)
+        // reaches this routinely, so it is the normal case here, not an edge one —
+        // same treatment Solide's status line already gives its own capped pool.
+        Line(sb, "elseif scapped then");
+        Line(sb, "  print('[Freeze] armed on ' .. tostring(scount) .. ' instance(s) of ' .. " +
+                 "tostring(CFG.className) .. ' or a subclass -- CAP REACHED, so that is a " +
+                 "floor, not a total: more instances exist and are NOT held. " +
+                 "Narrow className in CFG to cover the ones you want.')");
         Line(sb, "end");
         Line(sb);
         Line(sb,
-            $"dbg(string.format('[Freeze] Started: {EscapeLua(p.ClassName)}::" +
+            $"dbg(string.format('[Freeze] Started: %s::" +
             $"{EscapeLua(p.PropertyName)} = %s ({helperType}@0x{p.PropertyOffset:X}) " +
-            "on %s instance(s)', tostring(CFG.value), tostring(scount)))");
-        // Close ONLY on a start that both reported an outcome and actually froze
-        // something. nil (old helper) and 0 (armed, empty) both keep the window up,
-        // because both just printed something the user needs to read.
-        CeLuaHygiene.AppendCloseOnSuccess(sb, "sok2 == true and scount ~= 0");
+            "on %s instance(s)', tostring(CFG.className), tostring(CFG.value), " +
+            "tostring(scount)))");
+        // Close ONLY on a start that reported an outcome, froze something, and froze
+        // ALL of it. nil (old helper), 0 (armed, empty) and a capped pool all keep the
+        // window up, because each just printed something the user needs to read —
+        // closing over the cap notice would put it straight back where the abandonment
+        // message was: written, and never seen.
+        CeLuaHygiene.AppendCloseOnSuccess(
+            sb, "sok2 == true and scount ~= 0 and not scapped");
         Line(sb);
         Line(sb, "{$asm}");
         Line(sb, "[DISABLE]");
@@ -162,6 +202,15 @@ public static class FreezeScriptGenerator
         Line(sb, "-- ====== EDIT VALUES BELOW =============================================");
         Line(sb, "local CFG = {");
         Line(sb, $"  className          = '{EscapeLua(p.ClassName)}',");
+        // Scope. A Property Search row for an INHERITED field is keyed to the class
+        // that DECLARES it, so this name is routinely an ancestor (`Actor` for
+        // bCanBeDamaged / bHidden / bReplicates) and an exact-class pool holds
+        // whichever stray instance of that ancestor the level has — never the pawn
+        // the user was looking at. The Force submenu on the same row already walks
+        // subclasses (Solide, audit #5 A6); the two must not scope oppositely.
+        // (`[FREEZESCOPE-2026-08-18]`)
+        Line(sb, "  derived            = true,  -- also hold every SUBCLASS " +
+                 "(set false for exact class only)");
         Line(sb, $"  propOffset         = 0x{p.PropertyOffset:X},");
         Line(sb, $"  valueType          = '{helperType}',");
         Line(sb, $"  value              = {p.ValueLiteral},");
@@ -191,7 +240,7 @@ public static class FreezeScriptGenerator
         Line(sb, "  showMessage(");
         Line(sb, $"    '[Freeze] {HelperFileName} not found in this table.\\n\\n' ..");
         Line(sb, "    'Setup: UE5DumpUI -> Tools -> Inject Freeze Helper into Current CE Table')");
-        Line(sb, "  if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "do");
@@ -204,7 +253,7 @@ public static class FreezeScriptGenerator
         Line(sb, "  ss.destroy()");
         Line(sb, "  if not fn then");
         Line(sb, "    showMessage('[Freeze] Helper load error:\\n' .. tostring(err))");
-        Line(sb, "    if memrec then memrec.Active = false end");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");
         Line(sb, "  fn()");
@@ -287,6 +336,21 @@ public static class FreezeScriptGenerator
         "DoubleProperty" => "double",
         _                => "",
     };
+
+    /// <summary>
+    /// The class a freeze will actually be keyed on: the DEFINING class when the DLL
+    /// reported one, else the row's own class.
+    ///
+    /// <para>One definition, called by both the ViewModel that builds the script and the
+    /// dialog that tells the user what is about to happen. They used to pick it
+    /// separately — the dialog showed <c>ClassName</c> while the generator emitted
+    /// <c>DefiningClassName</c> — which is the "report and reality computed by different
+    /// code paths" shape audit #4 named as a root cause, and it is exactly the kind of
+    /// mismatch that let a freeze on a pawn's field quietly become a freeze on
+    /// <c>Actor</c>.</para>
+    /// </summary>
+    public static string HeldClassName(string? className, string? definingClassName)
+        => !string.IsNullOrEmpty(definingClassName) ? definingClassName! : (className ?? "");
 
     /// <summary>
     /// Whether the given UE property type is supported by v1 of the

@@ -172,6 +172,37 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
+    // X4: GenerateAsync returns a DumpResult the completion line is built from
+    // ==================================================================
+
+    [Fact]
+    public async Task Generate_ReturnsResult_WithCountsThatMatchTheSummaryLine()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "UCharacter", "Class"));
+        dump.Objects.Add(Obj("0x2", "BP_Player_C", "BlueprintGeneratedClass"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "UCharacter" };
+        dump.ClassWalks["0x2"] = new ClassInfoModel { Name = "BP_Player_C" };
+
+        var ms = new MemoryStream();
+        var result = await DumpAllService.GenerateAsync(
+            dump, DefaultEngineState(), ms,
+            new DumpOptions(IncludeInstanceCounts: false),
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, result.ClassesEmitted);
+        Assert.Equal(0, result.Errors);
+
+        // The returned counts must equal what the trailing summary line reports —
+        // the completion status is composed from the result, not the file length.
+        ms.Position = 0;
+        using var sr = new StreamReader(ms, Encoding.UTF8);
+        var all = await sr.ReadToEndAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("\"classes_emitted\":2", all);
+        Assert.Contains("\"errors\":0", all);
+    }
+
+    // ==================================================================
     // GameOnly filter: skip /Script/Engine.*
     // ==================================================================
 

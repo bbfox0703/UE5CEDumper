@@ -6,132 +6,135 @@ namespace UE5DumpUI.Tests;
 
 public class SdkExportServiceTests
 {
-    // --- MapCppType (FieldInfoModel) ---
+    // --- MapCppDecl (FieldInfoModel) ---
 
     [Fact]
-    public void MapCppType_IntProperty_ReturnsInt32()
+    public void MapCppDecl_IntProperty_ReturnsInt32()
     {
         var field = new FieldInfoModel { TypeName = "IntProperty", Size = 4 };
-        Assert.Equal("int32_t", SdkExportService.MapCppType(field));
+        Assert.Equal("int32_t", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_FloatProperty_ReturnsFloat()
+    public void MapCppDecl_FloatProperty_ReturnsFloat()
     {
         var field = new FieldInfoModel { TypeName = "FloatProperty", Size = 4 };
-        Assert.Equal("float", SdkExportService.MapCppType(field));
+        Assert.Equal("float", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_BoolProperty_ReturnsBool()
+    public void MapCppDecl_BoolProperty_ReturnsBool()
     {
         var field = new FieldInfoModel { TypeName = "BoolProperty", Size = 1 };
-        Assert.Equal("bool", SdkExportService.MapCppType(field));
+        Assert.Equal("bool", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_StrProperty_ReturnsFString()
+    public void MapCppDecl_StrProperty_ReturnsFString()
     {
         var field = new FieldInfoModel { TypeName = "StrProperty", Size = 16 };
-        Assert.Equal("FString", SdkExportService.MapCppType(field));
+        Assert.Equal("FString", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_Utf8StrProperty_ReturnsFUtf8String()
+    public void MapCppDecl_Utf8StrProperty_ReturnsFUtf8String()
     {
         // UE5.5+ FUtf8String — a distinct UE type, not an FString alias.
         var field = new FieldInfoModel { TypeName = "Utf8StrProperty", Size = 16 };
-        Assert.Equal("FUtf8String", SdkExportService.MapCppType(field));
+        Assert.Equal("FUtf8String", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_AnsiStrProperty_ReturnsFAnsiString()
+    public void MapCppDecl_AnsiStrProperty_ReturnsFAnsiString()
     {
         // UE5.5+ FAnsiString.
         var field = new FieldInfoModel { TypeName = "AnsiStrProperty", Size = 16 };
-        Assert.Equal("FAnsiString", SdkExportService.MapCppType(field));
+        Assert.Equal("FAnsiString", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_Utf8StrArray_ReturnsTArrayOfFUtf8String()
+    public void MapCppDecl_Utf8StrArray_ReturnsTArrayOfFUtf8String()
     {
         // Inner-type mapping (MapScalarInnerType) must also resolve the new variants.
         var field = new FieldInfoModel
         {
             TypeName = "ArrayProperty", InnerType = "Utf8StrProperty", Size = 16,
         };
-        Assert.Equal("TArray<FUtf8String>", SdkExportService.MapCppType(field));
+        Assert.Equal("TArray<FUtf8String>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ObjectProperty_WithClass_ReturnsPtr()
+    public void MapCppDecl_ObjectProperty_WithClass_ReturnsPtr()
     {
         var field = new FieldInfoModel { TypeName = "ObjectProperty", ObjClassName = "APlayerController", Size = 8 };
-        Assert.Equal("class APlayerController*", SdkExportService.MapCppType(field));
+        Assert.Equal("class APlayerController*", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ObjectProperty_NoClass_ReturnsUObjectPtr()
+    public void MapCppDecl_ObjectProperty_NoClass_ReturnsUObjectPtr()
     {
         var field = new FieldInfoModel { TypeName = "ObjectProperty", Size = 8 };
-        Assert.Equal("class UObject*", SdkExportService.MapCppType(field));
+        Assert.Equal("class UObject*", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ClassProperty_ReturnsSubclassOf()
+    public void MapCppDecl_ClassProperty_ReturnsSubclassOf()
     {
         var field = new FieldInfoModel { TypeName = "ClassProperty", ObjClassName = "AActor", Size = 8 };
-        Assert.Equal("TSubclassOf<class AActor>", SdkExportService.MapCppType(field));
+        Assert.Equal("TSubclassOf<class AActor>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_StructProperty_WithType_ReturnsStruct()
+    public void MapCppDecl_StructProperty_WithType_ReturnsStruct()
     {
         var field = new FieldInfoModel { TypeName = "StructProperty", StructType = "FVector", Size = 24 };
-        Assert.Equal("struct FVector", SdkExportService.MapCppType(field));
+        Assert.Equal("struct FVector", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_StructProperty_NoType_ReturnsRawBytes()
+    public void MapCppDecl_StructProperty_NoType_ReturnsRawBytes()
     {
+        // The extent is NOT part of the type — it belongs after the identifier. See CppDecl.
         var field = new FieldInfoModel { TypeName = "StructProperty", Size = 12 };
-        Assert.Equal("uint8_t[0xC]", SdkExportService.MapCppType(field));
+        var decl = SdkExportService.MapCppDecl(field);
+        Assert.Equal("uint8_t", decl.Type);
+        Assert.Equal("[0xC]", decl.ArraySuffix);
     }
 
     [Fact]
-    public void MapCppType_ArrayOfStruct_ReturnsTArray()
+    public void MapCppDecl_ArrayOfStruct_ReturnsTArray()
     {
         var field = new FieldInfoModel
         {
             TypeName = "ArrayProperty", InnerType = "StructProperty",
             InnerStructType = "FVector", Size = 16,
         };
-        Assert.Equal("TArray<struct FVector>", SdkExportService.MapCppType(field));
+        Assert.Equal("TArray<struct FVector>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ArrayOfObject_ReturnsTArrayPtr()
+    public void MapCppDecl_ArrayOfObject_ReturnsTArrayPtr()
     {
         var field = new FieldInfoModel
         {
             TypeName = "ArrayProperty", InnerType = "ObjectProperty",
             InnerObjClass = "UActorComponent", Size = 16,
         };
-        Assert.Equal("TArray<class UActorComponent*>", SdkExportService.MapCppType(field));
+        Assert.Equal("TArray<class UActorComponent*>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ArrayOfFloat_ReturnsTArrayFloat()
+    public void MapCppDecl_ArrayOfFloat_ReturnsTArrayFloat()
     {
         var field = new FieldInfoModel
         {
             TypeName = "ArrayProperty", InnerType = "FloatProperty", Size = 16,
         };
-        Assert.Equal("TArray<float>", SdkExportService.MapCppType(field));
+        Assert.Equal("TArray<float>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_MapProperty_ReturnsCorrect()
+    public void MapCppDecl_MapProperty_ReturnsCorrect()
     {
         var field = new FieldInfoModel
         {
@@ -139,85 +142,85 @@ public class SdkExportServiceTests
             KeyType = "StrProperty", ValueType = "IntProperty",
             Size = 80,
         };
-        Assert.Equal("TMap<FString, int32_t>", SdkExportService.MapCppType(field));
+        Assert.Equal("TMap<FString, int32_t>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_SetProperty_ReturnsCorrect()
+    public void MapCppDecl_SetProperty_ReturnsCorrect()
     {
         var field = new FieldInfoModel
         {
             TypeName = "SetProperty", ElemType = "NameProperty", Size = 80,
         };
-        Assert.Equal("TSet<FName>", SdkExportService.MapCppType(field));
+        Assert.Equal("TSet<FName>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_EnumProperty_WithName_ReturnsEnumName()
+    public void MapCppDecl_EnumProperty_WithName_ReturnsEnumName()
     {
         var field = new FieldInfoModel { TypeName = "EnumProperty", EnumName = "EMovementMode", Size = 1 };
-        Assert.Equal("EMovementMode", SdkExportService.MapCppType(field));
+        Assert.Equal("EMovementMode", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ByteProperty_WithEnum_ReturnsEnumName()
+    public void MapCppDecl_ByteProperty_WithEnum_ReturnsEnumName()
     {
         var field = new FieldInfoModel { TypeName = "ByteProperty", EnumName = "ENetRole", Size = 1 };
-        Assert.Equal("ENetRole", SdkExportService.MapCppType(field));
+        Assert.Equal("ENetRole", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_ByteProperty_Raw_ReturnsUint8()
+    public void MapCppDecl_ByteProperty_Raw_ReturnsUint8()
     {
         var field = new FieldInfoModel { TypeName = "ByteProperty", Size = 1 };
-        Assert.Equal("uint8_t", SdkExportService.MapCppType(field));
+        Assert.Equal("uint8_t", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_WeakObjectProperty_ReturnsWeak()
+    public void MapCppDecl_WeakObjectProperty_ReturnsWeak()
     {
         var field = new FieldInfoModel { TypeName = "WeakObjectProperty", ObjClassName = "AActor", Size = 8 };
-        Assert.Equal("TWeakObjectPtr<class AActor>", SdkExportService.MapCppType(field));
+        Assert.Equal("TWeakObjectPtr<class AActor>", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppType_DelegateProperty_ReturnsDelegate()
+    public void MapCppDecl_DelegateProperty_ReturnsDelegate()
     {
         var field = new FieldInfoModel { TypeName = "DelegateProperty", Size = 16 };
-        Assert.Equal("FScriptDelegate", SdkExportService.MapCppType(field));
+        Assert.Equal("FScriptDelegate", SdkExportService.MapCppDecl(field).Type);
     }
 
-    // --- MapCppType (LiveFieldValue) ---
+    // --- MapCppDecl (LiveFieldValue) ---
 
     [Fact]
-    public void MapCppTypeLive_ObjectProperty_WithClass()
+    public void MapCppDeclLive_ObjectProperty_WithClass()
     {
         var field = new LiveFieldValue
         {
             TypeName = "ObjectProperty", PtrClassName = "USceneComponent", Size = 8,
         };
-        Assert.Equal("class USceneComponent*", SdkExportService.MapCppType(field));
+        Assert.Equal("class USceneComponent*", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppTypeLive_StructProperty_WithType()
+    public void MapCppDeclLive_StructProperty_WithType()
     {
         var field = new LiveFieldValue
         {
             TypeName = "StructProperty", StructTypeName = "FTransform", Size = 96,
         };
-        Assert.Equal("struct FTransform", SdkExportService.MapCppType(field));
+        Assert.Equal("struct FTransform", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]
-    public void MapCppTypeLive_ArrayProperty_WithInner()
+    public void MapCppDeclLive_ArrayProperty_WithInner()
     {
         var field = new LiveFieldValue
         {
             TypeName = "ArrayProperty", ArrayInnerType = "StructProperty",
             ArrayStructType = "FHitResult", Size = 16,
         };
-        Assert.Equal("TArray<struct FHitResult>", SdkExportService.MapCppType(field));
+        Assert.Equal("TArray<struct FHitResult>", SdkExportService.MapCppDecl(field).Type);
     }
 
     // --- GenerateClassHeader ---

@@ -21,6 +21,41 @@ never promise "an even-length FText containing U+4E00 is on screen right now".
 
 -----
 
+## ⛔ THIS DIRECTORY IS A MIRROR. RE-SYNC IT BEFORE YOU TRUST IT, AND AFTER YOU EDIT THE PROJECT
+
+The project that actually gets built and packaged lives at **`D:\Unreal Projects\DumperTest`** on the
+maintainer's machine. This directory is a copy, and on **2026-08-24 it was found to be four days
+stale** — and the gap was not cosmetic.
+
+**What the drift cost.** The 08-23 package added a whole spawner (`Spawn_Holders`, `Spawn_Decoys`,
+`Spawn_DestroyHolders`, `Spawn_ManyComponents`, `Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`,
+`Spawn_LateInstance`, `Spawn_Generation`) plus `ADumperTestDerivedHolder` / `ADumperTestHolderDecoy`
+— **36 declarations**, and the classes that make Solide L3 falsifiable. None of it was here.
+**Two separate sessions grepped this directory, concluded the fixture did not exist, and planned a
+C++ authoring task that was already done.** One of them then "corrected" an agent who had it right.
+
+⚠ **And the real hazard was worse than a wasted plan: this copy was BUILDABLE.** The section below
+invites a rebuild, and rebuilding from a stale mirror silently produces a package **without** the
+spawner — destroying the fixture that five verification rows depend on.
+
+### The rules that follow from that
+
+1. **Never answer "does fixture X exist?" by grepping this directory.** Ask the running game:
+   `list_all_functions` / `walk_class` over the pipe. That is the only source that describes the
+   binary you are actually testing.
+2. ⚠ **Probing the packaged `.exe` needs care too**: **UClass names are UTF-16LE in there, while
+   UFunction names are ASCII.** Measured — `DumperTestHolder`: ascii **0**, utf16le 2;
+   `Spawn_Holders`: ascii 1, utf16le 0. So `grep -a DumperTestHolder <exe>` finds nothing and reads
+   as *"the class does not exist"*. Use `.encode('utf-16-le')`.
+3. **After editing the live project, copy the changed files back here in the same sitting.** Until
+   that happens the fixture exists only on one machine's D: drive and inside a binary — not in git,
+   and not on the other development PC.
+4. The stock Third-Person template files (`DumperTest.cpp/.h`, `DumperTestCharacter.*`,
+   `DumperTestGameMode.*`) are deliberately **not** mirrored — they are whatever the template
+   generates. Only the dumper-specific sources belong here.
+
+-----
+
 ## Build it (one pass, ~20 minutes)
 
 > **The project MUST be named `DumperTest`.** The sources use the `DUMPERTEST_API` export macro,
@@ -304,7 +339,8 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Text_Localized` | 統一言語 | Same glyphs, different `FTextHistory` (LOCTEXT). Disagreement with `Text_Even4_TwoNull` means the fault is history traversal, not decoding |
 | `Text_Empty` | *(empty)* | the empty display-string path |
 | `Name_Cjk` | 統一 | FName holding CJK — the FNamePool path (Serie), which is neither reader above |
-| `Str_*` | same four strings | **CONTROL GROUP** — FString never had B28. If an `Str_` is wrong too, the fault is not B28 and the FText result means nothing |
+| `Str_*` | same four strings | **CONTROL GROUP** — FString never had B28. If an `Str_` is wrong too, the fault is not B28 and the FText result means nothing . `Str_Even22_TwoNull` below is **not** part of this group |
+| `Str_Even22_TwoNull` | 統一言語日本語テスト日本語テスト日本語テスト | **audit #5 U7** — 22 chars, **66 UTF-8 bytes**. Property Search cuts previews at **50 BYTES**, not chars (`Utf8Helpers::TruncateUtf8(s, 50)`, `Ubel.cpp:5950`), and 50 mod 3 == 2 so the cut lands on byte 3 of glyph 17. PASS = the first **16** glyphs then `…` **inside** the quotes. FAIL on a byte-naive build is not an ugly preview but **zero rows**: a split 3-byte sequence makes the whole `search_properties` reply `{"error":…}` |
 
 **PASS** = every `Text_*` reads as CJK. **FAIL** = short ASCII punctuation soup (`,{1`, `-N?e`).
 
@@ -320,15 +356,61 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Map_IntToFloat` | 1:1.5 2:2.5 3:3.5 | non-FName key shape |
 | `Arr_Int` | `{10,20,30,40,50}` | |
 | `Arr_Struct` | 2 × `FDumperTestStat` — `StatName` Attack/Defence, `Value` 7777/6666, `Label` an FText | struct-element container — the deep-descent level, with an FText inside it |
-| `Map_I64ToI32` | 600000000001:6001 600000000002:6002 600000000003:6003 | **audit #5 M1.** pairAlign 8, unpadded pair 12 → stride 24. A build with the defect strides 20, so 6002 / 6003 read as garbage while 6001 looks fine |
-| `Map_StrToInt` | StrAlpha:6101 StrBeta:6102 StrGamma:6103 | **M1, second witness**, different arithmetic — unpadded pair 20 → stride 32 (defect: 28). Two witnesses so one wrong assumption cannot pass both |
-| `Map_IntToVec3f` | 1:(6201 6202 6203) 2:(6211 6212 6213) 3:(6221 6222 6223) | **M3.** `FDumperTestVec3f` is a 4-aligned POD (`X` `Y` `Z` floats, no FText/pointer/double), so its value sits at +4. The defect's size guess reads +8 — **the only container here that is wrong at element 0**, so scanning 6201 fails outright. Also **A4**'s target: a scalar leaf inside a map's struct side |
-| `Set_Big` | 9000..9199 (200 entries) with 9005 removed | **A2 + M2.** 200 entries push the `TBitArray` past its 128-bit inline buffer onto the heap; 9005 is a LOW index (5), so a build reading the frozen inline words still lists it. M2: the rendered row count must equal the header count |
+| `Map_I64ToI32` | 600000000001:6001 600000000002:6002 600000000003:6003 | **audit #5 MG1.** pairAlign 8, unpadded pair 12 → stride 24. A build with the defect strides 20, so 6002 / 6003 read as garbage while 6001 looks fine |
+| `Map_StrToInt` | StrAlpha:6101 StrBeta:6102 StrGamma:6103 | **MG1, second witness**, different arithmetic — unpadded pair 20 → stride 32 (defect: 28). Two witnesses so one wrong assumption cannot pass both |
+| `Map_IntToVec3f` | 1:(6201 6202 6203) 2:(6211 6212 6213) 3:(6221 6222 6223) | **MG3.** `FDumperTestVec3f` is a 4-aligned POD (`X` `Y` `Z` floats, no FText/pointer/double), so its value sits at +4. The defect's size guess reads +8 — **the only container here that is wrong at element 0**, so scanning 6201 fails outright. Also **A4**'s target: a scalar leaf inside a map's struct side |
+| `Set_Big` | 9000..9199 (200 entries) with 9005 removed | **A2 + MG2.** 200 entries push the `TBitArray` past its 128-bit inline buffer onto the heap; 9005 is a LOW index (5), so a build reading the frozen inline words still lists it. MG2: the rendered row count must equal the header count |
 | `Set_Struct` | (6301 6302 6303) (6311 6312 6313) | **A4**, set side — a struct element whose scalar leaf the Deep pass must reach |
+| `Map_IntToVecLwc` | 1:(6401000.1234 6402000.2345 6403000.3456) 2:(6411000.1234 6412000.2345 6413000.3456) | **U3/U17 step 3, map side** — a 24-byte 3×**double** LWC `FVector` as a container element; `Map_IntToVec3f` is three 4-byte floats and structurally cannot reach it. Width control on the same build: both render through the same decoder in the same reply. ⚠ Narrowing control: assert **`6403000.3456`**, never `6403000.5` — the tails were chosen because every one of them CHANGES through float32, so a silent narrow is visible |
+| `Set_VecLwc` | (6501000.1234 6502000.2345 6503000.3456) (6511000.1234 6512000.2345 6513000.3456) | **U3/U17 step 3, set side** — its own stride/alignment path, and the first 24-byte **8-aligned** set element here. Magnitudes ~6.5e6 exceed UE4's `WORLD_MAX` (2,097,152), i.e. a coordinate a 12-byte `FVector3f` could not hold — which is why LWC exists |
 | `Opt_Int_Set` | **24680** | V1c — appears under the optional's field name; Next Scan prunes |
 | `Opt_Float_Set` | 99.5 | |
 | `Opt_Str_Set` | `OptionalPresent` | |
 | `Opt_Int_Unset` | *(unset)* | **NEGATIVE criterion** — a scan for **0** must NOT surface it (the `bIsSet` gate) |
+| `Opt_Text_Set` | 選択言語最新 | **audit #5 U11** — the only `TOptional<FText>`. `Opt_Str_Set` takes the string-inner arm and the `Text_*` family the plain TextProperty arm, so neither exercises this one. A broken build renders an **empty** row |
+| `Opt_Text_Unset` | *(unset)* | the FText sibling of `Opt_Int_Unset`. ⚠ **WEAK half, and labelled as such**: on zeroed UObject memory a sentinel and the true `bIsSet` byte agree, so it passes on a correct build AND on a sentinel-based one. `Opt_Text_Set` alone carries U11 |
+
+### The C1 spawner — instances ON DEMAND, and the discriminating set
+
+Added 2026-08-23, mirrored here 2026-08-24. Everything below is created by invoking a
+`Spawn_*` UFunction on `ADumperTestActor`; nothing exists in bulk at BeginPlay. ⚠ Pass
+`parms_size` on the invoke (read it from `walk_functions`) — see the mirror warning at the top.
+
+| field | value | check |
+|---|---|---|
+| `SpawnedHolders` | `TArray<TObjectPtr<AActor>>` | the GC root for `Spawn_Holders`; without it the holders are collected mid-test |
+| `LateSpawns` | `TArray<TObjectPtr<UObject>>` | the GC root for `Spawn_LateInstance` |
+| `HolderValue` | seeded **1000 + global index** — DISTINCT per instance | **Solide L4.** One shared base restored to every instance is invisible if they all start equal; distinct values are the only way that defect shows |
+| `HolderIndex` | the same index as an `int32` | a second, independently-typed witness of the same identity |
+| `bHolderFlag` | `false` | a bool on a class that exists in bulk — the bitfield side of a Force |
+| `LateValue` | `0` on `UDumperTestLateSpawn` | **AA12/AA13 step 3.** That class has **zero live instances until `Spawn_LateInstance` is called, and no subclasses** — a legitimately empty result that must NOT be reported as success. The previous attempt used `NiagaraComponent`, which had two live instances, so the empty case was never exercised |
+| `BValue` / `BScalar` | `int32` / `float` on payload **B** | **U4 recycling.** `Spawn_RecycleChurn` alternates payload A and B so a freed GObjects slot is refilled by a **different class** — same-class respawn does not test the guard |
+
+**The three Holder classes are a DISCRIMINATING SET, not three samples** — and this is the
+fixture that makes Solide's derivation claim falsifiable at all:
+
+| class | name contains `DumperTestHolder` | derives from `ADumperTestHolder` |
+|---|---|---|
+| `ADumperTestHolder` | yes | yes (itself) |
+| `ADumperTestDerivedHolder` | **no** | **yes** — a substring test MISSES it |
+| `ADumperTestHolderDecoy` | **yes** | **no** — a substring test CATCHES it |
+
+⭐ A derivation walk holds `{Holder, Derived}` and skips `Decoy`; a substring match holds
+`{Holder, Decoy}` and skips `Derived`. **No single result satisfies both**, so the wrong
+implementation cannot pass. ⚠ Keep the spawn counts so the derived total stays **under the
+1024/256 caps** — a truncated hold makes *"the decoys were untouched"* mean nothing, because the
+walk may simply never have reached them.
+
+### Churn + DataTable — the things that CHANGE between two scans
+
+| field | value | check |
+|---|---|---|
+| `Set_Name` | `TSet<FName>` | **MG2 step 1, set flavour** — remove one element and the rendered row count must follow the header count |
+| `Set_Object` | `TSet<TObjectPtr<UObject>>` | the object-pointer set shape |
+| `Table_Small` / `Table_Big` | `UDataTable`, **8** and **100** rows | **V8 / MG2 step 2** — `V8_RebuildBigTable(Rows)` rebuilds `Table_Big`; 100 is the V8 default |
+| `Map_Churn` / `Arr_Churn` | grow together, one entry per call | a container that changes **between** two scans, for Next-Scan pruning and Snapshot Mode B |
+| `Index` (on `FDumperTestTableRow`) | `int32` row index | the scalar leaf inside a DataTable row |
+| `Caption` (on `FDumperTestTableRow`) | 走一步 — **odd (3) chars, contains U+4E00** | the B28 FText trigger **inside a DataTable row**, i.e. reached through a container rather than off the actor directly |
 
 ### Numerics, flags, layout
 
@@ -342,6 +424,8 @@ stored `00 4E` — a NUL at an even byte offset.
 | `F64` | 2718.281828 | |
 | `bFlagA` / `bFlagB` / `bFlagC` | 1 / 0 / 1 | three bitfields in one byte — bool masks |
 | `Grade` | `Elite` (=2) | enum with a **hole** at 3..6 (`Legend`=7), so index≠value cannot pass by accident |
+| `WideGrade` | `Wide_Base` (=24000) | **Y15 step 6** — a **4-byte** EnumProperty (`enum class : int32`); `Grade` is `: uint8`, i.e. ONE byte, and cannot stand in. ⭐ A freeze targets `Wide_Target` (=16064), which **shares its low byte `0xC0`** with 24000 — so a 1-byte write leaves the field **bit-identical** and FAIL cannot be confused with "the write never landed". Byte 1 of 24000 is `0x5D`, non-zero, so a short write is not hidden by zero neighbours |
+| `WideGuard` | `0x7F7F7F7F` | the **over**-wide-write guard ONLY. ⚠ It cannot detect a SHORT write — a 1-byte write leaves bytes +1..+3 of `WideGrade` itself stale and never reaches this field |
 | `FixedArr` (8 elements) | 100..800 | `ArrayDim > 1` — a different property shape from TArray |
 | `Health` — `BaseValue` / `CurrentValue` | Base 100, Current ticking | nested StructProperty in GAS-attribute shape → also the "Flatten GAS attributes" CE-export toggle |
 | `Payload` → `PayloadText` / `PayloadString` / `PayloadValue` | 統一言語, same as FString, 909090 | Related Objects edge · Locate-in-GWorld through a pointer · Solide force-to-null (strong ptr, so allowed) |
@@ -373,8 +457,29 @@ could be run and then had nothing to converge on. These five move on the same 1 
 all **on the HUD**, which for the raw three is the only way to learn their value at all: there is
 no reflection to ask, so you need the number off the screen before you can search for it.
 
-They are appended at the END of the class so every offset quoted elsewhere (`TickCount` +0x518,
-`FrozenInt` +0x51C, `Opt_Int_Set` +0x468, `Set_Int` +0x358) still points at the same field. That
+They are appended at the END of the class so every offset quoted elsewhere still points at the same
+field.
+
+> ⚠ **The rule is right; the four numbers this sentence used to quote were STALE, and had been for
+> some time.** It read *"`TickCount` +0x518, `FrozenInt` +0x51C, `Opt_Int_Set` +0x468, `Set_Int`
+> +0x358"*. Measured 2026-08-24 against **both** the pre-change and post-change packages, which agree
+> with each other and disagree with all four:
+>
+> | field | doc said | actually (both packages) |
+> |---|---|---|
+> | `TickCount` | +0x518 | **+0x6A8** |
+> | `FrozenInt` | +0x51C | **+0x6AC** |
+> | `Opt_Int_Set` | +0x468 | **+0x608** |
+> | `Set_Int` | +0x358 | **+0x368** |
+>
+> ⭐ **That old == new is the useful half**: appending seven UPROPERTYs moved **zero** existing
+> fields (136 → 143, `PropertiesSize` 2096 → 2328, all growth at the tail), so the rule works. The
+> numbers had simply rotted against an older build. `docs/todo.md:9972` attributes `0x518` to
+> `Map_IntToVec3f` rather than `TickCount`, which is the same rot seen from another angle.
+>
+> ▶ **Do not re-quote an offset here.** Nothing in `tools/verify/` hardcodes one — they resolve by
+> NAME at run time (`mutate_guard_selftest.py:58` calls `field_offset(c, inst, "TickCount")`), which
+> is why the rot cost nothing. Keep it that way: an offset in prose has no owner and no gate. That
 makes the raw three a **trailing** hole rather than an interior one — the easier case for hole
 detection, but still inside `PropertiesSize`, and the interior case is already covered by the
 static `RawInt` / `RawFloat` / `RawDouble`.

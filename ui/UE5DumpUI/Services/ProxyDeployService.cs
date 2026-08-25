@@ -56,7 +56,14 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 string vdfContent = File.ReadAllText(vdfPath);
-                var paths = VdfParser.ParseLibraryFolders(vdfContent);
+                var paths = VdfParser.ParseLibraryFolders(vdfContent, out string? vdfError);
+
+                // A structural fault stops extraction, so "0 libraries" below could mean
+                // either "Steam lists none" or "the file is broken". Say which. (AC12)
+                if (vdfError != null)
+                    _log.Warn("ProxyDeploy",
+                        $"libraryfolders.vdf is malformed ({vdfError}) — using the {paths.Count} " +
+                        $"library folder(s) read before the fault: {vdfPath}");
 
                 if (paths.Count == 0)
                 {
@@ -410,23 +417,23 @@ public sealed class ProxyDeployService : IProxyDeployService
     }
 
     /// <summary>
-    /// Try to detect UE version from the game executable's PE version info.
-    /// Returns null if detection fails.
+    /// Always null: the UE version is detected by the injected DLL at run time
+    /// (<c>Genau::DetectVersionDetailed</c>), which is the only place that can see the
+    /// engine rather than guess at it from a resource string.
+    ///
+    /// <para>Kept as a named seam rather than inlining <c>null</c> at the two call sites,
+    /// so <see cref="DetectedGame.UeVersion"/> has one documented origin if an offline
+    /// heuristic is ever added. <c>ProxyDeployTests</c> asserts the null, which is what
+    /// keeps this honest.</para>
+    ///
+    /// <para>audit #5 AC15 — this used to open <c>FileVersionInfo.GetVersionInfo(exePath)</c>
+    /// into a local named <c>info</c> and then unconditionally <c>return null</c> without
+    /// reading it. That is a full VERSIONINFO resource load per detected game, on every
+    /// Steam scan and every generic drive walk, for a value that was discarded — and the
+    /// property it fed is read by nothing in the app. The dead load is gone; the seam and
+    /// its (null) contract are not.</para>
     /// </summary>
-    private static string? TryDetectUeVersion(string exePath)
-    {
-        try
-        {
-            var info = FileVersionInfo.GetVersionInfo(exePath);
-            // Some UE games embed "Unreal Engine" or version in FileDescription/Comments
-            // For now, just return null — version is detected by the DLL at runtime
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private static string? TryDetectUeVersion(string exePath) => null;
 
     // ────────────────────────────────────────────────────────────────
     // Generic (non-Steam) Drive Scan
@@ -779,13 +786,19 @@ public sealed class ProxyDeployService : IProxyDeployService
         string? InstalledVersion = null,
         string? ErrorMessage = null,
         bool SetInstalledVersion = true,
-        bool SetErrorMessage = true);
+        bool SetErrorMessage = true,
+        // The load-observation column. Default OFF so the deploy/error paths, which write a
+        // status the instant BEFORE a game is launched, do not clobber a real observation with
+        // stale nothing — only the refresh path (which re-reads the log folder) sets it.
+        string? LoadObservation = null,
+        bool SetLoadObservation = false);
 
     private static void ApplyStatus(in GameStatusUpdate u)
     {
         u.Game.Status = u.Status;
         if (u.SetInstalledVersion) u.Game.InstalledVersion = u.InstalledVersion;
         if (u.SetErrorMessage)     u.Game.ErrorMessage     = u.ErrorMessage;
+        if (u.SetLoadObservation)  u.Game.LoadObservation  = u.LoadObservation;
     }
 
     /// <summary>
@@ -801,6 +814,62 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// </summary>
     internal static bool ShouldApplyRefresh(string binariesDir, IReadOnlySet<string>? preserve)
         => preserve == null || !preserve.Contains(binariesDir);
+
+    /// <summary>
+    /// Read the "did it actually load?" signal for a game from its per-process log folder under
+    /// <c>%LOCALAPPDATA%\UE5CEDumper\Logs</c>. The DLL creates that folder on load
+    /// (<c>dll/src/Sein.cpp InitProcessMirror</c>), so its presence + newest write time is the
+    /// cheapest honest tell that the proxy/inject actually ran — disk state alone cannot say that
+    /// (<c>[PROXYLOAD-2026-08-17]</c>). Absence is reported as "not observed" (UNKNOWN), never as a
+    /// failure: the game may simply not have been launched with the proxy yet. Best-effort; any IO
+    /// error degrades to "not observed". The join key + classification are the pure, tested
+    /// <c>ProxyImportAnalyzer.ProcessLogFolderName</c> / <c>ClassifyLoad</c>.
+    /// </summary>
+    private string ComputeLoadObservation(string exePath)
+    {
+        DateTime now = DateTime.Now;
+        try
+        {
+            string folderName = ProxyImportAnalyzer.ProcessLogFolderName(exePath);
+            if (string.IsNullOrEmpty(folderName))
+                return ProxyImportAnalyzer.ClassifyLoad(false, null, now, Constants.LogMaxAgeDays).Display;
+
+            string procDir = Path.Combine(
+                _platform.GetAppDataPath(), Constants.LogFolderName, Constants.LogSubFolder, folderName);
+
+            bool present = Directory.Exists(procDir);
+            DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
+            return ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug("ProxyDeploy", $"Load-signal probe skipped for {exePath}: {ex.Message}");
+            return ProxyImportAnalyzer.ClassifyLoad(false, null, now, Constants.LogMaxAgeDays).Display;
+        }
+    }
+
+    /// <summary>Newest <c>*.log</c> write time in a per-process log folder — the DLL's "last wrote a
+    /// line" is its "last ran", which is a truer signal than the directory's own mtime (that also
+    /// moves on the retention sweep's deletes). Falls back to the folder's write time when it holds
+    /// no <c>.log</c> yet; null when nothing is readable.</summary>
+    private static DateTime? NewestLogWrite(string dir)
+    {
+        DateTime? newest = null;
+        try
+        {
+            foreach (string f in Directory.EnumerateFiles(dir, "*.log"))
+            {
+                DateTime t = File.GetLastWriteTime(f);
+                if (newest is null || t > newest) newest = t;
+            }
+        }
+        catch { /* fall through to the folder's own time */ }
+        if (newest is null)
+        {
+            try { newest = Directory.GetLastWriteTime(dir); } catch { /* leave null */ }
+        }
+        return newest;
+    }
 
     public async Task RefreshDeployStatusAsync(
         IList<DetectedGame> games, string sourceDllPath, ProxyType proxyType,
@@ -886,7 +955,13 @@ public sealed class ProxyDeployService : IProxyDeployService
                                    : $"{errorMessage}; {conflictMsg}";
                 }
 
-                results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage));
+                // "Did it actually load?" — orthogonal to the disk status above, so it is set on
+                // EVERY refresh regardless of that status ([PROXYLOAD-2026-08-17]). Cheap: a
+                // Directory.Exists + a mtime read, no PE parse.
+                string loadObservation = ComputeLoadObservation(game.ExePath);
+
+                results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage,
+                    LoadObservation: loadObservation, SetLoadObservation: true));
             }
 
             return results;
@@ -903,6 +978,42 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Deploy / Undeploy
     // ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// "The target could not be replaced because something else owns it" — the case the user
+    /// can fix by closing the game, as opposed to a genuine fault.
+    ///
+    /// ⚠ This must NOT be an <c>IOException</c> filter, and the reason is a measurement, not a
+    /// preference. The publish path changed from <c>File.Copy</c> to a staged <c>File.Move</c>,
+    /// and the two hit a mapped target through different kernel paths:
+    ///
+    /// <list type="table">
+    ///   <item><description>OLD <c>File.Copy(src, target, overwrite)</c> — opens the target for
+    ///     write → <c>ERROR_SHARING_VIOLATION (32)</c> → <c>IOException</c></description></item>
+    ///   <item><description>NEW <c>File.Move(stage, target, overwrite)</c> — a replacing rename
+    ///     must first DELETE the target, and a file carrying an image section refuses deletion
+    ///     with <c>STATUS_CANNOT_DELETE</c> → <c>ERROR_ACCESS_DENIED (5)</c> →
+    ///     <c>UnauthorizedAccessException</c>, which is NOT an IOException</description></item>
+    /// </list>
+    ///
+    /// So the old filter silently stopped matching the moment the write shape changed, and the
+    /// user got a raw "Access to the path is denied." that does not even name the path
+    /// (<c>[STAGELOCK-2026-08-20]</c>). Measured at the OS level against a really-mapped DLL, with
+    /// a negative control: with nothing mapped, BOTH shapes succeed.
+    ///
+    /// Kept deliberately narrow — a hand-built verification <c>IOException</c> from
+    /// <see cref="CopyProxyStaged"/> is not one of these and must still fall through to
+    /// <c>ErrorOther</c>.
+    /// </summary>
+    internal static bool IsTargetUnreplaceable(Exception ex) => ex switch
+    {
+        // The staged rename's shape on a mapped target.
+        UnauthorizedAccessException => true,
+        // The direct-copy shape, still reachable on other write paths.
+        IOException io => io.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
+                          || io.Message.Contains("being used", StringComparison.OrdinalIgnoreCase),
+        _ => false,
+    };
+
     public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
                                            bool sameVersion, DeployOptions options)
     {
@@ -918,6 +1029,93 @@ public sealed class ProxyDeployService : IProxyDeployService
         if (sameVersion && !options.ForceSameVersion) return DeployVerdict.AlreadyCurrent;
 
         return DeployVerdict.Proceed;
+    }
+
+    /// <summary>Suffix of the staging file <see cref="CopyProxyStaged"/> writes beside the
+    /// target. Deliberately NOT one of <see cref="AllProxyDllNames"/> and not a loadable
+    /// extension, so nothing — Windows, the deploy grid, undeploy, or the orphan scanner —
+    /// can mistake a half-written copy for a deployed proxy.</summary>
+    internal const string StageSuffix = ".ue5dump-stage";
+
+    /// <summary>
+    /// May the staged copy be published over the live target? (pure — audit #5 AC11)
+    ///
+    /// Two INDEPENDENT detectors, because they fail on different things: the byte count
+    /// catches a short write / truncation, and the ownership flag catches a copy whose
+    /// PE version resource did not survive. `sourceBytes > 0` makes an unmeasurable or
+    /// empty source a REFUSAL rather than a pass (pass -1 for "could not measure"), the
+    /// same rule Flamme's ShouldPublishAtomicWrite settled on DLL-side.
+    ///
+    /// Ownership is compared to the SOURCE rather than asserted true: a dev build whose
+    /// proxy carries no ProductName must still deploy, it just has to copy faithfully.
+    /// </summary>
+    internal static bool ShouldPublishStagedProxy(long sourceBytes, long stagedBytes,
+                                                  bool sourceIsOurs, bool stagedIsOurs)
+        => sourceBytes > 0 && stagedBytes == sourceBytes && sourceIsOurs == stagedIsOurs;
+
+    private static long TryFileLength(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            return fi.Exists ? fi.Length : -1;
+        }
+        catch
+        {
+            return -1;   // unmeasurable → ShouldPublishStagedProxy refuses
+        }
+    }
+
+    /// <summary>
+    /// Publish <paramref name="sourcePath"/> at <paramref name="targetPath"/> without ever
+    /// exposing a partial file (audit #5 AC11).
+    ///
+    /// The old code was a bare <c>File.Copy(overwrite: true)</c> straight onto the live
+    /// target, which TRUNCATES first and then streams. Any failure part-way — disk full,
+    /// source read error, the process being killed — left a truncated DLL sitting at the
+    /// real proxy path, and that state is worse than a failed deploy in three ways:
+    ///   • the game IMPORTS that name, so it now fails to start;
+    ///   • a truncated PE has no version resource, so <see cref="IsOurProxyDll"/> is false
+    ///     and the grid reports it as "Other proxy: unknown" — another program's DLL;
+    ///   • and on that verdict BOTH removal paths refuse it (PlanUndeploy skips it as
+    ///     foreign, redeploy demands ForeignConsent), so the user's own wreckage is
+    ///     unremovable from the panel that produced it.
+    ///
+    /// Staging inside the SAME directory keeps the publish a same-volume rename. Residue
+    /// is bounded: the staging file is deleted on every exit path, and a kill between the
+    /// copy and the rename leaves one file that the next deploy of this type overwrites.
+    /// IOExceptions are left to propagate so DeployAsync's SHARING_VIOLATION filter still
+    /// classifies a locked target as "File locked (game running?)" — the rename raises the
+    /// same violation the direct copy used to.
+    /// </summary>
+    internal static void CopyProxyStaged(string sourcePath, string targetPath)
+    {
+        string stagePath = targetPath + StageSuffix;
+        try
+        {
+            File.Copy(sourcePath, stagePath, overwrite: true);
+
+            long srcBytes = TryFileLength(sourcePath);
+            long stgBytes = TryFileLength(stagePath);
+            if (!ShouldPublishStagedProxy(srcBytes, stgBytes,
+                                          DllProductIsOurs(sourcePath), DllProductIsOurs(stagePath)))
+            {
+                throw new IOException(
+                    $"Staged proxy failed verification (source {srcBytes} bytes, staged {stgBytes} bytes) " +
+                    $"— {Path.GetFileName(targetPath)} was left untouched");
+            }
+
+            // overwrite:true also succeeds when the target does not exist yet, so the
+            // first-ever deploy takes this identical path.
+            File.Move(stagePath, targetPath, overwrite: true);
+        }
+        finally
+        {
+            // Never leave the staging file in a game's Binaries folder: nothing in this
+            // file's removal paths knows the name.
+            try { if (File.Exists(stagePath)) File.Delete(stagePath); }
+            catch { /* best-effort; the next deploy overwrites it */ }
+        }
     }
 
     public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
@@ -963,39 +1161,38 @@ public sealed class ProxyDeployService : IProxyDeployService
                         $"({DescribeForeignDll(targetDll)}) — foreign overwrite was explicitly allowed");
                 }
 
-                // A proxy can only load if something in the process actually NAMES that DLL —
-                // but "names it" includes a RUN-TIME LoadLibrary, not just the import table.
-                // This is therefore an ADVISORY and never a refusal; the measurement that
-                // settled it is in ProxyImportAnalyzer.LoadsDynamically (11 of 21 local games
-                // run a working version.dll proxy with no static import, DQ7R self-confirmed).
-                //
-                // A refusal used to live here and cost real deploys: it rejected version.dll —
-                // the broadest-compatible flavour and the one the Suggested column recommends —
-                // on every game that loads it dynamically, which is most of them.
-                //
-                // What survives is the reason the check was written: when a proxy genuinely
-                // cannot load it fails SILENTLY and TOTALLY (zero log, reads exactly like
-                // "nothing happened"). So the risk rides along with the successful deploy as a
-                // note instead of being turned into a wall. A null parse result means "could
-                // not tell" and yields no note. Computed HERE, past the early returns, so the
-                // paths that deploy nothing do not pay a PE parse.
-                string? riskNote = ProxyImportAnalyzer.DescribeLoadRisk(
-                    ReadProxyImports(game.ExePath), proxyType);
+                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal used
+                // to live here and rejected version.dll (the broadest-compatible flavour) on every
+                // game that loads it dynamically. Two independent risks, at most one of which
+                // applies (they partition on whether the flavour is imported):
+                //   • BYPASS: the flavour IS imported, so an already-mapped System32 copy can
+                //     pre-empt ours — the [PROXYLOAD-2026-08-17] OCTOPATH failure; and
+                //   • NEVER-LOADS: a static-only flavour (dxgi/winmm) is absent, so nothing names
+                //     it and it cannot load at all.
+                // Both fail SILENTLY and TOTALLY when real (zero log, reads like "nothing
+                // happened"), so the note rides along with the successful deploy rather than
+                // becoming a wall. A null parse result means "could not tell" → no note. Computed
+                // HERE, past the early returns, so the paths that deploy nothing do not pay a PE
+                // parse. The persistent per-game tell is the Load column, refreshed from the log
+                // folder — this note is the one-shot nudge at deploy time.
+                var imports = ReadProxyImports(game.ExePath);
+                string? riskNote = ProxyImportAnalyzer.DescribeDeployAdvisory(imports, proxyType);
 
-                File.Copy(sourceDllPath, targetDll, overwrite: true);
+                CopyProxyStaged(sourceDllPath, targetDll);
                 _log.Info("ProxyDeploy", $"Deployed {proxyType.GetDisplayName()} to {game.Name}: {targetDll}");
                 if (riskNote != null)
-                    _log.Warn("ProxyDeploy",
-                        $"{proxyType.GetDllName()} for {game.Name} is not in its import table — may not load");
+                    _log.Warn("ProxyDeploy", $"{proxyType.GetDllName()} for {game.Name}: {riskNote}");
                 return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
                     InstalledVersion: GetDllVersion(targetDll), ErrorMessage: riskNote));
             }
-            catch (IOException ex) when (ex.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
-                                      || ex.Message.Contains("being used", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (IsTargetUnreplaceable(ex))
             {
-                _log.Warn("ProxyDeploy", $"Deploy to {game.Name} failed: file locked");
+                _log.Warn("ProxyDeploy",
+                    $"Deploy to {game.Name} failed: target in use or write-protected " +
+                    $"({ex.GetType().Name}) — {Path.Combine(game.BinariesDir, proxyType.GetDllName())}");
                 return (false, new GameStatusUpdate(game, ProxyDeployStatus.ErrorLocked,
-                    ErrorMessage: "File locked (game running?)", SetInstalledVersion: false));
+                    ErrorMessage: "Target in use (game running?) or write-protected",
+                    SetInstalledVersion: false));
             }
             catch (Exception ex)
             {
@@ -1597,9 +1794,15 @@ public sealed class ProxyDeployService : IProxyDeployService
             int recycled = 0;
             int vanished = 0;   // already gone before we got to it — not a failure, not a removal
 
+            // ⚠ Cancellation is OBSERVED here, not thrown. [ORPHANCANCEL-2026-08-20]
+            // Throwing out of the middle of a row discarded everything that row had already
+            // done — the file it had just recycled, and the knowledge that its folder chain was
+            // now half-pruned. Breaking out with the counts intact is what lets the caller
+            // report reality instead of a tally computed on a different path.
+            bool cancelled = false;
             foreach (string file in filesToRecycle)   // the CONFIRMED subset, not the fresh plan
             {
-                ct.ThrowIfCancellationRequested();
+                if (ct.IsCancellationRequested) { cancelled = true; break; }
                 try
                 {
                     var fi = new FileInfo(file);
@@ -1668,13 +1871,17 @@ public sealed class ProxyDeployService : IProxyDeployService
             // its folder, or the next scan cannot find it again.
             int dirsRemoved = 0;
             string? pruneStopReason = null;
-            bool allFilesGone = recycled + vanished == filesToRecycle.Count && locked.Count == 0
+            // An interrupted file loop leaves recycled+vanished short of the total, so this is
+            // already false and no folder is pruned under a half-emptied directory. Stated
+            // explicitly rather than relied upon.
+            bool allFilesGone = !cancelled
+                                && recycled + vanished == filesToRecycle.Count && locked.Count == 0
                                 && readOnly.Count == 0 && failed.Count == 0;
             if (allFilesGone)
             {
                 foreach (string dir in dirsToRemove)   // deepest-first, and only what was confirmed
                 {
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested) { cancelled = true; break; }
                     try
                     {
                         // NON-recursive on purpose. This is the kernel-enforced emptiness check:
@@ -1713,6 +1920,16 @@ public sealed class ProxyDeployService : IProxyDeployService
             var (success, message) = ProxyOrphanScanner.ResolveRemovalOutcome(
                 recycled, vanished, dirsRemoved, dirsToRemove.Count, locked, readOnly, failed,
                 pruneStopReason);
+
+            // An interrupted row is never a success, whatever the outcome text would have said:
+            // it is half-done by definition, and the row has to stay on the list.
+            if (cancelled)
+                return new OrphanRemovalResult(
+                    false,
+                    $"Interrupted — {recycled} file(s) recycled, {dirsRemoved} folder(s) removed; "
+                        + "the rest was left in place",
+                    recycled, dirsRemoved, Cancelled: true);
+
             return new OrphanRemovalResult(success, message, recycled, dirsRemoved);
         }, ct);
     }
@@ -1864,7 +2081,12 @@ public sealed class ProxyDeployService : IProxyDeployService
         }
     }
 
-    public bool IsOurProxyDll(string dllPath)
+    public bool IsOurProxyDll(string dllPath) => DllProductIsOurs(dllPath);
+
+    /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
+    /// (which must stay static to be unit-testable against a temp folder) can apply the
+    /// SAME ownership predicate the panel and both removal paths use.</summary>
+    private static bool DllProductIsOurs(string dllPath)
     {
         try
         {

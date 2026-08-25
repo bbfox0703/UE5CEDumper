@@ -34,12 +34,15 @@
 #include "../src/Solide.h"      // Force-field / stealth-meter matcher (MatchStealthField, header-inline)
 #include "../src/Orden.h"       // Multi-value group scan: source-agnostic SDR matcher (MatchGroup)
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
+#include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
 #include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 #include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
+#include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
+#include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 
 #include <Windows.h>
 
@@ -83,6 +86,249 @@ static int g_fail = 0;
             label, _a.c_str(), _e.c_str(), __FILE__, __LINE__); \
     } \
 } while (0)
+
+// ----- Ubel::ResolveFunctionInChain -----------------------------------------
+// [INVOKEINHERIT-2026-08-20] Resolving a UFunction by name must climb SuperStruct.
+//
+// The traversal lives in Ubel.h precisely so it can be driven here: no test target compiles
+// Ubel.cpp, Frieren.cpp or Mimic.cpp, so a rule left in any of those is untestable. These
+// fakes stand in for a class chain and its per-class function lists, which is the whole of
+// what the resolver is allowed to know.
+
+namespace {
+
+struct FakeChain {
+    // classAddr -> its OWN declared function names
+    std::vector<std::pair<uintptr_t, std::vector<std::string>>> declared;
+    // classAddr -> SuperStruct (absent = read fails, i.e. end of chain)
+    std::vector<std::pair<uintptr_t, uintptr_t>> supers;
+    mutable int listCalls = 0;
+
+    std::vector<FunctionInfo> List(uintptr_t cls) const {
+        ++listCalls;
+        std::vector<FunctionInfo> out;
+        for (const auto& d : declared)
+            if (d.first == cls)
+                for (size_t i = 0; i < d.second.size(); ++i) {
+                    FunctionInfo f;
+                    f.name = d.second[i];
+                    // Address encodes (class, slot) so a test can prove WHICH one was picked.
+                    f.address = cls * 0x100 + i + 1;
+                    f.parmsSize = 8;
+                    out.push_back(f);
+                }
+        return out;
+    }
+
+    bool ReadSuper(uintptr_t cls, uintptr_t& super) const {
+        for (const auto& s : supers)
+            if (s.first == cls) { super = s.second; return true; }
+        return false;
+    }
+};
+
+// StaticMeshActor -> Actor -> Object, mirroring the reported repro.
+static FakeChain MakeActorChain() {
+    FakeChain c;
+    c.declared = {
+        { 0x10, { "SetMobility" } },                              // StaticMeshActor
+        { 0x20, { "SetActorHiddenInGame", "K2_TeleportTo" } },    // Actor
+        { 0x30, { "ExecuteUbergraph" } },                         // Object
+    };
+    c.supers = { { 0x10, 0x20 }, { 0x20, 0x30 } };                // 0x30 has no super
+    return c;
+}
+
+static bool Resolve(const FakeChain& c, const char* name, FunctionInfo& out, int* levels = nullptr) {
+    return Ubel::ResolveFunctionInChain(
+        0x10, name,
+        [&c](uintptr_t cls) { return c.List(cls); },
+        [&c](uintptr_t cls, uintptr_t& super) { return c.ReadSuper(cls, super); },
+        out, levels);
+}
+
+}  // namespace
+
+static void Test_Ubel_ResolveFunctionInChain() {
+    const FakeChain c = MakeActorChain();
+    FunctionInfo hit;
+
+    // THE DEFECT: an inherited function on a derived instance.
+    EXPECT("inherited function resolves", Resolve(c, "SetActorHiddenInGame", hit));
+    EXPECT_EQ_U64("...to the base class's copy", hit.address, 0x20 * 0x100 + 1);
+
+    // The two controls from the field measurement, so the test reproduces its discriminator.
+    EXPECT("own function still resolves", Resolve(c, "SetMobility", hit));
+    EXPECT_EQ_U64("...to the derived class's copy", hit.address, 0x10 * 0x100 + 1);
+
+    // Two levels up, not just one.
+    EXPECT("grandparent function resolves", Resolve(c, "ExecuteUbergraph", hit));
+    EXPECT_EQ_U64("...to the grandparent's copy", hit.address, 0x30 * 0x100 + 1);
+
+    // A genuinely absent name must still fail — otherwise the fix would mask real errors.
+    EXPECT("absent function still fails", !Resolve(c, "NoSuchFunction", hit));
+
+    int levels = 0;
+    Resolve(c, "NoSuchFunction", hit, &levels);
+    EXPECT("the whole chain was searched", levels == 3);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_Overrides() {
+    // An override must beat the base it overrides — the derived copy is the one that runs.
+    FakeChain c;
+    c.declared = { { 0x10, { "Tick" } }, { 0x20, { "Tick" } } };
+    c.supers = { { 0x10, 0x20 } };
+
+    FunctionInfo hit;
+    EXPECT("override resolves", Resolve(c, "Tick", hit));
+    EXPECT_EQ_U64("override wins over the base", hit.address, 0x10 * 0x100 + 1);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive() {
+    // ⚠ The ordering rule this is written to protect: an EXACT match on a BASE class beats a
+    // case-insensitive match on a DERIVED one. Written as "try both at each level going up",
+    // the derived near-miss would win — which is why the implementation runs two full sweeps.
+    FakeChain c;
+    c.declared = { { 0x10, { "sethidden" } }, { 0x20, { "SetHidden" } } };
+    c.supers = { { 0x10, 0x20 } };
+
+    FunctionInfo hit;
+    EXPECT("resolves", Resolve(c, "SetHidden", hit));
+    EXPECT_EQ_U64("exact match on the base beat the derived near-miss", hit.address, 0x20 * 0x100 + 1);
+
+    // And case-insensitive still works when nothing matches exactly.
+    EXPECT("case-insensitive fallback survives", Resolve(c, "SETHIDDEN", hit));
+}
+
+static void Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates() {
+    FunctionInfo hit;
+
+    // Self-loop: SuperStruct pointing at itself must not hang.
+    FakeChain self;
+    self.declared = { { 0x10, { "A" } } };
+    self.supers = { { 0x10, 0x10 } };
+    EXPECT("self-loop terminates and fails cleanly", !Resolve(self, "Missing", hit));
+    EXPECT("self-loop walked one level only", self.listCalls == 1);
+
+    // A cycle that is not a self-loop is bounded by the depth guard rather than detected.
+    FakeChain cyc;
+    cyc.declared = { { 0x10, { "A" } }, { 0x20, { "B" } } };
+    cyc.supers = { { 0x10, 0x20 }, { 0x20, 0x10 } };
+    EXPECT("cycle terminates", !Resolve(cyc, "Missing", hit));
+    EXPECT("cycle bounded by the depth guard", cyc.listCalls == 64);
+
+    // A null super ends the chain.
+    FakeChain nul;
+    nul.declared = { { 0x10, { "A" } } };
+    nul.supers = { { 0x10, 0 } };
+    EXPECT("null super ends the chain", Resolve(nul, "A", hit));
+    EXPECT("null super walked one level", nul.listCalls == 1);
+}
+
+static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
+    const FakeChain c = MakeActorChain();
+    FunctionInfo hit;
+    int levels = 99;
+
+    EXPECT("null class refused", !Ubel::ResolveFunctionInChain(
+        0, "SetMobility",
+        [&c](uintptr_t cls) { return c.List(cls); },
+        [&c](uintptr_t cls, uintptr_t& s) { return c.ReadSuper(cls, s); }, hit, &levels));
+    EXPECT("...and reports zero levels", levels == 0);
+
+    EXPECT("empty name refused", !Resolve(c, "", hit));
+    EXPECT("null name refused", !Resolve(c, nullptr, hit));
+}
+
+// ----- Aura::ChoosePreviewSource --------------------------------------------
+// [CDOSCOPE-2026-08-20] A Property Search row's Preview and the Force/Freeze ACTIONS on
+// that same row disagreed about what counts as "an instance of this class": the preview
+// wanted an EXACT class match and fell back to `(CDO default)`, while the actions hit the
+// class AND every subclass. So a row could say "nothing is live" and the action on it then
+// report `on 2 instance(s)` — measured on DumperTest with NiagaraComponent::WarmupTickCount.
+//
+// The ordering rule lives in Aura.h so it can be compiled here; no test target builds
+// Aura.cpp, so a rule left in the walk itself would be unpinnable.
+
+static void Test_Aura_ChoosePreviewSource() {
+    using PS = Aura::PreviewSource;
+
+    // Exact wins over everything — showing a subclass's value while the row's own class has
+    // a live instance would be the wrong object.
+    EXPECT("exact beats derived and CDO",
+           Aura::ChoosePreviewSource(true, true, true) == PS::Exact);
+    EXPECT("exact alone", Aura::ChoosePreviewSource(true, false, false) == PS::Exact);
+
+    // THE DEFECT: a live subclass instance must beat the class default. Getting this pair
+    // backwards is precisely what the row was doing.
+    EXPECT("derived beats the CDO",
+           Aura::ChoosePreviewSource(false, true, true) == PS::Derived);
+    EXPECT("derived alone", Aura::ChoosePreviewSource(false, true, false) == PS::Derived);
+
+    // The CDO stays the last resort rather than being dropped — a default is still the only
+    // truth available when nothing is live.
+    EXPECT("CDO when nothing is live", Aura::ChoosePreviewSource(false, false, true) == PS::ClassDefault);
+    EXPECT("nothing at all", Aura::ChoosePreviewSource(false, false, false) == PS::None);
+}
+
+static void Test_Aura_PreviewSourceSuffix() {
+    // An ordinary live reading must stay unmarked; marking every row would make the marker
+    // worthless.
+    EXPECT_EQ_STR("exact is unmarked", Aura::PreviewSourceSuffix(Aura::PreviewSource::Exact), "");
+    EXPECT_EQ_STR("none is unmarked", Aura::PreviewSourceSuffix(Aura::PreviewSource::None), "");
+
+    // A subclass sample is LIVE but not of the row's own class, and the row has to say so —
+    // otherwise the value looks like it came from the class named in the row.
+    EXPECT_EQ_STR("derived is marked as a subclass sample",
+                  Aura::PreviewSourceSuffix(Aura::PreviewSource::Derived), " (subclass instance)");
+
+    // ⚠ The wording is unchanged but the CLAIM is stronger: subclasses really were searched
+    // and none was live, so the actions will find nothing either. Users grep this string, and
+    // the UI binds preview as free text, so it must stay exactly this.
+    EXPECT_EQ_STR("CDO keeps its greppable wording",
+                  Aura::PreviewSourceSuffix(Aura::PreviewSource::ClassDefault), " (CDO default)");
+}
+
+// ----- Voll::DecideStart ------------------------------------------------------
+// [RELAUNCHPIPE-2026-08-19] Who should own the pipe at startup.
+//
+// The old guard asked one question — does the pipe answer? — and skipped FOREVER on a yes.
+// On a self-relaunching title that is a race against the DYING first process: measured on
+// OCTOPATH TRAVELER 3 runs out of 3, the survivor ended up with the DLL mapped, the game
+// running, and no server at all. These pin the three-way decision that replaced it.
+
+static void Test_Voll_DecideStart() {
+    using SA = Voll::StartAction;
+    const DWORD self = 4242;
+
+    // Nobody home — the ordinary single-instance case.
+    EXPECT("free pipe starts now", Voll::DecideStart(false, 0, self) == SA::StartNow);
+    // A stale holderPid must not matter when the pipe does not exist. CreateFileW failing is
+    // the fact; anything else is leftover.
+    EXPECT("free pipe ignores a stale holder",
+           Voll::DecideStart(false, 9999, self) == SA::StartNow);
+
+    // Already ours: CE Lua can call the export by hand after auto-start already ran.
+    EXPECT("our own pipe is a no-op", Voll::DecideStart(true, self, self) == SA::AlreadyOurs);
+
+    // Someone else's — defer, but the caller now WATCHES rather than giving up.
+    EXPECT("another process defers", Voll::DecideStart(true, 1234, self) == SA::DeferAndWatch);
+
+    // ⚠ Unknown holder DEFERS, it does not start. Competing would put two servers on one
+    // name, so a client could be handed the wrong game's DLL — worse than waiting.
+    EXPECT("unknown holder defers rather than competing",
+           Voll::DecideStart(true, 0, self) == SA::DeferAndWatch);
+}
+
+static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
+    using SA = Voll::StartAction;
+    // Guard the guard: "holderPid == selfPid" must be a real comparison, not a stand-in for
+    // "some pid is known". A different known pid has to reach a DIFFERENT answer, or
+    // AlreadyOurs would swallow every held pipe and re-create the original defect.
+    EXPECT("self and other differ", Voll::DecideStart(true, 100, 100) != Voll::DecideStart(true, 101, 100));
+    EXPECT("self is AlreadyOurs", Voll::DecideStart(true, 100, 100) == SA::AlreadyOurs);
+    EXPECT("other is DeferAndWatch", Voll::DecideStart(true, 101, 100) == SA::DeferAndWatch);
+}
 
 // ----- TryStrToAddr ----------------------------------------------------------
 
@@ -478,6 +724,115 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// ----- Stark: ProcessEvent detection lifecycle ---------------------------------
+//
+// [PEHOOKONCE-2026-08-18]. The field defect: a detection that failed because there
+// was nothing to detect YET (proxy mode starts the pipe server only, so GObjects is
+// unset until a scan) stored the same -1 as a hard failure, and every retry path in
+// Frieren was gated against -1. One `pe_profile_start` before the scan therefore
+// poisoned the ProcessEvent hook for the entire process -- no invoke, no click and
+// no later scan could ever install it, and the message told the user to retry the
+// one thing that could not work.
+//
+// These pin the SEPARATION. Frieren.cpp is not compiled by any test target, so the
+// rules live in Stark.h precisely so that this file can hold them still.
+
+static void Test_Stark_PeOffsetSentinels() {
+    // The two negatives are NOT interchangeable, which is the entire finding.
+    EXPECT("a real offset is usable",        Stark::PeOffsetUsable(0x220));
+    EXPECT("a real offset is not retryable", !Stark::PeOffsetRetryable(0x220));
+
+    EXPECT("not-detected is NOT usable",     !Stark::PeOffsetUsable(Stark::kPeOffsetNotDetected));
+    EXPECT("not-detected IS retryable",      Stark::PeOffsetRetryable(Stark::kPeOffsetNotDetected));
+
+    EXPECT("hard failure is NOT usable",     !Stark::PeOffsetUsable(Stark::kPeOffsetFailed));
+    EXPECT("hard failure is NOT retryable",  !Stark::PeOffsetRetryable(Stark::kPeOffsetFailed));
+
+    // Offset 0 is a legal vtable offset in principle and must not read as a sentinel.
+    EXPECT("offset 0 is usable",             Stark::PeOffsetUsable(0));
+    EXPECT("offset 0 is not retryable",      !Stark::PeOffsetRetryable(0));
+}
+
+static void Test_Stark_ShouldRetryPeDetection() {
+    constexpr int kNotDetected = Stark::kPeOffsetNotDetected;
+
+    // THE FIX. An armed sentinel retries -- this is the path that was unreachable.
+    EXPECT("armed sentinel, first attempt -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, 0, 10'000, 0, false));
+
+    // Already answered, or answered "never": no work either way.
+    EXPECT("a usable offset never re-detects",
+           !Stark::ShouldRetryPeDetection(0x220, 0, 10'000, 0, false));
+    EXPECT("a hard failure never re-detects",
+           !Stark::ShouldRetryPeDetection(Stark::kPeOffsetFailed, 0, 10'000, 0, false));
+    EXPECT("a hard failure does not re-detect even when FORCED",
+           !Stark::ShouldRetryPeDetection(Stark::kPeOffsetFailed, 0, 10'000, 0, true));
+
+    // THE ANTI-STORM HALF. Re-arming without these turns the ordinary invoke path
+    // -- which a 10 Hz feature worker walks -- into a re-scan of up to 12 vtables x
+    // 0x2000 bytes, ten times a second, forever.
+    EXPECT("inside the cooldown -> no retry",
+           !Stark::ShouldRetryPeDetection(kNotDetected, 1, 10'500, 10'000, false));
+    EXPECT("cooldown just elapsed -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 11'000, 10'000, false));
+    EXPECT("budget spent -> no retry",
+           !Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts,
+                                          99'000, 10'000, false));
+    EXPECT("one attempt left -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts - 1,
+                                         99'000, 10'000, false));
+
+    // A user-initiated attempt (a feature switching on) skips cooldown and cap for
+    // the same reason TryInstallGameThreadHook's `force` does: the user is waiting.
+    EXPECT("force beats the cooldown",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 10'001, 10'000, true));
+    EXPECT("force beats the budget",
+           Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts,
+                                         99'000, 10'000, true));
+
+    // lastAttemptMs == 0 means "never attempted", not "attempted at tick 0" -- a
+    // cooldown measured from it would suppress the very first retry.
+    EXPECT("never attempted -> not throttled",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 5, 0, false));
+}
+
+static void Test_Stark_PeValidationFailureVerdict() {
+    constexpr int kOffset = 0x220;
+
+    // [PEHOOK-2026-08-17]: the version TABLE is a per-version guess with no evidence
+    // from the binary, and it is what produced the one measured mis-detection
+    // (DumperTest UE 5.4 Development, primary=0x220, hook fired 0 times).
+    EXPECT("version-table zero-fires is acted on",
+           Stark::ShouldActOnValidationFailure(true));
+    EXPECT("version-table failure re-arms detection",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset, 1) == Stark::kPeOffsetNotDetected);
+    EXPECT("second failure still re-arms",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset, 2) == Stark::kPeOffsetNotDetected);
+
+    // Bounded: a genuinely wrong slot re-detects to the same wrong slot, so the
+    // loop must terminate rather than reinstall forever.
+    EXPECT("the last allowed failure gives up",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset,
+                                                 Stark::kMaxPeValidationFailures)
+               == Stark::kPeOffsetFailed);
+    EXPECT("past the cap stays given up",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset,
+                                                 Stark::kMaxPeValidationFailures + 5)
+               == Stark::kPeOffsetFailed);
+
+    // THE FALSE-POSITIVE GUARD, and the reason this is not "act on every zero".
+    // A zero fire count also describes an idle game thread (paused / loading /
+    // minimised under t.IdleWhenNotForeground). The pattern scan fingerprints
+    // ProcessEvent's own body and has never been observed wrong, so a zero there
+    // reads as "the game was idle" and the correct hook must survive it.
+    EXPECT("pattern-scan zero-fires is NOT acted on",
+           !Stark::ShouldActOnValidationFailure(false));
+    EXPECT("a pattern-scan offset is left untouched",
+           Stark::PeOffsetAfterValidationFailure(false, kOffset, 1) == kOffset);
+    EXPECT("a pattern-scan offset survives repeated zeroes",
+           Stark::PeOffsetAfterValidationFailure(false, kOffset, 99) == kOffset);
+}
+
 // ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
 //
 // Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
@@ -588,10 +943,59 @@ static void Test_Mimic_MailboxLayout() {
     EXPECT("mailbox errorMsg is 256",     sizeof(Mimic::MailboxData::errorMsg)   == 256);
     EXPECT("mailbox paramsData is 1024",  sizeof(Mimic::MailboxData::paramsData) == 1024);
 
-    // Whole-struct size: 0x328 + 1024 = 1832. The header comment says "~1848",
+    // Contract 3 grew the struct at the TAIL — which is the only place it can grow
+    // without invalidating every saved .CT, so pinning that these two sit AFTER
+    // paramsData (and that nothing above them moved) is the whole compatibility
+    // claim, checked rather than asserted in prose.
+    EXPECT("mailbox cmdFlags @ 0x728",    offsetof(Mimic::MailboxData, cmdFlags)    == 0x728);
+    EXPECT("mailbox cmdOutFlags @ 0x72C", offsetof(Mimic::MailboxData, cmdOutFlags) == 0x72C);
+
+    // Whole-struct size: 0x328 + 1024 + 8 = 1840. The header comment says "~1848",
     // which is what an unchecked number drifts into.
-    EXPECT("mailbox total size 1832",     sizeof(Mimic::MailboxData) == 1832);
+    EXPECT("mailbox total size 1840",     sizeof(Mimic::MailboxData) == 1840);
     EXPECT("mailbox fits one page",       sizeof(Mimic::MailboxData) <= 4096);
+}
+
+// ----- Mimic: CMD_LIST_INSTANCES page geometry ---------------------------------
+//
+// The wire format of one LIST_INSTANCES page depends on a single input bit, and
+// the two sides that have to agree about it are written in different languages:
+// Mimic.cpp packs the entries, scripts/ue5_freeze_helper.lua unpacks them. Neither
+// can see the other, so the rule lives in the header both are documented against
+// and is pinned here. Getting the stride wrong does not crash — it reads the high
+// half of one pointer as the next object and freezes an address that is not one.
+static void Test_Mimic_ListInstancesGeometry() {
+    EXPECT("exact entry is 8 bytes",    Mimic::ListInstancesEntrySize(false) == 8);
+    EXPECT("derived entry is 16 bytes", Mimic::ListInstancesEntrySize(true)  == 16);
+
+    // Derived carries the per-entry UClass* witness, so it fits half as many.
+    EXPECT("exact page holds 128",   Mimic::ListInstancesPerPage(false) == 128);
+    EXPECT("derived page holds 64",  Mimic::ListInstancesPerPage(true)  == 64);
+
+    // A page must never overrun paramsData — the derived format halved the count
+    // rather than spilling, and this is what says so.
+    EXPECT("exact page fits paramsData",
+           Mimic::ListInstancesPerPage(false) * Mimic::ListInstancesEntrySize(false)
+               <= sizeof(Mimic::MailboxData::paramsData));
+    EXPECT("derived page fits paramsData",
+           Mimic::ListInstancesPerPage(true) * Mimic::ListInstancesEntrySize(true)
+               <= sizeof(Mimic::MailboxData::paramsData));
+
+    // Both caps must be reachable inside the page budget the helper walks, or the
+    // last instances are enumerated by the DLL and never fetched — a freeze that
+    // silently drops its tail.
+    EXPECT("exact cap fits 16 pages",
+           Mimic::LIST_INSTANCES_MAX_EXACT
+               <= static_cast<int>(Mimic::LIST_INSTANCES_MAX_PAGES
+                                   * Mimic::ListInstancesPerPage(false)));
+    EXPECT("derived cap fits 16 pages",
+           Mimic::LIST_INSTANCES_MAX_DERIVED
+               <= static_cast<int>(Mimic::LIST_INSTANCES_MAX_PAGES
+                                   * Mimic::ListInstancesPerPage(true)));
+
+    // The flag bits the CE Lua side writes/reads as literals.
+    EXPECT("LI_IN_DERIVED = 1",    static_cast<uint32_t>(Mimic::LI_IN_DERIVED)    == 1u);
+    EXPECT("LI_OUT_TRUNCATED = 1", static_cast<uint32_t>(Mimic::LI_OUT_TRUNCATED) == 1u);
 }
 
 // The Cmd / op enumerators CE Lua writes into the mailbox. Renumbering one is a
@@ -620,7 +1024,7 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    EXPECT("contract is 2",          Mimic::MAILBOX_CONTRACT     == 2);
+    EXPECT("contract is 3",          Mimic::MAILBOX_CONTRACT     == 3);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -632,6 +1036,140 @@ static void Test_Mimic_CommandNumbering() {
     EXPECT("contract minimum @ 0x08", offsetof(Mimic::MailboxContract, minimum) == 0x08);
     EXPECT("contract struct is 12",   sizeof(Mimic::MailboxContract) == 12);
     EXPECT("contract magic value",    Mimic::MAILBOX_CONTRACT_MAGIC == 0x43354555u);
+}
+
+// ----- Mimic: CMD_INVOKE routing + the init gate (audit #5 MB1 / MB2) ----------
+//
+// Both rules used to live inline in Mimic.cpp, which no target compiles — so the
+// only way to state them checkably was to move them into the header. They are the
+// two places a mailbox command can pick the WRONG behaviour without failing:
+// MB1 runs a stateful UFunction on the wrong thread, MB2 refuses a command that
+// would have worked.
+
+static void Test_Mimic_InvokeRouting() {
+    constexpr uint32_t N = Mimic::FUNC_FLAG_NATIVE;   // 0x0400
+    constexpr uint32_t S = Mimic::FUNC_FLAG_STATIC;   // 0x2000
+
+    // The UE bit values themselves — a generated script never sees these, but
+    // getting one wrong silently reclassifies every function.
+    EXPECT("FUNC_FLAG_NATIVE = 0x400",  N == 0x00000400u);
+    EXPECT("FUNC_FLAG_STATIC = 0x2000", S == 0x00002000u);
+
+    // Only Native AND Static together take the direct path.
+    EXPECT("native+static routes direct", Mimic::ShouldRouteDirectInvoke(N | S, true));
+    EXPECT("native alone queues",         !Mimic::ShouldRouteDirectInvoke(N, true));
+    EXPECT("static alone queues",         !Mimic::ShouldRouteDirectInvoke(S, true));
+    EXPECT("no flags queues",             !Mimic::ShouldRouteDirectInvoke(0, true));
+
+    // Unrelated bits must not disturb the verdict either way.
+    EXPECT("extra flags keep direct",
+           Mimic::ShouldRouteDirectInvoke(N | S | 0x00000001u | 0x04000000u, true));
+    EXPECT("extra flags keep queued",
+           !Mimic::ShouldRouteDirectInvoke(N | 0x00000001u | 0x04000000u, true));
+
+    // THE MB1 RULE. `flagsResolved=false` is what the caller passes when it could
+    // not re-read the UFunction — and it must beat any flag value, because the
+    // alternative is trusting a mailbox field the previous command wrote. If this
+    // assertion is dropped, a stale Native|Static routes a stateful actor
+    // UFunction off the game thread and nothing reports it.
+    EXPECT("unresolved never routes direct",
+           !Mimic::ShouldRouteDirectInvoke(N | S, false));
+    EXPECT("unresolved with 0xFFFFFFFF never routes direct",
+           !Mimic::ShouldRouteDirectInvoke(0xFFFFFFFFu, false));
+
+    // The two commands that REPURPOSE functionFlags as a page count. Their values
+    // are small, so they can never satisfy the mask — the stale-field hazard is a
+    // false NEGATIVE from these, and a false POSITIVE only from CMD_FIND_FUNCTION
+    // having resolved a different function. Pinned so a future page-count encoding
+    // that happens to set both bits cannot arrive unnoticed.
+    for (uint32_t pages = 1; pages <= 64; ++pages) {
+        if (Mimic::ShouldRouteDirectInvoke(pages, true)) {
+            EXPECT("a LIST_* page count must never look static-native", false);
+            break;
+        }
+    }
+    EXPECT("page counts never look static-native", true);
+}
+
+static void Test_Mimic_CommandRequiresInit() {
+    // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
+    // the pipe path gates it on nothing.
+    EXPECT("CMD_FOREGROUND is exempt", !Mimic::CommandRequiresInit(Mimic::CMD_FOREGROUND));
+
+    // Negative control — everything else must still be gated. This is the half
+    // that matters: over-exempting turns "-10 DLL not initialized" into a handler
+    // dereferencing caches the scan never filled. Enumerated explicitly rather
+    // than looped so adding a Cmd forces a decision here.
+    EXPECT("CMD_INVOKE needs init",           Mimic::CommandRequiresInit(Mimic::CMD_INVOKE));
+    EXPECT("CMD_FIND_INSTANCE needs init",    Mimic::CommandRequiresInit(Mimic::CMD_FIND_INSTANCE));
+    EXPECT("CMD_FIND_FUNCTION needs init",    Mimic::CommandRequiresInit(Mimic::CMD_FIND_FUNCTION));
+    EXPECT("CMD_INVOKE_BY_NAME needs init",   Mimic::CommandRequiresInit(Mimic::CMD_INVOKE_BY_NAME));
+    EXPECT("CMD_LIST_FUNCTIONS needs init",   Mimic::CommandRequiresInit(Mimic::CMD_LIST_FUNCTIONS));
+    EXPECT("CMD_LIST_INSTANCES needs init",   Mimic::CommandRequiresInit(Mimic::CMD_LIST_INSTANCES));
+    EXPECT("CMD_SET_DEBUG_CAMERA needs init", Mimic::CommandRequiresInit(Mimic::CMD_SET_DEBUG_CAMERA));
+    EXPECT("CMD_TELEPORT needs init",         Mimic::CommandRequiresInit(Mimic::CMD_TELEPORT));
+    EXPECT("CMD_PROTECT needs init",          Mimic::CommandRequiresInit(Mimic::CMD_PROTECT));
+    EXPECT("CMD_MOVEMENT needs init",         Mimic::CommandRequiresInit(Mimic::CMD_MOVEMENT));
+    EXPECT("CMD_FLY needs init",              Mimic::CommandRequiresInit(Mimic::CMD_FLY));
+    // Documented as "read-only + thread-agnostic", which is NOT the same claim:
+    // it reads the caches the scan fills and iterates GObjects.
+    EXPECT("CMD_QUERY_PTR needs init",        Mimic::CommandRequiresInit(Mimic::CMD_QUERY_PTR));
+    EXPECT("CMD_SEETHROUGH needs init",       Mimic::CommandRequiresInit(Mimic::CMD_SEETHROUGH));
+    // "Pure reflected memory write" — reflected means GObjects.
+    EXPECT("CMD_TIME needs init",             Mimic::CommandRequiresInit(Mimic::CMD_TIME));
+
+    // An unknown command must be gated too: it falls through to "Unknown command",
+    // and the gate is the cheaper refusal.
+    EXPECT("an unknown cmd is gated", Mimic::CommandRequiresInit(9999));
+
+    // Exactly ONE exemption across the whole declared command space. A future
+    // handler that quietly adds itself to the exemption list trips this.
+    int exempt = 0;
+    for (int32_t c = 0; c <= Mimic::CMD_TIME; ++c)
+        if (!Mimic::CommandRequiresInit(c)) ++exempt;
+    EXPECT("exactly one command is init-exempt", exempt == 1);
+}
+
+// ----- Flamme: the hint-cache publish gate (audit #5 FL1) ----------------------
+//
+// The rule that decides whether a staged temp may be renamed over the real cache.
+// Getting it wrong in the permissive direction publishes a TRUNCATED JSON document
+// over the only copy, and LoadHints then returns empty for every game at once —
+// pattern IDs, ueVersion, the user's version override and the invoke timeout.
+// Nothing compiles Flamme.cpp, so this predicate is the only assertable part.
+static void Test_Flamme_AtomicPublishGate() {
+    using Flamme::ShouldPublishAtomicWrite;
+
+    // The one passing shape: stream clean, size readable, size exact.
+    EXPECT("clean write publishes",  ShouldPublishAtomicWrite(true, true, 4096, 4096));
+
+    // Each detector alone must be able to veto — if either could not, it would be
+    // decoration rather than a second detector.
+    EXPECT("stream failure refuses", !ShouldPublishAtomicWrite(false, true, 4096, 4096));
+    EXPECT("short write refuses",    !ShouldPublishAtomicWrite(true, true, 4095, 4096));
+
+    // The direction that actually happens on a full volume: the stream reports fine
+    // (the failure surfaced only at flush on some CRTs) but the bytes are not there.
+    EXPECT("silent truncation refuses", !ShouldPublishAtomicWrite(true, true, 0, 4096));
+
+    // trunc failed / something appended — longer is as wrong as shorter.
+    EXPECT("over-long file refuses", !ShouldPublishAtomicWrite(true, true, 4097, 4096));
+
+    // An unmeasurable file is not a verified one. This is the branch a "size == 0
+    // means we could not read it" shortcut would get backwards.
+    EXPECT("unknown size refuses",   !ShouldPublishAtomicWrite(true, false, 0, 4096));
+    EXPECT("unknown size refuses even when the numbers would match",
+           !ShouldPublishAtomicWrite(true, false, 4096, 4096));
+
+    // Large files must not overflow or wrap the comparison — the cache grows one
+    // record per game, forever.
+    EXPECT("large exact match publishes",
+           ShouldPublishAtomicWrite(true, true, 3000000000ull, 3000000000ull));
+    EXPECT("large off-by-one refuses",
+           !ShouldPublishAtomicWrite(true, true, 3000000000ull, 3000000001ull));
+
+    // Degenerate but well-defined: no special-casing of an empty document.
+    EXPECT("empty exact match publishes", ShouldPublishAtomicWrite(true, true, 0, 0));
 }
 
 // ----- Radar: SizeOf + NameOf + parsers ---------------------------------
@@ -825,6 +1363,10 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
     // simply never feeds them in via its PropertyTypeNames union).
     EXPECT("ByteProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("ByteProperty", got) && got == DT::UInt8);
     EXPECT("Int8Property -> Int8",   Radar::TryDataTypeFromPropertyTypeName("Int8Property", got)  && got == DT::Int8);
+    // audit #5 AB14 — EnumProperty resolves to UInt8 (enums are 1-byte in the
+    // overwhelming majority). Before the fix this returned false and enum-backed
+    // state fields were invisible to every meta value scan.
+    EXPECT("EnumProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("EnumProperty", got) && got == DT::UInt8);
     // Bool + non-numeric still reject.
     EXPECT("BoolProperty rejected",  !Radar::TryDataTypeFromPropertyTypeName("BoolProperty", got));
     EXPECT("StrProperty rejected",   !Radar::TryDataTypeFromPropertyTypeName("StrProperty", got));
@@ -840,12 +1382,20 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
         }
         return true;
     };
+    auto hasName = [](const std::vector<std::string>& v, const char* n) {
+        for (const auto& s : v) if (s == n) return true;
+        return false;
+    };
     const auto& noByteNames = Radar::PropertyTypeNames(DT::NumericNoByte);
     EXPECT("NumericNoByte has 8 property names", noByteNames.size() == 8);
     EXPECT("every NumericNoByte property name resolves", allResolve(noByteNames));
+    // audit #5 AB14 — EnumProperty joined NumericAll (11 now, was 10) but NOT
+    // NumericNoByte: it resolves to UInt8, a 1-byte width NumericNoByte excludes.
     const auto& allNames = Radar::PropertyTypeNames(DT::NumericAll);
-    EXPECT("NumericAll has 10 property names", allNames.size() == 10);
+    EXPECT("NumericAll has 11 property names", allNames.size() == 11);
     EXPECT("every NumericAll property name resolves", allResolve(allNames));
+    EXPECT("NumericAll includes EnumProperty", hasName(allNames, "EnumProperty"));
+    EXPECT("NumericNoByte excludes EnumProperty", !hasName(noByteNames, "EnumProperty"));
 }
 
 static void Test_ValueScan_PropertyTypeNameOf_Inverse() {
@@ -1082,6 +1632,37 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("0x10 has NO Float", ts.Find(DT::Float) == nullptr);
         const uint8_t* i = ts.Find(DT::Int32);
         if (i) { int32_t v; std::memcpy(&v, i, 4); EXPECT("0x10 Int32 == 16", v == 16); }
+    }
+    // audit #5 AB15 — a LEADING ZERO must mean DECIMAL for every width, not octal
+    // for the integers and decimal for the floats. Before the fix, base-0 parsing
+    // read "010" as octal 8 for Int32/Int64/... while std::stod read it as 10.0 for
+    // Float/Double, so one meta scan gave the same string two different numbers.
+    {
+        Radar::NumericTargetSet ts;
+        EXPECT("BuildNumericTargets(010) ok", Radar::BuildNumericTargets(DT::NumericAll, "010", ts));
+        const uint8_t* i32 = ts.Find(DT::Int32);
+        EXPECT("010 Int32 present", i32 != nullptr);
+        if (i32) { int32_t v; std::memcpy(&v, i32, 4); EXPECT("010 Int32 == 10 (decimal, not octal 8)", v == 10); }
+        const uint8_t* u8 = ts.Find(DT::UInt8);
+        if (u8) EXPECT("010 UInt8 == 10", *u8 == 10);
+        const uint8_t* f = ts.Find(DT::Float);
+        EXPECT("010 Float present", f != nullptr);
+        if (f) { float v; std::memcpy(&v, f, 4); EXPECT("010 Float == 10.0", v == 10.0f); }
+        // The integer and float interpretations now AGREE — the whole point.
+        if (i32 && f) {
+            int32_t iv; std::memcpy(&iv, i32, 4);
+            float   fv; std::memcpy(&fv, f, 4);
+            EXPECT("010: integer and float widths agree", static_cast<float>(iv) == fv);
+        }
+    }
+    // ...and a 0x prefix still parses as hex even with a sign in front.
+    {
+        Radar::NumericTargetSet ts;
+        EXPECT("BuildNumericTargets(-0x10) ok", Radar::BuildNumericTargets(DT::NumericNoByte, "-0x10", ts));
+        const uint8_t* i32 = ts.Find(DT::Int32);
+        EXPECT("-0x10 Int32 present", i32 != nullptr);
+        if (i32) { int32_t v; std::memcpy(&v, i32, 4); EXPECT("-0x10 Int32 == -16", v == -16); }
+        EXPECT("-0x10 has NO Float (hex is integer-only)", ts.Find(DT::Float) == nullptr);
     }
     // Empty / whitespace / garbage → false, no entries.
     {
@@ -2431,6 +3012,24 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     EXPECT("witness: no leaf is displayed by two slots",
            shared[0][distinct[0]].leafAddr != shared[1][distinct[1]].leafAddr);
 
+    // audit #5 AB18 — the case GREEDY ALONE gets wrong. slot0 has two options and
+    // slot1 has only the shared one; greedy seats slot0 on the shared leaf first and
+    // leaves slot1 nothing free, so it duplicated it — even though a distinct
+    // assignment plainly exists (slot0 -> unique, slot1 -> shared). The augmenting-
+    // path repair must recover it. This FAILS before the fix and passes after.
+    std::vector<std::vector<GroupSlotMatch>> forcedSwap = {
+        { leaf(1, 1284, 100), leaf(2, 1288, 19) },   // slot0: two options
+        { leaf(1, 1284, 100) },                       // slot1: only the shared leaf
+    };
+    auto swapped = PickGroupWitnessAssignment(forcedSwap, slots, descs, {});
+    EXPECT("witness: augmenting path yields a distinct assignment greedy would miss",
+           swapped.size() == 2 &&
+           forcedSwap[0][swapped[0]].leafAddr != forcedSwap[1][swapped[1]].leafAddr);
+    EXPECT("witness: the forced-unique slot keeps its only (shared) leaf",
+           forcedSwap[1][swapped[1]].leafAddr == 1284);
+    EXPECT("witness: and the flexible slot moved to its other leaf",
+           forcedSwap[0][swapped[0]].leafAddr == 1288);
+
     // An empty slot claims nothing and must not disturb the later slots. The
     // filter picks the SECOND leaf, so an implementation that lost its place
     // (or just returned zeros) fails here rather than passing by construction.
@@ -2473,6 +3072,107 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     std::sort(seen.begin(), seen.end());
     EXPECT("order: a permutation, nothing lost or repeated",
            seen.size() == 3 && seen[0] == 0 && seen[1] == 1 && seen[2] == 2);
+}
+
+// audit #5 AB16 — the server-side Value Search filter must cover the displayed
+// "Origin" column, so filtering for "native" hits rows that visibly read "Native-C".
+static void Test_Radar_FormatCandidateOrigin() {
+    using namespace Radar;
+    FieldDescriptor reflected;      // isNativeC = false by default
+    EXPECT("origin: reflected field", FormatCandidateOrigin(reflected) == "Reflected");
+
+    FieldDescriptor nativeWidth;
+    nativeWidth.isNativeC   = true;
+    nativeWidth.guessedType = "Int32";
+    EXPECT("origin: native with width", FormatCandidateOrigin(nativeWidth) == "Native-C (Int32)");
+
+    FieldDescriptor nativeNoWidth;
+    nativeNoWidth.isNativeC = true;   // guessedType empty
+    EXPECT("origin: native without width", FormatCandidateOrigin(nativeNoWidth) == "Native-C");
+
+    // The string exactly mirrors the C# ScanCandidate.Origin, so the server-side
+    // keyword filter now matches a column the user can see (the whole finding).
+}
+
+// audit #5 AB19 — a group session's leaf memory is candidates x slots x perSlotCap
+// GroupSlotMatch objects; only the last two are clamped. The pure helpers below let
+// GroupSessionManager::Begin bound the retained session by total leaves.
+static void Test_Radar_GroupLeafBudget() {
+    using namespace Radar;
+    auto candWith = [](size_t slotCount, size_t leavesPerSlot) {
+        GroupCandidate gc;
+        gc.slotMatches.resize(slotCount);
+        for (auto& sl : gc.slotMatches) sl.resize(leavesPerSlot);
+        return gc;
+    };
+
+    // Leaf count is the plain product summed over candidates.
+    std::vector<GroupCandidate> pool = {
+        candWith(2, 3),   // 6 leaves
+        candWith(2, 4),   // 8 leaves
+        candWith(2, 5),   // 10 leaves
+    };
+    EXPECT("leafcount: sum over all slots of all candidates",
+           GroupSessionLeafCount(pool) == 24);
+
+    // Empty pool -> 0 kept, 0 leaves.
+    EXPECT("budget: empty pool keeps nothing",
+           GroupCandidatesWithinLeafBudget({}, 1000) == 0);
+    EXPECT("leafcount: empty pool is 0", GroupSessionLeafCount({}) == 0);
+
+    // Whole pool fits under a generous budget.
+    EXPECT("budget: whole pool fits", GroupCandidatesWithinLeafBudget(pool, 1000) == 3);
+
+    // A tight budget keeps the LEADING candidates (scan order) up to the cap: the
+    // first (6) fits under 10, adding the second (8 -> 14) would exceed it, so 1 kept.
+    EXPECT("budget: trims the tail at the leaf cap",
+           GroupCandidatesWithinLeafBudget(pool, 10) == 1);
+    // Exactly the first two (6 + 8 = 14) at a budget of 14.
+    EXPECT("budget: boundary keeps as many as fit", GroupCandidatesWithinLeafBudget(pool, 14) == 2);
+
+    // Never drop the whole scan on the backstop: a single over-budget candidate is
+    // still kept (it is itself bounded by slots x perSlotCap).
+    std::vector<GroupCandidate> oneBig = { candWith(4, 4096) };  // 16384 leaves
+    EXPECT("budget: one over-budget candidate is still kept",
+           GroupCandidatesWithinLeafBudget(oneBig, 100) == 1);
+}
+
+// audit #5 AE13 — the per-slot cap verdict has to SURVIVE Begin.
+//
+// Orden::MatchGroup reports truncation (Test_Orden_PerSlotCap above), and until this
+// fix the whole of its onward journey was a LOG_WARN inside ScanForValueGroup: no wire
+// key existed, so no DTO could carry it and the UI presented a capped witness list as
+// the complete set of matching fields. Refine cannot recompute it — it prunes the
+// stored pool and never calls the matcher again — and query is a pure window, so the
+// verdict has to be carried on the SESSION or it is lost after the first response.
+//
+// NEGATIVE CONTROL: drop the two assignments from GroupSessionManager::Begin and both
+// EXPECTs below fail with the default-constructed false/0.
+static void Test_Radar_GroupSessionCarriesPerSlotCap() {
+    using namespace Radar;
+    auto& mgr = GroupSessionManager::Instance();
+
+    std::vector<GroupCandidate> pool(1);
+    pool[0].slotMatches.resize(2);
+    for (auto& sl : pool[0].slotMatches) sl.resize(1);
+
+    uint64_t hitId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
+    bool sawHit = false; int sawCap = -1;
+    EXPECT("session: the capped session is retrievable",
+           mgr.WithSession(hitId, [&](const GroupSession& s) {
+               sawHit = s.perSlotCapHit; sawCap = s.perSlotCap;
+           }));
+    EXPECT("session: a Begin-time cap hit survives into the session", sawHit);
+    EXPECT("session: and so does the EFFECTIVE cap the DLL clamped to", sawCap == 256);
+
+    // Control: an uncapped scan must not report one, or every session would warn.
+    uint64_t cleanId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
+    bool cleanHit = true;
+    mgr.WithSession(cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
+    EXPECT("session: an uncapped scan reports no truncation", !cleanHit);
+
+    mgr.End(hitId);
+    mgr.End(cleanId);
 }
 
 // The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
@@ -2768,7 +3468,7 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<uint8,FName> WOULD be +8 w/o align",  Macht::ComputeMapValueOffset(1, 8)    == 8);
     EXPECT("Map<uint8,ptr> value at +8 (align 8)",    Macht::ComputeMapValueOffset(1, 8, 8) == 8);
 
-    // ---- Audit #5 D4a/M1 — the COMPOSITE recipe, not the two halves ----
+    // ---- Audit #5 D4a/MG1 — the COMPOSITE recipe, not the two halves ----
     // Real stride = Align(Align(unpaddedPair, alignof(TPair)) + 8, alignof(TPair)),
     // where alignof(TPair) == max(alignof(Key), alignof(Value)). Every case above
     // happens to land on a multiple of 8, which is exactly why this survived: both
@@ -2795,7 +3495,7 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<ptr,uint8> stride 24",
            Macht::ComputeSetElementStride(8 + 1, 8) == 24);
 
-    // ---- Audit #5 D4a/M3 — struct values must use MinAlignment, not a size guess ----
+    // ---- Audit #5 D4a/MG3 — struct values must use MinAlignment, not a size guess ----
     // TMap<int32,FVector>: FVector is 12 bytes but 4-ALIGNED, so the value really
     // sits at +4 and the pair is 16. The size guess ("8 or more => align 8") put it
     // at +8 with a stride of 28, so even element 0 displayed a wrong vector.
@@ -3440,6 +4140,71 @@ static void Test_Solide_MatchStealthField() {
     EXPECT("health scores 0",   MatchStealthField("health") == 0);
     EXPECT("velocity scores 0", MatchStealthField("velocity") == 0);
     EXPECT("position scores 0", MatchStealthField("position") == 0);
+}
+
+// ----- Solide::IntWidthOf / IntRangeOf (held-integer width + SIGN, AF8) -------
+// The bug this pins: Solide read Int8Property as UNSIGNED while writing it as
+// signed, so the re-assert worker's `read != target` drift check could never be
+// satisfied for a negative hold — it rewrote the same byte every tick, forever,
+// and told the user the game was fighting it. Nothing compiles Solide.cpp, so the
+// rule lives in Solide.h and is tested here.
+static void Test_Solide_IntWidthAndRange() {
+    using Solide::IntWidthOf;
+    using Solide::IntRangeOf;
+
+    // THE defect: Int8Property is SIGNED and one byte wide.
+    EXPECT("Int8Property is 1 byte",  IntWidthOf("Int8Property").bytes == 1);
+    EXPECT("Int8Property is SIGNED",  IntWidthOf("Int8Property").isSigned);
+    // Its unsigned same-width siblings must NOT be dragged along by the fix.
+    EXPECT("ByteProperty is 1 byte",  IntWidthOf("ByteProperty").bytes == 1);
+    EXPECT("ByteProperty is unsigned", !IntWidthOf("ByteProperty").isSigned);
+    EXPECT("UInt8Property is unsigned", !IntWidthOf("UInt8Property").isSigned);
+
+    EXPECT("IntProperty is 4 signed",
+           IntWidthOf("IntProperty").bytes == 4 && IntWidthOf("IntProperty").isSigned);
+    EXPECT("Int64Property is 8 signed",
+           IntWidthOf("Int64Property").bytes == 8 && IntWidthOf("Int64Property").isSigned);
+
+    // Anything else must report "not mine" rather than defaulting to a byte — the
+    // old code's fall-through is what made an unknown type a silent 1-byte write.
+    EXPECT("FloatProperty is not an int",  IntWidthOf("FloatProperty").bytes == 0);
+    EXPECT("UInt32Property is not held",   IntWidthOf("UInt32Property").bytes == 0);
+    EXPECT("empty type is not held",       IntWidthOf("").bytes == 0);
+
+    double lo = 0, hi = 0;
+    IntRangeOf(IntWidthOf("Int8Property"), lo, hi);
+    EXPECT("int8 range is -128..127", lo == -128.0 && hi == 127.0);
+    // -5 must be INSIDE the signed range (the value that never converged) and
+    // 200 must be OUTSIDE it (the mirror case: it stored as -56 and the unsigned
+    // read agreed with the target, so the hold looked converged while the game
+    // saw a different number).
+    EXPECT("-5 holdable in int8", -5.0 >= lo && -5.0 <= hi);
+    EXPECT("200 NOT holdable in int8", !(200.0 >= lo && 200.0 <= hi));
+
+    IntRangeOf(IntWidthOf("ByteProperty"), lo, hi);
+    EXPECT("uint8 range is 0..255", lo == 0.0 && hi == 255.0);
+    EXPECT("-5 NOT holdable in uint8", !(-5.0 >= lo && -5.0 <= hi));
+    EXPECT("200 holdable in uint8", 200.0 >= lo && 200.0 <= hi);
+
+    IntRangeOf(IntWidthOf("IntProperty"), lo, hi);
+    EXPECT("int32 range ends", lo == -2147483648.0 && hi == 2147483647.0);
+
+    // A non-held type must produce an EMPTY range, so a caller that forgets to
+    // check `bytes` rejects rather than writing a wrong width.
+    IntRangeOf(IntWidthOf("FloatProperty"), lo, hi);
+    EXPECT("non-int range is empty", lo == 0.0 && hi == 0.0);
+
+    // The TYPE GATE and the width table are one list, not two that must agree — the
+    // shape of the original defect. A type IsIntType admits but IntWidthOf does not
+    // know would be accepted by Force and then fail every read and write silently.
+    EXPECT("gate admits Int8Property",    Solide::IsIntType("Int8Property"));
+    EXPECT("gate admits ByteProperty",    Solide::IsIntType("ByteProperty"));
+    EXPECT("gate admits UInt8Property",   Solide::IsIntType("UInt8Property"));
+    EXPECT("gate admits IntProperty",     Solide::IsIntType("IntProperty"));
+    EXPECT("gate admits Int64Property",   Solide::IsIntType("Int64Property"));
+    EXPECT("gate rejects FloatProperty",  !Solide::IsIntType("FloatProperty"));
+    EXPECT("gate rejects UInt32Property", !Solide::IsIntType("UInt32Property"));
+    EXPECT("gate rejects StrProperty",    !Solide::IsIntType("StrProperty"));
 }
 
 // ----- Neu: UEnum::Names layout (legacy TArray vs UE5.6+ FNameData) -----------
@@ -4856,6 +5621,218 @@ static void Test_Renge_TryHexToBytes() {
     EXPECT("empty rejected",          !Renge::TryHexToBytes("", out));
 }
 
+// F5 — the response/event envelope must survive its payload.
+//
+// MakeResponse / MakeEvent used to splice the handler payload on with nlohmann's
+// merge_patch (RFC 7386). Two of its behaviours are wrong for an envelope and neither is
+// what any call site meant: a NULL value in the patch DELETES the key rather than setting
+// it, and a NON-OBJECT patch replaces the whole target — which would drop "id"/"ok"
+// outright. Assignment has neither.
+//
+// The negative control is the merge_patch line itself: put it back in ApplyPayload and
+// the null case loses "value" while the non-object case loses "id" AND "ok".
+//
+// MakeResponse itself is not called here — it reads Stark::IsGameThreadResponsive, whose
+// definition lives in Stark.cpp and is not linked into this target. ApplyPayload is the
+// piece that decides, so it is the piece pinned (working-lessons §2.3: put the rule in a
+// header and the header IS testable).
+static void Test_Renge_ApplyPayloadKeepsEnvelope() {
+    std::printf("Test_Renge_ApplyPayloadKeepsEnvelope\n");
+
+    auto envelope = [] {
+        nlohmann::json e;
+        e["id"] = 7;
+        e["ok"] = true;
+        e["game_thread_stalled"] = false;
+        return e;
+    };
+
+    // 1. Ordinary payload: every envelope key survives, every payload key lands.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["total"] = 42;
+        data["name"]  = "Actor";
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("plain payload keeps id",      res.contains("id") && res["id"] == 7);
+        EXPECT("plain payload keeps ok",      res.contains("ok") && res["ok"] == true);
+        EXPECT("plain payload keeps stalled", res.contains("game_thread_stalled"));
+        EXPECT("plain payload adds total",    res.contains("total") && res["total"] == 42);
+        EXPECT_EQ_STR("plain payload adds name", res["name"].get<std::string>(), "Actor");
+    }
+
+    // 2. A NULL value must be SET, not delete the key. merge_patch removed it, so a
+    //    handler answering {"value": null} shipped a response with no "value" at all.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["value"] = nullptr;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("null payload value is PRESENT", res.contains("value"));
+        EXPECT("null payload value is null",    res.contains("value") && res["value"].is_null());
+    }
+
+    // 3. A null that COLLIDES with an envelope key must not delete it. This is the one
+    //    that turns a success into an unparseable response on the UI side.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["ok"] = nullptr;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("colliding null keeps the key", res.contains("ok"));
+        EXPECT("id survives a colliding null", res.contains("id") && res["id"] == 7);
+    }
+
+    // 4. A handler that deliberately overrides an envelope key still wins (the
+    //    game_thread_stalled contract MakeResponse documents).
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("handler override wins", res["game_thread_stalled"] == true);
+    }
+
+    // 5. A non-object payload cannot destroy the envelope. merge_patch REPLACED the
+    //    target with it, i.e. "id" and "ok" simply ceased to exist.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json arr = nlohmann::json::array({1, 2, 3});
+        Renge::ApplyPayload(res, std::move(arr));
+        EXPECT("non-object payload leaves an object", res.is_object());
+        EXPECT("non-object payload keeps id", res.contains("id") && res["id"] == 7);
+        EXPECT("non-object payload keeps ok", res.contains("ok") && res["ok"] == true);
+    }
+
+    // 6. Nested objects are REPLACED, not recursively merged. merge_patch would have
+    //    kept `a` from the envelope's stale sub-object and produced a hybrid neither
+    //    side wrote.
+    {
+        nlohmann::json res = envelope();
+        res["inner"] = nlohmann::json{{"a", 1}};
+        nlohmann::json data;
+        data["inner"] = nlohmann::json{{"b", 2}};
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("nested object replaced, not merged",
+               res["inner"].is_object() && !res["inner"].contains("a")
+               && res["inner"].contains("b"));
+    }
+
+    // 7. The rvalue overload actually MOVES: the source array is left empty rather than
+    //    deep-copied. This is the half F5 was filed for (8192-object snapshot chunks
+    //    copied a second time inside the game process's heap).
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["objects"] = nlohmann::json::array({1, 2, 3, 4});
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("payload landed", res["objects"].size() == 4);
+        // Deliberately NOT `is_array() && empty()`: a moved-from nlohmann value is left
+        // as `null`, not as an empty array of its old type. Asserting "no longer holds
+        // the four elements" detects the copy either way without pinning nlohmann's
+        // moved-from representation — the first draft of this line asserted the
+        // representation and failed against a working move.
+        EXPECT("payload was moved out of, not copied",
+               !data["objects"].is_array() || data["objects"].empty());
+    }
+}
+
+// audit #5 AD24 — the three ENVELOPE BUILDERS themselves had no test, and the reason
+// was real: "structurally UNLINKABLE from the only test target that includes it".
+//
+// My first pass called that premise false, reasoning that everything in Renge.h is
+// `inline` so there is nothing to link. THE LINKER DISAGREED, and it was right:
+// `MakeResponse` calls `Stark::IsGameThreadResponsive`, which is DECLARED in Stark.h but
+// DEFINED in Stark.cpp — and no test target compiles Stark.cpp. `inline` makes the
+// builder itself linkable; it does nothing for what the builder calls. MakeError and
+// MakeEvent were always testable (neither touches Stark); MakeResponse was not.
+//
+// The one dependency is supplied below rather than by adding Stark.cpp to the target,
+// which would drag in MinHook and the Win32 hook machinery for a JSON test. The stub is
+// safe against drift in the way that matters: it has to match the declaration in Stark.h
+// that Renge.h already pulls in, so a signature change is a compile error here, not a
+// silently diverging fixture. It returns a FIXED value, which is why the assertions
+// below pin the presence and type of `game_thread_stalled` and only assert its value in
+// the one case that is about precedence rather than about liveness.
+namespace Stark {
+bool IsGameThreadResponsive(int32_t /*thresholdMs*/) { return true; }
+}   // namespace Stark
+
+static void Test_Renge_EnvelopeBuilders() {
+    std::printf("Test_Renge_EnvelopeBuilders\n");
+
+    // MakeResponse: id + ok=true + the liveness hint, with no payload at all.
+    {
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("MakeResponse sets id", res.contains("id") && res["id"] == 11);
+        EXPECT("MakeResponse sets ok=true", res.contains("ok") && res["ok"] == true);
+        EXPECT("MakeResponse always carries the liveness hint",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"].is_boolean());
+        EXPECT("MakeResponse with no payload has exactly the envelope", res.size() == 3);
+    }
+
+    // A payload splices in WITHOUT displacing any envelope key.
+    {
+        nlohmann::json data;
+        data["total"] = 3;
+        data["items"] = nlohmann::json::array({1, 2, 3});
+        nlohmann::json res = Renge::MakeResponse(12, std::move(data));
+        EXPECT("payload keeps id", res["id"] == 12);
+        EXPECT("payload keeps ok", res["ok"] == true);
+        EXPECT("payload keeps liveness hint", res.contains("game_thread_stalled"));
+        EXPECT("payload lands", res["total"] == 3 && res["items"].size() == 3);
+    }
+
+    // The documented precedence: a handler that sets game_thread_stalled itself WINS,
+    // because ApplyPayload runs after the envelope is stamped. This is the one envelope
+    // key a payload is allowed to overwrite, and the comment on MakeResponse says so.
+    {
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        nlohmann::json res = Renge::MakeResponse(13, std::move(data));
+        EXPECT("handler's own liveness value wins over the envelope's",
+               res["game_thread_stalled"] == true);
+    }
+
+    // A non-object payload is refused rather than allowed to replace the envelope.
+    {
+        nlohmann::json res = Renge::MakeResponse(14, nlohmann::json::array({9}));
+        EXPECT("array payload cannot destroy the response envelope",
+               res.is_object() && res["id"] == 14 && res["ok"] == true);
+    }
+
+    // MakeError: ok=false and an error string, and NO liveness hint — it does not go
+    // through MakeResponse, which is easy to "tidy up" into a shared path by accident.
+    {
+        nlohmann::json err = Renge::MakeError(15, "boom");
+        EXPECT("MakeError sets id", err["id"] == 15);
+        EXPECT("MakeError sets ok=false", err.contains("ok") && err["ok"] == false);
+        EXPECT_EQ_STR("MakeError carries the message", err["error"].get<std::string>(), "boom");
+        EXPECT("MakeError is exactly id+ok+error", err.size() == 3);
+    }
+
+    // MakeEvent: an "event" key, NO id (the UI routes on the absence of one), and the
+    // same payload rule as MakeResponse.
+    {
+        nlohmann::json evt = Renge::MakeEvent("scan_progress");
+        EXPECT_EQ_STR("MakeEvent names the event", evt["event"].get<std::string>(), "scan_progress");
+        EXPECT("MakeEvent carries no id — that is how a push is told from a response",
+               !evt.contains("id"));
+
+        nlohmann::json data;
+        data["pct"] = 40;
+        nlohmann::json evt2 = Renge::MakeEvent("scan_progress", std::move(data));
+        EXPECT("event payload lands", evt2["pct"] == 40);
+        EXPECT_EQ_STR("event key survives its payload",
+                      evt2["event"].get<std::string>(), "scan_progress");
+
+        // The envelope-destroying case for events, same as response #4 above.
+        nlohmann::json evt3 = Renge::MakeEvent("tick", nlohmann::json::array({1}));
+        EXPECT("array payload cannot destroy the event envelope",
+               evt3.is_object() && evt3.contains("event"));
+    }
+}
+
 // B4 — the mailbox poller needs immunity from the PER-COMMAND cancel WITHOUT being
 // classified a background worker. One flag used to answer both questions; this asserts
 // they are now genuinely independent. The second EXPECT in the poller block is the
@@ -4908,11 +5885,25 @@ static void Test_Tot_CancelImmunityVsBackgroundWorker() {
 static void Test_Sig_IsCeReplayableAob() {
     std::printf("Test_Sig_IsCeReplayableAob\n");
 
-    // Only the RIP forms give CE a (pattern, pos, len) triple it can replay with
-    // AOBScanModuleUE + a fixed offset into the match.
+    // CE replays the triple as exactly ONE step: addr = match + len + i32[match + pos],
+    // which yields the RIP TARGET. So the question is not "is `pattern` bytes?" but "is
+    // the answer the RIP target?".
     EXPECT("RipDirect replayable",        IsCeReplayableAob(AobResolve::RipDirect));
-    EXPECT("RipDeref replayable",         IsCeReplayableAob(AobResolve::RipDeref));
-    EXPECT("RipBoth replayable",          IsCeReplayableAob(AobResolve::RipBoth));
+    EXPECT("RipBoth replayable (form)",   IsCeReplayableAob(AobResolve::RipBoth));
+
+    // ⚠ RipDeref is NOT replayable, and this assertion was INVERTED until build 3262
+    // (audit #5 AD10) — the test pinned the defect, which is why nothing caught it.
+    // RipDeref's answer is one further load THROUGH the RIP target, and the triple has
+    // no field in which to say so; a CE script built from it registers the
+    // pointer-to-pointer slot as though it were the pointer.
+    EXPECT("RipDeref NOT replayable",    !IsCeReplayableAob(AobResolve::RipDeref));
+
+    // ⛔ RipBoth passing above is NECESSARY, NOT SUFFICIENT, and no publish site may use
+    // this predicate alone. Which of RipBoth's two arms won is a RUNTIME fact an enum
+    // cannot carry, and the deref arm has RipDeref's exact problem — as does a non-zero
+    // `adjustment`, which the triple also cannot express. Genau::CeReplayMatchesResolved
+    // settles both by replaying the triple and comparing it to the address published.
+    // Every GWorld entry is RipBoth, so that is the live path, not a hypothetical.
 
     // SymbolExport / SymbolCallFollow keep an MSVC MANGLED NAME in `pattern`. Publishing
     // one made the UI's "an AOB is available" test (non-empty string) true, and every
@@ -4933,6 +5924,12 @@ static void Test_Sig_IsCeReplayableAob() {
         for (size_t i = 0; i < n; ++i) {
             const auto& sig = tbl[i];
             if (IsCeReplayableAob(sig.resolve)) continue;
+            // RipDeref is non-replayable but its geometry is REAL and non-zero — it needs
+            // instrOffset to reach the RIP target before the extra load. The zero-geometry
+            // property below belongs to the forms whose `pattern` is not bytes at all, so
+            // asserting it over RipDeref would demand a broken entry. Vacuous today (no
+            // table has a RipDeref entry); stated so that adding one is not a false alarm.
+            if (sig.resolve == AobResolve::RipDeref) continue;
             EXPECT("non-replayable has zero instrOffset", sig.instrOffset == 0);
             EXPECT("non-replayable has zero opcodeLen",   sig.opcodeLen   == 0);
             EXPECT("non-replayable has zero totalLen",    sig.totalLen    == 0);
@@ -5032,6 +6029,33 @@ static void Test_Radar_RefineContainerAnchor() {
     EXPECT("a container anchor with no scan-time count falls back, not drops",
            V(ValueAnchor::ArrayElement, 3, -1, kData, 0x9000, 9, true)
                == RefineAnchorVerdict::KeepAddress);
+    EXPECT("no scan-time BASE falls back too (that is our bookkeeping, not the game's)",
+           V(ValueAnchor::ArrayElement, 3, 8, /*dataAtScan=*/0, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- an EMPTIED container is a FACT, not missing bookkeeping -------------
+    // TArray::Empty()/Reset() releases the allocation and sets Data to nullptr.
+    // Both callers `continue` on a failed header read BEFORE calling this, so
+    // nowData == 0 here always means "read fine, and the buffer is gone".
+    // Until 2026-08-23 `!nowData` was OR-ed into the bookkeeping guard above and
+    // returned KeepAddress, jumping over both Drop rules below — so the candidate
+    // stayed pinned to freed memory, and freed memory that still holds the scanned
+    // value reads back as a live hit.
+    EXPECT("emptied container (Data=nullptr, Count=0) DROPS",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/0, true)
+               == RefineAnchorVerdict::Drop);
+    EXPECT("emptied SPARSE container drops too",
+           V(ValueAnchor::SparseElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/0, false)
+               == RefineAnchorVerdict::Drop);
+    // Even element 0 -- the one whose address equals the buffer base, and so the one
+    // most likely to still read a plausible value out of the freed block.
+    EXPECT("element 0 of an emptied container drops (its address IS the old base)",
+           V(ValueAnchor::ArrayElement, 0, 1, kData, /*nowData=*/0, /*nowNum=*/0, true)
+               == RefineAnchorVerdict::Drop);
+    // A garbage header (null data but a non-zero count) must not be trusted either.
+    EXPECT("null data with a non-zero count is not trusted",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, /*nowData=*/0, /*nowNum=*/9, true)
+               == RefineAnchorVerdict::Drop);
 
     // --- the address recomputation ------------------------------------------
     EXPECT("element address = data + idx*stride + intra",
@@ -5582,6 +6606,142 @@ static void Test_FFieldClassName_Probe() {
            !DynOff::LooksLikeFieldClassName(std::string(60, 'x') + "Property"));
 }
 
+// Voll — pipe-accept capacity logging policy ([PIPEBUSY-2026-08-18]). The accept loop
+// runs on one thread; the policy is pure so it can be pinned here (no target compiles
+// Fern.cpp). The load-bearing invariant is the state machine: ERROR_PIPE_BUSY logs ONCE
+// on entry and ONCE on recovery, everything else ALWAYS logs ERROR, and the latch never
+// hides a different-errno failure.
+static void Test_Voll_CapacityLoggingPolicy() {
+    // A different, unexpected errno ALWAYS logs ERROR — regardless of the latch state.
+    {
+        bool at = false;
+        EXPECT("access-denied -> Error", Voll::OnCreateFailure(ERROR_ACCESS_DENIED, at) == Voll::AcceptLog::Error);
+        EXPECT("Error leaves latch clear", at == false);
+    }
+
+    // ERROR_PIPE_BUSY: announce once, then stay silent while it holds.
+    {
+        bool at = false;
+        EXPECT("first busy -> EnterCapacity",  Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::EnterCapacity);
+        EXPECT("latch now set",                at == true);
+        EXPECT("second busy -> None",          Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::None);
+        EXPECT("third busy -> None",           Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::None);
+        EXPECT("still at capacity",            at == true);
+
+        // Recovery: exactly one line, then quiet.
+        EXPECT("success -> RecoverCapacity",   Voll::OnCreateSuccess(at) == Voll::AcceptLog::RecoverCapacity);
+        EXPECT("latch cleared on recovery",    at == false);
+        EXPECT("next success -> None",         Voll::OnCreateSuccess(at) == Voll::AcceptLog::None);
+    }
+
+    // Ordinary success while NOT at capacity is silent (no spurious "slot freed").
+    {
+        bool at = false;
+        EXPECT("plain success -> None", Voll::OnCreateSuccess(at) == Voll::AcceptLog::None);
+        EXPECT("latch stays clear",     at == false);
+    }
+
+    // ADVERSARIAL: a different-errno failure DURING the at-capacity state still logs ERROR
+    // and does NOT clear the latch — so the eventual recovery line still fires exactly once
+    // and the genuine error is never suppressed.
+    {
+        bool at = false;
+        EXPECT("busy -> EnterCapacity", Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::EnterCapacity);
+        EXPECT("other errno mid-capacity -> Error",
+               Voll::OnCreateFailure(ERROR_INVALID_PARAMETER, at) == Voll::AcceptLog::Error);
+        EXPECT("latch survives the unrelated error", at == true);
+        EXPECT("recovery still fires once", Voll::OnCreateSuccess(at) == Voll::AcceptLog::RecoverCapacity);
+    }
+}
+
+// audit #5 U9 — a byte-width enum member must read UNSIGNED so the UHT MAX=255 sentinel
+// (and any enumerator >= 128) matches the UEnum table instead of sign-extending to a
+// negative int. Wider widths keep their natural signedness (matching the array-enum
+// sibling). Negative control: reverting ReadEnumRawValue's `case 1` to int8_t fails the
+// 0xFF / 0x80 rows.
+static void Test_Ubel_ReadEnumRawValue() {
+    uint8_t b_ff = 0xFF, b_80 = 0x80, b_7f = 0x7F;
+    EXPECT_EQ_U64("byte 0xFF unsigned -> 255", Ubel::ReadEnumRawValue(&b_ff, 1), 255);
+    EXPECT_EQ_U64("byte 0x80 unsigned -> 128", Ubel::ReadEnumRawValue(&b_80, 1), 128);
+    EXPECT_EQ_U64("byte 0x7F -> 127",          Ubel::ReadEnumRawValue(&b_7f, 1), 127);
+
+    // Wider widths: natural signedness — a negative int16 stays negative.
+    uint8_t neg16[2] = { 0xFF, 0xFF };            // int16 -1
+    EXPECT("int16 0xFFFF -> -1", Ubel::ReadEnumRawValue(neg16, 2) == -1);
+    uint8_t v16[2] = { 0x00, 0x01 };              // int16 256
+    EXPECT_EQ_U64("int16 0x0100 -> 256", Ubel::ReadEnumRawValue(v16, 2), 256);
+    uint8_t v32[4] = { 0x00, 0x00, 0x00, 0x01 };  // int32 0x01000000
+    EXPECT_EQ_U64("int32 -> 0x01000000", Ubel::ReadEnumRawValue(v32, 4), 0x01000000);
+    uint8_t v64[8] = { 0,0,0,0,0,0,0,1 };         // int64 0x0100000000000000
+    EXPECT_EQ_U64("int64 -> high byte", Ubel::ReadEnumRawValue(v64, 8), 0x0100000000000000ULL);
+
+    // Guards: null and unusual size are 0, never a crash.
+    EXPECT_EQ_U64("null -> 0",   Ubel::ReadEnumRawValue(nullptr, 1), 0);
+    EXPECT_EQ_U64("size 3 -> 0", Ubel::ReadEnumRawValue(&b_ff, 3), 0);
+}
+
+// audit #5 U10 — the FString/FUtf8String count cap bounds a GARBAGE Count, not display
+// length: a realistic long string (a 400-char description that used to render as
+// "(empty)") is accepted, while empty/negative and garbage-huge counts are rejected.
+// Negative control: dropping kMaxFStringChars back to 256 fails the 400 / cap rows.
+static void Test_Ubel_IsPlausibleStringCount() {
+    EXPECT("1 accepted",             Ubel::IsPlausibleStringCount(1));
+    EXPECT("256 accepted",           Ubel::IsPlausibleStringCount(256));
+    EXPECT("400 accepted (was empty)", Ubel::IsPlausibleStringCount(400));
+    EXPECT("cap accepted",           Ubel::IsPlausibleStringCount(Ubel::kMaxFStringChars));
+    EXPECT("0 rejected",             !Ubel::IsPlausibleStringCount(0));
+    EXPECT("negative rejected",      !Ubel::IsPlausibleStringCount(-1));
+    EXPECT("garbage count rejected", !Ubel::IsPlausibleStringCount(0x7FFFFFFF));
+    EXPECT("just over cap rejected", !Ubel::IsPlausibleStringCount(Ubel::kMaxFStringChars + 1));
+}
+
+// audit #5 G4 — the FNamePool block-offset-bits probe at testIdx=1 CANNOT distinguish 14
+// from 16 (both address chunk 0, offset 1*stride), which is why the old detector's
+// 14-bit arm was structurally unreachable while it logged the outcome as a measurement.
+// A block-boundary index DOES differ, but is unreliable for other reasons (see
+// DetectBlockOffsetBits) — so the honest fix keeps the stock width and this pins the
+// impossibility. Negative control: if ComputeBlockProbe stopped masking, the idx-1
+// indistinguishable assertion flips.
+static void Test_Serie_BlockBitsProbe() {
+    const int stride = 2;
+    EXPECT("idx1 16 vs 14 indistinguishable",
+           Serie::BlockBitsAreIndistinguishable(1, 16, 14, stride));
+    Serie::BlockProbe p16 = Serie::ComputeBlockProbe(1, 16, stride);
+    Serie::BlockProbe p14 = Serie::ComputeBlockProbe(1, 14, stride);
+    EXPECT("idx1 chunk 0 both",          p16.chunkIndex == 0 && p14.chunkIndex == 0);
+    EXPECT("idx1 offset 1*stride both",  p16.chunkOffset == stride && p14.chunkOffset == stride);
+
+    // At the 14-bit block boundary the widths DO diverge: 16 keeps it in chunk 0 at a
+    // large offset, 14 rolls it into chunk 1 offset 0.
+    const int32_t boundary = 1 << 14;  // 0x4000
+    EXPECT("idx 0x4000 16 vs 14 distinguishes",
+           !Serie::BlockBitsAreIndistinguishable(boundary, 16, 14, stride));
+    Serie::BlockProbe b16 = Serie::ComputeBlockProbe(boundary, 16, stride);
+    Serie::BlockProbe b14 = Serie::ComputeBlockProbe(boundary, 14, stride);
+    EXPECT("idx 0x4000 @16 chunk 0",     b16.chunkIndex == 0);
+    EXPECT_EQ_U64("idx 0x4000 @16 offset", b16.chunkOffset, (int64_t)boundary * stride);
+    EXPECT("idx 0x4000 @14 chunk 1",     b14.chunkIndex == 1);
+    EXPECT_EQ_U64("idx 0x4000 @14 offset 0", b14.chunkOffset, 0);
+}
+
+// audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
+// (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
+// chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
+// only bounds chunkIndex (the old code) accepts -1 (chunkIndex 0).
+static void Test_Serie_UE4NameIndexInBounds() {
+    const int32_t chunkSize = 0x4000;   // UE4_CHUNK_SIZE
+    const int32_t maxChunks = 256;      // UE4_NAME_MAX_CHUNKS
+    EXPECT("index 0 (None) ok", Serie::UE4NameIndexInBounds(0, chunkSize, maxChunks));
+    EXPECT("index 1 ok",        Serie::UE4NameIndexInBounds(1, chunkSize, maxChunks));
+    EXPECT("index 16383 ok",    Serie::UE4NameIndexInBounds(16383, chunkSize, maxChunks));
+    EXPECT("last chunk ok",     Serie::UE4NameIndexInBounds(maxChunks * chunkSize, chunkSize, maxChunks));
+    // The defect: a negative index MUST be rejected (the old chunkIndex-only guard did not).
+    EXPECT("index -1 REJECTED",     !Serie::UE4NameIndexInBounds(-1, chunkSize, maxChunks));
+    EXPECT("large negative rejected", !Serie::UE4NameIndexInBounds(-100000, chunkSize, maxChunks));
+    EXPECT("past max chunks rejected",
+           !Serie::UE4NameIndexInBounds((maxChunks + 1) * chunkSize, chunkSize, maxChunks));
+}
+
 // Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
 // CI. Off locally so the ordinary run stays two lines.
 static bool g_trace = false;
@@ -5621,9 +6781,16 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_PeOffsetSentinels);
+    RUN(Test_Stark_ShouldRetryPeDetection);
+    RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
+    RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
+    RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_CommandRequiresInit);
+    RUN(Test_Flamme_AtomicPublishGate);
 
     RUN(Test_ValueScan_DataTypeSizes);
     RUN(Test_ValueScan_ParseDataTypeRoundTrip);
@@ -5681,6 +6848,9 @@ int main() {
     RUN(Test_NumericFamily_Filter);
     RUN(Test_GroupScan_ExcludeAndHistogram);
     RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_FormatCandidateOrigin);
+    RUN(Test_Radar_GroupLeafBudget);
+    RUN(Test_Radar_GroupSessionCarriesPerSlotCap);
     RUN(Test_Radar_GroupSortUsesTheDisplayedLeaf);
     RUN(Test_ValueScan_OrderedViewScale);
     RUN(Test_Macht_IsRipRelativeModRM);
@@ -5718,6 +6888,7 @@ int main() {
     RUN(Test_Solitar_ApplyBoolBit);
     RUN(Test_Solitar_MatchProtectionBool);
     RUN(Test_Solide_MatchStealthField);
+    RUN(Test_Solide_IntWidthAndRange);
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
@@ -5777,6 +6948,8 @@ int main() {
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
+    RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);
@@ -5789,6 +6962,30 @@ int main() {
 
     // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
     RUN(Test_Aura_StructPathGuard);
+
+    // Voll — pipe-accept capacity logging: ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
+    RUN(Test_Voll_CapacityLoggingPolicy);
+
+    // audit #5 L1 (D1/D2 DLL engine decode + safety)
+    RUN(Test_Ubel_ReadEnumRawValue);          // U9  — byte enums read unsigned
+    RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
+    RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
+    RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
+
+    // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
+    RUN(Test_Ubel_ResolveFunctionInChain);
+    RUN(Test_Ubel_ResolveFunctionInChain_Overrides);
+    RUN(Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive);
+    RUN(Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates);
+    RUN(Test_Ubel_ResolveFunctionInChain_RejectsBadInput);
+
+    // [CDOSCOPE-2026-08-20] preview scope must match what the row's actions do
+    RUN(Test_Aura_ChoosePreviewSource);
+    RUN(Test_Aura_PreviewSourceSuffix);
+
+    // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
+    RUN(Test_Voll_DecideStart);
+    RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

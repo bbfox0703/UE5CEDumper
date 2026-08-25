@@ -126,6 +126,29 @@ def main() -> int:
         print("FAIL: no finding rows matched — the row format changed and this gate is blind.")
         return 1
 
+    # ── ID uniqueness: no finding ID may appear on more than one table row ──
+    # Added 2026-08-19 after AE11 and AE12 each appeared TWICE — a T1c-scan pair and
+    # a separate hand-added-while-fixing pair reused the same numbers. A duplicate ID
+    # makes every per-ID decision below ambiguous: marking one row `✅` closes BOTH in
+    # the counts this gate derives, so the register can report a finding fixed while an
+    # unrelated defect under the same ID is still open. It is a hard structural error,
+    # checked before anything indexes the rows by ID. Line numbers are reported so both
+    # offending rows are found at once. Uses the SAME ROW_RE, so it can only see what
+    # the rest of the gate sees.
+    id_lines: dict[str, list[int]] = {}
+    for m in ROW_RE.finditer(audit):
+        id_lines.setdefault(m.group(1), []).append(audit.count("\n", 0, m.start()) + 1)
+    dupes = {fid: lns for fid, lns in id_lines.items() if len(lns) > 1}
+    if dupes:
+        print(f"FAIL: {len(dupes)} finding ID(s) appear on more than one table row "
+              "(IDs must be unique — a duplicate makes ✅ bookkeeping ambiguous):")
+        for fid in sorted(dupes, key=lambda s: (len(s), s)):
+            print(f"  {fid}: lines {', '.join(str(n) for n in dupes[fid])}")
+        print()
+        print("Give each surplus row a fresh unused ID (grep e.g. `\\*\\*AE\\d+\\*\\*` for the "
+              "current max), and update any cross-reference that named the renamed row.")
+        return 1
+
     marked = {fid for fid, tick, _ in rows if tick}
     known = {fid for fid, _, _ in rows}
 

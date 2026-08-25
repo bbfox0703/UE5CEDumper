@@ -34,11 +34,35 @@ bool Init();
 // Creates <logDir>/<processName>/ with 5 category files; the previous run's
 // -0.log of each is archived to <base>-YYYYMMDD-HHMMSS.log.
 // Flushes any early-buffered lines to the correct files.
-// Then runs the retention sweep: archived logs and whole per-process folders
-// untouched for Grimoire::LOG_RETENTION_DAYS are deleted. Retention is by AGE,
-// not by file or folder count — see the retention block in Sein.cpp for why a
-// count could not express it.
+// Does NOT run the retention sweep — call RunRetentionSweep() for that.
 void InitProcessMirror(const std::wstring& processName);
+
+// Delete archived logs, and whole per-process folders, untouched for
+// Grimoire::LOG_RETENTION_DAYS. Retention is by AGE, not by file or folder count
+// — see the retention block in Sein.cpp for why a count could not express it.
+//
+// SPLIT OUT of InitProcessMirror for AB9: it ran inline under the LOADER LOCK, and
+// it is unbounded work — two directory sweeps plus a recursive remove_all over a
+// tree that grows with every game ever run. Measured over 407 real sessions in the
+// 3,023-file / 32-folder log corpus on this machine, the DllMain window that
+// CONTAINS it (`UE5Dumper DLL loaded` -> `auto-start thread created OK`) has a
+// median of 138 ms and a max of 475 ms, against a floor of 15 ms on a small tree.
+// Every DLL_PROCESS_ATTACH in the process is serialized behind that.
+//
+// CONTRACT:
+//   * Idempotent, and latched: only the FIRST call does work.
+//   * Safe from any thread, but only AFTER InitProcessMirror has created the
+//     per-process folder; a call before that logs and returns without touching
+//     anything.
+//   * Takes the log mutex only to COPY the two paths, then releases it and sweeps
+//     unlocked — holding it across the sweep would merely move the stall from the
+//     loader lock onto every logging thread.
+//
+// ⚠ CALLER OWNS THE THREADING DECISION, and it is not free: AB1 forbids creating a
+// thread in a CE plugin host, where the module is deliberately NOT pinned
+// (Heiter.cpp:399 — CE FreeLibrary's its plugins, and a thread in an unmapped image
+// takes CE down). So DllMain calls this INLINE there and on a thread elsewhere.
+void RunRetentionSweep();
 
 // Shutdown: flush and close all category files
 void Shutdown();

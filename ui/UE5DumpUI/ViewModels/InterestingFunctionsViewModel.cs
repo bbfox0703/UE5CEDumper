@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -60,10 +61,47 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// property is how the two are reconciled once the Load finishes.</summary>
     private bool _scoredWithGameplayActions;
 
+    /// <summary>
+    /// Which re-score is the newest. Bumped by every <see cref="RescoreAsync"/>, checked again
+    /// after its scoring completes; a run that is no longer newest throws its rows away.
+    ///
+    /// <para><b>Why this exists.</b> Two re-scores can be in flight at once — the setter starts one
+    /// per toggle, and <see cref="LoadAsync"/> starts another to reconcile a toggle that arrived
+    /// while it was busy. Each captures <c>GameplayActions</c>, then suspends on
+    /// <c>Task.Run(ScoreEntries)</c>. Without this, whichever SCORING finishes last wins the write
+    /// to <c>_allRows</c> — which is completion order, not request order. The UI thread serialises
+    /// the continuations but does not reorder them, so this is not a test-only artefact.</para>
+    ///
+    /// <para>⚠ The failure it prevents is the WORST shape available here, and self-concealing:
+    /// toggle on, let the load reconcile, toggle off — and if the first scoring lands last, the
+    /// grid keeps the pack's rows while the CheckBox reads off AND
+    /// <c>_scoredWithGameplayActions</c> reads off, so the mismatch the field exists to detect is
+    /// invisible and nothing ever reconciles it. That is Z1's "CheckBox and rows disagree,
+    /// permanently, recover by untick+retick" arriving by a different route.</para>
+    /// </summary>
+    private int _rescoreGeneration;
+
     /// <summary>The re-score <see cref="LoadAsync"/> kicked off to reconcile a
     /// toggle that arrived while it was busy, or null when the modes already
     /// agreed. Exists purely as a test seam — production code never reads it.</summary>
     internal Task? PendingRescore { get; private set; }
+
+    /// <summary>The re-score the <see cref="GameplayActions"/> setter kicked off.
+    /// Exists purely as a test seam — production code never reads it.
+    ///
+    /// Deliberately SEPARATE from <see cref="PendingRescore"/>, which answers a
+    /// different question ("did LoadAsync decide to reconcile?") and is asserted
+    /// *null* by GameplayActions_ToggledTwiceWhileBusy_LeavesRowsAlone. One field
+    /// with two writers would make that null ambiguous and break that test in the
+    /// very interleaving it exists to pin.
+    ///
+    /// Why a seam at all: the setter is fire-and-forget, so a test that set the
+    /// property and then called RescoreAsync() itself started a SECOND re-score
+    /// racing the first. Both end in ApplyFilter(), which Clear()s and refills
+    /// Results, so the assertion could enumerate a half-rebuilt (or momentarily
+    /// EMPTY) collection. Awaiting this instead is what makes the toggle path
+    /// deterministic.</summary>
+    internal Task? PendingToggleRescore { get; private set; }
 
     [ObservableProperty] private bool   _gameOnly = true;
     [ObservableProperty] private string _filterText = "";
@@ -185,6 +223,22 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         };
     }
 
+    /// <summary>Drop scored functions so a reconnect never shows rows (and live
+    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        _allRows = new List<ScoredFunctionRow>();
+        _entries = Array.Empty<AllFunctionEntry>();
+        _scoredWithGameplayActions = false;
+        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan (Z15)
+        SelectedResult = null;
+        Results.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        StatusText = "Click Load to scan all UFunctions";
+    }
+
     /// <summary>
     /// Reverse edge: "Props" row action — list the properties this function
     /// reads/writes (static bytecode scan). Opens a self-contained dialog
@@ -236,11 +290,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        _xrefBatchCts?.Cancel();
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
         _xrefBatchCts = new CancellationTokenSource();
+        oldCts?.Cancel();
+        oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFields = 0, cached = 0;
+        int done = 0, withFields = 0, cached = 0, budgetTruncated = 0;
         try
         {
             foreach (var row in targets)
@@ -255,14 +311,20 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                 {
                     var res = await _dump.WalkFunctionPropsAsync(row.FuncAddr, ct);
                     var fields = res.Props.Where(p => p.IsClassField).ToList();
+                    // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
+                    // a disasm that stopped at its instruction budget yields a SHORT
+                    // list, and a bare "0" then reads as "this function touches no class
+                    // fields" — the conclusion the user acts on. Mark it.
+                    var partial = res.BudgetHit ? PartialResultNotice.CellMarker : "";
                     if (fields.Count > 0)
                     {
                         withFields++;
                         var preview = string.Join(", ", fields.Take(2).Select(p => p.Name));
-                        row.XrefInfo = fields.Count > 2 ? $"{fields.Count} · {preview}, …"
-                                                        : $"{fields.Count} · {preview}";
+                        row.XrefInfo = (fields.Count > 2 ? $"{fields.Count} · {preview}, …"
+                                                         : $"{fields.Count} · {preview}") + partial;
                     }
-                    else row.XrefInfo = "0";
+                    else row.XrefInfo = "0" + partial;
+                    if (res.BudgetHit) budgetTruncated++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -275,11 +337,27 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                     StatusText = $"Props: {done}/{targets.Count} scanned ({withFields} use class fields)…";
             }
             StatusText = $"Props done: {withFields}/{targets.Count} use class fields"
-                       + (cached > 0 ? $" ({cached} cached)." : ".");
+                       + (cached > 0 ? $" ({cached} cached)." : ".")
+                       + PartialResultNotice.BatchPartialClause(
+                             budgetTruncated, targets.Count,
+                             cause: "hit the disassembler's instruction budget");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             StatusText = $"Props batch cancelled at {done}/{targets.Count}.";
+        }
+        catch (Exception ex)
+        {
+            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // a caller cancel carries OUR ct (caught above), a deliberate teardown
+            // carries the client's own token, and an unexpected pipe death — the game
+            // crashing, the DLL unloading — arrives as an IOException. A bare
+            // `catch (OperationCanceledException)` reported all of them as
+            // "Props batch cancelled at N/M", so a dead game read as "you pressed
+            // Cancel" and nothing was logged at all. (audit #5 Z5; audit #3's L14
+            // applied at the two sites it missed.)
+            _log.Error("Batch props failed", ex);
+            StatusText = $"Props batch failed at {done}/{targets.Count}.";
         }
         finally { IsXrefBatchRunning = false; }
     }
@@ -313,7 +391,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     // Gameplay-Action opt-in changes per-row scores + categories, so a full
     // re-score (not just a re-filter) is needed. Fire-and-forget: the scoring
     // runs on a worker thread to keep the toggle responsive on large games.
-    partial void OnGameplayActionsChanged(bool value)     => _ = RescoreAsync();
+    // The task is kept (rather than discarded into `_`) only so the VM tests can
+    // await THIS re-score instead of starting a second one that races it.
+    partial void OnGameplayActionsChanged(bool value)     => PendingToggleRescore = RescoreAsync();
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(AobMakerNote));
 
@@ -369,19 +449,24 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             _scoredWithGameplayActions = includeActions;
             _allRows = await Task.Run(() => ScoreEntries(_entries, includeActions));
 
+            // Keep the scan facts so RescoreAsync can rewrite the SAME status line
+            // rather than leaving the previous scoring's numbers on screen. (Z15)
+            _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
+                                          result.ScannedObjects, result.Truncated,
+                                          result.Aborted, result.Limit);
+
             // Build the class histogram over the FULL scored set, then filter.
-            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName));
+            // countsPartial: a capped/aborted walk makes the picker's per-class counts
+            // a lower bound. Until Z8 there was no flag to pass here at all — the DLL
+            // emitted no truncation marker for list_all_functions. (audit #5 Z4 + Z8)
+            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName),
+                                countsPartial: _lastScan.IsPartial);
             ApplyFilter();
 
-            int interesting = 0;
-            foreach (var r in _allRows)
-                if (r.FinalScore >= KeywordScoringTable.InterestingThreshold) interesting++;
-
-            StatusText = $"{result.Total} functions across {result.ScannedClasses} classes  " +
-                         $"({interesting} above threshold {KeywordScoringTable.InterestingThreshold}, " +
-                         $"scanned {result.ScannedObjects:N0} objects)";
+            StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
             _log.Info($"ListAllFunctions: total={result.Total} classes={result.ScannedClasses} " +
-                      $"interesting={interesting} (gameOnly={GameOnly})");
+                      $"interesting={CountAboveThreshold(_allRows)} (gameOnly={GameOnly}, " +
+                      $"truncated={result.Truncated}, aborted={result.Aborted})");
 
             // Refresh AOBMaker state at end of load so the Notes column
             // reflects current connectivity. Fire-and-forget: this MUST NOT
@@ -475,16 +560,85 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// needed — but the entry set is unchanged, so the class-noise histogram
     /// is left intact (no re-fetch, no Rebuild). No-op before the first Load
     /// or while one is in flight (Load reads the current toggle itself).
-    /// Internal so the VM tests can await a deterministic re-score.
+    /// PRIVATE on purpose: every caller is inside this class, and a test that
+    /// could reach it would start a second re-score racing the one the setter
+    /// already began. Tests await <see cref="PendingToggleRescore"/> /
+    /// <see cref="PendingRescore"/> — the task the VM itself decided to run.
     /// </summary>
-    internal async Task RescoreAsync()
+    private async Task RescoreAsync()
     {
         if (IsLoading || _entries.Count == 0) return;
         var entries = _entries;
         bool includeActions = GameplayActions;
+        int generation = Interlocked.Increment(ref _rescoreGeneration);
+
+        var rows = await Task.Run(() => ScoreEntries(entries, includeActions));
+
+        // A newer toggle started while this one was scoring, so these rows are already stale.
+        // Drop them: publishing now would overwrite the newer result with the older mode and
+        // leave the grid disagreeing with the CheckBox for good. See _rescoreGeneration.
+        if (generation != Volatile.Read(ref _rescoreGeneration)) return;
+
+        // Published together on purpose — `_scoredWithGameplayActions` means "what `_allRows` is
+        // scored with", so it must not be moved ahead of the rows it describes. It used to be set
+        // before the await, which is what let a superseded run leave the field claiming a mode the
+        // rows had never been scored in.
         _scoredWithGameplayActions = includeActions;
-        _allRows = await Task.Run(() => ScoreEntries(entries, includeActions));
+        _allRows = rows;
         ApplyFilter();
+        // Re-scoring MOVES the threshold count — that is the entire point of the
+        // Gameplay-Actions pack — so the status line must follow it. It used to be
+        // written only by LoadAsync, so a toggle re-scored every row and left the
+        // panel reporting the PREVIOUS mode's "above threshold: N" underneath the new
+        // grid. Distinct from Z1 (the re-score not running at all); this is the
+        // re-score running and the report not following. (audit #5 Z15)
+        StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
+    }
+
+    // ── Status line (shared by LoadAsync and RescoreAsync) ───────────────────
+
+    /// <summary>Scan facts from the last <see cref="LoadAsync"/>, kept so a re-score
+    /// can rebuild the identical sentence with only the score-derived number changed.
+    /// Default (all zeros) before the first load, where <see cref="BuildStatusLine"/>
+    /// is never called.</summary>
+    private LoadScanFacts _lastScan;
+
+    /// <summary>The <c>list_all_functions</c> facts the status line quotes. A record
+    /// struct, so a re-score cannot accidentally quote HALF of a newer scan.</summary>
+    internal readonly record struct LoadScanFacts(
+        int Total, int ScannedClasses, int ScannedObjects,
+        bool Truncated, bool Aborted, int Limit)
+    {
+        /// <summary>The DLL walk stopped early — the row count is a page, not the pool.</summary>
+        public bool IsPartial => Truncated || Aborted;
+    }
+
+    internal static int CountAboveThreshold(IReadOnlyList<ScoredFunctionRow> rows)
+    {
+        int n = 0;
+        foreach (var r in rows)
+            if (r.FinalScore >= KeywordScoringTable.InterestingThreshold) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// The panel's one status sentence. Pure + internal so both writers share it
+    /// verbatim (Z15) and so the truncation disclosure (Z8) is unit-testable without a
+    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows and emitted no
+    /// marker at all before Z8, so "N functions across M classes" read as a complete
+    /// census of the game.
+    /// </summary>
+    internal static string BuildStatusLine(LoadScanFacts f, int interesting)
+    {
+        var capSuffix = f.Aborted
+            ? PartialResultNotice.Cancelled()
+            : f.Truncated
+                ? PartialResultNotice.RowCap(f.Limit, "functions",
+                      "tick \"Game classes only\" to skip engine classes, or scan a narrower game")
+                : "";
+        return $"{f.Total:N0} functions across {f.ScannedClasses:N0} classes  " +
+               $"({interesting:N0} above threshold {KeywordScoringTable.InterestingThreshold}, " +
+               $"scanned {f.ScannedObjects:N0} objects){capSuffix}";
     }
 
     /// <summary>
@@ -532,6 +686,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
         FilterText      = "";
         CategoryFilter  = null;
         ShowAll         = false;

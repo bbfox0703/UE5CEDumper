@@ -79,6 +79,67 @@ struct StealthCandidate {
     int32_t     score = 0;    // MatchStealthField keyword score (higher = better)
 };
 
+// ---- integer property width + SIGNEDNESS (audit #5 AF8) --------------------
+//
+// The numeric hold reads a field, compares it against the target and rewrites on
+// drift. That loop only terminates if the READ and the WRITE agree about the
+// field's type — and for Int8Property they did not: both paths used `uint8_t`.
+//
+// The write was fine (`static_cast<uint8_t>(-5)` is 0xFB, which IS -5 in an int8),
+// but the read handed back 251, so `read != target` was true forever: the worker
+// rewrote the same byte every tick and the UI reported permanent drift against the
+// game. The mirror case is just as wrong in the other direction — forcing 200 into
+// an Int8Property stores 0xC8, the game sees -56, and the unsigned read agrees with
+// the target so the hold looks like it converged.
+//
+// Split out header-inline BECAUSE NO TEST TARGET COMPILES Solide.cpp. Keeping the
+// rule as a pure function is the repo's established way of pinning DLL logic
+// (Solitar::ApplyBoolBit, MatchStealthField above); dll_helpers_test includes this
+// header, so the table below is covered.
+struct IntWidth {
+    int32_t bytes = 0;      // 1 / 4 / 8 — 0 when the type is not a held integer
+    bool    isSigned = false;
+};
+
+// Width + signedness for every integer property type the numeric hold supports.
+// `bytes == 0` means "not one of ours"; the caller must not read or write it.
+//
+// THIS TABLE IS THE ONLY LIST. `IsIntType` below is derived from it rather than
+// spelling the same five names a second time — two lists that must agree is how the
+// read and the write came to disagree in the first place, and a type admitted by the
+// gate but unknown to the table would be accepted by Force and then fail every
+// read and write with no explanation.
+inline IntWidth IntWidthOf(const std::string& typeName) {
+    if (typeName == "IntProperty")    return { 4, true  };
+    if (typeName == "Int64Property")  return { 8, true  };
+    if (typeName == "Int8Property")   return { 1, true  };   // was read as UNSIGNED
+    if (typeName == "ByteProperty")   return { 1, false };
+    if (typeName == "UInt8Property")  return { 1, false };
+    return { 0, false };
+}
+
+// The integer half of the numeric-hold type gate. Derived, never re-listed.
+inline bool IsIntType(const std::string& typeName) {
+    return IntWidthOf(typeName).bytes != 0;
+}
+
+// The inclusive value range a held integer field can represent. A target outside
+// it cannot be held: the write truncates and the read then disagrees forever, which
+// is the same non-convergence AF8 produced by a different route. Callers clamp (and
+// say so) rather than spin.
+inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
+    switch (w.bytes) {
+        case 1: lo = w.isSigned ? -128.0 : 0.0;  hi = w.isSigned ? 127.0 : 255.0; break;
+        case 4: lo = -2147483648.0;              hi = 2147483647.0;               break;
+        // 2^63 is not representable as a double bound that round-trips; the widest
+        // exactly-representable integer either side is used instead. Solide's wire is
+        // a double end to end (AddForce takes one), so nothing past 2^53 was ever
+        // holdable exactly — see the AF6 fix for the same limit stated UI-side.
+        case 8: lo = -9007199254740992.0;        hi =  9007199254740992.0;        break;
+        default: lo = 0.0; hi = 0.0; break;
+    }
+}
+
 // Keyword scorer for a stealth/noise/visibility/detection meter field name.
 // Given an ALREADY-LOWERCASED reflected numeric property name, return a score
 // (> 0 = a candidate; higher = stronger). Name-only (the FloatProperty type

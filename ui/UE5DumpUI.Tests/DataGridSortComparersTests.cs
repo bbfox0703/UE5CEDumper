@@ -27,6 +27,15 @@ public class DataGridSortComparersTests
         Assert.True(c.Compare(R(n: 1), R(n: 2)) < 0);
         Assert.True(c.Compare(R(n: 5), R(n: 2)) > 0);
         Assert.Equal(0, c.Compare(R(n: 3), R(n: 3)));
+        // The DIGIT BOUNDARY, which is the only place a numeric column and a string
+        // column disagree: "10" sorts BEFORE "9" as text, after it as a number. This is
+        // the offline substitute for AF16's open residual, which asked for a live field
+        // with >=10 references to tell the two apart. There is no string path to find --
+        // PropertyXrefDialog.cs:40 wires this very comparer over PropertyXref.Occurrences,
+        // an int -- so the residual was unreachable by construction and is closed here
+        // instead of by a game launch. [AF16-BYCONSTRUCTION-2026-08-24]
+        Assert.True(c.Compare(R(n: 9), R(n: 10)) < 0);
+        Assert.True(c.Compare(R(n: 10), R(n: 9)) > 0);
     }
 
     [Fact]

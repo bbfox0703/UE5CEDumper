@@ -7,28 +7,40 @@
              Loaded="OnPanelLoaded">
 
   <DockPanel Margin="8">
-    <!-- Row 1: file controls + meta header -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
-      <Button Content="{StaticResource str.Dump.Load}"
-              Command="{Binding LoadFileCommand}"
-              ToolTip.Tip="{StaticResource str.Tip.Dump.Load}"
-              Classes="accent" Padding="12,4"/>
-      <Button Content="{StaticResource str.Dump.LoadLast}"
-              Command="{Binding LoadLastExportCommand}"
-              ToolTip.Tip="{StaticResource str.Tip.Dump.LoadLast}"
-              Padding="12,4"/>
-      <Button Content="{StaticResource str.Dump.Recheck}"
-              Command="{Binding RecheckLiveCommand}"
-              ToolTip.Tip="{StaticResource str.Tip.Dump.Recheck}"
-              Padding="12,4"/>
-      <Button Content="{StaticResource str.Dump.Cancel}"
-              Command="{Binding CancelCommand}"
-              IsVisible="{Binding IsBusy}"
-              Padding="8,4"/>
+    <!-- Row 1: file controls + meta header.
+         A DockPanel, not a horizontal StackPanel, for the same reason as
+         PropertySearchPanel's status row ([FORCESTATUSCLIP-2026-08-22]): a StackPanel
+         hands every child its DESIRED width, so TextTrimming on the last child is inert
+         and the text is hard-cut at the panel edge with no ellipsis. Here four
+         fixed-width buttons sit ahead of it, and HeaderText's TAIL is the dump
+         timestamp — the part that says whether the dump is stale. Buttons dock Left;
+         HeaderText is the fill child, so it trims honestly and the tooltip makes the
+         cut tail readable. -->
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
+        <Button Content="{StaticResource str.Dump.Load}"
+                Command="{Binding LoadFileCommand}"
+                ToolTip.Tip="{StaticResource str.Tip.Dump.Load}"
+                Classes="accent" Padding="12,4"/>
+        <Button Content="{StaticResource str.Dump.LoadLast}"
+                Command="{Binding LoadLastExportCommand}"
+                ToolTip.Tip="{StaticResource str.Tip.Dump.LoadLast}"
+                Padding="12,4"/>
+        <Button Content="{StaticResource str.Dump.Recheck}"
+                Command="{Binding RecheckLiveCommand}"
+                ToolTip.Tip="{StaticResource str.Tip.Dump.Recheck}"
+                Padding="12,4"/>
+        <Button Content="{StaticResource str.Dump.Cancel}"
+                Command="{Binding CancelCommand}"
+                IsVisible="{Binding IsBusy}"
+                Padding="8,4"/>
+      </StackPanel>
       <TextBlock Text="{Binding HeaderText}"
                  Foreground="#4EC9B0" VerticalAlignment="Center"
-                 TextTrimming="CharacterEllipsis"/>
-    </StackPanel>
+                 Margin="8,0,0,0"
+                 TextTrimming="CharacterEllipsis"
+                 ToolTip.Tip="{Binding HeaderText}"/>
+    </DockPanel>
 
     <!-- Row 2: unified keyword search + category -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">

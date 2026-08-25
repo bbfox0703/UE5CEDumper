@@ -601,9 +601,37 @@ public sealed class InvokeParamDialog : Window
 
                     if (_structEdits.TryGetValue(i, out var subEdits))
                     {
-                        // Struct param: write each sub-field (DynamicStructField overload)
+                        // Struct param: validate EVERY sub-field first, then write them.
+                        //
+                        // The validation used to live only in the scalar branch below, and
+                        // WriteParam's own comment asserts "TryValidateScalar refuses ahead of
+                        // this whenever the user actually typed something". That was true for a
+                        // top-level param and FALSE here: this branch called WriteStructParam
+                        // straight through, so a sub-field went to WriteParam unchecked. Two
+                        // things fell through the gap, both silent:
+                        //
+                        //   * a sub-field that is ITSELF opaque (a nested struct such as
+                        //     FSlateBrush::ImageSize / ::Margin) hit WriteParam's
+                        //     IsUnwritableParam early-return, so the typed value was dropped and
+                        //     FIRE still reported "ProcessEvent OK" — [Y11-OPAQUEDROP-2026-08-22];
+                        //   * an out-of-range INTEGER sub-field masked to width exactly the way
+                        //     top-level params used to, i.e. the width family (W6/Y2/Y9/Y15/AE1)
+                        //     surviving in the one place its fix was not applied.
+                        //
+                        // Refusing is deliberate and is what the row asks for. ⛔ Do NOT "fix"
+                        // this by writing the value instead: writing the user's text over a
+                        // structure's first pointer field is the original Y11 defect.
                         var subFields = subEdits.Select(se => se.sf).ToArray();
                         var subValues = subEdits.Select(se => se.edit.Text ?? "0").ToArray();
+
+                        if (!ParamBufferBuilder.TryValidateStructSubFields(
+                                subFields, subValues, out var badField, out var subErr))
+                        {
+                            _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                            _resultLabel.Text = $"ERROR: {param.Name}.{badField}: {subErr}";
+                            return;
+                        }
+
                         ParamBufferBuilder.WriteStructParam(buf, param.Offset,
                             (IReadOnlyList<DynamicStructField>)subFields, subValues);
                     }
@@ -776,7 +804,7 @@ public sealed class InvokeParamDialog : Window
                     FontFamily          = new FontFamily("Consolas, Courier New, monospace"),
                     FontSize            = 11,
                 },
-                supportsRecycling: true),
+                supportsRecycling: false),
         });
     }
 
@@ -859,16 +887,49 @@ public sealed class InvokeParamDialog : Window
                     description, script, autoActivate: false);
             }
 
+            // Params that could not be rendered as a Lua literal were baked as 0 with an
+            // --[[unparsed:…]] marker. Saying "N baked param(s)" over that reported a
+            // clean export of a script that will call the game with the wrong arguments
+            // (audit #5 Y14), so name them instead — computed from the SAME renderer the
+            // generator used, not from a second parse that could disagree.
+            var unparsed = bakedValues
+                .Where(v => BakedScriptGenerator.IsUnparsedLiteral(v.UeTypeName, v.LiteralText))
+                .Select(v => v.ParamName)
+                .ToList();
+            string paramNote = unparsed.Count == 0
+                ? $"{bakedValues.Count} baked param(s)"
+                : $"{bakedValues.Count} baked param(s) — ⚠ {unparsed.Count} could NOT be " +
+                  $"parsed and {(unparsed.Count == 1 ? "was" : "were")} baked as 0: " +
+                  string.Join(", ", unparsed);
+
             if (sentToCe)
             {
-                _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+                _resultLabel.Foreground = new SolidColorBrush(
+                    Color.Parse(unparsed.Count == 0 ? "#4EC9B0" : "#E0A050"));
                 _resultLabel.Text = $"AA Script created in CE: {description}\n" +
-                    $"({bakedValues.Count} baked param(s); helper file required " +
-                    "in your .CT)";
+                    $"({paramNote}; helper file required in your .CT)";
             }
             else if (_platform != null)
             {
-                await _platform.CopyToClipboardAsync(script);
+                // Wrap as paste-able CE memory-record XML. A bare [ENABLE]/[DISABLE] AA
+                // body cannot be pasted into CE's address list on its own — it has to be a
+                // CheatEntry with VariableType = Auto Assembler Script. Every other
+                // clipboard fallback in the app went through WrapAaScriptXml at build
+                // 1986, including the no-arg Console sibling; this one was missed
+                // (audit #5 Y12).
+                var xml = Services.CheatTableBuilder.WrapAaScriptXml(description, script);
+                bool copied = await _platform.CopyToClipboardAsync(xml);
+                if (!copied)
+                {
+                    // CopyToClipboardAsync never throws — it reports failure. Claiming a
+                    // successful copy over a clipboard that does not hold the script is
+                    // the same defect as Y14 one branch up.
+                    _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                    _resultLabel.Text = "ERROR: could not write to the clipboard — the AA " +
+                        "Script was NOT delivered. Another application may be holding the " +
+                        "clipboard open; try again.";
+                    return;
+                }
                 if (wasAvailable)
                 {
                     // Pipe was up at start; send failed. CE likely closed
@@ -876,15 +937,17 @@ public sealed class InvokeParamDialog : Window
                     _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#E0A050"));
                     _resultLabel.Text =
                         $"⚠ AOBMaker pipe broke mid-send (CE closed?).\n" +
-                        $"AA Script copied to clipboard ({script.Length:N0} chars) " +
-                        "as a fallback.\nPaste into a new CE AA Script entry once CE is ready.";
+                        $"AA Script copied as CE XML ({xml.Length:N0} chars) as a fallback " +
+                        $"({paramNote}).\nPaste into CE's address list once CE is ready.";
                 }
                 else
                 {
-                    _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
-                    _resultLabel.Text = $"AOBMaker not connected.\nAA Script copied to clipboard " +
-                        $"({script.Length:N0} chars).\nDon't forget to embed " +
-                        $"ue5_invoke_helper.lua in your .CT (Table -> Add File...).";
+                    _resultLabel.Foreground = new SolidColorBrush(
+                        Color.Parse(unparsed.Count == 0 ? "#4EC9B0" : "#E0A050"));
+                    _resultLabel.Text = $"AOBMaker not connected.\nAA Script copied as CE XML " +
+                        $"({xml.Length:N0} chars; {paramNote}) — paste into CE's address list." +
+                        $"\nDon't forget to embed ue5_invoke_helper.lua in your .CT " +
+                        $"(Table -> Add File...).";
                 }
             }
             else

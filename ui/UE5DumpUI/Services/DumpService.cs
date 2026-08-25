@@ -856,6 +856,8 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                // Emitted by the DLL since build 1194 and dropped here until Z8/Z12.
+                DeepScan       = scanNode["deep_scan"]?.GetValue<bool>() ?? false,
             };
         }
 
@@ -1320,6 +1322,9 @@ public sealed class DumpService : IDumpService
             // Default to "bytecode" for older DLLs that don't emit the field.
             Method       = res["method"]?.GetValue<string>() ?? "bytecode",
             Unmapped     = res["unmapped"]?.GetValue<int>() ?? 0,
+            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported",
+            // which is the same thing every caller assumed before the flag existed.
+            BudgetHit    = res["budget_hit"]?.GetValue<bool>() ?? false,
             Props        = props,
         };
     }
@@ -2255,6 +2260,10 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             DurationMs     = res["duration_ms"]?.GetValue<long>() ?? 0,
             DeadlineHit    = res["deadline_hit"]?.GetValue<bool>() ?? false,
+            // Absent on a pre-AE13 DLL => false => "no evidence of truncation", which is
+            // the only honest default: the UI must not claim a cap it was not told about.
+            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,
+            PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
             ClassHistogram = ParseClassHistogram(res),
             ClassDistinct  = res["class_distinct"]?.GetValue<int>() ?? 0,
         };
@@ -2307,6 +2316,8 @@ public sealed class DumpService : IDumpService
             SessionId  = res["session_id"]?.GetValue<ulong>() ?? sessionId,
             Total      = res["total"]?.GetValue<int>() ?? 0,
             DurationMs = res["duration_ms"]?.GetValue<long>() ?? 0,
+            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
             ClassHistogram = ParseClassHistogram(res),
             ClassDistinct  = res["class_distinct"]?.GetValue<int>() ?? 0,
         };
@@ -2347,6 +2358,8 @@ public sealed class DumpService : IDumpService
             Total         = res["total"]?.GetValue<int>() ?? 0,
             FilteredTotal = res["filtered_total"]?.GetValue<int>() ?? 0,
             Offset        = res["offset"]?.GetValue<int>() ?? offset,
+            PerSlotCapHit = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCap    = res["per_slot_cap"]?.GetValue<int>() ?? 0,
         };
         if (res["candidates"] is JsonArray arr)
             foreach (var item in arr)
@@ -2681,6 +2694,11 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             TotalFunctions = res["total_functions"]?.GetValue<int>() ?? 0,
+            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete", which is the
+            // pre-existing behaviour rather than a new false alarm. (audit #5 Z8)
+            Truncated      = res["truncated"]?.GetValue<bool>() ?? false,
+            Aborted        = res["aborted"]?.GetValue<bool>()   ?? false,
+            Limit          = res["limit"]?.GetValue<int>()      ?? limit,
             Functions      = functions,
         };
     }

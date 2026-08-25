@@ -43,7 +43,12 @@ public interface ILoggingService
     /// Start mirroring log output to a per-process subfolder.
     /// Call on pipe connect with the game process name.
     /// Creates &lt;logDir&gt;/&lt;processName&gt;/ui-{init,pipe,view}-0.log
-    /// with 2-version rotation.
+    /// with the same AGE-based retention as the root logs: the previous session's -0.log is
+    /// archived to -YYYYMMDD-HHMMSS.log and archives older than Constants.LogMaxAgeDays are
+    /// deleted. (audit #5 Z17 — this said "2-version rotation", the generation-count policy
+    /// that CLAUDE.md's app-data rule explicitly replaced and explains cannot express the
+    /// requirement: rotation runs on every process start, so N launches evict everything
+    /// earlier regardless of date. The code has always followed the age rule.)
     /// </summary>
     void StartProcessMirror(string processName);
 

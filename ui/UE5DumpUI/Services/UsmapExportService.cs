@@ -112,7 +112,18 @@ public static class UsmapExportService
 
             foreach (var obj in page.Objects)
             {
-                if (obj.ClassName is "Class" or "ScriptStruct")
+                // Mirrors the DLL-side `Aura::IsClassLikeMeta` whitelist (Class + the
+                // BPGC variants + DynamicClass), exactly as SdkExportService and
+                // DumpAllService already do. A bare `ClassName == "Class"` check
+                // silently dropped every BlueprintGeneratedClass /
+                // AnimBlueprintGeneratedClass / WidgetBlueprintGeneratedClass /
+                // DynamicClass — thousands of structs on a normal shipped title
+                // against a few hundred native ones, and the Blueprint classes are
+                // precisely the ones a .usmap consumer needs to parse saved games and
+                // network traffic. Same bug fixed in the DLL at build 673 and in the
+                // SDK exporter at build 1986; this was the last unfixed mirror
+                // (audit #5 W8).
+                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || obj.ClassName == "ScriptStruct")
                     structTargets.Add((obj.Address, obj.Name));
             }
 

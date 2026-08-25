@@ -367,6 +367,312 @@ public class FreezeValueDialogValidationTests
         Assert.Contains($"value              = {literal},", script);
     }
 
+    // ── Scope disclosure ([FREEZESCOPE-2026-08-18]) ─────────────────────────
+    //
+    // The dialog is the last screen before the script exists, and it was silent
+    // about the one thing the user cannot infer from the row: the freeze is keyed
+    // on the class that DECLARES the field, so "freeze my pawn's bCanBeDamaged" is
+    // really "hold it on every live Actor and subclass in the level". Both strings
+    // are pure statics for the same reason the validator is — the Window itself
+    // needs an Avalonia runtime and cannot be exercised headless.
+
+    [Fact]
+    public void ScopeSummary_NamesTheHeldClassAndItsSubclasses()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        var s = FreezeValueDialog.ScopeSummary(m);
+        Assert.Contains("Actor", s);
+        Assert.Contains("every subclass", s);
+        Assert.Contains("4823", s);
+    }
+
+    [Fact]
+    public void ScopeSummary_UsesTheClassTheScriptWillActuallyBeKeyedOn()
+    {
+        // The row's Class column and the class the freeze targets are not the same
+        // field, and the dialog used to show the former while the generator used the
+        // latter. Both now come from FreezeScriptGenerator.HeldClassName.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_SpecificTeammate_C", DefiningClassName = "BP_Teammate_C",
+            PropName = "Health", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4,
+        };
+
+        var s = FreezeValueDialog.ScopeSummary(m);
+        Assert.Contains("BP_Teammate_C", s);
+        Assert.DoesNotContain("BP_SpecificTeammate_C", s);
+
+        // And it is the same name the emitted script keys on.
+        var script = FreezeScriptGenerator.Generate(
+            PropertySearchViewModel.BuildFreezeParams(m, "1.0"));
+        Assert.Contains("className          = 'BP_Teammate_C',", script);
+    }
+
+    [Fact]
+    public void ScopeWarning_FiresWhenTheFieldIsInherited()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        var w = FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint);
+        Assert.NotNull(w);
+        Assert.Contains("bCanBeDamaged", w);
+        Assert.Contains("Actor", w);
+        // It must say how to narrow it, or it is only an apology.
+        Assert.Contains("className", w);
+    }
+
+    /// <summary>
+    /// The Force flow gets the SAME scope sentence and a DIFFERENT remedy (audit #5
+    /// AF22). Before the fix it got the Freeze remedy verbatim — "edit className in the
+    /// generated CFG block" — on a path that generates no script and therefore has no
+    /// CFG block: unreachable advice, the Z10 shape.
+    /// </summary>
+    [Fact]
+    public void ScopeWarning_CarriesTheHintOfTheFlowItWasAskedFor()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        const string forceHint = "There is no per-class switch for Force — release it from "
+                               + "the \"Forced fields\" strip.";
+        var force = FreezeValueDialog.ScopeWarning(m, forceHint);
+
+        Assert.NotNull(force);
+        Assert.Contains("bCanBeDamaged", force);          // the shared half is unchanged
+        Assert.Contains(forceHint, force);
+        // The decisive one: the Freeze-only remedy must NOT appear on the Force path.
+        Assert.DoesNotContain("CFG block", force);
+        Assert.DoesNotContain("className", force);
+    }
+
+    /// <summary>The Freeze wording as en.axaml holds it. Duplicated here on purpose —
+    /// a test that read the resource would pass if BOTH drifted together.</summary>
+    private const string FreezeNarrowHint =
+        "To target a single class, edit className in the generated CFG block "
+        + "(or set derived = false for that class only).";
+
+    [Fact]
+    public void ScopeWarning_IsSilentForAFieldUniqueToItsClass()
+    {
+        // The control. A warning that fires on every row is a warning nobody reads,
+        // and there is nothing surprising about freezing a game-specific field on
+        // the only class that declares it.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_Player_C", DefiningClassName = "BP_Player_C",
+            PropName = "MyGameHealth", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
+        };
+
+        Assert.Null(FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint));
+    }
+
+    [Fact]
+    public void ScopeWarning_FiresWhenTheRowClassDiffersFromTheDefiningClass()
+    {
+        // Post-dedup these are equal, so this branch is defensive — but the row's
+        // class is what the user READ and the defining class is what gets frozen,
+        // so if the wire ever stops collapsing them the warning must not go quiet.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_SpecificTeammate_C", DefiningClassName = "BP_Teammate_C",
+            PropName = "Health", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
+        };
+
+        var w = FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint);
+        Assert.NotNull(w);
+        Assert.Contains("BP_Teammate_C", w);
+    }
+
+    // ---- AF22, the half that had no test: key resolution -----------------------
+    //
+    // AF22 shipped the Force wording but resolved it with an interpolated key, so the
+    // Force-vs-Freeze choice happened in a string the compiler never saw and no test
+    // ever exercised (the pure ScopeWarning tests above take the hint as a PARAMETER,
+    // so they pass whichever hint the dialog actually picks). It also blinded
+    // tools/check_axaml_strings.py, which then reported all eight keys dead.
+    // KeyFor is that choice, extracted and pinned.
+
+    /// <summary>
+    /// Each (purpose, leaf) resolves to its own literal en.axaml key. Spelled out here
+    /// rather than rebuilt from the enum names on purpose: a test that composed the key
+    /// the same way the code does would agree with the code no matter what it composed.
+    /// </summary>
+    /// <remarks>A Fact with a table rather than a Theory: InlineData would force
+    /// <c>Leaf</c> public (an xUnit test method must be public, and so must its parameter
+    /// types), and widening the product API to suit the test runner is the wrong trade.
+    /// A method BODY may name an internal type freely.</remarks>
+    [Fact]
+    public void KeyFor_ResolvesEachPurposeAndLeafToItsOwnKey()
+    {
+        static void Check(string expected, FreezeValueDialog.Purpose p, FreezeValueDialog.Leaf l)
+            => Assert.Equal(expected, FreezeValueDialog.KeyFor(p, l));
+
+        Check("str.ValuePrompt.Freeze.Title",      FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.Title);
+        Check("str.ValuePrompt.Freeze.ValueLabel", FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.ValueLabel);
+        Check("str.ValuePrompt.Freeze.Ok",         FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.Ok);
+        Check("str.ValuePrompt.Freeze.NarrowHint", FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.NarrowHint);
+        Check("str.ValuePrompt.Force.Title",       FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.Title);
+        Check("str.ValuePrompt.Force.ValueLabel",  FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.ValueLabel);
+        Check("str.ValuePrompt.Force.Ok",          FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.Ok);
+        Check("str.ValuePrompt.Force.NarrowHint",  FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.NarrowHint);
+    }
+
+    /// <summary>
+    /// The AF22 invariant itself: no leaf may hand the Force flow the Freeze key. This is
+    /// what regressed silently before — reuse was the DEFAULT, so a new leaf that forgot
+    /// to branch simply showed freeze wording. Exhaustive over both enums, so a leaf added
+    /// later is covered without editing this test.
+    /// </summary>
+    [Fact]
+    public void KeyFor_NeverHandsTheForceFlowTheFreezeKey()
+    {
+        var leaves = Enum.GetValues<FreezeValueDialog.Leaf>();
+        Assert.True(leaves.Length >= 4, $"expected >=4 leaves, saw {leaves.Length}");
+
+        var all = new List<string>();
+        foreach (var leaf in leaves)
+        {
+            var freeze = FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Freeze, leaf);
+            var force  = FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Force,  leaf);
+            Assert.NotEqual(freeze, force);
+            all.Add(freeze);
+            all.Add(force);
+        }
+        // ...and no two pairs collide either, which a copy-pasted arm would cause.
+        Assert.Equal(all.Count, all.Distinct().Count());
+    }
+
+    /// <summary>An undeclared enum value is refused, not quietly served the Freeze
+    /// wording. Falling back to Freeze is the defect AF22 fixed.</summary>
+    [Fact]
+    public void KeyFor_RefusesAnUndeclaredPurpose()
+        => Assert.Throws<ArgumentOutOfRangeException>(
+               () => FreezeValueDialog.KeyFor((FreezeValueDialog.Purpose)97,
+                                              FreezeValueDialog.Leaf.Ok));
+
+    /// <summary>
+    /// Every key KeyFor can return is really defined in en.axaml. Res.Get returns "" for a
+    /// missing key, and the dialog then shows the key itself — visible, but only to whoever
+    /// opens the dialog. tools/check_axaml_strings.py enforces this in CI; this asserts it
+    /// in the test run too, which is what catches it before the commit.
+    /// </summary>
+    [Fact]
+    public void EveryValuePromptKeyExistsInEnAxaml()
+    {
+        var text = ReadEnAxaml();
+        int seen = 0;
+        foreach (var purpose in Enum.GetValues<FreezeValueDialog.Purpose>())
+            foreach (var leaf in Enum.GetValues<FreezeValueDialog.Leaf>())
+            {
+                Assert.Contains($"x:Key=\"{FreezeValueDialog.KeyFor(purpose, leaf)}\"",
+                                text, StringComparison.Ordinal);
+                seen++;
+            }
+        Assert.Equal(8, seen);   // guard the guard: an empty loop must not pass
+    }
+
+    /// <summary>
+    /// The wording behind the keys, which is what AF22 was actually about: the Force flow
+    /// must not describe itself as a freeze, and must not offer the Freeze remedy (edit
+    /// className in the generated CFG block) on a path that generates no script.
+    /// </summary>
+    [Fact]
+    public void TheForceWordingNeverDescribesItselfAsAFreeze()
+    {
+        var text = ReadEnAxaml();
+
+        string ForceStr(FreezeValueDialog.Leaf l)
+            => ValueOf(text, FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Force, l));
+        string FreezeStr(FreezeValueDialog.Leaf l)
+            => ValueOf(text, FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Freeze, l));
+
+        foreach (var leaf in Enum.GetValues<FreezeValueDialog.Leaf>())
+        {
+            var f = ForceStr(leaf);
+            Assert.False(string.IsNullOrWhiteSpace(f), $"Force.{leaf} is blank in en.axaml");
+            Assert.NotEqual(FreezeStr(leaf), f);
+            Assert.DoesNotContain("freeze", f, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The two specifics the finding named.
+        Assert.DoesNotContain("CFG block", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
+                              StringComparison.Ordinal);
+        Assert.DoesNotContain("className", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
+                              StringComparison.Ordinal);
+
+        // Negative control: the Freeze side still says all of it, so the assertions above
+        // are discriminating rather than vacuously true of any string in the file.
+        Assert.Contains("freeze", FreezeStr(FreezeValueDialog.Leaf.Ok),
+                        StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CFG block", FreezeStr(FreezeValueDialog.Leaf.NarrowHint),
+                        StringComparison.Ordinal);
+        Assert.Contains("className", FreezeStr(FreezeValueDialog.Leaf.NarrowHint),
+                        StringComparison.Ordinal);
+
+        // The assertions above are all "Force is not Freeze". They would survive renaming the
+        // Force button to "Apply", which is not what the checklist row asks for — it names the
+        // words. Pin the MEANING rather than the literal, so copy can still be improved:
+        // the Force flow holds a value through the DLL, it does not emit a script.
+        Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.Title), StringComparison.Ordinal);
+        Assert.Contains("Force", ForceStr(FreezeValueDialog.Leaf.ValueLabel), StringComparison.Ordinal);
+        Assert.Contains("hold", ForceStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("script", ForceStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
+        // ...and the paired control, so "no script" cannot be satisfied by dropping the word
+        // from both sides: the Freeze button still promises one.
+        Assert.Contains("script", FreezeStr(FreezeValueDialog.Leaf.Ok), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReadEnAxaml()
+    {
+        var path = FindRepoFile(Path.Combine("ui", "UE5DumpUI", "Resources", "Strings", "en.axaml"));
+        Assert.NotNull(path);   // shipped artifact — not finding it is a real failure
+        return File.ReadAllText(path!);
+    }
+
+    /// <summary>The text between the tags for one x:Key, or "" when absent.</summary>
+    private static string ValueOf(string axaml, string key)
+    {
+        foreach (var line in axaml.Split('\n'))
+        {
+            int at = line.IndexOf($"x:Key=\"{key}\"", StringComparison.Ordinal);
+            if (at < 0) continue;
+            int open  = line.IndexOf('>', at);
+            int close = line.LastIndexOf("</sys:String>", StringComparison.Ordinal);
+            if (open < 0 || close <= open) continue;
+            return line.Substring(open + 1, close - open - 1);
+        }
+        return "";
+    }
+
+    private static string? FindRepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
     private static PropertySearchMatch MakeMatch(string propType, int propSize) => new()
     {
         ClassName         = "BP_Player_C",

@@ -57,6 +57,13 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     private bool _lastReported;          // last combined IsConnected we raised
     private bool _tearingDown;           // guards the reconnect-both teardown
 
+    // Single combined game-thread-stalled level. Both lanes report EVERY
+    // per-response observation (PipeClient no longer edge-suppresses per lane —
+    // that was the audit-X7 root cause), and this one latch dedupes so the
+    // consumer still only hears transitions. Fixes the banner sticking ON when
+    // the lane that saw the pause went idle after the game resumed.
+    private readonly Helpers.GameThreadStalledLevel _stalled = new();
+
     public LaneRoutingPipeClient(ILoggingService log)
     {
         _log = log;
@@ -68,13 +75,20 @@ public sealed class LaneRoutingPipeClient : IPipeClient
         _bulk.EventReceived        += e => EventReceived?.Invoke(e);
         _interactive.Activity      += a => Activity?.Invoke(a);
         _bulk.Activity             += a => Activity?.Invoke(a);
-        // Either lane observes the same global game-thread state; each raises only
-        // on its own transitions, so forward both and let the consumer dedupe.
-        _interactive.GameThreadStalledChanged += s => GameThreadStalledChanged?.Invoke(s);
-        _bulk.GameThreadStalledChanged        += s => GameThreadStalledChanged?.Invoke(s);
+        // Both lanes observe the same global game-thread state, each whenever it
+        // gets a response. Feed every observation into the one combined latch and
+        // raise only on a real level change.
+        _interactive.GameThreadStalledChanged += RaiseStalledIfChanged;
+        _bulk.GameThreadStalledChanged        += RaiseStalledIfChanged;
 
         _interactive.ConnectionStateChanged += _ => OnChildStateChanged();
         _bulk.ConnectionStateChanged        += _ => OnChildStateChanged();
+    }
+
+    private void RaiseStalledIfChanged(bool stalled)
+    {
+        if (_stalled.Observe(stalled) is bool level)
+            GameThreadStalledChanged?.Invoke(level);
     }
 
     public bool IsConnected => _interactive.IsConnected && _bulk.IsConnected;
@@ -87,6 +101,10 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     {
         // Connect both lanes; on partial failure, tear the other down so we
         // never run half-connected.
+        // Reset the combined stall level so the first observation after a
+        // (re)connect always raises, even if the game was already paused before
+        // this connection (mirrors the per-lane reset PipeClient used to do).
+        _stalled.Reset();
         try
         {
             await _interactive.ConnectAsync(ct).ConfigureAwait(false);

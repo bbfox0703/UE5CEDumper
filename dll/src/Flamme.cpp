@@ -17,6 +17,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <atomic>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -88,6 +89,134 @@ static fs::path MakeTempPath(const fs::path& path) {
     auto tmp = path;
     tmp += L".tmp." + std::to_wstring(GetCurrentProcessId());
     return tmp;
+}
+
+// ============================================================
+// Atomic publish — ONE implementation, four call sites
+// ============================================================
+//
+// The block this replaces was repeated verbatim four times:
+//     { std::ofstream ofs(temp, trunc); if (!ofs) return; ofs << root.dump(2); }
+//     fs::rename(temp, path);
+// and carried two defects that only surface when the disk or the UI does.
+//
+// FL1 — the stream's error state was NEVER tested. No exceptions() mask, no good(),
+// no explicit close(). A short write is swallowed by the destructor and the rename
+// publishes the TRUNCATED document over the only good copy. The C# twin
+// structurally cannot do this: `await File.WriteAllTextAsync` throws BEFORE
+// `File.Move` (AobUsageService.cs:141-142).
+//
+// FL2 — `fs::rename(a, b)` is the THROWING overload, and each caller's catch-all
+// logged it and returned, leaking `<file>.tmp.<pid>`. The suffix is the PID, so
+// every affected launch left a DISTINCTLY NAMED full copy of the cache in
+// %LOCALAPPDATA%\UE5CEDumper\ forever — against the app-data rule that the root
+// holds only files "app-wide and fixed in number". It needs no disk fault either:
+// the UI holds this file with FileShare.Read and NOT FileShare.Delete, so a
+// replace-rename during a UI read simply fails.
+//
+// The decision itself lives in Flamme.h (ShouldPublishAtomicWrite) because no test
+// target compiles this file.
+
+// Remove staging files abandoned by earlier failures — ours AND the UI's; both
+// build "<cache>.tmp.<pid>" (AobUsageService.cs:139). Age-guarded rather than
+// PID-guarded: writing this file is a few KB and lasts milliseconds, so anything an
+// hour old is provably abandoned, whereas a liveness test would race a process
+// that is mid-write right now.
+//
+// Scoped to this cache file's own "<name>.tmp." prefix, never a folder wildcard.
+// The root holds the app-wide fixed files; the per-game families that must move and
+// expire as a GROUP (Snapshots\ with its -wal/-shm, Bookmarks\) live in their own
+// subfolders, which this never enters — so nothing here can orphan a sibling.
+// Runs at most once per process. (audit #5 FL2)
+static void SweepOrphanTemps(const fs::path& path) {
+    // Atomic, not a plain bool: SaveResults runs on the init/scan path while
+    // SaveUserOverride / SaveInvokeTimeout run on pipe threads, so two writers can
+    // reach here at once. Worst case would only be a duplicate (idempotent) sweep,
+    // but a torn plain-bool write is still a data race.
+    static std::atomic<bool> s_swept{false};
+    if (s_swept.exchange(true)) return;
+
+    const std::wstring prefix = path.filename().wstring() + L".tmp.";
+    const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(1);
+
+    std::error_code ec;
+    fs::directory_iterator it(path.parent_path(), ec);
+    if (ec) return;
+
+    // Explicit increment(ec): a range-for advances with the THROWING operator++,
+    // and the ec handed to the constructor only ever reports construction. Same
+    // trap as Sein's retention sweeps (audit #5 SE2).
+    const fs::directory_iterator last{};
+    int removed = 0;
+    while (it != last) {
+        const fs::path p = it->path();
+        const std::wstring name = p.filename().wstring();
+        if (name.size() > prefix.size() &&
+            name.compare(0, prefix.size(), prefix) == 0) {
+            std::error_code fe;
+            const auto mtime = fs::last_write_time(p, fe);
+            if (!fe && mtime < cutoff) {
+                std::error_code re;
+                if (fs::remove(p, re)) ++removed;
+            }
+        }
+        it.increment(ec);
+        if (ec) break;
+    }
+
+    if (removed > 0)
+        LOG_INFO("HintCache: removed %d abandoned staging file(s) older than 1h", removed);
+}
+
+/// Write `text` to a temp file, VERIFY it, then rename it over `path`.
+/// Returns false without touching `path` when anything went wrong, and never
+/// leaves the staging file behind. `who` names the caller for the log line.
+static bool WriteJsonAtomic(const fs::path& path, const std::string& text,
+                            const char* who) {
+    const fs::path tempPath = MakeTempPath(path);
+
+    bool streamOk = false;
+    {
+        // BINARY: what lands on disk is then byte-for-byte `text`, which is what
+        // makes the size check below an exact test rather than an approximation.
+        std::ofstream ofs(tempPath, std::ios::binary | std::ios::trunc);
+        if (!ofs.is_open()) {
+            LOG_WARN("HintCache: %s: failed to open temp file for writing", who);
+            return false;
+        }
+        ofs << text;
+        ofs.close();              // flushes; a short write shows up here
+        streamOk = !ofs.fail();
+    }
+
+    std::error_code ec;
+    const auto onDisk = fs::file_size(tempPath, ec);
+    const bool sizeKnown = !ec;
+
+    if (!ShouldPublishAtomicWrite(streamOk, sizeKnown,
+                                  sizeKnown ? static_cast<unsigned long long>(onDisk) : 0ull,
+                                  static_cast<unsigned long long>(text.size()))) {
+        LOG_WARN("HintCache: %s: staged write is incomplete (stream=%s, %s of %llu bytes) "
+                 "— NOT publishing; the previous cache is kept intact",
+                 who, streamOk ? "ok" : "FAILED",
+                 sizeKnown ? std::to_string(onDisk).c_str() : "unknown",
+                 static_cast<unsigned long long>(text.size()));
+        std::error_code rmEc;
+        fs::remove(tempPath, rmEc);
+        return false;
+    }
+
+    fs::rename(tempPath, path, ec);      // non-throwing overload
+    if (ec) {
+        LOG_WARN("HintCache: %s: publish failed (%s) — previous cache intact, "
+                 "removing the staging file", who, ec.message().c_str());
+        std::error_code rmEc;
+        fs::remove(tempPath, rmEc);
+        return false;
+    }
+
+    SweepOrphanTemps(path);
+    return true;
 }
 
 static std::string GetUtcTimestamp() {
@@ -312,17 +441,8 @@ void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
 
         games[peHash] = rec;
 
-        // Write atomically: temp file + rename
-        auto tempPath = MakeTempPath(path);
-        {
-            std::ofstream ofs(tempPath, std::ios::trunc);
-            if (!ofs.is_open()) {
-                LOG_WARN("HintCache: Failed to open temp file for writing");
-                return;
-            }
-            ofs << root.dump(2);  // Pretty-print with 2-space indent
-        }
-        fs::rename(tempPath, path);
+        // Write atomically: staged temp, verified, then renamed. (FL1/FL2)
+        if (!WriteJsonAtomic(path, root.dump(2), "SaveResults")) return;
 
         LOG_INFO("HintCache: Saved results for PE=%s (%s, scan #%d)",
                  peHash, processName ? processName : "?",
@@ -365,17 +485,8 @@ void UpdateGObjectsMethod(const char* peHash, const char* method) {
         go["method"]    = method;
         go["patternId"] = "";   // the AOB pattern only matched a decoy — do not hint it next launch
 
-        // Atomic write (temp + rename), mirroring SaveResults.
-        auto tempPath = MakeTempPath(path);
-        {
-            std::ofstream ofs(tempPath, std::ios::trunc);
-            if (!ofs.is_open()) {
-                LOG_WARN("HintCache: UpdateGObjectsMethod failed to open temp file");
-                return;
-            }
-            ofs << root.dump(2);
-        }
-        fs::rename(tempPath, path);
+        // Atomic write (temp + verify + rename), mirroring SaveResults.
+        if (!WriteJsonAtomic(path, root.dump(2), "UpdateGObjectsMethod")) return;
 
         LOG_INFO("HintCache: Updated gObjects method for PE=%s -> %s (patternId cleared)", peHash, method);
 
@@ -431,16 +542,7 @@ void SaveUserOverride(const char* peHash, uint32_t ueVersion,
 
         games[peHash] = rec;
 
-        auto tempPath = MakeTempPath(path);
-        {
-            std::ofstream ofs(tempPath, std::ios::trunc);
-            if (!ofs.is_open()) {
-                LOG_WARN("HintCache: SaveUserOverride: Failed to open temp file");
-                return;
-            }
-            ofs << root.dump(2);
-        }
-        fs::rename(tempPath, path);
+        if (!WriteJsonAtomic(path, root.dump(2), "SaveUserOverride")) return;
 
         if (ueVersion == 0)
             LOG_INFO("HintCache: Cleared user UE-version override for PE=%s", peHash);
@@ -501,16 +603,7 @@ void SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
 
         games[peHash] = rec;
 
-        auto tempPath = MakeTempPath(path);
-        {
-            std::ofstream ofs(tempPath, std::ios::trunc);
-            if (!ofs.is_open()) {
-                LOG_WARN("HintCache: SaveInvokeTimeout: Failed to open temp file");
-                return;
-            }
-            ofs << root.dump(2);
-        }
-        fs::rename(tempPath, path);
+        if (!WriteJsonAtomic(path, root.dump(2), "SaveInvokeTimeout")) return;
 
         if (timeoutMs <= 0)
             LOG_INFO("HintCache: Cleared invoke timeout override for PE=%s", peHash);

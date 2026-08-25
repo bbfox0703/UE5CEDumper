@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using UE5DumpUI.Helpers;
 using Xunit;
@@ -55,14 +56,25 @@ public class SearchKeywordHistoryTests
         Assert.Equal(new[] { "stamina", "mana", "health" }, h);
     }
 
+    /// <summary>
+    /// Re-using a remembered keyword must NOT reorder the list.
+    ///
+    /// This deliberately reverses the old "touch moves to front" behaviour. These
+    /// histories are bound as AutoCompleteBox ItemsSources, and ANY CollectionChanged
+    /// on one makes the control rebuild its popup and revert the user's pick back to
+    /// what they had typed ([LWFILTERREVERT-2026-08-21]). A dropdown only ever offers
+    /// entries already in the history, so the pick path IS the duplicate path — which
+    /// is why a duplicate must be a no-op rather than a cheap reorder.
+    /// </summary>
     [Fact]
-    public void Remember_ReusingKeyword_MovesToFront()
+    public void Remember_ReusingKeyword_DoesNotReorder_SoAnAutoCompletePickSurvives()
     {
         var h = New();
         SearchKeywordHistory.Remember(h, "health");
         SearchKeywordHistory.Remember(h, "mana");
-        SearchKeywordHistory.Remember(h, "health");   // touch
-        Assert.Equal(new[] { "health", "mana" }, h);
+        bool changed = SearchKeywordHistory.Remember(h, "health");   // re-use
+        Assert.False(changed);
+        Assert.Equal(new[] { "mana", "health" }, h);                 // untouched order
     }
 
     [Fact]
@@ -70,9 +82,55 @@ public class SearchKeywordHistoryTests
     {
         var h = New();
         SearchKeywordHistory.Remember(h, "Magic");
-        SearchKeywordHistory.Remember(h, "magic");
+        bool changed = SearchKeywordHistory.Remember(h, "magic");
+        Assert.False(changed);
         Assert.Single(h);
-        Assert.Equal("magic", h[0]);   // latest casing wins, moved to front
+        // FIRST-seen casing is kept. The class doc has always promised "the original
+        // casing is preserved"; the old move-to-front path quietly broke that promise.
+        Assert.Equal("Magic", h[0]);
+    }
+
+    /// <summary>
+    /// THE ASSERTION THAT ACTUALLY CATCHES THE BUG - count EVENTS, not contents.
+    ///
+    /// The reported failure had a history whose contents were byte-identical before and
+    /// after, so every content-comparing assertion in this file passed while the app was
+    /// broken. What reverts the AutoCompleteBox is the CollectionChanged notification
+    /// itself: Avalonia answers it with an unconditional RefreshView(), which clears the
+    /// popup ListBox and drives the box's text back to what the user typed. Contents are
+    /// not the signal; the event is.
+    /// </summary>
+    [Fact]
+    public void Remember_Duplicate_RaisesNoCollectionChanged()
+    {
+        var h = new ObservableCollection<string> { "RemoteRole", "Rotation", "Velocity" };
+        int events = 0;
+        h.CollectionChanged += (_, _) => events++;
+
+        bool changed = SearchKeywordHistory.Remember(h, "RemoteRole");
+
+        Assert.False(changed);
+        Assert.Equal(0, events);   // was 2 (RemoveAt + Insert) before the fix
+
+        // And the same for a duplicate that is NOT already at the front - the mouse can
+        // pick any row in the dropdown, so position must not matter.
+        events = 0;
+        Assert.False(SearchKeywordHistory.Remember(h, "Velocity"));
+        Assert.Equal(0, events);
+    }
+
+    /// <summary>The other half: a genuinely NEW keyword must still be remembered, so the
+    /// no-op above cannot have been achieved by making Remember inert.</summary>
+    [Fact]
+    public void Remember_NewKeyword_StillMutatesAndNotifies()
+    {
+        var h = new ObservableCollection<string> { "RemoteRole" };
+        int events = 0;
+        h.CollectionChanged += (_, _) => events++;
+
+        Assert.True(SearchKeywordHistory.Remember(h, "Velocity"));
+        Assert.True(events > 0);
+        Assert.Equal("Velocity", h[0]);
     }
 
     // ── Longest valid wins ───────────────────────────────────────────────────

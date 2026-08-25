@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+using System.IO;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -94,6 +96,360 @@ public class CeMailboxBailoutTests
 
         Assert.True(sawBailout,
             $"{name}: no ENABLE bail-out at all — the harness is not reaching the code it claims to check");
+    }
+
+    // ── [FREEZEUNTICK-2026-08-20] the untick must be DEFERRED ────────────────
+    //
+    // Every assertion above checks that a bail-out unticks. None of them could tell an
+    // untick that WORKS from one that silently does nothing — and for two years every one
+    // of them was the latter.
+    //
+    // CE's TMemoryRecord.setActive (memoryrecordunit.pas) runs, in order:
+    //     if state = fActive then exit;                 // (1)
+    //     if processingThread <> nil then exit;         // (2)
+    //     if autoassemble(script, ..., state, ...) then // (3)  <- our [ENABLE] runs HERE
+    //       fActive := state;                           // (4)  <- and only NOW is it true
+    // While the script is running at (3) fActive is still false, so an immediate
+    // `memrec.Active = false` hits (1) with state = fActive = false and returns having done
+    // nothing; (4) then ticks the row anyway. Only a timer that fires after (4) can untick.
+    //
+    // Measured in CE 7.7 before the source was read: a freeze record that bailed out with
+    // "helper not found" applied nothing (the frozen value kept ticking) and still reported
+    // Active=true from CE's own Lua Engine.
+
+    /// <summary>The discriminator: an ENABLE-side untick line must also create the timer.</summary>
+    private static bool IsDeferredUntick(string line)
+        => line.Contains("memrec.Active = false", StringComparison.Ordinal)
+        && line.Contains("createTimer", StringComparison.Ordinal);
+
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void EveryEnableUntick_IsDeferred_NotImmediate(string name, string script)
+    {
+        var offenders = ImmediateUnticksIn(EnableBlock(script));
+
+        Assert.True(offenders.Count == 0,
+            name + ": an [ENABLE] block unticks IMMEDIATELY, which CE ignores — see "
+            + "[FREEZEUNTICK-2026-08-20] and CeLuaHygiene.DeferredUntickLua:"
+            + Environment.NewLine + "    " + string.Join(Environment.NewLine + "    ", offenders));
+    }
+
+    /// <summary>
+    /// Guard the guard. If a script's ENABLE block contained no untick at all, the test above
+    /// would pass vacuously — which is exactly the failure mode it exists to catch.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void EveryEnableBlock_HasAtLeastOneDeferredUntick(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        var deferred = enable.Split('\n').Count(l => IsDeferredUntick(l));
+        Assert.True(deferred > 0,
+            name + ": no deferred untick found in [ENABLE] — either the bail-outs lost their "
+            + "untick, or EveryEnableUntick_IsDeferred_NotImmediate is passing vacuously.");
+    }
+
+    /// <summary>
+    /// The emitted line must actually be the shared emitter's, not a hand-rolled copy.
+    /// CLAUDE.md: "Hand-rolling any of these is how build 2743's three defects reached all
+    /// seven copies of the mailbox wait at once." This defect is the same story — 32 copies of
+    /// an untick that never worked.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Runs over EVERY generator, not just the mailbox ones, because this is what catches the
+    /// splice hazard: <c>DeferredUntickLua()</c> ends in a <c>--</c> comment, so pasting it into
+    /// <c>if X then showMessage(...); return end</c> comments out the <c>return end</c> and leaves
+    /// an unterminated <c>if</c>. Demonstrated, not hypothesised — doing exactly that to the Fly
+    /// guard made three generated scripts fail to parse with
+    /// <c>'end' expected (to close 'if' at line 11)</c>. Requiring the line to EQUAL the emitter's
+    /// text means nothing can be appended after the comment.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(EveryEnableScript))]
+    public void EveryDeferredUntick_IsTheSharedEmittersText(string name, string script)
+    {
+        var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+        foreach (var line in EnableBlock(script).Split('\n').Select(l => l.Trim()))
+        {
+            // Only the ONE-LINER shape is required to match. A line carrying both the untick
+            // and its createTimer IS the shared emitter's output, so anything appended after
+            // its trailing comment shows up as an inequality — which is exactly the splice
+            // hazard. The older multi-line shape (timer on one line, untick inside the
+            // OnTimer body further down) is equally correct and is covered by
+            // ImmediateUnticksIn instead.
+            if (!IsUntick(line)) continue;
+            if (!line.Contains("createTimer", StringComparison.Ordinal)) continue;
+            Assert.True(line == canonical,
+                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua()."
+                + Environment.NewLine + "  emitted:   " + line
+                + Environment.NewLine + "  canonical: " + canonical);
+        }
+    }
+
+
+    /// <summary>
+    /// The Lua rig <c>scripts/tests/untick_bailout_test.lua</c> exercises a COPY of the emitted
+    /// line against a model of CE's activation lifecycle — that is the only place the deferral is
+    /// shown to actually work, since text assertions structurally cannot tell a working untick
+    /// from a no-op. A copy that drifts from the emitter proves nothing about the shipped script,
+    /// so require them to be byte-identical.
+    ///
+    /// <para>Same idea as <c>check_mailbox_contract.py</c>'s hand-copied-literal check: the rig is
+    /// not in CI (no declared <c>lua</c> dependency, and a step that skips when its tool is missing
+    /// is worse than a documented manual one), so THIS is what keeps it honest.</para>
+    /// </summary>
+    [Fact]
+    public void UntickRigMatchesTheEmitter()
+    {
+        var rig = FindRepoFile("scripts/tests/untick_bailout_test.lua");
+        var text = File.ReadAllText(rig);
+        var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+
+        Assert.True(text.Contains(canonical, StringComparison.Ordinal),
+            "scripts/tests/untick_bailout_test.lua no longer contains the line "
+            + "CeLuaHygiene.DeferredUntickLua() emits, so what it proves is about a stale copy."
+            + Environment.NewLine + "  expected: " + canonical);
+
+        // Guard the guard: the rig must also still carry the IMMEDIATE shape, or its
+        // defect-reproduction case has quietly become a second copy of the fix.
+        Assert.Contains("if memrec then memrec.Active = false end", text, StringComparison.Ordinal);
+    }
+
+    private static string FindRepoFile(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
+        {
+            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
+    }
+
+
+    // ── EVERY generator, not just the mailbox ones ───────────────────────────
+    //
+    // ⚠ THE HOLE THIS CLOSES, and it was a real miss. The deferred-untick sweep classified
+    // call sites by reading the GENERATOR SOURCE top-to-bottom, tracking whether the last
+    // emitted literal was "[ENABLE]" or "[DISABLE]". That is wrong, because a private helper
+    // method defined BELOW the [DISABLE] emission still emits into [ENABLE] when the ENABLE
+    // path calls it. FreezeScriptGenerator.AppendHelperLoader is exactly that: it sits at the
+    // bottom of the file and was read as "[DISABLE], nothing to untick", so its two bail-outs
+    // kept the immediate untick — including `ue5_freeze_helper.lua not found in this table`,
+    // which is the precise path the defect was originally reported on.
+    //
+    // MailScripts() above did not catch it either, because Freeze is not in that list.
+    //
+    // So this test does neither of those things. It generates a script from EVERY generator
+    // that emits an [ENABLE] block and reads the OUTPUT — the only ground truth about which
+    // block a line lands in.
+
+    public static IEnumerable<object[]> EveryEnableScript()
+    {
+        foreach (var row in MailboxScripts()) yield return row;
+
+        yield return new object[] { "Freeze.Int", FreezeScriptGenerator.Generate(new FreezeScriptParams
+        {
+            ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+        }) };
+
+        yield return new object[] { "Freeze.Bool", FreezeScriptGenerator.Generate(new FreezeScriptParams
+        {
+            ClassName = "Actor", PropertyName = "bCanBeDamaged", PropertyOffset = 0x5A,
+            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, ValueLiteral = "0",
+        }) };
+
+        yield return new object[] { "Baked.Invoke", BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>()) };
+
+        // ⚠ The row above does NOT reach the contract check: BakedScriptGenerator emits
+        // AppendContractCheck only inside `if (verifyReturn)`. Measured — the script the row
+        // above produces contains zero contract-check text, so before this fixture existed the
+        // untick theories inspected only the two AppendHelperLoader bail-outs and the contract
+        // bail-out was covered by nothing at all. That is the same shape as
+        // [FREEZEUNTICK-2026-08-20], whose second round found two generators the first round's
+        // sweep had classified by READING the source rather than by generating the text.
+        yield return new object[] { "Baked.Invoke.Verify", BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 16, "0"),
+            verifyReturn: true) };
+
+        yield return new object[] { "CeInject", CeInjectScriptGenerator.Generate(@"C:\x\UE5Dumper.dll") };
+        yield return new object[] { "CeInject.Reminder", CeInjectScriptGenerator.GenerateReminder() };
+
+        // StandaloneTrainerScriptGenerator returns a LIST of records rather than one script, so
+        // every entry is yielded separately — a per-entry name makes a failure say which row.
+        var trainer = StandaloneTrainerScriptGenerator.Generate(new TrainerOffsets
+        {
+            Code = 1,
+            Chain = new List<TrainerChainHop>(),
+            PawnToRoot = 0x150, RootToRelLoc = 0x128, FVectorWidth = 12,
+            PawnToCmc = 0x2F8, WalkSpeedOff = 0x248, GravityOff = 0x1C0, JumpOff = 0x250,
+            PawnToController = 0x108, MoveModeOff = 0x201, VelocityOff = 0x160, VelocitySize = 12,
+            CtrlRotOff = 0x2A0, CtrlRotSize = 12,
+        });
+        foreach (var e in trainer)
+            yield return new object[] { "Trainer." + e.Description, e.Script };
+    }
+
+    [Theory]
+    [MemberData(nameof(EveryEnableScript))]
+    public void EveryGeneratedEnableBlock_UnticksOnlyViaTheSharedDeferredEmitter(string name, string script)
+    {
+        var offenders = ImmediateUnticksIn(EnableBlock(script));
+
+        Assert.True(offenders.Count == 0,
+            name + ": an [ENABLE] block unticks IMMEDIATELY, which CE ignores — see "
+            + "[FREEZEUNTICK-2026-08-20]. ⚠ Do NOT classify these by reading the generator source: "
+            + "a private helper defined below the [DISABLE] emission still emits into [ENABLE]."
+            + Environment.NewLine + "    " + string.Join(Environment.NewLine + "    ", offenders));
+    }
+
+    /// <summary>
+    /// Guard the guard, twice over. The list above must actually cover every generator that
+    /// emits an [ENABLE] block — a generator added later and forgotten here is precisely how
+    /// Freeze escaped — and the scripts it produces must actually contain unticks to inspect.
+    /// </summary>
+    [Fact]
+    public void TheEnableScriptList_CoversEveryGeneratorThatEmitsAnEnableBlock()
+    {
+        var services = Path.GetDirectoryName(FindRepoFile("ui/UE5DumpUI/Services/CeLuaHygiene.cs"))!;
+        var emitters = Directory.EnumerateFiles(services, "*ScriptGenerator.cs")
+            .Where(f => File.ReadAllText(f).Contains("\"[ENABLE]\"", StringComparison.Ordinal))
+            .Select(f => Path.GetFileNameWithoutExtension(f))
+            .ToList();
+
+        var covered = File.ReadAllText(FindRepoFile("ui/UE5DumpUI.Tests/CeMailboxBailoutTests.cs"));
+        var missing = emitters.Where(e => !covered.Contains(e, StringComparison.Ordinal)).ToList();
+
+        Assert.True(missing.Count == 0,
+            "these generators emit an [ENABLE] block but no test in this file mentions them, so "
+            + "their bail-outs are unchecked: " + string.Join(", ", missing));
+
+        Assert.True(emitters.Count >= 12,
+            $"only {emitters.Count} *ScriptGenerator.cs files emit [ENABLE]; the scan is not "
+            + "reaching the Services folder");
+    }
+
+    [Fact]
+    public void EveryGeneratedEnableBlock_ActuallyContainsAnUntickToCheck()
+    {
+        var barren = EveryEnableScript()
+            .Where(r => !EnableBlock((string)r[1]).Split('\n').Any(IsUntick))
+            .Select(r => (string)r[0])
+            .ToList();
+
+        // ONE exemption, and it is a real design fact rather than a deferral: "Reminder" is an
+        // informational script. It applies nothing, so there is no cheat to untick and no claim to
+        // be wrong about.
+        //
+        // ⚠ The "Trainer.*" exemption that used to sit here is GONE, because
+        // [TRAINERUNTICK-2026-08-21] is fixed. Do not reinstate it to make a red run green.
+        var unexpected = barren
+            .Where(n => !n.Contains("Reminder", StringComparison.Ordinal))
+            .ToList();
+        Assert.True(unexpected.Count == 0,
+            "no untick found in the [ENABLE] block of: " + string.Join(", ", unexpected)
+            + " — EveryGeneratedEnableBlock_UnticksOnlyViaTheSharedDeferredEmitter passes "
+            + "vacuously for these.");
+    }
+
+
+    /// <summary>
+    /// Untick lines in a block that are NOT deferred. [FREEZEUNTICK-2026-08-20]
+    ///
+    /// <para>There are TWO legitimate deferred shapes and the detector has to know both, or it
+    /// reports a false positive on working code:</para>
+    /// <list type="number">
+    /// <item>the shared one-liner from <c>CeLuaHygiene.DeferredUntickLua</c>, where
+    /// <c>createTimer</c> and the untick sit on the same line;</item>
+    /// <item>the older hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
+    /// created on one line and the untick sits several lines down inside the
+    /// <c>OnTimer = function(...)</c> body.</item>
+    /// </list>
+    /// <para>A line-only test flags the second as a defect — it did exactly that on
+    /// BakedScriptGenerator's perfectly correct self-untick timer. So an untick counts as deferred
+    /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
+    /// </summary>
+    /// <summary>
+    /// The trainer keeps BOTH untick shapes, and they are not interchangeable.
+    /// [TRAINERUNTICK-2026-08-21]
+    ///
+    /// <para>The momentary TP rows arm a timer <b>before</b> their bail-outs, via the generator's
+    /// own <c>AppendUntick</c>, which finds the record by DESCRIPTION rather than capturing
+    /// <c>memrec</c>. The stateful toggles must stay ticked while the cheat is on, so they untick
+    /// only on the paths that applied nothing, via the shared
+    /// <c>CeLuaHygiene.DeferredUntickLua()</c>.</para>
+    ///
+    /// <para>⚠ This is also the correction to how the defect was originally filed. It claimed the
+    /// generator "does not mention <c>memrec</c> even ONCE, so every failure path leaves the row
+    /// ticked" — a <c>memrec</c> grep used as the measurement. It was a PROXY, and it was wrong:
+    /// the TP rows already unticked without ever naming <c>memrec</c>. Assert on the two shapes,
+    /// never on that grep.</para>
+    /// </summary>
+    [Fact]
+    public void TheTrainerKeepsBothUntickShapes()
+    {
+        var src = File.ReadAllText(
+            FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
+
+        // The momentary shape: armed ahead of the bail-outs for the two TP rows.
+        Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
+
+        // The stateful shape: one per bail-out that applies nothing. Nine of them —
+        // Setup x3, Knob, Jump, GodMode x2, Fly x2.
+        Assert.Equal(9, Regex.Matches(src, @"Line\(sb, CeLuaHygiene\.DeferredUntickLua\(").Count);
+
+        // And no bail-out may go back to returning silently. Every `return` inside a
+        // showMessage branch has to be preceded by one of the two shapes; the count check above
+        // is what pins that, so this only guards against the inline form creeping back in —
+        // splicing the comment-terminated emitter into `if X then …; return end` would comment
+        // out the `return end` itself.
+        Assert.DoesNotContain("DeferredUntickLua()); return end", src, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Does this line untick a memory record? TWO mechanisms exist and a check that knows only one
+    /// reports a working script as unguarded. [TRAINERUNTICK-2026-08-21]
+    ///
+    /// <para><c>memrec.Active = false</c> is the common one — the record CE handed the script.
+    /// <c>StandaloneTrainerScriptGenerator</c> instead resolves the row with
+    /// <c>getAddressList().getMemoryRecordByDescription(...)</c> and writes <c>mr.Active</c>,
+    /// because its untick fires from a timer long after the enabling chunk has gone.</para>
+    ///
+    /// <para>⚠ That second mechanism is exactly what made the original finding overstate itself: it
+    /// measured with a <c>memrec</c> grep and concluded the trainer never unticked at all, when its
+    /// two momentary rows always had.</para>
+    /// </summary>
+    private static bool IsUntick(string line)
+        => line.Contains("memrec.Active = false", StringComparison.Ordinal)
+        || line.Contains("mr.Active = false", StringComparison.Ordinal);
+
+    private static List<string> ImmediateUnticksIn(string block)
+    {
+        var lines = block.Split('\n');
+        var bad = new List<string>();
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (!IsUntick(line)) continue;
+            if (line.Contains("createTimer", StringComparison.Ordinal)) continue;
+
+            // Back-scan for BOTH timer forms: `_u.OnTimer = function(x)` (the shared emitter) and
+            // `createTimer(50, function()` (the trainer's, which takes the callback inline).
+            var insideTimerBody = false;
+            for (int back = i - 1; back >= 0 && back >= i - 8; back--)
+                if (lines[back].Contains("OnTimer", StringComparison.Ordinal)
+                 || lines[back].Contains("createTimer", StringComparison.Ordinal))
+                { insideTimerBody = true; break; }
+            if (insideTimerBody) continue;
+
+            bad.Add("line " + (i + 1) + ": " + line);
+        }
+        return bad;
     }
 
     private static bool Within(string[] lines, int from, int span, string needle)
@@ -227,18 +583,55 @@ public class CeMailboxBailoutTests
     // against a newer DLL that changed nothing it depends on. tools/check_mailbox_contract.py
     // is what stops the version going stale; these pin the SCRIPT half.
 
+    /// <summary>
+    /// Every generated [ENABLE] block that ACTUALLY EMITS a contract check — derived by looking
+    /// for the symbol, not by hand-listing, so a generator that grows one later is picked up
+    /// without anyone remembering to come back here.
+    ///
+    /// <para>⚠ This exists because <c>Baked.Invoke.Verify</c> was added to
+    /// <see cref="EveryEnableScript"/> specifically to cover the contract bail-out — its comment
+    /// there says the bail-out "was covered by nothing at all" — and then the three contract
+    /// theories below were left pointing at <see cref="MailboxScripts"/>, which does not contain
+    /// it. So the fixture covered the SHAPE theories and not the one theory whose whole subject is
+    /// the contract bail-out. Half-wired, and invisible because everything was green.</para>
+    ///
+    /// <para>Deriving is also what keeps <c>Baked.Invoke</c> (no <c>verifyReturn</c>, therefore no
+    /// contract check) correctly OUT, without an exemption list: <c>AssertAFailedCheckUnticksTheRecord</c>
+    /// searches from the symbol's index, so feeding it a script that has none would throw rather
+    /// than fail cleanly.</para>
+    /// </summary>
+    public static IEnumerable<object[]> ContractCheckingScripts() =>
+        EveryEnableScript().Where(r =>
+            EnableBlock((string)r[1]).Contains(CeMailboxLayout.ContractSymbol, StringComparison.Ordinal));
+
+    /// <summary>Anti-vacuity for the source above: a filter that silently matched nothing — or
+    /// that lost the row this was built for — would make all three theories below pass by not
+    /// running. Pins the direction that matters (strictly more than the old hand-list) and the
+    /// specific row, rather than a total that drifts with every new generator.</summary>
+    [Fact]
+    public void TheContractCheckingList_IsWiderThanTheOldHandList_AndKeepsTheBakedRow()
+    {
+        var names = ContractCheckingScripts().Select(r => (string)r[0]).ToList();
+
+        Assert.Contains("Baked.Invoke.Verify", names);
+        Assert.DoesNotContain("Baked.Invoke", names);          // no contract check — correctly out
+        Assert.True(names.Count > MailboxScripts().Count(),
+            "the derived list is no wider than MailboxScripts, so nothing was actually gained: "
+            + string.Join(", ", names));
+    }
+
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void EveryScriptChecksTheContractBeforeWritingAnything(string name, string script)
         => AssertChecksTheContractBeforeWriting(name, script);
 
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void TheContractCheckNamesBothFailureDirections(string name, string script)
         => AssertNamesBothFailureDirections(name, script);
 
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void AFailedContractCheckUnticksTheRecord(string name, string script)
         => AssertAFailedCheckUnticksTheRecord(name, script);
 
@@ -295,8 +688,30 @@ public class CeMailboxBailoutTests
         // this point in the block — a bare return there would strand the row ticked.
         string enable = EnableBlock(script);
         int check = enable.IndexOf(CeMailboxLayout.ContractSymbol, StringComparison.Ordinal);
-        int untick = enable.IndexOf("memrec.Active = false", check, StringComparison.Ordinal);
-        Assert.True(untick > check, $"{name}: a failed contract check leaves the record ticked");
+        Assert.True(check >= 0, $"{name}: no contract symbol — wrong data source for this theory");
+
+        // ⚠ The window ENDS AT THE FIRST `return` after the check, and that bound is the whole
+        // point of this assertion. It used to be `IndexOf("memrec.Active = false", check)` with
+        // no upper bound, i.e. "an untick exists SOMEWHERE later" — which is not the claim.
+        // Measured 2026-08-24 on Baked.Invoke.Verify: its contract bail-outs sit at lines 54-81
+        // and a completely unrelated untick sits at line 132, inside the verify-mode OnTimer
+        // body. Break CeLuaHygiene.DeferredUntickLua() so every bail-out loses its untick and
+        // the unbounded search still found line 132 and passed — while the eleven MailboxScripts
+        // rows, which have no later untick to borrow, correctly went red. So the old form was
+        // discriminating only for scripts that happen to end without one.
+        //
+        // The first bail-out after the check is the strictest case: it fires before any timer
+        // this block installs later can help it, so if IT unticks, the shape is right.
+        int firstReturn = enable.IndexOf("\n  return", check, StringComparison.Ordinal);
+        if (firstReturn < 0) firstReturn = enable.IndexOf("\nreturn", check, StringComparison.Ordinal);
+        Assert.True(firstReturn > check,
+            $"{name}: the contract check never bails out — nothing to untick from");
+
+        string window = enable.Substring(check, firstReturn - check);
+        Assert.True(window.Contains("memrec.Active = false", StringComparison.Ordinal),
+            $"{name}: the FIRST bail-out after the contract check returns without unticking, so "
+            + "the row stays ticked while nothing was applied. (An untick later in the block does "
+            + "not count — that is what this assertion used to accept.)");
     }
 
     [Fact]
@@ -418,6 +833,82 @@ public class CeMailboxBailoutTests
 
         Assert.DoesNotContain(CeMailboxLayout.ContractSymbol, script, StringComparison.Ordinal);
         Assert.DoesNotContain("g_invokeMailbox", script, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// [L11-7 / 2026-08-21] The Baked invoker's CONTRACT CHECK bail-outs, which until now were
+    /// covered by nothing at all.
+    ///
+    /// <para><c>BakedScriptGenerator</c> emits <c>AppendContractCheck</c> only inside
+    /// <c>if (verifyReturn)</c>, and every fixture in <see cref="EveryEnableScript"/> and
+    /// <see cref="MailboxScripts"/> either omits verify mode or is a different generator — so the
+    /// three contract bail-outs (symbol unresolvable / memory unreadable / wrong magic) had no
+    /// assertion on them. That is the same gap shape as
+    /// <c>[FREEZEUNTICK-2026-08-20]</c>, whose second round found two generators the first round
+    /// had classified by READING the source instead of by generating the text.</para>
+    ///
+    /// <para>⚠ Adding the verify-mode script to <see cref="EveryEnableScript"/> does NOT close
+    /// this, and a negative control is what showed it: the theories fed by that list check for the
+    /// ABSENCE of an immediate untick and for the deferred line's exact text, and neither can fail
+    /// when an untick is simply MISSING. Stripping <c>AppendBail</c>'s untick reddened 13 other
+    /// rows and left the new fixture green. The rule that catches a missing untick lives in
+    /// <see cref="EveryEnableBailout_UnticksTheRecord"/>, whose <c>MailboxScripts</c> source is the
+    /// eleven stateful toggles — so this asserts the same rule directly instead of widening a list
+    /// whose membership carries meaning.</para>
+    ///
+    /// <para>Contract failure is <b>UntickAndReturn</b> whichever shape the script otherwise has:
+    /// the check sits BEFORE the first mailbox write, so nothing was applied and no deferred timer
+    /// has been armed yet to do it later.</para>
+    /// </summary>
+    [Fact]
+    public void TheBakedInvokersContractBailoutsUntickTheRecord()
+    {
+        string script = BakedScriptGenerator.Generate(
+            "PlayerController", "ClientSetViewTarget", 24,
+            new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 16, "0"),
+            verifyReturn: true);
+
+        var lines = EnableBlock(script).Split('\n');
+
+        // Guard the guard: if the contract check is not in this script at all, the assertions
+        // below pass vacuously and would keep passing if someone deleted the check entirely.
+        Assert.Contains("contract this script was generated against", string.Join("\n", lines),
+            StringComparison.Ordinal);
+
+        // ⚠ The rule is "a branch that REPORTS a failure and then LEAVES must already have
+        // unticked" — and the two cheaper phrasings are both wrong here, which is worth recording
+        // because each looked obviously right first.
+        //
+        //   "every showMessage is followed by an untick" (copied from
+        //   EveryEnableBailout_UnticksTheRecord) FAILS ON CORRECT CODE: the invoke-failure message
+        //   near the end of a verify script does not untick inline because it does not RETURN —
+        //   control falls through to an UNCONDITIONAL deferred timer a few lines later. That is the
+        //   momentary shape CLAUDE.md describes and AMomentaryTimeout_FlagsAndBreaks pins for
+        //   Teleport, and demanding an inline untick there is exactly the change that breaks it.
+        //
+        //   "every bare return must have unticked" ALSO fails on correct code: this generator
+        //   defines a local `_dumpHex` helper whose early `return` exits the FUNCTION, not the
+        //   block. The toggle theory never met that because its scripts define no helpers.
+        //
+        // So: a return counts as a bail-out only when a showMessage precedes it closely.
+        int guardedReturns = 0;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Trim() != "return") continue;
+            if (lines[i].Contains("syntaxcheck", StringComparison.Ordinal)) continue;
+            if (!Back(lines, i - 1, 8, "showMessage(")) continue;   // not a bail-out
+            guardedReturns++;
+            Assert.True(Back(lines, i - 1, 4, "memrec.Active = false"),
+                $"Baked.Invoke verify mode: the bail-out returning on line {i + 1} leaves the "
+                + "[ENABLE] block without unticking — the CE row stays ticked, nothing invoked.");
+        }
+
+        // Eight bail-outs return here: two helper-loader failures and the six contract branches
+        // (unresolvable / unreadable / wrong magic / re-read failed / script-too-old / DLL-too-old).
+        // A collapse means the harness stopped reaching the code it claims to check.
+        Assert.True(guardedReturns >= 7,
+            $"expected at least seven returning bail-outs, saw {guardedReturns}");
     }
 
     // ── The OTHER script shape: momentary actions ───────────────────────────
@@ -1046,5 +1537,34 @@ public class CeMailboxBailoutTests
         int close = enable.IndexOf(CeLuaHygiene.CloseCall, StringComparison.Ordinal);
         Assert.True(close > loop, $"{name}: the success-close is emitted before the wait loop");
         Assert.DoesNotContain("then break end", enable, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// params_data[1] and [2] are the base slot plus 8 and 16 (audit #5 AF14).
+    ///
+    /// <para>Five emitters wrote the FIRST operand through <c>OffParamsData</c> and the
+    /// next two as bare <c>0x330</c> / <c>0x338</c> literals in the same statement
+    /// group, so a future move of params_data would have split an FVector across the
+    /// old and new layouts — two of its components at the new base, one at the old.
+    /// They now go through named constants; this pins that the named constants are the
+    /// SAME BYTES the literals were, which is what makes the change a refactor and not
+    /// a contract move. (The generators' own tests assert the emitted text literally,
+    /// so together they prove the output is byte-identical.)</para>
+    /// </summary>
+    [Fact]
+    public void ParamsDataSlotsAreEightBytesApart()
+    {
+        static ulong H(string s) => Convert.ToUInt64(s.Replace("0x", ""), 16);
+
+        ulong p0 = H(CeMailboxLayout.OffParamsData);
+        Assert.Equal(p0 + 8,  H(CeMailboxLayout.OffParamsData1));
+        Assert.Equal(p0 + 16, H(CeMailboxLayout.OffParamsData2));
+
+        // And the literal values the generators used before the refactor, so this fails
+        // loudly if someone edits a constant expecting the emitted Lua to follow — the
+        // DLL's MailboxData layout is the authority, not this file.
+        Assert.Equal("0x328", CeMailboxLayout.OffParamsData);
+        Assert.Equal("0x330", CeMailboxLayout.OffParamsData1);
+        Assert.Equal("0x338", CeMailboxLayout.OffParamsData2);
     }
 }

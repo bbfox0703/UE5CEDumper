@@ -122,18 +122,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var procs = await _proxyDeployForChecks.ListGameProcessesAsync();
             if (epoch != _sessionEpoch) return;
             var hosts = procs.Where(p => p.DumperLoaded).ToList();
-            if (hosts.Count <= 1) { MultipleDumperHostsWarning = ""; return; }
+            // Exclude the process we actually reached (by PID, or by module name when
+            // the DLL reports no PID) so the connected game is never listed among its
+            // own competitors. Null => 0/1 hosts, nothing to warn about (X9).
+            var banner = Helpers.CompetingHostBanner.Build(hosts, state.ProcessId, state.ModuleName);
+            if (banner is not { } b) { MultipleDumperHostsWarning = ""; return; }
 
-            // Name the one we actually reached by PID when the DLL reports it; an older DLL
-            // sends 0, in which case the module name is the best we can say.
-            string connected = state.ProcessId > 0
-                ? $"{state.ModuleName} (PID {state.ProcessId})"
-                : state.ModuleName;
-            var others = hosts.Where(p => p.Pid != state.ProcessId)
-                              .Select(p => $"{p.Name} (PID {p.Pid})");
             MultipleDumperHostsWarning =
                 $"{hosts.Count} processes have the dumper DLL loaded. You are connected to "
-                + $"{connected} — also loaded: {string.Join(", ", others)}. "
+                + $"{b.ConnectedLabel} — also loaded: {string.Join(", ", b.Others)}. "
                 + "The pipe name is shared, so which game you reach is first-come-first-served. "
                 + "Close the ones you are not using.";
             _log.Warn(Constants.LogCatInit, MultipleDumperHostsWarning);
@@ -286,6 +283,44 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (InterestingProperties != null) InterestingProperties.PivotEnabled = on;
         if (LiveWalker != null)            LiveWalker.PivotEnabled = on;
         ValueSearch.PivotEnabled = on;
+    }
+
+    /// <summary>
+    /// Cross-tab "show me this class": DETACH the Object Tree highlight, then load
+    /// <paramref name="classAddr"/> into the Class/Struct panel. Every cross-tab class
+    /// handoff goes through here.
+    ///
+    /// <para>The detach is the fix for <c>[TREERECLICK-2026-08-22]</c>. After a handoff the
+    /// panel shows a class that no tree node selected, yet the tree kept highlighting the
+    /// node the user picked earlier — the UI asserting a selection that is not what is on
+    /// screen. Worse, that lie was unrecoverable by the obvious gesture: an Avalonia
+    /// <c>ListBox</c> writes <c>SelectedItem</c> only when it CHANGES, so clicking the
+    /// still-highlighted node raised nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
+    /// never fired (<c>ObjectTreeViewModel.cs:168</c>) and no walk reached the pipe. Clearing
+    /// the selection fixes both at once: the tree stops lying, and the next click on that
+    /// node is a real change, so it loads.</para>
+    ///
+    /// <para>⛔ The fix does NOT belong in <c>ClassStructViewModel</c>, which is already
+    /// correct — <c>LoadClassAsync</c> clears its dedupe key via <c>BeginLoad(nodeAddr:
+    /// null)</c> (<c>ClassStructViewModel.cs:250</c>), which is exactly why clicking a
+    /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
+    /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
+    /// (<c>:358</c>) swallows it, so that buys nothing this does not — and bypassing that
+    /// dedupe is pinned against by <c>RepeatedSelectionOfSameNode_WalksOnlyOnce</c>.</para>
+    ///
+    /// <para>Order is load-bearing: clear FIRST. <c>OnObjectSelected(null)</c> returns at
+    /// <c>ClassStructViewModel.cs:349</c> before its first await and deliberately takes no
+    /// load ticket, so it cannot supersede the load started on the next line; and if that
+    /// load throws, the tree is left honestly unselected rather than pointing at a stale
+    /// node. This is the same bare null write as <see cref="ObjectTreeViewModel.ClearOnDisconnect"/>
+    /// (<c>:496</c>); it touches no collection, so the reentrancy note at
+    /// <c>ObjectTreeViewModel.cs:505-510</c> — which is about the selection model reacting
+    /// to <c>FilteredNodes.Clear()</c> mid-method — does not apply.</para>
+    /// </summary>
+    private async Task ShowClassInClassStructAsync(string classAddr)
+    {
+        ObjectTree.SelectedNode = null;
+        await ClassStruct.LoadClassCommand.ExecuteAsync(classAddr);
     }
 
     /// <summary>Address format options for toolbar ComboBox.</summary>
@@ -1094,7 +1129,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 SelectedTabIndex = (int)MainTabIndex.ClassStruct; // Switch to ClassStruct tab
-                await ClassStruct.LoadClassCommand.ExecuteAsync(classAddr);
+                await ShowClassInClassStructAsync(classAddr);
             }
             catch (Exception ex)
             {
@@ -1178,7 +1213,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                         _log.Info($"InterestingFunctions -> ClassStruct fallback: {className}::{funcName}");
                     }
@@ -1232,7 +1267,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                     }
                     else
@@ -1392,7 +1427,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata (look for {propName})";
                         _log.Info($"InterestingProperties -> ClassStruct fallback: {className}.{propName}");
                     }
@@ -1681,8 +1716,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                         className, funcName, funcMatch.ParmsSize,
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"Invoke (baked, no args): {className}::{funcName}";
-                    // Sample availability before send so 'pipe broke mid-send'
-                    // surfaces distinctly from 'CE not running'.
+                    // Probe live before send: IsAvailable is only a cache of the
+                    // last connect, so without this refresh a CE started/closed
+                    // since then makes us assert the wrong "connected" state (X8).
+                    if (_aobMaker != null)
+                        await _aobMaker.CheckAvailabilityAsync();
                     bool wasAvailable = _aobMaker?.IsAvailable ?? false;
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
@@ -1775,7 +1813,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
+                        await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata " +
                                      $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)";
                         _log.Info($"Console -> ClassStruct fallback: {className}::{funcName}");
@@ -1889,6 +1927,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                         className, funcName, funcMatch.ParmsSize,
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"exec (baked, no args): {className}::{funcName}";
+                    // Probe live before send — IsAvailable is a stale connect cache (X8).
+                    if (_aobMaker != null)
+                        await _aobMaker.CheckAvailabilityAsync();
                     bool wasAvailable = _aobMaker?.IsAvailable ?? false;
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
@@ -1943,6 +1984,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 var script = Services.DebugCameraScriptGenerator.Generate();
                 const string description = "Debug Camera (force on/off): setDebugCamera";
+                // Probe live before send — IsAvailable is a stale connect cache (X8).
+                if (_aobMaker != null)
+                    await _aobMaker.CheckAvailabilityAsync();
                 bool wasAvailable = _aobMaker?.IsAvailable ?? false;
                 bool sentToCe = false;
                 if (_aobMaker != null && wasAvailable)
@@ -1977,10 +2021,20 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 StatusText = connected ? "Connected" : "Disconnected";
                 Teleport.SetConnected(connected);
                 DumpExplorer.SetConnected(connected);
-                if (!connected)
+                if (connected)
+                {
+                    // Fresh connection-scoped cancellation for this session's
+                    // long-running exports (X6). All field access is on the UI thread.
+                    _connectionCts.Dispose();
+                    _connectionCts = new CancellationTokenSource();
+                }
+                else
                 {
                     WindowTitle = "UE5 Dump UI";
                     GameThreadStalled = false;   // clear the paused banner on disconnect
+                    // Abort any in-flight export bound to the pipe that just dropped
+                    // so it stops round-tripping to a dead game (X6).
+                    _connectionCts.Cancel();
                     // End the session epoch and cancel any pending proxy-confirm dwell, so
                     // a proxy that just crashed the game isn't recorded as working when the
                     // user reconnects within the 20 s dwell. (M8)
@@ -1992,6 +2046,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // rest of the session and keeps warning about a conflict that ended
                     // when the game closed. (B9)
                     MultipleDumperHostsWarning = "";
+                    ResetPanelsOnDisconnect();   // clear stale process-scoped rows (X5)
                 }
             });
         };
@@ -2035,6 +2090,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // the window is gone. (M8)
         _proxyConfirmTimer?.Dispose();
         _proxyConfirmTimer = null;
+        // Cancel + dispose the connection-scoped export cancellation (X6).
+        try { _connectionCts.Cancel(); } catch { }
+        _connectionCts.Dispose();
 
         GC.SuppressFinalize(this);
     }
@@ -2295,6 +2353,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(TeleportViewModel.FallbackToCenter), nameof(TeleportViewModel.CursorHotkeyEnabled),
         nameof(TeleportViewModel.RelativeDistance), nameof(TeleportViewModel.RelativeHorizontal),
         nameof(TeleportViewModel.CoordSetRotation), nameof(TeleportViewModel.AutoRefresh),
+        // ApplyOptions/BuildOptions already round-trip these two; without them here a
+        // slider change never schedules a save, so the value only landed if some other
+        // Teleport option happened to change too (X10).
+        nameof(TeleportViewModel.WorldTimeDilation), nameof(TeleportViewModel.PawnTimeDilation),
     };
     private static readonly HashSet<string> SpcPersist = new()
     {
@@ -2375,6 +2437,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         PropertySearch.GameClassesOnly = o.PropertySearch.GameClassesOnly;
         PropertySearch.DeepSearch = o.PropertySearch.DeepSearch;
+        // Clamp on LOAD as well as in the control: ui-options.json is a plain file a
+        // user can edit, and a hand-written 0 there would make every search return
+        // nothing with no visible cause. [PROPSEARCHCAP-2026-08-19]
+        PropertySearch.PropertySearchCap = Math.Clamp(
+            o.PropertySearch.PropertySearchCap,
+            Constants.MinSearchCap, Constants.MaxSearchCap);
 
         var tp = o.Teleport;
         Teleport.ZOffset = tp.ZOffset;
@@ -2397,6 +2465,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         Console.GameOnly = o.Console.GameOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
+        // Clamped on LOAD too: ui-options.json is plain text a user can edit, and a
+        // hand-written 0 would make the Classes tab return nothing with no visible cause.
+        GameClassFilter.ClassListCap = Math.Clamp(
+            o.GameClassFilter.ClassListCap, Constants.MinSearchCap, Constants.MaxSearchCap);
 
         if (Snapshot != null)
         {
@@ -2522,6 +2594,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         o.PropertySearch.GameClassesOnly = PropertySearch.GameClassesOnly;
         o.PropertySearch.DeepSearch = PropertySearch.DeepSearch;
+        o.PropertySearch.PropertySearchCap = PropertySearch.PropertySearchCap;
 
         o.Teleport.ZOffset = Teleport.ZOffset;
         o.Teleport.TraceChannel = Teleport.TraceChannel;
@@ -2543,6 +2616,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         o.Console.GameOnly = Console.GameOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
+        o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
 
         if (Snapshot != null)
         {
@@ -2590,11 +2664,60 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Clear every panel that holds PROCESS-SCOPED state on disconnect (audit X5).
+    /// The old fan-out reset only Teleport / DumpExplorer / LiveFuncs, so a reconnect
+    /// (often to a DIFFERENT game) left the other panels showing rows whose addresses
+    /// belonged to the previous process — and still offered jumps to them.
+    ///
+    /// Every clear here is CLIENT-SIDE ONLY (the pipe is already gone), and the ones
+    /// that hold live DLL state say so: ValueSearch forgets its two scan sessions
+    /// without the End_* pipe call; PropertySearch drops the forced-fields mirror
+    /// without a reset-holds call; LiveWalker stops its auto-refresh timer. Panels
+    /// that legitimately PERSIST are deliberately excluded: Teleport / DumpExplorer
+    /// (handled via SetConnected(false) above), LiveFuncs (ResetOnDisconnect above),
+    /// ProxyDeploy (disk/OS state, connection-independent), and the disk-backed
+    /// snapshot corpora in Snapshot / Spc / Pivot (only their live session id /
+    /// DataTable pick / auto-loop is reset, never the saved rows). Runs on the UI thread.
+    /// </summary>
+    private void ResetPanelsOnDisconnect()
+    {
+        try
+        {
+            ObjectTree.ClearOnDisconnect();
+            ClassStruct.ClearOnDisconnect();
+            Pointers.ClearOnDisconnect();
+            LiveWalker.ClearOnDisconnect();
+            InstanceFinder.ClearOnDisconnect();
+            PropertySearch.ClearOnDisconnect();
+            GameClassFilter.ClearOnDisconnect();
+            InterestingFunctions.ClearOnDisconnect();
+            InterestingProperties.ClearOnDisconnect();
+            ValueSearch.ClearOnDisconnect();
+            RelatedObjects.ClearOnDisconnect();
+            DetectStats.ClearOnDisconnect();
+            Console.ClearOnDisconnect();
+            Snapshot?.ClearOnDisconnect();
+            Spc?.ClearOnDisconnect();
+            Pivot?.ClearOnDisconnect();
+        }
+        catch (Exception ex)
+        {
+            // A panel-clear must never break the disconnect path.
+            _log.Error("ResetPanelsOnDisconnect failed", ex);
+        }
+    }
+
+    /// <summary>
     /// Apply a fully-scanned engine state to all child ViewModels.
     /// Shared between ConnectAsync (normal mode) and TriggerScanAsync (proxy mode).
     /// </summary>
     private void ApplyEngineState(EngineState state)
     {
+        // Fresh session (connect / proxy trigger_scan): blank the Extra-Scan strip so
+        // no result from the previous game survives. Update() no longer does this —
+        // it is also the plain pointer refresh, and doing it there wiped the scan's
+        // own result seconds after the user saw it (audit #5 V10).
+        Pointers.ResetScanState();
         Pointers.Update(state);
 
         ObjectTree.SetEngineState(state);
@@ -2656,6 +2779,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     // recorded, short enough to fire in a normal session.
     private const int ProxyConfirmDwellMs = 20_000;
     private Timer? _proxyConfirmTimer;
+
+    // Cancels connection-scoped long-running work (the streaming exports) when the
+    // pipe drops mid-operation. Each export links its own CTS to this token, so a
+    // disconnect aborts the export's dead-pipe round-trips instead of hammering a
+    // gone game — and its services' ct checks stop being dead code (X6). Recreated
+    // on connect, cancelled on disconnect. ONLY the exports use it, so cancelling
+    // it can't cancel anything unrelated.
+    private CancellationTokenSource _connectionCts = new();
     // Bumped on every disconnect. A proxy-confirm dwell captures the epoch when it is
     // scheduled and only records if the epoch is unchanged when it fires — so a proxy
     // that crashed its game (disconnect) can't be recorded against a later reconnect,
@@ -3120,21 +3251,39 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             var ceDir = await TryFindCheatEngineDirAsync();
             string? target = null;
+            bool autoLocated = false;
 
             if (ceDir != null)
             {
                 var autorunDir = Path.Combine(
                     ceDir, Services.CeAutorunScriptGenerator.AutorunFolderName);
-                // CE ships the folder, but a portable/trimmed copy may not have it —
-                // creating it is safe and is what CE itself expects to find.
-                Directory.CreateDirectory(autorunDir);
-                target = Path.Combine(autorunDir, fileName);
+                try
+                {
+                    // CE ships the folder, but a portable/trimmed copy may not have it —
+                    // creating it is safe and is what CE itself expects to find.
+                    Directory.CreateDirectory(autorunDir);
+                    var autoTarget = Path.Combine(autorunDir, fileName);
+                    await File.WriteAllTextAsync(autoTarget, content);
+                    target = autoTarget;
+                    autoLocated = true;
+                }
+                catch (Exception ex) when (Helpers.FileWriteFault.IsPlacementDenied(ex))
+                {
+                    // CE lives under %ProgramFiles% for most installs, so the auto-place
+                    // needs elevation and throws here. That is exactly when the manual
+                    // fallback is needed — the old code skipped it and reported failure (X12).
+                    _log.Warn(Constants.LogCatInit,
+                        $"CE autorun auto-place denied ({ex.Message}); falling back to manual save dialog");
+                }
             }
-            else
+
+            if (!autoLocated)
             {
-                // No running CE to point at — let the user place the file. The
-                // dialog default name matches what CE expects to find.
-                StatusText = "Cheat Engine not running — choose its autorun folder...";
+                // No running CE to point at, or its folder was not writable — let the
+                // user place the file. The dialog default name matches what CE expects.
+                StatusText = ceDir == null
+                    ? "Cheat Engine not running — choose its autorun folder..."
+                    : "Cheat Engine's autorun folder is not writable — choose where to place it...";
                 target = await _platform.ShowSaveFileDialogAsync(
                     defaultFileName: fileName,
                     filterName: "CE autorun Lua (*.lua)",
@@ -3144,11 +3293,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     StatusText = "Install CE autorun: cancelled";
                     return;
                 }
+                await File.WriteAllTextAsync(target, content);
             }
 
-            await File.WriteAllTextAsync(target, content);
             _log.Info($"Installed CE autorun helper: {target} ({content.Length:N0} chars, " +
-                      $"dll={dllPath}, autoLocated={ceDir != null})");
+                      $"dll={dllPath}, autoLocated={autoLocated})");
 
             // Whether auto-located or hand-placed, the file only takes effect on the
             // NEXT CE start — say so, or the user will click and see nothing happen.
@@ -3315,11 +3464,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var progress = new Progress<string>(msg =>
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
 
-            var content = await SdkExportService.GenerateFullSdkAsync(_dump, progress);
-            await File.WriteAllTextAsync(filePath, content);
+            // Cancellation linked to the connection so a mid-export disconnect aborts
+            // the service's per-class walk (its ct checks were dead code before) (X6).
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+            var content = await SdkExportService.GenerateFullSdkAsync(_dump, progress, cts.Token);
+            await File.WriteAllTextAsync(filePath, content, cts.Token);
 
             StatusText = "SDK exported";
             _log.Info($"Full SDK exported to {filePath}");
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "SDK export cancelled (disconnected)";
+            _log.Info("Full SDK export cancelled");
         }
         catch (Exception ex)
         {
@@ -3341,6 +3498,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (_engineState == null) return;
 
+        // Temp-then-rename: the dump streams to <file>.partial and is published to
+        // the chosen name only after GenerateAsync returns (which happens only after
+        // the trailing summary line is written), so an abort/disconnect/crash never
+        // leaves a truncated .jsonl at the final name (X11).
+        string? tempPath = null;
         try
         {
             ClearError();
@@ -3369,24 +3531,54 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 DumperBuildNumber: GetBuildNumber(),
                 DumperCommit: null);                        // Not yet plumbed through
 
-            await using var fs = new FileStream(
-                filePath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true);
-            await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, progress);
+            // Cancellation linked to the connection so a mid-dump disconnect aborts
+            // the (now dead) per-class round-trips instead of hanging (X6).
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+            var ct = cts.Token;
 
-            var fileInfo = new FileInfo(filePath);
-            StatusText = $"Dumped {fileInfo.Length / 1024 / 1024:F1} MB to {Path.GetFileName(filePath)}";
-            _log.Info($"DumpAll exported to {filePath} ({fileInfo.Length} bytes)");
+            tempPath = filePath + ".partial";
+            DumpResult result;
+            await using (var fs = new FileStream(
+                tempPath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
+            {
+                result = await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, progress, ct);
+            }   // fs flushed + closed here, so File.Move below can take the file
+
+            File.Move(tempPath, filePath, overwrite: true);
+            tempPath = null;   // published — don't delete on a later throw
+
+            var byteLength = new FileInfo(filePath).Length;
+            // Report from what the dump ACTUALLY produced (class/error counts), not
+            // from the file's byte length, and format the size in floating point (X4).
+            StatusText = Helpers.DumpCompletionFormatter.Format(
+                result, byteLength, Path.GetFileName(filePath));
+            _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
+                      $"{result.ClassesEmitted} classes, {result.Errors} errors)");
 
             // Offer a one-click load in the Dump Explorer tab (no auto-load — the
             // user may re-export or be mid-operation there).
             DumpExplorer.SetLastExportPath(filePath);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Dump cancelled (disconnected)";
+            _log.Info("DumpAll export cancelled");
+            TryDeletePartial(tempPath);
         }
         catch (Exception ex)
         {
             StatusText = "Dump failed";
             SetError(ex);
             _log.Error("DumpAll export failed", ex);
+            TryDeletePartial(tempPath);
         }
+    }
+
+    /// <summary>Best-effort cleanup of an unpublished temp dump file (X11).</summary>
+    private static void TryDeletePartial(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* leftover .partial is harmless */ }
     }
 
     /// <summary>
@@ -3420,11 +3612,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var progress = new Progress<string>(msg =>
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
 
-            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress);
-            await File.WriteAllBytesAsync(filePath, bytes);
+            // Cancellation linked to the connection so a mid-export disconnect aborts
+            // the service's walk (its ct checks were dead code before) (X6).
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token);
+            await File.WriteAllBytesAsync(filePath, bytes, cts.Token);
 
             StatusText = "USMAP exported";
             _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "USMAP export cancelled (disconnected)";
+            _log.Info("USMAP export cancelled");
         }
         catch (Exception ex)
         {

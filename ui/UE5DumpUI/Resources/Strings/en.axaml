@@ -318,6 +318,8 @@
     <sys:String x:Key="str.InstanceFinder.ExactMatch">Exact match</sys:String>
     <sys:String x:Key="str.InstanceFinder.NewestFirst">Newest first</sys:String>
     <sys:String x:Key="str.InstanceFinder.MaxResults">Max</sys:String>
+    <sys:String x:Key="str.PropertySearch.MaxResults">Max</sys:String>
+    <sys:String x:Key="str.GameClassFilter.MaxResults">Max</sys:String>
     <sys:String x:Key="str.InstanceFinder.KeywordHint">Filter results (Name / Class / Addr)</sys:String>
     <sys:String x:Key="str.InstanceFinder.ContainerMatches">Container matches (address falls inside a TArray buffer):</sys:String>
 
@@ -394,6 +396,12 @@
     <sys:String x:Key="str.Pointers.TestScan.Result">Test: scan simulation finished (no actual rescan — all pointers are already found).</sys:String>
     <sys:String x:Key="str.Pointers.TestScan.Error">Test scan error: {0}</sys:String>
 
+    <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
+         Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
+         chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+    <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
+
     <!-- Pointer Panel: Cache management status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.Cache.GameCleared">Cache cleared for this game. Next scan will do a full search.</sys:String>
     <sys:String x:Key="str.Pointers.Cache.GameNotFound">No cache entry found for this game.</sys:String>
@@ -422,6 +430,13 @@
     <sys:String x:Key="str.System.SelfTest.Running">Probing KismetMathLibrary helpers...</sys:String>
     <sys:String x:Key="str.System.SelfTest.NoCandidate">No testable BlueprintFunctionLibrary helper found in this game.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Error">Self-Test failed: {0}</sys:String>
+    <!-- Self-Test FAILED. {0} label, {1} expected, {2} actual, {3} advice (one of the four below), {4} raw buffer. -->
+    <sys:String x:Key="str.System.SelfTest.Fail">✗ {0} expected {1}, got {2}&#10;{3}&#10;Raw buffer: {4}</sys:String>
+    <sys:String x:Key="str.System.SelfTest.Fail.HookFiring">The ProcessEvent hook is installed AND firing, so the invoke path itself is working. A wrong answer here most likely means this game's build resolves that helper through BlueprintFastCall, which makes it a no-op when called via ProcessEvent — so this result is not evidence of a broken hook. Verify with a game-specific UFunction instead. Re-deploying the DLL will not change it.</sys:String>
+    <sys:String x:Key="str.System.SelfTest.Fail.HookNeverFired">The ProcessEvent hook is installed but has never fired. That is the signature of a MIS-DETECTED vtable slot — check init-*.log for 'VALIDATION FAILED'. Re-deploying the DLL will NOT help: the binary is current, the detected slot is wrong. The same reading also appears when the game thread is simply idle (paused, loading, minimised), so retry once while the game is actually running before concluding.</sys:String>
+    <sys:String x:Key="str.System.SelfTest.Fail.NotDispatched">The DLL REFUSED this call — it never reached ProcessEvent, so the untouched return slot says nothing about the function. Check init-*.log: 'VALIDATION FAILED' means a detected vtable slot was rejected because the hook never fired (re-deploying the DLL will NOT fix that), and 'no UObject vtable available yet' means no scan has run in this process — run one and retry.</sys:String>
+    <sys:String x:Key="str.System.SelfTest.Fail.HookOff">The ProcessEvent hook is not installed, so this call used the direct fallback. Check init-*.log for 'DetectProcessEvent' and 'VALIDATION FAILED': "no UObject vtable available yet" means run a scan first and retry; "VALIDATION FAILED" means a detected slot was rejected because it never fired, and the hook has just been disabled for that reason; and a detection failure means re-deploying the DLL will NOT help — restart the game and re-inject.</sys:String>
+    <sys:String x:Key="str.System.SelfTest.Fail.Unknown">The DLL's hook state could not be read, so the cause is unknown. It is either a mis-detected vtable slot (check init-*.log for 'VALIDATION FAILED' — re-deploying the DLL does not fix that) or a helper this game compiled to BlueprintFastCall, which no-ops through ProcessEvent even when the hook is correct.</sys:String>
 
     <!-- System tab: Pipe Activity (live tail of UI<->DLL pipe traffic) -->
     <sys:String x:Key="str.System.PipeLog.Header">Pipe Activity</sys:String>
@@ -748,6 +763,7 @@
     <sys:String x:Key="str.ProxyDeploy.ColName">Game</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColPath">Binaries Path</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColStatus">Status</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColLoad">Loaded?</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColSuggested">Suggested proxy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColError">Error</sys:String>
@@ -759,6 +775,7 @@
     <sys:String x:Key="str.ProxyDeploy.ScanDrives">Scan Drives</sys:String>
     <sys:String x:Key="str.ProxyDeploy.RefreshDrives">Refresh Drives</sys:String>
     <sys:String x:Key="str.ProxyDeploy.CancelScan">Cancel</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.CancelOperation">Cancel operation</sys:String>
 
     <!-- Leftover ("orphan") proxy cleanup. Uninstalling a game leaves its folder behind BECAUSE our
          proxy DLL is a file Steam does not own, so an empty shell survives with our DLL inside it. -->
@@ -828,6 +845,19 @@
     <sys:String x:Key="str.Tip.PropertySearch.ForcedRemove">Release this hold (restore the captured base) and stop re-asserting it.</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedCapped">⚠ capped</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
+
+    <!-- Value prompt (FreezeValueDialog). ONE dialog serves two actions, so every string
+         that names the action has a Freeze and a Force variant (audit #5 AF22: the Force
+         flow reused the Freeze dialog verbatim, so the button the user clicked to write
+         and HOLD a live field said "Create freeze script"). -->
+    <sys:String x:Key="str.ValuePrompt.Freeze.Title">Freeze property value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.ValueLabel">Freeze value ({0}):</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.Ok">Create freeze script</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.NarrowHint">To target a single class, edit className in the generated CFG block (or set derived = false for that class only).</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.Title">Force property value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.ValueLabel">Force value ({0}):</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.Ok">Hold this value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.NarrowHint">There is no per-class switch for Force — it holds the field on the declaring class and every subclass until you release it from the "Forced fields" strip.</sys:String>
 
     <!-- Game Class Filter -->
     <sys:String x:Key="str.GameClassFilter.Load">Load</sys:String>
@@ -1369,6 +1399,8 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.InstanceFinder.ObjectName">Optional: also require the object's NAME to contain this text (case-insensitive). Combined with the class name as AND. Leave the class box empty to search by object name alone. Filtering runs in the game (across every object) so you won't miss matches hidden behind unrelated objects — but the result list is still capped; if you see "⚠ capped" in the status, narrow the search.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.ExactMatch">Match class name exactly (no substring). Applies to the class box only.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.NewestFirst">Scan from the newest (highest InternalIndex) end → catches just-spawned instances (e.g. an enemy that just appeared) and avoids the result cap truncating the newest. Off = oldest first (class-default object / template / earliest instances — good for finding a Blueprint's defaults). Tip: click the Index column to re-sort either way.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.MaxResults">Maximum rows returned (100–50000). The class walk is always exhaustive; this only caps the returned list. Raise it if you see "⚠ capped" — a broad name like "Health" hits the default 200 easily. Larger values are slower to transfer and each row resolves a preview value.</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.MaxResults">Maximum class rows returned (100–50000). The GObjects walk is always exhaustive and the "of N total" figure counts every class past the cap; this bounds only the rows shown. Raise it when the status line says "⚠ STOPPED" — Super / Package suggestions are derived from the loaded rows, so a value that only occurs past the cap is not offered until you do.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.MaxResults">Maximum rows returned (100–50000). The game-side scan is always exhaustive; this only caps the returned list. Raise it if you see "⚠ capped". Larger values are slower to transfer + filter.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.Keyword">Temporary filter over the rows already returned — whitespace-separated terms are ANDed across Name / Class / Address (e.g. "BP_ char"). Instant + client-side: it does NOT reach past the result cap. To recover an instance hidden past the cap, exclude noise classes in the class-filter (⚑) — that re-runs the scan in the game — or raise Max.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.Lookup">Lookup UObject at the specified address</sys:String>
@@ -1462,6 +1494,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ProxyDeploy.Scan">Detect Steam-installed UE games</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Inject">Route ② of 4 — use this when the game is already running and you did not deploy a proxy (① Deploy is better when you can restart the game: it loads with it and survives restarts). Inject UE5Dumper.dll into an already-running UE game (CreateRemoteThread + LoadLibraryW) — no Cheat Engine or pre-deployed proxy needed. Pick the process, then auto-connect. If the game runs as Administrator you'll get a UAC prompt to inject elevated (no manual restart). x64 games only; single-player / offline use only (anti-cheat may block).</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Refresh">Refresh deploy status for detected games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.CancelOperation">Stop the long operation currently running in this panel — Scan, Scan Drives, Refresh Drives, Find leftovers, Delete checked, Refresh, Deploy, Undeploy or Update All. Only one runs at a time, so this is unambiguous. It stops at the next unit of work (one game, one leftover chain, one library folder), so whatever is already in flight finishes and the result line reports what actually happened rather than pretending nothing did.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Route ① of 4 — the best one when you can restart the game: the proxy loads with it, survives restarts, and needs no Cheat Engine. Deploy the selected proxy DLL to the ticked games.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove OUR proxy DLLs from the selected games — every flavour (version / dinput8 / dxgi), not just the one selected above: that radio governs deploying, while this is a clean-up. A version.dll or dxgi.dll belonging to another program (a mod loader, another tool) is always left alone, and is reported rather than deleted.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Update all deployed games to latest version</sys:String>

@@ -103,6 +103,7 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, "UE5T_ready = false");
         Line(sb, "if UE5T.aob == '' or #UE5T.toPawn == 0 then");
         Line(sb, "  showMessage('[UE5 Trainer] Config missing (no AOB / chain). Regenerate from UE5CEDumper.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "local mod = UE5T.module");
@@ -110,11 +111,16 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, "local hit = AOBScanModuleUE(mod, UE5T.aob)");
         Line(sb, "if not hit then");
         Line(sb, "  showMessage('[UE5 Trainer] GWorld AOB scan FAILED in '..tostring(mod)..'. Baked for one game+version; aborting (no fallback).')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "local hitv = tonumber(hit, 16)");
         Line(sb, "local disp = readInteger(hitv + UE5T.pos, true)");
-        Line(sb, "if not disp then showMessage('[UE5 Trainer] Could not read RIP displacement. Aborting.'); return end");
+        Line(sb, "if not disp then");
+        Line(sb, "  showMessage('[UE5 Trainer] Could not read RIP displacement. Aborting.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, "local gworldSlot = disp + hitv + UE5T.aoblen");
         Line(sb, "synchronize(function()");
         Line(sb, "  unregisterSymbol(UE5T.sym)");
@@ -221,7 +227,11 @@ public static class StandaloneTrainerScriptGenerator
     {
         var sb = new StringBuilder(1024);
         BeginEnable(sb);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  showMessage('[UE5 Trainer] Enable Setup first.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, $"UE5T_startKnob('{key}', {Hex(off)}, {mult})");
         Line(sb, $"if DEBUG == 0 then {Close} end");
         EndEnable(sb);
@@ -237,7 +247,11 @@ public static class StandaloneTrainerScriptGenerator
     {
         var sb = new StringBuilder(1024);
         BeginEnable(sb);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  showMessage('[UE5 Trainer] Enable Setup first.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, $"local HEIGHT = {height}            -- edit: jump-height multiplier");
         Line(sb, "local MULT = math.sqrt(HEIGHT)   -- velocity scales with sqrt(height)");
         Line(sb, $"UE5T_startKnob('jump', {Hex(off)}, MULT)");
@@ -255,8 +269,16 @@ public static class StandaloneTrainerScriptGenerator
     {
         var sb = new StringBuilder(1024);
         BeginEnable(sb);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
-        Line(sb, "if #UE5T.godBits == 0 then showMessage('[UE5 Trainer] No protection bit was resolved.'); return end");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  showMessage('[UE5 Trainer] Enable Setup first.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
+        Line(sb, "if #UE5T.godBits == 0 then");
+        Line(sb, "  showMessage('[UE5 Trainer] No protection bit was resolved.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, "local old = UE5T.god_timer");
         Line(sb, "if old then old.destroy(); UE5T.god_timer = nil end");
         Line(sb, "local t = createTimer(nil, false)");
@@ -305,8 +327,16 @@ public static class StandaloneTrainerScriptGenerator
     {
         var sb = new StringBuilder(2048);
         BeginEnable(sb);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
-        Line(sb, "if not isKeyPressed then showMessage('[UE5 Trainer] Fly needs CE isKeyPressed -- update Cheat Engine.'); return end");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  showMessage('[UE5 Trainer] Enable Setup first.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
+        Line(sb, "if not isKeyPressed then");
+        Line(sb, "  showMessage('[UE5 Trainer] Fly needs CE isKeyPressed -- update Cheat Engine.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, "local old = UE5T.fly_timer");
         Line(sb, "if old then old.destroy(); UE5T.fly_timer = nil end");
         Line(sb, $"UE5T.fly_preset = {idx}   -- this preset now owns the shared fly timer");
@@ -465,6 +495,20 @@ public static class StandaloneTrainerScriptGenerator
     private static void EndDisable(StringBuilder sb) => Line(sb, "{$asm}");
 
     // Momentary: after the action runs, untick this entry ~50ms later (fires once).
+    //
+    // ⚠ TWO untick shapes live in this file and they are not interchangeable.
+    // [TRAINERUNTICK-2026-08-21]
+    //
+    // THIS one is for the momentary TP rows. It is emitted BEFORE their bail-outs on purpose, so
+    // the timer exists whichever path returns — success or "Enable Setup first" alike — and it
+    // looks the record up by DESCRIPTION at fire time rather than capturing `memrec`.
+    //
+    // The stateful toggles (Setup / Move Speed / Gravity / Jump / GodMode / Fly) use
+    // CeLuaHygiene.DeferredUntickLua() at each bail-out instead: they must STAY ticked while the
+    // cheat is on, so they can only untick on the paths that applied nothing.
+    //
+    // ⚠ A `memrec` grep is NOT a way to audit this file — that is what made the original finding
+    // overstate its scope. This helper unticks without ever naming `memrec`.
     private static void AppendUntick(StringBuilder sb, string desc)
     {
         Line(sb, "createTimer(50, function()");

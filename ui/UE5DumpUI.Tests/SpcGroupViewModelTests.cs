@@ -41,7 +41,7 @@ public class SpcGroupViewModelTests : IDisposable
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => Path.GetTempPath();
         public string GetLogDirectoryPath() => Path.GetTempPath();
-        public Task CopyToClipboardAsync(string text) { LastClipboard = text; return Task.CompletedTask; }
+        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";
         public void CloseImeForWindow(IntPtr windowHandle) { }

@@ -1,3 +1,4 @@
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Linq;
 using UE5DumpUI.Core;
@@ -90,7 +91,23 @@ public sealed class ArrayElementsResult
 /// <summary>
 /// A single field value read from a live UObject instance.
 /// </summary>
-public sealed class LiveFieldValue
+/// <remarks>
+/// ⚠ <b>Row objects SURVIVE a refresh.</b> [LWREFRESH-2026-08-21]
+///
+/// <para>Live Walker's refresh used to assign <c>Fields[i] = newFields[i]</c> under a comment
+/// claiming it "preserves scroll position". Measured on DumperTest, it does the opposite: the
+/// <c>DataGridCollectionView</c> splits each indexer assignment into Remove+Add and the grid ends
+/// up <b>exactly one row higher</b> per Refresh, cumulatively — which is the reported "the match
+/// sits one row below the viewport". Disabling the assignment entirely made the drift vanish;
+/// replacing the loop with a single Clear+Add was worse still (it jumps to the top).</para>
+///
+/// <para>So the refresh now copies values onto the EXISTING row via
+/// <see cref="CopyLiveValuesFrom"/>, and the members that can differ between two walks of the same
+/// object are observable so the cells still repaint. The structural ones — <c>Name</c>,
+/// <c>Offset</c>, <c>TypeName</c>, the navigability flags — stay <c>init</c> on purpose: they are
+/// exactly what the same-layout branch checks before deciding it may reuse the rows at all.</para>
+/// </remarks>
+public sealed partial class LiveFieldValue : ObservableObject
 {
     public string Name { get; init; } = "";
     public string TypeName { get; init; } = "";
@@ -101,19 +118,34 @@ public sealed class LiveFieldValue
     public bool IsGuessed { get; init; }
 
     /// <summary>Raw hex value (always populated for readable fields).</summary>
-    public string HexValue { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _hexValue = "";
 
     /// <summary>Human-readable typed value (for Float, Int, Bool, etc.).</summary>
-    public string TypedValue { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _typedValue = "";
 
     /// <summary>For ObjectProperty: address of the referenced object.</summary>
-    public string PtrAddress { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _ptrAddress = "";
 
     /// <summary>For ObjectProperty: name of the pointed-to object.</summary>
-    public string PtrName { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _ptrName = "";
 
     /// <summary>For ObjectProperty: class name of the pointed-to object.</summary>
-    public string PtrClassName { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _ptrClassName = "";
 
     /// <summary>For ObjectProperty: UClass* address of the pointed-to object (for CSX drilldown).</summary>
     public string PtrClassAddr { get; init; } = "";
@@ -128,7 +160,10 @@ public sealed class LiveFieldValue
     public int BoolByteOffset { get; init; }
 
     /// <summary>For ArrayProperty: element count (-1 = not an array).</summary>
-    public int ArrayCount { get; init; } = -1;
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private int _arrayCount = -1;
 
     /// <summary>For ArrayProperty: inner element type name (e.g., "FloatProperty", "StructProperty").</summary>
     public string ArrayInnerType { get; init; } = "";
@@ -167,7 +202,10 @@ public sealed class LiveFieldValue
     public List<EnumEntryValue>? ArrayEnumEntries { get; init; }
 
     /// <summary>For MapProperty: entry count (-1 = not a map).</summary>
-    public int MapCount { get; init; } = -1;
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private int _mapCount = -1;
 
     /// <summary>For MapProperty: key type name (e.g. "StrProperty").</summary>
     public string MapKeyType { get; init; } = "";
@@ -216,7 +254,10 @@ public sealed class LiveFieldValue
     public List<ContainerElementValue>? MapElements { get; init; }
 
     /// <summary>For SetProperty: entry count (-1 = not a set).</summary>
-    public int SetCount { get; init; } = -1;
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private int _setCount = -1;
 
     /// <summary>For SetProperty: element type name.</summary>
     public string SetElemType { get; init; } = "";
@@ -252,7 +293,10 @@ public sealed class LiveFieldValue
     public string StructTypeName { get; init; } = "";
 
     /// <summary>For EnumProperty: resolved enum name (e.g., "ROLE_Authority").</summary>
-    public string EnumName { get; init; } = "";
+    [NotifyPropertyChangedFor(nameof(DisplayValue))]
+    [NotifyPropertyChangedFor(nameof(ValueTooltip))]
+    [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [ObservableProperty] private string _enumName = "";
 
     /// <summary>For EnumProperty: raw enum integer value.</summary>
     public long EnumValue { get; init; }
@@ -284,6 +328,35 @@ public sealed class LiveFieldValue
     /// <summary>For DataTable RowMap: row data for CE XML / CSX export (from WalkDataTableRowsAsync).</summary>
     public List<DataTableRowInfo>? DataTableRowData { get; init; }
 
+    /// <summary>
+    /// Take the freshly-walked values from <paramref name="src"/> without replacing this object.
+    /// [LWREFRESH-2026-08-21]
+    ///
+    /// <para>Only the members that can differ between two walks of the SAME object are copied.
+    /// The caller has already established that the layout matches (same count, same first name),
+    /// so <c>Name</c>/<c>Offset</c>/<c>TypeName</c> are identical by construction and copying them
+    /// would be noise — and they are <c>init</c> precisely so that stays true.</para>
+    ///
+    /// <para>⚠ <c>IsSearchMatch</c> is deliberately NOT copied. The refresh path re-runs
+    /// <c>MarkSearchMatches</c> over the NEW rows before this is called, so taking the flag from
+    /// <paramref name="src"/> would be right by luck; but callers that copy outside that path would
+    /// silently clear a highlight. The marker owns that flag.</para>
+    /// </summary>
+    public void CopyLiveValuesFrom(LiveFieldValue src)
+    {
+        HexValue     = src.HexValue;
+        TypedValue   = src.TypedValue;
+        PtrAddress   = src.PtrAddress;
+        PtrName      = src.PtrName;
+        PtrClassName = src.PtrClassName;
+        ArrayCount   = src.ArrayCount;
+        MapCount     = src.MapCount;
+        SetCount     = src.SetCount;
+        EnumName     = src.EnumName;
+        FieldAddress = src.FieldAddress;
+        ArrayElements = src.ArrayElements;
+    }
+
     /// <summary>Display-friendly value string.</summary>
     public string DisplayValue =>
         // Intrinsic FDateTime / FTimespan structs carry no readable preview (a single
@@ -304,6 +377,62 @@ public sealed class LiveFieldValue
         DecodeHexAsNumeric(TypeName, HexValue) ??
         (!string.IsNullOrEmpty(HexValue) ? HexValue :
         ""));
+
+    /// <summary>
+    /// The full <see cref="DisplayValue"/>, for the Value column's hover tooltip — or
+    /// <c>null</c> when there is nothing to show.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Value cell is a fixed 200 px <c>TextBlock</c>
+    /// (<c>Views/LiveWalkerPanel.axaml</c>), so anything longer is simply invisible —
+    /// there is not even a trimming ellipsis to hint that text was cut.
+    /// <c>[V8PREVIEWCLIP-2026-08-23]</c> is what that costs: a DataTable's pre-drill
+    /// preview reads
+    /// <c>{DataTable: 100 rows, DumperTestTableRow}  ⚠ showing 64 of 100</c>, the badge
+    /// is appended LAST, and the prefix alone overflows the column — so the one
+    /// disclosure that warns you the grid holds 64 of 100 rows was unreachable at the
+    /// default width, on every table, at every N. The ViewModel string was correct the
+    /// whole time and a test asserted it; only the pixels were wrong. Same shape as
+    /// <c>[PARAMSSORT-2026-08-22]</c> in another panel.
+    /// </para>
+    /// <para>
+    /// ⚠ Returns <c>null</c>, not <c>""</c>, and that is the point of having a separate
+    /// property instead of binding <c>DisplayValue</c> straight to <c>ToolTip.Tip</c>:
+    /// Avalonia shows a tooltip whenever <c>Tip</c> is non-null, so an empty string
+    /// would pop an empty box on every blank cell. This matches how the other bound
+    /// tooltips in this UI behave (<c>XrefInfo</c>, <c>ScoreTooltip</c>).
+    /// </para>
+    /// <para>
+    /// ⚠ Every <c>[NotifyPropertyChangedFor(nameof(DisplayValue))]</c> in this file
+    /// carries a matching one for this property. They must stay in lockstep or a live
+    /// field's tooltip goes stale while its visible text updates — which is a worse
+    /// failure than the clipping, because a stale tooltip looks authoritative.
+    /// <c>LiveFieldValueTooltipTests</c> pins the pairing at source level.
+    /// </para>
+    /// </remarks>
+    public string? ValueTooltip => string.IsNullOrEmpty(DisplayValue) ? null : DisplayValue;
+
+    /// <summary>
+    /// The full <see cref="TypeName"/>, for the Type column's hover tooltip — or
+    /// <c>null</c> when empty.
+    /// </summary>
+    /// <remarks>
+    /// Sibling of <see cref="ValueTooltip"/>, same defect, one column left. The Type
+    /// cell is 115 px and UE type names run long by nature — the case that prompted it
+    /// was <c>DataTableRows</c> rendering as <c>DataTableRo</c>, and
+    /// <c>SoftObjectProperty</c> / <c>MulticastInlineDelegateProperty</c> are worse. It
+    /// was spotted as the negative control for <c>[V8PREVIEWCLIP-2026-08-23]</c>:
+    /// hovering this cell to prove the Value tooltip was really the new binding showed
+    /// a column that was equally clipped and equally silent.
+    ///
+    /// <para>⚠ No <c>[NotifyPropertyChangedFor]</c> needed, and that is a fact about
+    /// <see cref="TypeName"/>, not an omission: it is <c>init</c>-only and structural —
+    /// the same-layout branch of a refresh checks it before reusing rows at all, so it
+    /// cannot change under a live row. <see cref="DisplayValue"/> is the opposite and
+    /// that is why its twin needs nine notifications.</para>
+    /// </remarks>
+    public string? TypeTooltip => string.IsNullOrEmpty(TypeName) ? null : TypeName;
 
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
@@ -328,10 +457,10 @@ public sealed class LiveFieldValue
         !IsPointerNavigation && !string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0";
 
     /// <summary>Absolute memory address of this field (instance base + offset). Set by ViewModel.</summary>
-    public string FieldAddress { get; set; } = "";
+    [ObservableProperty] private string _fieldAddress = "";
 
     /// <summary>Whether this field matches the current search query (set by ViewModel).</summary>
-    public bool IsSearchMatch { get; set; }
+    [ObservableProperty] private bool _isSearchMatch ;
 
     /// <summary>Whether this field's value can be edited inline (scalar numeric/bool/enum types only).</summary>
     public bool IsEditable =>

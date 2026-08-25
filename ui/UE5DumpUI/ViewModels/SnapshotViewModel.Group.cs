@@ -231,9 +231,17 @@ public partial class SnapshotViewModel
             }
             foreach (var c in res.Candidates) GroupCandidates.Add(c);
             var trunc = res.Truncated ? $" (showing first {GroupCandidates.Count:N0})" : "";
-            GroupStatusText = res.Total == 0
+            // AF13: the DLL sibling has said this since AE13; the snapshot corpus
+            // truncated a slot's witness list at the same cap and said nothing, so a
+            // field that DID match read as a field that did not. Applies to the
+            // no-match line too — a truncated slot is exactly when a miss may be the
+            // cap rather than the answer.
+            var capNote = res.PerSlotCapHit
+                ? PartialResultNotice.PerSlotWitnessCap(res.PerSlotCap) : "";
+            GroupStatusText = (res.Total == 0
                 ? $"No objects hold all {GroupInputs.Count} values."
-                : $"{res.Total:N0} object(s) matched{trunc}  ·  scanned {res.ScannedObjects:N0}";
+                : $"{res.Total:N0} object(s) matched{trunc}  ·  scanned {res.ScannedObjects:N0}")
+                + capNote;
         }
         catch (OperationCanceledException)
         {

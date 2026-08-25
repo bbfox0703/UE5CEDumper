@@ -129,6 +129,106 @@ public class PointerQueryScriptGeneratorTests
         Assert.DoesNotContain("deAlloc", disable);
     }
 
+    // ── SLOTSYM: the slot [DISABLE] must ACTUALLY unregister, and say so honestly ──
+    //
+    // The bug: on the &GEngine SLOT path the record took the mayFallBack DISABLE branch,
+    // where unregisterSymbol was nested inside the buffer-only `cur == mem` guard. With no
+    // buffer, `mem` was nil, both arms were skipped, the symbol survived — and a trailing
+    // UNCONDITIONAL dbg claimed it had been "unregistered" anyway. That leaves a stale
+    // UE_GameEngine across a game restart (it resolves into the dead process's module).
+
+    [Fact]
+    public void GameEngine_slot_disable_actually_releases_the_symbol()
+    {
+        var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
+        var disable = s.Substring(s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
+
+        // The buffer guard is still there (the two other arms) …
+        Assert.Contains("if mem and mem ~= 0 and cur == mem then", disable);
+        Assert.Contains("elseif mem and mem ~= 0 then", disable);
+        // … but now there is an ELSE (mem == nil = slot path) that reference-counts and
+        // actually unregisters, instead of falling through doing nothing.
+        Assert.Contains("UE5_slotSymRefcount['UE_GameEngine']", disable);
+        Assert.Contains("while getAddressSafe('UE_GameEngine') and _tries < 8 do", disable);
+        Assert.Contains("unregisterSymbol('UE_GameEngine')", disable);
+    }
+
+    [Fact]
+    public void GWorld_disable_is_reference_counted_and_actually_releases()
+    {
+        var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GWorld);
+        var disable = s.Substring(s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
+        Assert.Contains("UE5_slotSymRefcount['UE_GWorld']", disable);
+        Assert.Contains("while getAddressSafe('UE_GWorld') and _tries < 8 do", disable);
+        Assert.Contains("unregisterSymbol('UE_GWorld')", disable);
+    }
+
+    [Theory]
+    [InlineData(PointerQueryScriptGenerator.Target.GWorld, "UE_GWorld", "GWorld")]
+    [InlineData(PointerQueryScriptGenerator.Target.GameEngine, "UE_GameEngine", "GameEngine")]
+    public void Slot_disable_message_follows_the_fact_not_the_intent(
+        PointerQueryScriptGenerator.Target target, string sym, string tag)
+    {
+        var s = PointerQueryScriptGenerator.Generate(target);
+        var disable = s.Substring(s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
+
+        // The success message is re-checked against reality: it only fires in the ELSE of
+        // an `if getAddressSafe(sym) then <failure> else <success>` verify.
+        Assert.Contains($"could NOT be unregistered", disable);
+        Assert.Contains($"dbg('[{tag}] {sym} unregistered')", disable);
+
+        // Negative control: the pre-fix UNCONDITIONAL success line (emitted at column 0,
+        // so preceded by a bare newline) must be gone. If it came back, the message would
+        // once again claim success on a path that unregistered nothing.
+        Assert.DoesNotContain($"\ndbg('[{tag}] {sym} unregistered')", disable);
+    }
+
+    [Theory]
+    [InlineData(PointerQueryScriptGenerator.Target.GWorld, "UE_GWorld")]
+    [InlineData(PointerQueryScriptGenerator.Target.GameEngine, "UE_GameEngine")]
+    public void Slot_disable_leaves_the_symbol_for_a_second_live_record(
+        PointerQueryScriptGenerator.Target target, string sym)
+    {
+        var s = PointerQueryScriptGenerator.Generate(target);
+        var disable = s.Substring(s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
+        // Two records that resolve the SAME slot register the identical address, so only a
+        // reference count (not an address marker) can keep the symbol for the survivor.
+        Assert.Contains($"UE5_slotSymRefcount['{sym}'] = _rc", disable);
+        Assert.Contains("if _rc > 0 then", disable);
+        Assert.Contains("still held by", disable);
+    }
+
+    [Theory]
+    [InlineData(PointerQueryScriptGenerator.Target.GWorld, "UE_GWorld")]
+    [InlineData(PointerQueryScriptGenerator.Target.GameEngine, "UE_GameEngine")]
+    public void Slot_enable_bumps_the_reference_count_before_registering(
+        PointerQueryScriptGenerator.Target target, string sym)
+    {
+        var s = PointerQueryScriptGenerator.Generate(target);
+        var enable = s.Substring(0, s.IndexOf("[DISABLE]", System.StringComparison.Ordinal));
+        Assert.Contains($"UE5_slotSymRefcount['{sym}'] = (UE5_slotSymRefcount['{sym}'] or 0) + 1", enable);
+        Assert.Contains($"registerSymbol('{sym}', addr)", enable);
+        // The increment must precede the register so the count and the registration move
+        // together.
+        Assert.True(
+            enable.IndexOf($"UE5_slotSymRefcount['{sym}'] = (", System.StringComparison.Ordinal)
+            < enable.IndexOf($"registerSymbol('{sym}', addr)", System.StringComparison.Ordinal),
+            "the refcount bump must come before the registerSymbol");
+    }
+
+    [Fact]
+    public void Contract_check_is_emitted_exactly_once()
+    {
+        // Regression guard: the ENABLE used to call AppendContractCheck twice (a
+        // copy/paste), emitting the whole ~40-line block redundantly.
+        var s = PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine);
+        int n = 0;
+        for (int i = s.IndexOf("local _want = ", System.StringComparison.Ordinal); i >= 0;
+             i = s.IndexOf("local _want = ", i + 1, System.StringComparison.Ordinal))
+            n++;
+        Assert.Equal(1, n);
+    }
+
     [Fact]
     public void Enable_closes_lua_engine_on_clean_success()
     {

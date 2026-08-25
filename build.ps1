@@ -60,7 +60,13 @@ param(
 $ErrorActionPreference = "Stop"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-# Force UTF-8 for console output and .NET subprocess output (fixes CJK garbling)
+# Force UTF-8 for console output and .NET subprocess output (fixes CJK garbling).
+# LOAD-BEARING, not cosmetic: on a localized MSVC, cl.exe /showIncludes is localized
+# too, and CMake bakes the prefix it observes into build/CMakeFiles/rules.ninja as
+# `msvc_deps_prefix`. Configure and build must observe the SAME code page or Ninja
+# matches nothing and records ZERO header deps -- a .h edit then stops triggering a
+# rebuild, silently. Pinning UTF-8 here, before any configure, is what keeps them
+# equal. See Repair-NinjaHeaderDeps below, which heals a tree configured elsewhere.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 $env:DOTNET_CLI_UI_LANGUAGE = "en"  # dotnet CLI in English to avoid codepage issues
@@ -118,6 +124,65 @@ function Write-Fail([string]$Text) {
 
 function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
+}
+
+function Repair-NinjaHeaderDeps() {
+    <#
+    .SYNOPSIS
+        Drop the build dir if its msvc_deps_prefix cannot match what cl.exe prints,
+        which silently disables Ninja's header dependency tracking.
+
+    .DESCRIPTION
+        Ninja learns which headers a .cpp includes by parsing cl.exe's /showIncludes
+        output: a line naming an included file is recognised by the literal string in
+        `msvc_deps_prefix` (build/CMakeFiles/rules.ninja). CMake detects that prefix
+        once, at CONFIGURE time, by running the compiler and reading its output.
+
+        On a localized MSVC the prefix is localized too -- on this project's zh-TW
+        machines it is "注意: 包含檔案: ", never the English "Note: including file: "
+        (VSLANG=1033 does NOT change it; only the installed language pack decides).
+        Its BYTES therefore depend on the console code page CMake probed under. This
+        script pins the console to UTF-8 before doing anything (see
+        [Console]::OutputEncoding at the top), so configure and build always agree.
+
+        A tree configured under a DIFFERENT code page does not agree. The bare
+        `cmake -S . -B build -G Ninja` shown in CLAUDE.md's "manual commands" section,
+        run from a stock cmd/Git Bash shell on CJK Windows, bakes a cp950 prefix; under
+        this script cl.exe then prints UTF-8 and NO line ever matches. Ninja records
+        ZERO header deps and reports nothing. The symptom is the dangerous one: editing
+        a .h stops triggering a rebuild, so the test executables link stale objects and
+        a header-pinned unit test goes green against code that was never compiled.
+
+        Detect that state -- a prefix that is not valid UTF-8 -- and remove the build
+        dir so the caller's configure runs fresh and every object recompiles with
+        working deps. A pure-ASCII prefix (English MSVC) is valid UTF-8 and is left
+        alone, so this is a no-op on non-localized toolchains.
+    #>
+    $rulesPath = Join-Path $BUILD_DIR "CMakeFiles\rules.ninja"
+    if (-not (Test-Path $rulesPath)) { return }   # nothing configured yet
+
+    # latin-1 maps 0x00-0xFF one-to-one, so the raw prefix bytes survive the round trip.
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $text   = $latin1.GetString([System.IO.File]::ReadAllBytes($rulesPath))
+    $match  = [regex]::Match($text, '(?m)^msvc_deps_prefix = (.*)$')
+    if (-not $match.Success) { return }           # not an MSVC deps=msvc tree
+
+    $prefixBytes = $latin1.GetBytes($match.Groups[1].Value.TrimEnd("`r"))
+    if ($prefixBytes.Length -eq 0) { return }
+
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    try {
+        $null = $strictUtf8.GetString($prefixBytes)
+        return                                    # healthy: prefix will match
+    } catch {
+        # not valid UTF-8 => configured under another code page => deps are dead
+    }
+
+    Write-Step "Stale msvc_deps_prefix in $rulesPath (configured under another code page)."
+    Write-Info "Ninja cannot match cl.exe /showIncludes output, so it is recording NO header"
+    Write-Info "dependencies: a .h edit would not trigger a rebuild and the tests would link"
+    Write-Info "stale objects. Removing the build dir to force a clean re-configure."
+    Remove-Item -Recurse -Force $BUILD_DIR -ErrorAction SilentlyContinue
 }
 
 function Enter-VsDevEnvironment() {
@@ -250,6 +315,48 @@ function Invoke-CppSelfTest {
 
     Write-Ok "$TargetName passed"
     return $true
+}
+
+# SHA-256 without Get-FileHash. NOT a style preference — Get-FileHash is the ONE
+# fragile command this whole script uses, and it broke a Publish run on 2026-08-24
+# with "無法辨識 'Get-FileHash' 詞彙" (CommandNotFoundException), four times in a row,
+# right after the AOT publish wrote a 54 MB native binary.
+#
+# MEASURED, not guessed. Of the 26 commands build.ps1 calls, under **Windows
+# PowerShell 5.1** — which is what build.cmd launches — exactly one is not a
+# compiled cmdlet:
+#
+#     Name          Type      Source
+#     Get-FileHash  Function  Microsoft.PowerShell.Utility
+#
+# It is a PowerShell FUNCTION living in Microsoft.PowerShell.Utility.psm1, so
+# resolving it forces PowerShell to auto-load that module FROM DISK at the moment
+# of first call. Every other command here (Write-Host, Get-ChildItem, Copy-Item, …)
+# is a binary cmdlet present in the initial session state and never touches the
+# module file. So anything that blocks that one on-disk load — an AV real-time
+# scan (this machine runs Bitdefender), AMSI, a transient lock, module-path
+# shadowing — produces a CommandNotFoundException for `Get-FileHash` **and for
+# nothing else in the script**. That is exactly the observed failure.
+#
+# ⚠ The classification is VERSION-DEPENDENT and that nearly hid it: under
+# PowerShell 7 `Get-FileHash` is a compiled Cmdlet and the fragility does not
+# exist. Probing from `pwsh` reports "0 functions" and looks like an all-clear.
+# build.cmd invokes `powershell`, not `pwsh`.
+#
+# System.Security.Cryptography is in the always-loaded CLR, so this has no module
+# dependency at all. Output is byte-for-byte the same shape as Get-FileHash's
+# .Hash — UPPERCASE hex, no separators — which the callers rely on for both the
+# -ne comparison and Substring(0,12).
+function Get-Sha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+                                     [System.IO.FileAccess]::Read,
+                                     [System.IO.FileShare]::ReadWrite)
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($fs)) -replace '-', '') }
+        finally { $fs.Dispose() }
+    }
+    finally { $sha.Dispose() }
 }
 
 function Get-FileSize([string]$Path) {
@@ -452,6 +559,10 @@ if ($cppTargets.Count -gt 0) {
 
     # NOTE: no clean here. -Clean already removed $BUILD_DIR in the Clean phase;
     # otherwise we keep it for an incremental Ninja build (the whole point).
+    # A tree configured under a different console code page has dead header-dep
+    # tracking; drop it first so the configure below is fresh. No-op when healthy.
+    Repair-NinjaHeaderDeps
+
     Write-Step "Configuring CMake (Ninja + MSVC, all DLL targets)..."
     $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
 
@@ -703,14 +814,57 @@ if ($Target -in "All", "UI", "Test") {
                 if ($exeFile) {
                     # Copy EXE + native DLLs only — Publish dists ship without
                     # *.pdb symbols (keeps the distribution lean).
-                    Get-ChildItem -Path $publishDir -File |
-                        Where-Object { $_.Extension -in ".exe", ".dll" } |
-                        ForEach-Object { Copy-Item $_.FullName -Destination $DIST_DIR -Force }
+                    #
+                    # ⚠ VERIFY THE COPY. Copy-Item is NON-TERMINATING, so a locked
+                    # destination used to leave $exitCode at 0 while dist/ kept the
+                    # PREVIOUS binary — and the success line below then printed the
+                    # STALE file's size, which is identical to a good one (54.7 MB
+                    # either way). Measured 2026-08-22: a still-running UE5DumpUI.exe
+                    # held av_libglesv2.dll, the run "succeeded", and dist/ held
+                    # sha 1b316b6a while the freshly published exe was 18e4112d.
+                    # The hand-over rule at the top of CLAUDE.md rests entirely on
+                    # this copy, so it is checked by CONTENT, not by exit code.
+                    $copyErrs = New-Object System.Collections.Generic.List[string]
+                    foreach ($f in (Get-ChildItem -Path $publishDir -File |
+                                    Where-Object { $_.Extension -in ".exe", ".dll" })) {
+                        try   { Copy-Item $f.FullName -Destination $DIST_DIR -Force -ErrorAction Stop }
+                        catch { $copyErrs.Add("$($f.Name): $($_.Exception.Message)") }
+                    }
 
-                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                    $srcExe  = Join-Path $publishDir "UE5DumpUI.exe"
+                    $dstExe  = Join-Path $DIST_DIR   "UE5DumpUI.exe"
+                    # Get-Sha256Hex, not Get-FileHash — see its definition for why that one
+                    # command is the only load-bearing fragility in this script.
+                    $srcHash = Get-Sha256Hex $srcExe
+                    $dstHash = if (Test-Path $dstExe) { Get-Sha256Hex $dstExe }
+                               else { "<missing>" }
 
-                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                    Write-Ok "UE5DumpUI.exe ($exeSize)"
+                    # NB: $dstHash can be the literal "<missing>" (9 chars), so it is
+                    # NOT safe to Substring(0,12) -- that would throw inside the very
+                    # branch whose job is to report the problem.
+                    function Short-Hash([string]$h) {
+                        if ($h.Length -ge 12) { $h.Substring(0,12) } else { $h }
+                    }
+
+                    if ($copyErrs.Count -gt 0) {
+                        foreach ($e in $copyErrs) { Write-Fail "  copy failed — $e" }
+                    }
+
+                    if ($srcHash -ne $dstHash) {
+                        Write-Fail ("dist\UE5DumpUI.exe is NOT the build that was just " +
+                                    "published (dist $(Short-Hash $dstHash) vs published " +
+                                    "$(Short-Hash $srcHash)). Something holds the file open " +
+                                    "— usually a running UE5DumpUI.exe or an injected game holding " +
+                                    "UE5Dumper.dll. The published output has been LEFT IN PLACE at " +
+                                    "$publishDir; close the holder and re-run, or copy it by hand.")
+                        $exitCode = 1
+                    }
+                    else {
+                        # Only discard the published output once dist/ provably matches it.
+                        Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                        $exeSize = Get-FileSize $dstExe
+                        Write-Ok "UE5DumpUI.exe ($exeSize, sha $(Short-Hash $srcHash))"
+                    }
                 }
                 else {
                     Write-Fail "No build output found"
@@ -777,6 +931,10 @@ if ($Target -in "All", "Test") {
     # `build test` run on its own (no DLL build this invocation) the dir may be
     # empty/unconfigured — configure it now (cheap; only the requested test
     # targets are compiled below, not the DLLs).
+    # Removes the build dir when its header-dep tracking is dead, which also clears
+    # CMakeCache.txt and so makes the configure below run. No-op when healthy.
+    Repair-NinjaHeaderDeps
+
     if (-not (Test-Path (Join-Path $BUILD_DIR "CMakeCache.txt"))) {
         Write-Step "Configuring CMake for tests (Ninja + MSVC)..."
         $testCfgOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
@@ -803,6 +961,36 @@ if ($Target -in "All", "Test") {
     # dll_helpers_test covers the pure helpers (Renge::TryStrToAddr, Scharf)
     # and compiles Radar.cpp / Denken.cpp as sources.
     if (-not (Invoke-CppSelfTest -TargetName "dll_helpers_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # grausam_window_test #includes Grausam.cpp to reach its anonymous namespace, CREATES
+    # REAL WINDOWS, and drives the GetForegroundWindow hook DIRECTLY (no MinHook hook is
+    # ever installed, so user32 is never patched in this process). It is the DLL LOW L10
+    # window-re-subclass half, which was filed as needing a game with a fullscreen toggle.
+    #
+    # ⚠ It MUST be built from here and not by a bare `cmake --build` in a DevShell.
+    # Measured 2026-08-24: built that way its object landed at `#deps 0` — Ninja recorded
+    # ZERO header dependencies because the console codepage did not match the
+    # `msvc_deps_prefix` CMake baked in — so editing Grausam.cpp did not rebuild it and a
+    # negative control silently re-ran the OLD binary and "passed". Same trap CLAUDE.md
+    # documents for header edits; it applies to an #included .cpp identically.
+    if (-not (Invoke-CppSelfTest -TargetName "grausam_window_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # sein_retention_test #includes Sein.cpp and exercises the retention sweep AB9 moved
+    # off the loader lock. It drives the DLL's only recursive delete, against a fixture
+    # under %TEMP% guarded by a four-condition safety gate.
+    if (-not (Invoke-CppSelfTest -TargetName "sein_retention_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
+    # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
+    # target compiled before -- and drives them against a fake FUObjectArray built in the
+    # test process's own memory. Macht reads the current process, so no game is involved.
+    if (-not (Invoke-CppSelfTest -TargetName "dll_core_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
         $exitCode = 1
     }
 
@@ -929,28 +1117,12 @@ if ($Target -in "All", "DLL") {
 }
 
 # ============================================================
-# Copy the UI-side helper scripts
+# (removed 2026-08-20) The Startup-shortcut helpers are no longer published.
 # ============================================================
-# Separate from the CE block above because these belong to UE5DumpUI.exe, not to
-# the DLL — so they must ship for every target that can put an exe in dist\, UI
-# included. Both resolve their target as "<script dir>\UE5DumpUI.exe" FIRST,
-# which only works if they land right beside the exe rather than in a subfolder.
-#
-# Two implementations of one tool, and shipping both is deliberate: Bitdefender's
-# behavioural layer quarantined the .ps1 the first time it ran (an unsigned
-# parent spawning powershell, which then wrote a .lnk into the Startup folder —
-# a textbook persistence shape). The Python twin is stdlib-only and gives a
-# machine where the PowerShell host is the problem another way to do the job.
-if ($Target -in "All", "UI", "DLL") {
-    $uiHelpers = @("startup-shortcut.ps1", "startup_shortcut.py")
-    foreach ($h in $uiHelpers) {
-        $src = Join-Path $ROOT_DIR "scripts\$h"
-        if (Test-Path $src) {
-            Copy-Item $src -Destination $DIST_DIR -Force
-            Write-Ok "$h copied to dist\"
-        }
-    }
-}
+# `scripts/startup-shortcut.ps1` and `scripts/startup_shortcut.py` used to be
+# copied into dist\ beside UE5DumpUI.exe. They are no longer part of the
+# distribution. Both still live in scripts\ and still work when run from there —
+# only the publish step is gone, so nothing about the tool itself changed.
 
 # ============================================================
 # Strip debug symbols from distribution builds

@@ -354,6 +354,214 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Cursor teleport ────────────────────────────────────────────────
     [ObservableProperty] private double _zOffset = 100.0;
+
+    // ── NumericUpDown façades ────────────────────────────────────────────────
+    // [SNAPINTERVAL-2026-08-20] NumericUpDown.Value is decimal? (measured: Avalonia 12.1.1), and
+    // clearing the text box drives it to null with no way to opt out at the control. Bound straight
+    // at the non-nullable properties above, a COMPILED binding — which this app uses everywhere —
+    // cannot convert that and paints a raw
+    //   System.InvalidCastException: Could not convert '(null)' (null) to System.Int32
+    // in a validation line under the control, leaving the field blank while the old value is still
+    // the one in force. Binding a decimal? instead means no conversion is attempted.
+    //
+    // ⚠ These only absorb the empty box; they do not clamp. Range belongs to whoever already states
+    // it (the control's Minimum/Maximum, or a view-model guard such as OnAutoRefreshIntervalSecChanged),
+    // and several of these inputs have no meaningful range at all. See Helpers/NumericInput.cs.
+
+    /// <inheritdoc cref="ZOffset"/>
+    public decimal? ZOffsetValue
+    {
+        get => NumericInput.ToControlValue(ZOffset);
+        set
+        {
+            ZOffset = NumericInput.KeepCurrentIfEmpty(value, ZOffset);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnZOffsetChanged(double value) => OnPropertyChanged(nameof(ZOffsetValue));
+
+    /// <inheritdoc cref="TraceChannel"/>
+    public decimal? TraceChannelValue
+    {
+        get => (decimal)TraceChannel;
+        set
+        {
+            TraceChannel = NumericInput.KeepCurrentIfEmpty(value, TraceChannel);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnTraceChannelChanged(int value) => OnPropertyChanged(nameof(TraceChannelValue));
+
+    /// <inheritdoc cref="RelativeDistance"/>
+    public decimal? RelativeDistanceValue
+    {
+        get => NumericInput.ToControlValue(RelativeDistance);
+        set
+        {
+            RelativeDistance = NumericInput.KeepCurrentIfEmpty(value, RelativeDistance);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnRelativeDistanceChanged(double value) => OnPropertyChanged(nameof(RelativeDistanceValue));
+
+    /// <inheritdoc cref="CoordX"/>
+    public decimal? CoordXValue
+    {
+        get => NumericInput.ToControlValue(CoordX);
+        set
+        {
+            CoordX = NumericInput.KeepCurrentIfEmpty(value, CoordX);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordXChanged(double value) => OnPropertyChanged(nameof(CoordXValue));
+
+    /// <inheritdoc cref="CoordY"/>
+    public decimal? CoordYValue
+    {
+        get => NumericInput.ToControlValue(CoordY);
+        set
+        {
+            CoordY = NumericInput.KeepCurrentIfEmpty(value, CoordY);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordYChanged(double value) => OnPropertyChanged(nameof(CoordYValue));
+
+    /// <inheritdoc cref="CoordZ"/>
+    public decimal? CoordZValue
+    {
+        get => NumericInput.ToControlValue(CoordZ);
+        set
+        {
+            CoordZ = NumericInput.KeepCurrentIfEmpty(value, CoordZ);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordZChanged(double value) => OnPropertyChanged(nameof(CoordZValue));
+
+    /// <inheritdoc cref="CoordPitch"/>
+    public decimal? CoordPitchValue
+    {
+        get => NumericInput.ToControlValue(CoordPitch);
+        set
+        {
+            CoordPitch = NumericInput.KeepCurrentIfEmpty(value, CoordPitch);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordPitchChanged(double value) => OnPropertyChanged(nameof(CoordPitchValue));
+
+    /// <inheritdoc cref="CoordYaw"/>
+    public decimal? CoordYawValue
+    {
+        get => NumericInput.ToControlValue(CoordYaw);
+        set
+        {
+            CoordYaw = NumericInput.KeepCurrentIfEmpty(value, CoordYaw);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordYawChanged(double value) => OnPropertyChanged(nameof(CoordYawValue));
+
+    /// <inheritdoc cref="CoordRoll"/>
+    public decimal? CoordRollValue
+    {
+        get => NumericInput.ToControlValue(CoordRoll);
+        set
+        {
+            CoordRoll = NumericInput.KeepCurrentIfEmpty(value, CoordRoll);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnCoordRollChanged(double value) => OnPropertyChanged(nameof(CoordRollValue));
+
+    /// <inheritdoc cref="CoordZTolerance"/>
+    public decimal? CoordZToleranceValue
+    {
+        get => NumericInput.ToControlValue(CoordZTolerance);
+        set
+        {
+            CoordZTolerance = NumericInput.KeepCurrentIfEmpty(value, CoordZTolerance);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
+    /// <inheritdoc cref="SeeThroughPierce"/>
+    public decimal? SeeThroughPierceValue
+    {
+        get => (decimal)SeeThroughPierce;
+        set
+        {
+            SeeThroughPierce = NumericInput.KeepCurrentIfEmpty(value, SeeThroughPierce);
+            // Notify UNCONDITIONALLY. A rejected or emptied entry leaves the backing value
+            // unchanged, so nothing else would raise a change and the control would keep
+            // painting an empty box while a different value was in force. Round 1 of
+            // [SNAPINTERVAL-2026-08-20] fixed the exception and left exactly that behind;
+            // the live check is what caught it.
+            OnPropertyChanged();
+        }
+    }
+
     [ObservableProperty] private int _traceChannel;      // ETraceTypeQuery byte
     [ObservableProperty] private bool _fallbackToCenter = true;
 
@@ -2577,6 +2785,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// takes effect on the next See-through ON).</summary>
     partial void OnSeeThroughPierceChanged(int value)
     {
+        OnPropertyChanged(nameof(SeeThroughPierceValue));
         if (_seeThroughActive && IsConnected)
             _ = PushSeeThroughPierceAsync(value);
     }
@@ -3117,6 +3326,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedCoordChanged(CoordRow? value)
     {
+        OnPropertyChanged(nameof(CoordZToleranceValue));
         // Suppressed while ApplyCoordFilter restores the selection onto a rebuilt row —
         // that is not the user choosing a row, and treating it as one wiped an
         // in-progress edit on every filter keystroke. (B20)
@@ -3871,15 +4081,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out var folded);
 
             var notes = new StringBuilder();
-            if (folded.Count > 0)
-            {
-                // Honest about what the picker's radio buttons dropped: the entries
-                // are still there and still findable by typing the group name.
-                notes.Append($" {folded.Count} group(s) had no radio button " +
-                             $"({string.Join(", ", folded.Take(3))}" +
-                             (folded.Count > 3 ? ", …" : "") +
-                             ") — those entries are still listed under All and match the filter box.");
-            }
+            notes.Append(FoldedGroupsNote(folded));
             if (_coordAll.Count > Constants.CoordLibraryExportWarnCount)
             {
                 notes.Append($" {_coordAll.Count} entries makes a large script — CE's AA " +
@@ -3909,6 +4111,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex) { SetError(ex); _log.Error("Coord Lua export failed", ex); }
     }
+
+    /// <summary>
+    /// What the picker's radio buttons could not fit, as a status-line clause.
+    ///
+    /// <para>Every export shares one generator and one <c>folded</c> out-parameter, but
+    /// only the DLL "Push to CE" path built this sentence — the no-DLL push and the
+    /// "Save .lua" path threw the list away with <c>out _</c> (audit #5 AF15). A user
+    /// exporting either of those got a script whose picker silently omits a group's
+    /// radio button and no hint that anything was dropped. Extracted rather than copied
+    /// twice: three inline copies of a disclosure is how the wording drifts until two of
+    /// them are wrong.</para>
+    ///
+    /// <para>Returns "" when nothing folded, so callers can append it unconditionally —
+    /// the shape <see cref="Core.PartialResultNotice"/> uses for the same reason.</para>
+    /// </summary>
+    internal static string FoldedGroupsNote(IReadOnlyList<string> folded)
+        => folded is null || folded.Count == 0
+            ? ""
+            : $" {folded.Count} group(s) had no radio button " +
+              $"({string.Join(", ", folded.Take(3))}" +
+              (folded.Count > 3 ? ", …" : "") +
+              ") — those entries are still listed under All and match the filter box.";
 
     /// <summary>
     /// Stage 1 of the Lua re-import (R7): paste a previously generated AA script and
@@ -3986,7 +4210,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             ClearError();
             var script = CoordLibraryScriptGenerator.Generate(
-                _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out _);
+                _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out var folded);
 
             bool sent = await _aobMaker.CreateAAScriptAsync(
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
@@ -3997,6 +4221,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? $"Pushed the no-DLL picker ({_coordAll.Count} entries) to Cheat Engine. " +
                   "Enable 'UE5 Trainer: Setup' first — this flavour uses its baked offsets, " +
                   "has no map guard, and goes stale when the game is patched."
+                  + FoldedGroupsNote(folded)
                 : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
@@ -4019,9 +4244,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var path = await _platform.ShowSaveFileDialogAsync($"{name}.lua", "Lua script", "lua");
             if (string.IsNullOrEmpty(path)) return;
             var script = CoordLibraryScriptGenerator.Generate(
-                _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out _);
+                _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out var folded);
             File.WriteAllText(path!, script, new UTF8Encoding(false));
-            CoordStatus = $"Wrote {_coordAll.Count} entries to {path}.";
+            CoordStatus = $"Wrote {_coordAll.Count} entries to {path}." + FoldedGroupsNote(folded);
         }
         catch (Exception ex) { SetError(ex); _log.Error("Coord Lua save failed", ex); }
     }

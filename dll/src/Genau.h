@@ -273,9 +273,12 @@ uintptr_t FindSparseDelegateStorage();
 //
 // PROBE-RAN, not VALIDATED — this comment named the strict flag while the code has always
 // read the loose one, and since audit #5's G1 fix the two genuinely diverge (a partially
-// probed run now reports validated=false). Grimoire.h:246 explains why the loose flag is
-// the correct gate: using the strict one would regress &GEngine on exactly the builds
-// where detection falls back to defaults.
+// probed run now reports validated=false). The "TWO flags, deliberately" block above
+// `DynOff::bOffsetsProbeRan` in Grimoire.h explains why the loose flag is the correct gate:
+// on the UE 5.8 run the give-up path was the ONLY reason &GEngine resolved at all, so using
+// the strict one would regress it on exactly the builds that split exists to expose.
+// (Cited as `Grimoire.h:246` until build 3262; it had drifted ~45 lines. Grep the
+// identifier — docs/working-lessons.md §1 — a line number in a cross-file citation rots.)
 uintptr_t FindGEngineSlot();
 
 // Second-pass GEngine resolution, run after ValidateAndFixOffsets + FNamePool init.

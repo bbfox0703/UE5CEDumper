@@ -26,7 +26,7 @@ public sealed class MockPlatformService : IPlatformService
 
     /// <summary>Last text passed to <see cref="CopyToClipboardAsync"/> (null until first call).</summary>
     public string? LastClipboard { get; private set; }
-    public Task CopyToClipboardAsync(string text) { LastClipboard = text; return Task.CompletedTask; }
+    public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
     public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
     public string GetMachineName() => "TEST-MACHINE";
     public void CloseImeForWindow(IntPtr windowHandle) { }
@@ -345,6 +345,170 @@ public class AobUsageServiceTests : IDisposable
         Assert.False(record.LowConfidence);
         Assert.Equal(0, record.VersionDetectRev);     // unstamped → next launch re-detects
     }
+
+    // ────────────────────────────────────────────────────────────────
+    // Corrupt-file durability (audit #5 AC4 + AC5) and staging hygiene (AC6).
+    //
+    // This file is not one game's cache: it holds EVERY game's scan record plus the
+    // user's per-game UE-version override and invoke timeout. Answering a parse
+    // failure with a blank document meant the next save published a one-game file
+    // over all of it.
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// THE FINDING. A corrupt file must be moved aside, never overwritten — the bytes
+    /// are the only copy of every other game's record.
+    ///
+    /// NEGATIVE CONTROL: restore `catch (JsonException) { return new AobUsageFile(); }`
+    /// and this fails: no quarantine exists and the original bytes are gone for good.
+    /// </summary>
+    [Fact]
+    public async Task RecordScan_CorruptJson_QuarantinesTheOriginalBytes()
+    {
+        var svc = CreateService();
+        var dir = Path.GetDirectoryName(svc.FilePath)!;
+        Directory.CreateDirectory(dir);
+
+        // A file that fails to parse but plainly holds other games' data.
+        const string corrupt = """{ "games": { "AAAA1111": { "ueVersionUserOverride": 427 """;
+        await File.WriteAllTextAsync(svc.FilePath, corrupt, TestContext.Current.CancellationToken);
+
+        await svc.RecordScanAsync(MakeState());
+
+        var quarantined = Directory.GetFiles(dir, Path.GetFileName(svc.FilePath) + ".corrupt-*");
+        Assert.Single(quarantined);
+        Assert.Equal(corrupt,
+            await File.ReadAllTextAsync(quarantined[0], TestContext.Current.CancellationToken));
+
+        // ...and the fresh cache still works.
+        var file = await svc.LoadFileAsync();
+        Assert.Single(file.Games);
+    }
+
+    [Fact]
+    public async Task LoadFile_NullDocument_IsTreatedAsCorruptNotAsEmpty()
+    {
+        // "null" is valid JSON that deserializes to null. The old `?? new AobUsageFile()`
+        // wiped on it exactly like a parse failure did, and without even a log line.
+        var svc = CreateService();
+        Directory.CreateDirectory(Path.GetDirectoryName(svc.FilePath)!);
+        await File.WriteAllTextAsync(svc.FilePath, "null", TestContext.Current.CancellationToken);
+
+        var file = await svc.LoadFileAsync();
+
+        Assert.Empty(file.Games);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(svc.FilePath)!,
+                                         Path.GetFileName(svc.FilePath) + ".corrupt-*"));
+    }
+
+    [Fact]
+    public async Task LoadFile_UnreadableFile_ThrowsRatherThanReportingAnEmptyCache()
+    {
+        // Locked or denied is NOT corrupt. Answering it with a blank document would let
+        // the caller's save destroy a perfectly good file.
+        var svc = CreateService();
+        await svc.RecordScanAsync(MakeState("AAAA0000BBBB1111", "Game1.exe"));
+
+        using (File.Open(svc.FilePath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => svc.LoadFileAsync());
+
+            // RecordScanAsync swallows it (fire-and-forget contract) and writes nothing.
+            await svc.RecordScanAsync(MakeState("CCCC2222DDDD3333", "Game2.exe"));
+        }
+
+        var file = await svc.LoadFileAsync();
+        Assert.Single(file.Games);
+        Assert.True(file.Games.ContainsKey("AAAA0000BBBB1111"));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(svc.FilePath)!,
+                                        Path.GetFileName(svc.FilePath) + ".corrupt-*"));
+    }
+
+    [Fact]
+    public async Task LoadFile_QuarantineIsBounded()
+    {
+        // The app-data root's rule is "app-wide and fixed in number", so the quarantine
+        // is capped like the reset backups are.
+        var svc = CreateService();
+        var dir = Path.GetDirectoryName(svc.FilePath)!;
+        var name = Path.GetFileName(svc.FilePath);
+        Directory.CreateDirectory(dir);
+
+        for (int d = 1; d <= UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies; d++)
+            await File.WriteAllTextAsync(Path.Combine(dir, $"{name}.corrupt-2020010{d}-000000000"),
+                                         $"old-{d}", TestContext.Current.CancellationToken);
+
+        await File.WriteAllTextAsync(svc.FilePath, "{ not json", TestContext.Current.CancellationToken);
+        await svc.LoadFileAsync();
+
+        var quarantined = Directory.GetFiles(dir, name + ".corrupt-*");
+        Assert.Equal(UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies, quarantined.Length);
+        // The OLDEST is the one that went.
+        Assert.DoesNotContain(quarantined, p => p.EndsWith("corrupt-20200101-000000000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LoadFile_QuarantinePruneNeverEatsTheCopyItJustTook()
+    {
+        // Pruning sorts on the embedded timestamp. If the clock ran backwards — or a
+        // pre-existing copy is stamped in the FUTURE — the copy taken this second sorts
+        // oldest, and a naive prune would delete the very bytes the mechanism exists to
+        // keep. NEGATIVE CONTROL: drop the `justSaved` exclusion and this fails.
+        var svc = CreateService();
+        var dir = Path.GetDirectoryName(svc.FilePath)!;
+        var name = Path.GetFileName(svc.FilePath);
+        Directory.CreateDirectory(dir);
+
+        for (int d = 1; d <= UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies; d++)
+            await File.WriteAllTextAsync(Path.Combine(dir, $"{name}.corrupt-2999010{d}-000000000"),
+                                         $"future-{d}", TestContext.Current.CancellationToken);
+
+        const string doomed = "{ the only copy of every game's overrides";
+        await File.WriteAllTextAsync(svc.FilePath, doomed, TestContext.Current.CancellationToken);
+        await svc.LoadFileAsync();
+
+        var survivors = Directory.GetFiles(dir, name + ".corrupt-*")
+                                 .Select(File.ReadAllText)
+                                 .ToList();
+        Assert.Contains(doomed, survivors);
+        Assert.Equal(UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies, survivors.Count);
+    }
+
+    /// <summary>
+    /// AC6. The staging name carries the writer's PID, so every abandoned copy is
+    /// distinctly named and nothing ever deleted it — unbounded residue in the app-data
+    /// root, one full copy of the cache per affected launch (the DLL writes the same
+    /// name from the game process).
+    ///
+    /// NEGATIVE CONTROL: remove the SweepOrphanTemps() call and the stale file survives.
+    /// </summary>
+    [Fact]
+    public async Task Save_SweepsAbandonedStagingFiles_ButSparesFreshOnesAndBackups()
+    {
+        var svc = CreateService();
+        var dir = Path.GetDirectoryName(svc.FilePath)!;
+        var name = Path.GetFileName(svc.FilePath);
+        Directory.CreateDirectory(dir);
+
+        var stale  = Path.Combine(dir, $"{name}.tmp.99999");
+        var fresh  = Path.Combine(dir, $"{name}.tmp.88888");
+        var backup = Path.Combine(dir, $"{name}.001");
+        var ct = TestContext.Current.CancellationToken;
+        await File.WriteAllTextAsync(stale,  "abandoned", ct);
+        await File.WriteAllTextAsync(fresh,  "a game process may be mid-write", ct);
+        await File.WriteAllTextAsync(backup, "a reset backup", ct);
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow - TimeSpan.FromHours(3));
+
+        await svc.RecordScanAsync(MakeState());
+
+        Assert.False(File.Exists(stale));    // age-guarded sweep took it
+        Assert.True(File.Exists(fresh));     // could belong to a live writer — spared
+        Assert.True(File.Exists(backup));    // scoped to the ".tmp." prefix only
+        Assert.False(File.Exists(AobUsageServiceTests.OwnTempPath(svc)));
+    }
+
+    private static string OwnTempPath(AobUsageService svc)
+        => UE5DumpUI.Helpers.AtomicFileHygiene.TempPathFor(svc.FilePath, Environment.ProcessId);
 
     [Fact]
     public void FilePath_ContainsMachineName()

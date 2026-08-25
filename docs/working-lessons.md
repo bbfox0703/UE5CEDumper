@@ -126,6 +126,17 @@ missing drive letter *feels* like a fact about the world in a way that `4m38s` d
 exactly why it slipped. **Never assert that something does not exist without naming the host you
 looked on.** ← this rule is the same two-machine problem that makes this whole file necessary.
 
+**And the conditions must reach the doc that owns the PROCEDURE, not only the one that owns the
+number.** 2026-08-17 recorded A5's PASS *with* its conditions — *"a re-search ~38 s later previewed
+317"* — into `todo.md`'s evidence block, and that block was right. But the **step**, in `todo.md`
+*and* in the 繁中 mirror, still said to watch the Preview column, and a Property Search preview is a
+per-search snapshot with no timer and no binding. The wrong procedure therefore outlived a PASS: on
+2026-08-19 the maintainer followed it, saw nothing move, re-ran the same query three times in four
+seconds, and reported a defect that does not exist. **A PASS obtained by a procedure the checklist
+does not prescribe means the CHECKLIST is the defect — correct the steps, in every copy that carries
+them, in the same commit that records the PASS.** Recording the conditions and leaving the
+instructions alone reads as done and is not.
+
 ### 1.7 The second machine turns an anecdote into a fact — and it cuts both ways
 
 "This is probably machine-specific" is also a hypothesis, and re-measuring settles it in one run. CE's
@@ -210,7 +221,190 @@ Corollary for the read side: Y16's third site *reads* four bytes for a one-byte 
 bugs are not only write bugs, and the read half tends to be filed later because it corrupts nothing
 — it just reports a number that is wrong.
 
+### 1.x A log-window that is coarser than the events it separates reports a CONFIDENT WRONG ANSWER
+
+Four separate rigs in the 2026-08-20 batch got this wrong in four different ways, and each time
+the failure mode was the same: **the rig printed a verdict, not an error.**
+
+| how the window was taken | what broke |
+|---|---|
+| line COUNT across several `*-0.log` files, sliced `[before:]` | more than one file grows, so new lines land in the MIDDLE of the concatenated list, not at the end. Reported **0** `enqueued invoke` while the log plainly held one. |
+| `strftime("%Y-%m-%d %H:%M:%S")` timestamp watermark | **one-second** resolution. Three mailbox cells running milliseconds apart: cell A's `static-native fast path` line fell inside cell B's window, and the rig announced `FAIL: the poisoned flags took the FAST PATH` — on a run whose own `result=-5` proved the call had been **queued**. |
+| counter read OUTSIDE the timed window | `get_diagnostics` round trips take milliseconds during which the game keeps firing `ProcessEvent`; timing only the invoke while differencing across two round trips manufactured a 6.6-fire "excess" and a false FAIL. |
+| BYTE offset into a log recorded before launching the process | **every process start ROTATES `<cat>-0.log`**, so the offset (tens of KB) slid past an entirely fresh file. The rig printed an empty section while the log plainly held the line it was looking for. |
+
+**The rule: measure with something at least as fine-grained as the thing you are separating.** For
+append-only logs inside one run the reliable primitive is a **before/after COUNT of matching lines**
+— exact at any timing, immune to file count, and needing no clock at all:
+
+```python
+class Watch:                      # tools/verify/l4_mb1_stale_flags.py
+    def __init__(self):  self.base = {n: len(all_matching(n)) for n in self.NEEDLES}
+    def delta(self, n):  return all_matching(n)[self.base[n]:]
+```
+
+⚠ **A timestamp watermark is still right when the events are seconds apart and the log is shared
+with other processes** — it is not banned, it is just the wrong tool below its own resolution.
+
+⭐ **The tell that saved the third case: two signals in the same output disagreed.** `result=-5`
+(queued) and "fast-path lines: 1" (called directly) cannot both be true. When a rig's own numbers
+contradict each other, suspect the rig before writing up the defect.
+
+### 1.y "The first live instance of class X" is not what `find_instances` returns
+
+`find_instances(class_name="Actor")` without `exact_match` is a **name SUBSTRING** match. On
+DumperTest it returns `ActorSequence`, `ActorElementAssetDataInterface`, `ActorPartitionSubsystem`
+and ~200 more, so `[i for i in r if not name.startswith("Default__")][0]` handed back a
+`UActorSequence` — and the rig then invoked `Actor.UserConstructionScript` against it.
+
+Filter on the reported **`class`** field, not on the query:
+
+```python
+ins = [i for i in r["instances"] if i.get("class") == cls
+       and not str(i.get("name","")).startswith("Default__")]
+```
+
+Two reasons this matters beyond tidiness:
+* **it is a live-fire hazard, not just a wrong sample.** A wrong-type invoke that TIMES OUT stays
+  **queued**, and a queued request can drain later — running an `AActor` method against a non-actor
+  at an arbitrary moment. (It did drain here, and nothing crashed. That is luck, not a result.)
+* the same substring behaviour already produced a wrong baseline once, when `Actor`'s "58 live
+  instances" was compared against a `find_instances` count that had swept in `ActorElement*`
+  non-actors.
+
+### 1.w Before filing a defect, GREP THE DOCS FOR THE SUBJECT — the answer is often already written
+
+2026-08-22, running G11 step 2: Avowed's UI badge said `UE504` while the DLL log said `503`. That
+looked like the repo's signature defect shape — report and reality computed by different code paths
+— so it was filed as a confirmed defect with a reproduction.
+
+**It was a false alarm, and `docs/todo.md` already said so**, under a heading that could not have
+been more explicit: *"THREE DIFFERENT 'UE VERSION' QUANTITIES, and confusing them manufactures a G11
+false alarm"* — naming Avowed, naming the `CMC::GravityDirection` raise, concluding *"503 and 504 are
+both right for different questions"*. That note also records that the same confusion had already
+cost **two** contradictory readings before it. The filing made it three.
+
+* **The cost is asymmetric.** A false defect is worse than a missed one here, because the prescribed
+  fix ("make Avowed report 503") would have deleted a deliberate, correct structural correction —
+  the same failure mode as §2.4.
+* **The cheap guard is one command.** `grep -n <subject> docs/todo.md` before writing the filing. The
+  answer was one grep away, in the same file the filing was being written into.
+* ⚠ **A live reproduction is not evidence that the behaviour is wrong.** Reproducing `UE504` on
+  demand felt conclusive and proved only that the feature works every time. Ask "what would this
+  look like if it were CORRECT?" before "how do I reproduce it?".
+* ⭐ **The re-derivation still paid, but only because it was pushed to the mechanism.** Chasing it to
+  the actual writer showed the older note's own explanation ("the cache's 504 is from an older run")
+  was wrong — the value is written fresh every scan by the C# mirror. Stopping at "already
+  documented, never mind" would have preserved that error.
+
+### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
+
+Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with
+the identical honest limit: *"the same games as before" cannot be checked — no baseline exists on
+this machine.*
+
+**a) Ask whether the change could possibly matter before hunting for a baseline.** The whole diff
+was `try { var info = GetVersionInfo(p); return null; } catch { return null; }` → `=> null`. **Both
+forms return null on every path.** A behavioural baseline was never needed: the removed call could
+not influence the result, and that is a *proof*, strictly stronger than any two observations. When
+a row demands a before/after and the "before" is gone, read the diff — a fix that deletes work
+whose result was discarded is provably behaviour-preserving, and the row collapses to a smoke test.
+⚠ The reverse also holds: if the diff does not carry that property, no amount of re-running the new
+code is evidence about the old, and the row should say so rather than tick.
+
+**b) An oracle computed AFTER you read the answer is worthless.** Write the independent
+implementation, run it, and **write its number down before opening the UI**. An oracle produced
+afterwards gets debugged until it agrees — every discrepancy reads as a bug in the oracle, because
+you already believe the answer. Order is the whole control, and it costs nothing to get right.
+
+**c) A count agreeing is weak evidence; the NAME is what pinned it.** The drive scan and the oracle
+both said 22 — but the sharp agreement was that **ten rows are named `Unreal Projects`** rather than
+`DumperTest` / `StackOBot` / …, because prune-on-match fired at `D:\Unreal Projects` itself and the
+per-game detector then walked its children. Pruning one level deeper yields **the same count of 22**
+with ten different names. So when comparing against an oracle, diff the *derived* fields that
+encode the algorithm's decisions, not the tally — the tally is the one number a wrong
+implementation is most likely to get right by accident.
+
+⭐ **d) Corollary that closed the row's last claim: check what the column BINDS before treating it
+as evidence.** A 2026-08-20 note read "the Version column is empty" as proof `UeVersion` was null.
+That column binds `InstalledVersion`; `UeVersion` is bound by nothing at all, so the observation was
+about a different property entirely. The conclusion happened to be true. One `grep` over the
+`.axaml` is cheaper than an argument about what a blank cell means.
+
 -----
+
+-----
+
+### 1.aa When no host has the case, MANUFACTURE it — and let the write be the negative control
+
+`V6/U8` step 2 wanted a `NameProperty` whose value carries a numeric suffix (`Slot_1`), to check
+that Live Walker and Value Search render the same 8 bytes of an `FName`. DumperTest has none —
+measured three ways rather than assumed (a game-wide 375-property sweep, the test actor's own
+`Name_*` fields, `Map_NameToInt`'s three keys: all `Number=0`). The reflex is to go install or boot
+a game that has one, which costs a whole session and leaves the row open until then.
+
+**Cheaper and strictly stronger: write the case into memory with CE, observe, write it back.**
+
+```
+as found  1D 04 00 00 00 00 00 00  ->  GameNetDriver
+written   1D 04 00 00 02 00 00 00  ->  GameNetDriver_1
+restored  1D 04 00 00 00 00 00 00
+```
+
+⭐ **The write is not a workaround for the missing fixture — it is a better experiment than the
+fixture would have been.** A found `Slot_1` shows only that the panels agree. A *toggled* one shows
+they agree **because they read that field**: scanning the bare name went from **267 hits to 266**
+and the row vanished the instant the `Number` moved, which proves the matcher is not comparing
+`ComparisonIndex` alone. Two panels can agree while both ignore the same half of a value; only the
+transition rules that out. This is §1.2's negative control, obtained for free by owning the input.
+
+**When it applies:** the quantity is (i) reachable and writable from outside, (ii) inert enough that
+a wrong value cannot corrupt state you care about — a scratch field in our own test fixture is
+ideal — and (iii) restorable, with the restore **verified by re-reading**, not assumed from the
+write returning.
+
+⛔ **When it does not:** anything the game recomputes, anything persisted to disk, and anything whose
+wrong value could crash a session you still need. And do not manufacture the case in a title you did
+not launch yourself for this purpose.
+
+⚠ **Keep the third reader.** CE's raw `readBytes` is what makes this more than self-agreement: Live
+Walker and Value Search are two consumers of the same DLL, so they can share a decoding bug. The
+tool doing the write is conveniently also outside that path — use it to read as well as to write.
+
+### 1.ab A HEADING IS NOT EVIDENCE — in this register the closure is recorded somewhere else
+
+⚠⚠ **`docs/todo.md` records a closure in a DIFFERENT PLACE from the row it closes**, usually under
+its own `✅ … [SOMETAG-2026-08-NN]` heading thousands of lines away. The original `⬜`/`🟡` heading
+is **not** updated as a matter of course. So reading a heading — or a summary built from headings,
+or a handover paragraph quoting one — tells you nothing about whether the work is outstanding.
+
+**Measured, in a single session (2026-08-24): five times.** The worst was audit **L10 step 2**. Its
+section heading read, in these words, *"Step 2 is still open, on a NEW blocker"*, and the block
+ended with *"▶ Next session starts here"*. Both were **false the following day**: the step is
+closed three times over elsewhere in the same file — `[AF16-PROPSSORT-2026-08-22]` (Props half),
+`[AF16-XREF-2026-08-23]` (Xref half, the blocker cleared by `tools/verify/af16_xref_fixture.py`
+finding a fixture *by construction*), and `[AF16-BYCONSTRUCTION-2026-08-24]` (the numeric-vs-string
+residual, closed as **unreachable**). A seven-agent workflow was spun up to solve a problem that
+had already been solved twice.
+
+**The rule, and it is cheap:**
+
+1. **Before planning ANY row, grep the whole file for its finding ids** — `AF16`, `AE4`, `[TAG-…]`
+   — and read every hit, not just the one under the heading you started from. A `✅ CLOSED` block
+   naming the id anywhere in the file closes it.
+2. **The per-step TABLE inside a section is the ground truth, not the heading.** Headings like
+   *"4-of-6"* and *"STEPS 1-4, 7, 8, 9 DONE"* go stale the moment one more step lands.
+3. ⭐ **When you close a step, edit the HEADING in the same commit.** This is the whole fix. Closing
+   AE4 step 2 while leaving the heading saying *"only step 2 is still PARTIAL"* is how the next
+   session gets misdirected — and that heading survived a maintainer pass, an automated sweep, and
+   two of my own reads of the same section.
+4. **A stale heading is worth a commit on its own.** Mark it superseded with pointers to the real
+   closures; keep the body only when it still carries something (L10's five dead ends are worth
+   keeping *because each is now explained*, and the explanations are what stop a sixth attempt).
+
+ℹ️ The same trap wears a second face: `docs/pending-verification_zh-TW.md` is the operational
+mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
+done — worth checking, never sufficient on its own.
 
 ## 2. Audit agents — raw finder output is about half wrong
 
@@ -508,6 +702,97 @@ A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed f
   its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
   assertion instead. Same family as AF1's aliasing fixture in §2.3.
 
+
+### 2.5a The generated artifact must be shown to **PARSE**, and the tool that consumes it may not say so
+
+§2.5's rule, paid for a second time and with a sharper edge: on 2026-08-22 the baked invoke script
+had an **unescaped apostrophe** in a single-quoted Lua literal (`read it in CE's memory viewer`),
+which closed the string early and made the whole `[ENABLE]` block a syntax error.
+
+Three things about it are worth carrying forward.
+
+1. **The existing test generated the broken artifact and passed on it.** Y13's
+   `..._OnlyClaimsTheDumpWhenItReallyHoldsIt` produces this exact script and asserts substrings —
+   all of which are present. Across 4,648 tests, **nothing asked whether the emitted Lua compiles.**
+   Substring assertions cannot see a syntax error; only a parser can.
+2. **Cheat Engine reports nothing.** Ticking the record leaves `Active` at `false` with no dialog,
+   no output and no log line. From the outside it is indistinguishable from a checkbox that will not
+   stay ticked. The way in was `autoAssemble(record.Script:match('%[ENABLE%](.-)%[DISABLE%]'))` from
+   the Lua Engine, which *does* return the error — **when a record silently refuses to enable, run
+   its own `[ENABLE]` text through `autoAssemble` and read the message.**
+3. ⭐ **A grep for the offending character structurally could not find it.** The apostrophe was in a
+   variable defined ten lines above the interpolation, so the first sweep — grep the emitting lines
+   for `'s ` — came back **empty and looked like a clean bill of health**. The sweep that meant
+   something *ran* 19 generators (17 simple + teleport's 13 actions + freeze) through a scanner,
+   with apostrophes deliberately fed in via a class name, a property name and a Windows account
+   named `O'Brien`. Same family as §2.3's sibling grep: a filtered grep measures what survived the
+   filter.
+
+The scanner itself has one non-obvious requirement: **it cannot be a quote count.** The generators
+legitimately emit `-- ... when CE's resolver ...` inside comments, so it has to track `--` line
+comments and `--[[ ]]` long brackets. It was written against the real broken artifact first and
+shown to fire (1 line) and clear (0 after escaping that one apostrophe) before being ported into
+`CeLuaQuotingTests`; both directions are pinned as tests.
+
+### 2.5b A verification fixture can destroy the thing being measured — displace, do not relocate
+
+Running MB3's teleport round trip, the displacement step used `TP to coordinates` with the UI's
+default **0 / 0 / 0**. In `ThirdPersonMap` the origin is under the floor: the pawn fell, crossed
+KillZ and was **destroyed**. The next record, `Recall marker 1`, then returned `code -3`
+(`TP_ERR_NO_PAWN`) — a completely honest error that reads exactly like "Save silently failed".
+
+- **DumperTest does not respawn the pawn**, focused or not. The only way back is relaunch,
+  re-inject, and re-attach CE to the new PID.
+- When the point of a step is a **round trip**, displace with something relative and bounded
+  (`TP facing direction`, 100 uu) rather than an absolute coordinate. The measurement wants the pose
+  to change and come back, and it does not care where.
+- ⭐ The general shape: before reading an error as a defect, ask whether the **previous step in your
+  own script** put the system into the state the error is truthfully reporting.
+
+
+### 2.5c "54.7 MB" is not a verification — hash `dist/` against what was just built
+
+The memory index's rule of thumb ("54.7 MB = AOT and shippable, 106.8 MB = non-trimmed") answers
+*which kind* of build is sitting in `dist/`. It cannot answer *which build*, and on 2026-08-22 that
+gap shipped a stale binary past a green run: `build.ps1 -Mode Publish` printed
+`[OK] UE5DumpUI.exe (54.7 MB)` and exited **0** while the copy into `dist/` had silently failed
+(a running `UE5DumpUI.exe` held `av_libglesv2.dll`). The size was right. The file was old.
+
+- **`Copy-Item` is non-terminating.** A `ForEach-Object { Copy-Item ... }` pipeline reports nothing
+  and leaves `$LASTEXITCODE` alone. Same trap as the `-ErrorAction SilentlyContinue` note in the
+  PowerShell tool docs, but here nobody had even asked for silence.
+- **The holder is usually one of ours**: a running UI, or an **injected game** holding
+  `dist/UE5Dumper.dll` (that one bit `-Target DLL` twice in the same session). Kill both before any
+  publish.
+- **Native AOT is not byte-reproducible.** Four publishes of identical source gave four different
+  SHA256s. So a hash proves *this copy landed*; it can never prove *two builds are the same build*.
+  Do not try to use it that way.
+- The fix in `build.ps1` is the shape to copy elsewhere: verify the **artifact**, not the operation,
+  and keep the good output on disk when the verification fails.
+
+
+
+### 2.5d A computer-use coordinate is a MEASUREMENT, and it expires when the layout reflows
+
+Driving the Live Walker on 2026-08-22, two of three button coordinates captured earlier in the same
+session were wrong by the time they were used — silently, because a click on empty chrome does
+nothing and looks exactly like a click on a control that did nothing.
+
+- **The toolbar reflowed mid-session.** `Find Refs` and `Related` appear once an object is loaded,
+  pushing everything right of them left. The ▼ match-stepper moved from x≈547 to x≈521, so two
+  "press ▼" actions actually clicked the **"2 matches" label**.
+- The damage is not the wasted click, it is the **conclusion**: "the stepper stopped working after
+  auto-refresh" was one sentence away from being filed as a defect, on an instrument that had never
+  been shown to fire in that state.
+- **Rule**: before a click that an assertion depends on, re-read the control's position from a fresh
+  screenshot, and prove the click LANDED (a state change you can see) before reading anything into
+  what follows. This is §1's "a check must be shown able to fail" applied to the actuator rather
+  than the detector.
+- The same session also had a toggle whose ON/OFF bookkeeping drifted, so a "control with the
+  feature OFF" ran with it **ON**. ⭐ For any toggle, read its state back from the screen — the
+  countdown, the highlight, the label — rather than tracking it in your head across a long run.
+
+
 ### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
 
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
@@ -600,6 +885,301 @@ like the defect itself.**
 just the open count, when pasting the tool's headline.
 
 -----
+
+### 2.8 Most "needs Cheat Engine" rows do not — pull the emitted script out and run it under `lua`
+
+The register has a large block of rows filed as CE-only. Two of them were closed on 2026-08-20
+**without opening Cheat Engine at all**, and the same route should be tried before booking a CE
+session for any of the rest.
+
+**The route.** With **AOBMaker offline**, the UI's CE buttons fall back to copying a CE memory-record
+XML to the clipboard. That XML contains the *real emitted* `[ENABLE]`/`[DISABLE]` `{$lua}` blocks —
+the exact text the shipping build produces today, not a generator fixture. So:
+
+1. drive the UI to the button (e.g. Teleport → Global Pointers → **Get GameEngine**);
+2. read the clipboard, `html.unescape` it, pull `<AssemblerScript>`;
+3. split the two `{$lua}` blocks and `load()` them over a table of **stubbed CE globals**
+   (`getAddressSafe` / `registerSymbol` / `unregisterSymbol` / `readInteger` / `readQword` /
+   `allocateMemory` / `sleep` / `getTickCount` / a `memrec` stand-in …);
+4. assert on what the script *did*, not on what it says.
+
+**Why it is stronger than it sounds.** The generator already has C# tests, but those assert on the
+emitted *text*. Running it catches control-flow defects that read fine — `[SLOTSYM]`'s bug was
+exactly that: on the slot path both arms of a guard were skipped and a trailing unconditional `dbg`
+claimed success anyway. **Stubbing lets you neuter one primitive and prove the honesty branch is
+reachable**: make `unregisterSymbol` a no-op and the script must say *"could NOT be unregistered"*
+rather than *"unregistered"*. No amount of source-reading establishes that.
+
+**Two practical notes.** `scripts/tests/*.lua` is the home and the convention (they are manual tools,
+deliberately not in CI, because a standalone `lua` is not a declared dependency and a step that
+skips quietly is worse than one run on purpose). And a pure helper needs no UI at all — `[STALEDLL]`
+(b)'s size readout was closed by lifting `ue5_dllFileSize`/`ue5_dllSizeText` straight out of
+`dist/UE5CEDumper.CT` and running them against the two real DLLs.
+
+⛔ **Know what this does NOT cover, and say so on the row.** The stubs are not CE. Anything whose
+question *is* CE's own behaviour stays CE-only — `[FREEZESTUCK]` step 3 asks whether CE's real
+`TMemoryRecord.Active = false` behaves like the stand-in, and its row already says no offline test
+can reach it. Closing the offline half is progress; claiming the row is done is not.
+
+-----
+
+
+### 2.8 A patch script's ENCODING is part of the patch — `utf-8-sig` writes a BOM you did not ask for
+
+Every patch script in the 2026-08-21 session read **and wrote** with `encoding="utf-8-sig"`.
+Reading with it strips a BOM; **writing with it ADDS one.** Eleven files silently gained a BOM they
+never had, against a repo that is 427-of-446 BOM-less. Nothing failed — not the build, not 4,600
+tests, not five CI gates — and it was found only by diffing the first three bytes of every file the
+session had touched against the pre-session baseline.
+
+Two rules, both cheap:
+* **Round-trip bytes, not text**, whenever the edit does not need decoding: `p.read_bytes()` /
+  `p.write_bytes()`. It cannot change an encoding, a BOM, or a line ending.
+* When you must use text, **read with `utf-8-sig` and write with `utf-8`** — never the same codec
+  for both.
+
+⚠ The same session hit the sibling trap **four times**: a bash heredoc mangles backslash escapes, so
+`b"...
+..."` in a Python source becomes a real newline and the anchor silently stops matching.
+`working-lessons` already said "prefer the Write tool"; the correction is that it is not a
+preference. **Anything containing a backslash goes in a file written by the Write tool.**
+
+⭐ And the reason both matter more than they look: each produced a change that **no test could
+see**. A BOM does not break C#; a mangled anchor produces `occurrences: 0` and an assert, which is
+loud — but its cousin, an anchor that matches something slightly different, would not be.
+
+### 2.9 A new test that passes proves nothing until you have seen it fail — and the first two rules you write will probably be wrong
+
+Worked example, same session, closing the L11 #7 offline half. The task was "the untick theories
+never inspect a script containing a contract check". Three iterations, each caught by a control
+rather than by reading:
+
+1. Added the missing fixture to the list the theories iterate. Suite green. **The negative control
+   (strip the untick out of `CeLuaHygiene.AppendBail`) reddened 13 rows and left the new fixture
+   green** — because the theories fed by that list check for the *absence* of an immediate untick
+   and for the deferred line's *exact text*, and neither can fail when an untick is simply MISSING.
+   The rule that catches a missing untick is fed by a different list.
+2. Wrote a focused test with the rule *"every `showMessage` must be followed by an untick"*, copied
+   from the toggle theory. **It failed on correct code**: a momentary script's final failure message
+   does not untick inline because it does not RETURN — control falls through to an unconditional
+   deferred timer. Demanding an inline untick there is precisely the change that breaks the
+   momentary shape.
+3. Rewrote it as *"every bare `return` must have unticked"*. **Also failed on correct code**: the
+   generator defines a local `_dumpHex` helper whose early `return` exits the FUNCTION, not the
+   block. The toggle theory had never met that because its scripts define no helpers.
+
+The rule that is actually true of both shapes: **a branch that REPORTS a failure and then LEAVES
+must already have unticked** — a `return` preceded closely by a `showMessage`. That version passes,
+and reddens under the same negative control.
+
+Lesson: a test written by copying a sibling theory's predicate inherits that sibling's *unstated
+scope*. Run the control first — a green new test is the least informative outcome available.
+
+
+
+### 2.11 Arming a negative control is an EDIT — restore the bytes, never the substitution
+
+*2026-08-22, during `[PARAMSSORT-2026-08-22]`. This did real damage to the tree and every gate
+stayed green.*
+
+The procedure that has been working all session is: break the thing, watch the check fail, put it
+back. **The putting-back is where the danger is.** I armed a control by replacing
+`>Hold this value<` with `>Apply<` in `en.axaml`, saw the assertion fire, and restored by replacing
+`>Apply<` with `>Hold this value<`.
+
+`en.axaml` already contained **five other** `>Apply<` strings — the Teleport panel's Move Speed,
+Time Dilation, Gravity, Gravity-Direction and Coordinate-Library buttons. All five became
+"Hold this value".
+
+⛔ **Nothing caught it.** 4,640 tests passed. `check_axaml_strings.py` passed — it verifies that
+every referenced key *exists*, which is untouched by rewriting a key's *value*. The four other CI
+gates passed. Only `git diff` knew, and only because I went looking after a `grep -c` returned 6
+where I expected 1.
+
+**The rule.** A control is armed by mutating a file you did not intend to change, so restore it the
+way you would restore any accident:
+
+- `git checkout -- <file>` when the file has **no** intended edits in the working tree. Byte-exact,
+  no reasoning required. This is almost always the right answer.
+- Otherwise snapshot the exact bytes first (`b = p.read_bytes()`) and write them back
+  (`p.write_bytes(b)`).
+- **Never** reverse the substitution. `A→B` then `B→A` is only sound when `B` did not already occur,
+  and you rarely know that. If you must, scope the replacement to a count (`replace(a, b, 1)`) or to
+  the one line — and then still verify with `git diff`, not with a `grep -c` of what you expected.
+
+⭐ **The generalisation, which is the part worth carrying:** `grep -c` told me "6" and I noticed only
+because 6 ≠ 1. Had the file contained one stray `>Apply<` instead of five, the count would have read
+2 and looked close enough to right. **`git diff --stat` after restoring a control costs nothing and
+does not depend on guessing the expected number** — which is the same failure this file's §1 warns
+about in the other direction: *a number recorded without its conditions is not a measurement*, and a
+count checked against an expectation you formed before the edit is not a verification.
+
+▶ Also noticed and left alone: **this document has two sections numbered 2.8.** Renumbering would
+break inbound references, so it is flagged here rather than silently changed.
+
+
+
+### 2.12 A sequence of structural edits compounds — anchor each one on what it MATCHES, not on what you meant
+
+*2026-08-22, same session as §2.11, same afternoon, different mechanism. Both were mine.*
+
+Three edits to `docs/pending-verification_zh-TW.md`: delete section AC17, delete section AF21,
+rewrite section V8. Each was written as *"find the heading, walk BACK to the `-----` above it, cut to
+the next heading"*. Individually correct. In sequence, wrong.
+
+Deleting AC17 took the separator above it — which was the separator **below its neighbour Y12**. Now
+Y12 and AF21 were adjacent with nothing between them. The AF21 edit then walked back looking for a
+`-----`, found the one above **Y12**, and deleted Y12 as well.
+
+⛔ **The bug is `rindex` on a shared delimiter.** A separator does not belong to the section after
+it; it belongs to the *gap*, and the previous edit may already have consumed it. **Delete forward
+only** — from the heading to the next heading — which takes the section together with the separator
+that trails it and cannot reach a neighbour:
+
+```python
+m = re.search(r"^(?:### |## )", text[i + 4:], re.M)   # next heading, H3 or H2
+end = i + 4 + m.start()
+```
+
+⭐ **What caught it was the DERIVED COUNT, not review.** The file states its own invariant —
+`grep -c '^### '` minus the three subsections must equal the table's total — and after the second
+delete it read 47 against a table saying 48. One heading unaccounted for. Nothing in the prose
+looked wrong; the deleted section was 22 lines in the middle of a 60 KB file.
+
+▶ **So: give a structural document an arithmetic invariant, and re-derive it after every edit.**
+This one already had one, written down by someone who had been bitten before, and it paid for itself
+within the hour. `git diff | grep '^-### '` is the confirming check — it names exactly which
+headings a change removed, which is the question you actually care about.
+
+▶ And when incremental edits have already compounded, **reset and redo them in one pass** rather
+than patching the patch. `git checkout -- <file>` was safe here only because everything earlier in
+the day was already committed — which is the other half of why the commit-early habit is worth
+keeping.
+
+
+
+### 2.13 A DEFERRAL REASON AGES WORSE THAN THE FINDING IT DEFERS
+
+*Measured over 2026-08-21/22. Six rows closed; **five had sat on a stated blocker that was simply
+false.*** The finding itself was fine each time — what had rotted was the sentence explaining why it
+could not be checked yet.
+
+| the deferral said | what was actually true |
+|---|---|
+| "only a real mount point can verify it" (`AC17`/`VOLUMEROOT`) | a cross-volume `mklink /J` junction separates the volumes just as well, and needs no elevation |
+| "the deps listing shows a breakage" (`PROXYDEPS`) | it shows **empty translation units** — six 527-byte objects against a smallest-real 10,985 |
+| "cannot be visually verified in an unattended session" | computer-use drove all five steps, including hand-corrupting a settings file to a value no control can produce |
+| "needs a real scaling change, the one row a script cannot do" (`AF21`) | the desktop is *permanently* at 225%; and the row's own gesture (hang it off the **right** edge) provably **cannot** expose the defect, so following it yields a confident false PASS |
+| "needs a game with a `UDataTable` over 64 rows" (`V8`) | five existing tests already pin every step's substance; only "is it rendered" is left |
+| "needs CE installed under `%ProgramFiles%` with the app non-elevated — no unattended session can stage it" (`X12`, 2026-08-24) | **wrong in BOTH directions.** `TryFindCheatEngineDirAsync` resolves CE's folder from the **running `cheatengine*` process's own path**, so any CE we start decides the target — a 97 MB copy we own is as real as the installed one. *And* the installed `C:\Program Files\Cheat Engine\autorun` is **writable non-elevated on this host** (measured with a probe file), so the prescribed setup would not have reproduced the denial anyway |
+
+⭐ **Why it rots in exactly this direction.** A deferral is written at the moment of *least*
+knowledge about the thing — right after diagnosing the defect, before anyone has tried. It then
+travels attached to the row as though it were a measured fact, and every later reader treats it as
+one, because it is sitting next to a diagnosis that IS well-evidenced.
+
+▶ **So: re-derive a deferral's premise before accepting it, exactly as §2.4 says to re-derive a
+finding's premise before fixing it.** Ask what specifically would have to be true, and whether it
+has ever been checked. Cheap: all five above collapsed in minutes.
+
+⚠ **And the sharpest version — a blocker can be worse than wrong, it can be actively misleading.**
+`AF21`'s row named a gesture that exercises the *permissive* side of the guard, so a careful tester
+following it exactly gets a pass and learns nothing. When a row prescribes a specific manipulation,
+check that the manipulation lands in the band where the two builds actually differ.
+
+⭐ **Two capability beliefs retired the same day (2026-08-24), both of which had been silently
+shrinking what counted as automatable:**
+
+* **Avalonia's top-level menu items ARE clickable by computer use.** A carried note said the header
+  opens but the item click runs nothing, which would have made every `Tools ▸ …` row human-only.
+  Measured on `Tools ▸ Install CE autorun Helper`: it fired on the first attempt, twice, and drove
+  a `SaveFileDialog`. ▶ **Re-test a carried UI-capability claim before letting it reclassify a row.**
+* **`wmic` is GONE on this Windows build (26200)** — `subprocess` raises `WinError 2`, which reads
+  like a missing script rather than a missing OS component. Enumerate processes with a Toolhelp
+  snapshot + `QueryFullProcessImageNameW` (see `tools/verify/x12_ce_autorun_denied.py`), which is
+  also what the app's own `GetRunningProcesses` does, so the rig and the code agree by construction.
+
+⚠ **Staging a "not writable" target does NOT require an ACL edit** — and reaching for `icacls` on a
+real install is both a security-settings change and unnecessary. The write under test is a
+`File.WriteAllTextAsync` onto a fixed file name, so a **read-only file** raises the very
+`UnauthorizedAccessException` a permission denial raises. One attribute, instantly reversible.
+⛔ But check WHICH mechanism the code actually reaches: for `AE20` the sibling trick — a **share
+lock** — was silently defused, because that code re-plans from disk first and a file it cannot open
+simply leaves the plan.
+
+
+
+### 2.14 A verification row's stated PASS is a HYPOTHESIS about where the defect lives — check it against the fix
+
+*Three rows in one afternoon, 2026-08-22, all three the same shape.* Each row was written by
+whoever fixed the defect, at the moment they were most sure what it was. Each names a check that is
+either satisfiable without exercising the fix, or points at the wrong half of it.
+
+| row | what it told you to assert | where the defect actually lives |
+|---|---|---|
+| `B19` locked log | "the locked file is still there" | **ORDER.** That assertion is true under the fix, under the defect, *and* when the sweep never ran. The fix was one shared `error_code` ending the loop, so the witness is the aged file *after* the lock in enumeration order. |
+| Dump Explorer cross-game gate | walk two games and watch the refusal | The gate was **already** pinned by five headless tests. The only unpinned thing was the **log line** the row names in passing — and the status text it does pin is transient, overwritten by the next action. |
+| `AF7` `budget_hit` | "the reply has `budget_hit`" | **A tautology.** The DLL writes the key unconditionally, so it is present on bytecode-path replies where the flag can never be true. Meaningful only when `method == "disasm"`. |
+
+⭐ **The pattern: a row records what the author was LOOKING AT when they fixed it, not what
+distinguishes fixed from broken.** Those coincide only by luck. So before running a row, do the
+thing you would do before fixing a finding (§2.4) — **read the fix, and ask what state would make
+the stated check pass on the BROKEN build.** If you can name one, the row is wrong and the check
+you actually want is somewhere adjacent.
+
+▶ **Three practical tells**, all cheap:
+1. **Would the assertion also hold if the feature never ran?** ("the locked file survived", "no
+   error appeared") → you need a positive arm that proves it ran.
+2. **Is the asserted value written unconditionally?** grep the emitter. If it is, the row is
+   asserting the schema, not the behaviour.
+3. **Does the row name a diagnostic, a log line, a status string in passing?** That aside is often
+   the only part not already covered — the mechanism usually has tests and the *reporting* usually
+   does not.
+
+⚠ **And the correction is cheap while the mis-run is not**: all three rows had a better check
+available for the same effort or less, and two of them would have produced a confident PASS that
+measured nothing.
+
+
+### 2.10 An absence proves nothing until the CHANNEL is shown to carry the thing
+
+A11 step 6's PASS was recorded 2026-08-20 as *"PASS, and non-vacuously"*, with this reasoning: the
+refine was shown to have run over 11 real candidates, so the absent `Refine re-anchor:` line must be
+a decision rather than an empty pass. The reasoning is sound and it is **irrelevant**. The rig was
+grepping `scan-0.log`; `Refine re-anchor:` is emitted from `Aura.cpp`, whose `#define LOG_CAT "OARR"`
+Sein routes to **`offsets-0.log`**. The line could not have appeared in the file being read no matter
+what the code did — and the row's own step text named the same wrong file, so the rig inherited it.
+
+⭐ **The write-up controlled for the STIMULUS and not for the DETECTOR.** A grep of the wrong file
+returns zero for both "the code did not do it" and "I am reading the wrong channel", and no amount
+of evidence about the stimulus separates those.
+
+The fix is one assertion, and it belongs in every absence-shaped check: **before treating an absence
+as evidence, prove the channel carries that category's traffic at all.** The rig now aborts unless
+`offsets-0.log` contains an `[OARR]` line.
+
+⚠ Concretely, for this repo: `docs/log-verification-checklist.md` already says grep by FORMAT STRING
+rather than line number. The missing half is that a format string tells you nothing about WHICH FILE
+it lands in. Four categories (`SEETHRU` / `Grausam` / `SENSE` / `PROXY`) fall through to
+`init-0.log` rather than to a file named after them.
+
+⭐⭐ **AND THE OBVIOUS FIX FOR THIS IS ITSELF A TRAP — it caught me the same day.** Having found that
+A11's marker is `[OARR]` because `Aura.cpp` declares `#define LOG_CAT "OARR"`, I applied the same
+reasoning to A12's marker in the SAME FILE and moved a working rig to the wrong log. The two lines
+sit a few hundred lines apart and go to different files:
+
+| marker | call | tag | file |
+|---|---|---|---|
+| `Radar: Refine re-anchor:` | `LOG_INFO(...)` — takes the file's `LOG_CAT` | `[OARR]` | `offsets-*.log` |
+| `RefineGroup re-anchor:` | `Sein::Info("SCAN:grp", ...)` — **explicit** | `[SCAN:grp]` | `scan-0.log` |
+
+**`#define LOG_CAT` is a DEFAULT, not the answer. Read the CALL.** `Aura.cpp` alone has 93 `LOG_*`
+calls and 22 explicit `Sein::` calls. `Sein.cpp`'s table resolves a category to a file; it cannot
+tell you which category a given line passes — only the call site can.
+
+▶ The cheap way to settle it without reading any of this: run the thing once and
+`grep -l "<marker>" *.log`. One command, no inference. That is what finally decided it, after two
+rounds of reasoning from the source produced two different wrong answers.
 
 ## 3. Traps in our own stack
 
@@ -878,6 +1458,222 @@ Four rules came out of it:
 **Do not respond by making the script look like something else.** The behaviour genuinely *is*
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
+
+### 3.8 This machine has TWO Visual Studios, and picking the wrong one fails at LINK, in a file you never touched
+
+`vswhere -all` returns **two** installations, and only the second has the toolset `build/` was
+compiled with:
+
+| install | MSVC toolsets |
+|---|---|
+| `C:\Program Files\Microsoft Visual Studio\2022\Community` | `14.44.35207` only |
+| `C:\Program Files\Microsoft Visual Studio\18\Community` | `14.38.33130`, `14.44.35207`, **`14.51.36231`** |
+
+`build.ps1` calls `Enter-VsDevShell` on the **newest** install, so every object already sitting in
+`build/` was produced by **14.51**. Point any other builder at `2022\Community\…\vcvars64.bat` and
+the compile stage happily succeeds — then the LINK dies:
+
+```
+Radar.cpp.obj : error LNK2019: unresolved external symbol __std_rotate
+Radar.cpp.obj : error LNK2019: unresolved external symbol __std_find_last_not_ch_pos_1
+dll\UE5Dumper.dll : fatal error LNK1120: 2 unresolved externals
+```
+
+Those are 14.51 vectorized-algorithm helpers, and **no `.lib` under `14.44.35207\lib\x64` defines
+either** — checked with `dumpbin /LINKERMEMBER:1` over every lib in that directory, not assumed.
+
+**Why it misleads so effectively.** The named file is one you did not edit (`Radar.cpp` is not even
+a `Macht.h` dependent), the symbols are STL internals, and it surfaces immediately after whatever
+source change you *did* make — so it reads as "my edit broke the build" or "the STL install is
+corrupt". It is neither: it is **objects from one toolset being linked against another's libs**.
+
+**The one-line diagnostic**: revert your change and rebuild pristine. If the failure survives, it
+was never yours. (That is what settled it here.)
+
+⇒ **Never hardcode a `vcvars64.bat` path.** Resolve with
+`vswhere -latest -prerelease -products * -property installationPath`, which is what
+`tools/verify/build_dll.py` does, and fail loudly rather than falling back to a guess. Related but
+*separate*: CLAUDE.md's `msvc_deps_prefix` warning is about **configure**, not build — that one is
+about the console code page, this one is about which VS you entered. Getting the code page right
+does not save you from the wrong toolset.
+
+### 3.8c `build.cmd` runs Windows PowerShell **5.1**, and exactly ONE command in `build.ps1` is fragile there
+
+Two facts that only bite together.
+
+**1. `build.cmd` always spawns 5.1, whatever shell you type it in.** Its last line is
+`powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1 …`, and on Windows `powershell.exe`
+is *always* Windows PowerShell 5.1 — PowerShell 7 is a **separate executable**, `pwsh.exe`. Launching
+`build.cmd` from pwsh 7 just makes pwsh the parent process. The transcript proves it out of the
+script's own mouth: `主應用程式: powershell -NoProfile …` / `PSVersion: 5.1.…` / `PSEdition: Desktop`.
+
+**2. Under 5.1, `Get-FileHash` is a script FUNCTION, not a cmdlet.** Measured over every command
+`build.ps1` calls — 26 of them — exactly one is not a compiled cmdlet:
+
+```
+Name          Type      Source
+Get-FileHash  Function  Microsoft.PowerShell.Utility
+```
+
+It lives in `Microsoft.PowerShell.Utility.psm1`, so resolving it forces PowerShell to **auto-load
+that module from disk at the moment of first call**. `Write-Host`, `Copy-Item`, `Get-ChildItem` and
+the other 24 are binary cmdlets already in the initial session state and never touch the module file.
+⇒ anything that blocks that one on-disk load — an AV real-time scan (**this machine runs
+Bitdefender**, §3.8), AMSI, a transient lock — raises `CommandNotFoundException` for `Get-FileHash`
+**and for nothing else in the script**. Which is precisely what happened on 2026-08-24: four
+consecutive `build.cmd publish` runs died at *"無法辨識 'Get-FileHash' 詞彙"*, immediately after the
+AOT publish had just written a 54 MB native binary — peak AV activity. It did **not** reproduce
+under an otherwise identical run minutes later, so it is intermittent, not a logic bug.
+
+⚠ **The version-dependence nearly hid it.** Under PowerShell 7 `Get-FileHash` *is* a compiled cmdlet,
+so probing from `pwsh` reports **zero** fragile commands and reads as an all-clear. Classify commands
+in the host that will actually run them.
+
+**Fix: remove the dependency, do not switch hosts.** `build.ps1` now computes SHA-256 through
+`System.Security.Cryptography` (always-loaded CLR, no module) via `Get-Sha256Hex`, verified
+case-sensitively identical to `Get-FileHash` on three files including the 54 MB exe.
+⛔ **Do NOT "fix" this by pointing `build.cmd` at `pwsh`** — `Microsoft.VisualStudio.DevShell.dll` is
+a .NET Framework assembly, and more importantly the `[Console]::OutputEncoding` pin at the top of
+`build.ps1` is load-bearing for `msvc_deps_prefix` (CLAUDE.md): change the host and a `.h` edit can
+silently stop triggering a rebuild. That trades a located, one-line problem for an unlocated one.
+
+⚠⚠ **CI runs the SAME `build.ps1` under a DIFFERENT PowerShell, so it structurally could not have
+caught this.** `.github/workflows/release.yml` invokes `./build.ps1 -Mode Publish` under
+`shell: pwsh` (every step in that file is `pwsh`), i.e. **PowerShell 7** — where `Get-FileHash` is a
+compiled cmdlet and the failure mode does not exist. Locally `build.cmd` gives it **5.1**. Keep that
+divergence in mind for any *other* `build.ps1` behaviour too: green CI says nothing about the host
+the maintainer actually builds in. (The `Get-FileHash` call in that workflow at `release.yml:79` was
+checked and left alone for the same reason — pwsh, and no AV on the runner.)
+
+### 3.8d An incremental build HIDES compiler warnings — a "new" warning after a sync usually is not new
+
+`.\build.cmd clean` and a from-scratch tree surfaced `Frieren.cpp(1009): warning C4190` that plain
+`build.cmd publish` never showed. Nothing had changed: read the Ninja step counts — `[1/11]` (no
+`Frieren.cpp` in the list, no warning), `[1/34]` (`Frieren.cpp` compiled, warning), `[1/83]` clean
+(compiled, warning). **A warning is emitted by a COMPILE, and Ninja only compiles what changed**, so
+a warning in an untouched file is invisible until something forces its TU to rebuild — which a repo
+sync, a header edit, or `clean` will do at an arbitrary later date. ⇒ *"this appeared after I synced"*
+is not evidence the sync caused it. Before hunting a cause, check whether that TU was compiled at all
+in the run that was quiet.
+
+The C4190 itself is worth knowing as a shape: `Frieren.cpp` wraps ~2,200 lines in one
+`extern "C" {` for the `UE5_*` exports, so a `static inline` helper declared inside it inherits **C
+language linkage** and returning `std::vector<FunctionInfo>` trips C4190. ⭐ **The diagnosis was the
+asymmetry**: `Mimic.cpp:529` holds a byte-identical twin that does *not* warn, because Mimic uses
+per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
+adapters; negative-controlled in both directions.
+
+### 3.9 Two injected hosts at once: the second one silently never scans
+
+"One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and
+that half is not obvious until it costs you a measurement.
+
+The DLL's auto-start refuses to run when the pipe is already owned:
+
+```
+[WARN] [INIT] DllMain AutoStart: pipe already exists (another UE5Dumper instance running)
+              — skipping auto-start
+```
+
+So the second host **loads the DLL, reports a successful injection, creates its log folder, writes a
+`Logger started` line — and then does nothing at all.** Its `scan-0.log` was **122 bytes**. Every
+downstream check on that host then measures an absence that the injection itself caused: no scan, no
+pointers, no `HintCache: Saved results`, no sweep. A rig looking for any of those reports a clean,
+confident FAIL of a working fix.
+
+**The tell is in `init-0.log`, not `scan-0.log`** — the skip is an INIT-category line, and the scan
+log looks merely *empty* rather than *skipped*.
+
+⇒ **Kill the previous host and confirm it is gone before injecting the next**, and when a scan-shaped
+check comes back empty, read `init-0.log` before believing it. `initState` also says so directly:
+`INIT_SKIPPED = 4` exists for exactly this case (`Mimic.h`), so a rig can assert
+`initState == INIT_READY` up front rather than discovering it afterwards.
+
+### 3.w A game PROCESS that exists is not a game that BOOTED — and the failure looks like a result
+
+Satisfactory was launched for G3 steps 3+4 by running its shipping exe directly:
+
+```
+D:\SteamLibrary\...\Satisfactory\Engine\Binaries\Win64\FactoryGameSteam-Win64-Shipping.exe
+```
+
+`tasklist` showed the process. Injection succeeded. The pipe answered. The DLL scanned. Every
+outward sign said "running game" — and the whole 20-minute run was measuring **an engine that had
+never initialised**, because the exe had put up a modal dialog behind everything:
+
+> Failed to open descriptor file ../../../FactoryGameSteam/FactoryGameSteam.uproject
+
+UE resolves the `.uproject` **relative to the exe**, and for this title the exe lives in
+`Engine\Binaries\Win64\`, so `../../../FactoryGameSteam/` does not exist in the install layout.
+**Satisfactory must be started through Steam**, which supplies the right working directory. (Compare
+Elliot and DQ7R, whose exes sit under `<Game>\Binaries\Win64\` and *do* start directly — so "start
+the shipping exe directly" is a per-title fact, not a general one.)
+
+⚠ **WHY IT WAS CONVINCING, which is the part worth remembering.** The readings were not garbage;
+they were *coherent*:
+
+| observation | why it looked genuine |
+|---|---|
+| `GNames` and `GWorld` **resolved** (real addresses) | those come from symbol exports that work as soon as the DLLs are mapped — no engine init needed |
+| `GObjects=0x0`, `GEngine=0x0` | reads exactly like the "unresolved globals" title the step was hunting for |
+| `TrySymbolExport: Found '?GUObjectArray@@3VFUObjectArray@@A'` then `ValidateGObjects: Failed … Num@+04=-1` | the symbol resolved; only the *counts* were empty |
+| `ExtraScanGObjects: No valid FUObjectArray found (763 candidates tested)` | a specific, quantitative-sounding negative |
+
+**The contradiction that should have stopped it earlier was already in our own docs**:
+`test-games.md` records this exact title/engine resolving **all three globals via symbol export with
+217,602 objects**. A host that "regressed" to zero should have been suspected before it was believed.
+
+**Tells, in order of cheapness:**
+1. an **empty** array behind a **resolved** symbol (`Num = 0 / -1`) is "not initialised", not "wrong
+   address" — a wrong address gives garbage counts, not zeros;
+2. `object_count == 0` while GNames works at all;
+3. our own `test-games.md` row for that title disagreeing;
+4. and simply **looking at the window**.
+
+⇒ Any conclusion from such a run is void. In this case it would have entered the register as
+*"Satisfactory has unresolved globals"* — a fact about a game that was not running.
+
+✅ **Confirmed by re-running it properly** (`steam.exe -applaunch 526870`, wait for a menu, then
+inject): all four globals resolve, **137,425 objects**, and `gobjects` comes back as
+**`0x7FFCC7CE3620`** — *the exact address the failed run had already found and rejected as empty*.
+Holding the address constant across the two runs isolates "array not yet populated" from "wrong
+address" perfectly, and confirms the symbol path was never broken.
+⚠ The **pre-existing** `FactoryGameSteam … GObjects=0x0, Objects=0` line in that title's older log,
+which is what made it the chosen host in the first place, is very plausibly the same artefact. It
+should not be cited as evidence without a Steam-launched re-run.
+
+-----
+
+### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
+
+It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
+(clean tree, same `build_number.txt`) produces different bytes — PE timestamp, checksum, embedded
+build date. So the moment you run `build.ps1` for any reason, every deployed proxy on the machine
+flips to `*** STALE ***`:
+
+```
+dist/proxy: version.dll=2,882,560 ...
+  DQ7R      version.dll   2,882,560  *** STALE ***      <- SAME SIZE. Not stale.
+  ... 9 deployed proxy(ies), 9 stale
+```
+
+**The tell is that the sizes match exactly.** A genuinely stale proxy is a *different build* and
+essentially always differs in size too (the 2026-08-19 sweep found six at 2,860,544 / 2,867,712 /
+2,855,936 against a 2,88x,xxx dist).
+
+⛔ **Do not `refresh` on that signal.** It overwrites the genuine artifacts in nine game folders
+with local rebuilds for no functional gain, and burns the detector: once everything has been
+refreshed from a local build, a *real* staleness later has nothing to be compared against.
+
+ℹ️ It does **not** block a run: `PipeClient.assert_build()` compares only the **build NUMBER**
+(`get_pointers.build_number` ends with `dist/build_number.txt`), so a deployed 3263 proxy still
+satisfies it against a locally rebuilt 3263 dist. The two checks disagree by design — one asks
+"same build?", the other "same bytes?".
+
+A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
+predicate here; SHA-256 answers a question nobody asked.
+
+-----
 
 -----
 
@@ -1249,6 +2045,8 @@ while the `execXxx` thunk returns without writing `Z_Param__Result`.
 
 Verified failing pattern on Everspace 2 (UE 5.5): A=3, B=4 written correctly, dispatch returns
 `result=0`, ReturnValue stays 0, inputs preserved and the return slot untouched.
+⛔ **REFUTED 2026-08-20 — see the resolved-confound block below. On a correctly detected hook the
+same call on the same title returns 7.**
 
 **How to apply:** redirect verification to **game-specific instance methods** (PlayerController /
 Character / Inventory subclass functions), with the user in **active gameplay** (not an idle main menu)
@@ -1257,10 +2055,36 @@ so the game thread pumps ProcessEvent, and prefer simple scalar returns.
 > ⚠ This one carries a confound worth remembering: it was diagnosed while the ProcessEvent hook was
 > installed in the **wrong vtable slot** (a hardcoded UE-version table whose only "validation" was that
 > the slot pointed at readable code — which every UObject virtual does). That was fixed in build 648 by
-> pattern-scanning the function body plus a post-install fire-counter watchdog. **The stub hypothesis
-> was never re-verified against the corrected hook.** The generalisable half is the reason it slept for
-> 600+ builds: `-5` timeouts were attributed to "idle game / game thread not pumping" — *a
-> plausible-sounding explanation that was never falsified.*
+> pattern-scanning the function body plus a post-install fire-counter watchdog. The generalisable half
+> is the reason it slept for 600+ builds: `-5` timeouts were attributed to "idle game / game thread not
+> pumping" — *a plausible-sounding explanation that was never falsified.*
+
+> ## ⭐ RESOLVED 2026-08-20 — the confound above WAS the whole story, and Everspace 2 no longer no-ops
+>
+> The paragraph above used to end *"the stub hypothesis was never re-verified against the corrected
+> hook."* It has now been re-verified, **on the very title it was diagnosed on**, and it does not
+> reproduce. Everspace 2, headless, dist 3263:
+>
+> ```
+> DetectProcessEvent (pattern): match at vtable+0x278 -> 0x7FF60152D940
+> ProcessEvent: offset resolved to vtable+0x278 via the pattern scan (detection run 0/8)
+> GameThreadDispatch: hook installed at 0x7FF60152D940, validator armed (1500ms)
+> VALIDATION FAILED lines: 0        hook_active=True   fire_count=160
+> Add_IntInt(3,4) -> result_hex 03000000 04000000 07000000   ==>  ReturnValue 7
+> ```
+>
+> The return slot that "stayed 0" now holds **7**. So the Everspace 2 evidence for a
+> BlueprintFastCall stub was an artefact of the **wrong vtable slot**, exactly as the confound
+> warned — and with slots now pattern-detected per title (`0x260` Lushfoil 5.6, `0x268` DumperTest
+> 5.4, **`0x278` Everspace 2**) the failing pattern this section was built on has **no surviving
+> instance on this machine**.
+>
+> ⚠ **What does NOT follow.** This does not prove BlueprintFastCall never elides a helper — only that
+> the one title we cited for it does not. The practical advice is unchanged and still worth keeping:
+> **do not build a verification on a KismetMathLibrary return**, because you cannot tell dispatch
+> from elision from the outside. What changes is the inverse reading — a KismetMathLibrary failure
+> should now be treated as **evidence of a bad slot first**, since that is what it turned out to be
+> every time we have actually chased it.
 
 -----
 
@@ -1396,6 +2220,14 @@ architecture or UX changes in these areas.
   prints the open HIGH/MED tier with segments. The spent dossier is in `docs/archive/`; full
   rationale in the 2026-08-17 dev-log entry.
 
+- **Three Avalonia fix designs killed BY MEASUREMENT — do not re-propose any of them.** Each was tried
+  against the real UI and each failed to do the thing it was proposed for: **(a)** restoring a scroll
+  anchor with `ScrollIntoView`; **(b)** collapsing a set of collection edits into a single `Reset`;
+  **(c)** a `Dispatcher`-posted repaint to make a cleared `NumericUpDown` redraw. ⚠ They are grouped
+  here because they share a failure mode — all three are the *obvious* fix for their symptom, so a
+  fresh session re-invents them. Moved here from the memory index 2026-08-22; that index does not
+  travel with git, and this was the only fact in it the repo did not already own.
+
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,
 `multipipe-eval.md`, and `Nibble-Mask-Evaluation.md` in the AOBMaker repo.
@@ -1405,10 +2237,34 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
 ## 7. Operational notes for two-machine development
 
 - **`build_number.txt` auto-increments on every `build.ps1` run** (MSBuild only reads it), so doc and
-  commit build references drift. Cite the build as of commit time.
+  commit build references drift. Cite the build as of commit time. The bump is unconditional at
+  `build.ps1:446`, **before** any `-Mode` / `-Target` branch; `-NoBumpBuildNumber` suppresses it.
+  ⚠ **"only `-Mode Publish` bumps it" is a persistent and wrong belief** — it was in the project
+  memory index for months and cost the 2026-08-19 closing session a build-number collision. A
+  `-Target DLL` run bumps it exactly as hard as a publish does.
 - **`dist/` is gitignored**, so a freshly synced repo can still hold a days-old runnable build. Check
   `dist/UE5DumpUI.exe`'s size and mtime, not just `git status` — ~54 MB is the AOT-trimmed build,
   ~107 MB is the non-trimmed one that must never be handed over.
+  ⚠ **A plain `build.ps1` OVERWRITES `dist/`** — the copy step is unconditional, not publish-gated.
+  So "there is a build in `dist/`" never implies "there is a *shippable* build in `dist/`", and a
+  non-trimmed exe can be sitting there under a number a real release already used. On 2026-08-19
+  the number `3262` named three different binaries this way (the other PC's AOT build, a
+  106.8 MB non-trimmed local one, and the pending publish). **Before handing over or comparing
+  builds, check the SIZE, not just `dist/build_number.txt`.**
+  ⚠⚠ **And `-Target Test` publishes the UI too — it is NOT read-only.** Measured 2026-08-20 with a
+  before/after hash on `dist/UE5DumpUI.exe`: **54.7 MB `3ebf02e7` → 106.8 MB `fa1e3f19`**, twice,
+  reproducibly. The run announces it (`>> Publishing UE5DumpUI (Release, self-contained
+  single-file)... [OK] UE5DumpUI.exe (106.8 MB)`) but nobody reads a green test run's middle.
+  This is the nastiest instance of the rule above, because of **which** command does it: `-Target
+  Test` is the option you reach for precisely when you want to change nothing — CLAUDE.md described
+  it as building "only the two test executables", which is true of the C++ side and badly
+  misleading about the rest. So the safest-looking command in the file silently destroys the only
+  artifact the hand-over rule protects, and leaves a *runnable* exe behind, at the right build
+  number, that merely happens to be the wrong one. **After any `-Target Test`, re-run
+  `-Mode Publish -NoBumpBuildNumber` and check the size before handing `dist/` over.**
+  Found by accident: a `-Target Test` run used only to confirm `build.ps1` still parsed after an
+  edit, whose *summary listing* showed `UE5DumpUI.exe (106.8 MB)` where 54.7 MB was expected. The
+  summary listing is worth reading for that reason alone.
 - **The Ghidra corpus is machine-local and derived.** `$GHIDRA_PROJS` = `D:\Tools\GHIDRA_Projs` on this
   machine, but the real corpus is the archive at `D:\UE_Analyze_data`; run
   `py tools/ghidra/corpus_relocate.py` / `preflight.py` before trusting any path. Never host it on USB

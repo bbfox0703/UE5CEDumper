@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -47,7 +47,7 @@ public static class CoordLibraryScriptGenerator
     public const int GroupColumns = 5;
 
     // Mailbox layout — dll/src/Mimic.h (MailboxData / TeleportOp).
-    private const int CmdTeleport = 8;
+    private const int CmdTeleport = CeMailboxLayout.CmdTeleport;
     private const int OpExplicit = 13;   // TP_OP_EXPLICIT
     private const int OpGetPose = 0;     // TP_OP_GET_POSE (also yields the map name)
 

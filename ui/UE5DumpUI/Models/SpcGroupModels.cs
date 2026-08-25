@@ -80,6 +80,10 @@ public sealed class SpcGroupResult
     /// <summary>Total objects that matched (may exceed <see cref="Candidates"/> when capped).</summary>
     public int  Total          { get; set; }
     public bool Truncated      { get; set; }
+    // No PerSlotCapHit here, deliberately (checked while fixing audit #5 AF13):
+    // SpcGroupQueryAsync runs its own inline matcher that adds EVERY satisfying field
+    // to a slot with no cap, so there is no witness list to truncate. The flag exists
+    // on SnapshotGroupResult because GroupMatch.Run does cap.
     /// <summary>Objects (identity groups) evaluated after the intersection load.</summary>
     public int  ScannedObjects { get; set; }
     /// <summary>Non-null on a validation failure (bad slot count, chain-length mismatch, …).</summary>

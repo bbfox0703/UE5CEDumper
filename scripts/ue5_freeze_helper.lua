@@ -14,10 +14,16 @@
       breaks.
 
     * This helper locks a PROPERTY (offset + type) on ALL live
-      instances of a given UE class. It re-enumerates instances every
+      instances of a given UE class -- and, by default, of every
+      SUBCLASS of it (cfg.derived). It re-enumerates instances every
       few seconds via the DLL mailbox (CMD_LIST_INSTANCES), so newly
       spawned teammates / pickups / NPCs are picked up automatically
       and freed instances drop off.
+
+    * If it ever gives up (the DLL was unloaded or re-injected and the
+      mailbox stops answering), it UNTICKS its own CE record instead of
+      leaving a checkbox that claims a cheat nothing is applying --
+      provided the record was handed to it as cfg.memrec.
 
   Setup once per .CT:
     Option A (one-click, requires AOBMaker CE Plugin):
@@ -29,7 +35,8 @@
 
   Public API (re-declaration-safe, syntax-highlighted):
     handle = freezeProperty(cfg)
-    ok, err, n = handle.start()   -- begin tick + rescan timers, and REPORT:
+    ok, err, n, capped = handle.start()
+                                  -- begin tick + rescan timers, and REPORT:
                                   --   false, err, 0  hard failure (no DLL /
                                   --                  contract mismatch) -- nothing
                                   --                  is frozen; tell the user
@@ -37,11 +44,32 @@
                                   --                  (normal -- spawns get picked
                                   --                  up on the next rescan)
                                   --   true,  nil, n  frozen on n instances
+                                  -- `capped` (4th) is true when the DLL's result cap
+                                  -- was reached: n is then a FLOOR, not a total, and
+                                  -- more instances exist unheld. Common with
+                                  -- derived=true off a broad base like 'Actor'.
     handle.stop()        -- cancel both timers cleanly
 
   cfg fields:
-    className          (req) string  exact UE class name (e.g. 'BP_Teammate_C')
-                                     -- exact match, case-insensitive
+    className          (req) string  UE class name (e.g. 'BP_Teammate_C')
+                                     -- case-insensitive; see `derived` for whether
+                                     -- subclasses are included
+    derived            opt   bool    default TRUE. Hold the property on instances of
+                                     className AND OF EVERY SUBCLASS of it. This is
+                                     what a Property Search row usually needs: an
+                                     INHERITED field is keyed to the class that
+                                     DECLARES it, so `bCanBeDamaged` arrives as
+                                     'Actor' and an exact-class pool holds whichever
+                                     stray AActor the level has -- never the pawn the
+                                     user was looking at. Set false for exact-class
+                                     only. Requires a DLL speaking mailbox contract 3.
+    memrec             opt   object  the CE memory record that owns this freeze
+                                     (pass `memrec` from the [ENABLE] block). When the
+                                     freeze ABANDONS itself after MAX_FAIL_STREAK
+                                     failed rescans it drives this record inactive, so
+                                     the checkbox stops claiming a cheat is applied
+                                     when nothing is being written. Omit it and the
+                                     freeze still stops -- it just cannot untick.
     propOffset         (req) number  byte offset of property within instance
     valueType          (req) string  see TYPE_WRITERS table below
     value              (req) number  target value to write each tick
@@ -59,8 +87,18 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.2'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.5'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
+                                        -- 1.3 cfg.derived + cfg.memrec; start() also
+                                        --     returns `capped`
+                                        -- 1.4 correctness fixes, no API change; an
+                                        --     updated helper now replaces an older
+                                        --     resident copy on re-load
+                                        -- 1.5 the abandon message reports the FIRST
+                                        --     error of the streak, not the busy-guard
+                                        --     consequence of it. MUST bump: 1.4 is
+                                        --     resident in tables already in the wild
+                                        --     and a same-version re-load is a no-op
 
   =========================================================================
   SAMPLES
@@ -114,13 +152,17 @@
 
     local h = freezeProperty({
       className  = 'BP_Teammate_C',
+      derived    = true,      -- also every SUBCLASS of it (see cfg docs)
       propOffset = 0x4F8,
       valueType  = 'float',
       value      = 100.0,
+      -- Hand the record over so an ABANDONED freeze can untick itself. Without
+      -- this the box keeps claiming the cheat is on after writing has stopped.
+      memrec     = memrec,
     })
     _ue5_freeze_handles[KEY] = h        -- <-- reachable from [DISABLE]
 
-    local ok, err, n = h.start()
+    local ok, err, n, capped = h.start()
     if not ok then                       -- hard failure: nothing is frozen
       pcall(h.stop)
       _ue5_freeze_handles[KEY] = nil
@@ -131,6 +173,9 @@
     if n == 0 then
       -- Not an error: armed, and it applies as instances spawn.
       print('[Freeze] armed -- no live instances yet')
+    elseif capped then
+      -- n is a FLOOR: the DLL's cap was reached and more instances exist unheld.
+      print('[Freeze] armed on ' .. n .. ' instance(s) -- cap reached, more exist unheld')
     end
     {$asm}
 
@@ -204,8 +249,48 @@
 -- no live instances yet. Generated scripts read it; a 1.1 helper returns nil there
 -- and the generated script treats that as "cannot report" rather than as a verdict,
 -- so an old helper still runs a new script -- it just cannot diagnose it. (AA12/AA13)
-if not UE5_FREEZE_HELPER_VERSION then
-  UE5_FREEZE_HELPER_VERSION = '1.2'
+-- 1.3: cfg.derived (hold every SUBCLASS too, the scope a Property Search row for an
+-- inherited field actually needs) + cfg.memrec (an abandoned freeze unticks its own CE
+-- record instead of leaving the checkbox claiming a cheat that stopped writing) +
+-- start()'s 4th return `capped`. cfg.derived REQUIRES mailbox contract 3, so unlike
+-- 1.1/1.2 this one is a compatibility gate: see UE5_SCRIPT_CONTRACT below.
+-- (`[FREEZESCOPE-2026-08-18]` / `[FREEZESTUCK-2026-08-18]`)
+-- 1.4: correctness fixes with NO API change -- a mid-pagination rescan failure no
+-- longer replaces the cache with a partial list (audit #5 AA11); checkContract tells
+-- a GONE process from a stale symbol (AA28); waitDone's real-ms deadline governs
+-- instead of racing a dormant iteration fallback, and the reported time is the arm
+-- that fired (AA29); and this file now REPLACES an older resident copy on re-load
+-- (AA30, below). Purely behavioural, so NOT a contract gate -- UE5_SCRIPT_CONTRACT
+-- is unchanged.
+--
+-- Re-load semantics (audit #5 AA30). CE keeps ONE Lua state for the session and
+-- never rebuilds it, and this file is added via Table -> Add File. The `if not X then`
+-- guards below exist to preserve shared state (_ue5_invoke_busy) across a CONCURRENT
+-- load, but they also silently blocked a genuine UPDATE: a user who edited this file
+-- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
+-- -- redefine only when this chunk is NEWER than the resident one -- so an update
+-- takes effect while a same/older re-load stays a no-op that preserves state.
+local THIS_HELPER_VERSION = '1.5'
+-- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
+local function versionLess(a, b)
+  if not a then return true end
+  local function parts(v)
+    local t = {}
+    for n in tostring(v):gmatch('%d+') do t[#t + 1] = tonumber(n) end
+    return t
+  end
+  local pa, pb = parts(a), parts(b)
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x < y end
+  end
+  return false
+end
+-- Captured ONCE, before the version global is bumped, so the freezeProperty guard
+-- far below sees the same verdict this line computed.
+local _freezeOutdated = versionLess(UE5_FREEZE_HELPER_VERSION, THIS_HELPER_VERSION)
+if _freezeOutdated then
+  UE5_FREEZE_HELPER_VERSION = THIS_HELPER_VERSION
 end
 
 -- ============================================================
@@ -225,10 +310,26 @@ local OFF_FUNC_FLAGS = 0x024  -- uint32: total pages
 local OFF_CLASS      = 0x028
 local OFF_ERR        = 0x228
 local OFF_PARAMS     = 0x328
+local OFF_CMD_FLAGS  = 0x728  -- IN  (contract 3): per-command input flags
+local OFF_OUT_FLAGS  = 0x72C  -- OUT (contract 3): per-command output flags
 
 local CMD_LIST_INSTANCES = 6
 local STATUS_DONE        = 1
 local STATUS_IDLE        = 0    -- untouched: the DLL never picked the command up
+
+-- CMD_LIST_INSTANCES flags (dll/src/Mimic.h ListInstancesFlag).
+local LI_IN_DERIVED    = 1  -- cmdFlags:    include every SUBCLASS of className
+local LI_OUT_TRUNCATED = 1  -- cmdOutFlags: the DLL's result cap was reached
+
+-- Page geometry, and it is NOT one number: the entry stride depends on the scope
+-- (dll/src/Mimic.h ListInstancesEntrySize). Exact scope ships bare UObject*s and one
+-- class witness for the whole page; derived scope ships (UObject*, UClass*) pairs,
+-- because a sweep across subclasses has no single class to witness with. Reading a
+-- derived page at the exact stride does not fail loudly -- it reads the high half of
+-- one pointer as the next object, and freezes an address that is not one.
+local ENTRY_SIZE_EXACT   = 8
+local ENTRY_SIZE_DERIVED = 16
+local MAX_PAGES          = 16   -- matches Mimic::LIST_INSTANCES_MAX_PAGES
 
 -- Mailbox round-trip is bounded: GObjects walk + memcpy of <=1024 bytes.
 -- 5 s is generous for a 2000-instance cap.
@@ -362,7 +463,15 @@ end
 -- helper needs to refuse a write into a recycled slot (audit #5 AA2/AA3). Required,
 -- not optional: without it the freeze tick has no way to tell a live instance from a
 -- reused address, and degrading to that silently is the defect, not the fallback.
-local UE5_SCRIPT_CONTRACT = 2
+-- 3: CMD_LIST_INSTANCES takes an opt-in DERIVED scope (cmdFlags LI_IN_DERIVED) and
+-- reports a capped pool (cmdOutFlags LI_OUT_TRUNCATED). Baked as this helper's
+-- baseline rather than probed per-cfg, and deliberately so: the shipped generator
+-- always asks for derived scope, because holding only the DECLARING class of an
+-- inherited field is the defect (`[FREEZESCOPE-2026-08-18]`). Against a contract-2
+-- DLL the flag would be ignored and the freeze would hold the wrong pool while
+-- reporting success -- exactly the silent-wrong-scope failure being fixed -- so this
+-- refuses up front and says to update the DLL.
+local UE5_SCRIPT_CONTRACT = 3
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.
@@ -372,7 +481,17 @@ local function checkContract()
   if not cv or cv == 0 then
     return false, 'this UE5Dumper.dll is older than this script (no contract symbol) -- update the DLL'
   end
-  if readInteger(cv + 0x00) ~= 1127564629 then
+  local magic = readInteger(cv + 0x00)
+  if magic == nil then
+    -- The symbol still resolves (stale export table) but its memory cannot be read:
+    -- the process is GONE, not the address stale. This is the same fault waitDone
+    -- already diagnoses for a nil status, said the same way. Before this, a nil read
+    -- was `nil ~= 1127564629` and got mislabelled "stale address -- re-inject",
+    -- pointing the user at the wrong fix. (audit #5 AA28)
+    return false, 'the contract symbol could not be read -- the game process has ' ..
+      'most likely exited (if it is running, re-inject UE5Dumper.dll)'
+  end
+  if magic ~= 1127564629 then
     return false, 'the contract symbol resolved to the wrong memory (stale address) -- re-inject the DLL'
   end
   local cur, min = readInteger(cv + 0x04), readInteger(cv + 0x08)
@@ -454,36 +573,61 @@ local function waitDone(mb, timeoutMs)
     -- nil is not a status. readInteger returns nil once the process is gone and
     -- `nil ~= STATUS_DONE` is true, so without this the loop burns the whole
     -- deadline and then matches none of the branches below (status=nil).
-    local over = st == nil
-               or (tick and (tick() - t0 >= limit) or (iters >= math.floor(limit / 15)))
+    --
+    -- Exactly ONE deadline governs. The old expression was
+    --   st==nil or (tick and tickExpired) or itersExpired
+    -- which -- by Lua and/or precedence -- kept the iteration fallback LIVE even when
+    -- getTickCount() was present, so the effective deadline was min(tick, iters) and
+    -- the printed "%dms" was not the arm that fired. The iteration count is a fallback
+    -- ONLY for a build lacking getTickCount (~15 ms/iter, since CE's sleep(1) measures
+    -- ~15.47 ms). (audit #5 AA29)
+    local over
+    if st == nil then
+      over = true
+    elseif tick then
+      over = (tick() - t0 >= limit)                  -- REAL-ms deadline
+    else
+      over = (iters >= math.floor(limit / 15))       -- fallback: no getTickCount
+    end
     if st ~= STATUS_DONE and over then
       if st == nil then
         return false, 'the mailbox could not be read -- the game process has ' ..
           'most likely exited (if it is running, re-inject UE5Dumper.dll)'
       end
+      -- Name the time that ACTUALLY elapsed when a clock is available, so the number
+      -- reports the arm that fired rather than always echoing `limit`.
+      local shownMs = tick and (tick() - t0) or limit
       if st == STATUS_IDLE then
         return false, string.format(
           'mailbox timeout after %dms -- the DLL never picked this up ' ..
-          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', limit)
+          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', shownMs)
       end
       return false, string.format(
         'mailbox timeout after %dms -- the DLL took the command but did not ' ..
-        'finish it (status=%d)', limit, st)
+        'finish it (status=%d)', shownMs, st)
     end
   end
   return true
 end
 
 -- Pull one page of instance pointers via CMD_LIST_INSTANCES.
--- Returns: addrsArray (or nil), totalPages, errMsg (nil on success), classPtr, classOff
+-- Returns: page (or nil), totalPages, errMsg (nil on success), classPtr, classOff, capped
+--
+-- `page` is an array of { addr = <UObject*>, cls = <UClass*> }. `cls` is filled only
+-- in DERIVED scope, where the DLL ships a per-entry witness because the sweep spans
+-- many concrete classes; in exact scope it is nil and the page-wide classPtr covers
+-- every entry.
 --
 -- classPtr/classOff are the contract-2 identity witness (see checkContract): the
 -- UClass* every entry on this page belongs to, and the byte offset of
 -- UObject::ClassPrivate. tick() re-reads that field before every write so a slot
--- recycled by a DIFFERENT class is refused. Both are 0 when the DLL did not
--- publish them; the contract check above makes that unreachable, and the caller
--- still treats 0 as "no witness" rather than as a match.
-local function fetchInstancePage(className, pageIndex)
+-- recycled by a DIFFERENT class is refused. classPtr is 0 in derived scope BY
+-- DESIGN (there is no single class); classOff is required in both, and the contract
+-- check above makes a missing one unreachable.
+--
+-- `capped` is the DLL's own LI_OUT_TRUNCATED bit -- the walk that did the capping is
+-- the only thing that knows, so it is read rather than re-derived here.
+local function fetchInstancePage(className, pageIndex, derived)
   local mb, ferr = findMailbox()
   if not mb then return nil, 0, ferr end
 
@@ -511,10 +655,15 @@ local function fetchInstancePage(className, pageIndex)
   end
 
   _ue5_invoke_busy = true
-  local pok, addrs, totalPages, err, classPtr, classOff = pcall(function()
+  local pok, page, totalPages, err, classPtr, classOff, capped = pcall(function()
     writeMbStr(mb, OFF_CLASS, className)
     -- Page index goes in paramsData[0..3].
     writeInteger(mb + OFF_PARAMS, pageIndex)
+    -- Scope flag (contract 3). Written EVERY call, including the 0 case: the DLL
+    -- clears it after reading, but writing it unconditionally means this helper
+    -- never depends on that -- an exact-scope request can never inherit a derived
+    -- one left behind by anything else sharing the mailbox.
+    writeInteger(mb + OFF_CMD_FLAGS, derived and LI_IN_DERIVED or 0)
     -- Status cleared, THEN cmd written last as the trigger.
     writeInteger(mb + OFF_STATUS, 0)
     writeInteger(mb + OFF_CMD, CMD_LIST_INSTANCES)
@@ -529,16 +678,18 @@ local function fetchInstancePage(className, pageIndex)
         'CMD_LIST_INSTANCES result=%d (%s)', result, em)
     end
 
+    -- Unsigned, which is what we want: numParms is a uint16 count.
+    --
+    -- audit #5 AA35 -- this used to be followed by `if returned < 0 then returned =
+    -- returned + 65536 end` under the comment "readSmallInteger returns signed". It does
+    -- not, and the branch was unreachable. CE's readSmallIntegerEx (LuaHandler.pas:1614)
+    -- defaults `signed:=false` when called with one argument and pushes `word(v)`, so the
+    -- range is 0..65535 and `returned < 0` can never hold. ue5_invoke_helper.lua:695-707
+    -- already documented the same fact correctly and passes `true` explicitly when it
+    -- wants a signed read (AA20) -- two files in this repo disagreeing about one CE API is
+    -- the part worth removing, not just the dead line.
     local returned = readSmallInteger(mb + OFF_NUM_PARMS) or 0
-    -- readSmallInteger returns signed; we packed an unsigned uint16.
-    if returned < 0 then returned = returned + 65536 end
     local totalPagesLocal = readInteger(mb + OFF_FUNC_FLAGS) or 1
-
-    local out = {}
-    for i = 0, returned - 1 do
-      local a = readQword(mb + OFF_PARAMS + (i * 8))
-      if a and a ~= 0 then out[#out + 1] = a end
-    end
 
     -- Contract-2 identity witness. Read AFTER result==0, because the DLL only
     -- fills these on a successful enumeration and clears them first, so a stale
@@ -550,63 +701,130 @@ local function fetchInstancePage(className, pageIndex)
     -- most likely a leftover 64-bit address -- so drop the witness rather than
     -- compare against garbage, which would refuse EVERY write and make the
     -- freeze silently do nothing.
-    if cOff < 8 or cOff > 0x200 or cPtr == 0 then
-      cPtr, cOff = 0, 0
+    if cOff < 8 or cOff > 0x200 then cOff = 0 end
+    if derived then
+      -- No page-wide class in derived scope, and that is not a degraded state --
+      -- the witness travels per entry below. But WITHOUT the offset there is no
+      -- witness at all, and writing unguarded is precisely the AA2 defect, so this
+      -- is an error rather than a fallback.
+      cPtr = 0
+      if cOff == 0 then
+        return nil, 0,
+          'the DLL did not publish the ClassPrivate offset for a derived scan ' ..
+          '-- refusing to freeze without an identity witness'
+      end
+    elseif cPtr == 0 then
+      cOff = 0
     end
-    return out, totalPagesLocal, nil, cPtr, cOff
+
+    local entrySize = derived and ENTRY_SIZE_DERIVED or ENTRY_SIZE_EXACT
+    local out = {}
+    for i = 0, returned - 1 do
+      local base = mb + OFF_PARAMS + (i * entrySize)
+      local a = readQword(base)
+      if a and a ~= 0 then
+        if derived then
+          -- Per-entry witness: this object's own concrete UClass*. An entry the DLL
+          -- could not resolve a class for is DROPPED rather than written unguarded.
+          local c = readQword(base + 8)
+          if c and c ~= 0 then out[#out + 1] = { addr = a, cls = c } end
+        else
+          out[#out + 1] = { addr = a }
+        end
+      end
+    end
+
+    -- Truncation is the DLL's verdict, not ours: only the walk knows whether it
+    -- stopped at its cap. A broad derived base reaches it routinely.
+    local outFlags = readInteger(mb + OFF_OUT_FLAGS) or 0
+    local wasCapped = (outFlags % (LI_OUT_TRUNCATED * 2)) >= LI_OUT_TRUNCATED
+
+    return out, totalPagesLocal, nil, cPtr, cOff, wasCapped
   end)
   _ue5_invoke_busy = false
 
   if not pok then
     -- Body raised; pcall captured the error in the first slot.
-    return nil, 0, tostring(addrs)
+    return nil, 0, tostring(page)
   end
-  return addrs, totalPages or 0, err, classPtr or 0, classOff or 0
+  return page, totalPages or 0, err, classPtr or 0, classOff or 0, capped or false
 end
 
--- Full rescan: page through CMD_LIST_INSTANCES until all instances
--- of the class are collected. Caps at 16 pages (16*128 = 2048
--- instances) to match the DLL's hard cap.
-local function rescanInstances(className, filter)
-  local all = {}
+-- Full rescan: page through CMD_LIST_INSTANCES until all instances of the class
+-- are collected. Bounded at MAX_PAGES, which is the same ceiling the DLL sizes its
+-- two result caps against (2000 exact / 8-byte entries, 1024 derived / 16-byte
+-- entries -- both 16 pages).
+--
+-- Returns: addrs, errMsg, classPtr, classOff, clsOf, capped
+--   addrs  array of UObject* (the shape tick() and the tests use)
+--   clsOf  parallel array of per-entry UClass*, or nil in exact scope where one
+--          page-wide classPtr covers everything
+local function rescanInstances(className, filter, derived)
+  local all, clsOf = {}, (derived and {} or nil)
   local pageIndex = 0
-  local maxPages = 16
   local firstErr = nil
   local classPtr, classOff = 0, 0
+  local capped = false
 
-  while pageIndex < maxPages do
-    local addrs, totalPages, err, cPtr, cOff = fetchInstancePage(className, pageIndex)
-    if not addrs then
-      if pageIndex == 0 then firstErr = err end
+  while pageIndex < MAX_PAGES do
+    local page, totalPages, err, cPtr, cOff, wasCapped =
+      fetchInstancePage(className, pageIndex, derived)
+    if not page then
+      -- ANY page failing is a FAILED rescan, not a partial success. Page 0 or page 5,
+      -- an incomplete enumeration must not be returned with err=nil -- that made
+      -- rescan() replace the cache with a page-0-only PREFIX and reset the fail streak,
+      -- so the freeze silently held a truncated set and believed it complete. Setting
+      -- firstErr on ANY page makes rescan() keep the PRIOR cache and count the failure
+      -- instead (the old code set it only for pageIndex == 0). (audit #5 AA11)
+      firstErr = err
       break
     end
-    for i = 1, #addrs do all[#all + 1] = addrs[i] end
-    -- Every page reports the same class (the DLL enumerates one exact class), so
-    -- the first non-zero witness is the witness. Taking the first rather than the
-    -- last means a later empty page cannot erase it.
+    for i = 1, #page do
+      all[#all + 1] = page[i].addr
+      if clsOf then clsOf[#clsOf + 1] = page[i].cls end
+    end
+    if wasCapped then capped = true end
+    -- Exact scope: every page reports the same class, so the first non-zero witness
+    -- is THE witness (taking the first rather than the last means a later empty page
+    -- cannot erase it). Derived scope: cPtr is 0 by design and cOff is what matters,
+    -- so latch that on its own.
     if classPtr == 0 and cPtr and cPtr ~= 0 then
       classPtr, classOff = cPtr, cOff
+    elseif classOff == 0 and cOff and cOff ~= 0 then
+      classOff = cOff
     end
     pageIndex = pageIndex + 1
     if totalPages <= pageIndex then break end
+    -- Out of page budget with pages still unread. Only THIS is truncation-by-us:
+    -- testing `pageIndex >= MAX_PAGES` after the loop instead would also fire for a
+    -- pool that exactly fills the budget and was therefore complete, which is a
+    -- caveat printed over a freeze that has nothing wrong with it.
+    if pageIndex >= MAX_PAGES then capped = true; break end
   end
 
   if filter then
-    local filtered = {}
+    local filtered, filteredCls = {}, (clsOf and {} or nil)
     for i = 1, #all do
-      if filter(all[i]) then filtered[#filtered + 1] = all[i] end
+      if filter(all[i]) then
+        filtered[#filtered + 1] = all[i]
+        -- The two arrays are indexed in lockstep by tick(), so a filter that drops
+        -- an address MUST drop its witness with it. Filtering one and not the other
+        -- silently pairs each surviving object with the NEXT one's class, and every
+        -- write is then refused while the freeze reports itself healthy.
+        if filteredCls then filteredCls[#filteredCls + 1] = clsOf[i] end
+      end
     end
-    all = filtered
+    all, clsOf = filtered, filteredCls
   end
 
-  return all, firstErr, classPtr, classOff
+  return all, firstErr, classPtr, classOff, clsOf, capped
 end
 
 -- ============================================================
 -- Public API: freezeProperty
 -- ============================================================
 
-if not freezeProperty then
+if not freezeProperty or _freezeOutdated then
 
   --- Build a freeze handle for one (class, offset, type, value) tuple.
   ---
@@ -629,16 +847,31 @@ if not freezeProperty then
     local writer, werr = resolveWriter(cfg.valueType)
     if not writer then error(werr) end
 
+    -- Scope DEFAULTS TO DERIVED. A Property Search row for an inherited field is
+    -- keyed to the class that DECLARES it, so exact-class was the wrong answer for
+    -- the most common way this helper is invoked, and a default that is wrong for
+    -- the common case is the defect (`[FREEZESCOPE-2026-08-18]`). `derived = false`
+    -- is honoured; nil means "not stated", not "off".
+    local derived = (cfg.derived ~= false)
+
     local handle = {
       cfg          = cfg,
+      _derived     = derived,
       _writer      = writer,
       _cache       = {},
+      -- Per-entry UClass* witnesses, index-aligned with _cache. Populated only in
+      -- derived scope; nil means "use the page-wide _classPtr" (exact scope).
+      _cacheCls    = nil,
       _tickTimer   = nil,
       _rescanTimer = nil,
       _lastError   = nil,
+      _firstError  = nil,
       -- Identity witness from the last successful rescan (contract 2).
       _classPtr    = 0,
       _classOff    = 0,
+      -- The DLL's result cap was reached on the last successful rescan: the cache
+      -- is a PREFIX of the real pool and more instances exist unheld.
+      _capped      = false,
       -- Consecutive failed rescans. Bounds how long a stale cache can be
       -- written to when the mailbox stops answering (see rescan()).
       _failStreak  = 0,
@@ -662,6 +895,10 @@ if not freezeProperty then
       local mask   = handle.cfg.boolMask
       local cPtr   = handle._classPtr
       local cOff   = handle._classOff
+      -- Derived scope: each entry carries its OWN concrete class, because the pool
+      -- spans subclasses and one page-wide pointer would refuse every object that
+      -- is not literally the base. nil here = exact scope, one witness for all.
+      local clsOf  = handle._cacheCls
       for i = 1, #cache do
         local addr = cache[i]
         -- Identity guard (audit #5 AA2). A cached pointer is NOT proof the
@@ -681,8 +918,14 @@ if not freezeProperty then
         -- free-list link in qword 0, both non-zero, so in practice it caught
         -- only fully decommitted pages, i.e. the game exiting.
         local ok
-        if cPtr ~= 0 then
-          ok = readQword(addr + cOff) == cPtr
+        local want = clsOf and clsOf[i] or cPtr
+        if want and want ~= 0 and cOff ~= 0 then
+          ok = readQword(addr + cOff) == want
+        elseif clsOf then
+          -- Derived scope with no witness for this entry: refuse. rescan drops
+          -- witness-less entries, so reaching here means the cache was hand-built;
+          -- writing unguarded is the AA2 defect and is never the safer default.
+          ok = false
         else
           -- No witness (contract check makes this unreachable today; kept so
           -- the loop has a defined answer rather than writing unconditionally).
@@ -715,11 +958,73 @@ if not freezeProperty then
     -- Mimic.cpp's HandleListInstances answers SetDone(0) for both -- so neither can
     -- this. "Armed, 0 right now" is the honest report; claiming a typo would be a
     -- guess, which is the thing CLAUDE.md's mailbox rule forbids.
+    --- Stop writing, then drive the owning CE record inactive.
+    ---
+    --- WHY THE RECORD AND NOT JUST A PRINT (`[FREEZESTUCK-2026-08-18]`). The print
+    --- below lands in CE's Lua Engine window, which hygiene closes on a successful
+    --- enable -- so an abandoned freeze was silent, and the user was left looking at
+    --- a TICKED record (in CE a red X on the checkbox means ACTIVE, not failed) over
+    --- a freeze that had permanently stopped writing. CLAUDE.md's rule for every
+    --- stateful toggle is that a bail-out which applied nothing must untick, and a
+    --- freeze that stopped writing is applying nothing. It also makes the existing
+    --- advice -- "re-enable the record" -- possible to follow, which it was not while
+    --- the record had never been disabled.
+    ---
+    --- WHY IT IS DEFERRED. Setting `memrec.Active = false` runs the record's
+    --- [DISABLE] block synchronously, and that block calls handle.stop(), which
+    --- DESTROYS the very timer whose OnTimer is on the stack right now. `showMessage`
+    --- is modal and pumps messages, so it would let other timers re-enter for the
+    --- same reason. Disabling both timers first stops all further writes
+    --- immediately; the one-shot timer then does the rest after this callback has
+    --- returned. Same shape (and the same reason) as the deferred self-untick the
+    --- Teleport generator emits.
+    ---
+    --- WHY THE MESSAGE RIDES ALONG AT ALL. The generated [DISABLE] block ends with
+    --- the hygiene auto-close, so unticking the record CLOSES the Lua Engine window —
+    --- which means the print() above cannot survive its own fix, and a record that
+    --- silently unticks itself is only half an answer. A modal survives. Same text as
+    --- the print, from one variable, so the two channels cannot drift.
+    ---
+    --- WHY IT COMES AFTER THE UNTICK. `showMessage` blocks until the user dismisses
+    --- it. Correcting the checkbox first means the record is honest whether or not
+    --- anyone is at the keyboard; the other order leaves it ticked for as long as an
+    --- unattended dialog sits there.
+    local function abandonAndUntick(message)
+      if handle._tickTimer   then handle._tickTimer.Enabled   = false end
+      if handle._rescanTimer then handle._rescanTimer.Enabled = false end
+
+      local rec = handle.cfg.memrec
+      -- Scheduled with or WITHOUT a record: no record means the checkbox cannot be
+      -- corrected, which makes telling the user more important, not less.
+      local t = createTimer(getMainForm(), false)
+      t.Interval = 50
+      t.OnTimer = function(timer)
+        timer.destroy()
+        if rec then
+          -- pcall: the user may have deleted the record while the freeze ran, and a
+          -- freed record must not turn a diagnosed failure into a Lua traceback.
+          pcall(function() rec.Active = false end)
+        end
+        if type(showMessage) == 'function' then pcall(showMessage, message) end
+      end
+      t.Enabled = true
+    end
+
     local function rescan()
-      local addrs, err, cPtr, cOff =
-        rescanInstances(handle.cfg.className, handle.cfg.filter)
+      local addrs, err, cPtr, cOff, clsOf, capped =
+        rescanInstances(handle.cfg.className, handle.cfg.filter, handle._derived)
       if err then
         handle._lastError = err
+        -- The FIRST failure of a streak is the CAUSE; the ones after it can be
+        -- consequences of it. waitDone's timeout path returns without clearing
+        -- OFF_CMD (deliberately -- the DLL may still write the reply later), so a
+        -- rescan that TIMED OUT leaves the next two to short-circuit on the
+        -- in-flight guard and report 'mailbox busy'. Reporting only the last error
+        -- therefore offers a transient concurrency cause for a permanent fault, in
+        -- the one place the user reads it -- and hides exactly the distinction
+        -- CLAUDE.md requires ("the DLL never picked it up" vs "it took the command
+        -- and wedged"). [FREEZEFIRSTERR-2026-08-23], seen on a live suspended game.
+        if handle._failStreak == 0 then handle._firstError = err end
         handle._failStreak = handle._failStreak + 1
         -- One failure is usually a transient 'mailbox busy' (a concurrent
         -- invoke); keeping the cache is right there. A PERSISTENT failure is
@@ -730,26 +1035,47 @@ if not freezeProperty then
         if handle._failStreak >= MAX_FAIL_STREAK and not handle._abandoned then
           handle._abandoned = true
           handle._cache = {}
+          handle._cacheCls = nil
+          -- Nothing is held any more, so nothing is capped either. Leaving the last
+          -- successful rescan's flag standing would have isTruncated() describe a
+          -- pool that no longer exists.
+          handle._capped = false
+          -- ONE message, two channels. Built once so the print and the modal that
+          -- follows the untick can never say different things.
+          -- First error = the cause; mention a differing latest one after it so a
+          -- genuinely changing fault is not hidden either.
+          local first, latest = tostring(handle._firstError or err), tostring(err)
+          local why = (latest ~= first) and (first .. '; then: ' .. latest) or first
+          local msg = string.format(
+            '[ue5_freeze] %s: %d consecutive rescans failed -- freeze STOPPED ' ..
+            'writing (first error: %s). %s',
+            tostring(handle.cfg.className), handle._failStreak, why,
+            handle.cfg.memrec
+              and 'This record has been unticked; re-enable it after fixing the cause.'
+              or  'Untick and re-tick this record after fixing the cause.')
           -- Ungated on purpose: this is a real failure, and CE Lua hygiene
           -- keeps genuine failures unconditional. It is printed ONCE per
           -- abandonment, not per rescan.
-          print(string.format(
-            '[ue5_freeze] %s: %d consecutive rescans failed -- freeze STOPPED ' ..
-            'writing (last error: %s). Re-enable the record after fixing it.',
-            tostring(handle.cfg.className), handle._failStreak, tostring(err)))
+          print(msg)
+          -- Stops the timers now; unticks and re-states the message once this
+          -- callback has returned.
+          abandonAndUntick(msg)
         end
-        return false, err, 0
+        return false, err, 0, handle._capped
       else
         handle._cache = addrs
+        handle._cacheCls = clsOf
         handle._lastError = nil
+        handle._firstError = nil
         handle._failStreak = 0
         handle._abandoned = false
+        handle._capped = capped and true or false
         -- Refresh the witness from the same enumeration that produced the
         -- cache. A rescan that returned instances but no witness would leave a
         -- stale class pointer paired with fresh addresses, so they move together.
         handle._classPtr = cPtr or 0
         handle._classOff = cOff or 0
-        return true, nil, #addrs
+        return true, nil, #addrs, handle._capped
       end
     end
 
@@ -758,7 +1084,17 @@ if not freezeProperty then
     handle.lastError = function() return handle._lastError end
 
     --- True once consecutive rescan failures made the handle stop writing.
+    --- The abandonment now also disables the timers and unticks cfg.memrec, so
+    --- nothing has to POLL this to keep the checkbox honest -- it stays a readable
+    --- state for tests and for a caller that wants to ask.
     handle.isAbandoned = function() return handle._abandoned end
+
+    --- True when the last successful rescan hit the DLL's result cap: the frozen
+    --- set is a PREFIX of the real pool and more instances exist unheld.
+    handle.isTruncated = function() return handle._capped end
+
+    --- True when this handle holds className AND every subclass of it.
+    handle.isDerived = function() return handle._derived end
 
     --- Begin the tick + rescan timers. Returns rescan()'s (ok, err, count) so the
     --- caller can tell a hard failure from an armed-but-empty freeze -- see rescan.
@@ -773,7 +1109,7 @@ if not freezeProperty then
     handle.start = function()
       -- Initial scan happens synchronously so tick has data on the
       -- very first fire.
-      local ok, err, count = rescan()
+      local ok, err, count, capped = rescan()
 
       local tickMs   = handle.cfg.tickIntervalMs or 50
       local rescanMs = (handle.cfg.refreshIntervalSec or 5) * 1000
@@ -788,7 +1124,16 @@ if not freezeProperty then
       handle._rescanTimer.OnTimer  = rescan
       handle._rescanTimer.Enabled  = true
 
-      return ok, err, count
+      -- The initial rescan runs BEFORE the timers exist, so an abandonment on the
+      -- very first pass (MAX_FAIL_STREAK is 3, so only reachable on a restarted
+      -- handle) left them enabled. Re-apply the stop here rather than reordering
+      -- start(): the timers have to exist for stop() to be reachable at all.
+      if handle._abandoned then
+        handle._tickTimer.Enabled   = false
+        handle._rescanTimer.Enabled = false
+      end
+
+      return ok, err, count, capped
     end
 
     handle.stop = function()
@@ -803,6 +1148,7 @@ if not freezeProperty then
         handle._rescanTimer = nil
       end
       handle._cache = {}
+      handle._cacheCls = nil
     end
 
     return handle

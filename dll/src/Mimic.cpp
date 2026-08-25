@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <exception>   // std::uncaught_exceptions — CompoundOpGuard's unwind branch (MB3)
 #include <thread>
 #include <algorithm>
 
@@ -46,12 +47,9 @@ extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
 extern uintptr_t    g_cachedGEngine;  // &GEngine (the static slot holding UEngine*), 0 if unresolved
 
-// UE FunctionFlags subset we care about for the static-native fast path.
-// Pulled from Engine/Source/Runtime/CoreUObject/Public/UObject/Script.h.
-// Only the two flags below are read; defining locally avoids dragging the
-// full enum into Mimic just for two bit checks.
-static constexpr uint32_t kFuncFlag_Native = 0x00000400u;
-static constexpr uint32_t kFuncFlag_Static = 0x00002000u;
+// The UE FunctionFlags bits and the routing predicate that reads them now live in
+// Mimic.h (FUNC_FLAG_NATIVE / FUNC_FLAG_STATIC / ShouldRouteDirectInvoke) so a test
+// target can pin the rule — nothing compiles this .cpp. (audit #5 MB1)
 
 // The exported mailbox — zero-initialized by default
 extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
@@ -112,19 +110,47 @@ static void SetError(int32_t code, const char* msg);
 static void SetDone(int32_t resultCode);
 static bool EnsureInitialized();
 
+// Result code published when a command handler escapes with an exception. A new
+// NEGATIVE result code is not a contract change: `MAILBOX_CONTRACT` versions the
+// layout plus the Cmd/op numbering, and every generated script already treats any
+// non-zero `result` as failure and renders `errorMsg` verbatim. Distinct from -1
+// ("Unknown command") on purpose — this one means the command WAS recognised and
+// dispatched, which is a different thing to tell the user.
+static constexpr int32_t MB_ERR_HANDLER_THREW = -11;
+
 // RAII guard for compound operations — increments s_compoundDepth on entry,
 // decrements on exit. When the outermost guard destructs (depth back to 0)
 // it publishes status=DONE / cmd=IDLE based on whatever `result` was last
 // written. Catches all return paths (success, early error, exception).
+//
+// ⚠ "any return path" includes UNWINDING, and that path needed its own answer
+// (audit #5 MB3, sibling of the per-iteration guard in PollingThreadBody).
+// `result` holds whatever the last COMPLETED sub-step wrote, and the sub-steps
+// only write it on failure — HandleInvokeByName returns early when it is
+// non-zero, so at the moment a later sub-step throws `result` is normally 0.
+// Publishing DONE with that reports SUCCESS for a command that never ran to
+// completion, and CE Lua reads `result == 0` as "the invoke worked": strictly
+// worse than the hang it replaced, because the caller then trusts the params
+// buffer. Comparing against the count captured at ENTRY (not `!= 0`) is what
+// makes this correct inside a nested unwind.
 struct CompoundOpGuard {
-    CompoundOpGuard() { ++s_compoundDepth; }
+    CompoundOpGuard() : uncaughtAtEntry(std::uncaught_exceptions()) { ++s_compoundDepth; }
     ~CompoundOpGuard() {
         --s_compoundDepth;
         if (s_compoundDepth == 0) {
+            if (std::uncaught_exceptions() > uncaughtAtEntry) {
+                g_invokeMailbox.result = MB_ERR_HANDLER_THREW;
+                strncpy(g_invokeMailbox.errorMsg,
+                        "command handler threw — the operation did NOT complete",
+                        sizeof(g_invokeMailbox.errorMsg) - 1);
+                g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+            }
             g_invokeMailbox.status = STATUS_DONE;
             g_invokeMailbox.cmd    = CMD_IDLE;
         }
     }
+
+    int uncaughtAtEntry;
 };
 
 // ---- winmm timer-resolution access ─────────────────────────────────────────
@@ -247,12 +273,30 @@ static void PollingThreadBody() {
     // visible without explicit fences. `volatile`-style access prevents
     // compiler reordering. If we ever switch the writer to in-process,
     // the cmd/status fields must become std::atomic<int32_t>.
+
+    // One WARN per session for a throwing handler, matching Routine::ReassertLoop:
+    // the poller runs at kPollIntervalMs, so an unlatched warning would fill the log.
+    bool warnedThrow = false;
+
     while (s_running.load(std::memory_order_acquire)) {
         int32_t cmd = g_invokeMailbox.cmd;
 
         if (cmd != CMD_IDLE) {
             // Mark as processing
             g_invokeMailbox.status = STATUS_PROCESSING;
+
+            // Clear the previous command's error text BEFORE dispatching this one.
+            // SetError writes errorMsg; SetDone writes only `result` and never touches
+            // it -- so without this a SUCCESSFUL command inherited the last failure's
+            // message, and a caller reading errorMsg without checking `result` first saw
+            // a stale error on a command that worked. Measured 2026-08-23: after a handler
+            // threw, `GWORLD result=0` still carried "command handler threw ...".
+            // (MBERRSTALE-2026-08-23)
+            //
+            // Cleared HERE, not after the handler: a post-clear would wipe the message a
+            // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
+            // success and populated on failure -- the only consistent pairing.
+            g_invokeMailbox.errorMsg[0] = '\0';
 
             LOG_INFO("Mailbox: received cmd=%d", cmd);
 
@@ -274,9 +318,18 @@ static void PollingThreadBody() {
                 }
             }
 
-            // Auto-init if needed (proxy DLL mode: UE5_Init not called yet)
-            if (!EnsureInitialized() && cmd != CMD_IDLE) {
-                // Init failed — most commands won't work
+            // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
+            //
+            // Skipped entirely for the commands CommandRequiresInit() exempts —
+            // today only CMD_FOREGROUND, whose handler is pure Win32 and which the
+            // PIPE path services with no init gate at all. Gating it made the
+            // CE-Lua Keep-Foreground toggle fail with -10 on any game whose AOB
+            // scan fails, and the generated script renders that as "hook error
+            // -10", naming MinHook — a subsystem the command never even reached.
+            // The exemption also skips the auto-init ATTEMPT, so the toggle no
+            // longer pays for a whole-image sweep it does not need. (audit #5 MB2)
+            if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
+                // Init failed — these commands all walk UE reflection.
                 if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {
                     SetError(-10, "DLL not initialized (GObjects/GNames not found)");
                     continue;
@@ -286,6 +339,24 @@ static void PollingThreadBody() {
                 continue;
             }
 
+            // ---- audit #5 MB3: guard the DISPATCH, not the whole thread ----
+            //
+            // PollingThreadProc's Routine::RunThreadGuarded is the outer net that
+            // stops a throw reaching a frame with no handler, and it stays. But it
+            // was ALSO the only guard, so one throwing handler unwound straight out
+            // of this loop and the CE mailbox was dead for the rest of the session —
+            // recoverable only by a CE Disable→Enable the user has no reason to try,
+            // since every subsequent script just times out.
+            //
+            // This is now the per-iteration form the two siblings already use:
+            // Routine::ReassertLoop guards per TICK, Stark guards per PE CALL. One
+            // bad command loses that command, not the mailbox.
+            //
+            // `threw` is set false by the lambda's own last statement rather than by
+            // a catch, so it stays true on ANY escape, including one the compiler
+            // routes around a `break`.
+            bool threw = true;
+            Routine::RunTickGuarded("Mailbox", warnedThrow, [&] {
             switch (cmd) {
             case CMD_FIND_INSTANCE:
                 HandleFindInstance();
@@ -335,6 +406,17 @@ static void PollingThreadBody() {
             default:
                 SetError(-1, "Unknown command");
                 break;
+            }
+            threw = false;
+            });
+
+            // Publish a definite failure rather than leaving status=PROCESSING for
+            // the script to time out on. CompoundOpGuard has already run for the one
+            // compound handler and written the same code; SetError here is what
+            // covers the other fourteen, which have no guard at all.
+            if (threw) {
+                SetError(MB_ERR_HANDLER_THREW,
+                         "command handler threw — the operation did NOT complete");
             }
         }
 
@@ -442,6 +524,15 @@ static void HandleFindInstance() {
     }
 }
 
+// Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
+// traversal deliberately does not contain. [INVOKEINHERIT-2026-08-20]
+static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
+    return Ubel::WalkFunctions(cls);
+}
+static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
+    return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+}
+
 static void HandleFindFunction() {
     uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
 
@@ -468,43 +559,19 @@ static void HandleFindFunction() {
         return;
     }
 
-    // Walk functions
-    auto funcs = Ubel::WalkFunctions(classAddr);
+    // Search the class AND ITS BASES. Only the class's own declared functions used to be
+    // considered, so every inherited UFunction was unreachable from CE Lua by name —
+    // [INVOKEINHERIT-2026-08-20]. Same resolver as UE5_FindFunctionByName, so the pipe and
+    // the mailbox cannot answer the same question differently.
+    FunctionInfo hit;
+    int levels = 0;
+    const bool found = Ubel::ResolveFunctionInChain(
+        classAddr, funcName, ChainListFuncs, ChainReadSuper, hit, &levels);
 
-    // Exact match
-    uintptr_t ufuncAddr = 0;
-    uint16_t parmsSize = 0;
-    uint16_t numParms = 0;
-    uint32_t funcFlags = 0;
-
-    for (const auto& f : funcs) {
-        if (f.name == funcName) {
-            ufuncAddr = f.address;
-            parmsSize = f.parmsSize;
-            numParms = f.numParms;
-            funcFlags = f.functionFlags;
-            break;
-        }
-    }
-
-    // Case-insensitive fallback
-    if (!ufuncAddr) {
-        std::string lower(funcName);
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        for (const auto& f : funcs) {
-            std::string fl = f.name;
-            std::transform(fl.begin(), fl.end(), fl.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (fl == lower) {
-                ufuncAddr = f.address;
-                parmsSize = f.parmsSize;
-                numParms = f.numParms;
-                funcFlags = f.functionFlags;
-                break;
-            }
-        }
-    }
+    uintptr_t ufuncAddr = found ? hit.address : 0;
+    uint16_t parmsSize = found ? hit.parmsSize : 0;
+    uint16_t numParms = found ? hit.numParms : 0;
+    uint32_t funcFlags = found ? hit.functionFlags : 0;
 
     if (ufuncAddr) {
         g_invokeMailbox.ufuncAddr = ufuncAddr;
@@ -518,8 +585,9 @@ static void HandleFindFunction() {
     } else {
         g_invokeMailbox.ufuncAddr = 0;
         char msg[256];
-        snprintf(msg, sizeof(msg), "Function '%s' not found (%d functions walked)",
-                 funcName, (int)funcs.size());
+        snprintf(msg, sizeof(msg),
+                 "Function '%s' not found (%d class level(s) searched, own class + supers)",
+                 funcName, levels);
         SetError(-3, msg);
     }
 }
@@ -553,15 +621,84 @@ static void HandleInvoke() {
     // Stateful instance methods (FUNC_Net, FUNC_Event, BlueprintEvent,
     // anything touching actor mutable state from off-thread) still
     // route through GameThreadDispatch via UE5_CallProcessEvent.
-    const bool isStaticNative =
-        (g_invokeMailbox.functionFlags & (kFuncFlag_Native | kFuncFlag_Static))
-            == (kFuncFlag_Native | kFuncFlag_Static);
+    //
+    // The flags come from the UFunction that `ufuncAddr` NAMES, re-read here, and
+    // NOT from g_invokeMailbox.functionFlags. That field is a DLL-filled output —
+    // CMD_INVOKE's documented inputs are instanceAddr / ufuncAddr / paramsData —
+    // so it holds whatever the previous command left at offset 0x024:
+    //   * CMD_FIND_FUNCTION leaves the flags of the function IT resolved, which for
+    //     a bare re-FIRE (the generated form's FIRE button re-issues CMD_INVOKE
+    //     without re-running CMD_FIND_FUNCTION) can be a DIFFERENT function — a
+    //     stale Native|Static then sends a stateful actor UFunction off the game
+    //     thread, exactly what the comment above forbids;
+    //   * CMD_LIST_FUNCTIONS and CMD_LIST_INSTANCES overwrite it with a PAGE COUNT.
+    // ResolveFunctionInfo also validates the meta-class is "Function", so a stale or
+    // recycled ufuncAddr fails safe instead of routing on garbage. Unresolved ⇒
+    // queue: the false negative costs latency, the false positive corrupts state.
+    // (audit #5 MB1)
+    FunctionInfo fi{};   // global scope, like Fern's Linie query path
+    const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+    const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
+
+    if (!flagsResolved) {
+        LOG_WARN("Mailbox: INVOKE could not re-read FunctionFlags from ufunc=0x%llX "
+                 "(not a live UFunction?) — routing through GameThreadDispatch",
+                 (unsigned long long)ufuncAddr);
+    } else if (fi.functionFlags != g_invokeMailbox.functionFlags) {
+        // The whole point of MB1, made greppable: the mailbox field disagreed with
+        // the function actually being invoked. Before the fix this decided the route.
+        LOG_WARN("Mailbox: INVOKE mailbox functionFlags=0x%08X is STALE — '%s' "
+                 "really has 0x%08X; routing on the re-read value (MB1)",
+                 g_invokeMailbox.functionFlags, fi.name.c_str(), fi.functionFlags);
+    }
+
+    // Clear the ReturnValue slot before dispatching, so the After dump cannot be
+    // mistaken for a result.
+    //
+    // WHY: paramsData is a PERSISTENT global. Whatever the caller wrote for the INPUTS
+    // is still sitting in it, and on at least two titles the return slot came back
+    // holding a copy of an input -- ES2 showed Before/After identical (stale 0x49), and
+    // on DumperTest `Abs(-3.5)` came back with a buffer of `-3.5, 0, -3.5`. A slot that
+    // MIRRORS THE INPUT makes "the function ran and wrote this" indistinguishable from
+    // "the function never executed", which is not a cosmetic problem: it is what made a
+    // b636 latency measurement unpublishable on 2026-08-23 ([B636-NOACCIDENT-2026-08-23]).
+    // PointerPanelViewModel's own docstring states the same hazard in the same words.
+    //
+    // ZERO rather than a 0xCD-style sentinel, deliberately: a struct return that the
+    // callee only partially fills reads sanely when the remainder is zero and reads as
+    // garbage when it is 0xCD, and zeroing is what UE itself does to a param buffer
+    // before ProcessEvent.
+    //
+    // ⚠ RESIDUAL, stated so nobody over-trusts this: a function that legitimately
+    // returns 0 is STILL indistinguishable by slot contents alone. The slot answers
+    // "was it written", not "did it run" -- for that, read the ProcessEvent return code
+    // and the route line logged just below. Pick a fixture with a non-zero expected
+    // return when the question is whether the call happened.
+    if (flagsResolved && fi.returnValueOffset != 0xFFFF) {
+        for (const auto& prm : fi.params) {
+            if (!prm.isReturn || prm.offset < 0 || prm.size <= 0) continue;
+            const size_t off = static_cast<size_t>(prm.offset);
+            const size_t len = static_cast<size_t>(prm.size);
+            // Bounds are checked against the real buffer, not against ParmsSize: a
+            // forked layout can report a ParmsSize larger than the mailbox slab, and a
+            // memset past the end would corrupt whatever follows it in the struct.
+            if (off + len > sizeof(g_invokeMailbox.paramsData)) {
+                LOG_WARN("Mailbox: INVOKE return slot +%zu size %zu exceeds paramsData "
+                         "(%zu) — not clearing", off, len,
+                         sizeof(g_invokeMailbox.paramsData));
+                break;
+            }
+            memset(g_invokeMailbox.paramsData + off, 0, len);
+            LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
+            break;
+        }
+    }
 
     int32_t result;
     if (isStaticNative) {
         LOG_INFO("Mailbox: INVOKE -> static-native fast path "
                  "(flags=0x%08X, bypassing GameThreadDispatch)",
-                 g_invokeMailbox.functionFlags);
+                 fi.functionFlags);
         result = UE5_CallProcessEventDirect(
             instanceAddr, ufuncAddr,
             reinterpret_cast<uintptr_t>(g_invokeMailbox.paramsData));
@@ -736,15 +873,40 @@ static void HandleListFunctions() {
 // helper. Paginated identically to LIST_FUNCTIONS so the CE Lua side can pull
 // multi-page result sets through the single-slot mailbox.
 //
-// Match policy: exactMatch=true. Freeze callers want precise class identity
-// — partial matching would have "Pawn" pull every pawn subclass in the world,
-// and the property offset only makes sense for the exact class chain the
-// PropertySearch row identified. Users who deliberately want a broader scope
-// can edit the className in the generated AA Script's CFG block.
+// Match policy: chosen by the caller, and the DEFAULT is the exact class.
+//
+// exactMatch=true was the only policy until contract 3, on the reasoning that a
+// freeze wants precise class identity. That reasoning holds for the class the user
+// NAMED and fails for the class the UI actually hands over: a Property Search row
+// for an inherited field is keyed to the class that DECLARES it, so freezing a
+// pawn's `bCanBeDamaged` submits "Actor" and an exact pool returns whichever stray
+// AActor the level happens to hold — never the pawn. Solide hit the identical wall
+// and fixed it with Aura::FindInstancesDerivedFrom (audit #5 A6); the Freeze button
+// and the Force submenu sit on the same row, so they must scope the same way.
+// (`[FREEZESCOPE-2026-08-18]`)
+//
+// The scope is an opt-in bit rather than a policy change, so a script generated
+// before contract 3 keeps the pool it was written against.
 static void HandleListInstances() {
     char className[256];
     memcpy(className, g_invokeMailbox.className, sizeof(className));
     className[255] = '\0';
+
+    // Read the scope flag and CLEAR it in the same breath, BEFORE any early return.
+    //
+    // cmdFlags is the one input that would otherwise survive between commands
+    // (className and paramsData are both rewritten by the next caller), so a
+    // derived request left standing would silently widen the pool of whoever asks
+    // next — including a contract-1/2 script that never writes the field and is
+    // entitled to exact-match behaviour. Clearing here is what makes the flag
+    // genuinely additive rather than sticky.
+    const uint32_t inFlags = g_invokeMailbox.cmdFlags;
+    g_invokeMailbox.cmdFlags = 0;
+    const bool derived = (inFlags & LI_IN_DERIVED) != 0;
+
+    // Rewritten, never accumulated: a stale truncation bit from a previous page
+    // would tell the caller its pool was capped when it was not.
+    g_invokeMailbox.cmdOutFlags = 0;
 
     if (className[0] == '\0') {
         SetError(-1, "Empty class name");
@@ -755,33 +917,41 @@ static void HandleListInstances() {
     uint32_t pageIndex = 0;
     memcpy(&pageIndex, g_invokeMailbox.paramsData, sizeof(uint32_t));
 
-    LOG_INFO("Mailbox: LIST_INSTANCES class='%s' page=%u", className, pageIndex);
+    LOG_INFO("Mailbox: LIST_INSTANCES class='%s' page=%u scope=%s",
+             className, pageIndex, derived ? "derived" : "exact");
 
-    // Hard cap at 2000 instances — freeze use cases ("all teammates", "all
-    // ammo pickups") rarely exceed double digits; 2000 is generous and the
-    // total walk stays bounded.
-    auto rset = Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/2000);
+    // Caps live in Mimic.h beside the page geometry they have to agree with.
+    const int cap = derived ? LIST_INSTANCES_MAX_DERIVED : LIST_INSTANCES_MAX_EXACT;
+    Aura::SearchResultSet rset = derived
+        ? Aura::FindInstancesDerivedFrom(className, cap)
+        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap);
 
     // CDO filter: the class default object (Default__BP_Foo_C) is the
     // template, not a live instance. Freezing its property would touch the
     // template state — never what the user wants.
-    std::vector<uintptr_t> live;
+    //
+    // The derived walk already drops CDOs INSIDE its loop (it has to — a base like
+    // AActor has thousands of them at the low GObjects indices, and filtering after
+    // the cap would return a page of nothing but templates). This second pass is
+    // therefore a no-op there and the real filter on the exact path; both are kept
+    // so neither path depends on the other's behaviour.
+    struct LiveEntry { uint64_t obj; uint64_t cls; };
+    std::vector<LiveEntry> live;
     live.reserve(rset.results.size());
     for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            live.push_back(r.addr);
-        }
+        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        live.push_back({ static_cast<uint64_t>(r.addr), static_cast<uint64_t>(r.classAddr) });
     }
 
-    constexpr uint32_t ENTRY_SIZE = 8;            // uint64 pointer
-    constexpr uint32_t ENTRIES_PER_PAGE = 128;    // 128 * 8 = 1024 bytes (fills paramsData)
+    const uint32_t entrySize = ListInstancesEntrySize(derived);
+    const uint32_t entriesPerPage = ListInstancesPerPage(derived);
 
     uint32_t totalCount = static_cast<uint32_t>(live.size());
-    uint32_t totalPages = (totalCount + ENTRIES_PER_PAGE - 1) / ENTRIES_PER_PAGE;
+    uint32_t totalPages = (totalCount + entriesPerPage - 1) / entriesPerPage;
     if (totalPages == 0) totalPages = 1;
 
-    uint32_t startIdx = pageIndex * ENTRIES_PER_PAGE;
-    uint32_t endIdx = (std::min)(startIdx + ENTRIES_PER_PAGE, totalCount);
+    uint32_t startIdx = pageIndex * entriesPerPage;
+    uint32_t endIdx = (std::min)(startIdx + entriesPerPage, totalCount);
     uint32_t returnedCount = (startIdx < totalCount) ? (endIdx - startIdx) : 0;
 
     // parmsSize is uint16 — saturate if a class somehow has >65535 instances.
@@ -789,22 +959,41 @@ static void HandleListInstances() {
     g_invokeMailbox.numParms = static_cast<uint16_t>(returnedCount);
     g_invokeMailbox.functionFlags = totalPages;
 
+    // "The pool was capped" comes from the walk that did the capping, not from a
+    // second test over the page — that is audit #4's own named root cause (report
+    // and reality computed by different code paths). A derived sweep off a broad
+    // base reaches this routinely, so the caller must be TOLD rather than left to
+    // read a truthful-but-partial count as a total.
+    if (rset.truncated || rset.aborted)
+        g_invokeMailbox.cmdOutFlags |= LI_OUT_TRUNCATED;
+
     // Contract 2: publish the identity witness a caching caller needs to tell a
     // live instance from a recycled slot (audit #5 AA2/AA3).
     //
     // Read from an actual enumerated instance rather than resolved by name a
     // second time: the caller compares against what it will read out of THESE
-    // objects, so the witness has to come from the same place. exactMatch=true
-    // above means every entry shares one class, so one pointer covers the page —
-    // and the page the caller is holding, not just page 0.
+    // objects, so the witness has to come from the same place.
+    //
+    // EXACT scope: every entry shares one class, so one pointer covers the page —
+    //   and the page the caller is holding, not just page 0.
+    // DERIVED scope (contract 3): there IS no single class, so instanceAddr stays
+    //   0 and the witness travels per entry inside paramsData. Publishing the base
+    //   class here instead would be worse than useless: the caller would compare
+    //   each object's ClassPrivate against a class none of them IS, and refuse
+    //   every write while reporting a healthy freeze.
     //
     // Both are cleared first: a previous command may have left an unrelated
     // UObject*/UFunction* here, and a caller must never mistake that for a
     // witness. Zero means "not available" and the caller falls back.
     g_invokeMailbox.instanceAddr = 0;
     g_invokeMailbox.ufuncAddr    = 0;
-    if (returnedCount > 0) {
-        uintptr_t cls = Ubel::GetClass(live[startIdx]);
+    if (derived) {
+        // The offset is a property of the ENGINE, not of the page, so it is
+        // published whenever the scope needs it — the caller treats a zero here as
+        // a hard error rather than as a reason to write unguarded.
+        g_invokeMailbox.ufuncAddr = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
+    } else if (returnedCount > 0) {
+        uintptr_t cls = Ubel::GetClass(static_cast<uintptr_t>(live[startIdx].obj));
         if (cls) {
             g_invokeMailbox.instanceAddr = static_cast<uint64_t>(cls);
             g_invokeMailbox.ufuncAddr    = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
@@ -814,12 +1003,16 @@ static void HandleListInstances() {
     memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
 
     for (uint32_t i = 0; i < returnedCount; ++i) {
-        uint64_t addr = live[startIdx + i];
-        memcpy(g_invokeMailbox.paramsData + (i * ENTRY_SIZE), &addr, ENTRY_SIZE);
+        const LiveEntry& e = live[startIdx + i];
+        uint8_t* slot = g_invokeMailbox.paramsData + (i * entrySize);
+        memcpy(slot, &e.obj, sizeof(uint64_t));
+        if (derived) memcpy(slot + sizeof(uint64_t), &e.cls, sizeof(uint64_t));
     }
 
-    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) classWitness=0x%llX",
+    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) scope=%s%s classWitness=0x%llX",
              returnedCount, totalCount, pageIndex + 1, totalPages,
+             derived ? "derived" : "exact",
+             (g_invokeMailbox.cmdOutFlags & LI_OUT_TRUNCATED) ? " CAPPED" : "",
              (unsigned long long)g_invokeMailbox.instanceAddr);
     SetDone(0);
 }

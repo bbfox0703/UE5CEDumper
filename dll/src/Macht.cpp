@@ -7,6 +7,8 @@
 #define LOG_CAT "MEM"
 #include "Sein.h"
 #include "Grimoire.h"
+#include "Utf8Helpers.h"   // wide module paths must be converted before they reach Sein
+                           // ([NONASCIILS-2026-08-24]; Sein formats with a narrow vsnprintf)
 
 #include <Psapi.h>
 #include <vector>
@@ -517,8 +519,16 @@ std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
 
         auto hits = AOBScanAll(pattern, m.base);
         if (!hits.empty()) {
-            LOG_DEBUG("AOBScanAllModules: %zu matches in '%ls'",
-                      hits.size(), m.name);
+            // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — see the long note at
+            // Methode.cpp's copy of this. ⭐ THIS is the most exposed of the four sites:
+            // despite the field name and the "in '%ls'" wording, `m.name` is a FULL install
+            // path (GetModuleFileNameW, ~line 493), and it is reached from the ordinary MA1
+            // fallback — no CE plugin and no third-party DLL required, just a game installed
+            // under a non-ASCII folder. Conversion stays INSIDE this branch so it costs one
+            // allocation per MATCHING module, not per module scanned.
+            const std::string modU8 = Utf8Helpers::EncodeUtf16(m.name, MAX_PATH);  // stops at NUL
+            LOG_DEBUG("AOBScanAllModules: %zu matches in '%s'",
+                      hits.size(), modU8.c_str());
             allResults.insert(allResults.end(), hits.begin(), hits.end());
         }
     }

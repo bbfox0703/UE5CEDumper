@@ -90,16 +90,67 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
         return Path.Combine(GetAppDataPath(), Constants.LogFolderName, Constants.LogSubFolder);
     }
 
-    public async Task CopyToClipboardAsync(string text)
+    /// <summary>
+    /// Where a failed clipboard WRITE is reported. Set by the composition root once
+    /// the logger exists — this service is constructed BEFORE it (the log directory
+    /// comes from <see cref="GetLogDirectoryPath"/>), so it cannot be a constructor
+    /// parameter. Null means "not wired yet"; the copy still degrades safely, it is
+    /// just silent, which is the correct trade during the first milliseconds of
+    /// startup when nothing can copy anything anyway.
+    /// </summary>
+    public ILoggingService? Logger { get; set; }
+
+    /// <inheritdoc />
+    public Task<bool> CopyToClipboardAsync(string text)
     {
+        IClipboard? clipboard = null;
         if (Avalonia.Application.Current?.ApplicationLifetime is
             IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var topLevel = desktop.MainWindow;
-            if (topLevel?.Clipboard != null)
-            {
-                await topLevel.Clipboard.SetTextAsync(text);
-            }
+            clipboard = desktop.MainWindow?.Clipboard;
+        }
+
+        return CopyGuardedAsync(
+            clipboard is null ? null : () => clipboard.SetTextAsync(text), Logger);
+    }
+
+    /// <summary>
+    /// The guarded write itself, taking the clipboard call as a delegate so a test
+    /// can supply one that FAILS. There is no headless clipboard, so the only way to
+    /// exercise the failure path — the entire point of this code — is to inject it;
+    /// asserting on the shape of the source instead would prove nothing.
+    /// </summary>
+    /// <param name="setText">The clipboard write, or <c>null</c> when there is no
+    /// clipboard to write to.</param>
+    /// <param name="log">Where to report a refused write; may be null before the
+    /// composition root has wired it.</param>
+    internal static async Task<bool> CopyGuardedAsync(Func<Task>? setText, ILoggingService? log)
+    {
+        if (setText is null)
+        {
+            log?.Warn(Constants.LogCatView,
+                "Clipboard copy did nothing: no main window / no clipboard.");
+            return false;
+        }
+
+        try
+        {
+            await setText();
+            return true;
+        }
+        // Everything EXCEPT the never-swallow set, which stays loud here for the same
+        // reason it does in the read guard: an OOM or a trimming failure surfacing
+        // through the clipboard is still an OOM or a trimming failure.
+        catch (Exception ex) when (!Helpers.InputLayerFaultClassifier.IsNeverSwallowable(ex))
+        {
+            // Degrade to "the copy did nothing". Letting this escape would fault the
+            // AsyncRelayCommand that called it, which rethrows onto the dispatcher
+            // with our own frames on the stack — where the fault guard rightly
+            // refuses to swallow and the app terminates ([PASTECRASH-2026-08-18]).
+            log?.Warn(Constants.LogCatView,
+                $"Clipboard copy FAILED — nothing was copied, the app is unaffected. " +
+                $"{ex.GetType().FullName}: {ex.Message}");
+            return false;
         }
     }
 
@@ -343,33 +394,62 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     }
 
     // --- Free-space query for the snapshot disk guard --------------------
-    // Pure managed BCL (DriveInfo), AOT-safe. Resolves the drive from the DB path's
-    // root; defensive (an unreadable / unrooted path returns the safe sentinel so the
-    // guard never blocks on a measurement failure — same idiom as GetLogicalDrives).
+    // Defensive by design: an unreadable path returns the safe sentinel so the guard never
+    // blocks on a measurement failure. ⚠ The two sentinels are NOT the same and must not be
+    // unified — free returns long.MaxValue ("don't block"), total returns 0 (collapses the
+    // percentage term). Each is the value that makes ITS caller fail open.
+    //
+    // [VOLUMEROOT-2026-08-19] These used to be Path.GetPathRoot + DriveInfo, which measures
+    // the HOST volume when the path lives on a mount point — so a snapshot folder mounted at
+    // C:\Mount\Games was guarded against C:'s free space, not its own. See VolumeRoot for
+    // why both halves of that pairing are the same mistake. GetDiskFreeSpaceExW is asked
+    // about the resolved mount root directly, and its lpFreeBytesAvailableToCaller /
+    // lpTotalNumberOfBytes are exactly what DriveInfo.AvailableFreeSpace / .TotalSize wrap,
+    // so on an ordinary drive-letter path the numbers are unchanged (measured, not assumed).
 
     public long GetFreeDiskSpaceBytes(string path)
     {
+        string? root = VolumeRoot.Resolve(path);
+        if (root is null) return long.MaxValue;   // unknown → don't block
         try
         {
-            var root = Path.GetPathRoot(path);
-            if (string.IsNullOrEmpty(root)) return long.MaxValue;
-            var di = new DriveInfo(root);
-            return di.IsReady ? di.AvailableFreeSpace : long.MaxValue;
+            return GetDiskFreeSpaceExW(root, out ulong freeToCaller, out _, out _)
+                ? VolumeRoot.ClampToInt64(freeToCaller)
+                : long.MaxValue;
         }
-        catch { return long.MaxValue; }   // unknown → don't block
+        catch { return long.MaxValue; }
     }
 
     public long GetTotalDiskSpaceBytes(string path)
     {
+        string? root = VolumeRoot.Resolve(path);
+        if (root is null) return 0;               // unknown → percentage term collapses to 0
         try
         {
-            var root = Path.GetPathRoot(path);
-            if (string.IsNullOrEmpty(root)) return 0;
-            var di = new DriveInfo(root);
-            return di.IsReady ? di.TotalSize : 0;
+            return GetDiskFreeSpaceExW(root, out _, out ulong total, out _)
+                ? VolumeRoot.ClampToInt64(total)
+                : 0;
         }
-        catch { return 0; }   // unknown → percentage term collapses to 0
+        catch { return 0; }
     }
+
+    /// <summary>
+    /// Free/total for the volume containing a directory. Accepts a volume mount-point path,
+    /// which is the whole point of using it over <c>DriveInfo</c>.
+    ///
+    /// <para>⚠ <c>lpFreeBytesAvailableToCaller</c> is quota-aware and can be smaller than
+    /// <c>lpTotalNumberOfFreeBytes</c>. The guard wants the former — space this process may
+    /// actually use — which is also what <c>DriveInfo.AvailableFreeSpace</c> returned, so
+    /// keeping it preserves the previous behaviour on non-mounted paths.</para>
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDiskFreeSpaceExW",
+               SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetDiskFreeSpaceExW(
+        string lpDirectoryName,
+        out ulong lpFreeBytesAvailableToCaller,
+        out ulong lpTotalNumberOfBytes,
+        out ulong lpTotalNumberOfFreeBytes);
 
     /// <summary>
     /// Map a drive letter to the physical disk number backing it via
@@ -777,17 +857,27 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     ///
     /// <para>Fixed-drive is still required as a cheap pre-filter: a removable or network volume
     /// is out of scope for this cleanup regardless of what the shell says.</para>
+    ///
+    /// <para>audit #5 AC17 — that pre-filter used to be <c>new DriveInfo(root).DriveType</c>, which
+    /// silently undid the paragraph above it. <c>DriveInfo</c>'s constructor normalizes its
+    /// argument through <c>Path.GetPathRoot</c>, so for the mount-point root this method works so
+    /// hard to obtain (<c>C:\Mount\Games\</c>) it reported on <c>C:\</c> — the HOST volume, the
+    /// exact wrong-disk answer <c>GetVolumePathName</c> is called to avoid. Since the host of a
+    /// mount point is essentially always Fixed, the filter degenerated to "always pass" for
+    /// precisely the paths it was supposed to judge. <c>GetDriveTypeW</c> accepts a volume
+    /// mount-point path directly (trailing backslash required, which
+    /// <c>GetVolumePathNameW</c> supplies) and answers about the real volume.</para>
     /// </summary>
     public bool VolumeHasRecycleBin(string fullPath)
     {
         try
         {
-            var volume = new StringBuilder(260);
-            if (!GetVolumePathNameW(fullPath, volume, volume.Capacity)) return false;
-            string root = volume.ToString();
-            if (root.Length == 0) return false;
+            // Shared with the disk-space pair and the log-compression NTFS test, so the
+            // three cannot drift back apart — which is how [VOLUMEROOT] happened.
+            string? root = VolumeRoot.Resolve(fullPath);
+            if (root is null) return false;
 
-            if (new DriveInfo(root).DriveType != DriveType.Fixed) return false;
+            if (GetDriveTypeW(root) != DRIVE_FIXED) return false;
 
             // POLICY FIRST. SHQueryRecycleBin below reports on the bin's CONTENTS and is
             // structurally incapable of reporting on whether the bin is switched on: a
@@ -874,6 +964,18 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetVolumePathNameW", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumePathNameW(string lpszFileName, StringBuilder lpszVolumePathName, int cchBufferLength);
+
+    /// <summary>DRIVE_FIXED, the one <c>GetDriveTypeW</c> value this cleanup will act on.</summary>
+    private const uint DRIVE_FIXED = 3;
+
+    /// <summary>
+    /// Drive type of a volume ROOT or mount-point path. Unlike <c>DriveInfo</c> this takes the
+    /// path as given — no <c>Path.GetPathRoot</c> normalization — so it answers about a volume
+    /// mounted into a folder rather than about that folder's host drive (audit #5 AC17).
+    /// Requires the trailing backslash that <c>GetVolumePathNameW</c> already returns.
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDriveTypeW", ExactSpelling = true)]
+    private static extern uint GetDriveTypeW(string lpRootPathName);
 
     public bool MoveToRecycleBin(string path)
     {

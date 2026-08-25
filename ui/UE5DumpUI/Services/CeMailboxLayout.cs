@@ -25,6 +25,15 @@ internal static class CeMailboxLayout
     public const string OffInstanceAddr = "0x10";   // instanceAddr / op / knobId / request
     public const string OffUfuncAddr    = "0x18";   // ufuncAddr / value / slot / show flag
     public const string OffParamsData   = "0x328";  // params_data[0..]
+    // params_data[1] / [2] — the 2nd and 3rd 8-byte operand slots. Named because five
+    // emitters wrote them as bare literals while writing the FIRST one through
+    // OffParamsData in the same statement group, so moving params_data would have
+    // silently split an FVector across the old and new layouts (audit #5 AF14).
+    // ⚠ These are the SAME BYTES the old literals named: 0x328 + 8 and + 0x10. Nothing
+    // about the mailbox moved, so this is NOT a contract change — the emitted Lua is
+    // byte-identical, which CeMailboxLayoutOffsetTests pins.
+    public const string OffParamsData1  = "0x330";  // params_data[1]
+    public const string OffParamsData2  = "0x338";  // params_data[2]
 
     // Auto-start readiness values written to OffInitState (must match Mimic.h
     // InitState). Unlike every other field here this one is NOT part of a
@@ -41,6 +50,12 @@ internal static class CeMailboxLayout
 
     // Cmd opcodes (must match Mimic.h Cmd enum).
     public const int CmdSetDebugCamera = 7;   // CMD_SET_DEBUG_CAMERA
+    // audit #5 AF25 — 8 was the one gap in this table, even though the class summary above
+    // names Teleport as a consumer. TeleportScriptGenerator and CoordLibraryScriptGenerator
+    // each carried their own `private const int CmdTeleport = 8` while every other generator
+    // referenced this class, so the single most-used opcode was the only one with no canonical
+    // home and two places to update.
+    public const int CmdTeleport       = 8;   // CMD_TELEPORT  (Wirbel — markers / POV / coord TP)
     public const int CmdProtect        = 9;   // CMD_PROTECT   (GodMode / Solitar)
     public const int CmdMovement       = 10;  // CMD_MOVEMENT  (Laufen knobs)
     public const int CmdFly            = 11;  // CMD_FLY       (Dunste — no-gravity 3D flight)
@@ -67,7 +82,7 @@ internal static class CeMailboxLayout
     // the DLL publishes. The DLL answers with a RANGE, so the two failure
     // directions can be told apart: too-old script => regenerate the .CT, too-old
     // DLL => update the DLL. Today the second case is silent corruption.
-    public const int ContractVersion = 2;
+    public const int ContractVersion = 3;
 
     /// <summary>Exported symbol carrying the contract. Deliberately NOT a field of
     /// the mailbox struct: reading the layout version out of the struct whose layout

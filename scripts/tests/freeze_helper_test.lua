@@ -37,6 +37,8 @@ local WRITES   -- ordered log of {addr=, kind=, value=}
 local PRINTS   -- captured print() lines
 local SYMBOLS  -- symbol name -> address (0/absent = unresolved)
 local TIMERS   -- every createTimer() handed out, in creation order
+local FAKE_TICK -- controllable clock in ms: sleep() advances it, getTickCount reads it
+local TICK_STEP -- ms each sleep() adds (CE's sleep(1) really measures ~15.5 ms)
 
 -- Set by installMailbox(): a hook the write stubs call so the fake DLL can answer
 -- a command the moment the helper triggers it.
@@ -45,11 +47,28 @@ MAILBOX_ON_WRITE = nil
 local function resetWorld()
   MEM, BYTES, WRITES, PRINTS, SYMBOLS, TIMERS = {}, {}, {}, {}, {}, {}
   MAILBOX_ON_WRITE = nil
+  -- Non-zero default so a non-answering mailbox TIMES OUT via the tick arm rather
+  -- than hanging the rig (AA29's fix makes the iteration fallback dormant when
+  -- getTickCount is present). The AA29 case sets a sub-15ms step deliberately.
+  FAKE_TICK, TICK_STEP = 0, 16
 end
 
 function readQword(a)        return MEM[a] end
 function readInteger(a, _)   return MEM[a] end
-function readSmallInteger(a) return MEM[a] end
+-- Models CE's readSmallIntegerEx (LuaHandler.pas:1614): one argument means UNSIGNED, and
+-- the value is pushed as `word(v)` so the range is 0..65535. The stub used to hand back
+-- MEM[a] raw, which would have let a negative fixture value reach the helper and made the
+-- dead sign-fixup AA35 removed look reachable. Same shape as invoke_helper_test.lua:93.
+function readSmallInteger(a, signed)
+  local v = MEM[a]
+  if v == nil then return nil end
+  if signed then
+    if v >= 0x8000 then return v - 0x10000 end
+    return v
+  end
+  if v < 0 then return v + 0x10000 end
+  return v
+end
 function readByte(a)         return BYTES[a] end
 function readString(a, _)    return MEM[a] end
 function readBytes(a, n, t)  if t then return { BYTES[a] } end return BYTES[a] end
@@ -84,10 +103,10 @@ function getAddressSafe(name) return SYMBOLS[name] or 0 end
 -- Lua editor. No behaviour depends on it; stubbed so the chunk can run.
 function registerLuaFunctionHighlight(_) end
 function getMainForm() return {} end
-function sleep(_) end
+function sleep(_) FAKE_TICK = FAKE_TICK + TICK_STEP end
 function processMessages() end
 function processMessagesPaintOnly() end
-function getTickCount() return 0 end
+function getTickCount() return FAKE_TICK end
 
 function createTimer(_, enabled)
   local t = { Interval = 0, OnTimer = nil, Enabled = enabled or false }
@@ -143,8 +162,12 @@ local function newHandle(cfg)
   return h
 end
 
-local function tickTimer()   return TIMERS[#TIMERS - 1] end   -- first of the pair
-local function rescanTimer() return TIMERS[#TIMERS] end       -- second of the pair
+-- Indexed from the FRONT, not the back: start() creates the tick+rescan pair first,
+-- and an abandonment now creates a THIRD (one-shot, deferred untick) timer. Counting
+-- backwards silently re-pointed both accessors the moment that landed.
+local function tickTimer()     return TIMERS[1] end
+local function rescanTimer()   return TIMERS[2] end
+local function deferredTimer() return TIMERS[3] end
 
 -- ============================================================
 -- A fake DLL on the other end of the mailbox
@@ -160,26 +183,45 @@ local OFF_CMD, OFF_STATUS, OFF_RESULT   = 0x000, 0x004, 0x008
 local OFF_INSTANCE, OFF_UFUNC           = 0x010, 0x018
 local OFF_NUM_PARMS, OFF_FUNC_FLAGS     = 0x022, 0x024
 local OFF_ERR, OFF_PARAMS               = 0x228, 0x328
+local OFF_CMD_FLAGS, OFF_OUT_FLAGS      = 0x728, 0x72C
 local CMD_LIST_INSTANCES = 6
+local LI_IN_DERIVED, LI_OUT_TRUNCATED = 1, 1
 
---- @param opts table  pages = { {addr,...}, ... } (one entry per page),
+-- What scope the fake DLL was last ASKED for. The helper choosing the right stride
+-- is only half the contract; it also has to send the flag, and a rig that only
+-- checked the parsed addresses would pass while the DLL was still handed "exact".
+local LAST_SCOPE = nil
+
+--- @param opts table  pages = { {entry,...}, ... } (one list per page). An entry is
+---                      an address, or {addr, cls} to give it its own class -- which
+---                      is what a DERIVED page carries, since the pool spans
+---                      subclasses and one page witness cannot describe it.
 ---                    result (rc, default 0), classPtr/classOff (witness),
+---                    truncated = true -> the DLL reports LI_OUT_TRUNCATED,
 ---                    failOnPage = n  -> that page answers rc ~= 0 (AA11's shape),
 ---                    deadPage   = n  -> that page never answers (waitDone timeout)
 local function installMailbox(opts)
   opts = opts or {}
   local pages = opts.pages or { {} }
+  LAST_SCOPE = nil   -- reset here, not in resetWorld(): this local is declared later
   SYMBOLS['g_invokeMailbox']   = MB
   SYMBOLS['g_mailboxContract'] = CONTRACT_MB
-  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=2.
+  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=3
+  -- (contract 3 = the LI_IN_DERIVED scope flag + LI_OUT_TRUNCATED).
   MEM[CONTRACT_MB + 0x00] = 1127564629
-  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 2
+  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 3
   MEM[CONTRACT_MB + 0x08] = opts.contractMin or 1
 
   MAILBOX_ON_WRITE = function(addr, value)
     if addr ~= MB + OFF_CMD or value ~= CMD_LIST_INSTANCES then return end
     -- The helper wrote the page index to paramsData[0] just before the trigger.
     local pageIndex = MEM[MB + OFF_PARAMS] or 0
+    -- ...and the scope flag before that. The real handler reads it and CLEARS it,
+    -- so a derived request cannot leak into the next caller's command; model that
+    -- here or the rig would hide a helper that stopped writing the flag.
+    local derived = ((MEM[MB + OFF_CMD_FLAGS] or 0) % 2) == LI_IN_DERIVED
+    MEM[MB + OFF_CMD_FLAGS] = 0
+    LAST_SCOPE = derived and 'derived' or 'exact'
     if opts.deadPage and pageIndex == opts.deadPage then
       return  -- status stays 0: the DLL never picked it up
     end
@@ -187,16 +229,37 @@ local function installMailbox(opts)
       MEM[MB + OFF_RESULT] = -7
       MEM[MB + OFF_ERR]    = 'simulated page failure'
       MEM[MB + OFF_STATUS] = 1
+      MEM[MB + OFF_CMD]    = 0
       return
     end
     local page = pages[pageIndex + 1] or {}
     MEM[MB + OFF_RESULT]     = opts.result or 0
     MEM[MB + OFF_NUM_PARMS]  = #page
     MEM[MB + OFF_FUNC_FLAGS] = #pages
-    for i = 1, #page do MEM[MB + OFF_PARAMS + ((i - 1) * 8)] = page[i] end
-    MEM[MB + OFF_INSTANCE]   = opts.classPtr or 0xC1A55
+    -- Stride follows the SCOPE, exactly as dll/src/Mimic.h's
+    -- ListInstancesEntrySize does: 8 bytes exact, 16 bytes derived (addr + its
+    -- own UClass*). A rig that always wrote 8 would let a stride bug pass.
+    local entrySize = derived and 16 or 8
+    for i = 1, #page do
+      local e = page[i]
+      local a = (type(e) == 'table') and e[1] or e
+      local c = (type(e) == 'table') and e[2] or (opts.classPtr or 0xC1A55)
+      MEM[MB + OFF_PARAMS + ((i - 1) * entrySize)] = a
+      if derived then MEM[MB + OFF_PARAMS + ((i - 1) * entrySize) + 8] = c end
+    end
+    -- Derived scope publishes NO page-wide class (there is no single one); the
+    -- ClassPrivate offset is published in both.
+    MEM[MB + OFF_INSTANCE]   = derived and 0 or (opts.classPtr or 0xC1A55)
     MEM[MB + OFF_UFUNC]      = opts.classOff or 0x10
+    MEM[MB + OFF_OUT_FLAGS]  = opts.truncated and LI_OUT_TRUNCATED or 0
     MEM[MB + OFF_STATUS]     = 1
+    -- SetDone() clears `cmd` after publishing status, and the rig has to as well:
+    -- fetchInstancePage refuses a mailbox whose cmd is still non-zero (AA10's
+    -- in-flight guard). Without this the SECOND page request was always refused as
+    -- busy, so every multi-page path -- pagination itself, and the page-budget
+    -- truncation below -- was silently unreachable from this rig. A stub blinder
+    -- than the real API hides exactly the code under test (working-lessons 2.3).
+    MEM[MB + OFF_CMD]        = 0
   end
 end
 
@@ -590,6 +653,594 @@ do
 
   check(not h.isAbandoned(), 'the freeze is still live after a refusal')
   eq(_ue5_invoke_busy, false, 'and the flag is clear again')
+end
+
+-- ============================================================
+-- [FREEZESCOPE-2026-08-18]: the freeze must hold the class the user is
+-- looking at, not only the class that DECLARES the field.
+--
+-- A Property Search row for an inherited field (bCanBeDamaged, bHidden,
+-- bReplicates) is keyed to its DECLARING class, so the freeze was handed
+-- 'Actor' and an exact-name pool returned whichever stray AActor the level
+-- happened to hold -- one ChaosDebugDrawActor in the observed case -- while
+-- the player's pawn and every other subclass went untouched. Solide already
+-- walks subclasses for the Force submenu on the SAME ROW.
+--
+-- The wire consequence is the part a source-level test cannot reach: a derived
+-- page ships (UObject*, UClass*) PAIRS, because a sweep across subclasses has
+-- no single class to witness with.
+-- ============================================================
+
+case('SCOPE: derived is the DEFAULT -- the DLL is asked for subclasses')
+do
+  resetWorld(); installMailbox{ pages = { { 0x2000 } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x58, valueType = 'bool', value = true }
+  h.start()
+  eq(LAST_SCOPE, 'derived', 'the mailbox request carried LI_IN_DERIVED')
+  eq(h.isDerived(), true, 'and the handle agrees')
+end
+
+case('SCOPE: derived = false is honoured (exact class only)')
+do
+  resetWorld(); installMailbox{ pages = { { 0x2000 } } }
+  local h = freezeProperty{ className = 'Actor', derived = false,
+                            propOffset = 0x58, valueType = 'bool', value = true }
+  h.start()
+  eq(LAST_SCOPE, 'exact', 'the mailbox request did NOT carry LI_IN_DERIVED')
+  eq(h.isDerived(), false, 'and the handle agrees')
+  eq(#h._cache, 1, 'the 8-byte exact page still parses')
+  eq(h._cache[1], 0x2000, 'and yields the address, not half of one')
+  eq(h._classPtr, 0xC1A55, 'exact scope keeps the page-wide witness')
+end
+
+case('SCOPE: a derived page is read at the 16-byte stride, not the 8-byte one')
+do
+  -- The negative control for the stride itself. At an 8-byte stride the second
+  -- "address" read would be entry 1's CLASS pointer, so the freeze would write
+  -- into a UClass -- and nothing downstream would notice.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x10, valueType = 'int32', value = 7 }
+  local ok, _, count = h.start()
+  eq(ok, true, 'armed')
+  eq(count, 2, 'two instances, not four half-read ones')
+  eq(h._cache[1], 0x2000, 'entry 1 address')
+  eq(h._cache[2], 0x3000, 'entry 2 address -- 0xAAA here would be the stride bug')
+  eq(h._cacheCls[1], 0xAAA, 'entry 1 witness')
+  eq(h._cacheCls[2], 0xBBB, 'entry 2 witness')
+end
+
+case('SCOPE: each derived entry is guarded by ITS OWN class')
+do
+  -- The reason the witness had to go per-entry: two different subclasses in one
+  -- pool. A single page-wide witness would refuse whichever one it was not.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99 }
+  h.start()
+  MEM[0x2000 + 0x10] = 0xAAA      -- still its own subclass
+  MEM[0x3000 + 0x10] = 0xBBB      -- a DIFFERENT subclass, and equally a target
+  WRITES = {}
+  tickTimer().OnTimer()
+  eq(#WRITES, 2, 'both subclasses written -- a page-wide witness would drop one')
+end
+
+case('SCOPE: a derived slot recycled by an UNRELATED class is still refused')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99 }
+  h.start()
+  MEM[0x2000 + 0x10] = 0xAAA
+  MEM[0x3000 + 0x10] = 0xDEAD9    -- recycled by something that is not in the pool
+  WRITES = {}
+  tickTimer().OnTimer()
+  eq(#WRITES, 1, 'exactly one write')
+  eq(wroteAddr(1), 0x2000 + 0x20, 'and it is the surviving instance')
+end
+
+case('SCOPE: a derived entry the DLL could not class is DROPPED, not written blind')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99 }
+  local _, _, count = h.start()
+  eq(count, 1, 'the witness-less entry never entered the cache')
+  eq(h._cache[1], 0x2000, 'and the survivor is the one that had a witness')
+end
+
+case('SCOPE: a derived scan with no ClassPrivate offset is an ERROR, not a blind freeze')
+do
+  -- Without the offset there is no witness at all, and degrading to an unguarded
+  -- write is the AA2 defect -- so this must FAIL rather than fall back.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} } }, classOff = 0 }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99 }
+  local ok, err, count = h.start()
+  eq(ok, false, 'reported as a hard failure')
+  eq(count, 0, 'and nothing is frozen')
+  check(type(err) == 'string' and err:find('identity witness', 1, true) ~= nil,
+        'SCOPE: the error names the missing witness', tostring(err))
+end
+
+case('SCOPE: a filter drops the address AND its witness in lockstep')
+do
+  -- Filtering one array and not the other pairs every survivor with the NEXT
+  -- entry's class, so every write is refused while the freeze reports itself
+  -- healthy -- a silent no-op that looks exactly like success.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA}, {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 99,
+                            filter = function(a) return a ~= 0x2000 end }
+  local _, _, count = h.start()
+  eq(count, 1, 'the filter removed one instance')
+  eq(h._cache[1], 0x3000, 'the survivor is the expected address')
+  eq(h._cacheCls[1], 0xBBB, 'and it kept ITS OWN witness, not the dropped one\'s')
+  MEM[0x3000 + 0x10] = 0xBBB
+  WRITES = {}
+  tickTimer().OnTimer()
+  eq(#WRITES, 1, 'and it is actually written')
+end
+
+case('SCOPE: a capped pool is reported, so "n instances" is not read as a total')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} } }, truncated = true }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local ok, _, count, capped = h.start()
+  eq(ok, true, 'armed')
+  eq(count, 1, 'one instance returned')
+  eq(capped, true, 'start() reports the cap as its 4th value')
+  eq(h.isTruncated(), true, 'and the handle exposes it')
+end
+
+case('SCOPE: an UNcapped pool does not claim to be capped -- the control')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local _, _, _, capped = h.start()
+  eq(capped, false, 'no cap reported')
+  eq(h.isTruncated(), false, 'and the handle agrees')
+end
+
+case('SCOPE: running out of page budget also counts as capped')
+do
+  -- The other way the set can be a prefix: the DLL says there are more pages than
+  -- MAX_PAGES lets us fetch. Reported the same way, because the user's question
+  -- ("is this everything?") has the same answer.
+  resetWorld()
+  local pages = {}
+  for i = 1, 17 do pages[i] = { {0x1000 + i, 0xAAA} } end
+  installMailbox{ pages = pages }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local ok, _, count, capped = h.start()
+  eq(ok, true, 'armed')
+  eq(count, 16, 'stopped at the 16-page budget')
+  eq(capped, true, 'and said so')
+end
+
+case('SCOPE: a pool that EXACTLY fills the page budget is not capped -- the control')
+do
+  -- The off-by-one this guards: testing "did we reach MAX_PAGES" after the loop
+  -- flags a complete 16-page set as truncated, printing a caveat over a freeze
+  -- with nothing wrong with it. Only "pages remain AND budget spent" is truncation.
+  resetWorld()
+  local pages = {}
+  for i = 1, 16 do pages[i] = { {0x1000 + i, 0xAAA} } end
+  installMailbox{ pages = pages }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local _, _, count, capped = h.start()
+  eq(count, 16, 'every page was read')
+  eq(capped, false, 'and nothing claimed to be missing')
+end
+
+case('SCOPE: abandonment clears the cap flag -- an empty freeze holds nothing to truncate')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} } }, truncated = true }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  h.start()
+  eq(h.isTruncated(), true, 'capped while it was running')
+  SYMBOLS['g_invokeMailbox'] = 0
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'abandoned')
+  eq(h.isTruncated(), false, 'and no longer describes a pool it does not hold')
+end
+
+case('SCOPE: a contract-2 DLL is REFUSED, not silently given the old pool')
+do
+  -- The whole failure being fixed is a freeze that holds the wrong pool while
+  -- reporting success. An older DLL ignores the scope flag, so it must be told
+  -- apart from a working one BEFORE anything is written.
+  resetWorld()
+  installMailbox{ pages = { { 0x2000 } }, contractCur = 2 }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'refused')
+  check(type(err) == 'string' and err:find('update UE5Dumper.dll', 1, true) ~= nil,
+        'SCOPE: and it says which side to update', tostring(err))
+end
+
+-- ============================================================
+-- [FREEZESTUCK-2026-08-18]: an abandoned freeze must untick its record.
+--
+-- The abandonment print lands in CE's Lua Engine window, which hygiene closes on
+-- a successful enable -- so the user saw a TICKED record (in CE a red X on the
+-- checkbox means ACTIVE, not failed) over a freeze that had permanently stopped
+-- writing, and the message's own advice ("re-enable the record") could not be
+-- followed because the record had never been disabled.
+-- ============================================================
+
+--- A stand-in for CE's TMemoryRecord: assigning Active = false runs the record's
+--- [DISABLE] block, which is what CE actually does and what makes the reentrancy
+--- hazard real (that block calls handle.stop(), which destroys the timers).
+local function makeCeRecord(disableBody)
+  local state = { Active = true, disableRuns = 0, disableErr = nil }
+  local rec = setmetatable({}, {
+    __index    = function(_, k) return state[k] end,
+    __newindex = function(_, k, v)
+      state[k] = v
+      if k == 'Active' and v == false and disableBody then
+        state.disableRuns = state.disableRuns + 1
+        local ok, err = runAsCeChunk(disableBody, nil)
+        if not ok then state.disableErr = err end
+      end
+    end,
+  })
+  return rec, state
+end
+
+case('STUCK: abandonment unticks the CE record')
+do
+  resetWorld()
+  local rec, st = makeCeRecord(nil)
+  local h = freezeProperty{ className = 'C', propOffset = 0x20, valueType = 'int32',
+                            value = 99, memrec = rec }
+  h.start()
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'abandoned after 3 consecutive failures')
+
+  -- The untick is DEFERRED: doing it inline would run [DISABLE] -> stop() ->
+  -- destroy the very timer whose handler is on the stack.
+  eq(st.Active, true, 'not unticked from INSIDE the rescan callback')
+  eq(tickTimer().Enabled, false, 'but the tick timer already stopped')
+  eq(rescanTimer().Enabled, false, 'and so did the rescan timer')
+  check(tickTimer().destroyed ~= true, 'and nothing was destroyed from inside a callback')
+
+  check(deferredTimer() ~= nil, 'a one-shot untick timer was scheduled')
+  if deferredTimer() then
+    deferredTimer().OnTimer(deferredTimer())
+    eq(st.Active, false, 'THE FIX: the record is unticked once the callback has returned')
+    check(deferredTimer().destroyed == true, 'and the one-shot timer cleaned itself up')
+  end
+end
+
+case('STUCK: the untick runs [DISABLE], which stops the timers -- without reentering one')
+do
+  -- End to end against the header SAMPLE, under CE's real two-chunk model: the
+  -- deferred untick fires [DISABLE], [DISABLE] calls stop(), stop() destroys the
+  -- pair. If the untick had been done inline this is where it would destroy a
+  -- timer from inside its own handler.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} } } }
+  local blocks = extractSampleBlocks(HELPER)
+  check(#blocks >= 2, 'STUCK: the header still has both sample blocks')
+  if #blocks >= 2 then
+    local rec, st = makeCeRecord(blocks[2])
+    local okE, errE = runAsCeChunk(blocks[1], rec)
+    check(okE, 'STUCK: the [ENABLE] sample runs', errE)
+    eq(st.Active, true, 'and a healthy freeze leaves the record ticked')
+
+    -- Kill the mailbox the way a DLL re-injection does, then let it give up.
+    SYMBOLS['g_invokeMailbox'] = 0
+    for _ = 1, 3 do rescanTimer().OnTimer() end
+    check(deferredTimer() ~= nil, 'STUCK: an untick was scheduled')
+    if deferredTimer() then deferredTimer().OnTimer(deferredTimer()) end
+
+    eq(st.Active, false, 'the record is inactive')
+    eq(st.disableRuns, 1, 'and CE ran [DISABLE] exactly once')
+    eq(st.disableErr, nil, 'with no error -- no timer was destroyed from its own handler')
+    check(TIMERS[1] and TIMERS[1].destroyed == true, 'the tick timer was destroyed by [DISABLE]')
+    check(TIMERS[2] and TIMERS[2].destroyed == true, 'the rescan timer too')
+  end
+end
+
+case('STUCK: a TRANSIENT failure does NOT untick -- the control')
+do
+  -- The rule is "a bail-out that applied NOTHING unticks", not "any hiccup
+  -- unticks". One failed rescan keeps the cache and keeps writing, so unticking
+  -- there would be the opposite defect.
+  resetWorld()
+  local rec, st = makeCeRecord(nil)
+  local h = freezeProperty{ className = 'C', propOffset = 0x20, valueType = 'int32',
+                            value = 99, memrec = rec }
+  h.start()
+  h._cache, h._classPtr, h._classOff = { 0x2000 }, 0xC1A55, 0x10
+  MEM[0x2000 + 0x10] = 0xC1A55
+  rescanTimer().OnTimer()
+  eq(h.isAbandoned(), false, 'not abandoned')
+  eq(st.Active, true, 'record still ticked')
+  eq(deferredTimer(), nil, 'and no untick was scheduled')
+  WRITES = {}
+  tickTimer().OnTimer()
+  eq(#WRITES, 1, 'still writing')
+end
+
+case('STUCK: with no memrec it still stops, and says who has to untick')
+do
+  resetWorld()
+  local h = freezeProperty{ className = 'MyClass', propOffset = 0x20, valueType = 'int32', value = 99 }
+  h.start()
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'abandoned')
+  eq(tickTimer().Enabled, false, 'and it stopped writing anyway')
+  eq(#PRINTS, 1, 'reported once')
+  check(PRINTS[1] and PRINTS[1]:find('Untick and re-tick', 1, true) ~= nil,
+        'STUCK: the advice matches what actually happened', PRINTS[1])
+
+  -- The message still reaches the user even with no record to untick -- that case
+  -- is worse, not better, because the checkbox cannot be corrected at all.
+  check(deferredTimer() ~= nil, 'STUCK: a message was still scheduled')
+  if deferredTimer() then
+    deferredTimer().OnTimer(deferredTimer())
+    check(PRINTS[2] and PRINTS[2]:find('showMessage', 1, true) == 1,
+          'STUCK: and it arrives as a modal', tostring(PRINTS[2]))
+  end
+end
+
+case('STUCK: the message survives its own untick -- [DISABLE] closes the Lua window')
+do
+  -- The trap this exists for: the fix ITSELF hides the diagnosis. Unticking runs
+  -- [DISABLE], whose last line is the hygiene auto-close, so a print() into the Lua
+  -- Engine window is gone the moment the record clears. Order and channel both
+  -- matter -- the modal must come AFTER the untick and must not be a print.
+  resetWorld()
+  local rec, st = makeCeRecord(nil)
+  local h = freezeProperty{ className = 'MyClass', propOffset = 0x20, valueType = 'int32',
+                            value = 99, memrec = rec }
+  h.start()
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+
+  -- showMessage BLOCKS until dismissed, so the correction has to be done by the
+  -- time it opens -- otherwise an unattended dialog leaves the record ticked for as
+  -- long as nobody is at the keyboard. Sample the record from inside the modal;
+  -- asserting afterwards cannot tell the two orders apart.
+  local activeWhenShown = nil
+  local realShow = showMessage
+  showMessage = function(s) activeWhenShown = st.Active; realShow(s) end
+  if deferredTimer() then deferredTimer().OnTimer(deferredTimer()) end
+  showMessage = realShow
+
+  eq(st.Active, false, 'unticked')
+  eq(activeWhenShown, false, 'STUCK: and already unticked BEFORE the modal blocks')
+  local modal = PRINTS[#PRINTS]
+  check(modal and modal:find('showMessage', 1, true) == 1,
+        'STUCK: the last thing the user gets is a modal, not a window-bound print',
+        tostring(modal))
+  check(modal and modal:find('STOPPED', 1, true) ~= nil,
+        'STUCK: and it carries the same diagnosis as the print', tostring(modal))
+  check(modal and modal:find('has been unticked', 1, true) ~= nil,
+        'STUCK: including what was done about it', tostring(modal))
+end
+
+case('STUCK: with a memrec the message states the record WAS unticked')
+do
+  -- The old wording ("Re-enable the record after fixing it") described something
+  -- the user could not do, because nothing had disabled the record.
+  resetWorld()
+  local rec = makeCeRecord(nil)
+  local h = freezeProperty{ className = 'MyClass', propOffset = 0x20, valueType = 'int32',
+                            value = 99, memrec = rec }
+  h.start()
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(#PRINTS, 1, 'reported once')
+  check(PRINTS[1] and PRINTS[1]:find('has been unticked', 1, true) ~= nil,
+        'STUCK: the message says the record was unticked', PRINTS[1])
+end
+
+case('STUCK: a deleted record cannot turn the diagnosis into a traceback')
+do
+  resetWorld()
+  local exploding = setmetatable({}, {
+    __index    = function() error('record freed') end,
+    __newindex = function() error('record freed') end,
+  })
+  local h = freezeProperty{ className = 'C', propOffset = 0x20, valueType = 'int32',
+                            value = 99, memrec = exploding }
+  h.start()
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  check(deferredTimer() ~= nil, 'the untick was still scheduled')
+  if deferredTimer() then
+    local ok = pcall(deferredTimer().OnTimer, deferredTimer())
+    eq(ok, true, 'and firing it does not raise out of the timer')
+  end
+end
+
+-- ============================================================
+-- AA11: a page failure after page 0 must NOT be reported as clean success.
+-- ============================================================
+
+case('AA11: a page failure after page 0 keeps the PRIOR cache, not a partial prefix')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} }, { {0x3000, 0xBBB} } }, failOnPage = 1 }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x10, valueType = 'int32', value = 99 }
+  h.start()   -- initial rescan already fails on page 1; cache stays empty
+  -- Model a PRIOR successful rescan's cache, then rescan again into the same failure.
+  h._cache, h._cacheCls, h._failStreak = { 0x9000 }, { 0xAAA }, 0
+  local ok, err = rescanTimer().OnTimer()
+  eq(ok, false, 'AA11: the partial enumeration is reported as a FAILURE')
+  check(err ~= nil, 'AA11: with an error string')
+  eq(#h._cache, 1, 'AA11: the prior cache was kept, not replaced by the page-0 prefix')
+  eq(h._cache[1], 0x9000, 'AA11: and it is the PRIOR entry (0x9000), not 0x2000 from page 0')
+  check(h.lastError() ~= nil, 'AA11: lastError() is set')
+end
+
+case('AA11: an all-pages-OK multi-page rescan still succeeds -- the control')
+do
+  -- The fix must not turn a healthy multi-page enumeration into a failure.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} }, { {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x10, valueType = 'int32', value = 99 }
+  local ok, _, count = h.start()
+  eq(ok, true, 'AA11: two good pages -> success')
+  eq(count, 2, 'AA11: both pages collected')
+  eq(h.lastError(), nil, 'AA11: no error on a clean rescan')
+end
+
+-- ============================================================
+-- AA28: an unreadable contract symbol on a GONE process is not a "stale address".
+-- ============================================================
+
+case('AA28: an unreadable contract symbol is diagnosed as a gone process, not a stale address')
+do
+  resetWorld()
+  SYMBOLS['g_invokeMailbox']   = MB           -- resolves...
+  SYMBOLS['g_mailboxContract'] = CONTRACT_MB  -- ...but its magic is NEVER written to MEM
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'AA28: the rescan fails')
+  check(err and err:find('exited', 1, true) ~= nil, 'AA28: diagnosed as a gone process', err)
+  check(err and err:find('stale address', 1, true) == nil,
+        'AA28: NOT mislabelled a stale address', err)
+end
+
+case('AA28: a WRONG magic is still a stale address -- the control')
+do
+  resetWorld()
+  SYMBOLS['g_invokeMailbox']   = MB
+  SYMBOLS['g_mailboxContract'] = CONTRACT_MB
+  MEM[CONTRACT_MB + 0x00] = 0xDEADBEEF        -- readable, but the wrong magic
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'refused')
+  check(err and err:find('stale address', 1, true) ~= nil,
+        'AA28: a readable-but-wrong magic is still a stale address', err)
+end
+
+-- ============================================================
+-- AA29: exactly ONE deadline governs waitDone, and the printed time is the arm
+-- that fired -- not a dormant iteration fallback racing the tick deadline.
+-- ============================================================
+
+case('AA29: the real-ms deadline governs, not the ~15ms/iter fallback')
+do
+  resetWorld()
+  TICK_STEP = 10                                   -- sleep(1) < 15 ms: the iter fallback
+                                                   -- would fire FIRST if it were still live
+  installMailbox{ pages = { {} }, deadPage = 0 }   -- page 0 never answers -> waitDone times out
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'AA29: it times out')
+  check(err and err:find('never picked this up', 1, true) ~= nil,
+        'AA29: IDLE status is diagnosed as the DLL never taking the command', err)
+  -- Post-fix: the tick arm governs, so the clock reaches ~limit (5000) before the
+  -- iteration fallback (floor(5000/15)=333 iters * 10ms = 3330) could ever fire.
+  -- Pre-fix: the live iter fallback fired at 3330 while the message still said 5000ms.
+  check(getTickCount() >= 5000,
+        'AA29: waited the full tick deadline, not the iteration fallback',
+        'FAKE_TICK=' .. tostring(getTickCount()))
+end
+
+-- ============================================================
+-- AA30: an UPDATED helper must take effect on re-load; a same/older one must not.
+-- ============================================================
+-- ⭐ The three versions below are DERIVED from the helper, never typed. They used to
+-- be the literals '1.4'/'1.5', so bumping the helper to 1.5 (the [FREEZEFIRSTERR]
+-- fix, which HAD to bump -- a same-version re-load is a no-op, so 1.4 residents in
+-- the wild would never receive it) broke two of these cases and silently weakened
+-- the third: with the file at 1.5, the "an OLDER file does not downgrade" case was
+-- re-loading a SAME-version file and passing on the wrong branch entirely.
+local CUR = UE5_FREEZE_HELPER_VERSION            -- whatever the file under test declares
+local function bump(v, d)                        -- same major, minor +/- d
+  local a, b = v:match('^(%d+)%.(%d+)$')
+  return string.format('%s.%d', a, tonumber(b) + d)
+end
+local OLDER, NEWER = bump(CUR, -1), bump(CUR, 1)
+
+case('AA30: a newer-version helper REPLACES a resident older one on re-load')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = OLDER          -- an OLD helper is resident
+  local sentinel = function() return 'OLD' end
+  freezeProperty = sentinel
+  assert(loadfile(HELPER))()                 -- re-add the current file: CE recompiles the chunk
+  check(freezeProperty ~= sentinel, 'AA30: the newer helper redefined freezeProperty')
+  eq(UE5_FREEZE_HELPER_VERSION, CUR, 'AA30: and bumped the resident version')
+end
+
+case('AA30: the SAME version is a no-op -- shared state and the resident fn are kept')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = CUR
+  local sentinel = function() return 'SAME' end
+  freezeProperty = sentinel
+  _ue5_invoke_busy = true                    -- in-flight state that must survive a re-load
+  assert(loadfile(HELPER))()
+  eq(freezeProperty, sentinel, 'AA30: same version does not redefine (state preserved)')
+  eq(_ue5_invoke_busy, true, 'AA30: and the shared busy flag is untouched')
+  _ue5_invoke_busy = false                   -- restore for any later cases
+end
+
+case('AA30: an OLDER file re-added does not downgrade a newer resident helper')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = NEWER
+  local sentinel = function() return 'NEWER' end
+  freezeProperty = sentinel
+  assert(loadfile(HELPER))()
+  eq(freezeProperty, sentinel, 'AA30: the newer resident is kept; the older file is a no-op')
+  eq(UE5_FREEZE_HELPER_VERSION, NEWER, 'AA30: and the resident version is not downgraded')
+  -- Restore a REAL freezeProperty so the process ends in a clean state.
+  UE5_FREEZE_HELPER_VERSION = nil; assert(loadfile(HELPER))()
+end
+
+-- ============================================================
+-- AA31: the abandon modal must name the FIRST failure of the streak, not the
+-- busy-guard CONSEQUENCE of it.
+-- ============================================================
+-- Found closing AA3 step 5 on a live game (2026-08-23): the DLL was SUSPENDED, and
+-- the modal reported `mailbox busy (concurrent invoke or rescan)` -- a TRANSIENT
+-- concurrency cause offered for a PERMANENT fault, in the one place a user ever
+-- reads it.
+--
+-- The cascade is structural, not a fluke. waitDone's timeout path is
+-- `if not wok then return nil, 0, werr end` and does NOT clear OFF_CMD -- deliberately,
+-- because the DLL may still write into the mailbox later. So rescan #1 times out with
+-- cmd left set and rescans #2/#3 short-circuit on the in-flight guard in microseconds.
+-- `_lastError` is overwritten by each, so the abandon message is GUARANTEED to blame the
+-- busy guard whenever the first failure was a timeout -- which is precisely the "it took
+-- the command and wedged" shape CLAUDE.md requires be told apart from "the DLL never
+-- picked it up". It also means the streak is NOT three 5 s waits: it is one, then two
+-- instant returns.
+
+case('AA31: the abandon message names the FIRST error, not the busy-guard consequence')
+do
+  resetWorld()
+  -- Hold the opts table so the fake DLL can be killed AFTER a healthy start -- which
+  -- is the real scenario: the freeze was working, then the process wedged.
+  local opts = { pages = { {} } }
+  installMailbox(opts)
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  eq(h.isAbandoned(), false, 'AA31: healthy at the start -- the mailbox answers')
+  opts.deadPage = 0                                -- the DLL stops picking commands up
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'AA31: abandoned after 3 consecutive failures')
+  local msg = PRINTS[#PRINTS]
+  check(msg and msg:find('never picked this up', 1, true) ~= nil,
+        'AA31: the message names the TIMEOUT that actually caused the abandonment', msg)
+end
+
+case('AA31 control: an unchanging cause is still reported unchanged')
+do
+  resetWorld()
+  local h = newHandle{ className = 'MyClass', propOffset = 0x20, valueType = 'int32', value = 99 }
+  for _ = 1, 3 do rescanTimer().OnTimer() end
+  eq(h.isAbandoned(), true, 'AA31 control: abandoned')
+  local msg = PRINTS[#PRINTS]
+  check(msg and msg:find('g_invokeMailbox', 1, true) ~= nil,
+        'AA31 control: every failure identical -> that cause is what is reported', msg)
 end
 
 -- ============================================================

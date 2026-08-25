@@ -105,6 +105,95 @@ public class ClassStructViewModelConcurrencyTests
             await Task.Delay(5, TestContext.Current.CancellationToken);
     }
 
+    // ── AE2/AE3 step 3, the half a screenshot could not reach ────────────────
+    //
+    // The row's step 3 has two halves. "The spinner does not get STUCK after the panel
+    // settles" passed live on 2026-08-22. The other half — "it does not vanish EARLY while
+    // a load is still running" — was recorded as NOT verified, with the reason written
+    // down: on this machine a class load finishes faster than a screenshot can sample it.
+    // Even DOLLPlayerController (Properties Size 2224, a long inherited field list) was
+    // fully drawn in a zero-wait capture, so the spinner was never SEEN at all — and a
+    // check that never observed the thing appear cannot report on when it disappears.
+    //
+    // ⭐ That is a timing problem with the OBSERVER, not a property of the code. What the
+    // half actually claims is `IsLoading` staying true for the whole duration of a load,
+    // and a gated stub makes the load take exactly as long as the test wants.
+    //
+    // ⚠ And the interesting failure is NOT "is the flag true at some instant" — it is the
+    // one this row's whole subject (fast selection changes) produces: a SUPERSEDED load
+    // finishing and clearing the flag out from under a newer load that is still running.
+    // That is what the `if (gen == _loadId)` guard in LoadClassCoreAsync's finally exists
+    // for, and it is the second test below.
+
+    [Fact]
+    public async Task IsLoading_StaysTrueForTheWholeLoad_NotJustAtTheStart()
+    {
+        var dump = new GatedDumpService();
+        dump.RegisterClass("0xS1", Class("ClassS1"));
+        var gate = dump.GateWalk("0xS1");
+        var vm = NewVm(dump);
+
+        Assert.False(vm.IsLoading);                    // baseline — the flag is not just always on
+
+        var load = vm.OnObjectSelected(ClassLike("0xS1"));
+
+        // LoadClassCoreAsync sets IsLoading BEFORE its first await, so this is deterministic
+        // rather than a race: by the time OnObjectSelected has returned its task, the walk is
+        // parked on the gate and the flag must already be up.
+        await WaitForGate(dump.WalkGates, "0xS1");
+        Assert.True(vm.IsLoading, "the spinner is not up while the load is parked mid-flight");
+
+        // Still up after the load has been pending a while — the "vanishes early" shape.
+        await Task.Delay(30, TestContext.Current.CancellationToken);
+        Assert.True(vm.IsLoading, "the spinner vanished while the load was still running");
+
+        gate.SetResult(Class("ClassS1"));
+        await load;
+        Assert.False(vm.IsLoading, "the spinner is still up after the load finished");
+        Assert.Equal("ClassS1", vm.ClassName);         // and it actually loaded, so this is not vacuous
+    }
+
+    [Fact]
+    public async Task ASupersededLoadFinishing_DoesNotClearTheSpinner_ViaTreeSelection()
+    {
+        // ⚠ SAY WHAT THIS ADDS, because it is nearly a duplicate and pretending otherwise
+        // would be the more expensive mistake. StaleWalk_DoesNotClearIsLoadingOfNewerLoad
+        // above already asserts the same property — an older load must not retire a spinner
+        // it no longer owns — but it drives LoadClassCommand, the CROSS-TAB entry. AE2/AE3 is
+        // about FAST SELECTION IN THE TREE, which enters through OnObjectSelected. Both funnel
+        // into LoadClassCoreAsync, so the guard under test is the same one; what differs is
+        // that the row's own path is now the one exercised.
+        //
+        // (I found the overlap by running the negative control, not by reading: NC-1 reddened
+        // three tests where I expected two.)
+        var dump = new GatedDumpService();
+        dump.RegisterClass("0xOLD", Class("ClassOld"));
+        dump.RegisterClass("0xNEW", Class("ClassNew"));
+        var oldGate = dump.GateWalk("0xOLD");
+        var newGate = dump.GateWalk("0xNEW");
+        var vm = NewVm(dump);
+
+        var first  = vm.OnObjectSelected(ClassLike("0xOLD"));
+        await WaitForGate(dump.WalkGates, "0xOLD");
+        var second = vm.OnObjectSelected(ClassLike("0xNEW"));   // supersedes the first
+        await WaitForGate(dump.WalkGates, "0xNEW");
+        Assert.True(vm.IsLoading);
+
+        // Release the SUPERSEDED one first — the ordering that produces the defect.
+        oldGate.SetResult(Class("ClassOld"));
+        await first;
+
+        Assert.True(vm.IsLoading,
+            "the superseded load cleared the spinner while the newer load was still running — "
+            + "the panel now reads as settled while it is still filling in");
+        Assert.NotEqual("ClassOld", vm.ClassName);   // and it did not paint the stale class either
+
+        newGate.SetResult(Class("ClassNew"));
+        await second;
+        Assert.False(vm.IsLoading);
+        Assert.Equal("ClassNew", vm.ClassName);
+    }
+
     // ── AE2 ─────────────────────────────────────────────────────────────────
 
     [Fact]
