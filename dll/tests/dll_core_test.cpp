@@ -250,6 +250,52 @@ int main() {
         }
     }
 
+    // ── A10 — IS THE RECYCLED-UClass* DEFECT REPRODUCIBLE AT ALL? ─────────────────
+    //
+    // A10 was declined on 2026-08-24 with four reasons, and one of them was that nothing
+    // in the tree can recycle a UClass* on demand, so no fix could be shown to work and no
+    // test could be shown to fail. That reason was true when it was written. This target
+    // makes it checkable: the fixture's memory is OURS, so an address can be made to hold
+    // a different class simply by overwriting the bytes.
+    //
+    // This case does NOT fix A10 and does not assert the code is correct. It answers the
+    // prior question the decision turned on: does the defect actually reproduce?
+    {
+        blk("A10 - can a recycled class address be made to serve STALE metadata?");
+
+        // A minimal walkable "UClass": WalkClassEx caches whenever
+        // ShouldPublishClassWalk(true, PropertiesSize) holds, and that is only
+        // IsSanePropertiesSize -- a range check. Name/super reads may fail harmlessly.
+        std::vector<uint8_t> blob(0x200, 0);
+        const uintptr_t X = reinterpret_cast<uintptr_t>(blob.data());
+
+        auto setPropsSize = [&](int32_t v) {
+            memcpy(blob.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+        };
+
+        setPropsSize(100);
+        const int32_t first = Ubel::WalkClassEx(X).PropertiesSize;
+
+        // The recycle: same address, different class.
+        setPropsSize(200);
+        const int32_t second = Ubel::WalkClassEx(X).PropertiesSize;
+
+        check("A10 fixture: the first walk was cached at all (else this proves nothing)",
+              first == 100, std::to_string(first).c_str());
+
+        // ⚠ NOT an assertion that the code is right. Whichever way this lands it is
+        // information the A10 decision did not have:
+        //   second == 100 -> the defect REPRODUCES: a recycled address serves the old class
+        //   second == 200 -> it does not reproduce here, and the fixture is too weak to
+        //                    settle A10 -- which is itself worth knowing before anyone
+        //                    spends the ~36-call-site refactor.
+        printf("    [A10] after overwriting the class at the same address: "
+               "PropertiesSize %d -> %d  (%s)\n",
+               first, second,
+               second == first ? "STALE — the defect reproduces"
+                               : "re-read — not reproduced by this fixture");
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
