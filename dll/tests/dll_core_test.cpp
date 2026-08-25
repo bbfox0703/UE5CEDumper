@@ -184,6 +184,72 @@ int main() {
               std::to_string(seen).c_str());
     }
 
+    // ── B18 — Extra Scan must bail on cancel, and say its results are partial ──────
+    //
+    // B18 as filed: "Extra Scan is uncancellable under an unbounded join => CE UI freezes".
+    // Fixed in build 2603; VERIFYING it stayed blocked because on every title here the scan
+    // finishes faster than a person can cancel it.
+    //
+    // The mechanism is a poll at a BATCH BOUNDARY inside Genau::ScanForTarget, and the
+    // (MA1) comment beside it explains why it is there and not inside Macht: the largest
+    // indivisible unit is one AOBScanBatch, measured at most 0.64 s on a 213 MB .text. So
+    // what to test is not a DURATION -- it is that the poll is consulted and that the
+    // report declares the results partial.
+    //
+    // ScanForTarget is `static` in Genau.cpp; this TU includes that file, which is the only
+    // way to reach it without widening the header for a test.
+    //
+    // The scan runs against THIS PROCESS's modules -- which is what makes it work headlessly
+    // -- and the pattern below cannot match anything, so the uncancelled run is a full scan
+    // that finds nothing rather than an early success.
+    {
+        blk("B18 - the Extra Scan cancellation poll");
+
+        static const AobSignature kNoMatch[] = {
+            { "TEST_NOMATCH_1",
+              "CC CC CC CC DE AD BE EF CA FE BA BE CC CC CC CC DE AD BE EF",
+              AobTarget::GObjects, AobResolve::RipDirect,
+              0, 3, 7, 0, 50, 0 },
+        };
+        auto neverValid = [](uintptr_t) -> bool { return false; };
+
+        {   // POSITIVE CONTROL. Without it, "cancelled == true" below is equally consistent
+            // with a scan that bails for some unrelated reason on every call.
+            Genau::ScanReport rep;
+            rep.targetName = "B18-control";
+            ResetCancel();
+            const uintptr_t got = Genau::ScanForTarget(
+                kNoMatch, 1, neverValid, rep, false, false);
+
+            check("control: an uncancelled scan runs to completion", rep.cancelled == false);
+            check("control: and finds nothing, so it was not a lucky early exit", got == 0);
+
+            // ⚠ WHY THIS CONTROL IS NOT VACUOUS, and it is worth writing down because the
+            // whole run takes 0.08 s and that LOOKS like the scan never happened. It did:
+            // the test process simply has few, small modules. The proof is the negative
+            // control, not the duration — replacing the poll with `if (false)` reddens the
+            // cancelled case below, which can only happen if the loop REACHES that line.
+            // Same path up to the poll in both cases, so a control that passes here is a
+            // control that ran.
+        }
+
+        {   // The case. The poll sits at the TOP of the batch loop, so a cancel already
+            // pending stops it on batch 0 -- deterministic, with no thread race to lose.
+            Genau::ScanReport rep;
+            rep.targetName = "B18-cancelled";
+            ResetCancel();
+            Tot::g_perCommand.store(true);
+            const uintptr_t got = Genau::ScanForTarget(
+                kNoMatch, 1, neverValid, rep, false, false);
+            ResetCancel();
+
+            check("cancelled: the scan reports itself CANCELLED", rep.cancelled == true);
+            // The half that matters operationally: a cancelled scan must not hand back an
+            // address, because its own log line says partial results MUST NOT be published.
+            check("cancelled: and returns no address", got == 0);
+        }
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

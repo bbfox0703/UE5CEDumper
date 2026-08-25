@@ -13469,8 +13469,27 @@ to HEAD.
 still unmeasured — but the property that produces it is now covered, and it is covered by something
 that can fail.
 
-⛔ **B18 is NOT closed by this.** It is the same *shape* (a `Tot::Requested()` poll, in
-`Genau.cpp`'s Extra Scan) and `dll_core_test` already compiles `Genau.cpp`, so the target is in
-place — but Extra Scan's fixture is a different and harder one: it needs module memory ranges and
-AOB-scannable content, not an object pool. The infrastructure that unblocks it now exists; the
-fixture does not.
+✅ **B18 CLOSED the same way, 2026-08-25 `[B18-CORETEST-2026-08-25]`.** Same shape — a
+`Tot::Requested()` poll, in `Genau::ScanForTarget`'s AOB **batch boundary** — and the same reason it
+was blocked: the scan finishes faster than a person can cancel it.
+
+⭐ The (MA1) comment beside the poll is what shaped the test. Cancellation sits at the pattern
+boundary and deliberately **not** inside `Macht`, because the largest indivisible unit is one
+`AOBScanBatch` (measured ≤0.64 s on a 213 MB `.text`). So the thing to test is **not a duration** —
+it is that the poll is consulted and that the report declares the results partial, which is what its
+own log line demands (*"results are partial and MUST NOT be published"*).
+
+The scan runs against the TEST PROCESS's own modules, with a pattern that cannot match, so the
+uncancelled run is a full scan that finds nothing rather than an early success.
+
+| case | result |
+|---|---|
+| uncancelled | `report.cancelled == false`, returns 0 |
+| cancel pending before the call | `report.cancelled == **true**`, and **returns no address** |
+
+⚠ **The control looked vacuous and I checked rather than assumed.** The whole run takes **0.08 s**,
+which reads exactly like *"the scan never happened"*. It did — the test process simply has few,
+small modules. The proof is the negative control, not the duration: replacing the poll with
+`if (false)` reddens the cancelled case, which can only happen if the loop **reaches that line**.
+Both cases take the same path up to the poll, so a control that passes there is a control that ran.
+That reasoning is now written into the test, next to the assertion it justifies.
