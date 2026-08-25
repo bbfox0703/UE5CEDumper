@@ -14777,6 +14777,55 @@ broken, one normal — but since the broken kind does not exist, TQ2 serves both
 historic failure site (proxy mode) *and* a normal-GWorld host. A second title would add nothing this
 run has not already shown.
 
+> #### ✅ STEP 2'S RESIDUE CLOSED 2026-08-24 `[AE10-FAILBRANCH-2026-08-24]` — on the REPLY SPACE, not by finding an unreachable object
+>
+> The residue was *"exercise the FAILURE branch of 🌍 Locate-in-GWorld"*, and two attempts to
+> manufacture one had failed for reasons unrelated to the claim (a Package row exposes no detail
+> strip; CDOs turn out to be reachable through the class chain). A third attempt would have been a
+> fourth search for a subject nobody has ever found.
+>
+> ⭐ **"Click something unreachable" is a GAME PROCEDURE, not the assertion.** The 繁中 row states
+> the real FAIL condition as **沒有任何訊息、靜默無反應** — and that is a pure function of
+> `GWorldPathResult.Status` through `LiveWalkerViewModel.GWorldPathFailureStatus`, which
+> `LocateGWorldBannerTests`' `PathStub` already injects verbatim.
+>
+> ⚠⚠ **The row names two statuses that CANNOT OCCUR, which is why hand-hunting could never have
+> worked.** `no_path` appears **nowhere** in the DLL or the UI — the real one is `not_reachable`.
+> And `invalid` cannot reach this switch through this command at all: Fern answers the precondition
+> failures as `no_gworld` / `no_engine` / `invalid_target` first. Both were being chased by name.
+>
+> **Added, ~60 lines, no DLL or pipe change:**
+>
+> | test | covers |
+> |---|---|
+> | `EveryKnownFailureStatus_RaisesTheBanner_WithItsOwnExplanation` | the four arms with no test — `deadline`, `visited_cap`, `no_gworld`, `invalid_target`. (`not_reachable` ×2, `no_engine` and the `cancelled` **non-banner control** were already covered.) |
+> | ⭐ `AnUnknownFailureStatus_StillRaisesANonEmptyBanner_NeverASilentNoOp` | **the whole remaining reply space at once** |
+>
+> ⭐⭐ **The second one is what actually closes the row, because it does not enumerate.** Enumerating
+> statuses can only keep pace with the switch — and a status added tomorrow, or a typo in one, is
+> exactly the case that falls through, which is what the row fears. So it asserts the STRUCTURAL
+> property instead: the default arm is `$"No {rootLabel} path found ({path.Status})."`, which cannot
+> be empty for **any** input. Therefore every `Found=false` reply that is not `cancelled` raises a
+> non-empty banner — including statuses that do not exist yet. Inputs chosen to be un-guessable
+> rather than plausible: `no_path` (the row's own phantom), `invalid` (real in `Aura.cpp`,
+> unreachable here), `reconstruct_error` (future-shaped), and `""` (a dropped field on the wire).
+>
+> ⚠ **Two negative controls, each isolating exactly what it should:**
+>
+> | control | armed by | result |
+> |---|---|---|
+> | the structural claim | default arm → `""` | **exactly the 4** unknown-status rows fail; the 4 known arms and all 7 pre-existing tests stay green |
+> | each known arm | `deadline`'s text no longer says *"timed out"* | **exactly 1** row fails — so the arms are individually discriminating, not passing on a shared substring |
+>
+> Both reverted; `LiveWalkerViewModel.cs` byte-identical to HEAD. 15 tests in the file, 0 failed.
+>
+> ℹ️ **The one sliver left, stated plainly:** that the amber banner's PIXELS render. A VM test pins
+> `HasLocateFailure` / `LocateFailureMessage`, not that the XAML binds them — though
+> `LiveWalkerPanel.axaml:843` gates the Border solely on `HasLocateFailure` and its container Panel
+> carries no visibility gate, so nothing else can suppress it. If a pixel witness is ever wanted it
+> is **one screenshot** with the pipe forced to answer `invalid_target` via a bogus target address:
+> no gameplay, no unreachable object, no CE, no fixture.
+
 
 ### 🟡 AE10 —— 🌍 要能用（步驟 1／2／4 **CLOSED 2026-08-23**，步驟 3 前提不成立）—— 證據見 `[AE10-LOCATE-2026-08-23]` 一節（grep 該 tag）；原標題「AOB 掃不到 &GWorld 的遊戲上」
 
