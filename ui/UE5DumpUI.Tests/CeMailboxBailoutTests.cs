@@ -583,18 +583,55 @@ public class CeMailboxBailoutTests
     // against a newer DLL that changed nothing it depends on. tools/check_mailbox_contract.py
     // is what stops the version going stale; these pin the SCRIPT half.
 
+    /// <summary>
+    /// Every generated [ENABLE] block that ACTUALLY EMITS a contract check — derived by looking
+    /// for the symbol, not by hand-listing, so a generator that grows one later is picked up
+    /// without anyone remembering to come back here.
+    ///
+    /// <para>⚠ This exists because <c>Baked.Invoke.Verify</c> was added to
+    /// <see cref="EveryEnableScript"/> specifically to cover the contract bail-out — its comment
+    /// there says the bail-out "was covered by nothing at all" — and then the three contract
+    /// theories below were left pointing at <see cref="MailboxScripts"/>, which does not contain
+    /// it. So the fixture covered the SHAPE theories and not the one theory whose whole subject is
+    /// the contract bail-out. Half-wired, and invisible because everything was green.</para>
+    ///
+    /// <para>Deriving is also what keeps <c>Baked.Invoke</c> (no <c>verifyReturn</c>, therefore no
+    /// contract check) correctly OUT, without an exemption list: <c>AssertAFailedCheckUnticksTheRecord</c>
+    /// searches from the symbol's index, so feeding it a script that has none would throw rather
+    /// than fail cleanly.</para>
+    /// </summary>
+    public static IEnumerable<object[]> ContractCheckingScripts() =>
+        EveryEnableScript().Where(r =>
+            EnableBlock((string)r[1]).Contains(CeMailboxLayout.ContractSymbol, StringComparison.Ordinal));
+
+    /// <summary>Anti-vacuity for the source above: a filter that silently matched nothing — or
+    /// that lost the row this was built for — would make all three theories below pass by not
+    /// running. Pins the direction that matters (strictly more than the old hand-list) and the
+    /// specific row, rather than a total that drifts with every new generator.</summary>
+    [Fact]
+    public void TheContractCheckingList_IsWiderThanTheOldHandList_AndKeepsTheBakedRow()
+    {
+        var names = ContractCheckingScripts().Select(r => (string)r[0]).ToList();
+
+        Assert.Contains("Baked.Invoke.Verify", names);
+        Assert.DoesNotContain("Baked.Invoke", names);          // no contract check — correctly out
+        Assert.True(names.Count > MailboxScripts().Count(),
+            "the derived list is no wider than MailboxScripts, so nothing was actually gained: "
+            + string.Join(", ", names));
+    }
+
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void EveryScriptChecksTheContractBeforeWritingAnything(string name, string script)
         => AssertChecksTheContractBeforeWriting(name, script);
 
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void TheContractCheckNamesBothFailureDirections(string name, string script)
         => AssertNamesBothFailureDirections(name, script);
 
     [Theory]
-    [MemberData(nameof(MailboxScripts))]
+    [MemberData(nameof(ContractCheckingScripts))]
     public void AFailedContractCheckUnticksTheRecord(string name, string script)
         => AssertAFailedCheckUnticksTheRecord(name, script);
 
@@ -651,8 +688,30 @@ public class CeMailboxBailoutTests
         // this point in the block — a bare return there would strand the row ticked.
         string enable = EnableBlock(script);
         int check = enable.IndexOf(CeMailboxLayout.ContractSymbol, StringComparison.Ordinal);
-        int untick = enable.IndexOf("memrec.Active = false", check, StringComparison.Ordinal);
-        Assert.True(untick > check, $"{name}: a failed contract check leaves the record ticked");
+        Assert.True(check >= 0, $"{name}: no contract symbol — wrong data source for this theory");
+
+        // ⚠ The window ENDS AT THE FIRST `return` after the check, and that bound is the whole
+        // point of this assertion. It used to be `IndexOf("memrec.Active = false", check)` with
+        // no upper bound, i.e. "an untick exists SOMEWHERE later" — which is not the claim.
+        // Measured 2026-08-24 on Baked.Invoke.Verify: its contract bail-outs sit at lines 54-81
+        // and a completely unrelated untick sits at line 132, inside the verify-mode OnTimer
+        // body. Break CeLuaHygiene.DeferredUntickLua() so every bail-out loses its untick and
+        // the unbounded search still found line 132 and passed — while the eleven MailboxScripts
+        // rows, which have no later untick to borrow, correctly went red. So the old form was
+        // discriminating only for scripts that happen to end without one.
+        //
+        // The first bail-out after the check is the strictest case: it fires before any timer
+        // this block installs later can help it, so if IT unticks, the shape is right.
+        int firstReturn = enable.IndexOf("\n  return", check, StringComparison.Ordinal);
+        if (firstReturn < 0) firstReturn = enable.IndexOf("\nreturn", check, StringComparison.Ordinal);
+        Assert.True(firstReturn > check,
+            $"{name}: the contract check never bails out — nothing to untick from");
+
+        string window = enable.Substring(check, firstReturn - check);
+        Assert.True(window.Contains("memrec.Active = false", StringComparison.Ordinal),
+            $"{name}: the FIRST bail-out after the contract check returns without unticking, so "
+            + "the row stays ticked while nothing was applied. (An untick later in the block does "
+            + "not count — that is what this assertion used to accept.)");
     }
 
     [Fact]

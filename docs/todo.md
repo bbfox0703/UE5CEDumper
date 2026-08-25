@@ -3847,7 +3847,7 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | the contract check fires **FIRST** | ✅ — the only thing that happened was the check |
 > | its message **names `g_mailboxContract`** | ✅ — `[Invoke] could not resolve g_mailboxContract, even after re-reading the module list.` …and it then lists three causes, the second being *"CE is attached to a different process, or to a stale PID from an earlier run (that looks identical to being attached)"* — i.e. it correctly describes the exact state staged |
 > | **no `writeByte` may have run** | ✅ — the Lua Engine gained **no second `[Invoke] Before:` dump**. The successful run's Before/After pair is still the only one in the buffer, so the mailbox was never written |
-> | the record must **untick itself** | ❌ — `Y10 active=true`, read from CE's Lua Engine, not the icon (the icon agreed: red ✗) |
+> | the record must **untick itself** | ❌ 2026-08-20 → ✅ **CLOSED BY CONSTRUCTION 2026-08-24 `[Y10-UNTICK-BYCONSTRUCTION-2026-08-24]`**, see the block below |
 >
 > ⭐ **The miss is not a new defect — it is `[FREEZEUNTICK-2026-08-20]` in a SECOND generator.** Until
 > now that defect was only ever seen in the Freeze script. Here the identical shape appears in the
@@ -3856,6 +3856,55 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > is consistent across three scripts: **in-`[ENABLE]` `memrec.Active = false` never survives; a
 > deferred one-shot timer always does.** The fix therefore belongs in the shared emitter, not in
 > `FreezeScriptGenerator` alone — see the widened note on the defect's own block.
+>
+> #### ✅ CLOSED 2026-08-24 `[Y10-UNTICK-BYCONSTRUCTION-2026-08-24]` — and the test that was supposed to cover it could not have
+>
+> **No CE session was needed, and the row's own premise had already been fixed.** The shared-emitter
+> fix (`[AA12-BAILOUT-2026-08-21]`) landed after this ❌ was recorded and was never re-checked here.
+> Closed offline by a two-link chain, both links shown able to fail:
+>
+> | link | what it establishes |
+> |---|---|
+> | `scripts/tests/untick_bailout_test.lua` (10/10, run under real `lua`) | the emitted **deferred** shape actually unticks against CE's `setActive` lifecycle, modelled from CE's own `memoryrecordunit.pas:2573` — and the immediate shape provably does not |
+> | `CeMailboxBailoutTests` (250 cases) | the baked-invoke script's contract bail-out emits **exactly** that shape, carries no immediate untick, and bails out before any mailbox write |
+>
+> ⭐⭐ **Getting there found a live gap and a non-discriminating assertion — the row was right to stay
+> open, just not for the reason it said.**
+>
+> **(a) The fixture was half-wired.** `Baked.Invoke.Verify` was added to `EveryEnableScript()`
+> specifically because *"the contract bail-out was covered by nothing at all"* (its own comment).
+> But the three contract theories — including `AFailedContractCheckUnticksTheRecord`, whose entire
+> subject is that bail-out — were left pointing at `MailboxScripts()`, which does not contain it. So
+> the fixture reached the *shape* theories and missed the one it was created for. Replaced the
+> hand-list with `ContractCheckingScripts()`, **derived** by looking for the contract symbol in the
+> emitted text, so a generator that grows a contract check later is picked up without anyone
+> remembering. `Baked.Invoke` (no `verifyReturn`, no contract check) is correctly excluded by the
+> same derivation rather than by an exemption.
+>
+> **(b) Wiring it in alone would have changed nothing** — and this is the part worth keeping.
+> The assertion was `IndexOf("memrec.Active = false", check)` with **no upper bound**, i.e. *"an
+> untick exists somewhere after the contract symbol"*, which is not the claim being made. Measured:
+> the baked script's contract bail-outs sit at emitted lines 54–81, and a completely unrelated
+> untick sits at **line 132**, inside the verify-mode `OnTimer` body. Bounded the window at the
+> **first `return` after the check**.
+>
+> ⚠ **Negative control, run twice, and the delta is the proof.** Breaking
+> `CeLuaHygiene.DeferredUntickLua()` so every bail-out loses its untick:
+>
+> | | rows caught by `AFailedContractCheckUnticksTheRecord` |
+> |---|---|
+> | before | **11** — the MailboxScripts toggles only; `Baked.Invoke.Verify` **passed**, borrowing line 132 |
+> | after | **12** — the twelfth is exactly `Baked.Invoke.Verify` |
+>
+> So both halves were necessary: (a) put the row in the theory, (b) make the theory able to fail for
+> it. Control reverted; `CeLuaHygiene.cs` byte-identical to HEAD; 4,716 UI tests green, 13 gates 0.
+>
+> ⚠ **Honest limit.** This is offline. It does not prove CE **7.7** behaves as the model says — the
+> model is derived from CE's published Pascal, which [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md)
+> records as *lagging the release*. What it does prove is that the **shape** that caused the original
+> ❌ (an in-`[ENABLE]` immediate untick) is now excluded by two independent tests, and that the shape
+> that replaced it is the one `[FREEZESTUCK-CE-2026-08-20]` already observed working in real CE.
+> A live re-tick would add a third witness; it is no longer the only route.
 >
 > ℹ️ **Incidental but useful for the CRLF fix:** `Tools → Inject Helper into Current CE Table`
 > reported **`Inject helper OK: ue5_invoke_helper.lua embedded (…)`** — no mismatch — in the same
