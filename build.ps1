@@ -986,6 +986,14 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
+    # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
+    # target compiled before -- and drives them against a fake FUObjectArray built in the
+    # test process's own memory. Macht reads the current process, so no game is involved.
+    if (-not (Invoke-CppSelfTest -TargetName "dll_core_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # ----- C# tests -----
     # A missing test csproj is NOT a skip: it is checked into the repo, so its
     # absence means a broken tree or a wrong path, and reporting it as a skip

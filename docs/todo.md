@@ -13426,3 +13426,51 @@ tasks, and this repo already keeps evaluations as their own files:
   (EVALUATED 2026-07-23, tiered; Tier 0 **WON'T DO**)
 
 Nothing was edited, only moved.
+
+-----
+
+## ✅ A7's live half CLOSED 2026-08-25 `[A7-CORETEST-2026-08-25]` — and the DLL core finally has a test target
+
+A7's fix (the `(i & 0xFFF)==0 && Tot::Requested()` poll in the GObjects walk) shipped long ago; what
+stayed open was verifying it, and it was filed **blocked** for a measured reason: on every title
+here the walk is far too fast to cancel by hand — DQ7R's 149,408 objects take 152 ms, OCTOPATH's
+273,956 take 0.11 s.
+
+⭐⭐ **The blocker was the OBSERVER again, and the fix was infrastructure the repo has wanted for
+months.** `Macht` reads the **current process**, so a fake `FUObjectArray` built in a test's own
+memory is, to `Aura`, indistinguishable from a real one. New target **`dll_core_test`** compiles
+`Macht` + `Serie` + `Ubel` + `Radar` + `Denken` + `Flamme` + `Aura` + `Genau` — **~23,000 lines that
+no test target had ever compiled** — and points `Aura::Init` at that fixture.
+
+**The external surface was MEASURED by an incremental link probe, not guessed**, and it is small:
+`Sein` ×5, `Stark::SetInvokeTimeoutMs`, and `g_cachedUEVersion` (defined in `Frieren.cpp`, the C ABI
+layer). Defining the last one in the test is a *feature* — the test chooses the UE version the core
+branches on. Zydis and `version.lib` come from CMake.
+
+⚠ **The layout is FORCED, not detected** (`InitWithExtendedLayout`). A fixture whose layout was
+auto-detected would be testing the detector, and a detector that guessed wrong would yield a pool of
+zero objects — which reads exactly like *"the walk was cancelled"*. That is why the first case is a
+**positive control**: `GetCount() == 16,384` and an uncancelled `ForEach` visiting all 16,384.
+Without it every assertion below would pass against an empty pool.
+
+| case | result |
+|---|---|
+| cancel set BEFORE the walk | 0 objects visited — the poll at `i == 0` fires |
+| cancel set from INSIDE the callback at `i == 100` | stops at **exactly 4,096** — the next poll boundary, strictly after the cancel and strictly before the end |
+| a fresh walk afterwards | all 16,384 again — the cancel is not sticky |
+
+⚠ **Negative control:** replace the poll with `if (false)`. **3 assertions red, each reporting
+`got: 16384`** — the walk runs to completion in all three cases. Reverted; `Aura.cpp` byte-identical
+to HEAD.
+
+ℹ️ **What this does NOT close, stated plainly.** The pool size is 16,384 and the poll granularity is
+4,096, so this pins the MECHANISM, not the wall-clock responsiveness the row's prose talks about
+("prompt shutdown instead of a multi-second hang"). Latency on a 500k-object commercial title is
+still unmeasured — but the property that produces it is now covered, and it is covered by something
+that can fail.
+
+⛔ **B18 is NOT closed by this.** It is the same *shape* (a `Tot::Requested()` poll, in
+`Genau.cpp`'s Extra Scan) and `dll_core_test` already compiles `Genau.cpp`, so the target is in
+place — but Extra Scan's fixture is a different and harder one: it needs module memory ranges and
+AOB-scannable content, not an object pool. The infrastructure that unblocks it now exists; the
+fixture does not.

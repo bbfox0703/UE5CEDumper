@@ -627,4 +627,45 @@ if(BUILD_DLL_TESTS)
         )
         target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc)
     endif()
+
+    # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
+    #
+    # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
+    # Macht.cpp or Serie.cpp -- 23,000 lines including every GObjects walk, the class
+    # walker and the offset finder. Several audit findings were shipped unverifiable for
+    # exactly that reason, and A10 was declined partly on it.
+    #
+    # It builds by INCLUDING the .cpp files into one TU, so a test can reach file statics
+    # and drive them against a fake object pool built in the TEST PROCESS's own memory --
+    # Macht reads the current process, so no game is needed.
+    #
+    # THE EXTERNAL SURFACE, measured rather than guessed (an incremental link probe):
+    #   * Sein  -- 5 varargs log functions, stubbed in the test TU. Compiling Sein.cpp
+    #              would drag in the log tree and fight sein_retention_test over it.
+    #   * Stark::SetInvokeTimeoutMs -- one setter, stubbed; Stark.cpp is the MinHook
+    #              ProcessEvent hook and has no place in a headless test.
+    #   * g_cachedUEVersion -- defined in Frieren.cpp (the C ABI layer). Defined in the
+    #              test instead, which is a FEATURE: the test picks the UE version.
+    #   * Zydis (Denken) and version.lib (Genau's PE version-info reads).
+    add_executable(dll_core_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/dll_core_test.cpp
+    )
+
+    target_include_directories(dll_core_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+    )
+
+    target_compile_definitions(dll_core_test PRIVATE ${UE5_COMMON_DEFS})
+
+    if(MSVC)
+        set_property(TARGET dll_core_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        # /W3, not /W4: these are PRODUCTION sources compiled as an included TU, and their
+        # warning posture is the DLL's to argue with, not this target's.
+        target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj)
+    endif()
+
+    target_link_libraries(dll_core_test PRIVATE Zydis version)
 endif()
