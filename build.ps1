@@ -964,6 +964,21 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # grausam_window_test #includes Grausam.cpp to reach its anonymous namespace, CREATES
+    # REAL WINDOWS, and drives the GetForegroundWindow hook DIRECTLY (no MinHook hook is
+    # ever installed, so user32 is never patched in this process). It is the DLL LOW L10
+    # window-re-subclass half, which was filed as needing a game with a fullscreen toggle.
+    #
+    # ⚠ It MUST be built from here and not by a bare `cmake --build` in a DevShell.
+    # Measured 2026-08-24: built that way its object landed at `#deps 0` — Ninja recorded
+    # ZERO header dependencies because the console codepage did not match the
+    # `msvc_deps_prefix` CMake baked in — so editing Grausam.cpp did not rebuild it and a
+    # negative control silently re-ran the OLD binary and "passed". Same trap CLAUDE.md
+    # documents for header edits; it applies to an #included .cpp identically.
+    if (-not (Invoke-CppSelfTest -TargetName "grausam_window_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # ----- C# tests -----
     # A missing test csproj is NOT a skip: it is checked into the repo, so its
     # absence means a broken tree or a wrong path, and reporting it as a skip

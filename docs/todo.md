@@ -13206,8 +13206,57 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     (3) The `'<name>' @+0xNN mask=0xMM` line is emitted **only on the first class scan**, not on
     every toggle, so it is absent from a fresh OFF→ON window. The pawn address must come from the
     fresh window (it changes per process) but the bit layout must come from the whole live log.
-  - 🟡 **DLL LOW L10 — teardown half PASS 2026-08-23 `[L10-TEARDOWN-2026-08-23]`; the
-    re-subclass half remains.** DumperTest dev / DLL 3337, via `tools/verify/call_export.py`.
+  - ✅ **DLL LOW L10 — BOTH HALVES CLOSED.** Re-subclass half 2026-08-24
+    `[L10-RESUBCLASS-2026-08-24]`, teardown half 2026-08-23 `[L10-TEARDOWN-2026-08-23]` below.
+
+    **The re-subclass half needed no game.** *"Destroy and recreate the game window with a
+    fullscreen toggle"* is a GAME PROCEDURE; the claim is Grausam's own state machine plus four
+    ordinary Win32 calls over REAL HWNDs — a cached `std::atomic<HWND>`, the predicate
+    `if (!gw || !::IsWindow(gw))`, a non-blocking `try_lock` re-subclass, and a `GetPropW`
+    double-subclass guard. Nothing about Unreal, a GPU or a swapchain is asserted, and a
+    fullscreen toggle is merely one way to make `IsWindow()` go false; `DestroyWindow` is another
+    and it is the one a test can drive deterministically.
+
+    New target **`grausam_window_test`** (`dll/tests/`, 22 checks): `#include`s `Grausam.cpp` to
+    reach its anonymous namespace, creates real windows, and calls `HookedGetForegroundWindow`
+    **directly with no MinHook hook installed** — so user32 is never patched in the test process.
+    MinHook is still *linked* (`SetForegroundLock` references `MH_*` at external linkage, 17 call
+    sites); `Sein::Info`/`Error` are satisfied by two stub definitions rather than by compiling
+    `Sein.cpp` and dragging in the whole logging stack.
+
+    ⭐ **The arming precondition is satisfied by CONSTRUCTION, not by luck.** The hook returns
+    early when the real foreground window belongs to this process, so a test whose own window
+    happened to be foreground would never reach the re-find and would pass asserting nothing.
+    `g_origGetForegroundWindow` is pointed at a stub returning `nullptr`, so the path is always
+    reached and the result does not depend on what else is on the desktop.
+
+    ⚠ **Three negative controls, each isolating one mechanism:**
+
+    | armed by | result |
+    |---|---|
+    | predicate → `if (!gw)` (no longer notices a dead window) | **3** failures, all in the re-find case |
+    | double-subclass guard removed | `baseline: a second sweep does not re-save the proc` fails **by name**, then the process **crashes** — which is exactly the corruption `Grausam.cpp`'s own comment predicts (`SubclassProc` saved as "the original" → every message recurses) |
+    | `case WM_ACTIVATEAPP: w = TRUE` removed | **exactly 2** failures, both about the rewrite |
+
+    ⭐⭐ **The concurrency case is the leg a live session could NEVER observe**: four threads
+    hammering the hook with `g_gameWindow` repeatedly nulled, asserting the saved prop never
+    becomes `&SubclassProc`. That is the actual claim behind the `try_lock`, and no amount of
+    toggling fullscreen can arrange it.
+
+    ⚠⚠ **A trap worth more than the row: the FIRST run of these controls was VACUOUS.** Built by a
+    bare `cmake --build` in a DevShell, the new object landed at **`#deps 0`** — Ninja recorded
+    zero header deps because the console codepage did not match the `msvc_deps_prefix` CMake
+    baked in — so editing `Grausam.cpp` did **not** rebuild it, and NC-1 silently re-ran the OLD
+    binary and "passed". Caught by hashing the exe before and after each build. It is the same
+    trap CLAUDE.md documents for `.h` edits, and it applies to an `#include`d `.cpp` identically.
+    The target is now built through `build.ps1` (deps: **4**, with `../dll/src/Grausam.cpp` listed).
+
+    ℹ️ The test is **unbuffered** (`setvbuf(stdout, nullptr, _IONBF, 0)`) because it can genuinely
+    crash — see NC-2 — and `build.ps1:305` records the same "produced ZERO output" shape biting
+    `dll_helpers_test` under CI.
+
+  - 🟡 **teardown half PASS 2026-08-23 `[L10-TEARDOWN-2026-08-23]`.** DumperTest dev / DLL 3337,
+    via `tools/verify/call_export.py`.
     ```
     20:19:13.383  [Grausam] Foreground lock ENABLED (fg-window=0x81029A)
     20:19:15.467  UE5_Shutdown: Cleaning up...

@@ -568,4 +568,35 @@ if(BUILD_DLL_TESTS)
     # what the target now covers is Mimic.h's DATA surface, the mailbox layout and
     # command numbering that CE Lua bakes as literals.
     target_link_libraries(dll_helpers_test PRIVATE Zydis)
+
+    # ---- grausam_window_test: DLL LOW L10, the window re-subclass half -----------------
+    #
+    # A SEPARATE target, not another source on dll_helpers_test, and deliberately so: this
+    # one #includes Grausam.cpp to reach its anonymous namespace, and it CREATES REAL
+    # WINDOWS. Folding it in would give the leaf helper test a user32 message queue and a
+    # MinHook dependency it has no business carrying.
+    #
+    # minhook is MANDATORY, not incidental: Grausam.cpp's SetForegroundLock has external
+    # linkage and references MH_Initialize / MH_StatusToString / MH_CreateHook /
+    # MH_EnableHook / MH_RemoveHook, so the TU does not link without it -- even though the
+    # test never installs a hook. Sein is satisfied by two stub definitions inside the test
+    # TU rather than by compiling Sein.cpp, which would drag in the whole logging stack.
+    add_executable(grausam_window_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/grausam_window_test.cpp
+    )
+
+    target_include_directories(grausam_window_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    if(MSVC)
+        set_property(TARGET grausam_window_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        # /W4 without /permissive- : Grausam.cpp is compiled here as an INCLUDED source and
+        # its warning posture is the DLL's, not this target's, to argue with.
+        target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc)
+    endif()
+
+    target_link_libraries(grausam_window_test PRIVATE minhook user32)
 endif()
