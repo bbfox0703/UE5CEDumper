@@ -373,9 +373,11 @@
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColVersion}"
                             Binding="{Binding InstalledVersion}" SortMemberPath="InstalledVersion" Width="120" IsReadOnly="True"/>
 
-        <!-- Error Message -->
-        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColError}"
-                            Binding="{Binding ErrorMessage}" SortMemberPath="ErrorMessage" Width="200" IsReadOnly="True"/>
+        <!-- The detail behind Status. NOT an error column: the same field also carries
+             plain information ("Deployed as dxgi.dll"), a refusal, and a conflict warning.
+             See DetectedGame.StatusDetail. -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColDetails}"
+                            Binding="{Binding StatusDetail}" SortMemberPath="StatusDetail" Width="200" IsReadOnly="True"/>
       </DataGrid.Columns>
     </DataGrid>
   </DockPanel>

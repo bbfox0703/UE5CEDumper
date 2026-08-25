@@ -766,7 +766,7 @@
     <sys:String x:Key="str.ProxyDeploy.ColLoad">Loaded?</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColSuggested">Suggested proxy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
-    <sys:String x:Key="str.ProxyDeploy.ColError">Error</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColDetails">Details</sys:String>
     <sys:String x:Key="str.ProxyDeploy.SuggestToggle">Suggest proxy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.Source">Source:</sys:String>
     <sys:String x:Key="str.ProxyDeploy.Source.Steam">Steam</sys:String>
