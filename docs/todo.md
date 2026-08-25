@@ -9382,6 +9382,54 @@ suite can reach this.
 > and it independently re-confirms `AA2/AA3` step 3's narrowed assertion: `classWitness=0x0` is
 > *correct* on a derived listing and a real pointer on an exact one.
 >
+> ### ✅ STEP 6 FULLY CLOSED 2026-08-24 — the CE half by `[FZ6-ENABLE-2026-08-24]`, the DLL half by `[FZ6-CAP-2026-08-24]` below
+>
+> **The CE half needed no CE.** What the row asked for was: with the pool over the cap, tick the
+> record and observe (a) the *"CAP REACHED, so that is a floor, not a total"* line firing and (b) the
+> Lua Engine window **staying open** instead of auto-closing over it. Neither is a fact about Cheat
+> Engine — (a) is an ungated `print()` on the `elseif scapped` arm and (b) is the **absence** of a
+> call gated on `... and not scapped ...`. Both are decided by the emitted block's own Lua.
+>
+> ⭐⭐ **But a text assertion could not have closed it, and here is the proof rather than the claim.**
+> `FreezeScriptGeneratorTests.cs:771` already asserts `Assert.Contains("CAP REACHED", enable)`.
+> Replace `elseif scapped then` with `elseif false then` — the arm becomes **dead code** — and the
+> string is *still in the file*, so that assertion **still passes**. Measured: `grep -c` returns 1.
+> **A text assertion structurally cannot tell a reachable branch from dead code.**
+>
+> So `scripts/tests/freeze_enable_capped_test.lua` **loads and RUNS** the real emitted `[ENABLE]`
+> block (`load(enableSrc, 'ENABLE', 't', env)`) over stubbed CE globals, with
+> `getLuaEngine().Close` **recording** rather than ignoring the call. 19 checks, 0 failures.
+>
+> ⚠ **The trap it had to handle, and it is not obvious.** The `[ENABLE]` block loads the helper
+> ITSELF via `findTableFile`, with an early `return` at `FreezeScriptGenerator.cs:243`. A rig that
+> merely pre-defines `freezeProperty` in `_G` never reaches the capped arm: the block returns there
+> having printed nothing and closed nothing — which reads as *"no CAP line, window stayed open"*,
+> i.e. **a PASS on the capped case for entirely the wrong reason**. The rig stubs
+> `findTableFile`/`createStringStream` to actually serve a helper, and asserts the bail-out as its
+> own case so the state is named rather than mistaken for success.
+>
+> ⚠ **Three negative controls, on the FIXTURE, so each targets one claim:**
+>
+> | control | result |
+> |---|---|
+> | drop `not scapped` from the close gate | **`capped: the window is NOT closed` FAILS — `got: true`**. The rig watched the close actually fire |
+> | `elseif scapped` → `elseif false` (dead arm) | the CAP-line checks fail — while `Assert.Contains` on the same file still passes |
+> | fixture text ≠ generator output | `TheCheckedInFixture_IsStillWhatTheGeneratorEmits` fails, naming the regeneration step |
+>
+> ⭐ **The arming control is the load-bearing one**: the same run with `capped = false` must close
+> the window (`closed == true`). Without it, *"the window stayed open"* is equally consistent with a
+> close that never fires at all — which is exactly what the `findTableFile` bail-out produces.
+>
+> ℹ️ **The fixture is CHECKED IN**, at `scripts/tests/fixtures/freeze_enable.lua.txt`, not captured
+> by hand into `out/`. `contract_check_test.lua` and the two `slotsym` rigs depend on manual captures
+> in that gitignored scratch dir and are simply **unrunnable on a clean checkout**; this one is not.
+>
+> **The seam between the two halves is asserted, not assumed:** this rig owns everything after
+> `start()`'s 5th return value, `freeze_helper_test.lua:785` owns everything before it (a real
+> `LI_OUT_TRUNCATED` reply → `capped == true`, with an uncapped control), and the rig's anti-vacuity
+> check pins the destructuring `local sok, sok2, serr, scount, scapped` so a change to `start()`'s
+> arity fails loudly instead of silently splitting them.
+>
 > ### ✅ Step 6's DLL half CLOSED 2026-08-24 `[FZ6-CAP-2026-08-24]` — the fixture DOES exist now
 >
 > `Spawn_ManyComponents` ships in the packaged DumperTest (the repo's copy of the sample source is

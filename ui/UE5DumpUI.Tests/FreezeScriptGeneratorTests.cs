@@ -830,6 +830,55 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("sok2 == true and scount ~= 0 and not scapped", script, StringComparison.Ordinal);
     }
 
+    // ---- the checked-in fixture the lua rig runs -------------------------------------
+    //
+    // scripts/tests/freeze_enable_capped_test.lua LOADS and EXECUTES a real emitted
+    // [ENABLE] block, because a text assertion structurally cannot tell a reachable
+    // branch from dead code. Demonstrated 2026-08-24: replacing `elseif scapped then`
+    // with `elseif false then` leaves the string "CAP REACHED" in the script -- so the
+    // Assert.Contains below still PASSES -- while the rig catches it, because it runs.
+    //
+    // The fixture is CHECKED IN rather than captured by hand into out/, which is
+    // gitignored scratch: contract_check_test.lua and the two slotsym rigs depend on
+    // manual captures there and are simply unrunnable on a clean checkout. This test is
+    // what stops the checked-in copy going stale.
+
+    internal static FreezeScriptParams FreezeFixtureParams() => new()
+    {
+        ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
+        UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+    };
+
+    private static string FindRepoDir()
+    {
+        var d = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "CLAUDE.md")))
+            d = d.Parent;
+        Assert.NotNull(d);
+        return d!.FullName;
+    }
+
+    [Fact]
+    public void TheCheckedInFixture_IsStillWhatTheGeneratorEmits()
+    {
+        string path = System.IO.Path.Combine(
+            FindRepoDir(), "scripts", "tests", "fixtures", "freeze_enable.lua.txt");
+        Assert.True(System.IO.File.Exists(path), "fixture missing: " + path);
+
+        string onDisk = Norm(System.IO.File.ReadAllText(path));
+        string fresh  = Norm(FreezeScriptGenerator.Generate(FreezeFixtureParams()));
+
+        Assert.True(onDisk == fresh,
+            "scripts/tests/fixtures/freeze_enable.lua.txt no longer matches what "
+            + "FreezeScriptGenerator emits, so freeze_enable_capped_test.lua is running an OLD "
+            + "script and its result means nothing about the current generator. Regenerate it "
+            + "with FreezeScriptGenerator.Generate(FreezeFixtureParams()) and re-run that rig.");
+
+        // Line endings only -- the rig normalises the same way when it reads the file, so a
+        // CRLF/LF difference must not fail this and a CONTENT difference must.
+        static string Norm(string s) => s.Replace(((char)13).ToString(), string.Empty);
+    }
+
     [Fact]
     public void FreezeHelperLuaResource_Read_ReturnsNonTrivialContent()
     {
