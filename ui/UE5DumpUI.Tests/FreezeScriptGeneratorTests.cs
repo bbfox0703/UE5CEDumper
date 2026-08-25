@@ -789,6 +789,47 @@ public class FreezeScriptGeneratorTests
         Assert.Equal("", FreezeScriptGenerator.HeldClassName(null, null));
     }
 
+    // ── AA12/AA13 step 4: a MISSPELLED class must be indistinguishable from an empty one ──
+    //
+    // The DLL answers SetDone(0) for both -- Mimic.cpp's HandleListInstances cannot tell a
+    // class with no live instances from a name that matches nothing -- so neither can the
+    // script. "Armed, 0 right now" is the honest report; naming a typo would be a GUESS, which
+    // is exactly what CLAUDE.md's mailbox rule forbids ("Never report a mailbox failure by
+    // guessing"). ue5_freeze_helper.lua:957 states the rule at the implementation; nothing
+    // enforced it, so "class not found -- check the spelling" could be added as an
+    // improvement and every test would stay green.
+    //
+    // ⚠ This is an ABSENCE check, so it proves its own CHANNEL first (working-lessons 2.10):
+    // the armed line must BE there, or the vocabulary sweep below passes over a script that
+    // simply has no scount == 0 branch at all.
+    [Fact]
+    public void AnEmptyOrMisspelledClass_IsReportedAsArmed_AndNeverAsATypo()
+    {
+        string script = FreezeScriptGenerator.Generate(new FreezeScriptParams
+        {
+            ClassName = "NoSuchClassXyzzy", PropertyName = "TickCount", PropertyOffset = 0x6A8,
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "1",
+        });
+
+        // CHANNEL: the zero branch exists and says what it should.
+        Assert.Contains("elseif scount == 0 then", script, StringComparison.Ordinal);
+        Assert.Contains("[Freeze] armed: no live instances of", script, StringComparison.Ordinal);
+
+        // ...and it says nothing about the NAME being wrong. Case-insensitive, because the
+        // failure mode is someone writing a friendly sentence, not matching our casing.
+        foreach (var claim in new[]
+                 { "typo", "misspell", "spelling", "spelled", "no such class",
+                   "class not found", "does not exist", "check the class name", "unknown class" })
+            Assert.False(script.Contains(claim, StringComparison.OrdinalIgnoreCase),
+                $"the freeze script claims \"{claim}\" — but the DLL returns SetDone(0) for BOTH a "
+                + "misspelled class and a live-but-empty one, so that is a guess, not a diagnosis. "
+                + "See ue5_freeze_helper.lua's note at the SetDone(0) handling.");
+
+        // The same zero is ALSO the armed-and-waiting case, so it must neither close the window
+        // over the notice nor untick a freeze that is legitimately running.
+        Assert.Contains("sok2 == true and scount ~= 0 and not scapped", script, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void FreezeHelperLuaResource_Read_ReturnsNonTrivialContent()
     {

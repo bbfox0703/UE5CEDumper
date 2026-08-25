@@ -4065,6 +4065,32 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > engages. Exercising it needs a UFunction with `ParmsSize > 1024`; the largest on DumperTest is the
 > 184 B used here.
 >
+> #### ✅ THE CLAMP IS COVERED — it always was, and it is now shown able to fail `[Y10-CLAMP-2026-08-24]` 2026-08-24
+>
+> ⚠ **"Not exercised HERE" is true and was read as "not exercised at all".** It is not a live-game
+> item and never needed one: the clamp is `int zeroLen = Math.Min(Math.Max(parmsSize, 0),
+> ParamsRegionBytes)` in `BakedScriptGenerator`, and what it produces is **emitted text** — so a
+> generator test reaches it exactly as a `ParmsSize > 1024` UFunction would, without needing one to
+> exist on any installed title.
+>
+> `AuditL11HonestyTests.Y10_PreZeroLoop_NeverWritesPastTheParamsRegion` already drives three points —
+> `16→16` (ordinary), `1024→1024` (exactly the region), **`4096→1024` (clamped)** — asserting the
+> emitted loop bound.
+>
+> ⭐ **What was genuinely missing is that nobody had shown it could fail, so "covered" rested on
+> reading it.** Negative control 2026-08-24: drop the `Math.Min` so `zeroLen = parmsSize`. Result —
+> **exactly one** test fails, and it is the `parmsSize: 4096, expected: 1024` case; the `16` and
+> `1024` rows stay green, which is the precise demonstration that they could not have caught it and
+> that the third row can. Reverted; `BakedScriptGenerator.cs` byte-identical to HEAD.
+>
+> ⛔ **So do NOT spend a CE session hunting a >1024 UFunction for this.** The census entry
+> `ToolMenuEntryExtensions::InitMenuEntry` (ParmsSize 1104) would add nothing the `4096` row does not
+> already assert, and it would test the same emitted text through a slower path.
+>
+> ℹ️ Genuinely still uncovered, and it is a different claim: that a **live** 1104-byte invoke behaves.
+> The defect this clamp fixed was the emitted loop writing past `cmdFlags`/`cmdOutFlags` — entirely a
+> property of the text — so the residue is small.
+>
 > Still open: the CE-side half — watching the Before/After dump appear in the Lua Engine window.
 > can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
@@ -7574,9 +7600,41 @@ whether the record ends ticked or unticked.*
    one line — `[Freeze] armed: no live instances of X right now`. Then make one spawn and confirm the
    freeze takes hold within ~5 s. **If this unticks, the fix broke the feature and that is worse than
    the bug** — report it.
-4. **A misspelled class is indistinguishable from (3), by design.** Edit `CFG.className` to nonsense
-   and tick. It must behave exactly like step 3 — armed, 0. This is not a defect: the DLL answers
-   `SetDone(0)` for both, so claiming a typo would be a guess. Confirm it does not claim one.
+4. ✅ **CLOSED 2026-08-24 `[AA12-STEP4-TYPO-2026-08-24]` — offline, no CE.** *(original text: a
+   misspelled class is indistinguishable from (3), by design. Edit `CFG.className` to nonsense and
+   tick. It must behave exactly like step 3 — armed, 0. The DLL answers `SetDone(0)` for both, so
+   claiming a typo would be a guess. Confirm it does not claim one.)*
+
+   ⭐ **"Indistinguishable by design" is a STRUCTURAL property, so it is provable on the emitted
+   text.** A typo and an empty class are the same input to the script — `HandleListInstances`
+   answers `SetDone(0)` for both — so there is one `scount == 0` branch and both reach it. That
+   makes every part of the step checkable without ticking anything:
+
+   | assertion | how it is now held |
+   |---|---|
+   | armed, 0 — the message | `AnEmptyOrMisspelledClass_IsReportedAsArmed_AndNeverAsATypo` (NEW) |
+   | **does not claim a typo** | same test — a 9-word vocabulary sweep, case-insensitive |
+   | record stays ticked, window stays open | `Generate_ArmedButEmpty_DoesNotUntick_AndKeepsTheWindowOpen` — ⚠ **already existed**; only the typo half was unguarded |
+
+   ⚠ **The gap was real and was worth closing.** `ue5_freeze_helper.lua` states the rule *at the
+   implementation* — *"claiming a typo would be a guess, which is the thing CLAUDE.md's mailbox rule
+   forbids"* — and **nothing enforced it**. A well-meaning *"class not found — check the spelling"*
+   could be added to the armed message and every one of the 4,716 tests would have stayed green.
+
+   ⚠ **Both directions negative-controlled**, because an absence check that cannot fail is not a
+   check (working-lessons §2.10):
+
+   | control | armed by | result |
+   |---|---|---|
+   | the guard bites | append *"or the class name has a typo — check the spelling"* to the armed message | the new test fails, naming the offending word |
+   | the channel is real | delete the `elseif scount == 0 then` branch | the **channel** assertion fails first — so the vocabulary sweep can never pass over a script that simply has no zero branch |
+
+   Both reverted; `FreezeScriptGenerator.cs` byte-identical to HEAD. Suite 4,717 green,
+   `freeze_helper_test.lua` 159 checks / 0 failures.
+
+   ℹ️ What is still not proven, stated plainly: that **CE** renders it this way. The script's text
+   and the helper's behaviour are pinned; the pixels are not. Step 1's regression run already
+   covers the rendering path for the non-empty case.
 5. **An OLD helper is reported as unknown, not as a verdict.** Embed a **pre-1.2** `ue5_freeze_helper.lua`
    (any copy from before build 3125) and tick a newly generated script. Expect the "older
    ue5_freeze_helper.lua … re-inject it" line, the window left open, and the record **left ticked** —
