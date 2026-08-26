@@ -1221,6 +1221,32 @@ and not the bug. The F9 fix is what first *populated* that list; every row it ad
 fabricated zero. A cosmetic complaint that arrived **with** a correctness complaint usually shares
 a cause with it.
 
+### 2.17 "A fix that landed in one of its two copies" — three instances in one day
+
+2026-08-26, builds 3359-3362, three unrelated modules:
+
+| | the fix that WAS applied | the copy that was NOT |
+|---|---|---|
+| `[GWORLDACTORCHAIN]` | `PathStepToBreadcrumbs` stamps the no-offset sentinel | `PopulateFromWorld` builds the same hop and does not |
+| `[PERFDENOM]` | `busyMs` excludes the probe's own call, with a comment saying why | `dispatches`, **two lines below it**, still reads the global counter |
+| `[SANEPROPS]` | the gap-fill site treats the bound as a WORK cap | the instance / cache sites treat the same constant as a PLAUSIBILITY test |
+
+⭐ **The grep that finds these is aimed at the CONCEPT, not at the diff.** §2.3's sibling grep is
+"what else calls the thing I just changed?" — that is necessary and it would have missed all three,
+because in each case the un-fixed copy is **older than the fix** and the fix never touched it. The
+question that works is *"who else builds this kind of hop / answers this question / uses this
+number?"*, asked before the commit and again when the finding is written up.
+
+⚠ **The tell is a comment that explains why one site is careful.** All three had one. A comment
+justifying a subtlety at site A is evidence that site B, which does the same thing without the
+comment, has not been thought about. When you write that comment, grep for the shape it describes.
+
+⚠ **And the un-fixed copy's own justification may cite the fixed one.** `Ubel.cpp`'s WalkClassEx
+gate says the trade is bounded *"because WalkInstance already hard-fails on this exact predicate"* —
+true, and it is exactly why P3R's `USaveGame` classes were invisible everywhere at once. A
+justification that leans on a sibling's behaviour breaks silently when the sibling's premise is
+wrong for both of them.
+
 ### 2.15a The LOG TREE is a corpus — grep it before concluding a scenario needs a game you do not have
 
 `[GWORLDACTORCHAIN-2026-08-26]`. Verification row 5 needed an `ok_via_level` (streaming /

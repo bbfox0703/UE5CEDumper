@@ -22,6 +22,93 @@ builds ≤696 in
 
 -----
 
+## 2026-08-26 (night) - The three log-audit findings, fixed; an adversarial design review changed the shape of two of them (build 3362)
+
+The three open findings from the P3R log audit (previous entry). Each was designed, then faced a
+safety lens and an honesty/scope lens before a line was written — and that was not ceremony: five
+of six verdicts came back fatal, and two of the three fixes are **not** the shape I would have
+shipped from my own analysis.
+
+### `[SANEPROPS]` — one constant answering two questions
+
+`kMaxSanePropertiesSize = 1 MB`, whose comment claimed *"even the largest generated Blueprint /
+UClass layouts are at most tens of KB"*. P3R refutes it with `XRD777SaveGame` (3,671,800) and
+`AstreaSaveGame` (3,671,816), both of which the same log shows walking their fields cleanly.
+
+Split into `kMaxGapFillBytes` (1 MB, **unchanged** — the byte-sweep work cap the 827 MB Elliot
+wedge exists to stop, and also a WIRE bound, since `GuessGapTypes` emits ~N/4 rows for an N-byte
+gap) and `kMaxPlausiblePropertiesSize` (**64 MB** — admission control for caches that are never
+erased). ⚠ 64 MB is an admission bound, not a fact about UE; it sits ~17× above the largest real
+sample and ~13× below the observed garbage, and both samples are in the header so the next person
+re-derives rather than re-guesses.
+
+⭐ **My own analysis had two errors, and the review found both.** I concluded "nothing scales with
+PropertiesSize after the gate" — wrong: gap-fill emits one row per 4-byte stride, so a 3.67 MB
+class is ~918,000 rows serialised with no cap. (The split still holds, because that site uses the
+work cap — but I knew that by luck, not by measurement.) And I recorded the cache refusal as
+"only costs a re-walk". It does not: `WalkClassEx` refuses to **RETURN**, handing back an empty
+`ClassInfo`, and Aura's caches read `WalkClassEx(cls).Address != cls` as the refusal signal — so
+both `USaveGame` classes were invisible to **Value Search, Group Scan, snapshot capture, CE export,
+Solitar and Solide**, with no log line at all. That refusal now logs.
+
+⚠ **Writing the test reproduced A10 by accident.** One class blob reused across four cases had
+every case after the first read the first one's memoised answer, because `s_walkClassExCache` is
+keyed by address and nothing erases it. One blob per case, and the comment says why.
+
+### `[FUNCDENOM]` — a denominator that counted classes contributing nothing
+
+*The wire field was not the problem.* `scanned_classes` is correctly named, correctly documented,
+and one of the three UI sentences ("N classes scanned") was already reading it correctly. What was
+wrong was every sentence phrased as **provenance**.
+
+So the contributing count is **derived** — a computed property over the rows the panel is
+displaying — with **no new wire field**. Two reasons, both found independently by the reviewers: a
+parsed field would be `0` in every VM fixture (they all override `ListAllFunctionsAsync` and bypass
+the parser), and a `??` fallback fires on *absent*, not on *zero*, so a DLL that shipped the key and
+missed the assignment would render *"9,760 functions from 0 of 2,293 classes"* — a new wrong report
+at the one site the fix exists to protect.
+
+⚠ The DLL's log line is **append-only** on its format string: nothing in `dll/src` carries
+`_Printf_format_string_`, so MSVC diagnoses no format/argument mismatch anywhere here, and a
+reordered trailing `%s%s` reading an `int` as a `char*` is an access violation on the pipe worker
+inside a shipping game.
+
+### `[STALLDEFAULT]` — a default posing as a measurement
+
+Fixed by **withholding** `game_thread_stalled` when it is not a measurement — the cheapest correct
+answer, not a compromise: absence is already a live wire state and it costs fewer bytes.
+
+⚠⚠ **The naive version of this fix is a regression, and the review caught it.** The hook can go back
+DOWN mid-session (`Frieren.cpp` → `Stark::RemoveHook()` on a validation failure). Today a banner
+raised by a real stall is cleared **by the lie** — the next `false` clears it. Withhold the key
+without teaching the client that absence *withdraws* the claim and that banner sticks ON for the
+rest of the session. DLL half and client half therefore landed in one commit.
+
+A tri-state **string** was rejected on a measured path, not a guess: `GetValue<bool>()` throws
+`InvalidOperationException`, `PipeClient`'s read loop catches only `JsonException`, so the throw
+escapes, the loop exits, and every in-flight request fails with "Pipe disconnected" — it would
+**disconnect** an old client, not degrade it.
+
+`get_diagnostics` had a **second report path** with the identical defect, rendered to the user as
+"Responsive" in the System tab. It gains `liveness`; `responsive` stays unchanged so an older UI
+does not start rendering "Stalled" on a healthy game.
+
+Three rigs relied on the lying default and were **armed, not weakened**. ⚠ One of them,
+`seethrough_arm_b.py`, read the key with `[...]` **between `suspend-tid` and `resume-tid` with no
+try/finally** — a `KeyError` there would have left the game thread SUSPENDED and the process
+needing a kill.
+
+---
+
+**Method note worth keeping.** The `PERF` denominator fixed in 3361 and `[SANEPROPS]` are the same
+sentence in different files: *a fix that landed in one of its two copies*. In 3361 it was `busyMs`
+corrected and `dispatches` two lines below it not; here it was `PathStepToBreadcrumbs` marked and
+`PopulateFromWorld` not. Three instances in one day, in three unrelated modules. The grep that
+finds them is aimed at the CONCEPT, not at the diff.
+
+C++ suite green (265 + 1649 + 22 + 14 + 17), C# **4,750/4,750** with six negative controls across
+the three fixes, gates **13/13**.
+
 ## 2026-08-26 (evening) - The P3R log confirmed the fix; auditing the same logs found two more reporting defects, and named the title that closes row 5 (build 3361)
 
 The maintainer re-ran the reported game. `Logs\P3R` (build 3360, `e88190ba-dirty`, proxy DLL,
