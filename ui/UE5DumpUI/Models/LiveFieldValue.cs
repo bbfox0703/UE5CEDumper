@@ -114,6 +114,31 @@ public sealed partial class LiveFieldValue : ObservableObject
     public int Offset { get; init; }
     public int Size { get; init; }
 
+    /// <summary>
+    /// True when this row is NOT reachable from the current object by a byte offset —
+    /// it was derived from a back-reference, not read out of a reflected field. The
+    /// GWorld actor list is the only producer today: <c>ULevel::Actors</c> carries no
+    /// UPROPERTY (audit #5 F8/F9), so the actors under "Start from GWorld" are
+    /// reconstructed from each actor's <c>Outer</c> and there is no offset — and no
+    /// element index — that walks UWorld to them.
+    ///
+    /// <para><b>Offset stays 0 on such a row and MUST NOT be treated as one.</b> A
+    /// pointer chain built through it emits <c>[UWorld + 0]</c>, which is the world's
+    /// vtable pointer — that is the whole defect this flag exists to stop. Navigation
+    /// stamps <c>BreadcrumbItem.FieldOffset = -1</c> for these (the marker
+    /// <see cref="ViewModels.LiveWalkerViewModel.PathStepToBreadcrumbs"/> already uses
+    /// for the same hop), and every CE export re-roots the spine there.</para>
+    /// </summary>
+    public bool HasNoParentOffset { get; init; }
+
+    /// <summary>
+    /// Offset column text: hex, or an em dash when the row has no parent offset at all
+    /// (<see cref="HasNoParentOffset"/>). Displaying those as "0x0" is what made a
+    /// derived actor look like a field at offset zero. Sorting still uses
+    /// <see cref="Offset"/>.
+    /// </summary>
+    public string OffsetDisplay => HasNoParentOffset ? "—" : $"0x{Offset:X}";
+
     /// <summary>True if this field was heuristically guessed (not from UE reflection).</summary>
     public bool IsGuessed { get; init; }
 

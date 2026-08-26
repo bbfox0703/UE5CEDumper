@@ -1181,6 +1181,46 @@ tell you which category a given line passes — only the call site can.
 `grep -l "<marker>" *.log`. One command, no inference. That is what finally decided it, after two
 rounds of reasoning from the source produced two different wrong answers.
 
+### 2.15 A SENTINEL WITH NO CONSUMER-SIDE GUARD IS A LATENT BUG WAITING FOR A SECOND PRODUCER
+
+`[GWORLDACTORCHAIN-2026-08-26]`, build 3359. Audit #5 F8/F9 established that a level actor is
+reached through its `Outer`, not through any field, so the hop has **no offset**. The codebase
+encoded that as `BreadcrumbItem.FieldOffset = -1`, stamped by `PathStepToBreadcrumbs`, and one
+consumer — the AA-script `gworldWalkable` gate — tested `FieldOffset >= 0` and refused. That looked
+finished. It was two-thirds of a mechanism, and both missing thirds shipped a wrong address to a
+user:
+
+- **No second producer had it.** `PopulateFromWorld` builds the *same hop* for the "Start from
+  GWorld" list and published `Offset = 0` — a positive claim that the actor is at `[UWorld + 0]`,
+  which is the world's **vtable pointer**. The correct copy was the OLDER one, so a "did I update
+  every site I touched?" review at fix time would have passed: the site that needed changing was
+  not one the fix touched. The question that finds this is **"who else builds this kind of
+  hop?"**, not "what did I just edit?" — §2.3's sibling grep, aimed at the CONCEPT rather than at
+  the diff.
+- **No emitter validated it.** `ProjectBreadcrumb` formatted the offset with `$"+{off:X}"`, so a
+  `-1` that *did* reach it printed **`+FFFFFFFF`**. That path was live the whole time via
+  Locate-in-GWorld and had simply never been exercised. A sentinel the emitter cannot survive is
+  not a sentinel; it is a second bug parked next to the first.
+
+**The repair shape, and why the throw is not defensive noise.** The producer now stamps the
+sentinel, a shared `AnchorAtLastUnchainableHop` strips such hops before emission, *and*
+`ProjectBreadcrumb` **throws** if one still arrives. The throw is what makes the invariant real:
+with the strip removed, the export fails loudly with the hop named, instead of copying a table that
+resolves into the executable image. ⭐ It is also **testable and demonstrably reachable** — removing
+the strip turned it red in the production path, not just in a unit test — so it is an invariant,
+not the `elseif false` kind of dead branch §1.9 warns about.
+
+⚠ **Do not "simplify" this to one representation.** `LiveFieldValue.Offset` deliberately stays `0`
+on those rows (bookmarks and the same-layout row-reuse path key on name+offset) while a separate
+`HasNoParentOffset` carries the fact. Forcing `Offset = -1` would have been the tidier-looking
+change and would have silently repointed two unrelated features.
+
+⚠ **The user's first symptom was the cosmetic half, and it was still the right thread to pull.**
+The report opened with *"lots of fields with offset `0x0` appeared after the fix"* — true, connected,
+and not the bug. The F9 fix is what first *populated* that list; every row it added carried the
+fabricated zero. A cosmetic complaint that arrived **with** a correctness complaint usually shares
+a cause with it.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log

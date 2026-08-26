@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **15 open batches** needing a running game (2026-08-22;
+> - `## Pending live-game verification` — **10 open batches** needing a running game (2026-08-26;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -2891,6 +2891,33 @@ instead of a warning. ⚠ A **missing** object counts as bad, not empty — neve
 as nothing to build. Shown able to fail: setting the threshold to 0 reports all six with their sizes
 and exits 1; at 2048 the check is clean at 72 objects. CLAUDE.md's build section now names the empty
 TU as the third legitimate exception beside `.rc.res` and `.asm.obj`.
+
+### ⬜ FIXED 2026-08-26, NEEDS A LIVE CHECK — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
+
+*Reported from a real P3R session (build 3358, `UE427`, 65,158 objects; screenshots + logs supplied).
+Fixed in build 3359 — see [dev-log.md](dev-log.md). The **logic** is pinned by 7 unit checks with
+five negative controls, so what is owed here is only what no stub can produce: **Cheat Engine
+resolving the emitted table against the live game**.*
+
+**What was wrong.** `PopulateFromWorld` published every level actor and component in the *Start from
+GWorld* list as a field at `Offset = 0`. The actors are reconstructed from their `Outer` — audit #5
+F8/F9 — so no such offset exists, and CE resolved `KernelActor (0)` to `P->144AF6408`, the value at
+`UWorld + 0`, i.e. the world's **vtable pointer**. The real actor was at `0x64AF68C0`.
+
+⚠ **The tell the user saw first was cosmetic and is worth remembering**: "many fields with offset
+`0x0` appeared after the fix". They were right that the two were connected — the F9 fix is what
+first *populated* that list, and every row it added carried the fabricated zero.
+
+| # | cat | what to do | expected |
+|---|---|---|---|
+| 1 | **B** | P3R (or any game with a populated actor list). Live Walker → **Start from GWorld**. Look at the Offset column for the actor / `Actor.Component` rows. | `—`, not `0x0`. `PersistentLevel` still shows its real offset (`0x30`-ish). |
+| 2 | **B** | Drill into one actor (e.g. `KernelActor`), pick a scalar leaf, **Copy CE XML**, paste into CE. | The table's root is the **actor's own address** (`0x64AF68C0` in the report), NOT a `GWorld → base → Actor (0)` chain. Every leaf resolves to the address the Live Walker's own Address column shows. The status line says **"⚠ Chain re-rooted at … (absolute address, session-only)"**. |
+| 3 | **B** | Same spine, **Copy CE AA Script**. | Status says **"hardcoded address (GWorld path not forward-walkable)"** — NOT "GWorld AOB walk" / "GWorld hardcoded-base walk". The script registers the actor's absolute address. |
+| 4 | **B** | A control that must NOT change: navigate GWorld → **PersistentLevel** → some reflected object field, then Copy CE XML. | A normal GWorld-rooted chain with real offsets, AOB wrapper included when the checkbox is on, and **no** re-rooted note. If this one re-roots, the fix over-reached. |
+| 5 | **B** | Locate-in-GWorld on an object that resolves via the World-Partition recovery path (status `ok_via_level`), then Copy CE XML. | No `+FFFFFFFF` anywhere in the XML (that was the latent third defect); the chain re-roots at the recovered actor instead. |
+
+⚠ **Row 5 needs a streaming / World-Partition title, not P3R.** If no such game is at hand, close
+rows 1–4 and leave 5 open rather than marking the section done.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 

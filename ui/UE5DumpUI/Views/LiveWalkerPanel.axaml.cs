@@ -36,11 +36,19 @@ public partial class LiveWalkerPanel : UserControl
     //   DataGridSortWiringTests caught it the same minute, which is exactly what that
     // guard exists for. Worth remembering as a shape: making a column PRETTIER can
     // break its SORT, because the two ride on the same attribute.
+    //
+    // "Offset" joined for the same reason in a third disguise: the column is still a
+    // DataGridTextColumn, but its Binding was moved off Offset onto OffsetDisplay so a
+    // GWorld actor row (which has NO offset from the world) stops rendering as "0x0".
+    // That un-roots SortMemberPath="Offset" exactly like the template conversion did —
+    // and sorting on OffsetDisplay instead would have been worse than inert: it would
+    // order hex TEXT, putting 0x9 after 0x10.
     private static readonly IReadOnlyDictionary<string, IComparer> FieldsSortComparers =
         new Dictionary<string, IComparer>
         {
             ["DisplayValue"] = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.DisplayValue),
             ["TypeName"]     = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.TypeName),
+            ["Offset"]       = DataGridSortComparers.Number<LiveFieldValue>(r => r.Offset),
         };
 
     // FunctionGrid's "Params" column (audit #5 AF20). This file wired 1 of its 3

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
@@ -1009,7 +1009,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             Fields.Add(pLevel);
         }
 
-        // Each actor as a navigable entry
+        // Each actor as a navigable entry.
+        //
+        // HasNoParentOffset, and it is not cosmetic: these rows are RECONSTRUCTED from
+        // each actor's Outer, because ULevel::Actors carries no UPROPERTY (audit #5
+        // F8/F9) — there is no offset from UWorld to an actor, and no element index
+        // either. Offset 0 here is "unknown", not "at +0", and a CE pointer chain that
+        // believes it emits [UWorld + 0] = the world's VTABLE POINTER. The same hop
+        // built by Locate-in-GWorld has always been marked (PathStepToBreadcrumbs
+        // stamps FieldOffset = -1 for a "LevelActor" step); this list was the copy that
+        // never got the marker, so every export through it was silently wrong.
+        //
+        // Components hang off their actor and are found the same way, so they inherit it.
         foreach (var actor in world.Actors)
         {
             Fields.Add(new LiveFieldValue
@@ -1017,6 +1028,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 Name = actor.Name,
                 TypeName = "ObjectProperty",
                 Offset = 0,
+                HasNoParentOffset = true,
                 Size = 8,
                 PtrAddress = actor.Address,
                 PtrName = actor.Name,
@@ -1031,6 +1043,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     Name = $"  {actor.Name}.{comp.Name}",
                     TypeName = "ObjectProperty",
                     Offset = 0,
+                    HasNoParentOffset = true,
                     Size = 8,
                     PtrAddress = comp.Address,
                     PtrName = comp.Name,
@@ -1097,8 +1110,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // so the breadcrumb must carry the FULL offset to the value or every
             // child lands valueOffset bytes short (the off-by-8 on FName-keyed
             // maps). Zero for non-map parents, so other navigation is unchanged.
-            int navOffset = field.Offset + MapValueDrillOffset(
-                Breadcrumbs.Count > 0 ? Breadcrumbs[^1] : null);
+            //
+            // A row with no parent offset (a GWorld actor-list entry) carries the -1
+            // sentinel instead. -1 is the established marker for "this hop cannot be
+            // reproduced by a forward offset" — PathStepToBreadcrumbs stamps it, and
+            // BuildAaScript's gworldWalkable gate already tests FieldOffset >= 0. Adding
+            // MapValueDrillOffset to it would turn the sentinel back into a number.
+            int navOffset = field.HasNoParentOffset
+                ? -1
+                : field.Offset + MapValueDrillOffset(
+                    Breadcrumbs.Count > 0 ? Breadcrumbs[^1] : null);
 
             if (!string.IsNullOrEmpty(field.PtrAddress) && field.PtrAddress != "0x0")
             {
@@ -1914,6 +1935,31 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Detect fields whose container element count exceeds the loaded element count.
     /// Returns a warning string listing the truncated fields, or null if none.
     /// </summary>
+    /// <summary>
+    /// One-line note for a CE export whose spine was re-rooted by
+    /// <see cref="CeXmlExportService.AnchorAtLastUnchainableHop"/>. Empty when nothing
+    /// was dropped, so the normal export line is unchanged.
+    ///
+    /// <para>The user asked for a chain from GWorld and is getting one from an absolute
+    /// address instead — that is a real downgrade (it dies on the next restart) and
+    /// saying so is the difference between a session-only table and a table the user
+    /// thinks is restart-stable. It replaces a chain that was simply WRONG: the dropped
+    /// hop had no offset, so the old export walked <c>[UWorld + 0]</c> into the world's
+    /// vtable pointer.</para>
+    /// </summary>
+    internal static string ReanchorNote(
+        IReadOnlyList<BreadcrumbItem> before, IReadOnlyList<BreadcrumbItem> after)
+    {
+        if (after.Count >= before.Count) return "";
+        var root = after.Count > 0 ? after[0] : null;
+        var name = root == null ? "the object"
+                 : !string.IsNullOrEmpty(root.Label) ? root.Label
+                 : root.FieldName;
+        return $" ⚠ Chain re-rooted at {name} (absolute address, session-only): "
+             + "it is reached through its Outer, not through a field of the world, "
+             + "so no pointer chain from GWorld exists.";
+    }
+
     private static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
     {
         var truncated = new List<string>();
@@ -4170,6 +4216,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 ? new List<LiveFieldValue> { lastBc.ContainerField! }
                 : new List<LiveFieldValue>(Fields);
 
+            // Drop everything above the last hop that has no offset (a GWorld actor-list
+            // entry, a World-Partition recovery hop). Those are reached by a BACK-reference
+            // — an actor's Outer, ULevel::OwningWorld — so no forward offset exists and the
+            // chain that used to be emitted read [UWorld + 0], i.e. the world's vtable.
+            // Re-rooting there costs restart-stability and buys a chain that is right.
+            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
+            var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
+            breadcrumbsForXml = reanchoredForXml;
+
             _log.Info($"CEXML export: containerView={isContainerView} bcCount={breadcrumbsForXml.Count} | BC={FormatBreadcrumbTrace()}");
 
             // Pre-check CleanBreadcrumbs to log any cycle removals
@@ -4287,7 +4342,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedStructs.Count} structs / {resolvedInstances.Count} pointers resolved, depth={CsxDrilldownDepth})");
@@ -4498,6 +4553,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 fieldsForXml = selectedSnapshot;
             }
 
+            // Same re-anchor as Copy CE XML — see the comment there. Both entry points do
+            // it because both feed the generator, and AnchorAtLastUnchainableHop is
+            // idempotent, so a spine that is already anchored passes through untouched.
+            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
+            var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
+            breadcrumbsForXml = reanchoredForXml;
+
             var fieldSummary = selectedSnapshot.Count == 1
                 ? $"field={selectedSnapshot[0].Name}"
                 : $"fields={selectedSnapshot.Count}({string.Join(",", selectedSnapshot.Take(5).Select(f => f.Name))}{(selectedSnapshot.Count > 5 ? "…" : "")})";
@@ -4618,7 +4680,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
             _log.Info($"CE Field XML copied: {selectedSnapshot.Count} field(s) (AOB={useAob}, includeGuessed={includeGuessed}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedInstances.Count} pointer targets resolved at depth={CsxDrilldownDepth})");

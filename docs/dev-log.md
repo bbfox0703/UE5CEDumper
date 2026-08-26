@@ -22,6 +22,76 @@ builds ≤696 in
 
 -----
 
+## 2026-08-26 - "Start from GWorld" published level actors as fields at offset 0; every CE chain through one walked into the world's vtable (build 3359)
+
+**`[GWORLDACTORCHAIN-2026-08-26]`.** Reported on **P3R** (`UE427`, 65,158 objects, build 3358):
+Copy CE XML from an object reached through the GWorld actor list produced *completely wrong*
+addresses. CE resolved the emitted table to
+
+```
+base            P->603BB0A0   8 Bytes  0000000144AF6408
+  KernelActor (0)  P->144AF6408
+```
+
+`0x144AF6408` is inside the executable image (base `0x140000000`) — it is the value at
+`UWorld + 0`, i.e. the **world's vtable pointer**. The actor really lives at `0x64AF68C0`.
+
+**Root cause — a fix that landed in one of its two copies.** Audit #5 F8/F9 established that
+`ULevel::Actors` carries **no UPROPERTY**, so the actor list is reconstructed from each actor's
+`Outer` (`Aura::FindActorsInLevel`): there is no offset from UWorld to an actor, and no element
+index either. `LiveWalkerViewModel.PathStepToBreadcrumbs` **already knew this** — a `LevelActor`
+path step is stamped `FieldOffset = -1`, `IsPointerDeref = false`, with a comment citing F8.
+`PopulateFromWorld`, which builds the same hop for the *Start from GWorld* list, was never given
+the marker: it published every actor and component as `Offset = 0` + `isPointer: true`, which is
+a positive claim that the actor sits at `[UWorld + 0]`.
+
+Three consumers believed it, and the third is the one that shows the shape of the bug best:
+
+| | path | what it emitted |
+|---|---|---|
+| 1 | Copy CE XML / Copy CE Field | `[GWorld] + 0` → the vtable (the report) |
+| 2 | Copy CE AA Script | `gworldWalkable` requires `spine.Skip(1).All(bc => bc.FieldOffset >= 0)` — **the gate was already correct**; the crumb lied to it with a `0`, so it emitted a restart-stable walk into the vtable |
+| 3 | Locate-in-GWorld → export | that path *does* stamp `-1`, and nothing downstream handled it: `$"+{step.Offset:X}"` formatted it as **`+FFFFFFFF`** |
+
+So the marker existed, the gate that consumes it existed, and the emitter that had to survive it
+did not. Row 3 was latent the whole time.
+
+**Fix.**
+
+- `LiveFieldValue.HasNoParentOffset` — "this row is not reachable from the current object by a byte
+  offset". `Offset` deliberately **stays 0** (bookmarks and the same-layout row-reuse path key on
+  it); the flag is what stops it being read as `+0`. `PopulateFromWorld` sets it on actors and
+  components; `PersistentLevel`, which IS a reflected field of UWorld, keeps its real offset.
+- Navigation stamps the existing `-1` sentinel rather than inventing a second representation, and
+  skips `MapValueDrillOffset` so the sentinel cannot be turned back into a number.
+- `CeXmlExportService.AnchorAtLastUnchainableHop` — re-roots the spine at the **deepest** hop with
+  no offset and drops everything above it. Idempotent (index 0 is never examined, because a root's
+  offset is not applied by any emit path), so the VM and the generator can both call it. Both
+  export commands do, and say so: *"⚠ Chain re-rooted at KernelActor (absolute address,
+  session-only)"* — the trade is restart-stability for correctness, and the user is told.
+- `ProjectBreadcrumb` now **throws** on a negative offset instead of formatting it. That is what
+  kills row 3, and it is a reachable invariant, not dead code: with the re-anchor removed, the
+  export fails with *"spine still contains an offset-less hop 'KernelActor' … was not applied"*.
+- The Offset column renders `—` instead of `0x0` for such a row.
+
+⚠ **The offset column's Binding change broke its sort, and `DataGridSortWiringTests` caught it in
+the same run.** `SortMemberPath="Offset"` was rooted by the column's own `Binding`; pointing that
+at `OffsetDisplay` un-roots it, and under trimming the header goes inert. This is the **third**
+disguise of that trap recorded in `LiveWalkerPanel.axaml.cs` (after a template-column conversion
+and an element-syntax `MultiBinding`) — and here sorting on the display string would have been
+*worse* than inert: it orders hex text, putting `0x9` after `0x10`. Fixed with a wired
+`DataGridSortComparers.Number` entry.
+
+**Verification.** `ui/UE5DumpUI.Tests/LiveWalkerGWorldActorChainTests.cs` — 7 checks driving the
+real production path (stubbed `walk_world` → row → breadcrumb → clipboard XML), with **five
+negative controls, each isolating one half**: remove the row marker → 4 red (and the copied XML
+contains **no trace of the actor's address**, which is the reported defect reproducing); remove the
+export re-anchor → 1 red, via the generator guard firing in production; remove the generator guard
+→ 1 red; revert the offset display → 1 red. Full suite **4,734/4,734**, gates **13/13**.
+
+⛔ **Not yet confirmed on P3R itself** — see `[GWORLDACTORCHAIN-2026-08-26]` in
+[todo.md](todo.md)'s live-verification register.
+
 ## 2026-08-24 (later) - The C1 spawner fixture already existed; the repo's copy of the sample source did not know (build 3349)
 
 **`[C1-SPAWNER-EXISTS-2026-08-24]`.** Found by accident while picking a queued-route fixture for
