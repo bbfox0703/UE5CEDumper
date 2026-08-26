@@ -104,17 +104,25 @@ winget install --id Microsoft.VisualStudio.Community --exact --source winget --o
 "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath "<vswhere -latest -property installationPath>" --config .vsconfig --quiet --norestart
 ```
 
-### ⚠ VS **Build Tools** will not be detected
+### VS **Build Tools** and Insiders — supported since build 3363
 
-`build.ps1`'s two `vswhere` calls pass neither `-products *` nor `-prerelease`, and vswhere's
-documented default product filter is Community/Professional/Enterprise. A BuildTools-only or
-Insiders-only machine has a complete toolchain and still dies with
-*"No Visual Studio installation found (need C++ Desktop workload)"*.
+`build.ps1` used to pass neither `-products *` nor `-prerelease` to `vswhere`, and vswhere's
+default product filter is Community/Professional/Enterprise — so a **Build Tools** or **Insiders**
+install had a complete toolchain and still died with *"No Visual Studio installation found"*.
+Fixed: all three call sites now use the same filter.
 
-The repo disagrees with itself here: `tools/verify/build_dll.py` passes `-products * -prerelease`
-and `tools/verify/compile_sdk_header.py` passes `-products *`, while `build.ps1` passes neither.
-Until that is reconciled, **install the Community SKU**. `bootstrap.py` reports a BuildTools-only
-machine as `MISSING-INVISIBLE` rather than "present", because that is what `build.ps1` will see.
+⚠⚠ **The filter must stay IDENTICAL across `build.ps1`, `tools/verify/build_dll.py` and
+`tools/verify/compile_sdk_header.py`** — they drive the same `build/` directory. Two `vswhere`
+calls that disagree pick two toolsets, and 14.51 objects linked against 14.44 libs fail with
+unresolved STL symbols that read as *"the STL is broken"* (`working-lessons.md` §3.8). That
+shared-`build/` coupling, not Insiders support, is why `-prerelease` is on all of them.
+
+⭐ The same change fixed a second defect the flags hid: the `-requires VC.Tools` call was a
+**fallback that ran only when the unfiltered `-latest` returned nothing** — which never happens
+once *any* VS is installed, i.e. it was unreachable in exactly the case it existed for (a newest
+VS with no C++ toolset). It is now the primary query, and the fallback exists only to tell
+"no VS at all" apart from "VS present, C++ toolset missing" — a one-click fix that used to be
+reported as the other one.
 
 -----
 
@@ -153,7 +161,7 @@ Nothing here is touched by `build.ps1 -Mode Publish` or `py tools/check_all.py`.
 | **Rust (rustup) + nightly** | winget `Rustlang.Rustup` · user scope | Building patternsleuth, which pins `channel = "nightly"`. |
 | **patternsleuth** | `git clone` **outside** `vendor/` | Not on crates.io and has no releases. Do not `cargo install --git` — rustup reads `rust-toolchain.toml` from the cwd, so the pin would be ignored. |
 | **Cheat Engine SOURCE clone** | `git clone` (read-only) | Keeps the `docs/ce-*.md` `file:line` references honest. Never built, so **no Lazarus/FPC**. |
-| **cloc** | winget `AlDanial.Cloc` | ⚠ casing matters — `AlDanial.cloc` is not found. |
+| **cloc** | winget `AlDanial.Cloc` | ⚠ casing matters — `AlDanial.cloc` is not found. `count_cloc.bat` resolves it as `%CLOC_EXE%` → `cloc` on PATH → a few known local copies, and counts the repo it lives in (`%~dp0`), so neither path is machine-specific any more. It also takes an optional target directory. |
 
 -----
 

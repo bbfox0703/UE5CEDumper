@@ -60,7 +60,11 @@ def find_vcvars():
     means the objects and the libs came from different toolsets.
     """
     if VSWHERE.is_file():
+        # -requires matches build.ps1's filter EXACTLY. Both drive the same build        # directory, so two vswhere calls that disagree pick two toolsets -- and 14.51
+        # objects linked against 14.44 libs is the unresolved-STL-symbol failure this
+        # function's own docstring is about.
         r = subprocess.run([str(VSWHERE), "-latest", "-prerelease", "-products", "*",
+                            "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                             "-property", "installationPath"],
                            capture_output=True, text=True, errors="replace")
         root = r.stdout.strip().splitlines()

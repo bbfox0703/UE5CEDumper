@@ -207,22 +207,27 @@ def d_vswhere():
 
 
 def d_vs_cpp():
-    """Two probes, deliberately. The first asks 'is a C++ toolset installed anywhere';
-    the second asks 'is it in a SKU build.ps1 can SEE' -- build.ps1 passes neither
-    `-products *` nor `-prerelease`, so a BuildTools-only machine has a complete
-    toolchain that build.ps1 reports as absent."""
-    anywhere = vswhere("-latest", "-products", "*", "-prerelease", "-requires",
+    """Mirrors build.ps1's filter EXACTLY -- that is the whole point of this probe: to see
+    what build.ps1 will see, not to find the best VS. All three call sites (build.ps1,
+    tools/verify/build_dll.py, tools/verify/compile_sdk_header.py) drive one shared build/
+    directory, so a filter that differs here would report a toolset the build then refuses
+    to use."""
+    filt = ("-latest", "-products", "*", "-prerelease")
+    anywhere = vswhere(*filt, "-requires",
                        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                        "-property", "installationPath")
-    visible = vswhere("-latest", "-property", "installationPath")
     if not anywhere:
+        # "No VS at all" and "VS present, C++ toolset absent" are different problems, and
+        # the second is a one-click fix in the installer.
+        anyvs = vswhere(*filt, "-property", "installationPath")
+        if anyvs:
+            return False, ("VS at " + anyvs.splitlines()[0] + " has NO C++ toolset -- "
+                           "add VC.Tools.x86.x64 (see .vsconfig)")
         return False, ""
-    if not visible:
-        return False, "MISSING-INVISIBLE: C++ toolset exists but build.ps1's vswhere " \
-                      "call cannot see this SKU (BuildTools/Insiders) -- see docs/toolchain.md §2"
-    ver = vswhere("-latest", "-property", "installationVersion") or "?"
+    ver = vswhere(*filt, "-property", "installationVersion") or "?"
     warn = "" if ver.split(".")[0].isdigit() and int(ver.split(".")[0]) >= 18 else "  ⚠ not v18"
-    return True, f"{ver} @ {visible.splitlines()[0]}{warn}"
+    return True, f"{ver} @ {anywhere.splitlines()[0]}{warn}"
+
 
 
 def d_vs_components():

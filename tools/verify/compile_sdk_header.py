@@ -59,7 +59,9 @@ def find_cl():
             continue
         try:
             out = subprocess.run(
-                [str(vswhere), "-latest", "-products", "*",
+                # Filter identical to build.ps1 and build_dll.py -- see the note in
+                # build.ps1's VS-selection block. They share one build/ directory.
+                [str(vswhere), "-latest", "-products", "*", "-prerelease",
                  "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                  "-property", "installationPath"],
                 capture_output=True, text=True, timeout=60)
