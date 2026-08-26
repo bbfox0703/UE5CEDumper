@@ -1581,12 +1581,13 @@ Nothing here has been compiled. Build the **Shipping** package to
 `invoke_function`. ⚠ Re-check the escaped caption survives the round trip: it is the one string in
 the fixture whose corruption would look like a *B28 defect* rather than like a build problem.
 
-## 🔎 Log-audit findings (P3R session 2026-08-26, build 3360) — 3 open
+## 🔎 Log-audit findings (P3R session 2026-08-26, build 3360) — all 3 FIXED in build 3362
 
 *Found by a five-lens adversarial sweep of a real P3R session's logs (46 agents, every finding
 refute-mandated; 19 of 40 were killed). Two of the four defects it surfaced were fixed the same
 day in build 3361 — the `PERF` line's two denominators and the missing re-anchor log line, both
-recorded in [dev-log.md](dev-log.md). These three are open. Each was independently reproduced
+recorded in [dev-log.md](dev-log.md). The three below were fixed in build 3362, each after an
+adversarial design review that changed the shape of two of them. Each was independently reproduced
 before being written down.*
 
 ### ✅ FIXED 2026-08-26 (build 3362) `[SANEPROPS-2026-08-26]` — `kMaxSanePropertiesSize = 1 MB` rejected legitimate classes
@@ -1674,13 +1675,51 @@ reverting both provenance sentences turns 3 tests red.
 their own change: `search_properties` (`Aura.cpp` counts the class then discards it at four separate
 points), and the batch path that copies one batch-wide count into every query's result.
 
-### ⬜ `[STALLDEFAULT-2026-08-26]` — `game_thread_stalled: false` before the hook exists is a DEFAULT, not a measurement
+### ✅ FIXED 2026-08-26 (build 3362) `[STALLDEFAULT-2026-08-26]` — `game_thread_stalled: false` before the hook existed was a DEFAULT, not a measurement
 
-`game_thread_stalled` cannot report a stall until the ProcessEvent hook is installed, so almost
-every `false` in a session's logs is the field's initial value rather than an observation. A reader
-(or a future check) cannot tell the two apart from the wire. Either withhold the field until it can
-be measured, or publish a third state. ⚠ Low severity but the exact shape of `[SEETHRUNOOP]` and
-`[SEETHRUTALLY]` — a success report computed by a path that never ran.
+`game_thread_stalled` could not report a stall until the ProcessEvent hook was installed, so almost
+every `false` in a session's logs was the field's initial value rather than an observation — the
+exact shape of `[SEETHRUNOOP]` / `[SEETHRUTALLY]`, a success report computed by a path that never ran.
+
+**Fixed by WITHHOLDING the key when it is not a measurement**, which turned out to be the cheapest
+correct answer: absence is already a live wire state (`MakeError` and `MakeEvent` never carried it,
+and the client already tolerated it), so it adds no new state and costs fewer bytes. `Stark` gained
+a pure three-state classifier; `IsGameThreadResponsive` is now `IsResponsiveFromLiveness(...)` with
+its **contract unchanged**, because eight in-DLL gates ask "should I attempt an invoke?" and
+unknown must keep meaning yes.
+
+⚠⚠ **The naive version of this fix is a REGRESSION, and the review caught it.** The hook can go
+back DOWN mid-session (`Frieren.cpp`'s validation-failure path calls `Stark::RemoveHook()`), which
+returns liveness to unknown. Today a banner raised by a real stall is cleared *by the lie* — the
+next `false` clears it. Withhold the key without teaching the client that absence **withdraws** the
+claim, and that banner sticks ON for the rest of the session. So the DLL half and the client half
+had to land in one commit, and they did.
+
+Rejected alternatives, each for a measured reason: a **tri-state string** would not degrade an old
+client, it would **disconnect** it (`GetValue<bool>()` throws `InvalidOperationException`, which
+`PipeClient`'s `catch (JsonException)` does not catch — the read loop exits and every in-flight
+request fails). A **second additive bool** leaves the wrong value on the wire for anyone reading
+only the first field.
+
+Also fixed in the same commit: `get_diagnostics` had a **second report path** with the identical
+defect (`gt["responsive"]`, rendered to the user as "Responsive" in the System tab). It gains
+`liveness` beside it; `responsive` is kept unchanged so an older UI does not start rendering
+"Stalled" on a healthy game.
+
+Three verification rigs relied on the lying default and were **armed, not weakened**:
+`f5_envelope.py` now installs the hook before probing and keeps its three-key assertion (dropping
+the key only for a run where arming demonstrably failed, and saying so); `l8_fglock_nopump.py`'s
+`is not False` now catches "detector never armed" and "already stalled" in one test, where the
+former used to be indistinguishable from success; and ⚠ `seethrough_arm_b.py` read the key with
+`[...]` **between `suspend-tid` and `resume-tid` with no try/finally** — a `KeyError` there would
+have left the game thread SUSPENDED and the process needing a kill.
+
+**Verification**: 9 C++ classifier assertions covering every branch (including the
+connected-while-paused one that a "simplification" would delete, and the saturating guards), a
+regression control asserting the gate predicate is **bit-for-bit** what it was before the split,
+the envelope builders re-pinned per liveness, and 8 C# `PipeEnvelope` tests. Two negative controls:
+restoring the unconditional stamp turns the omission assertions red, and making an absent key mean
+"no report" turns the withdrawal test red.
 
 ## ▶ Next up (genuinely actionable now)
 

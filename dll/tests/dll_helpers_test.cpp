@@ -5805,21 +5805,112 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
 // below pin the presence and type of `game_thread_stalled` and only assert its value in
 // the one case that is about precedence rather than about liveness.
 namespace Stark {
-bool IsGameThreadResponsive(int32_t /*thresholdMs*/) { return true; }
+// Settable, because the envelope's shape now DEPENDS on the verdict: an Unknown
+// liveness omits the key entirely rather than defaulting it to false.
+// (STALLDEFAULT-2026-08-26)
+GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
+GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_testLiveness; }
 }   // namespace Stark
+
+static void Test_Stark_ClassifyGameThreadLiveness() {
+    using L = Stark::GameThreadLiveness;
+    const uint64_t thr = 500, now = 100000;
+    auto cl = [&](bool active, uint64_t last, uint64_t inst) {
+        return Stark::ClassifyGameThreadLiveness(active, last, inst, now, thr);
+    };
+
+    EXPECT("no hook: UNKNOWN, not a healthy default", cl(false, 0, 0) == L::Unknown);
+    EXPECT("fired recently: responsive", cl(true, now - 100, now - 5000) == L::Responsive);
+    EXPECT("fired, then went quiet past the threshold: stalled",
+           cl(true, now - 1000, now - 5000) == L::Stalled);
+    EXPECT("never fired, inside the grace window: still UNKNOWN",
+           cl(true, 0, now - 100) == L::Unknown);
+    // The connected-while-paused case: active, never fired, past grace. Deleting this
+    // branch as a "simplification" would remove working detection.
+    EXPECT("never fired, past grace: stalled (connected while paused)",
+           cl(true, 0, now - 1000) == L::Stalled);
+    EXPECT("active with no install stamp: UNKNOWN", cl(true, 0, 0) == L::Unknown);
+
+    // Saturating guards: a clock that appears to go backwards must not underflow into
+    // a huge age and read as a stall.
+    EXPECT("last == now is responsive", cl(true, now, now - 5000) == L::Responsive);
+    EXPECT("exactly the threshold is still responsive",
+           cl(true, now - thr, now - 5000) == L::Responsive);
+    EXPECT("a fire stamped in the future does not underflow",
+           cl(true, now + 10000, now - 5000) == L::Responsive);
+}
+
+static void Test_Stark_LivenessPreservesTheGateContract() {
+    // The eight in-DLL gates (Dunste noclip, Schlacht see-through, Wirbel) ask "should
+    // I attempt a game-thread invoke?", and unknown must keep meaning YES -- the
+    // attempt is what installs the hook. This asserts the refactor changed the REPORT
+    // and not the GATE, by re-deriving the pre-fix expression and comparing.
+    //
+    // A regression control, NOT evidence the bug existed.
+    using L = Stark::GameThreadLiveness;
+    const uint64_t thr = 500, now = 100000;
+    struct V { bool active; uint64_t last; uint64_t inst; };
+    const V vectors[] = {
+        {false, 0, 0}, {true, now - 100, now - 5000}, {true, now - 1000, now - 5000},
+        {true, 0, now - 100}, {true, 0, now - 1000}, {true, 0, 0},
+        {true, now, now}, {true, now - thr, now - 5000}, {true, now + 10000, now},
+    };
+    auto legacy = [&](const V& v) -> bool {
+        if (!v.active) return true;
+        if (v.last != 0) return (now > v.last ? now - v.last : 0) <= thr;
+        if (v.inst == 0) return true;
+        return (now > v.inst ? now - v.inst : 0) <= thr;
+    };
+    bool allMatch = true;
+    for (const V& v : vectors) {
+        const L got = Stark::ClassifyGameThreadLiveness(v.active, v.last, v.inst, now, thr);
+        if (Stark::IsResponsiveFromLiveness(got) != legacy(v)) allMatch = false;
+    }
+    EXPECT("the gate predicate is bit-for-bit what it was before the split", allMatch);
+}
 
 static void Test_Renge_EnvelopeBuilders() {
     std::printf("Test_Renge_EnvelopeBuilders\n");
 
     // MakeResponse: id + ok=true + the liveness hint, with no payload at all.
     {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Responsive;
         nlohmann::json res = Renge::MakeResponse(11);
         EXPECT("MakeResponse sets id", res.contains("id") && res["id"] == 11);
         EXPECT("MakeResponse sets ok=true", res.contains("ok") && res["ok"] == true);
-        EXPECT("MakeResponse always carries the liveness hint",
-               res.contains("game_thread_stalled") && res["game_thread_stalled"].is_boolean());
+        EXPECT("a MEASURED responsive carries the hint as false",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"] == false);
         EXPECT("MakeResponse with no payload has exactly the envelope", res.size() == 3);
     }
+
+    // A measured STALL still carries the hint, as true.
+    {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Stalled;
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("a MEASURED stall carries the hint as true",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"] == true);
+        EXPECT("...and the envelope is still exactly 3 keys", res.size() == 3);
+    }
+
+    // ⭐ UNKNOWN omits the key. This is the assertion that goes RED on the old
+    // `res["game_thread_stalled"] = !IsGameThreadResponsive()`, which reported a
+    // healthy game thread nobody had measured. (STALLDEFAULT-2026-08-26)
+    {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Unknown;
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("an UNMEASURED liveness omits the key entirely",
+               !res.contains("game_thread_stalled"));
+        EXPECT("...leaving a 2-key envelope", res.size() == 2);
+
+        // Precedence survives the omission: a handler that sets the key itself still
+        // wins. Fails if the omission is implemented as a post-hoc erase.
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        nlohmann::json res2 = Renge::MakeResponse(13, std::move(data));
+        EXPECT("a handler's own value wins even when Stark cannot tell",
+               res2.contains("game_thread_stalled") && res2["game_thread_stalled"] == true);
+    }
+    Stark::g_testLiveness = Stark::GameThreadLiveness::Responsive;   // restore for the rest
 
     // A payload splices in WITHOUT displacing any envelope key.
     {
@@ -7001,6 +7092,8 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Stark_ClassifyGameThreadLiveness);
+    RUN(Test_Stark_LivenessPreservesTheGateContract);
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)

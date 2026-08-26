@@ -17,6 +17,19 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 - On partial success: `"ok": true, "error": "message"` — check for `"error"` even when `ok` is true.
 - All addresses are hex strings with no prefix (e.g. `"7FF600A12340"`) unless noted.
 - Pagination advances by `"scanned"` (indices iterated), **not** by `objects.length` — null slots are skipped but still counted.
+- **`"game_thread_stalled"` (bool) is OPTIONAL, and its absence is meaningful.** It rides every
+  **success** envelope, but only when the DLL can actually measure it — i.e. once a ProcessEvent
+  hook is installed. **Present ⇒ a measurement.** Absent ⇒ either the DLL cannot tell (no hook
+  yet, which is the normal state of a fresh connection because the hook installs lazily on the
+  first invoke) or an older DLL that predates this. Error envelopes and push events have never
+  carried it. ⚠ A client must treat absence on a success envelope as **withdrawing** any standing
+  claim, not as "no news": the hook can go back down mid-session, and a banner raised by a real
+  stall would otherwise stay up forever. It used to be stamped unconditionally as
+  `!IsGameThreadResponsive()` — a *gate* predicate that maps "unknown" to "responsive" — so the
+  wire asserted a healthy game thread nobody had measured. (STALLDEFAULT-2026-08-26)
+  `get_diagnostics.game_thread.liveness` carries the same fact in three states
+  (`"responsive"` / `"stalled"` / `"unknown"`); `game_thread.responsive` beside it is the legacy
+  gate predicate and is kept unchanged for older clients.
 
 -----
 

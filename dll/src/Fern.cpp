@@ -4084,6 +4084,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // of "is the game starved?". A stalled game thread makes every
             // invoke-bearing command sit in the dispatcher.
             json gt;
+            const Stark::GameThreadLiveness live = Stark::GetGameThreadLiveness();
             gt["hook_active"]           = Stark::IsHookActive();
             gt["hook_fire_count"]       = Stark::GetHookFireCount();
             // MsSinceLastHookFire returns UINT64_MAX for "never fired — liveness
@@ -4095,7 +4096,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const uint64_t msSinceFire = Stark::MsSinceLastHookFire();
             gt["ms_since_last_fire"]    = (msSinceFire == UINT64_MAX)
                                             ? int64_t(-1) : int64_t(msSinceFire);
+            // `responsive` is the GATE predicate: Unknown counts as responsive, because
+            // "no hook yet" means "try". Kept unchanged so an older UI does not start
+            // rendering "Stalled" on a healthy game. `liveness` is the honest
+            // three-state answer, and is what the UI renders. (STALLDEFAULT-2026-08-26)
             gt["responsive"]            = Stark::IsGameThreadResponsive();
+            gt["liveness"]              =
+                (live == Stark::GameThreadLiveness::Unknown)  ? "unknown"
+              : (live == Stark::GameThreadLiveness::Stalled)  ? "stalled"
+                                                              : "responsive";
             gt["invoke_timeout_ms"]     = Stark::GetInvokeTimeoutMs();
             data["game_thread"] = gt;
 

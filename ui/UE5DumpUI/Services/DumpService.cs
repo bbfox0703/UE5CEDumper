@@ -2828,6 +2828,7 @@ public sealed class DumpService : IDumpService
                 // as "unknown" rather than as a plausible age.
                 MsSinceLastFire = JsonNum.L(g?["ms_since_last_fire"], -1L),
                 Responsive      = JsonNum.B(g?["responsive"]),
+                Liveness        = g?["liveness"]?.GetValue<string>() ?? "",
                 InvokeTimeoutMs = JsonNum.I(g?["invoke_timeout_ms"]),
             },
             Commands = cmds,

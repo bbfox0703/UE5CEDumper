@@ -463,6 +463,7 @@
     <sys:String x:Key="str.System.Diag.NeverFired">never fired (hook installs on first invoke)</sys:String>
     <sys:String x:Key="str.System.Diag.Responsive">responsive</sys:String>
     <sys:String x:Key="str.System.Diag.Stalled">STALLED</sys:String>
+    <sys:String x:Key="str.System.Diag.LivenessUnknown">unknown (no ProcessEvent hook yet)</sys:String>
     <sys:String x:Key="str.System.Diag.NotConnected">Diagnostics need a live DLL connection.</sys:String>
     <sys:String x:Key="str.System.Diag.Reset.Done">Counters reset.</sys:String>
     <sys:String x:Key="str.System.Diag.Error">Diagnostics failed: {0}</sys:String>

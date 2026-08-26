@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -356,12 +356,17 @@ public sealed class PipeClient : IPipeClient
                     parseSw.Stop();
                     if (obj == null) continue;
 
-                    // App-wide game-thread liveness hint: the DLL rides
-                    // `game_thread_stalled` on every success envelope. Report the
-                    // raw observation on every response; the router's combined
-                    // latch (GameThreadStalledLevel) dedupes so a paging burst
-                    // doesn't spam the UI. Absent (old DLL / push event) → no report.
-                    if (obj["game_thread_stalled"]?.GetValue<bool>() is bool stalled)
+                    // App-wide game-thread liveness hint. The DLL rides
+                    // `game_thread_stalled` on a success envelope ONLY when it is a
+                    // measurement; it withholds the key when no PE hook is installed
+                    // and it cannot tell. Report on every success envelope either way —
+                    // a withheld key WITHDRAWS a claim, and must not be silently
+                    // ignored, or a banner raised by a real stall would stick after the
+                    // hook comes back down. Push events and ok:false errors say nothing
+                    // and are skipped. The router's combined latch
+                    // (GameThreadStalledLevel) dedupes, so a paging burst does not spam
+                    // the UI. (STALLDEFAULT-2026-08-26)
+                    if (Helpers.PipeEnvelope.TryReadStalled(obj, out bool stalled))
                         GameThreadStalledChanged?.Invoke(stalled);
 
                     if (obj["event"] != null)

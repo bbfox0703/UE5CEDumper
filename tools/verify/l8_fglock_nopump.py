@@ -84,20 +84,21 @@ def main(argv=None):
                          "on an already-subclassed window). Relaunch the game.")
         before_lines = subclass_lines()
 
-        # ⭐ FORCE THE ProcessEvent HOOK FIRST, or the stall detector is inert.
-        # Stark::IsGameThreadResponsive opens with `if (!s_hookActive) return true;` -- with no
-        # hook installed it reports RESPONSIVE unconditionally, so `game_thread_stalled` reads
-        # False on a fresh process no matter what the thread is doing. The first run of this rig
-        # froze the correct thread (highest-CPU, 4906 ms vs 15 ms) and still saw False, because
-        # nothing had installed the hook yet. pe_profile_start calls UE5_EnsureGameThreadHook.
+        # ⭐ FORCE THE ProcessEvent HOOK FIRST, or the stall detector is inert. With no hook
+        # the DLL cannot measure liveness at all and now WITHHOLDS `game_thread_stalled`
+        # (STALLDEFAULT-2026-08-26) -- it used to default it to False, which is why the first
+        # run of this rig froze the correct thread (highest-CPU, 4906 ms vs 15 ms) and still
+        # saw False. pe_profile_start calls UE5_EnsureGameThreadHook.
         c.request("pe_profile_start")
         time.sleep(1.5)
         live = c.request("get_pointers").get("game_thread_stalled")
-        print("    hook forced; game_thread_stalled = %s (must be False -- detector live and "
-              "thread healthy)" % live)
-        if live:
-            fails.append("0: the thread already reads stalled BEFORE the freeze -- the host is "
-                         "not healthy and the freeze below would prove nothing")
+        print("    hook forced; game_thread_stalled = %r (must be False -- detector armed AND "
+              "thread healthy; None means not armed)" % live)
+        # `is not False` covers both failure modes in one test: True (already stalled) and
+        # None (never armed). The second used to be indistinguishable from success.
+        if live is not False:
+            fails.append("0: the stall detector is not armed (live=%r) or the host is already "
+                         "stalled -- the freeze below would prove nothing" % live)
 
         print("")
         print("[1] freezing tid %d BEFORE the first enable (game thread only)" % a.tid)

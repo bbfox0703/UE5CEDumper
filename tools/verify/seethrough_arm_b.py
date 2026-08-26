@@ -20,10 +20,14 @@ first:
   * `IsHungAppWindow(hwnd)`         - the OS's own view, from user32
   * `get_pointers.game_thread_stalled` - the DLL's view (Stark's hook heartbeat)
 
-⚠ `game_thread_stalled` is FALSE BY DEFAULT when no ProcessEvent hook is installed
-(`Stark::IsGameThreadResponsive` opens with `if (!s_hookActive) return true;`), so the rig
-forces the hook first. Enabling See-through does that anyway, but it is asserted rather than
-assumed.
+⚠ `game_thread_stalled` is now ABSENT when no ProcessEvent hook is installed -- the DLL
+withholds the key rather than defaulting it to False, so an unmeasured liveness can no longer
+pose as a healthy one (STALLDEFAULT-2026-08-26). The rig forces the hook first; enabling
+See-through does that anyway, but it is asserted rather than assumed.
+
+⚠⚠ READ THE KEY WITH .get(), NEVER `[...]`. The second read sits BETWEEN `suspend-tid` and
+`resume-tid` with no try/finally, so a KeyError there would leave the game thread SUSPENDED
+and the process needing a kill.
 
 ⚠ A `taskkill /F` does NOT test this arm - recorded during arms (c)/(d): the DLL's shutdown
 path never runs at all, so the arm is vacuous. It must be a posted WM_CLOSE.
@@ -115,9 +119,15 @@ def main(argv=None):
             raise SystemExit("arm(b): nothing hidden from this pose -- the arm would be vacuous")
 
         hung0 = bool(u32.IsHungAppWindow(hwnd))
-        stalled0 = c.request("get_pointers")["game_thread_stalled"]
-        print("[2] BEFORE the stall: IsHungAppWindow=%s  game_thread_stalled=%s (both must be "
-              "False, or the witnesses cannot flip)" % (hung0, stalled0))
+        # Absent means the DLL is not MEASURING liveness (no PE hook), which makes the
+        # whole arm vacuous -- and it must be caught HERE, before the suspend below.
+        stalled0 = c.request("get_pointers").get("game_thread_stalled")
+        print("[2] BEFORE the stall: IsHungAppWindow=%s  game_thread_stalled=%r (must be "
+              "False, not None, or the witnesses cannot flip)" % (hung0, stalled0))
+        if stalled0 is None:
+            raise SystemExit("arm(b): the DLL is not measuring game-thread liveness (no PE "
+                             "hook) -- refusing to suspend a thread whose stall nothing "
+                             "would witness")
         if hung0 or stalled0:
             fails.append("2: the game already looks hung before the stall, so neither witness "
                          "can show the stall actually happened")
@@ -126,8 +136,9 @@ def main(argv=None):
         print("[3] stalling the game thread: %s" % tid_ctl("suspend-tid", a.tid))
         time.sleep(a.hang)
         hung1 = bool(u32.IsHungAppWindow(hwnd))
-        stalled1 = c.request("get_pointers")["game_thread_stalled"]
-        print("    WITNESSES: IsHungAppWindow=%s  game_thread_stalled=%s" % (hung1, stalled1))
+        # .get(), never [...]: this line is INSIDE the suspend window.
+        stalled1 = c.request("get_pointers").get("game_thread_stalled")
+        print("    WITNESSES: IsHungAppWindow=%s  game_thread_stalled=%r" % (hung1, stalled1))
         if not stalled1:
             fails.append("3: the DLL does not see the game thread as stalled -- the stall did "
                          "not take, so a clean close afterwards is just arm (d) again")
