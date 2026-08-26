@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **10 open batches** needing a running game (2026-08-26;
+> - `## Pending live-game verification` — **9 open batches** needing a running game (2026-08-26;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -1581,6 +1581,55 @@ Nothing here has been compiled. Build the **Shipping** package to
 `invoke_function`. ⚠ Re-check the escaped caption survives the round trip: it is the one string in
 the fixture whose corruption would look like a *B28 defect* rather than like a build problem.
 
+## 🔎 Log-audit findings (P3R session 2026-08-26, build 3360) — 3 open
+
+*Found by a five-lens adversarial sweep of a real P3R session's logs (46 agents, every finding
+refute-mandated; 19 of 40 were killed). Two of the four defects it surfaced were fixed the same
+day in build 3361 — the `PERF` line's two denominators and the missing re-anchor log line, both
+recorded in [dev-log.md](dev-log.md). These three are open. Each was independently reproduced
+before being written down.*
+
+### ⬜ `[SANEPROPS-2026-08-26]` — `kMaxSanePropertiesSize = 1 MB` rejects legitimate classes
+
+P3R has **two real classes over the limit**, and the same log shows both parsing perfectly:
+
+```
+[WALK] WalkClass: XRD777SaveGame (super=SaveGame, size=3671800) at 0x162C6940
+[WALK] WalkClass: XRD777SaveGame — 2 fields
+[WALK:safe] WalkClass: refusing to cache 0x162c6940 — PropertiesSize=3671800 (read ok);
+            not a UStruct, or recycled memory
+```
+
+`AstreaSaveGame` (3,671,816) is the other. Both are byte-stable across twelve minutes of the
+session, so "recycled memory" is simply wrong about them — a ~3.5 MB SaveGame class is ordinary.
+
+⚠ **The cache refusal is the harmless half.** `Ubel.h:530 IsSanePropertiesSize` has a *second*
+caller: `Ubel.cpp:3801`, in `WalkInstance`, which on a fail sets `result.isStale = true`,
+`propsSize = 0` and **skips the field/gap walk entirely** — so walking an instance of one of these
+classes would return nothing and the UI would report a live object as stale. That path was **not
+entered in this session** (grep `implausible PropertiesSize` = 0), so this is latent, not observed.
+
+**Not fixed here on purpose**: the constant guards a real safety property (a recycled address
+yields a garbage `PropertiesSize`, and the walker must not trust it), so raising it is a judgement
+about what a plausible size is, not a typo. Two shapes worth weighing — raise the ceiling to
+something a save-game class fits under, or make the *instance* path's verdict depend on more than
+size alone. Needs the maintainer's call.
+
+### ⬜ `[FUNCDENOM-2026-08-26]` — "9760 entries from 2293 classes" counts classes that contributed nothing
+
+`ListAllFunctions: total=9760 classes=2293 interesting=1848`. The `2293` is the number of classes
+**scanned**, not the number that yielded a function; only ~889 actually contributed one. Read as
+provenance — which it looks like — it overstates coverage by 2.6×. Same family as the `PERF`
+denominator fixed in 3361: a number that invites an arithmetic reading it does not support.
+
+### ⬜ `[STALLDEFAULT-2026-08-26]` — `game_thread_stalled: false` before the hook exists is a DEFAULT, not a measurement
+
+`game_thread_stalled` cannot report a stall until the ProcessEvent hook is installed, so almost
+every `false` in a session's logs is the field's initial value rather than an observation. A reader
+(or a future check) cannot tell the two apart from the wire. Either withhold the field until it can
+be measured, or publish a third state. ⚠ Low severity but the exact shape of `[SEETHRUNOOP]` and
+`[SEETHRUTALLY]` — a success report computed by a path that never ran.
+
 ## ▶ Next up (genuinely actionable now)
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
@@ -2892,7 +2941,7 @@ as nothing to build. Shown able to fail: setting the threshold to 0 reports all 
 and exits 1; at 2048 the check is clean at 72 objects. CLAUDE.md's build section now names the empty
 TU as the third legitimate exception beside `.rc.res` and `.asm.obj`.
 
-### ⬜ ROWS 1–4 VERIFIED 2026-08-26, ROW 5 STILL OWED — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
+### ✅ ALL FIVE ROWS CLOSED 2026-08-26 — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
 
 *Reported from a real P3R session (build 3358, `UE427`, 65,158 objects; screenshots + logs supplied).
 Fixed in build 3359 — see [dev-log.md](dev-log.md). The **logic** is pinned by 8 unit checks
@@ -2962,8 +3011,36 @@ rows 1–4 and leave 5 open rather than marking the section done.
 > UWorld `10C5D859BD0` **0** times; AA script `define(PlayerStart,10C5E66C0C0)`; control
 > `bcCount=3` with root `gworld_addr_359220` and `PersistentLevel (30) ▸ LevelScriptActor (F0)`.
 >
-> **Row 5 remains open** — DumperTest has no World-Partition streaming, so the `ok_via_level`
-> recovery path was never entered.
+> **Row 5: CLOSED 2026-08-26 on Titan Quest II (build 3361).** DumperTest has no streaming, so the
+> `ok_via_level` path could not be entered there. ⭐ **The reproducer was found by AUDITING THE LOG
+> TREE, not by guessing a title**: `Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log` already held
+> the pre-fix line, from a session five days earlier —
+> `[2026-08-23 09:11:37.634] LocateInGWorld: reach mode, 2 hop(s) | BC=GWorld(P,0x0,68E0) > (world
+> level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`. Two `0xFFFFFFFF` hops in a real
+> spine; nobody had ever pressed Copy CE XML on one, which is exactly why the third defect stayed
+> latent.
+>
+> Re-run on TQ2 (UE507, **279,587 objects** — identical to the 2026-08-23 session; Instances →
+> class `Actor`, exact → **3 results**, identical → 🌍 Locate on `0x2B8B783A8D0`):
+>
+> | | 2026-08-23, pre-fix | 2026-08-26, build 3361 |
+> |---|---|---|
+> | locate spine | `(world level)(S,**0xFFFFFFFF**,A960) > (level actor)(S,**0xFFFFFFFF**,FA60)` | `(world level)(S,**none**,91C0) > (level actor)(S,**none**,A8D0)` |
+> | Copy CE XML from it | never pressed, on any build | `CEXML re-anchored: dropped **2** offset-less hop(s); root is now (level actor) @ 0x2B8B783A8D0` |
+>
+> **The emitted table, measured**: 777 `<Address>` entries, **exactly one** absolute — `2B8B783A8D0`,
+> the level actor's own address, as the root (`<Description>"Actor_0"</Description>`). `FFFFFFFF`
+> appears **0** times anywhere in the file; `GWorld` 0; the world address (`2B8B7892320`) 0; the
+> level address 0. AA Script on the same spine: *"hardcoded address (GWorld path not
+> forward-walkable)"*, body `define(Actor,2B8B783A8D0)`.
+>
+> ⚠ **Environment note, recorded rather than hidden**: TQ2 ran the **3360** proxy DLL against the
+> **3361** UI, and the UI's own stale-build banner said so (`⚠ DLL build 3360 ≠ UI 3361 — stale,
+> redeploy`). That is acceptable *here specifically*, and the reason is checkable rather than
+> assumed: `git diff --stat e88190ba HEAD -- dll/` is **empty**, so the DLL is functionally
+> identical, and every mechanism row 5 exercises (`AnchorAtLastUnchainableHop`, `FormatCrumbOffset`,
+> `LogReanchor`) is UI-side. ⛔ Do not generalise this — for any row that turns on DLL behaviour the
+> banner is a stop, not a note.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 

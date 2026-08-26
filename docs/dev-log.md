@@ -22,6 +22,87 @@ builds ≤696 in
 
 -----
 
+## 2026-08-26 (evening) - The P3R log confirmed the fix; auditing the same logs found two more reporting defects, and named the title that closes row 5 (build 3361)
+
+The maintainer re-ran the reported game. `Logs\P3R` (build 3360, `e88190ba-dirty`, proxy DLL,
+UE427, 65,021 objects) against the 3358 session on the **same actor in the same game**:
+
+| | 3358 (broken) | 3360 (fixed) |
+|---|---|---|
+| nav | `NAV→ KernelActor addr=0x64AF68C0 off=0x0` | `NAV→ KernelActor addr=0x101646B80 off=none` |
+| spine | `KernelActor(P,0x0,68C0)` | `KernelActor(P,none,6B80)` |
+| export | `bcCount=2` | `bcCount=1` |
+| AOB | `AOB=True` | `AOB=False` + `AOB requested but root is not GWorld` |
+
+⭐ **`AOB=True → False` is the sharpest line in the whole affair**: build 3358 wrapped the bogus
+chain in a **GWorld AOB script**, i.e. it made the wrong address *survive a restart*. And the
+"before" artifact was on disk the whole time — `Y:\Copy CE XML.xml`, saved 09:47 — which measures
+identically to the after: root `gworld_addr_9E30D6`, then `KernelActor (0)` at `+0`, and the
+actor's real address `64AF68C0` appearing **0 times in 1,288 entries**. That is precisely what the
+unit test asserts when the row marker is removed.
+
+**Then the logs were audited rather than merely read** — five diverse lenses over both sessions, a
+refute-mandated skeptic per finding (19 of 40 killed), and a completeness critic. It changed the
+conclusion twice, in both directions.
+
+⚠ **Two corrections to what this session had already claimed.**
+1. "The two sessions are apples-to-apples" was **too strong**. They differ in injection mode
+   (proxy vs auto-start), AOB hint-cache state (`scan #1` vs `#17`), `array_limit`, and whether
+   AOBMaker was up. The narrow comparison — same PE `69CE343916376000`, same actor, same class,
+   same gesture — holds, and that is what should have been said.
+2. The P3R logs witness the **mechanism**, not the **bytes**: no export's XML content is ever
+   logged, and a `bcCount=1 / AOB=False` pair is also what a **GameEngine-rooted** export would
+   print — and that session rooted one on GameEngine at 10:50:13. Here the same line's `BC=` trace
+   names a two-crumb GWorld spine, so it is disambiguated; but the signature alone is not.
+
+**That second point was a real gap, and it is now closed in code.** The re-anchor announced itself
+only through `StatusText`, which reaches no log and is overwritten by the next status. `LogReanchor`
+now says it outright at both export sites:
+
+```
+CEXML re-anchored: dropped 2 offset-less hop(s); root is now (level actor) @ 0x2B8B783A8D0
+                   (absolute, session-only — no pointer chain from GWorld exists)
+```
+
+**Two reporting defects fixed, and both are the same shape as the bug that started the day.**
+
+⭐ `[PERFDENOM-2026-08-26]` — the `PERF` line printed three numbers over **two denominators**:
+`11 dispatches` beside `busy 15.2 ms` beside `per call: dll 1.524`, where 15.2/11 = 1.38. `busyMs`
+is summed from the per-command rows, which deliberately skip the probe's own `get_diagnostics` —
+there is a comment saying so, added when a 57.7 ms operation reported "161.2%" because the probe
+was measuring itself. `dispatches`, **two lines below it**, still read the global counter. The
+divisor was always `dispatches − 1`, on two games and two builds. *The fix landed in one of its two
+copies* — the same sentence as the GWorld defect, in a different file. The existing test
+**pinned** it (`R(3, …, one call)` asserting `"3 dispatches"`), sitting directly beside the test
+that made exactly this correction for `busyMs`.
+
+`[PERFPEAK-2026-08-26]` — `max` was a running high-water mark, so it was the worst call *since the
+last reset*, not the worst in the operation; two exports minutes apart printed a byte-identical
+`max 3.5ms` while their totals moved. `TopDeltas`' own comment said *"let the label carry the
+caveat"* and the label said `max`. It now reads `top (peak = session high-water, not this op)`.
+
+⚠ Fixing that label broke `Split_never_goes_negative…`, which asserted **no `-` anywhere in the
+line** as a proxy for *no negative number* — and `high-water` has a hyphen. The proxy was corrected
+to the actual predicate rather than the wording bent to fit it.
+
+**Row 5 is closed, and the log tree named the title.** Three lenses guessed "needs a
+World-Partition game"; the critic found the reproducer already on disk —
+`Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log` from five days earlier, showing
+`(world level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`. Two `0xFFFFFFFF` hops in a
+real spine, and nobody had ever pressed Copy CE XML on one — which is why the third defect stayed
+latent. Re-run on **Titan Quest II** (UE507, 279,587 objects; the same `Actor` → 3 results → 🌍
+Locate): the hops now render `none`, the export re-roots (`dropped 2 offset-less hop(s)`), and the
+emitted table has **777 `<Address>` entries, exactly one absolute** — the level actor's own — with
+`FFFFFFFF` appearing **0** times anywhere in the file. AA Script: `define(Actor,2B8B783A8D0)`.
+
+Three findings stay **open** and are recorded in [todo.md](todo.md): `[SANEPROPS-2026-08-26]`
+(a 1 MB sanity ceiling rejects two legitimate ~3.5 MB P3R SaveGame classes, and the *instance*
+walker uses the same predicate to declare a live object stale), `[FUNCDENOM-2026-08-26]`,
+`[STALLDEFAULT-2026-08-26]`.
+
+Suite **4,738/4,738**, gates **13/13**, `dist/` republished AOT-trimmed (54.7 MB, sha `25e65203`,
+byte-identical to the native output).
+
 ## 2026-08-26 (later) - The GWorld actor-chain fix, driven on a live game; and the sentinel was logged as `0xFFFFFFFF` (build 3360)
 
 **Live half of `[GWORLDACTORCHAIN-2026-08-26]`** (previous entry). Rows 1–4 of its verification

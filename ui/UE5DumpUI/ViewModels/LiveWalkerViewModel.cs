@@ -1936,6 +1936,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Returns a warning string listing the truncated fields, or null if none.
     /// </summary>
     /// <summary>
+    /// Record a spine re-root in the log. The user-facing note goes to
+    /// <see cref="StatusText"/> only, which reaches no log and is gone the moment the
+    /// next status replaces it — so a session's logs showed the re-anchor solely as a
+    /// <c>bcCount</c> SMALLER than the crumb count in the same line's <c>BC=</c> trace.
+    /// That is a genuine witness, but it reads as a contradiction, and it is
+    /// indistinguishable from an export rooted somewhere that legitimately has one crumb
+    /// (a GameEngine root). Say it outright instead. No-op when nothing was dropped.
+    /// </summary>
+    private void LogReanchor(IReadOnlyList<BreadcrumbItem> before, IReadOnlyList<BreadcrumbItem> after)
+    {
+        if (after.Count >= before.Count) return;
+        var root = after.Count > 0 ? (after[0].FieldName ?? after[0].Label) : "(none)";
+        _log.Info($"CEXML re-anchored: dropped {before.Count - after.Count} offset-less hop(s); "
+                + $"root is now {root} @ {(after.Count > 0 ? after[0].Address : "")} "
+                + "(absolute, session-only — no pointer chain from GWorld exists)");
+    }
+
+    /// <summary>
     /// Render a breadcrumb / field offset for a LOG line. A negative value is the
     /// "this hop has no offset" sentinel (a GWorld actor-list entry, a World-Partition
     /// recovery hop), and `0x{-1:X}` prints it as <c>0xFFFFFFFF</c> — which is both
@@ -4234,6 +4252,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Re-rooting there costs restart-stability and buys a chain that is right.
             var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
             var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
+            LogReanchor(breadcrumbsForXml, reanchoredForXml);
             breadcrumbsForXml = reanchoredForXml;
 
             _log.Info($"CEXML export: containerView={isContainerView} bcCount={breadcrumbsForXml.Count} | BC={FormatBreadcrumbTrace()}");
@@ -4569,6 +4588,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // idempotent, so a spine that is already anchored passes through untouched.
             var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
             var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
+            LogReanchor(breadcrumbsForXml, reanchoredForXml);
             breadcrumbsForXml = reanchoredForXml;
 
             var fieldSummary = selectedSnapshot.Count == 1

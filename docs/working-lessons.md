@@ -1221,6 +1221,43 @@ and not the bug. The F9 fix is what first *populated* that list; every row it ad
 fabricated zero. A cosmetic complaint that arrived **with** a correctness complaint usually shares
 a cause with it.
 
+### 2.15a The LOG TREE is a corpus — grep it before concluding a scenario needs a game you do not have
+
+`[GWORLDACTORCHAIN-2026-08-26]`. Verification row 5 needed an `ok_via_level` (streaming /
+World-Partition) recovery path. Three independent finder agents concluded "this needs a different
+title" and stopped. It had **already been reproduced on this machine five days earlier**, and the
+line was sitting in `%LOCALAPPDATA%\UE5CEDumper\Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log`:
+
+```
+LocateInGWorld: reach mode, 2 hop(s) | BC=GWorld(P,0x0,68E0) > (world level)(S,0xFFFFFFFF,A960)
+                                                             > (level actor)(S,0xFFFFFFFF,FA60)
+```
+
+⭐ **Every log folder under `Logs\` is a record of a scenario that has occurred on real software
+here.** Before writing "needs a title we do not have" / "cannot be reproduced on demand", grep the
+whole tree for the *symptom string*, not the game name. The 21-day retention sweep means the corpus
+is a rolling few weeks deep — which is usually plenty, and is also a reason to look **now** rather
+than deferring the row.
+
+⚠ **Two second-order lessons from the same find.**
+
+- **A finder agent asked "which game has feature X?" will answer from world knowledge.** It has to
+  be pointed at the evidence: *"grep the log tree for this exact string"* is a different instruction
+  from *"which title would exercise this?"*, and only the first one found it. Put the symptom
+  string in the prompt.
+- **The absence of a symptom is not evidence when the code path never ran.** Three lenses noted
+  `+FFFFFFFF` appears 0 times in the new session and correctly refused to call that a pass —
+  `find_path_from_gworld` was never sent, so the generator was never reached. That is §2.10 (an
+  absence proves nothing until the CHANNEL is shown to carry the thing) applied to a whole feature
+  rather than to one log line.
+
+⚠ **And the row it closed had never been executed at all** — not before the fix, not after. The
+`ok_via_level` spine had been *produced* on 2026-08-23, but nobody had pressed Copy CE XML on it, so
+the `+FFFFFFFF` it would have emitted was latent for as long as the marker had existed. When a
+defect is "the producer marks it and no consumer handles it" (§2.15), the consumer half is
+**usually unexercised by construction** — that is why it survived. Budget a live run for it
+specifically; a green suite says nothing about a path no user has walked.
+
 ### 2.16 An export row rarely needs Cheat Engine, and rarely needs the game that was reported
 
 Two independent shortcuts, both used to close `[GWORLDACTORCHAIN-2026-08-26]` rows 1–4 in about ten

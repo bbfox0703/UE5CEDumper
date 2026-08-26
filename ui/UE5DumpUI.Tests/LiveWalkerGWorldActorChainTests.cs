@@ -50,7 +50,7 @@ public class LiveWalkerGWorldActorChainTests
             });
     }
 
-    private static (LiveWalkerViewModel vm, MockPlatformService platform) MakeVm()
+    private static (LiveWalkerViewModel vm, MockPlatformService platform, MockLoggingService log) MakeVmL()
     {
         var dump = new WorldStub();
         // The object the user drills into: one plain scalar field at a real offset, so the
@@ -66,7 +66,14 @@ public class LiveWalkerGWorldActorChainTests
             },
         });
         var platform = new MockPlatformService(Path.GetTempPath());
-        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform);
+        var log = new MockLoggingService();
+        var vm = new LiveWalkerViewModel(dump, log, platform);
+        return (vm, platform, log);
+    }
+
+    private static (LiveWalkerViewModel vm, MockPlatformService platform) MakeVm()
+    {
+        var (vm, platform, _) = MakeVmL();
         return (vm, platform);
     }
 
@@ -177,6 +184,49 @@ public class LiveWalkerGWorldActorChainTests
         Assert.True(xml != null, $"no script produced - status='{vm.StatusText}' error='{vm.ErrorMessage}'");
         Assert.DoesNotContain("4C8003", xml, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("64AF68C0", xml, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The re-anchor must be stated in the LOG, not only in StatusText.
+    ///
+    /// <para>Found by auditing a real P3R session (2026-08-26): the only trace the
+    /// re-anchor left in the logs was a <c>bcCount</c> smaller than the crumb count in
+    /// the same line's <c>BC=</c> trace. That is a real witness, but it reads as a
+    /// contradiction, and it is indistinguishable from an export legitimately rooted on a
+    /// one-crumb spine — the same session rooted a walk on GameEngine minutes later,
+    /// which would produce the identical <c>bcCount=1 / AOB=False</c> pair. StatusText
+    /// reaches no log and is overwritten by the next status.</para>
+    /// </summary>
+    [Fact]
+    public async Task CopyCeXml_FromAWorldActor_SaysInTheLogThatItReanchored()
+    {
+        var (vm, _, log) = MakeVmL();
+        await vm.StartFromWorldCommand.ExecuteAsync(null);
+        await vm.NavigateToFieldCommand.ExecuteAsync(
+            Assert.Single(vm.Fields, f => f.Name == "KernelActor"));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        var line = Assert.Single(log.Messages, m => m.Contains("re-anchored", StringComparison.Ordinal));
+        Assert.Contains("dropped 1 offset-less hop", line, StringComparison.Ordinal);
+        Assert.Contains(ActorAddr, line, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// ...and must say nothing when it did not fire, or the line becomes noise that a
+    /// reader learns to skip.
+    /// </summary>
+    [Fact]
+    public async Task OrdinaryExport_LogsNoReanchor()
+    {
+        var (vm, _, log) = MakeVmL();
+        await vm.StartFromWorldCommand.ExecuteAsync(null);
+        await vm.NavigateToFieldCommand.ExecuteAsync(
+            Assert.Single(vm.Fields, f => f.Name == "PersistentLevel"));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(log.Messages, m => m.Contains("re-anchored", StringComparison.Ordinal));
     }
 
     /// <summary>
