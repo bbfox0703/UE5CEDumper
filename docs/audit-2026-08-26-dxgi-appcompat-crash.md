@@ -329,7 +329,10 @@ A cheaper, game-free reproduction would be a test EXE with a `HIGHDPIAWARE` laye
   + `…appcompat.txt` (the file that proved the loaded dxgi.dll was ours) + a third copy of the dump
 - `out/proxy-backups/Avowed.dxgi.dll.20260823-212124.bak` — the crashing binary
 
-**Traps hit during this investigation, worth not repeating:**
+**Traps hit during this investigation, worth not repeating.** These are also recorded — with the
+reasoning, and with what each one cost — as
+[working-lessons.md §3.6a](working-lessons.md), which is the copy to keep current; this list is the
+short form:
 
 - ⚠ **`UploadTime` is not `EventTime`.** The WER event surfaced on 2026-08-26 but
   `EventTime=134319217554888574` decodes to **2026-08-23 09:22**. Reading the wrong field led to

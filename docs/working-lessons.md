@@ -1488,6 +1488,64 @@ an unrelated stack frame `0x7FFEE5453602 − 0x193602` both gave `0x7FFEE52C0000
 `1` = write, `8` = DEP. WER's `P9` is not that field; taking it for one turned a read into a write in
 the first write-up.
 
+### 3.6a Reading a WER crash on THIS machine — six traps, two of which cost a wrong culprit
+
+From the 2026-08-26 dxgi/AppCompat investigation
+([audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md)). §3.6 above is
+about *making* a dump name the culprit; this is about *reading* one that already exists.
+
+**⚠ `UploadTime` is not `EventTime`, and the folder mtime is neither.** The WER event surfaced in the
+Application log dated **2026-08-26 20:52**, the `ReportQueue` folder was stamped the same, and the
+crash was actually on **2026-08-23 09:22**. `EventTime=134319217554888574` is a FILETIME —
+`datetime(1601,1,1) + timedelta(microseconds=v//10)`. Getting this wrong first dated the crash to
+"today", and then — because ReShade was being installed at the real timestamp — attributed it to
+**ReShade instead of to us**. Decode `EventTime` before you decide whose crash it is.
+
+**⭐ `…tmp.appcompat.txt` in the WER cab is what PROVES which DLL was loaded.** It lists every
+`MATCHING_FILE` with `SIZE`, `LINK_DATE`, `PRODUCT_NAME`, `ORIGINAL_FILENAME` and `EXPORT_NAME`. Ours
+read `dxgi.dll SIZE=2891264 PRODUCT_NAME="UE5CEDumper" BIN_FILE_VERSION="1.0.0.3315"` alongside
+`dxgi0.dll … PRODUCT_NAME="ReShade"` — settling both "was it ours" and "which build" in one file, and
+overturning the misattribution above. Look here before reasoning from the module list.
+
+**⚠ Resolve dump RVAs against the DUMPED build, never the current one.** `dist/proxy/dxgi.dll` had
+`SizeOfImage 0x2CB000` against the dump's `0x2CA000`; the crash return address `0x1B43E4` landed
+**mid-instruction** there and the "identifying" disassembly was meaningless. `out/proxy-backups/`
+keeps timestamped copies of every deployed proxy — `Avowed.dxgi.dll.20260823-212124.bak` was a
+byte-exact match, and against *it* the same RVAs resolved to the exact export thunk and to the
+instruction after its `call ResolveAll`. **Check `SizeOfImage` before trusting any RVA mapping.**
+
+**You can name the immediate caller with no symbols at all.** Disassemble the faulting function's
+prologue, add up its frame (`RtlAllocateHeap` = 7 pushes + `sub rsp,0x140` = `0x178`), and read the
+qword at `rsp+frame`. That gave `dxgi.dll+0x1B43E4` — our module — in one step, with no PDB.
+Registers survive too: the same prologue showed `mov rdi,rcx` / `mov r13,r8` / `mov ebx,edx`, so the
+context's `Rdi=0 Rbx=0 R13=0x20` read straight off as `HeapAlloc(NULL, 0, 32)`.
+
+**⚠ ntdll's export table is far too sparse to symbolize by nearest-export.** `ntdll+0x17AD3C`
+resolves to `RtlNtdllName+0x6F9C`, which is a **`.rdata` data pointer**, not a function. Use the
+`.pdata` (exception directory) function table to tell code from data and to get real function
+bounds — a hit *inside* `[begin,end)` is a frame, one outside is spilled data. Same trick found
+`apphelp!SE_DllLoaded` (a real export, RVA `0x1F790`) live on the stack, which is what tied the crash
+to the shim engine.
+
+**⚠ Minidump module order is stable in the head and ±1 later.** Across all three Octopath dumps
+`apphelp[4] / AcGenral[5] / shell32[20] / version.dll[21]` were identical, but `winmm` was `[31]`
+or `[32]` and `dxgi` `[37]` or `[38]`. Order is usable for "who was loaded during shim init"; it is
+**not** usable for a fine-grained argument resting on one index. (A scratch script that had been
+overwritten by a subagent printed a *different* order and nearly retracted a correct inference — see
+the `dis.py` note below, and §2.0b.)
+
+**⚠ `wevtutil` from git-bash needs MSYS path conversion off.** `wevtutil qe Application /c:5` fails
+with `參數過多` / "too many arguments" because MSYS rewrites `/c:5` into a path. Prefix
+`MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1`. Output is CP950-mojibake in this shell but the ASCII
+fields (`P1`..`P10`, paths, hex codes) are intact — decode `Report.wer` as **UTF-16LE** for the
+readable version, and `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` or python raises
+on the BOM. PowerShell is not an option here (§3.8).
+
+**⚠ Never name a scratch script after a stdlib module.** `scratchpad/dis.py` shadowed `dis`, which
+`capstone` imports via `inspect`, producing
+`partially initialized module 'capstone' has no attribute 'Cs'` — a circular-import error that reads
+like a broken capstone install. Same class as `code.py`, `types.py`, `select.py`.
+
 ### 3.7b A DETACHED thread must not capture a stack local by reference — and ASAN will not tell you
 
 `dll_helpers_test` died on CI with **`0xC0000409` (STATUS_STACK_BUFFER_OVERRUN), no output at all**,
