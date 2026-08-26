@@ -115,11 +115,34 @@ The **scan log** is the single most valuable piece of information. It contains h
 
 ### Prerequisites
 
-- Visual Studio 2022+ (v17+) with C++ Desktop workload
-- .NET SDK 10.0
-- CMake 3.25+
-- Ninja (any recent version)
-- Cheat Engine 7.5+ (for testing)
+> 🚀 **`bootstrap.cmd` checks all of this for you** and prints exactly what is missing,
+> installing nothing until you pass `--install`. The reasoning for every row — including
+> what NOT to install — is in **[docs/toolchain.md](docs/toolchain.md)**.
+
+**To build:**
+
+- **Visual Studio 2026 (v18)** with the Desktop C++ workload.
+  ⚠ The winget id has **no year**: `Microsoft.VisualStudio.Community`.
+  ⚠ `--add Microsoft.VisualStudio.Workload.NativeDesktop` alone installs **no compiler, no
+  CMake and no SDK** — those are *Recommended* deps, not Required. Use the repo's
+  [`.vsconfig`](.vsconfig).
+  VS2022 is untested here; two VS installs sharing one `build/` dir fail at link
+  (`docs/working-lessons.md` §3.8).
+- **.NET SDK 10.0** — or the `Microsoft.NetCore.Component.SDK` VS component. Pick **one**.
+- **Git**, plus `git submodule update --init --recursive`. Git is a *build* dependency:
+  `dll/CMakeLists.txt` shells `git` at configure time.
+- ⛔ **CMake and Ninja are NOT separate installs.** They come from the VS component
+  `Microsoft.VisualStudio.Component.VC.CMake.Project` (4.3.1-msvc1 / 1.13.2). Installing
+  `Kitware.CMake` as well puts a second cmake on PATH that fights over the same `build/`
+  directory — see docs/toolchain.md §8.
+
+**To run the gates and tests:**
+
+- **Python 3** (3.12 recommended) with the **`py` launcher**. ⭐ All 13 gates are
+  stdlib-only — there is no `pip install` step.
+- Lua 5.4 is optional, for the CE-script rigs in `scripts/tests/`.
+
+**For live-game testing:** Cheat Engine **7.7+** (not in winget — see docs/toolchain.md §5).
 
 ### Building
 

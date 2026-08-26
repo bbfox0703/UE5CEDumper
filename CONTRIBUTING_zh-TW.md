@@ -115,11 +115,33 @@ AOB（Array of Bytes）Pattern 是定位引擎全域指標（GObjects、GNames�
 
 ### 前置需求
 
-- Visual Studio 2022+（v17+），含 C++ Desktop 工作負載
-- .NET SDK 10.0
-- CMake 3.25+
-- Ninja（任意近期版本）
-- Cheat Engine 7.5+（用於測試）
+> 🚀 **`bootstrap.cmd` 會自動檢查以下所有項目**,列出缺什麼,在你加上 `--install` 之前
+> 不會安裝任何東西。每一項的理由(含**不該裝什麼**)請看
+> **[docs/toolchain.md](docs/toolchain.md)**。
+
+**建置所需:**
+
+- **Visual Studio 2026(v18)**,含 Desktop C++ 工作負載。
+  ⚠ winget id **沒有年份**:`Microsoft.VisualStudio.Community`。
+  ⚠ 只寫 `--add Microsoft.VisualStudio.Workload.NativeDesktop` 會**裝不到編譯器、CMake、
+  SDK** — 它們是 *Recommended* 而非 Required 相依。請用 repo 內的 [`.vsconfig`](.vsconfig)。
+  VS2022 未經測試;兩個 VS 共用同一個 `build/` 目錄會在連結階段失敗
+  (`docs/working-lessons.md` §3.8)。
+- **.NET SDK 10.0** — 或 VS 元件 `Microsoft.NetCore.Component.SDK`。**擇一**即可。
+- **Git**,以及 `git submodule update --init --recursive`。Git 是*建置*相依:
+  `dll/CMakeLists.txt` 在 configure 階段就會呼叫 `git`。
+- ⛔ **CMake 與 Ninja 不是獨立安裝。** 它們來自 VS 元件
+  `Microsoft.VisualStudio.Component.VC.CMake.Project`(4.3.1-msvc1 / 1.13.2)。額外安裝
+  `Kitware.CMake` 會讓 PATH 上出現第二個 cmake,兩者爭搶同一個 `build/` 目錄 —
+  見 docs/toolchain.md §8。
+
+**跑 gate 與測試所需:**
+
+- **Python 3**(建議 3.12),含 **`py` launcher**。⭐ 13 個 gate 全部只用標準函式庫 —
+  **不需要 `pip install`**。
+- Lua 5.4 為選用,供 `scripts/tests/` 的 CE 腳本測試台使用。
+
+**實機測試:** Cheat Engine **7.7+**(winget 沒有此套件 — 見 docs/toolchain.md §5)。
 
 ### 建置方式
 
