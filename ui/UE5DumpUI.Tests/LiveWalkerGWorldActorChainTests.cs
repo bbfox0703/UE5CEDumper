@@ -232,6 +232,20 @@ public class LiveWalkerGWorldActorChainTests
     }
 
     /// <summary>
+    /// The log must not print the sentinel as <c>0xFFFFFFFF</c>. Logs are this project's
+    /// primary evidence channel (docs/log-verification-checklist.md), and that spelling is
+    /// confusable with the defect the sentinel exists to prevent — a reader grepping for
+    /// <c>FFFFFFFF</c> would hit a CORRECTLY-marked hop and read it as the bug.
+    /// </summary>
+    [Fact]
+    public void CrumbOffset_IsLoggedByMeaning_NotAsFFFFFFFF()
+    {
+        Assert.Equal("none", LiveWalkerViewModel.FormatCrumbOffset(-1));
+        Assert.Equal("0x0",  LiveWalkerViewModel.FormatCrumbOffset(0));
+        Assert.Equal("0x28", LiveWalkerViewModel.FormatCrumbOffset(0x28));
+    }
+
+    /// <summary>
     /// The generator refuses an un-anchored spine instead of formatting -1 as "+FFFFFFFF".
     /// This is the invariant behind the re-anchor: a future export path that forgets to call
     /// it fails loudly rather than handing the user a table that walks into the image.

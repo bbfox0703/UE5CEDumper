@@ -1160,7 +1160,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     TargetClassName = field.StructTypeName,
                     IsPointerDeref = isDataTableRow,
                 });
-                _log.Info($"NAV→Struct {field.Name} addr={field.StructDataAddr} off=0x{navOffset:X} dtRow={isDataTableRow} | BC={FormatBreadcrumbTrace()}");
+                _log.Info($"NAV→Struct {field.Name} addr={field.StructDataAddr} off={FormatCrumbOffset(navOffset)} dtRow={isDataTableRow} | BC={FormatBreadcrumbTrace()}");
                 UpdateDisplay(result);
             }
         }
@@ -1672,7 +1672,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!willRepopulate) return false;
 
         RepopulateContainerView(field, item);
-        _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off=0x{item.FieldOffset:X}");
+        _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off={FormatCrumbOffset(item.FieldOffset)}");
         return true;
     }
 
@@ -1935,6 +1935,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Detect fields whose container element count exceeds the loaded element count.
     /// Returns a warning string listing the truncated fields, or null if none.
     /// </summary>
+    /// <summary>
+    /// Render a breadcrumb / field offset for a LOG line. A negative value is the
+    /// "this hop has no offset" sentinel (a GWorld actor-list entry, a World-Partition
+    /// recovery hop), and `0x{-1:X}` prints it as <c>0xFFFFFFFF</c> — which is both
+    /// meaningless as an offset and confusable with the very defect the sentinel exists
+    /// to prevent (`+FFFFFFFF` in an emitted CE table). Logs are this project's primary
+    /// evidence channel, so print what it MEANS.
+    /// </summary>
+    internal static string FormatCrumbOffset(int offset)
+        => offset < 0 ? "none" : $"0x{offset:X}";
+
     /// <summary>
     /// One-line note for a CE export whose spine was re-rooted by
     /// <see cref="CeXmlExportService.AnchorAtLastUnchainableHop"/>. Empty when nothing
@@ -4236,7 +4247,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 {
                     var bc = cleaned[i];
                     var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
-                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off=0x{bc.FieldOffset:X} addr={bc.Address}");
+                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off={FormatCrumbOffset(bc.FieldOffset)} addr={bc.Address}");
                 }
             }
 
@@ -4574,7 +4585,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 {
                     var bc = cleaned[i];
                     var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
-                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off=0x{bc.FieldOffset:X} addr={bc.Address}");
+                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off={FormatCrumbOffset(bc.FieldOffset)} addr={bc.Address}");
                 }
             }
 
@@ -6068,7 +6079,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsPointerDeref = isPointer,
         });
 
-        _log.Info($"NAV→ {fieldName} addr={addr} off=0x{fieldOffset:X} ptr={isPointer} | BC={FormatBreadcrumbTrace()}");
+        _log.Info($"NAV→ {fieldName} addr={addr} off={FormatCrumbOffset(fieldOffset)} ptr={isPointer} | BC={FormatBreadcrumbTrace()}");
         UpdateDisplay(result);
     }
 
@@ -6129,7 +6140,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         foreach (var bc in Breadcrumbs)
         {
             var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
-            parts.Add($"{bc.FieldName ?? bc.Label}({flags},0x{bc.FieldOffset:X},{bc.Address?[^4..]})");
+            parts.Add($"{bc.FieldName ?? bc.Label}({flags},{FormatCrumbOffset(bc.FieldOffset)},{bc.Address?[^4..]})");
         }
         return string.Join(" > ", parts);
     }

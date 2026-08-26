@@ -22,6 +22,43 @@ builds ≤696 in
 
 -----
 
+## 2026-08-26 (later) - The GWorld actor-chain fix, driven on a live game; and the sentinel was logged as `0xFFFFFFFF` (build 3360)
+
+**Live half of `[GWORLDACTORCHAIN-2026-08-26]`** (previous entry). Rows 1–4 of its verification
+register were run end to end against a running **DumperTest Shipping** (UE504, **24,479 objects**,
+`dist/UE5Dumper.dll` injected, GWorld resolved by AOB `GWLD_TQ_1`). Full evidence is in
+[todo.md](todo.md); the short form:
+
+- The Offset column shows `—` for every Outer-derived actor/component and `0x30` for
+  `PersistentLevel`.
+- Copy CE XML from `PlayerStart0`: of **382** `<Address>` entries the copied table carries **exactly
+  one** absolute address — the actor's own, as the root. The UWorld address appears **0** times.
+- Copy CE AA Script: *"hardcoded address (GWorld path not forward-walkable)"*, script body
+  `define(PlayerStart,1872FEDBE00)`, no GWorld walk.
+- Control: `GWorld → PersistentLevel → LevelScriptActor` still emits the AOB-wrapped restart-stable
+  chain with real offsets and no re-root. The fix did not over-reach.
+
+⭐ **Two things made this cheap, and both are reusable.** The defect lives in `PopulateFromWorld`,
+which consumes the DLL's `walk_world` reply and never looks at the engine version — so the
+**already-granted DumperTest fixture stands in for the reported P3R (UE4.27) session** and no new
+computer-use grant or purchased title was needed. And `clipboardRead` is granted, so the emitted
+table was **read back as bytes** instead of being eyeballed in Cheat Engine: every claim above is a
+count over the actual XML, not a reading of a screenshot. Most "needs CE" export rows are like this.
+
+⚠ **One real find from the live run, and it was in the LOG.** The first pass printed the no-offset
+sentinel through `0x{-1:X}`:
+
+```
+NAV→ PlayerStart addr=0x1872FEDBE00 off=0xFFFFFFFF ptr=True
+```
+
+That is meaningless as an offset **and** confusable with `+FFFFFFFF` — the emitted-table defect the
+sentinel exists to prevent. A future reader grepping the logs for `FFFFFFFF` would have hit a
+**correctly marked** hop and read it as the bug still present. `FormatCrumbOffset` now prints
+`off=none` at all six sites (nav, struct-nav, synthetic-container rehydrate, both export pre-checks,
+and the breadcrumb trace). Logs are this project's primary evidence channel — a sentinel has to be
+legible there too.
+
 ## 2026-08-26 - "Start from GWorld" published level actors as fields at offset 0; every CE chain through one walked into the world's vtable (build 3359)
 
 **`[GWORLDACTORCHAIN-2026-08-26]`.** Reported on **P3R** (`UE427`, 65,158 objects, build 3358):

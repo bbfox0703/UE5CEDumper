@@ -1221,6 +1221,30 @@ and not the bug. The F9 fix is what first *populated* that list; every row it ad
 fabricated zero. A cosmetic complaint that arrived **with** a correctness complaint usually shares
 a cause with it.
 
+### 2.16 An export row rarely needs Cheat Engine, and rarely needs the game that was reported
+
+Two independent shortcuts, both used to close `[GWORLDACTORCHAIN-2026-08-26]` rows 1–4 in about ten
+minutes. Sibling of §2.8 (pull the emitted Lua out and run it under `lua`) — same instinct applied
+to the OTHER two costs of a live row.
+
+- **`clipboardRead` is a granted computer-use flag, so an emitted table can be READ AS BYTES.**
+  Drive the UI, press Copy CE XML, call `read_clipboard`, and count. That turned "does CE resolve
+  this correctly?" — a screenshot-and-squint job — into *of 382 `<Address>` entries, exactly one is
+  absolute and it is the actor's own; the world address appears 0 times*. CE was never launched.
+  ⭐ The measurement is also **stronger** than the CE one: a screenshot shows the rows that fit.
+- **Substitute the fixture for the reported game when the defect is provably engine-independent.**
+  The report came from P3R (UE 4.27, not granted, a purchased title); the defect lived in a
+  ViewModel that consumes the DLL's `walk_world` reply and never reads the engine version. The
+  already-granted **DumperTest** (UE 5.4) exercises the identical code. No new grant, no launch of
+  someone's game. ⚠ **State the reason in the evidence** — "ran it on the fixture instead" is only
+  legitimate when you can name the line that makes the two hosts equivalent, and the row must still
+  say which sub-checks the substitute could NOT reach (row 5 here needs World-Partition streaming,
+  which DumperTest has none of, so it stayed open).
+
+⚠ **What the substitution does NOT excuse**: check the host actually booted. `24,479 objects` is
+what made the run meaningful — §3.w's dead-engine trap reports coherent zeros through injection,
+pipe and scan alike.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log

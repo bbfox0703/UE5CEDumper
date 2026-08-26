@@ -2892,12 +2892,13 @@ as nothing to build. Shown able to fail: setting the threshold to 0 reports all 
 and exits 1; at 2048 the check is clean at 72 objects. CLAUDE.md's build section now names the empty
 TU as the third legitimate exception beside `.rc.res` and `.asm.obj`.
 
-### ⬜ FIXED 2026-08-26, NEEDS A LIVE CHECK — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
+### ⬜ ROWS 1–4 VERIFIED 2026-08-26, ROW 5 STILL OWED — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
 
 *Reported from a real P3R session (build 3358, `UE427`, 65,158 objects; screenshots + logs supplied).
-Fixed in build 3359 — see [dev-log.md](dev-log.md). The **logic** is pinned by 7 unit checks with
-five negative controls, so what is owed here is only what no stub can produce: **Cheat Engine
-resolving the emitted table against the live game**.*
+Fixed in build 3359 — see [dev-log.md](dev-log.md). The **logic** is pinned by 8 unit checks
+(`ui/UE5DumpUI.Tests/LiveWalkerGWorldActorChainTests.cs`) with five negative controls. Rows 1–4 were
+then driven end to end on a live DumperTest — evidence block below the table. **Only row 5 is still
+open**: it needs a World-Partition / streaming title, which DumperTest is not.*
 
 **What was wrong.** `PopulateFromWorld` published every level actor and component in the *Start from
 GWorld* list as a field at `Offset = 0`. The actors are reconstructed from their `Outer` — audit #5
@@ -2918,6 +2919,51 @@ first *populated* that list, and every row it added carried the fabricated zero.
 
 ⚠ **Row 5 needs a streaming / World-Partition title, not P3R.** If no such game is at hand, close
 rows 1–4 and leave 5 open rather than marking the section done.
+
+> #### ✅ ROWS 1–4 PASS 2026-08-26 `[GWORLDACTORCHAIN-2026-08-26]` — DumperTest Shipping, build 3360
+>
+> ⭐ **Run on DumperTest, not on P3R, and that is not a shortcut.** The defect is in
+> `PopulateFromWorld`, which consumes the DLL's `walk_world` reply and never looks at the engine
+> version — P3R (UE4.27) and DumperTest (UE5.4) exercise the identical code. DumperTest was already
+> granted for computer use, so this cost no new grant and did not disturb a purchased title.
+> ⭐ **`clipboardRead` made Cheat Engine unnecessary**: the emitted table was read back directly, so
+> every claim below is about the actual bytes copied, not about a screenshot of CE.
+>
+> Host: `DumperTest-Win64-Shipping`, injected `dist/UE5Dumper.dll`, **UE504, 24,479 objects**
+> (a booted engine, not the coherent-zeros trap), UI `v1.0.0.3360` / DLL 3360, GWorld resolved by
+> AOB `GWLD_TQ_1` → `&GWorld = 0x7FF6D8457C70` — so row 3's gate had a real GWorld base to refuse,
+> which is what makes it discriminating.
+>
+> | # | result |
+> |---|---|
+> | 1 | **PASS.** `PersistentLevel` shows `0x30`; `DirectionalLight`, `PlayerStart`, `SkyLight`, `StaticMeshActor`, `PlayerStart.CollisionComponent` … all show `—`. |
+> | 2 | **PASS, decisively.** Drilled `PlayerStart0` (`0x1872FEDBE00`), Copy CE XML. Of **382** `<Address>` entries the copied table has **exactly one** absolute address — `1872FEDBE00`, the actor's own, as the root. The UWorld address (`1872C79A4F0`) appears **0** times, the string `GWorld` **0** times, `+FFFFFFFF` **0** times. Arithmetic checks: root `+30` = `1872FEDBE30` = `PrimaryActorTick(0x28) ▸ TickGroup(0x8)`, which is what the Live Walker's own Address column shows. Status: *"⚠ Chain re-rooted at PlayerStart_0 (absolute address, session-only)…"* |
+> | 3 | **PASS.** Copy CE AA Script → *"hardcoded address (GWorld path not forward-walkable)"* — the precise note, not the "not a GWorld-rooted path" one. Script body is `define(PlayerStart,1872FEDBE00)` + `registersymbol`, with no GWorld walk. |
+> | 4 | **PASS — the control did not move.** `GWorld → PersistentLevel → LevelScriptActor` still emits the AOB-wrapped restart-stable chain: root `gworld_addr_43BDD1`, then `PersistentLevel (30) ▸ LevelScriptActor (F0)`, then real leaf offsets. No re-root note, no `+FFFFFFFF`, and the ONLY non-`+` address is the AOB symbol name. |
+>
+> **The UI log is the compact proof**, and it is worth reading against the P3R report:
+>
+> | | P3R, build 3358 (broken) | DumperTest, build 3360 (fixed) |
+> |---|---|---|
+> | nav | `NAV→ KernelActor … off=0x0 ptr=True` | `NAV→ PlayerStart … off=none ptr=True` |
+> | spine | `BC=GWorld(P,0x0,B0A0) > KernelActor(P,0x0,68C0)` | `BC=GWorld(P,0x0,A4C0) > PlayerStart(P,none,BE00)` |
+> | export | `CEXML export: … bcCount=2` | `CEXML export: … bcCount=1` (re-rooted) |
+>
+> ⚠ `off=none` rather than `off=0xFFFFFFFF`: the first live run (build 3359) printed the sentinel
+> through `0x{-1:X}`, which is meaningless as an offset **and** confusable with the `+FFFFFFFF`
+> defect itself — a reader grepping the logs for `FFFFFFFF` would have hit a correctly-marked hop
+> and read it as the bug. `LiveWalkerViewModel.FormatCrumbOffset` now prints what it means, at all
+> six log sites.
+>
+> ⭐ **All four rows were then re-run on build 3360**, i.e. on the exact binary being handed over
+> rather than on the one that happened to be built when the bug was fixed —
+> `dist/UE5DumpUI.exe` sha `5b79406f`, byte-identical to the Native-AOT output. Identical outcomes
+> (new session, so new addresses): root `10C5E66C0C0`, 382 `<Address>` entries, **1** absolute,
+> UWorld `10C5D859BD0` **0** times; AA script `define(PlayerStart,10C5E66C0C0)`; control
+> `bcCount=3` with root `gworld_addr_359220` and `PersistentLevel (30) ▸ LevelScriptActor (F0)`.
+>
+> **Row 5 remains open** — DumperTest has no World-Partition streaming, so the `ok_via_level`
+> recovery path was never entered.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 
