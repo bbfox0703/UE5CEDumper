@@ -786,10 +786,14 @@ public class InterestingFunctionsViewModelTests
                 Total = 2, ScannedClasses = 2, ScannedObjects = 100,
                 Functions = new List<AllFunctionEntry>
                 {
+                    // Both rows come from the SAME class, deliberately: 2 classes were
+                    // examined, 1 contributed. That asymmetry is what makes the sentence
+                    // below discriminating. ClassAddr, not ClassName, is the identity.
+                    // (FUNCDENOM-2026-08-26)
                     // Scores 0 without the pack, 5 with it (GameplayAction "Dash").
-                    new() { ClassName = "AThing", FuncName = "Dash" },
+                    new() { ClassName = "AThing", ClassAddr = "0xA", FuncName = "Dash" },
                     // Never interesting either way — keeps the count honest at 0.
-                    new() { ClassName = "AThing", FuncName = "Zzz" },
+                    new() { ClassName = "AThing", ClassAddr = "0xA", FuncName = "Zzz" },
                 },
             },
         };
@@ -806,7 +810,7 @@ public class InterestingFunctionsViewModelTests
         // ...and so must the sentence describing it.
         Assert.Contains("(1 above threshold", vm.StatusText);
         // The scan facts it quotes are still the load's, not invented.
-        Assert.Contains("2 functions across 2 classes", vm.StatusText);
+        Assert.Contains("2 functions from 1 of 2 classes", vm.StatusText);
     }
 
     // ==================================================================
@@ -817,12 +821,14 @@ public class InterestingFunctionsViewModelTests
     public void StatusLine_on_a_complete_scan_carries_no_warning()
     {
         var s = InterestingFunctionsViewModel.BuildStatusLine(
+            // Every number distinct ON PURPOSE, so a copy-paste of the wrong field
+            // cannot render the right sentence. (FUNCDENOM-2026-08-26)
             new InterestingFunctionsViewModel.LoadScanFacts(
-                50_000, 4_400, 1_000_000, Truncated: false, Aborted: false, Limit: 100_000),
-            interesting: 900);
+                50_000, 4_400, 900, 1_000_000, Truncated: false, Aborted: false, Limit: 100_000),
+            interesting: 700);
 
-        Assert.Equal("50,000 functions across 4,400 classes  "
-                   + $"(900 above threshold {KeywordScoringTable.InterestingThreshold}, "
+        Assert.Equal("50,000 functions from 900 of 4,400 classes  "
+                   + $"(700 above threshold {KeywordScoringTable.InterestingThreshold}, "
                    + "scanned 1,000,000 objects)", s);
     }
 
@@ -836,7 +842,7 @@ public class InterestingFunctionsViewModelTests
     {
         var s = InterestingFunctionsViewModel.BuildStatusLine(
             new InterestingFunctionsViewModel.LoadScanFacts(
-                100_000, 9_000, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000),
+                100_000, 9_000, 2_100, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000),
             interesting: 1_500);
 
         Assert.Contains("STOPPED at the 100,000-row cap", s);
@@ -849,7 +855,7 @@ public class InterestingFunctionsViewModelTests
     {
         var s = InterestingFunctionsViewModel.BuildStatusLine(
             new InterestingFunctionsViewModel.LoadScanFacts(
-                12, 3, 400, Truncated: false, Aborted: true, Limit: 100_000),
+                12, 3, 2, 400, Truncated: false, Aborted: true, Limit: 100_000),
             interesting: 1);
 
         Assert.Contains("SCAN CANCELLED", s);

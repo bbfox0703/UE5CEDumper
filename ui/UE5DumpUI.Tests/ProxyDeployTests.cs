@@ -526,7 +526,7 @@ public class ProxyDeployTests
         Assert.Null(game.UeVersion);
         Assert.Equal(ProxyDeployStatus.NotDeployed, game.Status);
         Assert.Null(game.InstalledVersion);
-        Assert.Null(game.ErrorMessage);
+        Assert.Null(game.StatusDetail);
         Assert.False(game.IsSelected);
     }
 

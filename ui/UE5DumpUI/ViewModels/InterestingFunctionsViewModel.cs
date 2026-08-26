@@ -1,4 +1,4 @@
-using System.Threading;
+﻿using System.Threading;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -452,8 +452,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             // Keep the scan facts so RescoreAsync can rewrite the SAME status line
             // rather than leaving the previous scoring's numbers on screen. (Z15)
             _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
-                                          result.ScannedObjects, result.Truncated,
-                                          result.Aborted, result.Limit);
+                                          result.ClassesWithFunctions, result.ScannedObjects,
+                                          result.Truncated, result.Aborted, result.Limit);
 
             // Build the class histogram over the FULL scored set, then filter.
             // countsPartial: a capped/aborted walk makes the picker's per-class counts
@@ -465,6 +465,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
             StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
             _log.Info($"ListAllFunctions: total={result.Total} classes={result.ScannedClasses} " +
+                      $"contributed={result.ClassesWithFunctions} " +
                       $"interesting={CountAboveThreshold(_allRows)} (gameOnly={GameOnly}, " +
                       $"truncated={result.Truncated}, aborted={result.Aborted})");
 
@@ -606,7 +607,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// <summary>The <c>list_all_functions</c> facts the status line quotes. A record
     /// struct, so a re-score cannot accidentally quote HALF of a newer scan.</summary>
     internal readonly record struct LoadScanFacts(
-        int Total, int ScannedClasses, int ScannedObjects,
+        int Total, int ScannedClasses, int ClassesWithFunctions, int ScannedObjects,
         bool Truncated, bool Aborted, int Limit)
     {
         /// <summary>The DLL walk stopped early — the row count is a page, not the pool.</summary>
@@ -636,7 +637,11 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                 ? PartialResultNotice.RowCap(f.Limit, "functions",
                       "tick \"Game classes only\" to skip engine classes, or scan a narrower game")
                 : "";
-        return $"{f.Total:N0} functions across {f.ScannedClasses:N0} classes  " +
+        // "from M of N classes", not "across N classes": the second number is the
+        // EXAMINED count and reads as provenance, which overstated coverage 2.6x on
+        // P3R (2,293 examined, ~889 contributing). (FUNCDENOM-2026-08-26)
+        return $"{f.Total:N0} functions from {f.ClassesWithFunctions:N0} of " +
+               $"{f.ScannedClasses:N0} classes  " +
                $"({interesting:N0} above threshold {KeywordScoringTable.InterestingThreshold}, " +
                $"scanned {f.ScannedObjects:N0} objects){capSuffix}";
     }

@@ -265,7 +265,7 @@ int main() {
 
         // A minimal walkable "UClass": WalkClassEx caches whenever
         // ShouldPublishClassWalk(true, PropertiesSize) holds, and that is only
-        // IsSanePropertiesSize -- a range check. Name/super reads may fail harmlessly.
+        // IsPlausiblePropertiesSize -- a range check. Name/super reads may fail harmlessly.
         std::vector<uint8_t> blob(0x200, 0);
         const uintptr_t X = reinterpret_cast<uintptr_t>(blob.data());
 
@@ -297,5 +297,60 @@ int main() {
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+    // -- SANEPROPS-2026-08-26 -- a big class is not a recycled one -----------------
+    //
+    // One constant answered two questions. P3R has two REAL classes at ~3.67 MB
+    // (XRD777SaveGame / AstreaSaveGame) that walk their fields cleanly; the old 1 MB
+    // bound declared them recycled, so WalkInstance zeroed propsSize and skipped the
+    // walk, and the UI told the user a live object had been freed.
+    //
+    // Decided by ARITHMETIC on a class blob we own, so none of these can go green for
+    // a heap-layout reason.
+    {
+        blk("SANEPROPS - a real 3.6 MB class must walk; a garbage one must still bail");
+
+        // ONE CLASS BLOB PER CASE, and it is not tidiness: s_walkClassExCache is keyed
+        // by the raw class address and NOTHING erases it (that unboundedness is exactly
+        // why the plausibility ceiling has to stay a bound). Reusing one address makes
+        // every case after the first read the FIRST case's memoised answer -- the A10
+        // defect the fixture above demonstrates, hit here by accident while writing
+        // this test.
+        std::vector<uint8_t> objBlob(0x200, 0);
+        const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob.data());
+        std::vector<uint8_t> clsGarbage(0x200, 0), clsEmpty(0x200, 0), clsBig(0x200, 0);
+        auto setPropsSize = [](std::vector<uint8_t>& b, int32_t v) {
+            memcpy(b.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+            return reinterpret_cast<uintptr_t>(b.data());
+        };
+
+        // Order matters: prove the wedge case still bails BEFORE asking the walker to
+        // accept a multi-megabyte size, so a regression shows up as a failing check
+        // rather than as a hung test run.
+        const uintptr_t Cg = setPropsSize(clsGarbage, 867763776);  // Elliot, ~827 MB
+        auto garbage = Ubel::WalkInstance(O, Cg, 64, 2, /*fillGaps=*/true);
+        check("garbage 827 MB is STILL judged stale", garbage.isStale == true);
+        check("...and its propsSize is zeroed", garbage.propsSize == 0);
+
+        const uintptr_t Ce = setPropsSize(clsEmpty, 0);
+        auto empty = Ubel::WalkInstance(O, Ce, 64, 2, /*fillGaps=*/true);
+        check("a field-less class (propsSize 0) is NOT stale", empty.isStale == false);
+
+        const uintptr_t Cb = setPropsSize(clsBig, 3671816);        // P3R AstreaSaveGame
+        auto big = Ubel::WalkInstance(O, Cb, 64, 2, /*fillGaps=*/true);
+        check("P3R's real 3.6 MB class is NOT stale (THE bug)", big.isStale == false);
+        check("...and its propsSize survives", big.propsSize == 3671816);
+        check("...and the gap pass says it SKIPPED rather than saying nothing",
+              big.gapFillSkipped == true);
+
+        // The control for the flag itself: a default walk never asked for gap-fill, so
+        // it must not claim a skip. Setting the flag beside the stale gate instead of
+        // beside the gap pass would make this true on every ordinary walk. Same address
+        // as the case above ON PURPOSE -- the class answer is meant to be memoised; it
+        // is the per-WALK flag that must differ.
+        auto bigNoFill = Ubel::WalkInstance(O, Cb, 64, 2, /*fillGaps=*/false);
+        check("a walk that did not ask for gap-fill does not claim a skip",
+              bigNoFill.gapFillSkipped == false);
+    }
+
     return g_fail == 0 ? 0 : 1;
 }

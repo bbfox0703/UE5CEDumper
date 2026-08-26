@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Ubel — 尤蓓爾 (外科式暗殺者 — Surgical Assassin)
@@ -512,23 +512,51 @@ struct LiveFieldValue {
     bool guessed = false;
 };
 
-// A real UStruct::PropertiesSize is bounded — even the largest generated
-// Blueprint / UClass layouts are at most tens of KB. A value beyond this means
-// the class pointer is recycled/garbage: the instance was freed and its memory
-// slot reused (e.g. a level transition / GC that ran while the user was away in
-// another panel, then returned to Live Walker on the stale address). Used to
-//   (a) reject such stale objects in WalkInstance, and
-//   (b) cap the Guess-What gap-fill so a bogus multi-hundred-MB PropertiesSize
-//       can't become one giant gap that wedges the single-threaded pipe worker
-//       (827 MB observed → ~8e8 per-byte SEH-faulting reads = effective hang).
-inline constexpr int32_t kMaxSanePropertiesSize = 1 * 1024 * 1024;  // 1 MB
+// TWO different questions used to share one constant, and the shared answer was
+// wrong about both. (SANEPROPS-2026-08-26)
+//
+// (1) WORK cap - "how many bytes will we sweep BYTE-WISE for one object?"
+//     1 MB, unchanged. A recycled class pointer read 867,763,776 (~827 MB) on
+//     Elliot (2026-06-27): one giant gap, ~8e8 per-byte SEH-faulting reads in
+//     GuessGapTypes, and the single-threaded pipe worker wedged with the UI on
+//     it. This is also a WIRE bound: GuessGapTypes emits one field row per
+//     4-byte stride in the common case, so an N-byte gap becomes ~N/4 rows that
+//     Fern serialises with no cap of its own.
+inline constexpr int32_t kMaxGapFillBytes = 1 * 1024 * 1024;  // 1 MB
+
+// (2) PLAUSIBILITY ceiling - "is this class pointer real, or recycled?"
+//     Admission control for caches that are NEVER erased: s_walkClassExCache
+//     hands out `const ClassInfo&` and is unbounded BY DESIGN (see its note in
+//     Ubel.cpp), and Aura's container / ref caches emplace permanently past
+//     their refusal checks. A refused class also fails to RETURN - WalkClassEx
+//     hands back an empty ClassInfo - so this must stay a bound, never `>= 0`.
+//
+//     WARNING: 64 MB is an ADMISSION BOUND, not a claim about UE.
+//     UStruct::PropertiesSize is an int32 accumulated by UStruct::Link and the
+//     engine imposes no cap. The number sits far above every real class observed
+//     and far below the observed garbage; the samples are recorded so the next
+//     person can RE-DERIVE it rather than re-guess it:
+//       * P3R  XRD777SaveGame  =       3,671,800  (walks cleanly, 2 fields)
+//       * P3R  AstreaSaveGame  =       3,671,816  (ditto; both byte-stable 12 min)
+//       * Elliot recycled ptr  =     867,763,776  (~827 MB, the wedge above)
+//     64 MB is ~17x above the largest real sample and ~13x below the garbage one
+//     (their geometric mean is ~56 MB). If a real class is ever seen above this,
+//     RAISE it and add the sample here - do not delete it.
+//
+//     WARNING: the old value was 1 MB and its comment claimed "even the largest
+//     generated Blueprint / UClass layouts are at most tens of KB". P3R refutes
+//     that: the two SaveGame classes above were declared recycled, so WalkClassEx
+//     returned EMPTY for them and they were structurally invisible to Value
+//     Search, Group Scan, snapshot capture, CE export, Solitar and Solide - with
+//     no log line at all.
+inline constexpr int32_t kMaxPlausiblePropertiesSize = 64 * 1024 * 1024;  // 64 MB
 
 // True when `propertiesSize` is a plausible UStruct::PropertiesSize: non-negative
-// and within kMaxSanePropertiesSize. A 0 is allowed (unusual but not garbage); a
-// negative or wildly-large value means the class pointer is recycled/garbage.
-// Pure — unit-tested in dll_helpers_test so the bound is locked at build time.
-inline bool IsSanePropertiesSize(int32_t propertiesSize) {
-    return propertiesSize >= 0 && propertiesSize <= kMaxSanePropertiesSize;
+// and within kMaxPlausiblePropertiesSize. A 0 is allowed (a field-less UCLASS is
+// legitimate); a negative or wildly-large value means the pointer is recycled.
+// Pure - unit-tested in dll_helpers_test so the bound is locked at build time.
+inline bool IsPlausiblePropertiesSize(int32_t propertiesSize) {
+    return propertiesSize >= 0 && propertiesSize <= kMaxPlausiblePropertiesSize;
 }
 
 // True when a completed WalkClass result may be MEMOIZED. The class caches are
@@ -548,7 +576,7 @@ inline bool IsSanePropertiesSize(int32_t propertiesSize) {
 // out-param, and 0 is a *sane* PropertiesSize, so the size test alone cannot see an
 // unmapped address. Pure — unit-tested in dll_helpers_test.
 inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize) {
-    return propsSizeReadOk && IsSanePropertiesSize(propertiesSize);
+    return propsSizeReadOk && IsPlausiblePropertiesSize(propertiesSize);
 }
 
 // True when a UEnum member table may be MEMOIZED into the (never-erased) enum cache.
@@ -578,6 +606,11 @@ struct InstanceWalkResult {
     bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
     bool        isStale = false;   // True when classAddr looks recycled/garbage (implausible PropertiesSize)
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
+    // The reflected walk RAN and its fields below are real; only the Guess-What
+    // raw-byte pass was skipped, because PropertiesSize exceeds kMaxGapFillBytes.
+    // NOT staleness — the two used to be the same verdict, which is how a live
+    // 3.6 MB USaveGame was reported to the user as freed. (SANEPROPS-2026-08-26)
+    bool        gapFillSkipped = false;
     std::vector<LiveFieldValue> fields;
 };
 

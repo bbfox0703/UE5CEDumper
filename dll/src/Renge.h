@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Renge — 蓮格 (連絡人 — Liaison)
@@ -328,7 +328,17 @@ inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json(
     // clear it on the next response once the thread ticks again. Cost: one
     // atomic read + a steady-clock diff. Placed before the payload splice so a
     // handler that (unusually) sets its own "game_thread_stalled" still wins.
-    res["game_thread_stalled"] = !Stark::IsGameThreadResponsive();
+    //
+    // Emitted ONLY when it is a MEASUREMENT. When Stark cannot tell — no PE hook
+    // installed yet, which is the NORMAL state of a fresh connection because the
+    // hook installs lazily on the first invoke — the key is OMITTED rather than
+    // defaulted to false, which asserted a healthy game thread nobody had measured.
+    // Absence is not a new wire state: MakeError and MakeEvent below have never
+    // carried it, and the client has always tolerated its absence.
+    // (STALLDEFAULT-2026-08-26)
+    const Stark::GameThreadLiveness live = Stark::GetGameThreadLiveness();
+    if (live != Stark::GameThreadLiveness::Unknown)
+        res["game_thread_stalled"] = (live == Stark::GameThreadLiveness::Stalled);
     ApplyPayload(res, std::move(data));
     return res;
 }

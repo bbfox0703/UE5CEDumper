@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Stark — 修塔爾克 (勇者戰士 — Brave Warrior)
 // GameThreadDispatch: MinHook ProcessEvent hook + game-thread queue
 //
@@ -90,6 +90,50 @@ uint64_t MsSinceLastHookFire();
 /// and to surface a "game paused" hint. thresholdMs<=0 uses kStallThresholdMs.
 /// Thread-safe.
 bool IsGameThreadResponsive(int32_t thresholdMs = kStallThresholdMs);
+
+// ---- Three states, because "responsive" and "cannot tell" are different facts ----
+//
+// IsGameThreadResponsive above answers a GATE question ("should I attempt a
+// game-thread invoke?") and deliberately maps the unknown case to true, because
+// "no hook yet" means "try -- the attempt is what installs the hook". That is
+// correct for the eight in-DLL gates and MUST NOT change.
+//
+// It is wrong as a REPORT. Every response envelope carried
+// `game_thread_stalled: false`, which asserted a healthy game thread that nobody
+// had measured -- the normal state of a fresh connection, because the hook
+// installs lazily on the first invoke. (STALLDEFAULT-2026-08-26)
+enum class GameThreadLiveness : uint8_t { Unknown, Responsive, Stalled };
+
+/// Pure classifier -- state comes in as parameters so a header-only test target can
+/// drive every branch; Stark.cpp supplies the atomics. All times are Stark's
+/// steady-clock milliseconds; 0 means "never".
+inline GameThreadLiveness ClassifyGameThreadLiveness(
+        bool hookActive, uint64_t lastFireMs, uint64_t installedMs,
+        uint64_t nowMs, uint64_t thresholdMs) {
+    if (!hookActive) return GameThreadLiveness::Unknown;
+    if (lastFireMs != 0)
+        return ((nowMs > lastFireMs ? nowMs - lastFireMs : 0) <= thresholdMs)
+                   ? GameThreadLiveness::Responsive : GameThreadLiveness::Stalled;
+    // Hook active but never fired. Inside the grace window we still cannot tell;
+    // past it, the game thread was already paused when we hooked.
+    if (installedMs == 0) return GameThreadLiveness::Unknown;   // active, no install stamp
+    return ((nowMs > installedMs ? nowMs - installedMs : 0) <= thresholdMs)
+               ? GameThreadLiveness::Unknown
+               : GameThreadLiveness::Stalled;
+}
+
+/// Unknown counts as RESPONSIVE. This is the gate contract, preserved exactly:
+/// Dunste (noclip), Schlacht (see-through) and Wirbel all ask "should I try?", and
+/// mapping Unknown to false would mean See-through never traces, the Noclip pawn
+/// stays ghosted, and POV silently degrades -- forever, on a game whose hook has
+/// not installed yet. DO NOT change this to `== Responsive`.
+inline bool IsResponsiveFromLiveness(GameThreadLiveness l) {
+    return l != GameThreadLiveness::Stalled;
+}
+
+/// The measured verdict, for REPORTS. thresholdMs<=0 uses kStallThresholdMs.
+/// Thread-safe.
+GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs);
 
 // ============================================================
 // Calling ProcessEvent OURSELVES without re-entering our own detour

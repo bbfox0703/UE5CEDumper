@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Reflection;
@@ -1434,9 +1434,20 @@ public partial class PointerPanelViewModel : ViewModelBase
             // a meaningless age.
             DiagGameThread = Res.Format("str.System.Diag.GameThread",
                 d.GameThread.HookActive ? "on" : "off",
-                d.GameThread.Responsive
-                    ? Res.Get("str.System.Diag.Responsive")
-                    : Res.Get("str.System.Diag.Stalled"),
+                // Three states, because "responsive" and "no hook yet, so nothing was
+                // measured" are different facts. `Responsive` is the GATE predicate and
+                // maps unknown to true, so rendering it directly announced a healthy
+                // game thread nobody had measured. Falls back to it only for a DLL that
+                // predates `liveness`. (STALLDEFAULT-2026-08-26)
+                d.GameThread.Liveness switch
+                {
+                    "stalled"    => Res.Get("str.System.Diag.Stalled"),
+                    "responsive" => Res.Get("str.System.Diag.Responsive"),
+                    "unknown"    => Res.Get("str.System.Diag.LivenessUnknown"),
+                    _            => d.GameThread.Responsive
+                                        ? Res.Get("str.System.Diag.Responsive")
+                                        : Res.Get("str.System.Diag.Stalled"),
+                },
                 d.GameThread.HasFired
                     ? Res.Format("str.System.Diag.LastFire", d.GameThread.MsSinceLastFire)
                     : Res.Get("str.System.Diag.NeverFired"),

@@ -26,6 +26,12 @@ WHAT COUNTS AS A FAILURE
   * a line that does not parse as JSON            -> truncation or interleaving
   * a line holding more than one JSON object      -> a missing terminator
   * a reply missing `id` / `ok` / `game_thread_stalled` -> the envelope regression
+    ⚠ `game_thread_stalled` is only present when the DLL can MEASURE it, i.e. once a
+    ProcessEvent hook is installed (STALLDEFAULT-2026-08-26). The rig ARMS the detector
+    with `pe_profile_start` before probing and keeps the three-key assertion. If arming
+    fails it drops that key FOR THAT RUN ONLY and says so -- it does not weaken the
+    assertion to "absent or boolean", which would make a future deletion of the stamp
+    undetectable.
   * a `\\n` inside a JSON string that splits a line -> the split writing out of order
 """
 import json
@@ -37,7 +43,31 @@ import time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient, PIPE            # noqa: E402
 
-ENVELOPE = ("id", "ok", "game_thread_stalled")
+ENVELOPE_FULL = ("id", "ok", "game_thread_stalled")
+ENVELOPE_UNARMED = ("id", "ok")
+
+
+def arm_liveness(c):
+    """Install the ProcessEvent hook so `game_thread_stalled` is a MEASUREMENT.
+
+    Returns the envelope keys to assert. Absence of the key is legitimate when no hook
+    is installed, so a failed arm must not report as an envelope regression -- but it
+    must be said out loud, or a run that asserted two keys instead of three looks
+    identical to one that asserted three. (STALLDEFAULT-2026-08-26)
+    """
+    try:
+        c.request("pe_profile_start")
+        time.sleep(1.5)
+        probe = c.request("get_pointers")
+        if "game_thread_stalled" in probe:
+            print("  liveness detector ARMED (game_thread_stalled = %r)"
+                  % probe["game_thread_stalled"])
+            return ENVELOPE_FULL
+    except Exception as e:
+        print("  liveness arm FAILED: %s" % e)
+    print("  detector NOT armed -- game_thread_stalled is legitimately absent this run; "
+          "asserting id/ok only")
+    return ENVELOPE_UNARMED
 
 
 class RawClient(PipeClient):
@@ -126,6 +156,7 @@ def step1():
             ("find_instances", {"class_name": "Actor", "max_results": 5000}),
             ("begin_snapshot", {}),
         ]
+        ENVELOPE = arm_liveness(c)
         snapshot_started = False
         for cmd, args in probes:
             t0 = time.time()
@@ -139,7 +170,7 @@ def step1():
             missing = [k for k in ENVELOPE if k not in r]
             size = len(json.dumps(r))
             print(f"  {cmd:<22} {dt:6.2f}s  {size:>9,} B  ok={r.get('ok')}  "
-                  f"envelope={'ALL 3' if not missing else 'MISSING ' + ','.join(missing)}")
+                  f"envelope={('ALL %d' % len(ENVELOPE)) if not missing else 'MISSING ' + ','.join(missing)}")
             if missing:
                 ok = False
             if cmd == "begin_snapshot" and r.get("ok"):
@@ -152,7 +183,7 @@ def step1():
                 missing = [k for k in ENVELOPE if k not in r]
                 print(f"  snapshot_chunk[{i}]        {len(json.dumps(r)):>9,} B  "
                       f"ok={r.get('ok')}  envelope="
-                      f"{'ALL 3' if not missing else 'MISSING ' + ','.join(missing)}")
+                      f"{('ALL %d' % len(ENVELOPE)) if not missing else 'MISSING ' + ','.join(missing)}")
                 if missing:
                     ok = False
                 if r.get("done") or not r.get("ok"):

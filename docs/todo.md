@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **15 open batches** needing a running game (2026-08-22;
+> - `## Pending live-game verification` — **9 open batches** needing a running game (2026-08-26;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -1581,6 +1581,146 @@ Nothing here has been compiled. Build the **Shipping** package to
 `invoke_function`. ⚠ Re-check the escaped caption survives the round trip: it is the one string in
 the fixture whose corruption would look like a *B28 defect* rather than like a build problem.
 
+## 🔎 Log-audit findings (P3R session 2026-08-26, build 3360) — all 3 FIXED in build 3362
+
+*Found by a five-lens adversarial sweep of a real P3R session's logs (46 agents, every finding
+refute-mandated; 19 of 40 were killed). Two of the four defects it surfaced were fixed the same
+day in build 3361 — the `PERF` line's two denominators and the missing re-anchor log line, both
+recorded in [dev-log.md](dev-log.md). The three below were fixed in build 3362, each after an
+adversarial design review that changed the shape of two of them. Each was independently reproduced
+before being written down.*
+
+### ✅ FIXED 2026-08-26 (build 3362) `[SANEPROPS-2026-08-26]` — `kMaxSanePropertiesSize = 1 MB` rejected legitimate classes
+
+P3R has **two real classes over the limit**, and the same log shows both parsing perfectly:
+
+```
+[WALK] WalkClass: XRD777SaveGame (super=SaveGame, size=3671800) at 0x162C6940
+[WALK] WalkClass: XRD777SaveGame — 2 fields
+[WALK:safe] WalkClass: refusing to cache 0x162c6940 — PropertiesSize=3671800 (read ok);
+            not a UStruct, or recycled memory
+```
+
+`AstreaSaveGame` (3,671,816) is the other. Both are byte-stable across twelve minutes of the
+session, so "recycled memory" is simply wrong about them — a ~3.5 MB SaveGame class is ordinary.
+
+⚠ **The cache refusal is the harmless half.** `Ubel.h:530 IsSanePropertiesSize` has a *second*
+caller: `Ubel.cpp:3801`, in `WalkInstance`, which on a fail sets `result.isStale = true`,
+`propsSize = 0` and **skips the field/gap walk entirely** — so walking an instance of one of these
+classes would return nothing and the UI would report a live object as stale. That path was **not
+entered in this session** (grep `implausible PropertiesSize` = 0), so this is latent, not observed.
+
+**FIXED by splitting the one constant into two**, because it was answering two questions with
+opposite risk profiles: `kMaxGapFillBytes` (1 MB, **unchanged** — the byte-sweep work cap that the
+827 MB wedge exists to stop) and `kMaxPlausiblePropertiesSize` (**64 MB** — admission control for
+caches that are never erased). `WalkInstance`'s stale gate and `ShouldPublishClassWalk` now ask the
+plausibility question; `GuessGapTypes` and the gap-fill entry keep the work cap.
+
+⭐ **The consequence was much worse than this row first recorded, and an adversarial design review
+found it.** `Ubel.cpp`'s `WalkClassEx` gate does not merely refuse the CACHE — it refuses to
+**RETURN**, handing back an empty `ClassInfo` (the signature is a reference into the map). Aura's
+container and ref caches read `WalkClassEx(cls).Address != cls` as the refusal signal, so on P3R
+both `USaveGame` classes were structurally invisible to **Value Search, Group Scan, snapshot
+capture, CE export, Solitar and Solide** — with **no log line at all**. That refusal now logs.
+
+⚠ **The 64 MB figure is a judgement call the maintainer may want to change.** It is an admission
+bound, not a fact about UE (`UStruct::PropertiesSize` is an int32 with no engine cap). It sits ~17×
+above the largest real sample (3,671,816, P3R) and ~13× below the observed garbage (867,763,776,
+Elliot) — their geometric mean is ~56 MB. The samples are in the header comment so it can be
+re-derived rather than re-guessed.
+
+Also in the fix: a live-but-huge class now reports `gap_fill_skipped` on the wire and an ℹ status
+line instead of the ⚠ "freed/recycled" one; the two WARN texts stopped asserting things they had
+not measured; and `ProbeRowMapOffset`'s `O(PropertiesSize/8 × fields)` double loop gained the work
+cap as a clamp, because the raised ceiling newly exposes it.
+
+**Verification**: 9 new C++ assertions across `dll_helpers_test` (pure bound) and `dll_core_test`
+(the instance path, driving `WalkInstance` against a fake class blob), with two negative controls —
+reverting the ceiling to 1 MB turns **9 assertions red including "P3R's real 3.6 MB class is NOT
+stale (THE bug)"**, and removing the skip flag turns the gap-pass assertion red.
+
+⚠ **Writing that test reproduced A10 by accident**: one class blob reused across four cases had
+every case after the first read the first one's memoised answer, because `s_walkClassExCache` is
+keyed by address and nothing erases it. One blob per case; the comment says why.
+
+### ✅ FIXED 2026-08-26 (build 3362) `[FUNCDENOM-2026-08-26]` — "9760 entries from 2293 classes" counted classes that contributed nothing
+
+`ListAllFunctions: total=9760 classes=2293 interesting=1848`. The `2293` was the number of classes
+**scanned**, not the number that yielded a function; only ~889 actually contributed one. Read as
+provenance — which it looks like — it overstated coverage by 2.6×. Same family as the `PERF`
+denominator fixed in 3361: a number that invites an arithmetic reading it does not support.
+
+⭐ **The wire field was NOT the problem and was deliberately left alone.** `scanned_classes` is
+correctly named and correctly documented, and one of the three UI sentences (`"N classes scanned"`)
+was already reading it correctly. What was wrong was every sentence phrased as PROVENANCE. So the
+contributing count is **derived** — `AllFunctionsResult.ClassesWithFunctions`, a computed property
+over the rows the panel is displaying — with **no new wire field**: a parsed field would be `0` in
+every VM fixture (they all override `ListAllFunctionsAsync` and bypass the parser), and a `??`
+fallback fires on *absent*, not on *zero*, so a DLL that shipped the key and missed the assignment
+would render "9,760 functions from 0 of 2,293 classes". One number, one source, and that source is
+the array being described.
+
+The DLL keeps its own `CountContributingClasses` for its log line only, appended to the format
+string (⚠ **append-only**: nothing in `dll/src` carries `_Printf_format_string_`, so MSVC diagnoses
+no format/argument mismatch and a reordered trailing `%s%s` against an `int` is an access violation
+on the pipe worker inside a shipping game).
+
+**Verification**: 4 C++ assertions (including order-independence — entries are pushed grouped by
+class today, so an adjacent-transition implementation would pass everything else), and 2 C# tests
+including ⭐ **the over-swap control**: the "N classes scanned" sentence must KEEP quoting the
+examined count while the two provenance sentences use the contributing one. Negative control:
+reverting both provenance sentences turns 3 tests red.
+
+⚠ **Siblings deliberately NOT folded in** — they are the same defect on different commands and need
+their own change: `search_properties` (`Aura.cpp` counts the class then discards it at four separate
+points), and the batch path that copies one batch-wide count into every query's result.
+
+### ✅ FIXED 2026-08-26 (build 3362) `[STALLDEFAULT-2026-08-26]` — `game_thread_stalled: false` before the hook existed was a DEFAULT, not a measurement
+
+`game_thread_stalled` could not report a stall until the ProcessEvent hook was installed, so almost
+every `false` in a session's logs was the field's initial value rather than an observation — the
+exact shape of `[SEETHRUNOOP]` / `[SEETHRUTALLY]`, a success report computed by a path that never ran.
+
+**Fixed by WITHHOLDING the key when it is not a measurement**, which turned out to be the cheapest
+correct answer: absence is already a live wire state (`MakeError` and `MakeEvent` never carried it,
+and the client already tolerated it), so it adds no new state and costs fewer bytes. `Stark` gained
+a pure three-state classifier; `IsGameThreadResponsive` is now `IsResponsiveFromLiveness(...)` with
+its **contract unchanged**, because eight in-DLL gates ask "should I attempt an invoke?" and
+unknown must keep meaning yes.
+
+⚠⚠ **The naive version of this fix is a REGRESSION, and the review caught it.** The hook can go
+back DOWN mid-session (`Frieren.cpp`'s validation-failure path calls `Stark::RemoveHook()`), which
+returns liveness to unknown. Today a banner raised by a real stall is cleared *by the lie* — the
+next `false` clears it. Withhold the key without teaching the client that absence **withdraws** the
+claim, and that banner sticks ON for the rest of the session. So the DLL half and the client half
+had to land in one commit, and they did.
+
+Rejected alternatives, each for a measured reason: a **tri-state string** would not degrade an old
+client, it would **disconnect** it (`GetValue<bool>()` throws `InvalidOperationException`, which
+`PipeClient`'s `catch (JsonException)` does not catch — the read loop exits and every in-flight
+request fails). A **second additive bool** leaves the wrong value on the wire for anyone reading
+only the first field.
+
+Also fixed in the same commit: `get_diagnostics` had a **second report path** with the identical
+defect (`gt["responsive"]`, rendered to the user as "Responsive" in the System tab). It gains
+`liveness` beside it; `responsive` is kept unchanged so an older UI does not start rendering
+"Stalled" on a healthy game.
+
+Three verification rigs relied on the lying default and were **armed, not weakened**:
+`f5_envelope.py` now installs the hook before probing and keeps its three-key assertion (dropping
+the key only for a run where arming demonstrably failed, and saying so); `l8_fglock_nopump.py`'s
+`is not False` now catches "detector never armed" and "already stalled" in one test, where the
+former used to be indistinguishable from success; and ⚠ `seethrough_arm_b.py` read the key with
+`[...]` **between `suspend-tid` and `resume-tid` with no try/finally** — a `KeyError` there would
+have left the game thread SUSPENDED and the process needing a kill.
+
+**Verification**: 9 C++ classifier assertions covering every branch (including the
+connected-while-paused one that a "simplification" would delete, and the saturating guards), a
+regression control asserting the gate predicate is **bit-for-bit** what it was before the split,
+the envelope builders re-pinned per liveness, and 8 C# `PipeEnvelope` tests. Two negative controls:
+restoring the unconditional stamp turns the omission assertions red, and making an absent key mean
+"no report" turns the withdrawal test red.
+
 ## ▶ Next up (genuinely actionable now)
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
@@ -2891,6 +3031,107 @@ instead of a warning. ⚠ A **missing** object counts as bad, not empty — neve
 as nothing to build. Shown able to fail: setting the threshold to 0 reports all six with their sizes
 and exits 1; at 2048 the check is clean at 72 objects. CLAUDE.md's build section now names the empty
 TU as the third legitimate exception beside `.rc.res` and `.asm.obj`.
+
+### ✅ ALL FIVE ROWS CLOSED 2026-08-26 — `[GWORLDACTORCHAIN-2026-08-26]` CE chains through the GWorld actor list
+
+*Reported from a real P3R session (build 3358, `UE427`, 65,158 objects; screenshots + logs supplied).
+Fixed in build 3359 — see [dev-log.md](dev-log.md). The **logic** is pinned by 8 unit checks
+(`ui/UE5DumpUI.Tests/LiveWalkerGWorldActorChainTests.cs`) with five negative controls. Rows 1–4 were
+then driven end to end on a live DumperTest — evidence block below the table. **Only row 5 is still
+open**: it needs a World-Partition / streaming title, which DumperTest is not.*
+
+**What was wrong.** `PopulateFromWorld` published every level actor and component in the *Start from
+GWorld* list as a field at `Offset = 0`. The actors are reconstructed from their `Outer` — audit #5
+F8/F9 — so no such offset exists, and CE resolved `KernelActor (0)` to `P->144AF6408`, the value at
+`UWorld + 0`, i.e. the world's **vtable pointer**. The real actor was at `0x64AF68C0`.
+
+⚠ **The tell the user saw first was cosmetic and is worth remembering**: "many fields with offset
+`0x0` appeared after the fix". They were right that the two were connected — the F9 fix is what
+first *populated* that list, and every row it added carried the fabricated zero.
+
+| # | cat | what to do | expected |
+|---|---|---|---|
+| 1 | **B** | P3R (or any game with a populated actor list). Live Walker → **Start from GWorld**. Look at the Offset column for the actor / `Actor.Component` rows. | `—`, not `0x0`. `PersistentLevel` still shows its real offset (`0x30`-ish). |
+| 2 | **B** | Drill into one actor (e.g. `KernelActor`), pick a scalar leaf, **Copy CE XML**, paste into CE. | The table's root is the **actor's own address** (`0x64AF68C0` in the report), NOT a `GWorld → base → Actor (0)` chain. Every leaf resolves to the address the Live Walker's own Address column shows. The status line says **"⚠ Chain re-rooted at … (absolute address, session-only)"**. |
+| 3 | **B** | Same spine, **Copy CE AA Script**. | Status says **"hardcoded address (GWorld path not forward-walkable)"** — NOT "GWorld AOB walk" / "GWorld hardcoded-base walk". The script registers the actor's absolute address. |
+| 4 | **B** | A control that must NOT change: navigate GWorld → **PersistentLevel** → some reflected object field, then Copy CE XML. | A normal GWorld-rooted chain with real offsets, AOB wrapper included when the checkbox is on, and **no** re-rooted note. If this one re-roots, the fix over-reached. |
+| 5 | **B** | Locate-in-GWorld on an object that resolves via the World-Partition recovery path (status `ok_via_level`), then Copy CE XML. | No `+FFFFFFFF` anywhere in the XML (that was the latent third defect); the chain re-roots at the recovered actor instead. |
+
+⚠ **Row 5 needs a streaming / World-Partition title, not P3R.** If no such game is at hand, close
+rows 1–4 and leave 5 open rather than marking the section done.
+
+> #### ✅ ROWS 1–4 PASS 2026-08-26 `[GWORLDACTORCHAIN-2026-08-26]` — DumperTest Shipping, build 3360
+>
+> ⭐ **Run on DumperTest, not on P3R, and that is not a shortcut.** The defect is in
+> `PopulateFromWorld`, which consumes the DLL's `walk_world` reply and never looks at the engine
+> version — P3R (UE4.27) and DumperTest (UE5.4) exercise the identical code. DumperTest was already
+> granted for computer use, so this cost no new grant and did not disturb a purchased title.
+> ⭐ **`clipboardRead` made Cheat Engine unnecessary**: the emitted table was read back directly, so
+> every claim below is about the actual bytes copied, not about a screenshot of CE.
+>
+> Host: `DumperTest-Win64-Shipping`, injected `dist/UE5Dumper.dll`, **UE504, 24,479 objects**
+> (a booted engine, not the coherent-zeros trap), UI `v1.0.0.3360` / DLL 3360, GWorld resolved by
+> AOB `GWLD_TQ_1` → `&GWorld = 0x7FF6D8457C70` — so row 3's gate had a real GWorld base to refuse,
+> which is what makes it discriminating.
+>
+> | # | result |
+> |---|---|
+> | 1 | **PASS.** `PersistentLevel` shows `0x30`; `DirectionalLight`, `PlayerStart`, `SkyLight`, `StaticMeshActor`, `PlayerStart.CollisionComponent` … all show `—`. |
+> | 2 | **PASS, decisively.** Drilled `PlayerStart0` (`0x1872FEDBE00`), Copy CE XML. Of **382** `<Address>` entries the copied table has **exactly one** absolute address — `1872FEDBE00`, the actor's own, as the root. The UWorld address (`1872C79A4F0`) appears **0** times, the string `GWorld` **0** times, `+FFFFFFFF` **0** times. Arithmetic checks: root `+30` = `1872FEDBE30` = `PrimaryActorTick(0x28) ▸ TickGroup(0x8)`, which is what the Live Walker's own Address column shows. Status: *"⚠ Chain re-rooted at PlayerStart_0 (absolute address, session-only)…"* |
+> | 3 | **PASS.** Copy CE AA Script → *"hardcoded address (GWorld path not forward-walkable)"* — the precise note, not the "not a GWorld-rooted path" one. Script body is `define(PlayerStart,1872FEDBE00)` + `registersymbol`, with no GWorld walk. |
+> | 4 | **PASS — the control did not move.** `GWorld → PersistentLevel → LevelScriptActor` still emits the AOB-wrapped restart-stable chain: root `gworld_addr_43BDD1`, then `PersistentLevel (30) ▸ LevelScriptActor (F0)`, then real leaf offsets. No re-root note, no `+FFFFFFFF`, and the ONLY non-`+` address is the AOB symbol name. |
+>
+> **The UI log is the compact proof**, and it is worth reading against the P3R report:
+>
+> | | P3R, build 3358 (broken) | DumperTest, build 3360 (fixed) |
+> |---|---|---|
+> | nav | `NAV→ KernelActor … off=0x0 ptr=True` | `NAV→ PlayerStart … off=none ptr=True` |
+> | spine | `BC=GWorld(P,0x0,B0A0) > KernelActor(P,0x0,68C0)` | `BC=GWorld(P,0x0,A4C0) > PlayerStart(P,none,BE00)` |
+> | export | `CEXML export: … bcCount=2` | `CEXML export: … bcCount=1` (re-rooted) |
+>
+> ⚠ `off=none` rather than `off=0xFFFFFFFF`: the first live run (build 3359) printed the sentinel
+> through `0x{-1:X}`, which is meaningless as an offset **and** confusable with the `+FFFFFFFF`
+> defect itself — a reader grepping the logs for `FFFFFFFF` would have hit a correctly-marked hop
+> and read it as the bug. `LiveWalkerViewModel.FormatCrumbOffset` now prints what it means, at all
+> six log sites.
+>
+> ⭐ **All four rows were then re-run on build 3360**, i.e. on the exact binary being handed over
+> rather than on the one that happened to be built when the bug was fixed —
+> `dist/UE5DumpUI.exe` sha `5b79406f`, byte-identical to the Native-AOT output. Identical outcomes
+> (new session, so new addresses): root `10C5E66C0C0`, 382 `<Address>` entries, **1** absolute,
+> UWorld `10C5D859BD0` **0** times; AA script `define(PlayerStart,10C5E66C0C0)`; control
+> `bcCount=3` with root `gworld_addr_359220` and `PersistentLevel (30) ▸ LevelScriptActor (F0)`.
+>
+> **Row 5: CLOSED 2026-08-26 on Titan Quest II (build 3361).** DumperTest has no streaming, so the
+> `ok_via_level` path could not be entered there. ⭐ **The reproducer was found by AUDITING THE LOG
+> TREE, not by guessing a title**: `Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log` already held
+> the pre-fix line, from a session five days earlier —
+> `[2026-08-23 09:11:37.634] LocateInGWorld: reach mode, 2 hop(s) | BC=GWorld(P,0x0,68E0) > (world
+> level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`. Two `0xFFFFFFFF` hops in a real
+> spine; nobody had ever pressed Copy CE XML on one, which is exactly why the third defect stayed
+> latent.
+>
+> Re-run on TQ2 (UE507, **279,587 objects** — identical to the 2026-08-23 session; Instances →
+> class `Actor`, exact → **3 results**, identical → 🌍 Locate on `0x2B8B783A8D0`):
+>
+> | | 2026-08-23, pre-fix | 2026-08-26, build 3361 |
+> |---|---|---|
+> | locate spine | `(world level)(S,**0xFFFFFFFF**,A960) > (level actor)(S,**0xFFFFFFFF**,FA60)` | `(world level)(S,**none**,91C0) > (level actor)(S,**none**,A8D0)` |
+> | Copy CE XML from it | never pressed, on any build | `CEXML re-anchored: dropped **2** offset-less hop(s); root is now (level actor) @ 0x2B8B783A8D0` |
+>
+> **The emitted table, measured**: 777 `<Address>` entries, **exactly one** absolute — `2B8B783A8D0`,
+> the level actor's own address, as the root (`<Description>"Actor_0"</Description>`). `FFFFFFFF`
+> appears **0** times anywhere in the file; `GWorld` 0; the world address (`2B8B7892320`) 0; the
+> level address 0. AA Script on the same spine: *"hardcoded address (GWorld path not
+> forward-walkable)"*, body `define(Actor,2B8B783A8D0)`.
+>
+> ⚠ **Environment note, recorded rather than hidden**: TQ2 ran the **3360** proxy DLL against the
+> **3361** UI, and the UI's own stale-build banner said so (`⚠ DLL build 3360 ≠ UI 3361 — stale,
+> redeploy`). That is acceptable *here specifically*, and the reason is checkable rather than
+> assumed: `git diff --stat e88190ba HEAD -- dll/` is **empty**, so the DLL is functionally
+> identical, and every mechanism row 5 exercises (`AnchorAtLastUnchainableHop`, `FormatCrumbOffset`,
+> `LogReanchor`) is UI-side. ⛔ Do not generalise this — for any row that turns on DLL behaviour the
+> banner is a stop, not a note.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 

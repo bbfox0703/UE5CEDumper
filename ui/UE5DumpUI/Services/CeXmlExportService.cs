@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Threading;
 using UE5DumpUI.Core;
 using UE5DumpUI.Helpers;
@@ -1862,6 +1862,43 @@ public static class CeXmlExportService
         return result;
     }
 
+    /// <summary>
+    /// Re-root <paramref name="spine"/> at the last hop that cannot be reproduced by a
+    /// byte offset from its parent, dropping everything before it. Returns the spine
+    /// unchanged when every hop is a real offset.
+    ///
+    /// <para>A hop carries <c>FieldOffset &lt; 0</c> when it was reached by a
+    /// BACK-reference rather than by reading a field: the GWorld actor list (an actor's
+    /// <c>Outer</c>) and the World-Partition recovery path (<c>ULevel::OwningWorld</c>).
+    /// <c>ULevel::Actors</c> has no UPROPERTY (audit #5 F8/F9), so no offset and no
+    /// element index exists to publish. Emitting one anyway produced
+    /// <c>[UWorld + 0]</c> — the world's vtable pointer — and CE showed a chain that
+    /// resolved into the executable image.</para>
+    ///
+    /// <para>Re-rooting trades restart-stability for correctness: the exported chain is
+    /// anchored on that object's absolute (session-only) address, exactly like an
+    /// Instance Finder export, and every offset below it is genuine. Callers surface the
+    /// trade so the user is not silently handed a session-only table.</para>
+    ///
+    /// <para><b>Idempotent</b> — the returned spine's own root is at index 0 and index 0
+    /// is never examined (a root's offset is not applied by any emit path), so applying
+    /// this twice equals applying it once.</para>
+    /// </summary>
+    internal static IReadOnlyList<BreadcrumbItem> AnchorAtLastUnchainableHop(
+        IReadOnlyList<BreadcrumbItem> spine)
+    {
+        for (int i = spine.Count - 1; i >= 1; i--)
+        {
+            if (spine[i].FieldOffset < 0)
+            {
+                var reanchored = new List<BreadcrumbItem>(spine.Count - i);
+                for (int j = i; j < spine.Count; j++) reanchored.Add(spine[j]);
+                return reanchored;
+            }
+        }
+        return spine;
+    }
+
     internal static IReadOnlyList<BreadcrumbItem> CleanBreadcrumbs(IReadOnlyList<BreadcrumbItem> breadcrumbs)
     {
         if (breadcrumbs.Count <= 1) return breadcrumbs;
@@ -1915,7 +1952,16 @@ public static class CeXmlExportService
     private readonly record struct BreadcrumbStep(int Offset, bool DerefAfter, string Description);
 
     private static BreadcrumbStep ProjectBreadcrumb(BreadcrumbItem bc)
-        => new(bc.FieldOffset,
+        => bc.FieldOffset < 0
+        // An invariant, not a user-facing condition: a negative offset is the marker for
+        // a hop with NO offset, and callers must have run AnchorAtLastUnchainableHop to
+        // drop it. Reaching here would format it as "+FFFFFFFF" and hand the user a table
+        // whose first hop lands in the executable image. Failing the export is the honest
+        // outcome; the VM turns this into a visible error.
+        ? throw new InvalidOperationException(
+            $"CE export spine still contains an offset-less hop '{bc.FieldName}' "
+            + $"({bc.Label} @ {bc.Address}) — AnchorAtLastUnchainableHop was not applied.")
+        : new(bc.FieldOffset,
                bc.IsPointerDeref || bc.IsContainerView,
                // Default Description = the clean field/property name. Container-view
                // breadcrumbs carry their "[N x Type]" suffix only in Label, so prefer

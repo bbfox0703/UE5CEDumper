@@ -575,8 +575,12 @@
         </ContextMenu>
       </DataGrid.ContextMenu>
       <DataGrid.Columns>
+        <!-- OffsetDisplay, not Offset: a GWorld actor-list row has NO offset from the
+             world (it is reconstructed from the actor's Outer), and rendering that as
+             "0x0" is what made it look like a field at +0. Sorting still keys on the
+             numeric Offset. -->
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Offset}"
-                            Binding="{Binding Offset, StringFormat='0x{0:X}'}" SortMemberPath="Offset"
+                            Binding="{Binding OffsetDisplay}" SortMemberPath="Offset"
                             Width="75" IsReadOnly="True"/>
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}" SortMemberPath="Name"

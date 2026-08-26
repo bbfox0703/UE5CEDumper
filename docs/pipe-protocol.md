@@ -17,6 +17,19 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 - On partial success: `"ok": true, "error": "message"` — check for `"error"` even when `ok` is true.
 - All addresses are hex strings with no prefix (e.g. `"7FF600A12340"`) unless noted.
 - Pagination advances by `"scanned"` (indices iterated), **not** by `objects.length` — null slots are skipped but still counted.
+- **`"game_thread_stalled"` (bool) is OPTIONAL, and its absence is meaningful.** It rides every
+  **success** envelope, but only when the DLL can actually measure it — i.e. once a ProcessEvent
+  hook is installed. **Present ⇒ a measurement.** Absent ⇒ either the DLL cannot tell (no hook
+  yet, which is the normal state of a fresh connection because the hook installs lazily on the
+  first invoke) or an older DLL that predates this. Error envelopes and push events have never
+  carried it. ⚠ A client must treat absence on a success envelope as **withdrawing** any standing
+  claim, not as "no news": the hook can go back down mid-session, and a banner raised by a real
+  stall would otherwise stay up forever. It used to be stamped unconditionally as
+  `!IsGameThreadResponsive()` — a *gate* predicate that maps "unknown" to "responsive" — so the
+  wire asserted a healthy game thread nobody had measured. (STALLDEFAULT-2026-08-26)
+  `get_diagnostics.game_thread.liveness` carries the same fact in three states
+  (`"responsive"` / `"stalled"` / `"unknown"`); `game_thread.responsive` beside it is the legacy
+  gate predicate and is kept unchanged for older clients.
 
 -----
 
@@ -747,9 +760,17 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
   "outer_name":  "ThirdPersonMap",
   "outer_class": "World",
   // "stale": true,   // present only when the class pointer looks recycled/garbage
-                      // (PropertiesSize beyond kMaxSanePropertiesSize = 1 MB). Returned
-                      // with no fields + props_size omitted; the client must NOT retry
-                      // fill_gaps (a bogus multi-hundred-MB size would wedge the pipe).
+                      // (PropertiesSize negative, or beyond
+                      // kMaxPlausiblePropertiesSize = 64 MB). Returned with no fields +
+                      // props_size omitted; the client must NOT retry fill_gaps (a
+                      // bogus multi-hundred-MB size would wedge the pipe).
+  // "gap_fill_skipped": true,
+                      // present only when true, and only on a non-lean walk that
+                      // ASKED for fill_gaps. The class is real and the fields above are
+                      // complete — it is merely larger than kMaxGapFillBytes = 1 MB, so
+                      // the Guess-What raw-byte pass was skipped. NOT staleness: the two
+                      // used to share one bound, which is how a live 3.6 MB USaveGame
+                      // was reported to the user as freed. (SANEPROPS-2026-08-26)
   "fields": [
     // --- Scalar field ---
     {

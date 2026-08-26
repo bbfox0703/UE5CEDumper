@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Aura — 斷頭台的阿烏拉 (服從之秤 — Obedience Scale)
@@ -1089,9 +1089,25 @@ struct AllFunctionEntry {
     uint16_t    parmsSize   = 0;
 };
 
+// A class CONTRIBUTED iff it owns at least one emitted entry. DERIVED from the
+// entries rather than counted during the walk, so the number cannot drift from the
+// rows it describes: there is no separate increment site to misplace, and the
+// EXAMINED count is not an input, so no implementation of this can accidentally
+// return it. Pure -- unit-tested in dll_helpers_test. (FUNCDENOM-2026-08-26)
+inline int CountContributingClasses(const std::vector<AllFunctionEntry>& entries) {
+    std::unordered_set<uintptr_t> seen;
+    for (const auto& e : entries) seen.insert(e.classAddr);
+    return static_cast<int>(seen.size());
+}
+
 struct AllFunctionsResult {
     int scannedObjects   = 0;     // GObjects count walked
-    int scannedClasses   = 0;     // UClasses considered (post game-only filter)
+    // UClasses EXAMINED (post game-only filter). ⚠ NOT the number that produced a
+    // row: it is incremented before WalkFunctions runs, so on P3R it read 2,293
+    // while only ~889 classes contributed. Correctly named and correctly used by
+    // "N classes scanned"; anything phrased as PROVENANCE ("N functions from M
+    // classes") wants CountContributingClasses instead. (FUNCDENOM-2026-08-26)
+    int scannedClasses   = 0;
     // Emitted functions. Identical to entries.size() by construction (both the
     // outer and inner cap tests fire before the push), so it is NOT an honest
     // pool total and must never be read as one — the pool size cannot be known

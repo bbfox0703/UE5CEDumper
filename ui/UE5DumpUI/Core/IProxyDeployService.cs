@@ -63,13 +63,13 @@ public interface IProxyDeployService
 
     /// <summary>
     /// Check deployment status for each game (for the given proxy type) and
-    /// update Status / InstalledVersion / ErrorMessage. Independently of the
-    /// selected type, flags a redundancy warning via ErrorMessage only when
+    /// update Status / InstalledVersion / StatusDetail. Independently of the
+    /// selected type, flags a redundancy warning via StatusDetail only when
     /// 2+ of our proxy DLLs actually coexist in the same folder (only one
     /// activates at runtime).
     ///
     /// <para><paramref name="preserveBinariesDirs"/> names games whose current
-    /// Status/ErrorMessage the CALLER owns and this refresh must not touch. Pass the
+    /// Status/StatusDetail the CALLER owns and this refresh must not touch. Pass the
     /// games an operation just failed on when the refresh is that operation's own tail:
     /// the disk state of a failed deploy is "file absent", which this method honestly
     /// reports as <c>NotDeployed</c> with no message — erasing the failure and its reason.
@@ -91,7 +91,7 @@ public interface IProxyDeployService
 
     /// <summary>
     /// Deploy the proxy DLL of the given type to a game's Binaries directory.
-    /// Returns true on success, false on failure (sets game.ErrorMessage).
+    /// Returns true on success, false on failure (sets game.StatusDetail).
     /// </summary>
     Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
         DeployOptions options = default, CancellationToken ct = default);

@@ -1181,6 +1181,133 @@ tell you which category a given line passes — only the call site can.
 `grep -l "<marker>" *.log`. One command, no inference. That is what finally decided it, after two
 rounds of reasoning from the source produced two different wrong answers.
 
+### 2.15 A SENTINEL WITH NO CONSUMER-SIDE GUARD IS A LATENT BUG WAITING FOR A SECOND PRODUCER
+
+`[GWORLDACTORCHAIN-2026-08-26]`, build 3359. Audit #5 F8/F9 established that a level actor is
+reached through its `Outer`, not through any field, so the hop has **no offset**. The codebase
+encoded that as `BreadcrumbItem.FieldOffset = -1`, stamped by `PathStepToBreadcrumbs`, and one
+consumer — the AA-script `gworldWalkable` gate — tested `FieldOffset >= 0` and refused. That looked
+finished. It was two-thirds of a mechanism, and both missing thirds shipped a wrong address to a
+user:
+
+- **No second producer had it.** `PopulateFromWorld` builds the *same hop* for the "Start from
+  GWorld" list and published `Offset = 0` — a positive claim that the actor is at `[UWorld + 0]`,
+  which is the world's **vtable pointer**. The correct copy was the OLDER one, so a "did I update
+  every site I touched?" review at fix time would have passed: the site that needed changing was
+  not one the fix touched. The question that finds this is **"who else builds this kind of
+  hop?"**, not "what did I just edit?" — §2.3's sibling grep, aimed at the CONCEPT rather than at
+  the diff.
+- **No emitter validated it.** `ProjectBreadcrumb` formatted the offset with `$"+{off:X}"`, so a
+  `-1` that *did* reach it printed **`+FFFFFFFF`**. That path was live the whole time via
+  Locate-in-GWorld and had simply never been exercised. A sentinel the emitter cannot survive is
+  not a sentinel; it is a second bug parked next to the first.
+
+**The repair shape, and why the throw is not defensive noise.** The producer now stamps the
+sentinel, a shared `AnchorAtLastUnchainableHop` strips such hops before emission, *and*
+`ProjectBreadcrumb` **throws** if one still arrives. The throw is what makes the invariant real:
+with the strip removed, the export fails loudly with the hop named, instead of copying a table that
+resolves into the executable image. ⭐ It is also **testable and demonstrably reachable** — removing
+the strip turned it red in the production path, not just in a unit test — so it is an invariant,
+not the `elseif false` kind of dead branch §1.9 warns about.
+
+⚠ **Do not "simplify" this to one representation.** `LiveFieldValue.Offset` deliberately stays `0`
+on those rows (bookmarks and the same-layout row-reuse path key on name+offset) while a separate
+`HasNoParentOffset` carries the fact. Forcing `Offset = -1` would have been the tidier-looking
+change and would have silently repointed two unrelated features.
+
+⚠ **The user's first symptom was the cosmetic half, and it was still the right thread to pull.**
+The report opened with *"lots of fields with offset `0x0` appeared after the fix"* — true, connected,
+and not the bug. The F9 fix is what first *populated* that list; every row it added carried the
+fabricated zero. A cosmetic complaint that arrived **with** a correctness complaint usually shares
+a cause with it.
+
+### 2.17 "A fix that landed in one of its two copies" — three instances in one day
+
+2026-08-26, builds 3359-3362, three unrelated modules:
+
+| | the fix that WAS applied | the copy that was NOT |
+|---|---|---|
+| `[GWORLDACTORCHAIN]` | `PathStepToBreadcrumbs` stamps the no-offset sentinel | `PopulateFromWorld` builds the same hop and does not |
+| `[PERFDENOM]` | `busyMs` excludes the probe's own call, with a comment saying why | `dispatches`, **two lines below it**, still reads the global counter |
+| `[SANEPROPS]` | the gap-fill site treats the bound as a WORK cap | the instance / cache sites treat the same constant as a PLAUSIBILITY test |
+
+⭐ **The grep that finds these is aimed at the CONCEPT, not at the diff.** §2.3's sibling grep is
+"what else calls the thing I just changed?" — that is necessary and it would have missed all three,
+because in each case the un-fixed copy is **older than the fix** and the fix never touched it. The
+question that works is *"who else builds this kind of hop / answers this question / uses this
+number?"*, asked before the commit and again when the finding is written up.
+
+⚠ **The tell is a comment that explains why one site is careful.** All three had one. A comment
+justifying a subtlety at site A is evidence that site B, which does the same thing without the
+comment, has not been thought about. When you write that comment, grep for the shape it describes.
+
+⚠ **And the un-fixed copy's own justification may cite the fixed one.** `Ubel.cpp`'s WalkClassEx
+gate says the trade is bounded *"because WalkInstance already hard-fails on this exact predicate"* —
+true, and it is exactly why P3R's `USaveGame` classes were invisible everywhere at once. A
+justification that leans on a sibling's behaviour breaks silently when the sibling's premise is
+wrong for both of them.
+
+### 2.15a The LOG TREE is a corpus — grep it before concluding a scenario needs a game you do not have
+
+`[GWORLDACTORCHAIN-2026-08-26]`. Verification row 5 needed an `ok_via_level` (streaming /
+World-Partition) recovery path. Three independent finder agents concluded "this needs a different
+title" and stopped. It had **already been reproduced on this machine five days earlier**, and the
+line was sitting in `%LOCALAPPDATA%\UE5CEDumper\Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log`:
+
+```
+LocateInGWorld: reach mode, 2 hop(s) | BC=GWorld(P,0x0,68E0) > (world level)(S,0xFFFFFFFF,A960)
+                                                             > (level actor)(S,0xFFFFFFFF,FA60)
+```
+
+⭐ **Every log folder under `Logs\` is a record of a scenario that has occurred on real software
+here.** Before writing "needs a title we do not have" / "cannot be reproduced on demand", grep the
+whole tree for the *symptom string*, not the game name. The 21-day retention sweep means the corpus
+is a rolling few weeks deep — which is usually plenty, and is also a reason to look **now** rather
+than deferring the row.
+
+⚠ **Two second-order lessons from the same find.**
+
+- **A finder agent asked "which game has feature X?" will answer from world knowledge.** It has to
+  be pointed at the evidence: *"grep the log tree for this exact string"* is a different instruction
+  from *"which title would exercise this?"*, and only the first one found it. Put the symptom
+  string in the prompt.
+- **The absence of a symptom is not evidence when the code path never ran.** Three lenses noted
+  `+FFFFFFFF` appears 0 times in the new session and correctly refused to call that a pass —
+  `find_path_from_gworld` was never sent, so the generator was never reached. That is §2.10 (an
+  absence proves nothing until the CHANNEL is shown to carry the thing) applied to a whole feature
+  rather than to one log line.
+
+⚠ **And the row it closed had never been executed at all** — not before the fix, not after. The
+`ok_via_level` spine had been *produced* on 2026-08-23, but nobody had pressed Copy CE XML on it, so
+the `+FFFFFFFF` it would have emitted was latent for as long as the marker had existed. When a
+defect is "the producer marks it and no consumer handles it" (§2.15), the consumer half is
+**usually unexercised by construction** — that is why it survived. Budget a live run for it
+specifically; a green suite says nothing about a path no user has walked.
+
+### 2.16 An export row rarely needs Cheat Engine, and rarely needs the game that was reported
+
+Two independent shortcuts, both used to close `[GWORLDACTORCHAIN-2026-08-26]` rows 1–4 in about ten
+minutes. Sibling of §2.8 (pull the emitted Lua out and run it under `lua`) — same instinct applied
+to the OTHER two costs of a live row.
+
+- **`clipboardRead` is a granted computer-use flag, so an emitted table can be READ AS BYTES.**
+  Drive the UI, press Copy CE XML, call `read_clipboard`, and count. That turned "does CE resolve
+  this correctly?" — a screenshot-and-squint job — into *of 382 `<Address>` entries, exactly one is
+  absolute and it is the actor's own; the world address appears 0 times*. CE was never launched.
+  ⭐ The measurement is also **stronger** than the CE one: a screenshot shows the rows that fit.
+- **Substitute the fixture for the reported game when the defect is provably engine-independent.**
+  The report came from P3R (UE 4.27, not granted, a purchased title); the defect lived in a
+  ViewModel that consumes the DLL's `walk_world` reply and never reads the engine version. The
+  already-granted **DumperTest** (UE 5.4) exercises the identical code. No new grant, no launch of
+  someone's game. ⚠ **State the reason in the evidence** — "ran it on the fixture instead" is only
+  legitimate when you can name the line that makes the two hosts equivalent, and the row must still
+  say which sub-checks the substitute could NOT reach (row 5 here needs World-Partition streaming,
+  which DumperTest has none of, so it stayed open).
+
+⚠ **What the substitution does NOT excuse**: check the host actually booted. `24,479 objects` is
+what made the run meaningful — §3.w's dead-engine trap reports coherent zeros through injection,
+pipe and scan alike.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -130,7 +130,18 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
         // itself. Deriving busy from the same rows the ranking shows makes the
         // percentage and the breakdown agree by construction.
         double busyMs = top.Sum(t => t.TotalMs);
-        long dispatches = Math.Max(0, after.TotalDispatches - before.TotalDispatches);
+        // ...and so is the COUNT, for the same reason and from the same rows. It used
+        // to be `after.TotalDispatches - before.TotalDispatches`, the global counter,
+        // which includes the probe's own get_diagnostics that `top` (and therefore
+        // busyMs) deliberately skips. The line then printed three numbers over two
+        // denominators: "11 dispatches" beside "busy 15.2 ms" beside "per call: dll
+        // 1.524" — 15.2/11 = 1.38, not 1.524, because the per-call divisor is the
+        // transport count, which excludes the probe too. Measured on a real P3R
+        // session (2026-08-26) and on DumperTest: the divisor was always
+        // dispatches-1, on two games and two builds. The busy fix directly above was
+        // made and this one, two lines below it, was not. (audit #4's root cause: the
+        // report and the reality computed by different code paths.)
+        long dispatches = top.Sum(t => t.Count);
         double wallMs   = elapsed.TotalMilliseconds;
 
         // Share of the operation's own wall-clock spent inside the DLL dispatcher.
@@ -178,9 +189,15 @@ internal sealed class DiagnosticsProbe : IAsyncDisposable
 
         if (top.Count > 0)
         {
-            sb.Append(" · top: ");
+            // "peak", and the qualifier is not decoration: MaxMs is a running
+            // high-water mark that cannot be differenced (see TopDeltas), so it is the
+            // worst call SINCE THE LAST RESET, not the worst call in this operation.
+            // TopDeltas' own comment said "let the label carry the caveat" and the
+            // label said "max". Two exports minutes apart printed a byte-identical
+            // "max 3.5ms" while their totals moved, which is what that reads like.
+            sb.Append(" · top (peak = session high-water, not this op): ");
             sb.Append(string.Join(", ", top.Take(3).Select(t =>
-                $"{t.Cmd} {F(t.TotalMs)}ms/{t.Count}x max {F(t.MaxMs)}ms")));
+                $"{t.Cmd} {F(t.TotalMs)}ms/{t.Count}x peak {F(t.MaxMs)}ms")));
         }
         return sb.ToString();
     }

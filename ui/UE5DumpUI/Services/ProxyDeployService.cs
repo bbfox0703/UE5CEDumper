@@ -761,7 +761,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     // THREADING CONTRACT for everything below that touches a DetectedGame.
     //
     // DetectedGame is an ObservableObject and its Status / InstalledVersion /
-    // ErrorMessage / SuggestedProxy are bound to the Proxy Deploy DataGrid. Writing them
+    // StatusDetail / SuggestedProxy are bound to the Proxy Deploy DataGrid. Writing them
     // from inside a Task.Run raises PropertyChanged on a thread-pool thread, which lets
     // Avalonia mutate the visual tree while the render thread is composing it — that is an
     // access violation inside libSkiaSharp, not an exception, so it takes the whole app
@@ -784,9 +784,9 @@ public sealed class ProxyDeployService : IProxyDeployService
         DetectedGame Game,
         ProxyDeployStatus Status,
         string? InstalledVersion = null,
-        string? ErrorMessage = null,
+        string? StatusDetail = null,
         bool SetInstalledVersion = true,
-        bool SetErrorMessage = true,
+        bool SetStatusDetail = true,
         // The load-observation column. Default OFF so the deploy/error paths, which write a
         // status the instant BEFORE a game is launched, do not clobber a real observation with
         // stale nothing — only the refresh path (which re-reads the log folder) sets it.
@@ -797,13 +797,13 @@ public sealed class ProxyDeployService : IProxyDeployService
     {
         u.Game.Status = u.Status;
         if (u.SetInstalledVersion) u.Game.InstalledVersion = u.InstalledVersion;
-        if (u.SetErrorMessage)     u.Game.ErrorMessage     = u.ErrorMessage;
+        if (u.SetStatusDetail)     u.Game.StatusDetail     = u.StatusDetail;
         if (u.SetLoadObservation)  u.Game.LoadObservation  = u.LoadObservation;
     }
 
     /// <summary>
     /// Should this game's freshly-computed disk state be applied, or does the caller own its
-    /// current Status/ErrorMessage? Pure so the rule is unit-testable without file IO.
+    /// current Status/StatusDetail? Pure so the rule is unit-testable without file IO.
     ///
     /// <para>Exists because a refresh run as the TAIL OF AN OPERATION would otherwise erase
     /// that operation's own result. The disk state of a failed deploy is "file absent", which
@@ -1141,18 +1141,18 @@ public sealed class ProxyDeployService : IProxyDeployService
                 {
                     case DeployVerdict.NeedsForeignConsent:
                         return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
-                            ErrorMessage: "Refused: another program's proxy DLL",
+                            StatusDetail: "Refused: another program's proxy DLL",
                             SetInstalledVersion: false));
 
                     case DeployVerdict.AlreadyCurrent:
                         // Already up to date — status only, version/error left as they were.
                         return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
-                            SetInstalledVersion: false, SetErrorMessage: false));
+                            SetInstalledVersion: false, SetStatusDetail: false));
                 }
 
                 // Replacing a third party's DLL is irreversible and the same
                 // operation erases the row that said whose it was (a successful
-                // deploy clears ErrorMessage), so record the identity FIRST —
+                // deploy clears StatusDetail), so record the identity FIRST —
                 // otherwise nothing anywhere says what used to be here.
                 if (exists && !isOurs)
                 {
@@ -1183,7 +1183,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 if (riskNote != null)
                     _log.Warn("ProxyDeploy", $"{proxyType.GetDllName()} for {game.Name}: {riskNote}");
                 return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
-                    InstalledVersion: GetDllVersion(targetDll), ErrorMessage: riskNote));
+                    InstalledVersion: GetDllVersion(targetDll), StatusDetail: riskNote));
             }
             catch (Exception ex) when (IsTargetUnreplaceable(ex))
             {
@@ -1191,14 +1191,14 @@ public sealed class ProxyDeployService : IProxyDeployService
                     $"Deploy to {game.Name} failed: target in use or write-protected " +
                     $"({ex.GetType().Name}) — {Path.Combine(game.BinariesDir, proxyType.GetDllName())}");
                 return (false, new GameStatusUpdate(game, ProxyDeployStatus.ErrorLocked,
-                    ErrorMessage: "Target in use (game running?) or write-protected",
+                    StatusDetail: "Target in use (game running?) or write-protected",
                     SetInstalledVersion: false));
             }
             catch (Exception ex)
             {
                 _log.Error("ProxyDeploy", $"Deploy to {game.Name} failed: {ex.Message}");
                 return (false, new GameStatusUpdate(game, ProxyDeployStatus.ErrorOther,
-                    ErrorMessage: ex.Message, SetInstalledVersion: false));
+                    StatusDetail: ex.Message, SetInstalledVersion: false));
             }
         }, ct);
 
@@ -1316,13 +1316,13 @@ public sealed class ProxyDeployService : IProxyDeployService
                     ResolveUndeployOutcome(removed, plan.ForeignSkipped, locked);
                 // InstalledVersion is only cleared when something was actually removed.
                 return (success, new GameStatusUpdate(game, status,
-                    ErrorMessage: message, SetInstalledVersion: removed > 0));
+                    StatusDetail: message, SetInstalledVersion: removed > 0));
             }
             catch (Exception ex)
             {
                 _log.Error("ProxyDeploy", $"Undeploy from {game.Name} failed: {ex.Message}");
                 return (false, new GameStatusUpdate(game, ProxyDeployStatus.ErrorOther,
-                    ErrorMessage: ex.Message, SetInstalledVersion: false));
+                    StatusDetail: ex.Message, SetInstalledVersion: false));
             }
         }, ct);
 

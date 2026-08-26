@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace UE5DumpUI.Models;
 
@@ -63,7 +63,16 @@ public sealed class DiagnosticsGameThread
     /// value that fits a signed 64-bit integer at the wire boundary. A very large
     /// positive value means the same thing and came from a pre-fix DLL.</summary>
     public long MsSinceLastFire   { get; init; } = -1;
+    /// <summary>The GATE predicate, not a measurement: "unknown" counts as
+    /// responsive, because with no hook installed the right answer to "should I
+    /// attempt an invoke?" is yes. Kept for older DLLs; prefer
+    /// <see cref="Liveness"/> for anything shown to a user.</summary>
     public bool Responsive        { get; init; }
+    /// <summary>The honest three-state answer: <c>"responsive"</c>, <c>"stalled"</c>
+    /// or <c>"unknown"</c> (no PE hook yet, so nothing was measured). Empty from a
+    /// DLL that predates it — fall back to <see cref="Responsive"/> then.
+    /// (STALLDEFAULT-2026-08-26)</summary>
+    public string Liveness        { get; init; } = "";
     public int  InvokeTimeoutMs   { get; init; }
 
     /// <summary>True when the hook has actually fired at least once, so

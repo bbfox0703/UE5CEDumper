@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Stark — 修塔爾克 (勇者戰士 — Brave Warrior)
 // GameThreadDispatch: MinHook ProcessEvent hook + game-thread queue
 //
@@ -480,26 +480,28 @@ uint64_t MsSinceLastHookFire() {
     return (now > last) ? (now - last) : 0;
 }
 
+// One decision, one place. The branches used to live here and the report used to be
+// `!IsGameThreadResponsive()`, which collapsed "measured responsive" and "no hook, so
+// cannot tell" into the same wire value. The classifier is pure and lives in Stark.h
+// so every branch is unit-testable; this reads the atomics and hands them over.
+// (STALLDEFAULT-2026-08-26)
+GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs) {
+    const uint64_t thr = (uint64_t)(thresholdMs > 0 ? thresholdMs : kStallThresholdMs);
+    // NowMs() into a local: C++ leaves argument evaluation order unspecified, and the
+    // classifier's saturating guards should not have to cover a clock read that
+    // happened after the atomics it is compared against.
+    const uint64_t now = NowMs();
+    return ClassifyGameThreadLiveness(
+        s_hookActive.load(std::memory_order_relaxed),
+        s_lastHookFireMs.load(std::memory_order_relaxed),
+        s_hookInstalledMs.load(std::memory_order_relaxed),
+        now, thr);
+}
+
 bool IsGameThreadResponsive(int32_t thresholdMs) {
-    uint64_t thr = (uint64_t)(thresholdMs > 0 ? thresholdMs : kStallThresholdMs);
-    // No hook yet: the caller's invoke is what lazily installs it, so let it try —
-    // reporting "stalled" here would stop the POV path from ever installing the
-    // hook on games where invoke-based getters do work.
-    if (!s_hookActive.load(std::memory_order_relaxed)) return true;
-    uint64_t now  = NowMs();
-    uint64_t last = s_lastHookFireMs.load(std::memory_order_relaxed);
-    if (last != 0) {
-        // Hook has fired before: responsive iff it fired within the threshold.
-        // A running game keeps this tiny; a pause freezes it and we cross `thr`.
-        return (now > last ? now - last : 0) <= thr;
-    }
-    // Hook is active but has NEVER fired. Give it a grace window after install to
-    // produce its first tick; if it stays silent past that, the game thread was
-    // already paused when we hooked (the just-connected-while-paused case, where
-    // s_lastHookFireMs alone would stay 0 forever and never reveal the stall).
-    uint64_t inst = s_hookInstalledMs.load(std::memory_order_relaxed);
-    if (inst == 0) return true;   // active without an install stamp — shouldn't happen
-    return (now > inst ? now - inst : 0) <= thr;
+    // Contract UNCHANGED: unknown counts as responsive, because the caller's invoke
+    // is what lazily installs the hook. See IsResponsiveFromLiveness in Stark.h.
+    return IsResponsiveFromLiveness(GetGameThreadLiveness(thresholdMs));
 }
 
 } // namespace Stark

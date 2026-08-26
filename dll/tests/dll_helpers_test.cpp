@@ -4849,18 +4849,66 @@ static void Test_Holes_ComputeClassHoles_ArrayDim() {
            Ubel::ComputeClassHoles(ciBad, 0x28, 0x80).size() == 3);
 }
 
-static void Test_IsSanePropertiesSize() {
-    // The bound that stops a recycled-object walk from wedging the pipe: a real
-    // UStruct::PropertiesSize is non-negative and at most kMaxSanePropertiesSize.
+static void Test_CountContributingClasses() {
+    // NOTE: these are unit tests of a NEW pure function, not negative controls -- they
+    // cannot go red against unfixed code, because the function does not exist there.
+    // The controls that CAN go red are the C# BuildStatusLine pins.
+    // (FUNCDENOM-2026-08-26)
+    auto mk = [](std::initializer_list<uintptr_t> addrs) {
+        std::vector<Aura::AllFunctionEntry> v;
+        for (uintptr_t a : addrs) { Aura::AllFunctionEntry e; e.classAddr = a; v.push_back(e); }
+        return v;
+    };
+    EXPECT("five entries over two classes counts 2",
+           Aura::CountContributingClasses(mk({0xA, 0xA, 0xB, 0xB, 0xB})) == 2);
+    EXPECT("no entries contribute no classes",
+           Aura::CountContributingClasses(mk({})) == 0);
+    EXPECT("one entry, one class", Aura::CountContributingClasses(mk({0xA})) == 1);
+    // Order independence. Entries are pushed grouped-by-class today (the walk visits one
+    // class at a time), so an adjacent-transition implementation would pass every case
+    // above and break only when a future change reorders them.
+    EXPECT("interleaved entries still count 2, not 3",
+           Aura::CountContributingClasses(mk({0xA, 0xB, 0xA})) == 2);
+}
+
+static void Test_IsPlausiblePropertiesSize() {
+    // Admission control for caches that are NEVER erased: a real
+    // UStruct::PropertiesSize is non-negative and at most kMaxPlausiblePropertiesSize.
     // Real-world trigger (Elliot, 2026-06-27 log): returning to Live Walker on a
-    // freed instance read class PropertiesSize=867763776 (~827 MB) → one giant
-    // gap → GuessGapTypes spun ~8e8 SEH reads and blocked the single-threaded pipe.
-    EXPECT("UWorld real size (2536) is sane", Ubel::IsSanePropertiesSize(2536));
-    EXPECT("zero is sane (unusual, not garbage)", Ubel::IsSanePropertiesSize(0));
-    EXPECT("exactly the cap is sane", Ubel::IsSanePropertiesSize(Ubel::kMaxSanePropertiesSize));
-    EXPECT("cap+1 is NOT sane", !Ubel::IsSanePropertiesSize(Ubel::kMaxSanePropertiesSize + 1));
-    EXPECT("negative is NOT sane", !Ubel::IsSanePropertiesSize(-1));
-    EXPECT("the 827 MB garbage value is NOT sane", !Ubel::IsSanePropertiesSize(867763776));
+    // freed instance read class PropertiesSize=867763776 (~827 MB), one giant gap,
+    // GuessGapTypes spun ~8e8 SEH reads and blocked the single-threaded pipe.
+    EXPECT("UWorld real size (2536) is plausible", Ubel::IsPlausiblePropertiesSize(2536));
+    EXPECT("zero is plausible (a field-less UCLASS is legitimate)",
+           Ubel::IsPlausiblePropertiesSize(0));
+    EXPECT("exactly the ceiling is plausible",
+           Ubel::IsPlausiblePropertiesSize(Ubel::kMaxPlausiblePropertiesSize));
+    EXPECT("ceiling+1 is NOT plausible",
+           !Ubel::IsPlausiblePropertiesSize(Ubel::kMaxPlausiblePropertiesSize + 1));
+    EXPECT("negative is NOT plausible", !Ubel::IsPlausiblePropertiesSize(-1));
+    EXPECT("the 827 MB garbage value is NOT plausible",
+           !Ubel::IsPlausiblePropertiesSize(867763776));
+
+    // The rows the P3R log buys, and the whole reason the ceiling moved: both classes
+    // walk their fields cleanly and stay byte-stable for twelve minutes, and the old
+    // 1 MB bound declared both of them recycled. (SANEPROPS-2026-08-26)
+    EXPECT("P3R XRD777SaveGame (3,671,800) IS plausible",
+           Ubel::IsPlausiblePropertiesSize(3671800));
+    EXPECT("P3R AstreaSaveGame (3,671,816) IS plausible",
+           Ubel::IsPlausiblePropertiesSize(3671816));
+}
+
+static void Test_GapFillWorkCapIsADifferentQuestion() {
+    // The point of the split: ONE number, TWO verdicts. A class can be entirely real
+    // (plausible) and still be too large to sweep byte-wise (over the work cap). If
+    // the two ever collapse back into one constant, this goes red.
+    EXPECT("the work cap is still 1 MB", Ubel::kMaxGapFillBytes == 1 * 1024 * 1024);
+    EXPECT("the plausibility ceiling is ABOVE the work cap",
+           Ubel::kMaxPlausiblePropertiesSize > Ubel::kMaxGapFillBytes);
+    EXPECT("a class just over the work cap is still PLAUSIBLE",
+           Ubel::IsPlausiblePropertiesSize(Ubel::kMaxGapFillBytes + 1));
+    // P3R's real class is the concrete instance of exactly that: real, not gap-fillable.
+    EXPECT("P3R's 3.6 MB SaveGame is plausible AND over the work cap",
+           Ubel::IsPlausiblePropertiesSize(3671800) && 3671800 > Ubel::kMaxGapFillBytes);
 }
 
 static void Test_ShouldPublishClassWalk() {
@@ -4871,7 +4919,7 @@ static void Test_ShouldPublishClassWalk() {
     // that are not UStructs at all (WalkInstance's own pre-gate walk, and
     // UE5_WalkClassBegin, which ue5_dissect.lua uses as its is-this-an-instance probe).
 
-    // The read-ok term is the half IsSanePropertiesSize cannot express: Macht::ReadSafe
+    // The read-ok term is the half IsPlausiblePropertiesSize cannot express: Macht::ReadSafe
     // ZEROES its out-param on an access violation, and 0 is a legitimate
     // PropertiesSize, so an unmapped address is indistinguishable from a UCLASS that
     // declares no own UPROPERTYs unless the return value is carried.
@@ -4880,12 +4928,14 @@ static void Test_ShouldPublishClassWalk() {
     EXPECT("failed read is never published, even with a plausible size",
            !Ubel::ShouldPublishClassWalk(false, 512));
 
-    // With a successful read the bound is exactly IsSanePropertiesSize's.
+    // With a successful read the bound is exactly IsPlausiblePropertiesSize's.
     EXPECT("read ok + real UWorld size is published", Ubel::ShouldPublishClassWalk(true, 2536));
     EXPECT("read ok + zero is published (a field-less UCLASS is legitimate)",
            Ubel::ShouldPublishClassWalk(true, 0));
-    EXPECT("read ok + exactly the cap is published",
-           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxSanePropertiesSize));
+    EXPECT("read ok + exactly the ceiling is published",
+           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxPlausiblePropertiesSize));
+    EXPECT("read ok + P3R's real 3.6 MB SaveGame IS published",
+           Ubel::ShouldPublishClassWalk(true, 3671816));
     EXPECT("read ok + negative is NOT published", !Ubel::ShouldPublishClassWalk(true, -1));
     EXPECT("read ok + the 827 MB garbage value is NOT published",
            !Ubel::ShouldPublishClassWalk(true, 867763776));
@@ -5755,21 +5805,112 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
 // below pin the presence and type of `game_thread_stalled` and only assert its value in
 // the one case that is about precedence rather than about liveness.
 namespace Stark {
-bool IsGameThreadResponsive(int32_t /*thresholdMs*/) { return true; }
+// Settable, because the envelope's shape now DEPENDS on the verdict: an Unknown
+// liveness omits the key entirely rather than defaulting it to false.
+// (STALLDEFAULT-2026-08-26)
+GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
+GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_testLiveness; }
 }   // namespace Stark
+
+static void Test_Stark_ClassifyGameThreadLiveness() {
+    using L = Stark::GameThreadLiveness;
+    const uint64_t thr = 500, now = 100000;
+    auto cl = [&](bool active, uint64_t last, uint64_t inst) {
+        return Stark::ClassifyGameThreadLiveness(active, last, inst, now, thr);
+    };
+
+    EXPECT("no hook: UNKNOWN, not a healthy default", cl(false, 0, 0) == L::Unknown);
+    EXPECT("fired recently: responsive", cl(true, now - 100, now - 5000) == L::Responsive);
+    EXPECT("fired, then went quiet past the threshold: stalled",
+           cl(true, now - 1000, now - 5000) == L::Stalled);
+    EXPECT("never fired, inside the grace window: still UNKNOWN",
+           cl(true, 0, now - 100) == L::Unknown);
+    // The connected-while-paused case: active, never fired, past grace. Deleting this
+    // branch as a "simplification" would remove working detection.
+    EXPECT("never fired, past grace: stalled (connected while paused)",
+           cl(true, 0, now - 1000) == L::Stalled);
+    EXPECT("active with no install stamp: UNKNOWN", cl(true, 0, 0) == L::Unknown);
+
+    // Saturating guards: a clock that appears to go backwards must not underflow into
+    // a huge age and read as a stall.
+    EXPECT("last == now is responsive", cl(true, now, now - 5000) == L::Responsive);
+    EXPECT("exactly the threshold is still responsive",
+           cl(true, now - thr, now - 5000) == L::Responsive);
+    EXPECT("a fire stamped in the future does not underflow",
+           cl(true, now + 10000, now - 5000) == L::Responsive);
+}
+
+static void Test_Stark_LivenessPreservesTheGateContract() {
+    // The eight in-DLL gates (Dunste noclip, Schlacht see-through, Wirbel) ask "should
+    // I attempt a game-thread invoke?", and unknown must keep meaning YES -- the
+    // attempt is what installs the hook. This asserts the refactor changed the REPORT
+    // and not the GATE, by re-deriving the pre-fix expression and comparing.
+    //
+    // A regression control, NOT evidence the bug existed.
+    using L = Stark::GameThreadLiveness;
+    const uint64_t thr = 500, now = 100000;
+    struct V { bool active; uint64_t last; uint64_t inst; };
+    const V vectors[] = {
+        {false, 0, 0}, {true, now - 100, now - 5000}, {true, now - 1000, now - 5000},
+        {true, 0, now - 100}, {true, 0, now - 1000}, {true, 0, 0},
+        {true, now, now}, {true, now - thr, now - 5000}, {true, now + 10000, now},
+    };
+    auto legacy = [&](const V& v) -> bool {
+        if (!v.active) return true;
+        if (v.last != 0) return (now > v.last ? now - v.last : 0) <= thr;
+        if (v.inst == 0) return true;
+        return (now > v.inst ? now - v.inst : 0) <= thr;
+    };
+    bool allMatch = true;
+    for (const V& v : vectors) {
+        const L got = Stark::ClassifyGameThreadLiveness(v.active, v.last, v.inst, now, thr);
+        if (Stark::IsResponsiveFromLiveness(got) != legacy(v)) allMatch = false;
+    }
+    EXPECT("the gate predicate is bit-for-bit what it was before the split", allMatch);
+}
 
 static void Test_Renge_EnvelopeBuilders() {
     std::printf("Test_Renge_EnvelopeBuilders\n");
 
     // MakeResponse: id + ok=true + the liveness hint, with no payload at all.
     {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Responsive;
         nlohmann::json res = Renge::MakeResponse(11);
         EXPECT("MakeResponse sets id", res.contains("id") && res["id"] == 11);
         EXPECT("MakeResponse sets ok=true", res.contains("ok") && res["ok"] == true);
-        EXPECT("MakeResponse always carries the liveness hint",
-               res.contains("game_thread_stalled") && res["game_thread_stalled"].is_boolean());
+        EXPECT("a MEASURED responsive carries the hint as false",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"] == false);
         EXPECT("MakeResponse with no payload has exactly the envelope", res.size() == 3);
     }
+
+    // A measured STALL still carries the hint, as true.
+    {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Stalled;
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("a MEASURED stall carries the hint as true",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"] == true);
+        EXPECT("...and the envelope is still exactly 3 keys", res.size() == 3);
+    }
+
+    // ⭐ UNKNOWN omits the key. This is the assertion that goes RED on the old
+    // `res["game_thread_stalled"] = !IsGameThreadResponsive()`, which reported a
+    // healthy game thread nobody had measured. (STALLDEFAULT-2026-08-26)
+    {
+        Stark::g_testLiveness = Stark::GameThreadLiveness::Unknown;
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("an UNMEASURED liveness omits the key entirely",
+               !res.contains("game_thread_stalled"));
+        EXPECT("...leaving a 2-key envelope", res.size() == 2);
+
+        // Precedence survives the omission: a handler that sets the key itself still
+        // wins. Fails if the omission is implemented as a post-hoc erase.
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        nlohmann::json res2 = Renge::MakeResponse(13, std::move(data));
+        EXPECT("a handler's own value wins even when Stark cannot tell",
+               res2.contains("game_thread_stalled") && res2["game_thread_stalled"] == true);
+    }
+    Stark::g_testLiveness = Stark::GameThreadLiveness::Responsive;   // restore for the rest
 
     // A payload splices in WITHOUT displacing any envelope key.
     {
@@ -6918,7 +7059,9 @@ int main() {
     RUN(Test_Holes_FullyCovered);
     RUN(Test_Holes_ClampsOutOfWindow);
     RUN(Test_Holes_ComputeClassHoles_ArrayDim);
-    RUN(Test_IsSanePropertiesSize);
+    RUN(Test_CountContributingClasses);
+    RUN(Test_IsPlausiblePropertiesSize);
+    RUN(Test_GapFillWorkCapIsADifferentQuestion);
     RUN(Test_ShouldPublishClassWalk);
     RUN(Test_ShouldPublishEnumTable);
     RUN(Test_VersionNeedleScan_Equivalence);
@@ -6949,6 +7092,8 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Stark_ClassifyGameThreadLiveness);
+    RUN(Test_Stark_LivenessPreservesTheGateContract);
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)

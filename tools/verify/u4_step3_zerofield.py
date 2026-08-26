@@ -5,7 +5,7 @@ r"""U4 step 3 -- a legitimately ZERO-FIELD UScriptStruct must still be MEMOIZED.
 
 THE PREDICATE UNDER TEST
   ShouldPublishClassWalk (dll/src/Ubel.h:550) is
-      propsSizeReadOk && IsSanePropertiesSize(propertiesSize)
+      propsSizeReadOk && IsPlausiblePropertiesSize(propertiesSize)
   and its own comment (Ubel.h:541-545) says why it may NOT be tightened:
       * NEVER gate on Fields.empty() -- InjectIntrinsicStructFields exists precisely
         because an empty field list is a LEGITIMATE outcome (FDateTime/FTimespan and

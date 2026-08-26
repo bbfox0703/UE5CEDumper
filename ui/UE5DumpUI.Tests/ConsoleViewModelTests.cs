@@ -987,4 +987,69 @@ public class ConsoleViewModelTests
         Assert.True(changes >= 2, "PropertyChanged must fire again on subsequent selection");
         Assert.Equal("", vm.SelectedExecHint);
     }
+
+    /// <summary>
+    /// The OVER-SWAP control for [FUNCDENOM-2026-08-26]. Two of this panel's three
+    /// sentences read as PROVENANCE ("N functions from M classes") and must quote the
+    /// CONTRIBUTING count; the third says "N classes scanned", which was always correct
+    /// and must keep quoting the EXAMINED count. A fix that swapped all three would be
+    /// wrong in the opposite direction, and nothing else would catch it.
+    /// </summary>
+    [Fact]
+    public async Task The_scanned_sentence_keeps_the_examined_count_while_provenance_uses_contributing()
+    {
+        // 3 examined, 1 contributing — deliberately different, so a sentence quoting the
+        // wrong field renders a different string.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 2, ScannedClasses = 3, ScannedObjects = 500, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName="UCheatManager", ClassAddr="0x1000", FuncName="Fly",
+                            FunctionFlags=FUNC_Exec },
+                    new() { ClassName="UCheatManager", ClassAddr="0x1000", FuncName="God",
+                            FunctionFlags=FUNC_Exec },
+                },
+            },
+        };
+        var vm = CreateVm(fake);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        // Exec commands WERE discovered, so this renders the "N classes scanned" sentence,
+        // which asks how many were EXAMINED.
+        Assert.Contains("3 classes scanned", vm.StatusText);
+        Assert.DoesNotContain("1 classes scanned", vm.StatusText);
+    }
+
+    /// <summary>
+    /// ...and the sibling: when NOTHING was found, the sentence is provenance
+    /// ("scanned N functions from M classes") and must quote the CONTRIBUTING count.
+    /// </summary>
+    [Fact]
+    public async Task The_no_exec_sentence_uses_the_contributing_count()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 2, ScannedClasses = 7, ScannedObjects = 500, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName="AThing", ClassAddr="0xA", FuncName="Tick",
+                            FunctionFlags=FUNC_BlueprintCallable },
+                    new() { ClassName="AThing", ClassAddr="0xA", FuncName="Zzz",
+                            FunctionFlags=FUNC_BlueprintCallable },
+                },
+            },
+        };
+        var vm = CreateVm(fake);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Contains("from 1 classes", vm.StatusText);
+        Assert.DoesNotContain("from 7 classes", vm.StatusText);
+    }
 }
