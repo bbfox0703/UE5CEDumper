@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
 // PipeServer: Named Pipe JSON IPC implementation
 // ============================================================
@@ -2073,6 +2073,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["is_definition"] = true;
             if (result.isStale)
                 data["stale"] = true;
+            // Present only when true, and !lean because the lean contract above is
+            // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
+            // subset of full. A CE export reads `fields` and never this.
+            // (SANEPROPS-2026-08-26)
+            if (!lean && result.gapFillSkipped)
+                data["gap_fill_skipped"] = true;
             if (!lean && result.propsSize > 0)
                 data["props_size"] = result.propsSize;
 

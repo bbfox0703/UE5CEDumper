@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Ubel — 尤蓓爾 (外科式暗殺者 — Surgical Assassin)
 // UStructWalker: FField chain traversal and property reading
 // ============================================================
@@ -992,7 +992,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
     // handing in a non-UStruct address poisoned the cache permanently — and the caller
     // that does exactly that is in-tree and shipped: WalkInstance walks the class FIRST
-    // and only then applies IsSanePropertiesSize to decide the address is recycled, and
+    // and only then applies IsPlausiblePropertiesSize to decide the address is recycled, and
     // UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its is-this-an-instance
     // probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
     // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
@@ -1003,10 +1003,15 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         PublishWalkClass(uclassAddr, info);
     } else {
+        // Name the term that actually fired. The old text asserted a disjunction it
+        // had not measured ("not a UStruct, or recycled memory") about classes that
+        // demonstrably parsed — P3R's two SaveGame classes walked their fields on the
+        // very same line. (SANEPROPS-2026-08-26)
         Sein::Warn("WALK:safe",
-            "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d (read %s); "
-            "not a UStruct, or recycled memory",
+            "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d is %s (read %s); "
+            "the class pointer looks recycled",
             (unsigned long long)uclassAddr, info.PropertiesSize,
+            info.PropertiesSize < 0 ? "negative" : "beyond the plausibility ceiling",
             propsSizeReadOk ? "ok" : "FAILED");
     }
 
@@ -1117,6 +1122,18 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // Placed BEFORE CorrectSubclassOffsets so a garbage class cannot calibrate the
     // process-wide FSTRUCTPROP_STRUCT offset off its own bogus fields.
     if (!ShouldPublishClassWalk(true, info.PropertiesSize)) {
+        // Logged, because this refusal is INVISIBLE otherwise and it is not a cache
+        // miss: the signature returns a reference into the map, so a refused class
+        // reads as a class with NO FIELDS to all ~26 external callers (Aura's
+        // container / ref caches treat `Address != cls` as the refusal signal). On
+        // P3R that silently hid both USaveGame classes from Value Search, Group Scan,
+        // snapshot capture, CE export, Solitar and Solide. WalkClass has already
+        // warned for this same address on this same path, so this adds one line per
+        // refused class, not a flood. (SANEPROPS-2026-08-26)
+        Sein::Warn("WALK:safe",
+            "WalkClassEx: 0x%llx REFUSED (PropertiesSize=%d) — returning an EMPTY "
+            "ClassInfo, so every caller will see this class as having no fields",
+            (unsigned long long)uclassAddr, info.PropertiesSize);
         return s_emptyClassInfo;
     }
 
@@ -3431,11 +3448,11 @@ void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
     const int32_t gapLen = gapEnd - gapStart;
     if (gapLen <= 0) return;
     // Hard safety bound, independent of any caller: a single object's gap can
-    // never legitimately exceed its PropertiesSize (<= kMaxSanePropertiesSize).
+    // never legitimately exceed the gap-fill work cap.
     // A larger gapLen means the caller fed a garbage size — refuse it rather
     // than walk it one byte at a time (each faulting read is a costly SEH). This
     // guards EVERY caller (WalkInstance gap-fill + Aura Native-C scan).
-    if (gapLen > kMaxSanePropertiesSize) {
+    if (gapLen > kMaxGapFillBytes) {
         Sein::Warn("WALK:guess",
             "GuessGapTypes: gap [0x%X,0x%X) len=%d exceeds sane bound, refusing",
             (unsigned)gapStart, (unsigned)gapEnd, gapLen);
@@ -3790,7 +3807,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     result.propsSize = ci.PropertiesSize;
 
     // Stale/garbage gate: a real UStruct::PropertiesSize is bounded (see
-    // kMaxSanePropertiesSize). An implausible value means classAddr points at
+    // kMaxPlausiblePropertiesSize). An implausible value means classAddr points at
     // recycled memory — the instance was freed and its slot reused while the
     // user was elsewhere (e.g. a long Snapshot/Class-Pivot pass), then Live
     // Walker re-walked the stale address on return. Bail BEFORE the gap-fill:
@@ -3798,7 +3815,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     // GuessGapTypes spins ~8e8 per-byte SEH reads, wedging the single-threaded
     // pipe worker (and the UI with it). propsSize is zeroed so the UI's
     // "0 fields + propsSize>0" fill_gaps auto-retry never fires.
-    if (!IsSanePropertiesSize(ci.PropertiesSize)) {
+    if (!IsPlausiblePropertiesSize(ci.PropertiesSize)) {
         Sein::Warn("WALK:safe",
             "WalkInstance: instance 0x%llx class 0x%llx has implausible PropertiesSize=%d "
             "(stale/recycled object?), skipping field/gap walk",
@@ -5777,11 +5794,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
     // --- Guess What: fill gaps between known fields ---
     // Note: works with 0-field classes too — the entire [headerEnd, propsSize] becomes one gap.
-    // The PropertiesSize upper bound is redundant with the stale gate above (which
-    // already returns for implausible sizes) but kept explicit so the gap-fill can
-    // never run over a multi-hundred-MB range even if that gate is ever loosened.
+    // The gap pass is bounded SEPARATELY from the plausibility gate above: a class
+    // can be entirely real and still be too large to sweep byte-wise, and conflating
+    // the two is what made a live 3.6 MB USaveGame report as recycled. Say the skip
+    // out loud rather than silently returning no guessed rows. (SANEPROPS-2026-08-26)
+    //
+    // Gated on `fillGaps` as well, so a default walk (fill_gaps defaults to false)
+    // never claims to have skipped a pass nobody asked for.
+    if (fillGaps && !result.isDefinition && ci.PropertiesSize > kMaxGapFillBytes) {
+        result.gapFillSkipped = true;
+        Sein::Warn("WALK:guess",
+            "WalkInstance: gap-fill SKIPPED for 0x%llx — PropertiesSize=%d exceeds the "
+            "%d-byte gap-fill work cap; the reflected fields ARE complete",
+            (unsigned long long)instanceAddr, ci.PropertiesSize, kMaxGapFillBytes);
+    }
     if (fillGaps && !result.isDefinition &&
-        ci.PropertiesSize > 0 && ci.PropertiesSize <= kMaxSanePropertiesSize) {
+        ci.PropertiesSize > 0 && ci.PropertiesSize <= kMaxGapFillBytes) {
         // Determine scan boundaries
         int32_t headerEnd = isRawStruct ? 0 : (DynOff::UOBJECT_OUTER + 8);
         int32_t scanEnd = ci.PropertiesSize;
@@ -6168,7 +6196,14 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
 
     int32_t scanBegin = (ci.SuperPropertiesSize > 0 ? ci.SuperPropertiesSize : 0);
     scanBegin = (scanBegin + 7) & ~7;
-    const int32_t scanEnd = ci.PropertiesSize - kSparseArrayBytes;
+    // Bounded by the gap-fill work cap as well as by the object. Raising the
+    // plausibility ceiling to 64 MB makes a mis-derived USTRUCT_PROPSSIZE reach this
+    // double loop, which is O(PropertiesSize/8 x fields) with a TSparseArray read per
+    // step. A real UDataTable's PropertiesSize is ~176 bytes, so 1 MB is ~6000x
+    // headroom and this clamp is unobservable on any real table. (SANEPROPS-2026-08-26)
+    const int32_t propsCap = (ci.PropertiesSize < kMaxGapFillBytes)
+                                 ? ci.PropertiesSize : kMaxGapFillBytes;
+    const int32_t scanEnd = propsCap - kSparseArrayBytes;
     if (scanEnd < scanBegin) {
         Sein::Warn("WALK", "ProbeRowMapOffset: no room to scan (propsSize=%d, "
                    "superPropsSize=%d) — a UDataTable smaller than a TSparseArray "

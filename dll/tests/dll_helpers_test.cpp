@@ -4849,18 +4849,44 @@ static void Test_Holes_ComputeClassHoles_ArrayDim() {
            Ubel::ComputeClassHoles(ciBad, 0x28, 0x80).size() == 3);
 }
 
-static void Test_IsSanePropertiesSize() {
-    // The bound that stops a recycled-object walk from wedging the pipe: a real
-    // UStruct::PropertiesSize is non-negative and at most kMaxSanePropertiesSize.
+static void Test_IsPlausiblePropertiesSize() {
+    // Admission control for caches that are NEVER erased: a real
+    // UStruct::PropertiesSize is non-negative and at most kMaxPlausiblePropertiesSize.
     // Real-world trigger (Elliot, 2026-06-27 log): returning to Live Walker on a
-    // freed instance read class PropertiesSize=867763776 (~827 MB) → one giant
-    // gap → GuessGapTypes spun ~8e8 SEH reads and blocked the single-threaded pipe.
-    EXPECT("UWorld real size (2536) is sane", Ubel::IsSanePropertiesSize(2536));
-    EXPECT("zero is sane (unusual, not garbage)", Ubel::IsSanePropertiesSize(0));
-    EXPECT("exactly the cap is sane", Ubel::IsSanePropertiesSize(Ubel::kMaxSanePropertiesSize));
-    EXPECT("cap+1 is NOT sane", !Ubel::IsSanePropertiesSize(Ubel::kMaxSanePropertiesSize + 1));
-    EXPECT("negative is NOT sane", !Ubel::IsSanePropertiesSize(-1));
-    EXPECT("the 827 MB garbage value is NOT sane", !Ubel::IsSanePropertiesSize(867763776));
+    // freed instance read class PropertiesSize=867763776 (~827 MB), one giant gap,
+    // GuessGapTypes spun ~8e8 SEH reads and blocked the single-threaded pipe.
+    EXPECT("UWorld real size (2536) is plausible", Ubel::IsPlausiblePropertiesSize(2536));
+    EXPECT("zero is plausible (a field-less UCLASS is legitimate)",
+           Ubel::IsPlausiblePropertiesSize(0));
+    EXPECT("exactly the ceiling is plausible",
+           Ubel::IsPlausiblePropertiesSize(Ubel::kMaxPlausiblePropertiesSize));
+    EXPECT("ceiling+1 is NOT plausible",
+           !Ubel::IsPlausiblePropertiesSize(Ubel::kMaxPlausiblePropertiesSize + 1));
+    EXPECT("negative is NOT plausible", !Ubel::IsPlausiblePropertiesSize(-1));
+    EXPECT("the 827 MB garbage value is NOT plausible",
+           !Ubel::IsPlausiblePropertiesSize(867763776));
+
+    // The rows the P3R log buys, and the whole reason the ceiling moved: both classes
+    // walk their fields cleanly and stay byte-stable for twelve minutes, and the old
+    // 1 MB bound declared both of them recycled. (SANEPROPS-2026-08-26)
+    EXPECT("P3R XRD777SaveGame (3,671,800) IS plausible",
+           Ubel::IsPlausiblePropertiesSize(3671800));
+    EXPECT("P3R AstreaSaveGame (3,671,816) IS plausible",
+           Ubel::IsPlausiblePropertiesSize(3671816));
+}
+
+static void Test_GapFillWorkCapIsADifferentQuestion() {
+    // The point of the split: ONE number, TWO verdicts. A class can be entirely real
+    // (plausible) and still be too large to sweep byte-wise (over the work cap). If
+    // the two ever collapse back into one constant, this goes red.
+    EXPECT("the work cap is still 1 MB", Ubel::kMaxGapFillBytes == 1 * 1024 * 1024);
+    EXPECT("the plausibility ceiling is ABOVE the work cap",
+           Ubel::kMaxPlausiblePropertiesSize > Ubel::kMaxGapFillBytes);
+    EXPECT("a class just over the work cap is still PLAUSIBLE",
+           Ubel::IsPlausiblePropertiesSize(Ubel::kMaxGapFillBytes + 1));
+    // P3R's real class is the concrete instance of exactly that: real, not gap-fillable.
+    EXPECT("P3R's 3.6 MB SaveGame is plausible AND over the work cap",
+           Ubel::IsPlausiblePropertiesSize(3671800) && 3671800 > Ubel::kMaxGapFillBytes);
 }
 
 static void Test_ShouldPublishClassWalk() {
@@ -4871,7 +4897,7 @@ static void Test_ShouldPublishClassWalk() {
     // that are not UStructs at all (WalkInstance's own pre-gate walk, and
     // UE5_WalkClassBegin, which ue5_dissect.lua uses as its is-this-an-instance probe).
 
-    // The read-ok term is the half IsSanePropertiesSize cannot express: Macht::ReadSafe
+    // The read-ok term is the half IsPlausiblePropertiesSize cannot express: Macht::ReadSafe
     // ZEROES its out-param on an access violation, and 0 is a legitimate
     // PropertiesSize, so an unmapped address is indistinguishable from a UCLASS that
     // declares no own UPROPERTYs unless the return value is carried.
@@ -4880,12 +4906,14 @@ static void Test_ShouldPublishClassWalk() {
     EXPECT("failed read is never published, even with a plausible size",
            !Ubel::ShouldPublishClassWalk(false, 512));
 
-    // With a successful read the bound is exactly IsSanePropertiesSize's.
+    // With a successful read the bound is exactly IsPlausiblePropertiesSize's.
     EXPECT("read ok + real UWorld size is published", Ubel::ShouldPublishClassWalk(true, 2536));
     EXPECT("read ok + zero is published (a field-less UCLASS is legitimate)",
            Ubel::ShouldPublishClassWalk(true, 0));
-    EXPECT("read ok + exactly the cap is published",
-           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxSanePropertiesSize));
+    EXPECT("read ok + exactly the ceiling is published",
+           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxPlausiblePropertiesSize));
+    EXPECT("read ok + P3R's real 3.6 MB SaveGame IS published",
+           Ubel::ShouldPublishClassWalk(true, 3671816));
     EXPECT("read ok + negative is NOT published", !Ubel::ShouldPublishClassWalk(true, -1));
     EXPECT("read ok + the 827 MB garbage value is NOT published",
            !Ubel::ShouldPublishClassWalk(true, 867763776));
@@ -6918,7 +6946,8 @@ int main() {
     RUN(Test_Holes_FullyCovered);
     RUN(Test_Holes_ClampsOutOfWindow);
     RUN(Test_Holes_ComputeClassHoles_ArrayDim);
-    RUN(Test_IsSanePropertiesSize);
+    RUN(Test_IsPlausiblePropertiesSize);
+    RUN(Test_GapFillWorkCapIsADifferentQuestion);
     RUN(Test_ShouldPublishClassWalk);
     RUN(Test_ShouldPublishEnumTable);
     RUN(Test_VersionNeedleScan_Equivalence);

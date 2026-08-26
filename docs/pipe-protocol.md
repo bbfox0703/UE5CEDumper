@@ -747,9 +747,17 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
   "outer_name":  "ThirdPersonMap",
   "outer_class": "World",
   // "stale": true,   // present only when the class pointer looks recycled/garbage
-                      // (PropertiesSize beyond kMaxSanePropertiesSize = 1 MB). Returned
-                      // with no fields + props_size omitted; the client must NOT retry
-                      // fill_gaps (a bogus multi-hundred-MB size would wedge the pipe).
+                      // (PropertiesSize negative, or beyond
+                      // kMaxPlausiblePropertiesSize = 64 MB). Returned with no fields +
+                      // props_size omitted; the client must NOT retry fill_gaps (a
+                      // bogus multi-hundred-MB size would wedge the pipe).
+  // "gap_fill_skipped": true,
+                      // present only when true, and only on a non-lean walk that
+                      // ASKED for fill_gaps. The class is real and the fields above are
+                      // complete — it is merely larger than kMaxGapFillBytes = 1 MB, so
+                      // the Guess-What raw-byte pass was skipped. NOT staleness: the two
+                      // used to share one bound, which is how a live 3.6 MB USaveGame
+                      // was reported to the user as freed. (SANEPROPS-2026-08-26)
   "fields": [
     // --- Scalar field ---
     {

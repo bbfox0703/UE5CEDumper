@@ -6138,8 +6138,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             return result;
         }
 
-        // PropertiesSize sanity bound mirrors the DLL's kMaxSanePropertiesSize
-        // (1 MB). A larger value is garbage, not a genuine 0-field class.
+        // Mirrors the DLL's kMaxGapFillBytes (1 MB) — the GAP-FILL WORK cap, not a
+        // plausibility bound. Above it the DLL walks the class but skips the guessed
+        // rows, so asking it to retry with fill_gaps buys nothing. The value is
+        // unchanged; it was only ever mis-NAMED here. (SANEPROPS-2026-08-26)
         const int MaxSanePropertiesSize = 1 * 1024 * 1024;
         if (result.Fields.Count == 0 && result.PropertiesSize > 0
             && result.PropertiesSize <= MaxSanePropertiesSize && !FillGaps)
@@ -6415,6 +6417,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             StatusText = "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.";
             _log.Warn($"UpdateDisplay: stale/recycled object at {result.Address} (implausible PropertiesSize) — fields unavailable");
+        }
+        else if (result.GapFillSkipped)
+        {
+            // Informational, not a warning: the fields ARE complete. Only the
+            // speculative guessed rows are missing. (SANEPROPS-2026-08-26)
+            StatusText = "ℹ This class is too large to guess raw bytes for — "
+                       + "the reflected fields below are complete.";
+            _log.Info($"UpdateDisplay: gap-fill skipped at {result.Address} "
+                    + $"(PropertiesSize={result.PropertiesSize}) — reflected fields are complete");
         }
 
         // Compute absolute field addresses

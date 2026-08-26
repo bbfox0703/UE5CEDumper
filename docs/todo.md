@@ -1589,7 +1589,7 @@ day in build 3361 — the `PERF` line's two denominators and the missing re-anch
 recorded in [dev-log.md](dev-log.md). These three are open. Each was independently reproduced
 before being written down.*
 
-### ⬜ `[SANEPROPS-2026-08-26]` — `kMaxSanePropertiesSize = 1 MB` rejects legitimate classes
+### ✅ FIXED 2026-08-26 (build 3362) `[SANEPROPS-2026-08-26]` — `kMaxSanePropertiesSize = 1 MB` rejected legitimate classes
 
 P3R has **two real classes over the limit**, and the same log shows both parsing perfectly:
 
@@ -1609,11 +1609,38 @@ caller: `Ubel.cpp:3801`, in `WalkInstance`, which on a fail sets `result.isStale
 classes would return nothing and the UI would report a live object as stale. That path was **not
 entered in this session** (grep `implausible PropertiesSize` = 0), so this is latent, not observed.
 
-**Not fixed here on purpose**: the constant guards a real safety property (a recycled address
-yields a garbage `PropertiesSize`, and the walker must not trust it), so raising it is a judgement
-about what a plausible size is, not a typo. Two shapes worth weighing — raise the ceiling to
-something a save-game class fits under, or make the *instance* path's verdict depend on more than
-size alone. Needs the maintainer's call.
+**FIXED by splitting the one constant into two**, because it was answering two questions with
+opposite risk profiles: `kMaxGapFillBytes` (1 MB, **unchanged** — the byte-sweep work cap that the
+827 MB wedge exists to stop) and `kMaxPlausiblePropertiesSize` (**64 MB** — admission control for
+caches that are never erased). `WalkInstance`'s stale gate and `ShouldPublishClassWalk` now ask the
+plausibility question; `GuessGapTypes` and the gap-fill entry keep the work cap.
+
+⭐ **The consequence was much worse than this row first recorded, and an adversarial design review
+found it.** `Ubel.cpp`'s `WalkClassEx` gate does not merely refuse the CACHE — it refuses to
+**RETURN**, handing back an empty `ClassInfo` (the signature is a reference into the map). Aura's
+container and ref caches read `WalkClassEx(cls).Address != cls` as the refusal signal, so on P3R
+both `USaveGame` classes were structurally invisible to **Value Search, Group Scan, snapshot
+capture, CE export, Solitar and Solide** — with **no log line at all**. That refusal now logs.
+
+⚠ **The 64 MB figure is a judgement call the maintainer may want to change.** It is an admission
+bound, not a fact about UE (`UStruct::PropertiesSize` is an int32 with no engine cap). It sits ~17×
+above the largest real sample (3,671,816, P3R) and ~13× below the observed garbage (867,763,776,
+Elliot) — their geometric mean is ~56 MB. The samples are in the header comment so it can be
+re-derived rather than re-guessed.
+
+Also in the fix: a live-but-huge class now reports `gap_fill_skipped` on the wire and an ℹ status
+line instead of the ⚠ "freed/recycled" one; the two WARN texts stopped asserting things they had
+not measured; and `ProbeRowMapOffset`'s `O(PropertiesSize/8 × fields)` double loop gained the work
+cap as a clamp, because the raised ceiling newly exposes it.
+
+**Verification**: 9 new C++ assertions across `dll_helpers_test` (pure bound) and `dll_core_test`
+(the instance path, driving `WalkInstance` against a fake class blob), with two negative controls —
+reverting the ceiling to 1 MB turns **9 assertions red including "P3R's real 3.6 MB class is NOT
+stale (THE bug)"**, and removing the skip flag turns the gap-pass assertion red.
+
+⚠ **Writing that test reproduced A10 by accident**: one class blob reused across four cases had
+every case after the first read the first one's memoised answer, because `s_walkClassExCache` is
+keyed by address and nothing erases it. One blob per case; the comment says why.
 
 ### ⬜ `[FUNCDENOM-2026-08-26]` — "9760 entries from 2293 classes" counts classes that contributed nothing
 

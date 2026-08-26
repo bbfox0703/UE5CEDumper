@@ -540,6 +540,7 @@ public sealed class DumpService : IDumpService
             OuterClassName = o["outer_class"]?.GetValue<string>() ?? "",
             IsDefinition = o["is_definition"]?.GetValue<bool>() ?? false,
             IsStale = o["stale"]?.GetValue<bool>() ?? false,
+            GapFillSkipped = o["gap_fill_skipped"]?.GetValue<bool>() ?? false,
             PropertiesSize = o["props_size"]?.GetValue<int>() ?? 0,
         };
 
