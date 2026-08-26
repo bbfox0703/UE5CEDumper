@@ -36,6 +36,24 @@ static HMODULE LoadRealVersion()
 {
     if (g_realVersion) return g_realVersion;
 
+    // ⛔ PRE-CRT GATE — before LoadLibraryW and before any LOG_*, both of which are unsafe
+    // when one of our exports is entered before `_DllMainCRTStartup` has run: LoadLibraryW
+    // would recurse into a still-held loader lock, and LOG_* mallocs on a heap that does not
+    // exist yet (`HeapAlloc(NULL, …)` → AV in `ntdll!RtlAllocateHeap`). Returning null makes
+    // each forwarder below answer its own documented failure value instead.
+    //
+    // ⚠ This one is NOT theoretical for version.dll, and it is the reason the gate is here
+    // rather than only in the dxgi proxy: `AcGenral.dll` — the AppCompat shim engine, loaded
+    // at module [5], ahead of msvcrt — STATICALLY IMPORTS version.dll
+    // (GetFileVersionInfoSizeW / GetFileVersionInfoW / VerQueryValueW), and version.dll is
+    // NOT a KnownDLL, so on a shimmed game the copy it binds to is OURS. Today that is
+    // survivable: a static import is initialised before its dependent, so our DllMain has
+    // run by the time AcGenral calls in. This gate is what stops that from being load-bearing.
+    // See docs/audit-2026-08-26-dxgi-appcompat-crash.md §5.
+    //
+    // Nothing is latched — `g_realVersion` stays null, so the next call retries.
+    if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return nullptr; }
+
     // Build path to the real version.dll in System32
     wchar_t realPath[MAX_PATH] = {};
     if (!Lugner::SystemDllPath(L"version.dll", realPath, MAX_PATH)) {
@@ -62,6 +80,22 @@ static FARPROC RealProc(const char* name)
     return real ? GetProcAddress(real, name) : nullptr;
 }
 
+// ⚠ EVERY forwarder below caches with `static Fn fn = nullptr; if (!fn) fn = …`, NOT with
+// `static auto fn = reinterpret_cast<Fn>(RealProc(…))`. This is required, not stylistic:
+//
+//   * A magic static evaluates its initialiser EXACTLY ONCE and latches the result forever.
+//     RealProc can now legitimately return null on a first call — that is precisely what the
+//     pre-CRT gate in LoadRealVersion does — and latching that null would leave the export
+//     permanently dead for the life of the process, which is a worse failure than the crash
+//     the gate removes.
+//   * A magic static also drags in the CRT's thread-safe-init machinery
+//     (`_Init_thread_header` / `_Init_thread_footer`), which is exactly the kind of CRT
+//     global state that is not ready on the path this gate exists to survive.
+//
+// The retry is unsynchronised on purpose: two racers call GetProcAddress on the same module
+// for the same name and write the SAME pointer, so the work is idempotent and the worst case
+// is doing it twice — the same argument Lugner_Winmm.cpp's resolver makes.
+
 // ── Forwarded exports (17 total) ─────────────────────────────
 // Internal names use Proxy_ prefix; ProxyVersion.def maps them
 // to the real export names (GetFileVersionInfoA, etc.).
@@ -72,7 +106,8 @@ extern "C" BOOL WINAPI Proxy_GetFileVersionInfoA(
     LPCSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData)
 {
     using Fn = BOOL(WINAPI*)(LPCSTR, DWORD, DWORD, LPVOID);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoA"));
     return fn ? fn(lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
 }
 
@@ -80,7 +115,8 @@ extern "C" BOOL WINAPI Proxy_GetFileVersionInfoW(
     LPCWSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData)
 {
     using Fn = BOOL(WINAPI*)(LPCWSTR, DWORD, DWORD, LPVOID);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoW"));
     return fn ? fn(lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
 }
 
@@ -88,7 +124,8 @@ extern "C" DWORD WINAPI Proxy_GetFileVersionInfoSizeA(
     LPCSTR lptstrFilename, LPDWORD lpdwHandle)
 {
     using Fn = DWORD(WINAPI*)(LPCSTR, LPDWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeA"));
     return fn ? fn(lptstrFilename, lpdwHandle) : 0;
 }
 
@@ -96,7 +133,8 @@ extern "C" DWORD WINAPI Proxy_GetFileVersionInfoSizeW(
     LPCWSTR lptstrFilename, LPDWORD lpdwHandle)
 {
     using Fn = DWORD(WINAPI*)(LPCWSTR, LPDWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeW"));
     return fn ? fn(lptstrFilename, lpdwHandle) : 0;
 }
 
@@ -106,7 +144,8 @@ extern "C" BOOL WINAPI Proxy_GetFileVersionInfoExA(
     DWORD dwFlags, LPCSTR lpwstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData)
 {
     using Fn = BOOL(WINAPI*)(DWORD, LPCSTR, DWORD, DWORD, LPVOID);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoExA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoExA"));
     return fn ? fn(dwFlags, lpwstrFilename, dwHandle, dwLen, lpData) : FALSE;
 }
 
@@ -114,7 +153,8 @@ extern "C" BOOL WINAPI Proxy_GetFileVersionInfoExW(
     DWORD dwFlags, LPCWSTR lpwstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData)
 {
     using Fn = BOOL(WINAPI*)(DWORD, LPCWSTR, DWORD, DWORD, LPVOID);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoExW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoExW"));
     return fn ? fn(dwFlags, lpwstrFilename, dwHandle, dwLen, lpData) : FALSE;
 }
 
@@ -122,7 +162,8 @@ extern "C" DWORD WINAPI Proxy_GetFileVersionInfoSizeExA(
     DWORD dwFlags, LPCSTR lpwstrFilename, LPDWORD lpdwHandle)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCSTR, LPDWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeExA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeExA"));
     return fn ? fn(dwFlags, lpwstrFilename, lpdwHandle) : 0;
 }
 
@@ -130,7 +171,8 @@ extern "C" DWORD WINAPI Proxy_GetFileVersionInfoSizeExW(
     DWORD dwFlags, LPCWSTR lpwstrFilename, LPDWORD lpdwHandle)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCWSTR, LPDWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeExW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoSizeExW"));
     return fn ? fn(dwFlags, lpwstrFilename, lpdwHandle) : 0;
 }
 
@@ -140,7 +182,8 @@ extern "C" BOOL WINAPI Proxy_GetFileVersionInfoByHandle(
     DWORD dwFlags, HANDLE hFile, LPVOID lpData, DWORD dwLen)
 {
     using Fn = BOOL(WINAPI*)(DWORD, HANDLE, LPVOID, DWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoByHandle"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetFileVersionInfoByHandle"));
     return fn ? fn(dwFlags, hFile, lpData, dwLen) : FALSE;
 }
 
@@ -150,7 +193,8 @@ extern "C" BOOL WINAPI Proxy_VerQueryValueA(
     LPCVOID pBlock, LPCSTR lpSubBlock, LPVOID* lplpBuffer, PUINT puLen)
 {
     using Fn = BOOL(WINAPI*)(LPCVOID, LPCSTR, LPVOID*, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerQueryValueA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerQueryValueA"));
     return fn ? fn(pBlock, lpSubBlock, lplpBuffer, puLen) : FALSE;
 }
 
@@ -158,7 +202,8 @@ extern "C" BOOL WINAPI Proxy_VerQueryValueW(
     LPCVOID pBlock, LPCWSTR lpSubBlock, LPVOID* lplpBuffer, PUINT puLen)
 {
     using Fn = BOOL(WINAPI*)(LPCVOID, LPCWSTR, LPVOID*, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerQueryValueW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerQueryValueW"));
     return fn ? fn(pBlock, lpSubBlock, lplpBuffer, puLen) : FALSE;
 }
 
@@ -169,7 +214,8 @@ extern "C" DWORD WINAPI Proxy_VerFindFileA(
     LPSTR szCurDir, PUINT puCurDirLen, LPSTR szDestDir, PUINT puDestDirLen)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCSTR, LPCSTR, LPCSTR, LPSTR, PUINT, LPSTR, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerFindFileA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerFindFileA"));
     return fn ? fn(uFlags, szFileName, szWinDir, szAppDir, szCurDir, puCurDirLen, szDestDir, puDestDirLen) : 0;
 }
 
@@ -178,7 +224,8 @@ extern "C" DWORD WINAPI Proxy_VerFindFileW(
     LPWSTR szCurDir, PUINT puCurDirLen, LPWSTR szDestDir, PUINT puDestDirLen)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCWSTR, LPCWSTR, LPCWSTR, LPWSTR, PUINT, LPWSTR, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerFindFileW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerFindFileW"));
     return fn ? fn(uFlags, szFileName, szWinDir, szAppDir, szCurDir, puCurDirLen, szDestDir, puDestDirLen) : 0;
 }
 
@@ -190,7 +237,8 @@ extern "C" DWORD WINAPI Proxy_VerInstallFileA(
     LPSTR szTmpFile, PUINT puTmpFileLen)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPSTR, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerInstallFileA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerInstallFileA"));
     return fn ? fn(uFlags, szSrcFileName, szDestFileName, szSrcDir, szDestDir, szCurDir, szTmpFile, puTmpFileLen) : 0;
 }
 
@@ -200,7 +248,8 @@ extern "C" DWORD WINAPI Proxy_VerInstallFileW(
     LPWSTR szTmpFile, PUINT puTmpFileLen)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPWSTR, PUINT);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerInstallFileW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerInstallFileW"));
     return fn ? fn(uFlags, szSrcFileName, szDestFileName, szSrcDir, szDestDir, szCurDir, szTmpFile, puTmpFileLen) : 0;
 }
 
@@ -209,14 +258,16 @@ extern "C" DWORD WINAPI Proxy_VerInstallFileW(
 extern "C" DWORD WINAPI Proxy_VerLanguageNameA(DWORD wLang, LPSTR szLang, DWORD cchLang)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPSTR, DWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerLanguageNameA"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerLanguageNameA"));
     return fn ? fn(wLang, szLang, cchLang) : 0;
 }
 
 extern "C" DWORD WINAPI Proxy_VerLanguageNameW(DWORD wLang, LPWSTR szLang, DWORD cchLang)
 {
     using Fn = DWORD(WINAPI*)(DWORD, LPWSTR, DWORD);
-    static auto fn = reinterpret_cast<Fn>(RealProc("VerLanguageNameW"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("VerLanguageNameW"));
     return fn ? fn(wLang, szLang, cchLang) : 0;
 }
 

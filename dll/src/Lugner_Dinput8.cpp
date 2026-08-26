@@ -41,6 +41,20 @@ static HMODULE LoadRealDinput8()
 {
     if (g_realDinput8) return g_realDinput8;
 
+    // ⛔ PRE-CRT GATE — see Lugner.cpp's copy for the full reasoning, and
+    // docs/audit-2026-08-26-dxgi-appcompat-crash.md for the crash it prevents. Short version:
+    // an export of ours can be entered before `_DllMainCRTStartup` has run, and at that point
+    // LoadLibraryW recurses into a still-held loader lock while LOG_* mallocs on a heap that
+    // does not exist yet. Nothing is latched, so the next call retries; the forwarders below
+    // each answer their own documented failure value (E_FAIL / S_FALSE / nullptr) meanwhile.
+    //
+    // No AppCompat shim targets dinput8.dll today (AcGenral names dxgi.dll, ninput.dll and
+    // d3d9.dll, not this one), so this is defence in depth rather than a live bug — but the
+    // four proxies are ONE binary with one DllMain and one thunk shape, and a gate that is
+    // only in the flavour where the crash was observed is a gate that will be missing the
+    // next time the loader reaches a different one first.
+    if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return nullptr; }
+
     wchar_t realPath[MAX_PATH] = {};
     if (!Lugner::SystemDllPath(L"dinput8.dll", realPath, MAX_PATH)) {
         LOG_ERROR("Could not resolve the System32 path of dinput8.dll (err=%lu) — refusing "
@@ -75,14 +89,16 @@ extern "C" HRESULT WINAPI Proxy_DirectInput8Create(
     LPVOID* ppvOut, LPVOID punkOuter)
 {
     using Fn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPVOID);
-    static auto fn = reinterpret_cast<Fn>(RealProc("DirectInput8Create"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("DirectInput8Create"));
     return fn ? fn(hinst, dwVersion, riidltf, ppvOut, punkOuter) : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI Proxy_DllCanUnloadNow()
 {
     using Fn = HRESULT(WINAPI*)();
-    static auto fn = reinterpret_cast<Fn>(RealProc("DllCanUnloadNow"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("DllCanUnloadNow"));
     return fn ? fn() : S_FALSE;
 }
 
@@ -90,21 +106,24 @@ extern "C" HRESULT WINAPI Proxy_DllGetClassObject(
     REFCLSID rclsid, REFIID riid, LPVOID* ppv)
 {
     using Fn = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
-    static auto fn = reinterpret_cast<Fn>(RealProc("DllGetClassObject"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("DllGetClassObject"));
     return fn ? fn(rclsid, riid, ppv) : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI Proxy_DllRegisterServer()
 {
     using Fn = HRESULT(WINAPI*)();
-    static auto fn = reinterpret_cast<Fn>(RealProc("DllRegisterServer"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("DllRegisterServer"));
     return fn ? fn() : E_FAIL;
 }
 
 extern "C" HRESULT WINAPI Proxy_DllUnregisterServer()
 {
     using Fn = HRESULT(WINAPI*)();
-    static auto fn = reinterpret_cast<Fn>(RealProc("DllUnregisterServer"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("DllUnregisterServer"));
     return fn ? fn() : E_FAIL;
 }
 
@@ -123,7 +142,8 @@ extern "C" HRESULT WINAPI Proxy_DllUnregisterServer()
 extern "C" const void* WINAPI Proxy_GetdfDIJoystick()
 {
     using Fn = const void*(WINAPI*)();
-    static auto fn = reinterpret_cast<Fn>(RealProc("GetdfDIJoystick"));
+    static Fn fn = nullptr;
+    if (!fn) fn = reinterpret_cast<Fn>(RealProc("GetdfDIJoystick"));
     return fn ? fn() : nullptr;
 }
 

@@ -22,6 +22,79 @@ builds ≤696 in
 
 -----
 
+## 2026-08-27 - The AppCompat shim calls our export before our CRT exists; four proxies fixed, and one "fix" that would have killed the export (build 3363)
+
+OCTOPATH TRAVELER would not start with our `dxgi.dll` proxy deployed, while the **same 2.9 MB
+binary** as `winmm.dll` worked in the same game. Root cause confirmed at instruction level from
+two crash dumps and the shim engine's own disassembly; full dossier in
+[audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md).
+
+The game carries an AppCompat layer (`HKCU\...\AppCompatFlags\Layers` = `HIGHDPIAWARE`), so
+`apphelp.dll` + `AcGenral.dll` load at module [4]/[5] — ahead of `msvcrt`. `AcGenral`'s
+`NS_DXGICompat` shim does `GetModuleHandleW(L"dxgi.dll")` →
+`GetProcAddress("SetAppCompatStringPointer")` → call, driven by `apphelp!SE_DllLoaded`, which the
+loader raises when a module is **MAPPED** — before its init routine runs. Our export for that name
+was a lazy asm thunk whose resolver logs; logging allocates; `__acrt_heap` was still NULL;
+`HeapAlloc(NULL, 0, 0x20)` faulted in `ntdll!RtlAllocateHeap+0x54` and the process died before the
+EXE entry point.
+
+`winmm` survives because `AcGenral` names `dxgi.dll` / `ninput.dll` / `d3d9.dll` and **not**
+`winmm.dll`: nothing enters our winmm thunks until the game's own code runs, ~2.0 s after DllMain.
+
+### What shipped, across all four flavours
+
+- **`Lugner::g_crtReady`** — a plain `volatile LONG` with a *constant* initialiser, so it lives in
+  zero-filled `.data` with no dynamic initialiser and is readable before the CRT exists. Set by
+  `Lugner::MarkCrtReady()` as the **first statement** of `DLL_PROCESS_ATTACH`.
+- **A pre-CRT gate on every resolver** — `DxgiProxy_EnsureResolved`, `WinmmProxy_EnsureResolved`,
+  `LoadRealVersion`, `LoadRealDinput8`. ⚠ It **refuses outright** rather than doing the
+  kernel32-only resolve the plan called for: that would have been allocation-safe but *not*
+  loader-lock-safe, and the pre-CRT caller is the loader itself. Nothing is latched, so the host's
+  own first call resolves normally. This is what ReShade does.
+- **`Lugner::g_preCrtCalls`** — an `InterlockedIncrement` counter reported once from DllMain as a
+  `LOG_WARN`. Without it the refusal is completely invisible: no log, no crash, nothing.
+- **The thunks now tell two null cases apart**, via a new `mResolveAttempted` data symbol. This is
+  the part that needed care: the obvious "return 0 on null" would have silently reversed B44/B48's
+  recorded decision, where a stub returning 0 is *worse* because winmm's `0 == TIMERR_NOERROR`
+  would make a missing `timeBeginPeriod` silently no-op the 1 ms tick. `mResolveAttempted == 0`
+  (resolver refused) → `xor eax,eax / ret`; `== 1` (name genuinely absent) → keep the deliberate
+  loud `jmp rax` with `rax == 0`.
+
+### The change the fix forced, which was not in the plan
+
+`Lugner.cpp` (17 sites) and `Lugner_Dinput8.cpp` (6) cached with
+`static auto fn = reinterpret_cast<Fn>(RealProc("..."));`. **A magic static evaluates its
+initialiser exactly once and latches the result forever** — so adding the gate above without
+touching them would have latched `nullptr` on a pre-CRT first call and left the export dead for
+the life of the process. That is a *worse* failure than the crash being removed: silent, permanent
+and invisible. All 23 became `static Fn fn = nullptr; if (!fn) fn = ...`, which also drops the
+CRT's `_Init_thread_header` machinery off a path that must not need the CRT.
+
+### An unrelated defect found on the way
+
+`scripts/gen_proxy_forwarders.py --check` reported **`Lugner_Winmm.cpp STALE`** *before* any of
+this work: the AD18 `SystemDllPath` fix had been hand-applied to the generated .cpp and never
+back-ported, so re-running the generator would have silently reintroduced the
+drive-root-relative-path defect — and that check is **not in CI**. AD18 and the new changes are
+both in the generator now; `--check` is clean.
+
+### Verification
+
+`tools/verify/proxy_precrt_gate.py` maps a proxy with
+`LoadLibraryExW(..., DONT_RESOLVE_DLL_REFERENCES)` — image mapped, exports callable, **DllMain not
+called** — and calls a thunk from a child process so a fault is an exit code. The pre-fix
+`out/proxy-backups/Avowed.dxgi.dll.20260823-212124.bak` faults `0xC0000005` at **`+0x187A2E`, the
+same RVA on the faulting stack of both Octopath minidumps**; `dist/proxy/dxgi.dll` returns cleanly
+at `+0x1889CC`. Same result for winmm. 13/13 gates and
+`check_proxy_exports --artifacts` pass.
+
+⚠ The rig provably **cannot** discriminate pre/post fix for `version` / `dinput8` (plain C
+forwarders, not asm thunks — their pre-fix path does not fault in this harness), and it says so
+rather than printing a green tick. Their gate is verified by construction only. **The in-game
+Octopath run is still owed** — see todo.md.
+
+-----
+
 ## 2026-08-26 (night) - The three log-audit findings, fixed; an adversarial design review changed the shape of two of them (build 3362)
 
 The three open findings from the P3R log audit (previous entry). Each was designed, then faced a

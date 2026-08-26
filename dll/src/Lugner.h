@@ -14,6 +14,50 @@
 
 namespace Lugner {
 
+// ── The CRT-ready latch ────────────────────────────────────────────────────────────
+//
+// ⚠ AN EXPORT OF OURS CAN BE CALLED BEFORE `_DllMainCRTStartup` HAS RUN, and when it is,
+// our CRT does not exist yet: `__acrt_heap` is still NULL, so the first `malloc` becomes
+// `HeapAlloc(NULL, …)` and faults in `ntdll!RtlAllocateHeap+0x54`. That is not a
+// hypothetical — it is what makes OCTOPATH TRAVELER refuse to start with the dxgi proxy
+// deployed, confirmed at the instruction level in
+// docs/audit-2026-08-26-dxgi-appcompat-crash.md.
+//
+// The caller is Windows' own AppCompat shim engine. When a game carries a compat layer
+// (Octopath: `HIGHDPIAWARE`), `apphelp.dll` + `AcGenral.dll` load at module [4]/[5] — ahead
+// of msvcrt — and `AcGenral!NS_DXGICompat` does
+// `GetModuleHandleW(L"dxgi.dll")` → `GetProcAddress("SetAppCompatStringPointer")` → call,
+// driven by `apphelp!SE_DllLoaded`, which the loader raises when a module is **MAPPED** —
+// before its init routine runs. Our export for that name was a lazy thunk whose resolver
+// LOGS, and logging allocates.
+//
+// ⭐ The lesson is NOT "do less in DllMain". ReShade does MORE under the loader lock (file
+// I/O, 44+ hook installs) and boots fine; it simply does not export
+// `SetAppCompatStringPointer`, so the shim's `GetProcAddress` returns NULL and it is never
+// entered. We DO export it, so we need this latch instead.
+//
+// ⚠ MUST stay a plain `volatile LONG` with a CONSTANT initialiser. It is read on a path
+// where the CRT does not exist, so it has to live in zero-initialised .data with **no
+// dynamic initialiser** — anything with a runtime constructor (including a `std::atomic`
+// that is not constant-initialised) would be read before it was written. An aligned LONG
+// load is atomic on x64, and this is a one-way 0→1 latch, so the read needs no interlock;
+// the write uses one anyway because it costs nothing.
+inline volatile LONG g_crtReady = 0;
+
+// Number of forwarded calls that arrived before the latch was set. Bumped on a path that
+// must not allocate, so it is an InterlockedIncrement and nothing else. Reported ONCE from
+// DllMain, when there is finally a logger to report it to — without this, the pre-CRT
+// refusal below is completely invisible and the next person debugging "why did the shim not
+// apply" has nothing to go on.
+inline volatile LONG g_preCrtCalls = 0;
+
+// Called from DLL_PROCESS_ATTACH, before anything else. By then `_DllMainCRTStartup` has
+// already run `__acrt_initialize`, so the heap is real.
+inline void MarkCrtReady()       { InterlockedExchange(&g_crtReady, 1); }
+inline bool CrtReady()           { return g_crtReady != 0; }
+inline void NotePreCrtCall()     { InterlockedIncrement(&g_preCrtCalls); }
+inline LONG PreCrtCallCount()    { return g_preCrtCalls; }
+
 // Compose the absolute System32 path of `dllName` into `out`.
 // Returns false — leaving `out` an EMPTY STRING — if the directory could not be
 // obtained or the result does not fit. Callers must treat false as "do not load".

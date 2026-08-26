@@ -1723,41 +1723,57 @@ restoring the unconditional stamp turns the omission assertions red, and making 
 
 ## ▶ Next up (genuinely actionable now)
 
-- **🔴 Proxy resolvers must survive being called before our CRT exists (all four flavours)** —
-  Effort: **S** · Risk: low. **This is a live, reproducible "the game will not start" bug**, not a
-  latent one: OCTOPATH TRAVELER dies during loader init with our `dxgi.dll` deployed, twice, on
-  2026-08-23 (`%LOCALAPPDATA%\CrashDumps\Octopath_Traveler-Win64-Shipping.exe.{23324,6604}.dmp`).
-  Root cause is CONFIRMED at the instruction level in
-  [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) — read §2/§3
-  before touching anything. Short version: the game carries an AppCompat layer
-  (`HKCU\…\AppCompatFlags\Layers` = `HIGHDPIAWARE`), so `AcGenral!NS_DXGICompat` calls
-  `dxgi.dll!SetAppCompatStringPointer` from `apphelp!SE_DllLoaded` — **after our module is MAPPED but
-  before `_DllMainCRTStartup` runs**. Our export for that name is a lazy thunk whose resolver LOGS,
-  logging allocates, `__acrt_heap` is still NULL → `HeapAlloc(NULL,0,0x20)` → AV in
-  `ntdll!RtlAllocateHeap+0x54`.
-  Three changes, and they apply to **all four proxies, not just dxgi** — the `ResolveAll` bodies are
-  identical except for the callee name:
-  1. **Never allocate on a resolver path.** Drop `LOG_*` out of `DxgiProxy_EnsureResolved`
-     ([Lugner_Dxgi.cpp:120,122](../dll/src/Lugner_Dxgi.cpp)), `WinmmProxy_EnsureResolved`,
-     `LoadRealVersion` ([Lugner.cpp](../dll/src/Lugner.cpp)) and `LoadRealDinput8`
-     ([Lugner_Dinput8.cpp](../dll/src/Lugner_Dinput8.cpp)); record the outcome in POD statics and
-     emit the line later. ⚠ There is **no** safe logging call before the CRT is up — `Sein`'s
-     "early buffer" allocates too (`s_earlyBuffer.emplace_back`, [Sein.cpp:522](../dll/src/Sein.cpp)).
-  2. **CRT-ready gate** — a shared flag in `Lugner.h`, set at the top of `DLL_PROCESS_ATTACH` in
-     [Heiter.cpp](../dll/src/Heiter.cpp). When not ready a resolver may use only
-     `GetSystemDirectoryW` + `LoadLibraryW` + `GetProcAddress` (pure kernel32, zero allocation) and
-     must not touch `Sein` at all.
-  3. **NULL-guard the thunks** — `LAZY_THUNK` ([Lugner_Dxgi.asm:97](../dll/src/Lugner_Dxgi.asm) and
-     the winmm twin) ends in `jmp rax`, so a failed resolve jumps through NULL. Do what ReShade
-     does: `test rax,rax / jz → xor eax,eax / ret`.
-  **The negative control already exists** — `out/proxy-backups/Avowed.dxgi.dll.20260823-212124.bak`
-  is the binary that crashes; a fix that cannot be shown to differ from it has not been shown to
-  work. PASS = Octopath starts with our `dxgi.dll` **and** `init-0.log` shows
-  `dxgi proxy: lazily forwarded 20/20`. Also re-run
-  `py tools/check_proxy_exports.py --artifacts --list` after `-Target DLL`.
-  ⚠ Do **not** "fix" this by dropping the four AppCompat exports (§8.4) — that masks the cause, and
-  `tools/check_proxy_exports.py` re-derives the export table against the real System32 one.
-  *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8.*
+- **✅ SHIPPED build 3363 — proxy resolvers now survive being called before our CRT exists; only
+  the in-game confirmation is owed** —
+  Effort: **S** · Risk: low. Fixed the live "OCTOPATH TRAVELER will not start with our dxgi.dll"
+  bug: the AppCompat shim engine (`AcGenral!NS_DXGICompat`, via `apphelp!SE_DllLoaded`) called
+  `dxgi.dll!SetAppCompatStringPointer` after our module was MAPPED but before
+  `_DllMainCRTStartup` ran, our thunk entered a resolver that logs, logging allocated, and
+  `__acrt_heap` was still NULL → `HeapAlloc(NULL,0,0x20)` → AV in `ntdll!RtlAllocateHeap+0x54`.
+  Full root cause and the shipped design:
+  [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8.
+  What landed, across **all four flavours**: a `Lugner::g_crtReady` latch (plain `volatile LONG`,
+  constant-initialised, set as DllMain's FIRST statement); a pre-CRT gate on
+  `DxgiProxy_EnsureResolved` / `WinmmProxy_EnsureResolved` / `LoadRealVersion` /
+  `LoadRealDinput8` that **refuses outright** rather than doing a kernel32-only resolve (the
+  planned version was allocation-safe but not loader-lock-safe); a `Lugner::g_preCrtCalls`
+  counter reported once from DllMain so the refusal is not invisible; a thunk that distinguishes
+  *resolver refused* → `xor eax,eax / ret` from *name genuinely absent* → the deliberate loud
+  `jmp 0` (B44/B48 — winmm's `0 == TIMERR_NOERROR`); and **23 magic statics** converted to
+  retry-on-null, because `static auto fn = RealProc(...)` would have latched the gate's `nullptr`
+  and killed the export for the process lifetime. §8.5: the winmm generator was found **already
+  STALE** and is fixed.
+  Verified offline with `tools/verify/proxy_precrt_gate.py` (maps with
+  `DONT_RESOLVE_DLL_REFERENCES` so DllMain never runs, calls a thunk in a child process): the
+  pre-fix `out/proxy-backups/Avowed.dxgi.dll.20260823-212124.bak` faults `0xC0000005` at
+  **`+0x187A2E` — the same RVA on the faulting stack of both Octopath minidumps** — while
+  `dist/proxy/dxgi.dll` returns cleanly. Same result for winmm. 13/13 gates +
+  `check_proxy_exports --artifacts` pass.
+  🔴 **Owed:** the in-game run. Deploy `dist/proxy/dxgi.dll` to Octopath's `Binaries\Win64`
+  (rename ReShade's aside); PASS = the game starts AND `init-0.log` has
+  `dxgi proxy: lazily forwarded 20/20`. The new
+  `Proxy: N forwarded call(s) arrived BEFORE our CRT was initialised` warning should also appear —
+  that line is the shim engine's fingerprint.
+  ⚠ Also owed, smaller: `version.dll` / `dinput8.dll` regression runs. Their gate is verified
+  only *by construction* — §9 records that the rig provably **cannot** discriminate pre/post fix
+  for the plain-C-forwarder flavours, and it says so instead of printing a green tick.
+  *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8/§9.*
+
+- **dxgi resolver still holds an SRWLOCK across `LoadLibraryW` — the half of B43 that was never
+  applied** —
+  Effort: **S** · Risk: low. Audit #4 B43 removed the exclusive SRWLOCK from the winmm resolver
+  because `LoadLibraryW` takes the loader lock, so a thunk reached from a foreign DllMain — which
+  already holds it — inverts the lock order against any thread that took ours first. It recorded
+  that *"the dxgi original's safety argument was explicitly CONDITIONAL on RHI init being the only
+  entry point"* but left `DxgiProxy_EnsureResolved` holding the lock across `LoadLibraryW` **and**
+  a Sein log write. The build-3363 pre-CRT gate removes the loader-lock entry path that made this
+  acute, but a foreign DllMain calling `CreateDXGIFactory` after our CRT is up still reaches it.
+  Fix = adopt winmm's shape (no lock; racing resolvers are idempotent, the thunk's own null test
+  is what stops anyone observing a half-filled table; claim the log line once with
+  `InterlockedCompareExchange`). Deliberately NOT folded into the 3363 change: it alters
+  concurrency semantics and belongs behind its own reasoning.
+  *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8.6;
+  audit #4 B43.*
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items
