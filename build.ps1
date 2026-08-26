@@ -420,14 +420,37 @@ if (-not $vswhere) {
 
 Write-Info "vswhere: $vswhere"
 
-# Find Visual Studio installation path
-$vsPath = & $vswhere -latest -property installationPath
+# Find Visual Studio installation path.
+#
+# ASK FOR WHAT WE ACTUALLY NEED FIRST. This used to run `-latest` with no filters and
+# only fall back to `-requires VC.Tools` when that returned NOTHING -- which it never
+# does once ANY Visual Studio is installed, so the fallback was unreachable in exactly
+# the case it existed for (a VS that is newest but has no C++ toolset).
+#
+# `-products *` and `-prerelease` matter for a second reason: vswhere's DEFAULT product
+# filter is Community/Professional/Enterprise, so a VS BUILD TOOLS or Insiders install
+# was INVISIBLE here -- a complete toolchain that died below claiming the C++ workload
+# was missing. BuildTools does ship Common7\Tools\Microsoft.VisualStudio.DevShell.dll,
+# so the product filter was the only blocker.
+#
+# ⚠ These flags must stay IDENTICAL to tools/verify/build_dll.py's, because both drive
+# the same build\ directory. Two vswhere calls that disagree pick two toolsets, and
+# 14.51 objects linked against 14.44 libs fail with unresolved STL symbols that read as
+# "the STL is broken" (working-lessons.md §3.8).
+$vsWhereFilter = @('-latest', '-products', '*', '-prerelease')
+$vsPath = & $vswhere @vsWhereFilter -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vsPath) {
-    # Try finding any VS with C++ workload
-    $vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-}
-if (-not $vsPath) {
-    Write-Fail "No Visual Studio installation found (need C++ Desktop workload)"
+    # Distinguish "no VS at all" from "VS present, C++ toolset absent" -- the second is
+    # a one-click fix in the installer and used to be reported as the first.
+    $anyVs = & $vswhere @vsWhereFilter -property installationPath
+    if ($anyVs) {
+        Write-Fail "Visual Studio found at '$($anyVs -split "`n" | Select-Object -First 1)' but it has NO C++ toolset."
+        Write-Info "  Add it:  Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+        Write-Info "  The repo's component list is in .vsconfig - see docs/toolchain.md"
+    } else {
+        Write-Fail "No Visual Studio installation found (need the Desktop C++ workload)"
+        Write-Info "  See docs/toolchain.md, or run: bootstrap.cmd --tiers build"
+    }
     exit 1
 }
 Write-Info "VS:     $vsPath"
