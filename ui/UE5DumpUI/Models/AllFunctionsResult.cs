@@ -1,3 +1,6 @@
+﻿using System.Collections.Generic;
+using System.Linq;
+
 namespace UE5DumpUI.Models;
 
 /// <summary>
@@ -104,6 +107,22 @@ public sealed class AllFunctionsResult
     /// <summary>True when the returned set is a page rather than the whole pool —
     /// the single predicate every caller should gate an "in this game" claim on.</summary>
     public bool IsPartial => Truncated || Aborted;
+
+    /// <summary>
+    /// Classes that emitted at least one row — the honest denominator for any
+    /// "N functions from M classes" sentence. <see cref="ScannedClasses"/> is the
+    /// EXAMINED count (post game-only filter) and answers a different question; do NOT
+    /// substitute one for the other. On P3R they read 889 and 2,293.
+    ///
+    /// <para>DERIVED from <see cref="Functions"/> rather than carried on the wire, so it
+    /// cannot drift from the rows it describes and cannot be left unset by a
+    /// construction path — every VM test builds this object directly and would have
+    /// seen 0 from a parser-computed field. Keyed on <c>ClassAddr</c>, not
+    /// <c>ClassName</c>: two Blueprint classes can share a name, and the DLL always
+    /// populates the address. (FUNCDENOM-2026-08-26)</para>
+    /// </summary>
+    public int ClassesWithFunctions =>
+        Functions.Select(f => f.ClassAddr).Distinct().Count();
 
     public List<AllFunctionEntry> Functions { get; init; } = new();
 }

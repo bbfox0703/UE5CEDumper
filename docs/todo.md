@@ -1642,12 +1642,37 @@ stale (THE bug)"**, and removing the skip flag turns the gap-pass assertion red.
 every case after the first read the first one's memoised answer, because `s_walkClassExCache` is
 keyed by address and nothing erases it. One blob per case; the comment says why.
 
-### ⬜ `[FUNCDENOM-2026-08-26]` — "9760 entries from 2293 classes" counts classes that contributed nothing
+### ✅ FIXED 2026-08-26 (build 3362) `[FUNCDENOM-2026-08-26]` — "9760 entries from 2293 classes" counted classes that contributed nothing
 
-`ListAllFunctions: total=9760 classes=2293 interesting=1848`. The `2293` is the number of classes
+`ListAllFunctions: total=9760 classes=2293 interesting=1848`. The `2293` was the number of classes
 **scanned**, not the number that yielded a function; only ~889 actually contributed one. Read as
-provenance — which it looks like — it overstates coverage by 2.6×. Same family as the `PERF`
+provenance — which it looks like — it overstated coverage by 2.6×. Same family as the `PERF`
 denominator fixed in 3361: a number that invites an arithmetic reading it does not support.
+
+⭐ **The wire field was NOT the problem and was deliberately left alone.** `scanned_classes` is
+correctly named and correctly documented, and one of the three UI sentences (`"N classes scanned"`)
+was already reading it correctly. What was wrong was every sentence phrased as PROVENANCE. So the
+contributing count is **derived** — `AllFunctionsResult.ClassesWithFunctions`, a computed property
+over the rows the panel is displaying — with **no new wire field**: a parsed field would be `0` in
+every VM fixture (they all override `ListAllFunctionsAsync` and bypass the parser), and a `??`
+fallback fires on *absent*, not on *zero*, so a DLL that shipped the key and missed the assignment
+would render "9,760 functions from 0 of 2,293 classes". One number, one source, and that source is
+the array being described.
+
+The DLL keeps its own `CountContributingClasses` for its log line only, appended to the format
+string (⚠ **append-only**: nothing in `dll/src` carries `_Printf_format_string_`, so MSVC diagnoses
+no format/argument mismatch and a reordered trailing `%s%s` against an `int` is an access violation
+on the pipe worker inside a shipping game).
+
+**Verification**: 4 C++ assertions (including order-independence — entries are pushed grouped by
+class today, so an adjacent-transition implementation would pass everything else), and 2 C# tests
+including ⭐ **the over-swap control**: the "N classes scanned" sentence must KEEP quoting the
+examined count while the two provenance sentences use the contributing one. Negative control:
+reverting both provenance sentences turns 3 tests red.
+
+⚠ **Siblings deliberately NOT folded in** — they are the same defect on different commands and need
+their own change: `search_properties` (`Aura.cpp` counts the class then discards it at four separate
+points), and the batch path that copies one batch-wide count into every query's result.
 
 ### ⬜ `[STALLDEFAULT-2026-08-26]` — `game_thread_stalled: false` before the hook exists is a DEFAULT, not a measurement
 

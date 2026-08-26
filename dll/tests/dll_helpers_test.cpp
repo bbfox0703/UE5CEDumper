@@ -4849,6 +4849,28 @@ static void Test_Holes_ComputeClassHoles_ArrayDim() {
            Ubel::ComputeClassHoles(ciBad, 0x28, 0x80).size() == 3);
 }
 
+static void Test_CountContributingClasses() {
+    // NOTE: these are unit tests of a NEW pure function, not negative controls -- they
+    // cannot go red against unfixed code, because the function does not exist there.
+    // The controls that CAN go red are the C# BuildStatusLine pins.
+    // (FUNCDENOM-2026-08-26)
+    auto mk = [](std::initializer_list<uintptr_t> addrs) {
+        std::vector<Aura::AllFunctionEntry> v;
+        for (uintptr_t a : addrs) { Aura::AllFunctionEntry e; e.classAddr = a; v.push_back(e); }
+        return v;
+    };
+    EXPECT("five entries over two classes counts 2",
+           Aura::CountContributingClasses(mk({0xA, 0xA, 0xB, 0xB, 0xB})) == 2);
+    EXPECT("no entries contribute no classes",
+           Aura::CountContributingClasses(mk({})) == 0);
+    EXPECT("one entry, one class", Aura::CountContributingClasses(mk({0xA})) == 1);
+    // Order independence. Entries are pushed grouped-by-class today (the walk visits one
+    // class at a time), so an adjacent-transition implementation would pass every case
+    // above and break only when a future change reorders them.
+    EXPECT("interleaved entries still count 2, not 3",
+           Aura::CountContributingClasses(mk({0xA, 0xB, 0xA})) == 2);
+}
+
 static void Test_IsPlausiblePropertiesSize() {
     // Admission control for caches that are NEVER erased: a real
     // UStruct::PropertiesSize is non-negative and at most kMaxPlausiblePropertiesSize.
@@ -6946,6 +6968,7 @@ int main() {
     RUN(Test_Holes_FullyCovered);
     RUN(Test_Holes_ClampsOutOfWindow);
     RUN(Test_Holes_ComputeClassHoles_ArrayDim);
+    RUN(Test_CountContributingClasses);
     RUN(Test_IsPlausiblePropertiesSize);
     RUN(Test_GapFillWorkCapIsADifferentQuestion);
     RUN(Test_ShouldPublishClassWalk);

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Aura — 斷頭台的阿烏拉 (服從之秤 — Obedience Scale)
 // ObjectArray: FUObjectArray slot enumeration and validation
 // ============================================================
@@ -5492,13 +5492,26 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
         }
     }
 
+    // "from %d classes" read as PROVENANCE and was the EXAMINED count: on P3R it
+    // said "9760 entries from 2293 classes" while ~889 classes actually produced a
+    // row, overstating coverage 2.6x. Both numbers now appear, each labelled with
+    // the question it answers. (FUNCDENOM-2026-08-26)
+    //
+    // ⚠ APPEND-ONLY on the format string. Nothing in dll/src carries
+    // _Printf_format_string_ or __attribute__((format)), so MSVC diagnoses no
+    // format/argument mismatch anywhere here and the args land in vsnprintf inside
+    // Sein. Reordering the trailing %s%s against an int is an access violation on
+    // the pipe worker, inside a shipping game.
+    const int contributed = CountContributingClasses(result.entries);
     Sein::Info("PIPE:list",
-        "EnumerateAllFunctions: %d entries from %d classes "
-        "(gameOnly=%d, scanned %d objects, total funcs %d%s%s)",
+        "EnumerateAllFunctions: %d entries, %d classes EXAMINED "
+        "(gameOnly=%d, scanned %d objects, total funcs %d%s%s); "
+        "%d of them contributed >=1 entry",
         static_cast<int>(result.entries.size()), result.scannedClasses,
         gameOnly ? 1 : 0, result.scannedObjects, result.totalFunctions,
         result.truncated ? ", TRUNCATED at cap" : "",
-        result.aborted ? ", ABORTED" : "");
+        result.aborted ? ", ABORTED" : "",
+        contributed);
     return result;
 }
 

@@ -299,12 +299,12 @@ public partial class ConsoleViewModel : ViewModelBase
                     : result.IsPartial
                         // Partial scan: say what was searched, NOT what the game has.
                         ? $"No UFUNCTION(exec) commands in the {result.Total:N0} functions "
-                          + $"scanned so far (across {result.ScannedClasses:N0} classes) — "
+                          + $"scanned so far (from {result.ClassesWithFunctions:N0} classes) — "
                           + $"this scan did not finish, so it is not evidence the game has "
                           + $"none.{capSuffix}"
                         : $"No UFUNCTION(exec) commands found in this game "
-                          + $"(scanned {result.Total:N0} functions across "
-                          + $"{result.ScannedClasses:N0} classes). The cooker "
+                          + $"(scanned {result.Total:N0} functions from "
+                          + $"{result.ClassesWithFunctions:N0} classes). The cooker "
                           + $"may have stripped them, or the game doesn't use "
                           + $"this pattern.";
             }
