@@ -3,7 +3,10 @@
 Append-only milestone history, newest first. Each entry references a
 build number from `build_number.txt` so commits can be cross-referenced.
 **Reading tip:** grep `^## ` for the index, then read the top (newest-first).
-Entries for **builds ≤2168** are archived: builds 1800–2168 in
+Entries for **builds ≤2747** are archived — this header said **≤2168** for three weeks after the
+third split. Builds 2220–2747 in
+[archive/dev-log-2026-08-pre-build-2779.md](archive/dev-log-2026-08-pre-build-2779.md),
+builds 1800–2168 in
 [archive/dev-log-2026-07-pre-build-2200.md](archive/dev-log-2026-07-pre-build-2200.md),
 builds 1178–1799 in
 [archive/dev-log-2026-06-pre-build-1800.md](archive/dev-log-2026-06-pre-build-1800.md),
@@ -19,6 +22,154 @@ builds ≤696 in
 > [todo.md](todo.md) for the prioritized next-work list. This file
 > records *what shipped* — the other two record *what works now* and
 > *what's next*.
+
+-----
+
+## 2026-08-27 (later) - The crash fix turned into a hang, because a deferral said the second half was out of scope (build 3365, verified in-game 3366)
+
+Build 3363 (previous entry) stopped OCTOPATH TRAVELER crashing with our `dxgi.dll` proxy. The game
+then **hung with no window**, and its log stopped at `DllMain: auto-start thread created OK`.
+
+That line being last is diagnostic by itself: a thread created inside DllMain cannot run until the
+loader lock is released, so the auto-start thread never printing its own first line means **the
+loader lock was never released**. `tools/pe/minidump_triage.py` walks the FAULTING thread and a
+hang has none, so `tools/verify/hang_dump.py` was written to dump a live process and census every
+thread's stack by module.
+
+The dump named it exactly:
+
+```
+ntdll+0x6019B                  <- RtlAcquireSRWLockExclusive's wait (ZwWaitForAlertByThreadId)
+dxgi.dll+0x2ACC90              <- our own .data: the SRWLOCK object itself
+dxgi.dll+0x18993F              <- our thunk, SECOND pass
+AcGenral+0x5D78/5C00/22E2/5420, apphelp+0x1E696/1F81F     <- this block appears TWICE
+dxgi.dll+0x1889CC              <- SetAppCompatStringPointer thunk, FIRST pass
+```
+
+with all three DllMain-created threads parked in `ZwWaitForSingleObject` behind the loader lock.
+
+**Our own `LoadLibraryW` re-enters us on the same thread.** Loading the real `dxgi.dll` makes the
+loader raise `apphelp!SE_DllLoaded`; `AcGenral`'s DXGICompat hookset does
+`GetModuleHandleW(L"dxgi.dll")` — which resolves back to **us**, because we are the module
+registered under that name — and calls our thunk again while the resolver is still inside
+`LoadLibraryW`. **SRWLOCK is documented non-recursive.** Self-deadlock.
+
+### The part worth keeping
+
+That lock is audit #4 **B43**, which removed it from the winmm twin for the sibling lock-order
+reason and left dxgi alone, noting the dxgi original's safety argument was *"explicitly CONDITIONAL
+on RHI init being the only entry point"*. Build 3363's own audit doc recorded finishing it as
+**"NOT done — deliberately out of scope"**. It was not out of scope; it was the live defect, and
+the deferral cost a full extra round trip through a real game. Logged as a new row in
+[working-lessons.md §2.13](working-lessons.md) — *a deferral reason ages worse than the finding it
+defers* — because the specific mistake was rating a **sibling's already-proven finding** as
+theoretical in the flavour it had not been applied to.
+
+### What shipped
+
+- **The SRWLOCK is gone.** Correctness without one is B43's argument verbatim: `mProcs[]` stores
+  are aligned and pointer-sized so they cannot tear, racing resolvers write identical values, and
+  "nobody observes a half-populated table" is preserved by the thunk's own null test. The log line
+  is claimed once with `InterlockedCompareExchange`, after the work — the winmm shape.
+- **`Lugner::ResolveReentry`**, in all four flavours. A nested call returns at once; its thunk then
+  sees an unresolved slot with `mResolveAttempted` still 0 and answers 0 **without forwarding** —
+  exactly what ReShade's compat exports do. The **outer** call completes the resolve and forwards
+  for real. ⚠ Deliberately not a "first caller wins" mutual exclusion: a loser returning with a
+  null slot would hand the *game* a null `CreateDXGIFactory1`. Removing the lock is the cure; the
+  guard is defence.
+
+### Verified in-game (build 3366, 2026-08-27)
+
+```
+10:17:32.450 [WARN]  Proxy: 1 forwarded call(s) arrived BEFORE our CRT was initialised …
+10:17:32.452 [INFO]  DllMain: auto-start thread created OK
+10:17:32.456 [INFO]  dxgi proxy: lazily forwarded 20/20 exports to real System32 dxgi.dll
+10:17:32.475 [INFO]  DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)
+10:17:32.984 [INFO]  DllMain ProxyStart: pipe server started
+10:18:13.670 [SUMMARY] GObjects=0x7FF659775C10 GNames=0x20440C60010 GWorld=0x7FF6598590F8 Objects=406060
+```
+
+Two lines to actually read. The **pre-CRT warning is still there and that is the point** — it is
+the shim engine's direct fingerprint, so the root-cause analysis is no longer inference. And
+**`20/20` lands at `.456`, before `proxy DLL mode` at `.475`**: the resolve completed on the
+*loader thread*, inside the shim's outer call, and only then did the loader release and let our
+threads run. Under 3363 that resolve never returned.
+
+⚠ `version.dll` / `dinput8.dll` have had no in-game regression run since 3363 — and they are also
+the two flavours the offline rig provably cannot discriminate pre/post fix on. Queued in todo.md.
+
+-----
+
+## 2026-08-27 - The AppCompat shim calls our export before our CRT exists; four proxies fixed, and one "fix" that would have killed the export (build 3363)
+
+OCTOPATH TRAVELER would not start with our `dxgi.dll` proxy deployed, while the **same 2.9 MB
+binary** as `winmm.dll` worked in the same game. Root cause confirmed at instruction level from
+two crash dumps and the shim engine's own disassembly; full dossier in
+[audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md).
+
+The game carries an AppCompat layer (`HKCU\...\AppCompatFlags\Layers` = `HIGHDPIAWARE`), so
+`apphelp.dll` + `AcGenral.dll` load at module [4]/[5] — ahead of `msvcrt`. `AcGenral`'s
+`NS_DXGICompat` shim does `GetModuleHandleW(L"dxgi.dll")` →
+`GetProcAddress("SetAppCompatStringPointer")` → call, driven by `apphelp!SE_DllLoaded`, which the
+loader raises when a module is **MAPPED** — before its init routine runs. Our export for that name
+was a lazy asm thunk whose resolver logs; logging allocates; `__acrt_heap` was still NULL;
+`HeapAlloc(NULL, 0, 0x20)` faulted in `ntdll!RtlAllocateHeap+0x54` and the process died before the
+EXE entry point.
+
+`winmm` survives because `AcGenral` names `dxgi.dll` / `ninput.dll` / `d3d9.dll` and **not**
+`winmm.dll`: nothing enters our winmm thunks until the game's own code runs, ~2.0 s after DllMain.
+
+### What shipped, across all four flavours
+
+- **`Lugner::g_crtReady`** — a plain `volatile LONG` with a *constant* initialiser, so it lives in
+  zero-filled `.data` with no dynamic initialiser and is readable before the CRT exists. Set by
+  `Lugner::MarkCrtReady()` as the **first statement** of `DLL_PROCESS_ATTACH`.
+- **A pre-CRT gate on every resolver** — `DxgiProxy_EnsureResolved`, `WinmmProxy_EnsureResolved`,
+  `LoadRealVersion`, `LoadRealDinput8`. ⚠ It **refuses outright** rather than doing the
+  kernel32-only resolve the plan called for: that would have been allocation-safe but *not*
+  loader-lock-safe, and the pre-CRT caller is the loader itself. Nothing is latched, so the host's
+  own first call resolves normally. This is what ReShade does.
+- **`Lugner::g_preCrtCalls`** — an `InterlockedIncrement` counter reported once from DllMain as a
+  `LOG_WARN`. Without it the refusal is completely invisible: no log, no crash, nothing.
+- **The thunks now tell two null cases apart**, via a new `mResolveAttempted` data symbol. This is
+  the part that needed care: the obvious "return 0 on null" would have silently reversed B44/B48's
+  recorded decision, where a stub returning 0 is *worse* because winmm's `0 == TIMERR_NOERROR`
+  would make a missing `timeBeginPeriod` silently no-op the 1 ms tick. `mResolveAttempted == 0`
+  (resolver refused) → `xor eax,eax / ret`; `== 1` (name genuinely absent) → keep the deliberate
+  loud `jmp rax` with `rax == 0`.
+
+### The change the fix forced, which was not in the plan
+
+`Lugner.cpp` (17 sites) and `Lugner_Dinput8.cpp` (6) cached with
+`static auto fn = reinterpret_cast<Fn>(RealProc("..."));`. **A magic static evaluates its
+initialiser exactly once and latches the result forever** — so adding the gate above without
+touching them would have latched `nullptr` on a pre-CRT first call and left the export dead for
+the life of the process. That is a *worse* failure than the crash being removed: silent, permanent
+and invisible. All 23 became `static Fn fn = nullptr; if (!fn) fn = ...`, which also drops the
+CRT's `_Init_thread_header` machinery off a path that must not need the CRT.
+
+### An unrelated defect found on the way
+
+`scripts/gen_proxy_forwarders.py --check` reported **`Lugner_Winmm.cpp STALE`** *before* any of
+this work: the AD18 `SystemDllPath` fix had been hand-applied to the generated .cpp and never
+back-ported, so re-running the generator would have silently reintroduced the
+drive-root-relative-path defect — and that check is **not in CI**. AD18 and the new changes are
+both in the generator now; `--check` is clean.
+
+### Verification
+
+`tools/verify/proxy_precrt_gate.py` maps a proxy with
+`LoadLibraryExW(..., DONT_RESOLVE_DLL_REFERENCES)` — image mapped, exports callable, **DllMain not
+called** — and calls a thunk from a child process so a fault is an exit code. The pre-fix
+`out/proxy-backups/Avowed.dxgi.dll.20260823-212124.bak` faults `0xC0000005` at **`+0x187A2E`, the
+same RVA on the faulting stack of both Octopath minidumps**; `dist/proxy/dxgi.dll` returns cleanly
+at `+0x1889CC`. Same result for winmm. 13/13 gates and
+`check_proxy_exports --artifacts` pass.
+
+⚠ The rig provably **cannot** discriminate pre/post fix for `version` / `dinput8` (plain C
+forwarders, not asm thunks — their pre-fix path does not fault in this harness), and it says so
+rather than printing a green tick. Their gate is verified by construction only. **The in-game
+Octopath run is still owed** — see todo.md.
 
 -----
 

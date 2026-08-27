@@ -52,6 +52,24 @@
 static constexpr int kDxgiExportCount = 20;  // f0..f19 — MUST match ProxyDxgi.def + the .asm thunk order
 extern "C" uintptr_t mProcs[kDxgiExportCount] = { 0 };
 
+// 1 once DxgiProxy_EnsureResolved has actually ATTEMPTED resolution (whether or not the
+// real dxgi.dll loaded). Read by the asm thunks, which need to tell two very different
+// reasons a slot can be null apart:
+//
+//   mResolveAttempted == 0 → the resolver REFUSED because our CRT was not up yet
+//                            (Lugner::CrtReady() was false). The thunk answers 0 without
+//                            forwarding; the next call after DllMain resolves normally.
+//   mResolveAttempted == 1 → the resolver ran and this name is genuinely absent from the
+//                            host's System32 dxgi.dll. The thunk keeps the pre-existing
+//                            `jmp rax` with rax == 0, i.e. a loud crash — a DELIBERATE
+//                            choice recorded in Lugner_Winmm.asm (a stub returning 0 is
+//                            worse there, where 0 == TIMERR_NOERROR would silently no-op
+//                            timeBeginPeriod). Do not collapse these two cases.
+//
+// Plain uintptr_t, constant-initialised, so it lives in zero-filled .data and is readable
+// before the CRT exists — same requirement as Lugner::g_crtReady.
+extern "C" uintptr_t mResolveAttempted = 0;
+
 // Export names in f0..f19 order. MUST stay in sync with ProxyDxgi.def
 // and the asm thunk order. Resolution is by NAME (version-robust: a name
 // absent on some Windows build simply yields a null slot, which only
@@ -99,31 +117,60 @@ static const char* const kDxgiExports[kDxgiExportCount] = {
 // to its early buffer — harmless.)
 extern "C" void DxgiProxy_EnsureResolved()
 {
-    static SRWLOCK s_lock = SRWLOCK_INIT;
-    static bool    s_done = false;
+    // ⛔ PRE-CRT GATE — the first thing, before the lock, before anything that could
+    // allocate. See Lugner::g_crtReady for the full story; the short version is that
+    // Windows' AppCompat shim engine calls dxgi.dll!SetAppCompatStringPointer from
+    // apphelp!SE_DllLoaded, i.e. after our module is MAPPED but before
+    // _DllMainCRTStartup has run, and everything below this line — LoadLibraryW under a
+    // still-held loader lock, and LOG_* which allocates a std::string for the timestamp —
+    // is unsafe at that point. Returning leaves mProcs[] null and mResolveAttempted 0,
+    // which the asm thunk reads as "answer 0, do not forward"; the game's own first dxgi
+    // call, long after DllMain, then resolves normally.
+    //
+    // ⚠ Deliberately does NOT latch anything. An early-out that set s_done here would
+    // make one shim call permanently disable the proxy.
+    if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return; }
 
-    AcquireSRWLockExclusive(&s_lock);
-    if (!s_done) {
-        s_done = true;
+    // ⛔ SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below re-enters this function on this
+    // very thread when the game carries an AppCompat layer — see Lugner::ResolveReentry for
+    // the measured stack. Bail out and let the nested thunk answer 0 without forwarding.
+    //
+    // ⚠ There is NO LOCK here any more, and that is the actual fix for the hang, not this
+    // guard. An SRWLOCK across LoadLibraryW self-deadlocked on exactly that re-entry. B43's
+    // argument for why winmm needs none applies verbatim: the stores are aligned and
+    // pointer-sized, racers write identical values, and the thunk's own null test is what
+    // stops anyone seeing a half-filled table.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return;
 
-        wchar_t realPath[MAX_PATH] = {};
-        // false => refuse. The old code discarded GetSystemDirectoryW's return and
-        // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
-        HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
-                     ? LoadLibraryW(realPath) : nullptr;
-        if (real) {
-            int resolved = 0;
-            for (int i = 0; i < kDxgiExportCount; ++i) {
-                mProcs[i] = reinterpret_cast<uintptr_t>(GetProcAddress(real, kDxgiExports[i]));
-                if (mProcs[i]) ++resolved;
-            }
-            LOG_INFO("dxgi proxy: lazily forwarded %d/%d exports to real System32 dxgi.dll", resolved, kDxgiExportCount);
-        } else {
-            LOG_ERROR("dxgi proxy: FAILED to load real System32 dxgi.dll (err=%lu) — forwarded calls will crash",
-                      GetLastError());
+    wchar_t realPath[MAX_PATH] = {};
+    // false => refuse. The old code discarded GetSystemDirectoryW's return and
+    // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
+    HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
+                 ? LoadLibraryW(realPath) : nullptr;
+    // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
+    const DWORD loadErr = real ? 0 : GetLastError();
+    int resolved = 0;
+    if (real) {
+        for (int i = 0; i < kDxgiExportCount; ++i) {
+            mProcs[i] = reinterpret_cast<uintptr_t>(GetProcAddress(real, kDxgiExports[i]));
+            if (mProcs[i]) ++resolved;
         }
     }
-    ReleaseSRWLockExclusive(&s_lock);
+    // Published only after mProcs[] is fully written, so no thunk observes "resolution
+    // finished" over a half-filled table.
+    mResolveAttempted = 1;
+
+    // Claimed once: this is file I/O, and a duplicate line would misreport a race as two
+    // resolves. After the work, never around it — same shape as the winmm twin.
+    static volatile LONG s_logged = 0;
+    if (InterlockedCompareExchange(&s_logged, 1, 0) != 0) return;
+    if (real) {
+        LOG_INFO("dxgi proxy: lazily forwarded %d/%d exports to real System32 dxgi.dll", resolved, kDxgiExportCount);
+    } else {
+        LOG_ERROR("dxgi proxy: FAILED to load real System32 dxgi.dll (err=%lu) — forwarded calls will crash",
+                  loadErr);
+    }
 }
 
 #endif // UE5_PROXY_DXGI_BUILD

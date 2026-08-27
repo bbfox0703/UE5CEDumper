@@ -34,6 +34,22 @@
 static constexpr int kWinmmExportCount = 180;
 extern "C" uintptr_t mProcs[kWinmmExportCount] = { 0 };
 
+// 1 once the resolver has actually ATTEMPTED resolution (whether or not the real DLL
+// loaded). Read by the asm thunks, which need to tell two very different reasons a slot
+// can be null apart:
+//
+//   mResolveAttempted == 0 -> the resolver REFUSED because our CRT was not up yet
+//                             (Lugner::CrtReady() false). The thunk answers 0 without
+//                             forwarding; the next call after DllMain resolves normally.
+//   mResolveAttempted == 1 -> the resolver ran and this NAME is genuinely absent from the
+//                             host System32 DLL. The thunk keeps the deliberate loud
+//                             `jmp rax` with rax == 0 -- see Lugner_Winmm.asm for why a
+//                             stub returning 0 is worse here. Do NOT collapse these.
+//
+// Plain uintptr_t, constant-initialised, so it lives in zero-filled .data and is readable
+// before the CRT exists -- same requirement as Lugner::g_crtReady.
+extern "C" uintptr_t mResolveAttempted = 0;
+
 // Resolution is by NAME (version-robust: a name absent on some Windows
 // build simply yields a null slot).
 static const char* const kWinmmExports[kWinmmExportCount] = {
@@ -241,10 +257,29 @@ static const char* const kWinmmExports[kWinmmExportCount] = {
 // thunk would deadlock DETERMINISTICALLY, not occasionally.
 extern "C" void WinmmProxy_EnsureResolved()
 {
-    // NO early-out gate either. A 'first caller wins, others return' check would let
-    // the loser return with its slot STILL NULL, and the thunk's next instruction is
-    // `jmp rax` -- an immediate AV at RIP=0. Racing resolvers are idempotent (same
-    // module, same names, same addresses), so every caller simply does the work and
+    // PRE-CRT GATE -- the first thing, before anything that could allocate or take the
+    // loader lock. Windows' AppCompat shim engine calls a proxied export from
+    // apphelp!SE_DllLoaded, i.e. after our module is MAPPED but before
+    // _DllMainCRTStartup has run: LoadLibraryW would recurse into a still-held loader
+    // lock and LOG_* would malloc on a heap that does not exist yet
+    // (HeapAlloc(NULL, ...) -> AV in ntdll!RtlAllocateHeap). Returning leaves mProcs[]
+    // null and mResolveAttempted 0, which the thunk reads as 'answer 0, do not forward'.
+    // Nothing is latched, so the host's own first call resolves normally.
+    // See docs/audit-2026-08-26-dxgi-appcompat-crash.md.
+    if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return; }
+
+    // SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below can re-enter this function on this
+    // very thread: on a game carrying a Windows AppCompat layer the loader raises
+    // apphelp!SE_DllLoaded for the module being loaded, AcGenral resolves the proxied name
+    // back to US and calls our thunk again. Measured on OCTOPATH TRAVELER through the dxgi
+    // twin, where an SRWLOCK held across LoadLibraryW self-deadlocked (SRWLOCK is
+    // NON-RECURSIVE) and the loader lock was never released. See Lugner::ResolveReentry.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return;
+
+    // Still NO LOCK, and no 'first caller wins' gate either -- a loser returning with its
+    // slot STILL NULL would hand the host a null forward. Racing resolvers are idempotent
+    // (same module, same names, same addresses), so every caller simply does the work and
     // returns with the table populated. LoadLibraryW is refcounted; a duplicate is cheap.
 
     wchar_t realPath[MAX_PATH] = {};
@@ -253,6 +288,8 @@ extern "C" void WinmmProxy_EnsureResolved()
     // null, which the logging below already reports as 0/N resolved. (AD18)
     HMODULE real = Lugner::SystemDllPath(L"winmm.dll", realPath, MAX_PATH)
                  ? LoadLibraryW(realPath) : nullptr;
+    // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
+    const DWORD loadErr = real ? 0 : GetLastError();
     int resolved = 0;
     if (real) {
         for (int i = 0; i < kWinmmExportCount; ++i) {
@@ -260,6 +297,9 @@ extern "C" void WinmmProxy_EnsureResolved()
             if (mProcs[i]) ++resolved;
         }
     }
+    // Published only after mProcs[] is fully written, so no thunk observes
+    // 'resolution finished' over a half-filled table.
+    mResolveAttempted = 1;
 
     // Logging is the ONE thing that should happen once -- it is file I/O, and a
     // duplicate line would misreport a race as two resolves. Claimed after the work,
@@ -271,7 +311,7 @@ extern "C" void WinmmProxy_EnsureResolved()
                  resolved, kWinmmExportCount);
     } else {
         LOG_ERROR("winmm proxy: FAILED to load real System32 winmm.dll (err=%lu) -- forwarded calls will crash",
-                  GetLastError());
+                  loadErr);
     }
 }
 

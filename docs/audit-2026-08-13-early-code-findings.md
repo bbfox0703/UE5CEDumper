@@ -2792,7 +2792,10 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > finding rows were not marked, so the register kept reporting AB3, AB5, A6, AA4-AA7 and AA25 as
 > open. The count above is the corrected derivation.
 >
-> **`tools/check_audit_register.py` now gates this** (wired into CI): every finding
+> **`tools/check_audit_register.py` checks this** — ⚠ **ADVISORY in CI since 2026-08-23**, not
+> blocking: `.github/workflows/ci.yml:155` emits `::warning::check_audit_register drift … ADVISORY: not failing the build`. It was demoted because it was the one gate that failed in a
+> *different* commit from the change that broke it. Still run it — `--list` prints the open
+> HIGH/MED tier with each row's segment. Every finding
 > `docs/dev-log.md` reports fixed must carry a ✅ on its table row. Run it after any fix.
 > Marking the queue row is NOT enough — the count reads the individual rows.
 

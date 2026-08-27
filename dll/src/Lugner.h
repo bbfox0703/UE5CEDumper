@@ -14,6 +14,104 @@
 
 namespace Lugner {
 
+// ── The CRT-ready latch ────────────────────────────────────────────────────────────
+//
+// ⚠ AN EXPORT OF OURS CAN BE CALLED BEFORE `_DllMainCRTStartup` HAS RUN, and when it is,
+// our CRT does not exist yet: `__acrt_heap` is still NULL, so the first `malloc` becomes
+// `HeapAlloc(NULL, …)` and faults in `ntdll!RtlAllocateHeap+0x54`. That is not a
+// hypothetical — it is what makes OCTOPATH TRAVELER refuse to start with the dxgi proxy
+// deployed, confirmed at the instruction level in
+// docs/audit-2026-08-26-dxgi-appcompat-crash.md.
+//
+// The caller is Windows' own AppCompat shim engine. When a game carries a compat layer
+// (Octopath: `HIGHDPIAWARE`), `apphelp.dll` + `AcGenral.dll` load at module [4]/[5] — ahead
+// of msvcrt — and `AcGenral!NS_DXGICompat` does
+// `GetModuleHandleW(L"dxgi.dll")` → `GetProcAddress("SetAppCompatStringPointer")` → call,
+// driven by `apphelp!SE_DllLoaded`, which the loader raises when a module is **MAPPED** —
+// before its init routine runs. Our export for that name was a lazy thunk whose resolver
+// LOGS, and logging allocates.
+//
+// ⭐ The lesson is NOT "do less in DllMain". ReShade does MORE under the loader lock (file
+// I/O, 44+ hook installs) and boots fine; it simply does not export
+// `SetAppCompatStringPointer`, so the shim's `GetProcAddress` returns NULL and it is never
+// entered. We DO export it, so we need this latch instead.
+//
+// ⚠ MUST stay a plain `volatile LONG` with a CONSTANT initialiser. It is read on a path
+// where the CRT does not exist, so it has to live in zero-initialised .data with **no
+// dynamic initialiser** — anything with a runtime constructor (including a `std::atomic`
+// that is not constant-initialised) would be read before it was written. An aligned LONG
+// load is atomic on x64, and this is a one-way 0→1 latch, so the read needs no interlock;
+// the write uses one anyway because it costs nothing.
+inline volatile LONG g_crtReady = 0;
+
+// Number of forwarded calls that arrived before the latch was set. Bumped on a path that
+// must not allocate, so it is an InterlockedIncrement and nothing else. Reported ONCE from
+// DllMain, when there is finally a logger to report it to — without this, the pre-CRT
+// refusal below is completely invisible and the next person debugging "why did the shim not
+// apply" has nothing to go on.
+inline volatile LONG g_preCrtCalls = 0;
+
+// Called from DLL_PROCESS_ATTACH, before anything else. By then `_DllMainCRTStartup` has
+// already run `__acrt_initialize`, so the heap is real.
+inline void MarkCrtReady()       { InterlockedExchange(&g_crtReady, 1); }
+inline bool CrtReady()           { return g_crtReady != 0; }
+inline void NotePreCrtCall()     { InterlockedIncrement(&g_preCrtCalls); }
+inline LONG PreCrtCallCount()    { return g_preCrtCalls; }
+
+// ── Same-thread re-entrancy, and why there is no lock here ─────────────────────────
+//
+// ⚠ OUR RESOLVER CALLS LoadLibraryW, AND ON A SHIMMED GAME **THAT LOAD RE-ENTERS US ON THE
+// SAME THREAD**. The loader raises `apphelp!SE_DllLoaded` for the module we are loading,
+// `AcGenral`'s DXGICompat hookset does `GetModuleHandleW(L"dxgi.dll")` — which resolves to
+// US, because we are the module registered under that name — then `GetProcAddress` and
+// calls our thunk again, while our resolver is still inside `LoadLibraryW`.
+//
+// Measured on OCTOPATH TRAVELER, build 3364 (`out/hang-…-24836.dmp`, 2026-08-27): the main
+// thread sat in `ZwWaitForAlertByThreadId` on an SRWLOCK at `dxgi.dll+0x2ACC90` — our own
+// `s_lock` — with the `AcGenral`/`apphelp` notification frames appearing **twice** on the
+// stack. **SRWLOCK is documented NON-RECURSIVE**, so the second `AcquireSRWLockExclusive` on
+// that thread deadlocked; the loader lock was therefore never released, and all three
+// threads we create in DllMain stayed parked in `ZwWaitForSingleObject`. The game never drew
+// a frame. That lock is now gone — audit #4 B43 had already removed it from the winmm twin
+// for the sibling lock-order reason and left dxgi alone; this finishes it.
+//
+// ⭐ What replaces it is NOT another lock. Correctness without one is B43's argument, and it
+// still holds: `mProcs[]` entries are pointer-sized and aligned so a store cannot tear, two
+// racing resolvers write IDENTICAL values, and "nobody observes a half-populated table" is
+// preserved by the thunk itself, which tests its own slot. The guard below only stops the
+// *nested* call from doing redundant work: it returns at once, its thunk then sees an
+// unresolved slot with `mResolveAttempted` still 0 and answers 0 WITHOUT forwarding — which
+// is precisely what ReShade's compat exports do, and ReShade boots this game. The outer call
+// completes the resolve and forwards for real.
+//
+// ⚠ Deliberately NOT a "first caller wins" mutual exclusion: a loser returning with its slot
+// still null would hand the GAME a null `CreateDXGIFactory1`. Only a same-thread re-entry
+// bails. A cross-thread race falls through and resolves too, which is safe because the work
+// is idempotent — and even if the rare interleaving below loses the guard, recursion still
+// terminates at depth 2 (the nested `LoadLibraryW` finds the module already in the loader's
+// list and returns without a fresh `SE_DllLoaded`). Removing the lock is what fixes the
+// hang; the guard is defence, not the cure.
+inline volatile LONG g_resolvingTid = 0;
+
+// RAII so an early return cannot leak the marker. Non-copyable by omission.
+struct ResolveReentry {
+    LONG me;
+    bool reentered;
+    ResolveReentry()
+        : me(static_cast<LONG>(GetCurrentThreadId())),
+          reentered(g_resolvingTid == me)
+    {
+        if (!reentered) InterlockedExchange(&g_resolvingTid, me);
+    }
+    ~ResolveReentry()
+    {
+        // Clear only if we are still the recorded owner: a concurrent resolver on another
+        // thread may have overwritten it, and stomping 0 over ITS marker would drop its
+        // guard mid-flight.
+        if (!reentered) InterlockedCompareExchange(&g_resolvingTid, 0, me);
+    }
+};
+
 // Compose the absolute System32 path of `dllName` into `out`.
 // Returns false — leaving `out` an EMPTY STRING — if the directory could not be
 // obtained or the result does not fit. Callers must treat false as "do not load".

@@ -41,6 +41,7 @@ option casemap:none          ; keep mProcs / f0.. / DxgiProxy_EnsureResolved
 .code
 
 extern mProcs:QWORD
+extern mResolveAttempted:QWORD
 extern DxgiProxy_EnsureResolved:PROC
 
 public f0,  f1,  f2,  f3,  f4,  f5,  f6,  f7,  f8,  f9
@@ -85,6 +86,26 @@ ResolveAll endp
 
 ; ── Lazy forwarding thunk ───────────────────────────────────────────────
 ; fN: jump through mProcs[N]; on first use (mProcs[N]==0) resolve, then jump.
+;
+; A slot that is STILL null after ResolveAll has two very different causes, and they get
+; two different answers. Collapsing them was the crash in
+; docs/audit-2026-08-26-dxgi-appcompat-crash.md; collapsing them the OTHER way would undo
+; a decision recorded in Lugner_Winmm.asm.
+;
+;   mResolveAttempted == 0  The resolver REFUSED: our CRT was not initialised yet, because
+;                           Windows' AppCompat shim engine called this export from
+;                           apphelp!SE_DllLoaded -- after our module was mapped, before
+;                           _DllMainCRTStartup ran. Answer 0 and do NOT forward. Nothing is
+;                           latched, so the game's own first call resolves normally.
+;                           (ReShade behaves the same way here: its compat exports return
+;                           without forwarding when its own DllMain has not run.)
+;
+;   mResolveAttempted == 1  The resolver ran and this NAME is genuinely absent from the
+;                           host's System32 DLL. Fall through to `jmp rax` with rax == 0 --
+;                           a loud crash, ON PURPOSE. Lugner_Winmm.asm records why a stub
+;                           returning 0 is worse: there 0 == TIMERR_NOERROR, so a missing
+;                           timeBeginPeriod would SILENTLY no-op the 1 ms tick instead of
+;                           saying anything. A crash at least names the problem.
 LAZY_THUNK macro idx
 f&idx& proc
     mov  rax, qword ptr mProcs[8*idx]
@@ -92,6 +113,12 @@ f&idx& proc
     jnz  f&idx&_ready
     call ResolveAll
     mov  rax, qword ptr mProcs[8*idx]
+    test rax, rax
+    jnz  f&idx&_ready
+    cmp  qword ptr mResolveAttempted, 0   ; does not touch rax
+    jne  f&idx&_ready                     ; resolver ran -> genuinely absent -> jmp 0, loudly
+    xor  eax, eax                         ; resolver refused (pre-CRT) -> answer 0, no forward
+    ret
 f&idx&_ready:
     jmp  rax
 f&idx& endp

@@ -1723,6 +1723,67 @@ restoring the unconditional stamp turns the omission assertions red, and making 
 
 ## ▶ Next up (genuinely actionable now)
 
+- **✅ DONE + IN-GAME VERIFIED (builds 3363 + 3365) — proxy resolvers survive being called before
+  our CRT exists, and no longer self-deadlock the loader** —
+  OCTOPATH TRAVELER now starts with our `dxgi.dll` and the dumper attaches (2026-08-27, build 3366:
+  `dxgi proxy: lazily forwarded 20/20`, pipe server up, UE 4.18, 406,060 objects). Full dossier:
+  [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md).
+  ⚠ **It took two builds, and the reason is worth keeping.** 3363 fixed the crash (AppCompat shim
+  calls `SetAppCompatStringPointer` before `_DllMainCRTStartup`; the resolver logged; logging
+  allocated on a NULL `__acrt_heap`) — and the game then **hung**. 3365 fixed that: our own
+  `LoadLibraryW` re-enters us **on the same thread** (loading the real dxgi raises
+  `apphelp!SE_DllLoaded`, `AcGenral` resolves `dxgi.dll` back to US and calls our thunk again), and
+  **SRWLOCK is non-recursive**, so the resolver's lock self-deadlocked and the loader lock was
+  never released. That lock was audit #4 **B43**, which had removed it from the winmm twin and
+  which §8.6 of that doc had recorded as *"deliberately out of scope"*. The deferral was wrong; the
+  lesson is logged in [working-lessons.md §2.13](working-lessons.md).
+  Rigs left behind: `tools/verify/proxy_precrt_gate.py` (maps with `DONT_RESOLVE_DLL_REFERENCES` so
+  DllMain never runs, calls a thunk in a child process — pre-fix faults `0xC0000005` at the same
+  RVA the minidumps name, fixed returns cleanly) and `tools/verify/hang_dump.py` (dumps and
+  per-thread-triages a *hung* process; `minidump_triage.py` walks the FAULTING thread and a hang
+  has none).
+  ✅ **All four flavours now covered.** `version.dll` re-verified **in-game on DQ7R** (build 3366:
+  `Loaded real version.dll`, UE 4.27, 190,395 objects) — and the marker landing *after*
+  `pipe server started` is the direct evidence for the magic-static fix, since the first forwarded
+  call came from a game thread and forwarded. `dinput8.dll` **has no host** — no modern UE title
+  uses DirectInput8 — so its forward path is covered without a game by
+  `proxy_precrt_gate.py --forward`, which does a normal `LoadLibraryW` (DllMain runs) and calls the
+  export for real: dinput8 `DllCanUnloadNow` → `S_OK` where our stub answers `S_FALSE`. All four
+  PASS; the verdict is the proxy's own log line, not the return value, because a dead forwarder
+  answers a *documented failure value* that looks identical to success from outside.
+  ⚠ **Genuinely still open:** `dinput8.dll` has never run inside a game, before or after this
+  change, and the *pre-CRT* rig provably cannot discriminate pre/post fix for the two plain-C
+  forwarder flavours (§9) — their pre-CRT gate is verified by construction only.
+  *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8/§9.*
+
+- **✅ DONE 2026-08-27 — the doc defects the CLAUDE.md audit surfaced** —
+  All five fixed, plus two more found while fixing them. One was **refuted**.
+  1. ✅ **`pending-verification_zh-TW.md` header duplicated 6×** (313 → 198 lines). ⭐ The cause was
+     `tools/verify/zhtw_rebuild_buckets.py` **inserting the charter unconditionally** — every
+     `--apply` added another copy. Worse, its `CHARTER` and its `BUCKETS` blurbs were **stale**
+     against the hand-corrected doc, so re-running would have re-introduced the old wording and
+     deleted the `**目前 0 項。**` notes. Fixed all three: insertion is idempotent (and self-heals a
+     duplicated file), and both the charter and the blurbs were back-ported. **Proven**: `--apply`
+     on a copy now reproduces the doc byte-for-byte, and three consecutive runs leave the hash
+     unchanged.
+  2. ✅ `aob-block-library-eval.md` §6 step 3 said the specificity tool is not CI-run. It is.
+  3. ✅ `dev-log.md`'s header said the archive boundary was ≤2168; the real one is ≤2747.
+  4. ✅ `archive/README.md` was missing a row for `todo-closed-2026-08-25-build-3356.md`, and said
+     *five* defects where `handover-2026-08-20.md` §3 says **seven**. ⭐ Fixing it exposed **two
+     more unindexed archive files** (`dev-log-2026-05-pre-build-700.md`,
+     `dev-log-2026-06-pre-build-1180.md`) — an inventory taken from the README alone had been
+     under-reporting the archive. All three rows added; the folder now indexes cleanly.
+  5. ✅ `teleport-coord-library-spec.md`'s status said "not yet verified in-game" long after the
+     DLL flavour was verified; todo.md owns the status and the spec now points at it.
+  ❌ **REFUTED — `corpus-preservation.md` has no internal contradiction.** Its `### Never drop`
+  section is about **sole-landing AOB patterns**, not about recoverability, so it does not conflict
+  with `### Recoverability — Nothing is unrecoverable`. The stale claim was only ever in CLAUDE.md's
+  index row, and that row is gone.
+  ⭐ **The pattern worth naming: three stale generators in one day.** `gen_proxy_forwarders.py`
+  (winmm), `zhtw_rebuild_buckets.py` (twice — charter and blurbs). Each time a generated file was
+  hand-corrected and the generator was not, so re-running it would silently revert the fix. **After
+  hand-editing a generated file, back-port or the next `--apply` is a regression.**
+
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items
   1–5 (dev-log 2026-06-28).

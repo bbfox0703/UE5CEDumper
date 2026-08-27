@@ -25,10 +25,15 @@ BUCKETS = [
     # game with no CE belongs here. Deleting it would make the next author re-derive
     # the axis. The renderer already omits a bucket with no members from the table.
     ("第 2 步 — 要注入一個執行中的遊戲", "一款執行中的 UE 遊戲 + 注入",
-     "任何一款 UE 遊戲都可以，但 PASS 要靠人在遊戲裡做一件 Auto 做不到的事。",
+     "**目前 0 項。** 這一組收的是：任何一款 UE 遊戲都行，但 PASS 要靠人在遊戲裡做一件 Auto 做不到的事。",
      []),
     ("第 3 步 — 遊戲 ＋ Cheat Engine", "遊戲 + Cheat Engine",
-     "還要開 CE 並載入 .CT。",
+     "**目前 0 項。** 這一組收的是：還要開 CE 並載入 `.CT`，而且判定要靠人。\n"
+     "\n"
+     "> ℹ️ 這兩組空掉不是因為沒人做，是因為做完了 —— 2026-08-24～25 一輪把它們清光，包括三項原本\n"
+     "> 排進 CE session 的（Y10 的自我取消勾選、1024-byte params clamp、AA12/AA13 第 4 步）。\n"
+     "> ⭐ **三項最後都沒開 CE**：它們主張的是產生腳本的**文字性質**，不是 CE 的執行期行為。\n"
+     "> 下次有人想把一列丟進這兩組之前，先問同一個問題。",
      # AA2/AA3 and M1–M5 were DELETED from the checklist 2026-08-24: AA2/AA3 closed end to
      # end ([AA2-CONTRACT-AA3-STOP-2026-08-23] + [AA2-STEP4-CHURN-2026-08-23]) and M1–M5
      # step 1 arm (b) closed ([SEETHRU-ARMS-AB-2026-08-23]) while its arm (a) is not
@@ -54,7 +59,8 @@ BUCKETS = [
      ["U2"]),
 ]
 
-CHARTER = """### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
+CHARTER = """
+### ⭐ 這份清單只收「非人工不可」的項目（2026-08-22 重整）
 
 **判準只有一條，而且要能被檢查:**
 
@@ -70,8 +76,18 @@ CHARTER = """### ⭐ 這份清單只收「非人工不可」的項目（2026-08-
 1. **21 項移回 [todo.md](todo.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
    離線工具）。步驟表格**原封不動**搬過去，沒有刪掉任何東西，見那份文件的
    「Verification steps migrated from the 繁中 checklist」一節。
-2. **只留 10 項**，就是下面這些。
+2. **當時留下 10 項。**
 3. **CLAUDE.md 原本寫「先改 todo.md，再 mirror」** —— 一個 mirror 指令必然產出翻譯版，已改掉。
+
+⚠ **「10 項」是 2026-08-22 的快照，不是現況** —— 這行原本寫「只留 10 項，就是下面這些」，而下面
+早就不是 10 項了。**現況一律看上面那張數出來的表**，或跑 `tools/verify/zhtw_rebuild_buckets.py`。
+⚠ 別在這份檔案裡寫下未錨定的計數指令當範例 —— 字面的區塊標記會被自己數進去。這一行原本就犯了：
+它內嵌了計數樣式，於是沒有錨定 `^` 的 grep 會多數一項。
+
+⭐ **那 21 項的移出，事後看是這份檔案最有價值的一次改動。** 2026-08-24～25 一輪把它們幾乎清光，
+而清掉的方式幾乎都不是「照著步驟做」，是**發現那一列主張的其實是文字或邏輯性質**，於是改寫成離線
+測試。⚠ 反過來說，留在這裡的那幾項就是**真的**不行的：它們的 PASS 是人的判斷，或全世界沒有樣本。
+把一列丟進來之前，先確認它屬於後者而不是前者。
 
 ⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 todo.md，不要寫在這裡。
 ⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
@@ -130,12 +146,30 @@ def main():
     # swap the note under the table
     head = re.sub(r"> 這張表是\*\*數出來的\*\*.*?(?=\n\n)",
                   "> 這張表是**數出來的**，不要手改 —— 用 `tools/verify/zhtw_rebuild_buckets.py --apply`\n"
-                  "> 重建，它會從檔案本身重新數。第 0、1 步已經整組清空。",
+                  "> 重建，它會從檔案本身重新數。\n"
+                  ">\n"
+                  "> ⚠ **第 0～3 步現在全是 0**（不只第 0、1 步 —— 這行以前只寫到第 1 步，已過期）。空的分組標題\n"
+                  "> **不要刪**：重建腳本是照標題分組數的，刪掉標題等於讓那一組從此數不到。",
                   head, count=1, flags=re.S)
 
-    # insert the charter right after the 怎麼用這份清單 table note
+    # Write the charter in, IDEMPOTENTLY — and it was not.
+    #
+    # ⚠ This used to insert unconditionally, so EVERY `--apply` added ANOTHER copy. Six runs
+    # left six copies, ~145 lines of a 310-line file. Worse, the newest copy was hand-corrected
+    # in the doc afterwards while CHARTER above was never back-ported, so the five older ones
+    # had DRIFTED against it and re-running would have re-introduced the stale wording. Same
+    # stale-generator shape as scripts/gen_proxy_forwarders.py, found the same day (2026-08-27).
+    #
+    # Cutting from the FIRST existing charter heading up to the anchor also self-heals a file
+    # that already carries duplicates, so the repair does not need a separate one-off script.
+    # Normalise the blank lines on both sides rather than relying on CHARTER's own leading /
+    # trailing newlines: the replace path cuts at an existing heading (so the text before it
+    # already ends in a blank line) while the insert path does not, and the naive form left
+    # one extra blank line in exactly one of the two cases.
     anchor = head.find("### 分組是「後勤」")
-    head = head[:anchor] + CHARTER + "\n" + head[anchor:]
+    existing = head.find(CHARTER.strip().split("\n", 1)[0])
+    cut = existing if 0 <= existing < anchor else anchor
+    head = head[:cut].rstrip("\n") + "\n\n" + CHARTER.strip("\n") + "\n\n" + head[anchor:]
 
     tail_start = head.find("## 第 ")
     tail_end = head.find("## 做完一項之後")

@@ -347,8 +347,9 @@ numbers, so a user on another machine reads the caveat without finding this file
 2. Commit the index (one artifact, regenerated rarely).
 3. `tools/pe/aob_specificity.py` — AOB string in; bound, limiting window, and the run-<4 verdict out.
    **Stdlib only, no corpus, no Ghidra — so it CAN run on the bare second machine and in CI.**
-   ⚠️ As of 2026-08-01 it does neither: nothing in the repo calls it and CI does not run it. That is
-   a direct consequence of step 5 below never being built.
+   ✅ **Both, since 2026-08 — this line used to say the opposite and was stale.** `tools/check_all.py`
+   runs `aob_specificity --check`, and CI compares `tools/pe/aob-specificity-baseline.tsv` byte-wise,
+   so a pattern whose specificity moves fails the build. Step 5 below is still the part not built.
 4. Answer the generalisation question and record the divergence here.
 5. Gate authoring on it: a candidate clears the pre-filter before it earns a sweep.
 

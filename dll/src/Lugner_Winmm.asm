@@ -22,6 +22,7 @@ option casemap:none
 .code
 
 extern mProcs:QWORD
+extern mResolveAttempted:QWORD
 extern WinmmProxy_EnsureResolved:PROC
 
 public f0, f1, f2, f3, f4, f5, f6, f7, f8, f9
@@ -72,18 +73,31 @@ ResolveAll endp
 
 ; fN: jump through mProcs[N]; on first use (mProcs[N]==0) resolve, then jump.
 ;
-; NOTE -- there is deliberately NO post-resolve null test. If the resolver could
-; not fill this slot (the name does not exist in the host System32 DLL), rax is
-; still 0 and the `jmp rax` faults with RIP=0. That is a KNOWN, ACCEPTED tradeoff,
-; not an oversight: a stub returning 0 would be worse for winmm, where
-; 0 == TIMERR_NOERROR, so a missing timeBeginPeriod would SILENTLY no-op the 1 ms
-; tick instead of saying anything (dll/CMakeLists.txt records the same rejection).
-; A crash at least names the problem.
+; A slot that is STILL null after ResolveAll has two very different causes, and they
+; get two different answers. Collapsing them EITHER way is a real defect that has
+; already been paid for once in each direction.
 ;
-; The real defence is upstream, in this file's generator: it now asserts the
-; source DLL is a 64-bit PE. A 32-bit Python run used to read the SysWOW64 copy
-; via WOW64 redirection and emit permanently-null slots pointing straight at this
-; instruction, with a build that stayed internally consistent. (B44 / B48)
+;   mResolveAttempted == 0  The resolver REFUSED: our CRT was not initialised yet,
+;                           because Windows' AppCompat shim engine called this export
+;                           from apphelp!SE_DllLoaded -- after our module was mapped,
+;                           before _DllMainCRTStartup ran. Answer 0 and do NOT forward.
+;                           Nothing is latched, so the host's own first call resolves
+;                           normally. Without this test the thunk fell through to
+;                           `jmp rax` with rax == 0 and the process died during loader
+;                           init -- see docs/audit-2026-08-26-dxgi-appcompat-crash.md.
+;
+;   mResolveAttempted == 1  The resolver ran and this NAME is genuinely absent from the
+;                           host System32 DLL. Fall through to `jmp rax` with rax == 0 --
+;                           a loud crash, ON PURPOSE, and this half must stay. A stub
+;                           returning 0 would be worse for winmm, where
+;                           0 == TIMERR_NOERROR, so a missing timeBeginPeriod would
+;                           SILENTLY no-op the 1 ms tick instead of saying anything
+;                           (dll/CMakeLists.txt records the same rejection).
+;
+; The upstream defence against the second case is in this file's generator: it asserts
+; the source DLL is a 64-bit PE. A 32-bit Python run used to read the SysWOW64 copy via
+; WOW64 redirection and emit permanently-null slots pointing straight at that `jmp`,
+; with a build that stayed internally consistent. (B44 / B48)
 LAZY_THUNK macro idx
 f&idx& proc
     mov  rax, qword ptr mProcs[8*idx]
@@ -91,6 +105,12 @@ f&idx& proc
     jnz  f&idx&_ready
     call ResolveAll
     mov  rax, qword ptr mProcs[8*idx]
+    test rax, rax
+    jnz  f&idx&_ready
+    cmp  qword ptr mResolveAttempted, 0   ; does not touch rax
+    jne  f&idx&_ready                     ; resolver ran -> genuinely absent -> jmp 0, loudly
+    xor  eax, eax                         ; resolver refused (pre-CRT) -> answer 0, no forward
+    ret
 f&idx&_ready:
     jmp  rax
 f&idx& endp

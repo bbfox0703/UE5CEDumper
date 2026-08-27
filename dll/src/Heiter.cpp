@@ -13,6 +13,9 @@
 #include "Voll.h"
 #include "Utf8Helpers.h"
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
+#ifdef UE5_PROXY_BUILD
+#include "Lugner.h"    // Lugner::MarkCrtReady — the latch the forwarding thunks gate on
+#endif
 
 // Global DLL module handle — used by CEPlugin.cpp to resolve the DLL's
 // own file path when injecting into the game process.
@@ -285,6 +288,15 @@ static DWORD WINAPI RetentionSweepThreadProc(LPVOID) {
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     switch (reason) {
     case DLL_PROCESS_ATTACH: {
+#ifdef UE5_PROXY_BUILD
+        // ⭐ FIRST STATEMENT IN THE FUNCTION, and it has to stay first. Reaching DllMain
+        // means _DllMainCRTStartup has already run __acrt_initialize, so from this
+        // instruction onward `__acrt_heap` is real and our forwarding thunks may allocate.
+        // Before it, they must not — see Lugner::g_crtReady and
+        // docs/audit-2026-08-26-dxgi-appcompat-crash.md. Anything inserted above this line
+        // runs in the window the latch exists to close.
+        Lugner::MarkCrtReady();
+#endif
         g_hDllModule = hModule;
         DisableThreadLibraryCalls(hModule);
 
@@ -374,6 +386,21 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
                 LOG_WARN("Proxy: first-loaded-wins guard is NOT armed (CreateMutexW failed, "
                          "err=%lu) — a second UE5CEDumper proxy in this process would run "
                          "alongside this one", g_primaryProxyMutexErr);
+            }
+
+            // The pre-CRT refusals, reported the first moment there is a logger to report
+            // them to. Without this line the refusal is COMPLETELY INVISIBLE — no log, no
+            // crash, nothing — and the next person asking "why did the compat shim not
+            // apply?" would have nothing to go on. This is the only consumer of
+            // Lugner::g_preCrtCalls and the reason the counter exists.
+            if (const LONG preCrt = Lugner::PreCrtCallCount(); preCrt > 0) {
+                LOG_WARN("Proxy: %ld forwarded call(s) arrived BEFORE our CRT was initialised "
+                         "and were answered with 0 WITHOUT forwarding. Expected on a game that "
+                         "carries a Windows AppCompat layer — the shim engine "
+                         "(apphelp!SE_DllLoaded -> AcGenral) reaches into a module that is "
+                         "mapped but not yet initialised. NOT fatal, and NOT a lost feature: "
+                         "nothing is latched, so the game's own first call resolves normally. "
+                         "See docs/audit-2026-08-26-dxgi-appcompat-crash.md.", preCrt);
             }
 #endif
         }
