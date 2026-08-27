@@ -58,6 +58,60 @@ inline bool CrtReady()           { return g_crtReady != 0; }
 inline void NotePreCrtCall()     { InterlockedIncrement(&g_preCrtCalls); }
 inline LONG PreCrtCallCount()    { return g_preCrtCalls; }
 
+// ── Same-thread re-entrancy, and why there is no lock here ─────────────────────────
+//
+// ⚠ OUR RESOLVER CALLS LoadLibraryW, AND ON A SHIMMED GAME **THAT LOAD RE-ENTERS US ON THE
+// SAME THREAD**. The loader raises `apphelp!SE_DllLoaded` for the module we are loading,
+// `AcGenral`'s DXGICompat hookset does `GetModuleHandleW(L"dxgi.dll")` — which resolves to
+// US, because we are the module registered under that name — then `GetProcAddress` and
+// calls our thunk again, while our resolver is still inside `LoadLibraryW`.
+//
+// Measured on OCTOPATH TRAVELER, build 3364 (`out/hang-…-24836.dmp`, 2026-08-27): the main
+// thread sat in `ZwWaitForAlertByThreadId` on an SRWLOCK at `dxgi.dll+0x2ACC90` — our own
+// `s_lock` — with the `AcGenral`/`apphelp` notification frames appearing **twice** on the
+// stack. **SRWLOCK is documented NON-RECURSIVE**, so the second `AcquireSRWLockExclusive` on
+// that thread deadlocked; the loader lock was therefore never released, and all three
+// threads we create in DllMain stayed parked in `ZwWaitForSingleObject`. The game never drew
+// a frame. That lock is now gone — audit #4 B43 had already removed it from the winmm twin
+// for the sibling lock-order reason and left dxgi alone; this finishes it.
+//
+// ⭐ What replaces it is NOT another lock. Correctness without one is B43's argument, and it
+// still holds: `mProcs[]` entries are pointer-sized and aligned so a store cannot tear, two
+// racing resolvers write IDENTICAL values, and "nobody observes a half-populated table" is
+// preserved by the thunk itself, which tests its own slot. The guard below only stops the
+// *nested* call from doing redundant work: it returns at once, its thunk then sees an
+// unresolved slot with `mResolveAttempted` still 0 and answers 0 WITHOUT forwarding — which
+// is precisely what ReShade's compat exports do, and ReShade boots this game. The outer call
+// completes the resolve and forwards for real.
+//
+// ⚠ Deliberately NOT a "first caller wins" mutual exclusion: a loser returning with its slot
+// still null would hand the GAME a null `CreateDXGIFactory1`. Only a same-thread re-entry
+// bails. A cross-thread race falls through and resolves too, which is safe because the work
+// is idempotent — and even if the rare interleaving below loses the guard, recursion still
+// terminates at depth 2 (the nested `LoadLibraryW` finds the module already in the loader's
+// list and returns without a fresh `SE_DllLoaded`). Removing the lock is what fixes the
+// hang; the guard is defence, not the cure.
+inline volatile LONG g_resolvingTid = 0;
+
+// RAII so an early return cannot leak the marker. Non-copyable by omission.
+struct ResolveReentry {
+    LONG me;
+    bool reentered;
+    ResolveReentry()
+        : me(static_cast<LONG>(GetCurrentThreadId())),
+          reentered(g_resolvingTid == me)
+    {
+        if (!reentered) InterlockedExchange(&g_resolvingTid, me);
+    }
+    ~ResolveReentry()
+    {
+        // Clear only if we are still the recorded owner: a concurrent resolver on another
+        // thread may have overwritten it, and stomping 0 over ITS marker would drop its
+        // guard mid-flight.
+        if (!reentered) InterlockedCompareExchange(&g_resolvingTid, 0, me);
+    }
+};
+
 // Compose the absolute System32 path of `dllName` into `out`.
 // Returns false — leaving `out` an EMPTY STRING — if the directory could not be
 // obtained or the result does not fit. Callers must treat false as "do not load".

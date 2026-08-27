@@ -131,39 +131,46 @@ extern "C" void DxgiProxy_EnsureResolved()
     // make one shim call permanently disable the proxy.
     if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return; }
 
-    static SRWLOCK s_lock = SRWLOCK_INIT;
-    static bool    s_done = false;
+    // ⛔ SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below re-enters this function on this
+    // very thread when the game carries an AppCompat layer — see Lugner::ResolveReentry for
+    // the measured stack. Bail out and let the nested thunk answer 0 without forwarding.
+    //
+    // ⚠ There is NO LOCK here any more, and that is the actual fix for the hang, not this
+    // guard. An SRWLOCK across LoadLibraryW self-deadlocked on exactly that re-entry. B43's
+    // argument for why winmm needs none applies verbatim: the stores are aligned and
+    // pointer-sized, racers write identical values, and the thunk's own null test is what
+    // stops anyone seeing a half-filled table.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return;
 
-    AcquireSRWLockExclusive(&s_lock);
-    if (!s_done) {
-        s_done = true;
-
-        wchar_t realPath[MAX_PATH] = {};
-        // false => refuse. The old code discarded GetSystemDirectoryW's return and
-        // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
-        HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
-                     ? LoadLibraryW(realPath) : nullptr;
-        // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
-        const DWORD loadErr = real ? 0 : GetLastError();
-        int resolved = 0;
-        if (real) {
-            for (int i = 0; i < kDxgiExportCount; ++i) {
-                mProcs[i] = reinterpret_cast<uintptr_t>(GetProcAddress(real, kDxgiExports[i]));
-                if (mProcs[i]) ++resolved;
-            }
-        }
-        // Published AFTER mProcs[] is fully written and BEFORE the lock is dropped, so no
-        // thunk can observe "resolution finished" over a half-filled table.
-        mResolveAttempted = 1;
-
-        if (real) {
-            LOG_INFO("dxgi proxy: lazily forwarded %d/%d exports to real System32 dxgi.dll", resolved, kDxgiExportCount);
-        } else {
-            LOG_ERROR("dxgi proxy: FAILED to load real System32 dxgi.dll (err=%lu) — forwarded calls will crash",
-                      loadErr);
+    wchar_t realPath[MAX_PATH] = {};
+    // false => refuse. The old code discarded GetSystemDirectoryW's return and
+    // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
+    HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
+                 ? LoadLibraryW(realPath) : nullptr;
+    // Captured AT the failure, before GetProcAddress/logging clobber it. (AB10/AB11)
+    const DWORD loadErr = real ? 0 : GetLastError();
+    int resolved = 0;
+    if (real) {
+        for (int i = 0; i < kDxgiExportCount; ++i) {
+            mProcs[i] = reinterpret_cast<uintptr_t>(GetProcAddress(real, kDxgiExports[i]));
+            if (mProcs[i]) ++resolved;
         }
     }
-    ReleaseSRWLockExclusive(&s_lock);
+    // Published only after mProcs[] is fully written, so no thunk observes "resolution
+    // finished" over a half-filled table.
+    mResolveAttempted = 1;
+
+    // Claimed once: this is file I/O, and a duplicate line would misreport a race as two
+    // resolves. After the work, never around it — same shape as the winmm twin.
+    static volatile LONG s_logged = 0;
+    if (InterlockedCompareExchange(&s_logged, 1, 0) != 0) return;
+    if (real) {
+        LOG_INFO("dxgi proxy: lazily forwarded %d/%d exports to real System32 dxgi.dll", resolved, kDxgiExportCount);
+    } else {
+        LOG_ERROR("dxgi proxy: FAILED to load real System32 dxgi.dll (err=%lu) — forwarded calls will crash",
+                  loadErr);
+    }
 }
 
 #endif // UE5_PROXY_DXGI_BUILD

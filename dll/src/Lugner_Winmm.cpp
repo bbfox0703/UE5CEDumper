@@ -268,9 +268,18 @@ extern "C" void WinmmProxy_EnsureResolved()
     // See docs/audit-2026-08-26-dxgi-appcompat-crash.md.
     if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return; }
 
-    // NO early-out gate beyond that one. A 'first caller wins, others return' check would
-    // let the loser return with its slot STILL NULL. Racing resolvers are idempotent (same
-    // module, same names, same addresses), so every caller simply does the work and
+    // SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below can re-enter this function on this
+    // very thread: on a game carrying a Windows AppCompat layer the loader raises
+    // apphelp!SE_DllLoaded for the module being loaded, AcGenral resolves the proxied name
+    // back to US and calls our thunk again. Measured on OCTOPATH TRAVELER through the dxgi
+    // twin, where an SRWLOCK held across LoadLibraryW self-deadlocked (SRWLOCK is
+    // NON-RECURSIVE) and the loader lock was never released. See Lugner::ResolveReentry.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return;
+
+    // Still NO LOCK, and no 'first caller wins' gate either -- a loser returning with its
+    // slot STILL NULL would hand the host a null forward. Racing resolvers are idempotent
+    // (same module, same names, same addresses), so every caller simply does the work and
     // returns with the table populated. LoadLibraryW is refcounted; a duplicate is cheap.
 
     wchar_t realPath[MAX_PATH] = {};

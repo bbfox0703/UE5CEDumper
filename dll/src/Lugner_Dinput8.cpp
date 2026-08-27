@@ -55,6 +55,12 @@ static HMODULE LoadRealDinput8()
     // next time the loader reaches a different one first.
     if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return nullptr; }
 
+    // ⛔ SAME-THREAD RE-ENTRY GATE — see Lugner.cpp's copy and Lugner::ResolveReentry. The
+    // LoadLibraryW below can re-enter this function on this thread via the AppCompat shim
+    // engine's SE_DllLoaded notification.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return nullptr;
+
     wchar_t realPath[MAX_PATH] = {};
     if (!Lugner::SystemDllPath(L"dinput8.dll", realPath, MAX_PATH)) {
         LOG_ERROR("Could not resolve the System32 path of dinput8.dll (err=%lu) — refusing "

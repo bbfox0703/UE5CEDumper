@@ -54,6 +54,14 @@ static HMODULE LoadRealVersion()
     // Nothing is latched — `g_realVersion` stays null, so the next call retries.
     if (!Lugner::CrtReady()) { Lugner::NotePreCrtCall(); return nullptr; }
 
+    // ⛔ SAME-THREAD RE-ENTRY GATE. The LoadLibraryW below can re-enter this function on this
+    // very thread: on a shimmed game the loader raises apphelp!SE_DllLoaded for the module
+    // being loaded and AcGenral resolves the proxied name back to US. Measured on OCTOPATH
+    // TRAVELER through the dxgi twin — see Lugner::ResolveReentry. Returning null makes the
+    // nested forwarder answer its documented failure value; the outer call still resolves.
+    Lugner::ResolveReentry guard;
+    if (guard.reentered) return nullptr;
+
     // Build path to the real version.dll in System32
     wchar_t realPath[MAX_PATH] = {};
     if (!Lugner::SystemDllPath(L"version.dll", realPath, MAX_PATH)) {
