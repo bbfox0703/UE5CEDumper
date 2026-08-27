@@ -1742,11 +1742,18 @@ restoring the unconditional stamp turns the omission assertions red, and making 
   RVA the minidumps name, fixed returns cleanly) and `tools/verify/hang_dump.py` (dumps and
   per-thread-triages a *hung* process; `minidump_triage.py` walks the FAULTING thread and a hang
   has none).
-  ⚠ **Still owed, small:** `version.dll` and `dinput8.dll` have had **no in-game regression run**
-  since 3363. The dxgi run exercises the shared `Lugner.h` gate and re-entry guard, but not their
-  own forwarders — and those two were also the flavours the offline rig provably **cannot**
-  discriminate pre/post fix on (§9). Any game from the existing set will do; PASS = the game starts
-  and `init-0.log` shows `Loaded real version.dll` / the dinput8 equivalent.
+  ✅ **All four flavours now covered.** `version.dll` re-verified **in-game on DQ7R** (build 3366:
+  `Loaded real version.dll`, UE 4.27, 190,395 objects) — and the marker landing *after*
+  `pipe server started` is the direct evidence for the magic-static fix, since the first forwarded
+  call came from a game thread and forwarded. `dinput8.dll` **has no host** — no modern UE title
+  uses DirectInput8 — so its forward path is covered without a game by
+  `proxy_precrt_gate.py --forward`, which does a normal `LoadLibraryW` (DllMain runs) and calls the
+  export for real: dinput8 `DllCanUnloadNow` → `S_OK` where our stub answers `S_FALSE`. All four
+  PASS; the verdict is the proxy's own log line, not the return value, because a dead forwarder
+  answers a *documented failure value* that looks identical to success from outside.
+  ⚠ **Genuinely still open:** `dinput8.dll` has never run inside a game, before or after this
+  change, and the *pre-CRT* rig provably cannot discriminate pre/post fix for the two plain-C
+  forwarder flavours (§9) — their pre-CRT gate is verified by construction only.
   *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8/§9.*
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —

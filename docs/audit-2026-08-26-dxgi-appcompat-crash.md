@@ -158,6 +158,7 @@ the user's 3362 re-test.
 | **Octopath Traveler** | **dxgi** | **HIGHDPIAWARE** | ❌ would not start ≤3362 · ⏸ hung on 3363 · ✅ 20/20 from **3365** |
 | Octopath Traveler | winmm | HIGHDPIAWARE | ✅ works |
 | Geri | version | `~ HIGHDPIAWARE` | ✅ works (see §5) |
+| **DQ7R** | **version** | none | ✅ in-game re-verified on build 3366 (§9) |
 
 Derive the flavour column with:
 ```bash
@@ -467,15 +468,56 @@ acquisition anywhere on the path**.
 13/13 gates, `py tools/check_proxy_exports.py --artifacts`, and
 `python scripts/gen_proxy_forwarders.py winmm --check` all pass.
 
+### 🟢 The other three flavours
+
+**`version.dll` — in-game, DQ7R, 2026-08-27, build 3366.** Game runs, dumper attaches:
+
+```
+10:27:36.395 [PROXY]   Loaded real version.dll: C:\WINDOWS\system32\version.dll
+10:28:00.941 [SUMMARY] UE=427 GObjects=0x7FF668777660 GWorld=0x7FF6688C8470 Objects=190395
+```
+
+⭐ Note the `Loaded real version.dll` line lands **after** `pipe server started` — the first
+forwarded call came from a game thread ~900 ms after DllMain and **forwarded successfully**. That
+is the direct evidence for §8.4: had the magic statics still been there, a null latched on any
+earlier call would have left the export dead. (No pre-CRT warning here, which is correct — DQ7R
+carries no AppCompat layer.)
+
+**`dinput8.dll` has no host.** Modern UE titles do not use DirectInput8; there is no game in the
+set that loads it. That is not a reason to ship it unverified, so the missing coverage — *does a
+forwarder still forward after the magic-static change?* — is checked without a game by
+`--forward`, which does a **normal** `LoadLibraryW` (DllMain runs, CRT comes up) and then calls
+the export for real:
+
+| flavour | export called | result |
+|---|---|---|
+| version | `GetFileVersionInfoSizeW` | `0x734` = kernel32's real version-info size (a failed forward returns 0) |
+| version | `VerLanguageNameW` | `0x7` = `"English"` |
+| dinput8 | `DllCanUnloadNow` | `S_OK` — our stub answers `S_FALSE`, so this is the real one |
+| dxgi | `DXGIDeclareAdapterRemovalSupport` | `S_OK`, then `0x887A0036 DXGI_ERROR_ALREADY_EXISTS` |
+| winmm | `timeBeginPeriod` | `0`, which proves nothing on its own — the marker does |
+
+All four **PASS**. ⚠ The verdict is deliberately **not** the return value: a dead forwarder answers
+a *documented failure value* (`FALSE` / `0` / `E_FAIL`), which is indistinguishable from success
+from the outside. It is the proxy's own log line, counted only when the **line's own timestamp** is
+newer than the run — a 5-second file-mtime window originally let a *previous* run satisfy the
+check, which would have masked exactly the regression the rig exists to catch.
+
+The dxgi row is worth keeping: `DXGIDeclareAdapterRemovalSupport` is genuinely stateful, so the
+differing second answer **is** the proof that the call reached the real System32 dxgi — our stub
+would have answered identically both times. (It also means "call twice, expect the same value" is
+the wrong assertion for a forward test, and the rig no longer makes it.)
+
 ### ⚠ What is still NOT proven
 
-- **The rig cannot discriminate for `version` / `dinput8`.** Their pre-fix binaries also return
-  cleanly under it — those are plain C forwarders, not asm thunks, and their pre-fix path happens
-  not to fault in this harness. The tool says so out loud (`FAIL: the negative control ALSO
-  returned cleanly ... it proves nothing about the fix`) rather than printing a green tick. Their
-  gate and re-entry guard are verified by construction and by the single-mode clean return only.
-- **Neither flavour has had an in-game regression run since build 3363.** The dxgi run exercises
-  the shared `Lugner.h` code path, but not their own forwarders.
+- **The pre-CRT rig cannot discriminate for `version` / `dinput8`.** Their *pre-fix* binaries also
+  return cleanly under `DONT_RESOLVE_DLL_REFERENCES` — those are plain C forwarders, not asm
+  thunks, and their pre-fix path happens not to fault in that harness. The tool says so out loud
+  (`FAIL: the negative control ALSO returned cleanly ... it proves nothing about the fix`) rather
+  than printing a green tick. Their **pre-CRT gate** is therefore verified by construction; their
+  **forward path** is verified by the table above.
+- **`dinput8.dll` has never run inside a game**, before or after this change. Nothing in the set
+  loads it.
 - **The offline rig is not a byte-for-byte replay of the game crash.** Under
   `DONT_RESOLVE_DLL_REFERENCES` the IAT is not snapped either, so a pre-fix binary faults on its
   first imported call rather than on `HeapAlloc(NULL, ...)`. Same place in our code, earlier
