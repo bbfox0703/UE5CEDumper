@@ -1,7 +1,9 @@
 # Teleport Coordinate Library — design spec
 
 > **Status: P1-P5 SHIPPED** (builds 2257-2267, `dev`, 2777 tests green) —
-> **not yet verified in-game**. Designed 2026-07-22 across two adversarially
+> the **DLL-flavour picker is verified in-game**; the **standalone (no-DLL) flavour does NOT work
+> on the tested title**. ⚠ This line said "not yet verified in-game" long after that stopped being
+> true — [todo.md](todo.md) owns the status, this is a pointer to it. Designed 2026-07-22 across two adversarially
 > verified multi-agent rounds; built 2026-07-23. Remaining verification work is in
 > [todo.md](todo.md) under *"Teleport Coordinate Library"*; the shipping write-up
 > is in [dev-log.md](dev-log.md).

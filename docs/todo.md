@@ -1756,21 +1756,33 @@ restoring the unconditional stamp turns the omission assertions red, and making 
   forwarder flavours (§9) — their pre-CRT gate is verified by construction only.
   *Parent: [audit-2026-08-26-dxgi-appcompat-crash.md](audit-2026-08-26-dxgi-appcompat-crash.md) §8/§9.*
 
-- **Doc defects found by the 2026-08-27 CLAUDE.md audit — report only, not fixed** —
-  Effort: **S** · Risk: low. A row-by-row audit of CLAUDE.md's Documentation Index against every
-  target doc turned these up in passing. None was in scope for that trim.
-  1. **`docs/pending-verification_zh-TW.md` has its header block duplicated SIX times** (lines
-     ~36-180, ~145 of 310 lines) with drifted copies — almost certainly a bad
-     `py tools/verify/zhtw_rebuild_buckets.py --apply`. ⚠ Check the script before re-running it.
-  2. **`docs/aob-block-library-eval.md` §6 step 3 still says the block library is NOT CI-run**
-     ("nothing in the repo calls it and CI does not run it"). It IS — `.github/workflows/ci.yml`
-     compares `tools/ghidra/blocks/blocks.json` byte-wise. The doc contradicts reality.
-  3. **`docs/dev-log.md`'s own header states an archive boundary of ≤2168** against the real 2779.
-  4. **`docs/archive/README.md`** is missing a row for `todo-closed-2026-08-25-build-3356.md`
-     (158 KB), and its ":36" line says *five* defects where `handover-2026-08-19` says seven.
-  5. **`docs/corpus-preservation.md`** and **`docs/teleport-coord-library-spec.md`** each carry a
-     status line their own body refutes (unrecoverable `.rep`s; "not yet verified in-game").
-  *Parent: the CLAUDE.md index trim, 2026-08-27.*
+- **✅ DONE 2026-08-27 — the doc defects the CLAUDE.md audit surfaced** —
+  All five fixed, plus two more found while fixing them. One was **refuted**.
+  1. ✅ **`pending-verification_zh-TW.md` header duplicated 6×** (313 → 198 lines). ⭐ The cause was
+     `tools/verify/zhtw_rebuild_buckets.py` **inserting the charter unconditionally** — every
+     `--apply` added another copy. Worse, its `CHARTER` and its `BUCKETS` blurbs were **stale**
+     against the hand-corrected doc, so re-running would have re-introduced the old wording and
+     deleted the `**目前 0 項。**` notes. Fixed all three: insertion is idempotent (and self-heals a
+     duplicated file), and both the charter and the blurbs were back-ported. **Proven**: `--apply`
+     on a copy now reproduces the doc byte-for-byte, and three consecutive runs leave the hash
+     unchanged.
+  2. ✅ `aob-block-library-eval.md` §6 step 3 said the specificity tool is not CI-run. It is.
+  3. ✅ `dev-log.md`'s header said the archive boundary was ≤2168; the real one is ≤2747.
+  4. ✅ `archive/README.md` was missing a row for `todo-closed-2026-08-25-build-3356.md`, and said
+     *five* defects where `handover-2026-08-20.md` §3 says **seven**. ⭐ Fixing it exposed **two
+     more unindexed archive files** (`dev-log-2026-05-pre-build-700.md`,
+     `dev-log-2026-06-pre-build-1180.md`) — an inventory taken from the README alone had been
+     under-reporting the archive. All three rows added; the folder now indexes cleanly.
+  5. ✅ `teleport-coord-library-spec.md`'s status said "not yet verified in-game" long after the
+     DLL flavour was verified; todo.md owns the status and the spec now points at it.
+  ❌ **REFUTED — `corpus-preservation.md` has no internal contradiction.** Its `### Never drop`
+  section is about **sole-landing AOB patterns**, not about recoverability, so it does not conflict
+  with `### Recoverability — Nothing is unrecoverable`. The stale claim was only ever in CLAUDE.md's
+  index row, and that row is gone.
+  ⭐ **The pattern worth naming: three stale generators in one day.** `gen_proxy_forwarders.py`
+  (winmm), `zhtw_rebuild_buckets.py` (twice — charter and blurbs). Each time a generated file was
+  hand-corrected and the generator was not, so re-running it would silently revert the fix. **After
+  hand-editing a generated file, back-port or the next `--apply` is a regression.**
 
 - **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items

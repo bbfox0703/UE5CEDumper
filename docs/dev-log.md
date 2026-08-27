@@ -3,7 +3,10 @@
 Append-only milestone history, newest first. Each entry references a
 build number from `build_number.txt` so commits can be cross-referenced.
 **Reading tip:** grep `^## ` for the index, then read the top (newest-first).
-Entries for **builds ≤2168** are archived: builds 1800–2168 in
+Entries for **builds ≤2747** are archived — this header said **≤2168** for three weeks after the
+third split. Builds 2220–2747 in
+[archive/dev-log-2026-08-pre-build-2779.md](archive/dev-log-2026-08-pre-build-2779.md),
+builds 1800–2168 in
 [archive/dev-log-2026-07-pre-build-2200.md](archive/dev-log-2026-07-pre-build-2200.md),
 builds 1178–1799 in
 [archive/dev-log-2026-06-pre-build-1800.md](archive/dev-log-2026-06-pre-build-1800.md),
