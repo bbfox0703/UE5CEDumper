@@ -494,7 +494,11 @@ the `bIsBound` flag only; binding enumeration is tracked in
 
 -----
 
-## Frieren.h — C ABI Exports (32 functions, legacy alias: ExportAPI)
+## Frieren.h — C ABI Exports (legacy alias: ExportAPI)
+
+> ⚠ **Count is DERIVED, never hand-edited** — `grep -c '__declspec(dllexport)' dll/src/Frieren.h`
+> (**59** at the time of writing; this heading said *32* for months). The tables below cover the
+> core set, not all of them.
 
 ```cpp
 #pragma once

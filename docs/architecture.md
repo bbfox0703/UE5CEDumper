@@ -188,6 +188,13 @@ UE5CEDumper/
 
 ## Build Environment
 
+The C++ build is **incremental** — Ninja, one `build/` directory, and a shared
+`UE5DumperCommon` object library that compiles the proxy-agnostic sources **once** for all four
+proxy flavours. ⚠ Header edits retrigger a rebuild **only in a tree configured through
+`build.ps1`** — configure from a stock shell and CMake bakes the wrong `msvc_deps_prefix`, after
+which a `.h` edit silently stops triggering a rebuild (CLAUDE.md carries the full warning and the
+`--deps-check` recipe). `build.ps1 -Clean` forces a full rebuild; CI always passes `-Clean`.
+
 ### DLL (C++)
 
 | Property | Value |

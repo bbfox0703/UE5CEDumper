@@ -156,7 +156,7 @@ the user's 3362 re-test.
 |---|---|---|---|
 | Avowed, Elliot, SEED, TQ2 | dxgi | none | ✅ `dxgi proxy: lazily forwarded 20/20` |
 | **Octopath Traveler** | **dxgi** | **HIGHDPIAWARE** | ❌ would not start ≤3362 · ⏸ hung on 3363 · ✅ 20/20 from **3365** |
-| Octopath Traveler | winmm | HIGHDPIAWARE | ✅ works |
+| Octopath Traveler | winmm | HIGHDPIAWARE | ✅ works · re-verified 180/180 on build 3366 (§9) |
 | Geri | version | `~ HIGHDPIAWARE` | ✅ works (see §5) |
 | **DQ7R** | **version** | none | ✅ in-game re-verified on build 3366 (§9) |
 
@@ -482,6 +482,11 @@ forwarded call came from a game thread ~900 ms after DllMain and **forwarded suc
 is the direct evidence for §8.4: had the magic statics still been there, a null latched on any
 earlier call would have left the export dead. (No pre-CRT warning here, which is correct — DQ7R
 carries no AppCompat layer.)
+
+**`winmm.dll` — in-game, Octopath, build 3366**, as a regression check on the shared
+`Lugner.h` changes: `winmm proxy: lazily forwarded 180/180`, full init, 406,060 objects, and
+**no pre-CRT warning** — correct, because `AcGenral` does not name `winmm.dll`. So all four
+flavours are confirmed on the shipped build.
 
 **`dinput8.dll` has no host.** Modern UE titles do not use DirectInput8; there is no game in the
 set that loads it. That is not a reason to ship it unverified, so the missing coverage — *does a
