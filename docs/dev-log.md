@@ -22,6 +22,81 @@ builds ≤696 in
 
 -----
 
+## 2026-08-27 (later) - The crash fix turned into a hang, because a deferral said the second half was out of scope (build 3365, verified in-game 3366)
+
+Build 3363 (previous entry) stopped OCTOPATH TRAVELER crashing with our `dxgi.dll` proxy. The game
+then **hung with no window**, and its log stopped at `DllMain: auto-start thread created OK`.
+
+That line being last is diagnostic by itself: a thread created inside DllMain cannot run until the
+loader lock is released, so the auto-start thread never printing its own first line means **the
+loader lock was never released**. `tools/pe/minidump_triage.py` walks the FAULTING thread and a
+hang has none, so `tools/verify/hang_dump.py` was written to dump a live process and census every
+thread's stack by module.
+
+The dump named it exactly:
+
+```
+ntdll+0x6019B                  <- RtlAcquireSRWLockExclusive's wait (ZwWaitForAlertByThreadId)
+dxgi.dll+0x2ACC90              <- our own .data: the SRWLOCK object itself
+dxgi.dll+0x18993F              <- our thunk, SECOND pass
+AcGenral+0x5D78/5C00/22E2/5420, apphelp+0x1E696/1F81F     <- this block appears TWICE
+dxgi.dll+0x1889CC              <- SetAppCompatStringPointer thunk, FIRST pass
+```
+
+with all three DllMain-created threads parked in `ZwWaitForSingleObject` behind the loader lock.
+
+**Our own `LoadLibraryW` re-enters us on the same thread.** Loading the real `dxgi.dll` makes the
+loader raise `apphelp!SE_DllLoaded`; `AcGenral`'s DXGICompat hookset does
+`GetModuleHandleW(L"dxgi.dll")` — which resolves back to **us**, because we are the module
+registered under that name — and calls our thunk again while the resolver is still inside
+`LoadLibraryW`. **SRWLOCK is documented non-recursive.** Self-deadlock.
+
+### The part worth keeping
+
+That lock is audit #4 **B43**, which removed it from the winmm twin for the sibling lock-order
+reason and left dxgi alone, noting the dxgi original's safety argument was *"explicitly CONDITIONAL
+on RHI init being the only entry point"*. Build 3363's own audit doc recorded finishing it as
+**"NOT done — deliberately out of scope"**. It was not out of scope; it was the live defect, and
+the deferral cost a full extra round trip through a real game. Logged as a new row in
+[working-lessons.md §2.13](working-lessons.md) — *a deferral reason ages worse than the finding it
+defers* — because the specific mistake was rating a **sibling's already-proven finding** as
+theoretical in the flavour it had not been applied to.
+
+### What shipped
+
+- **The SRWLOCK is gone.** Correctness without one is B43's argument verbatim: `mProcs[]` stores
+  are aligned and pointer-sized so they cannot tear, racing resolvers write identical values, and
+  "nobody observes a half-populated table" is preserved by the thunk's own null test. The log line
+  is claimed once with `InterlockedCompareExchange`, after the work — the winmm shape.
+- **`Lugner::ResolveReentry`**, in all four flavours. A nested call returns at once; its thunk then
+  sees an unresolved slot with `mResolveAttempted` still 0 and answers 0 **without forwarding** —
+  exactly what ReShade's compat exports do. The **outer** call completes the resolve and forwards
+  for real. ⚠ Deliberately not a "first caller wins" mutual exclusion: a loser returning with a
+  null slot would hand the *game* a null `CreateDXGIFactory1`. Removing the lock is the cure; the
+  guard is defence.
+
+### Verified in-game (build 3366, 2026-08-27)
+
+```
+10:17:32.450 [WARN]  Proxy: 1 forwarded call(s) arrived BEFORE our CRT was initialised …
+10:17:32.452 [INFO]  DllMain: auto-start thread created OK
+10:17:32.456 [INFO]  dxgi proxy: lazily forwarded 20/20 exports to real System32 dxgi.dll
+10:17:32.475 [INFO]  DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)
+10:17:32.984 [INFO]  DllMain ProxyStart: pipe server started
+10:18:13.670 [SUMMARY] GObjects=0x7FF659775C10 GNames=0x20440C60010 GWorld=0x7FF6598590F8 Objects=406060
+```
+
+Two lines to actually read. The **pre-CRT warning is still there and that is the point** — it is
+the shim engine's direct fingerprint, so the root-cause analysis is no longer inference. And
+**`20/20` lands at `.456`, before `proxy DLL mode` at `.475`**: the resolve completed on the
+*loader thread*, inside the shim's outer call, and only then did the loader release and let our
+threads run. Under 3363 that resolve never returned.
+
+⚠ `version.dll` / `dinput8.dll` have had no in-game regression run since 3363 — and they are also
+the two flavours the offline rig provably cannot discriminate pre/post fix on. Queued in todo.md.
+
+-----
+
 ## 2026-08-27 - The AppCompat shim calls our export before our CRT exists; four proxies fixed, and one "fix" that would have killed the export (build 3363)
 
 OCTOPATH TRAVELER would not start with our `dxgi.dll` proxy deployed, while the **same 2.9 MB
