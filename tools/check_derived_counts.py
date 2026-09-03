@@ -47,6 +47,30 @@ def count_matching(root, relpath, pattern):
         return sum(1 for line in f if rx.search(line))
 
 
+def count_in_section(root, relpath, h2_prefix, pattern):
+    """Lines matching a regex INSIDE one '## ' section; the section ends at the next '## '.
+
+    Scoping is the whole point. A whole-file scan of the verification register answers 11 open
+    batches, not 9, because the CJK step sections below it are a different queue. Two
+    self-enumeration commands that disagree is exactly how this count drifted to a stale
+    43 / 36 / 40 / 30 in turn."""
+    path = os.path.join(root, relpath)
+    if not os.path.isfile(path):
+        return None
+    rx = re.compile(pattern)
+    n, inside = 0, False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith("## "):
+                if inside:
+                    break
+                inside = line.startswith(h2_prefix)
+                continue
+            if inside and rx.search(line):
+                n += 1
+    return n
+
+
 def count_files(root, reldir, suffix, skip=("bin", "obj")):
     """Files under a directory tree, excluding build output."""
     base = os.path.join(root, reldir)
@@ -73,6 +97,22 @@ def count_dir(root, reldir, suffix):
 # number as written in the doc.
 
 CHECKS = [
+    dict(
+        key="open_verification_batches",
+        label="open batch headings in the verification register",
+        derive=lambda r: count_in_section(
+            r, "docs/verification-register.md",
+            "## Pending live-game verification", r"^### .*⬜"),
+        derive_cmd=("awk '/^## Pending live-game verification/,0' docs/verification-register.md "
+                    "| awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜"),
+        # The register ASKED for this. It said "expect 40 and 0 -- a machine check, since this is
+        # the second time the invariant drifted", and then drifted again: the real value is 9.
+        # A number whose own prose tells you to re-derive it is a number nothing derives.
+        claims=[
+            ("docs/todo.md",                  r"\*\*(\d+) open batches\*\* needing a running game"),
+            ("docs/verification-register.md", r"and expect\s+`(\d+)` and"),
+        ],
+    ),
     dict(
         key="pipe_commands",
         label="pipe commands",
