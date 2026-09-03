@@ -25,6 +25,127 @@ builds ≤696 in
 
 -----
 
+## 2026-09-03 - FName index 1 is INTERIOR to "None": a probe that could never succeed, warning on every session (build 3368, verified live on DumperTest; re-verified 3369)
+
+Two fixes, both found by asking why a log line said something odd, and neither was the thing that
+was actually asked about.
+
+### 1. The FNamePool `BlockOffsetBits` WARN was a false alarm BY CONSTRUCTION
+
+`FNamePool: BlockOffsetBits = 16 (stock default kept; index 1 did NOT decode cleanly at this
+width — name resolution may be degraded)` had fired on **6 of 6 sessions** since audit #5 G4
+introduced it, across **four games and three engine versions** (ES2 UE5.06, Elliot UE5.04, P3R
+UE4.27 fork). It has never once been about the game it fired on. `FName[1]=''` is in **every log
+this repo has ever produced**, including the pre-G4 ones that did not probe at all.
+
+**An FName index is a stride-quantised BYTE OFFSET inside its block, not an entry ordinal:**
+
+```
+vendor .../Core/Private/UObject/UnrealNames.cpp:592
+    return FNameEntryHandle(CurrentBlock, ByteOffset / Stride);
+:679  return *reinterpret_cast<FNameEntry*>(Blocks[Block] + Stride * Offset);   // no validity check
+:518  enum { Stride = alignof(FNameEntry) };
+:253  static constexpr uint32 FNameBlockOffsetBits = 16;   // compile-time, no #ifndef
+UnrealNames.inl:12  REGISTER_NAME(0,None)
+```
+
+Entry 0 is always `"None"` and occupies `prefix + 4` bytes — always **more than one stride unit**.
+So index 1 addresses byte 2 of block 0: the `'N','o'` **inside the "None" string**. Not inference —
+our own `ValidateGNames` DEBUG dump had been printing the proof all along, byte-identical on five
+games across two engine generations:
+
+```
+1E 01 | 4E 6F 6E 65 | 10 03 | 42 79 74 65 50 72 6F 70 65 72 74 79 | C0 02 | 49 6E 74…
+hdr=4 |  N  o  n  e | hdr=12|  B  y  t  e  P  r  o  p  e  r  t  y | hdr=11|  I  n  t
+idx 0 --------------- idx 3 --------------------------------------- idx 10 ----------
+```
+
+The probe read `0x6F4E` as a header: lenA `(0x6F4E>>6)&0x3FF` = 445, lenB `(0x6F4E>>1)&0x7FF` =
+1959, both outside the accepted `1..256` → `len = 0` → WARN, unconditionally, forever. The
+hash-prefixed layout fails identically (byte 4 → `'n','e'` → 405 / 695). **In both stock layouts
+the first valid non-zero index is 3.**
+
+**DELETED, not moved to index 3** — that is the tempting fix and it is wrong.
+`BlockBitsAreIndistinguishable(3, 16, 14, 2)` is still **true**, so index 3 measures the width no
+better than index 1 did; it would merely start *succeeding*, printing a confirmation beside a
+number nobody measured. That is precisely what G4 removed. A regression guard pins it. G4's
+conclusion stands — there is no reliable offline discriminator — so the width is now logged as the
+engine constant it is.
+
+**The second copy is why this was a code change and not a one-line deletion.** `Init` and
+`InitObfuscated` each hand-wrote the *same* wrong index in their verification line — that is where
+`FName[1]=''` came from — and fixing only the WARN would have left the defect visible in the line
+directly below it (working-lessons §2.17). Both now call one helper sampling the **derived** first
+boundary, `Serie::FirstEntryAfterNone(noneOffset, stride)`; `DetectStride` already computed
+`noneOffset` and threw it away. `GetString(0)` is dropped from the line too — it short-circuits
+`nameIndex <= 0` to the literal `"None"` without touching memory, so it verified nothing.
+
+⚠ **Derived, never a literal 3.** Both stock layouts give 3, which is exactly what makes a
+hardcoded 3 look safe — but MindsEye's obfuscated fork inserts a 2-byte tag (`payloadGap = 2`),
+giving **4**. A literal there would be this bug again with a new number. That is the load-bearing
+test. `InitUE4` is deliberately untouched: in `TNameEntryArray` mode an index *is* a pointer-array
+ordinal, so its index 1 is a genuine second entry — said so in the header so nobody "fixes" it.
+
+**Name resolution was never degraded, and the logs said so one millisecond later**:
+`UE5_Init: Name sanity: 10/10 objects resolved` on 9 of 9 FNamePool sessions, 38 whole-pool
+censuses with 0 `named`/`nonNull` mismatches. Three direct 16-bit proofs the WARN made everyone
+doubt — DQ7R resolved `/Script/Engine` at `idx=387225`, Avowed at `idx=24315`, DumperTest at
+`idx=200623`, all far above 2¹⁴ and impossible to decode correctly at 14 bits.
+
+**Verified live on DumperTest (UE504 Development config, 25,213 objects), TWICE — build 3368
+(`bdb1f613`) and again after a clean recompile at build 3369 (`cbe02dfd`), byte-identical results:**
+`BlockOffsetBits = 16 (… not detectable offline — audit #5 G4)` as **INFO**, **zero** FNAM
+WARN/ERROR in either session, and `FName[3]='ByteProperty'` — the derived boundary resolving
+in-process to exactly what the block-0 hex predicted. Name health `Loaded 25,213 named` of
+25,213 = **100%**, `scanned=25213, nonNull=25213`, 154 `WalkClass:` lines with **0** empty names
+(game-specific `BP_ThirdPersonCharacter_C` included). The only WARNs in either run are the ordinary
+AOB candidate-rejection chatter (`ValidateGNames` / `ValidateGObjects` refusing bad candidates, and
+the cross-module guard refusing `EOSSDK-Win64-Shipping.dll`). These runs also exercised the
+`UE5-Extended` FUObjectItem layout at ItemSize 32 — a different one from the `Default`/24 the
+reporting session used — and the second run's scan log is 12.7 KB against the first's 357 KB
+because the hint cache hit (`GOBJ_ES53_1` / `GNAM_V1` / `GWLD_TQ_1`).
+
+⚠ **Correction to this entry's first draft, because the wrong version would teach a future reader
+to distrust every test binary.** It said the `-dirty` build stamp meant the fix was uncommitted and
+"not reproducible from a clean tag". That is wrong. **The `-dirty` suffix is STRUCTURAL: any build
+that bumps the build number stamps itself dirty.** `dll/CMakeLists.txt:43-52` decides it with
+`git diff --quiet HEAD` over the *whole* tree, and the build has by then already written the bumped
+`build_number.txt` — on both runs `git status` showed that file and nothing else. So `cbe02dfd-dirty`
+means "the source of `cbe02dfd`, built with the counter one ahead", not "someone left changes lying
+around". A genuinely clean stamp requires `-NoBumpBuildNumber` **and** an already-clean tree.
+
+9 new assertions, `dll_helpers_test` 1684 pass / 0 fail. Controls: the `payloadGap=2` case fails if
+the helper is constant-folded to 3; the idx-3 assertion fails if a probe is re-added there.
+13/13 gates, `check_proxy_exports --artifacts` green, C# suite green.
+⚠ `-Target Test` clobbered `dist/` with the 112,052,516 B non-trimmed build exactly as CLAUDE.md
+warns; restored via `-Mode Publish -NoBumpBuildNumber` (54.7 MiB / 57,398,784 B, sha `bc91f375`).
+
+### 2. `docs/pipe-protocol.md` said a synthetic hop was a real pointer edge
+
+Found while clarifying why Locate-in-GWorld returned `AuthorityGameMode` rather than
+`OwningGameInstance` on ES2 — that question was a non-issue (both are stock `UWorld` UPROPERTYs,
+`World.h:1424` / `:1482`; both routes are co-optimal 2-hop chains and the winner is decided by
+ascending field offset, 0x1A8 before 0x228, in `Ubel.cpp`'s "sort by offset **for clean display**").
+
+The spec, however, described the `ok_via_level` recovery as *"finds the actor in `ULevel::Actors`"*
+with *"The remaining steps are real edges"*. Both false since audit #5 F8 (build 3220):
+`Level.h:429` declares `TArray<TObjectPtr<AActor>> Actors;` with **no `UPROPERTY`** (control:
+`DestroyedReplicatedStaticActors` at `:886` has one), so the lookup was deleted outright and
+`Aura.cpp:4085-4105` builds **both** leading hops as synthetic (`fieldOffset -1`, `WorldLevel` /
+`LevelActor`, `element_index -1`). Not cosmetic: telling a reader an offset-less back-reference is
+a real pointer edge is the exact premise behind `e88190ba`, where a hop believed to have a real
+offset produced CE tables resolving into the world's **vtable**.
+
+The sample response was the worse half and was not in the report — it showed
+`PersistentLevel → Actors[12]` as an `ArrayProperty` at `field_offset 0x98` with `element_index 12`,
+a step the forward BFS *cannot* produce since it enumerates `GetClassRefMeta`. Replaced with
+`GameState → PlayerArray[0]` (both reflected UPROPERTYs, a real logged path) and an explicit
+PLACEHOLDER warning on the numbers. `todo.md`'s still-open `ok_via_level` row carried the same
+stale `Actors[k]`; the preserved *Original note* is left verbatim per convention with a warning
+above it.
+
+-----
+
 ## 2026-08-27 (later) - The crash fix turned into a hang, because a deferral said the second half was out of scope (build 3365, verified in-game 3366)
 
 Build 3363 (previous entry) stopped OCTOPATH TRAVELER crashing with our `dxgi.dll` proxy. The game

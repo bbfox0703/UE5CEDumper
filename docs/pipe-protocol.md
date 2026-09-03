@@ -1253,18 +1253,31 @@ false and `status` explains why:
   "visited":   18342,            // distinct objects discovered
   "duration_ms": 120,
   "steps": [
+    // ⚠ Addresses AND field_offsets below are PLACEHOLDERS — do not mine them, the
+    // layout is per-build and every offset here is resolved at runtime. What IS real
+    // is the shape: both fields are reflected UPROPERTYs (UWorld::GameState,
+    // AGameStateBase::PlayerArray), and this is a logged path — Elliot 2026-07-23,
+    // GWorld > GameState > PlayerArray[0] > PawnPrivate > … (see docs/todo.md).
     { "from": "0x7FF6AA000000", "to": "0x7FF6AA001000",
-      "field_offset": 0x30, "field_name": "PersistentLevel",
+      "field_offset": 0x1D8, "field_name": "GameState",
       "field_type": "ObjectProperty", "element_index": -1,
-      "to_name": "PersistentLevel", "to_class": "Level" },
+      "to_name": "BP_GameState_C_0", "to_class": "BP_GameState_C" },
     { "from": "0x7FF6AA001000", "to": "0x7FF6AA002000",
-      "field_offset": 0x98, "field_name": "Actors",
-      "field_type": "ArrayProperty", "inner_type": "ObjectProperty", "element_index": 12,
-      "to_name": "BP_PlayerController_C_0", "to_class": "BP_PlayerController_C" }
+      "field_offset": 0x2A8, "field_name": "PlayerArray",
+      "field_type": "ArrayProperty", "inner_type": "ObjectProperty", "element_index": 0,
+      "to_name": "BP_PlayerState_C_0", "to_class": "BP_PlayerState_C" }
     // … → target_obj
   ]
 }
 ```
+
+⚠ **Every step the forward BFS emits is a REFLECTED property hop** — it enumerates
+`GetClassRefMeta`, so a field with no `UPROPERTY` can never appear. In particular
+`ULevel::Actors` is a plain C++ member (`Engine/Classes/Engine/Level.h:429`,
+`TArray<TObjectPtr<AActor>> Actors;`, no `UPROPERTY` — contrast
+`DestroyedReplicatedStaticActors` at `:886`, which has one), so **there is no
+`GWorld → PersistentLevel → Actors[k]` step and never was**; audit #5 F8/F9. The
+only way a level actor enters a path is the synthetic `ok_via_level` recovery below.
 
 The UI replaces the Live Walker breadcrumb spine with this path. For a property
 VALUE it lands on `target_obj` and scrolls to the value field; for an OBJECT /
@@ -1275,14 +1288,29 @@ pointer field, without drilling into the target. BFS first-hit == shortest hops.
 BFS returns `not_reachable` and the target is (or is owned by) an actor whose
 `ULevel` isn't forward-reachable from the world, the DLL recovers the chain
 through the world's level list: it reaches the owning `ULevel` by its
-`OwningWorld` back-reference (an actor's Outer IS its level), finds the actor in
-`ULevel::Actors`, and returns `found: true` with `status: "ok_via_level"`. The
-first step is a SYNTHETIC `world → level` hop (`field_type: "WorldLevel"`,
-`field_offset: -1`) — a back-reference, NOT a forward static pointer, so the
-chain is for in-tool reachability / Live Walker navigation, not a clean CE
-pointer chain. The remaining steps (`Actors[k] → actor → … → target`) are real
-edges. A truly unreferenced actor not in any world level still returns
-`not_reachable`.
+`OwningWorld` back-reference (an actor's Outer IS its level) and returns
+`found: true` with `status: "ok_via_level"`.
+
+⚠ **The FIRST TWO steps are both SYNTHETIC** — neither is a pointer deref, and a
+CE chain must not be built through either:
+
+| step | `field_name` | `field_type` | `field_offset` | `element_index` |
+|---|---|---|---|---|
+| `world → level` | `Levels` | `WorldLevel` | `-1` | `-1` |
+| `level → actor` | `Actors` | `LevelActor` | `-1` | `-1` |
+
+Both are back-references, not forward static pointers (`dll/src/Aura.cpp:4085-4105`).
+There is **no membership lookup and no array index**: `ULevel::Actors` carries no
+`UPROPERTY`, so audit #5 F8 deleted the lookup outright — the Outer climb exits only
+with `level = GetOuter(actor)`, so membership is guaranteed by construction and `-1`
+is the honest answer for both the offset and the index. Only the TAIL steps
+(`actor → … → target`, empty when the target IS the actor) are real reflected edges.
+
+So the chain is for in-tool reachability / Live Walker navigation, **not** a clean CE
+pointer chain — the UI renders an offset-less hop as a navigation anchor
+(`IsPointerDeref=false`) and the CE exporter re-roots at the deepest such hop rather
+than fabricating an offset for it. A truly unreferenced actor not in any world level
+still returns `not_reachable`.
 20s deadline; also bails on `Cancel::Requested()` (pipe disconnect / shutdown).
 MulticastSparseDelegateProperty edges are intentionally NOT followed (their
 bindings live in a CoreUObject-global TMap — a per-node global walk would be

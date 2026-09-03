@@ -51,11 +51,29 @@ static int s_headerOffset = 0;
 static int s_stride = 2;
 
 // FNameBlockOffsetBits: how many bits of the FName index are used for the within-chunk offset.
-// Standard UE5: 16 bits (chunkIndex = nameIndex >> 16, offset = (nameIndex & 0xFFFF) * stride)
-// Some UE4 builds: 14 bits
-// This is auto-detected in DetectBlockOffsetBits().
+// chunkIndex = nameIndex >> bits, offset = (nameIndex & mask) * stride.
+//
+// ⛔ This is NOT detected and MUST NOT BE. It is a compile-time engine constant —
+// `static constexpr uint32 FNameBlockOffsetBits = 16;` (vendored
+// Core/Private/UObject/UnrealNames.cpp:253), with no #ifndef and no override — so 16 is
+// right on every stock FNamePool (UE 4.23+). Pre-FNamePool builds resolve through
+// s_isUE4Mode and never reach here.
+//
+// Audit #5 G4 established there is NO reliable offline discriminator, and the reasoning
+// is what stops this being "fixed" again: a LOW index cannot distinguish 14 from 16 (both
+// widths address the same byte — Serie::BlockBitsAreIndistinguishable), and a boundary
+// index >= 2^14 need not be an entry BOUNDARY even in a valid 16-bit pool, so a
+// fixed-index probe can WRONGLY DOWNGRADE a working pool. Anything that prints a
+// "confirmation" beside this number is reporting a default as a measurement.
+// The property that actually matters — do real names resolve — IS measured, over ten
+// live object FName indices, by Frieren's `Name sanity: N/10 objects resolved`.
 static int s_blockOffsetBits = 16;
 static int s_blockOffsetMask = 0xFFFF;
+
+// Byte offset within chunk[0] at which entry 0's CHARACTERS begin ("None"), as measured
+// by DetectStride. -1 until measured. Feeds Serie::FirstEntryAfterNone so the init
+// verification samples a REAL entry boundary — see that helper for why index 1 is not one.
+static int s_noneOffset = -1;
 
 // The FNamePool stores chunk pointers after an initial header
 // Typical layout: lock (8 bytes), CurrentBlock+CurrentByteCursor (8 bytes), then Blocks[] array
@@ -327,61 +345,6 @@ static void DetectChunksOffset() {
     s_chunksOffset = 0x10; // Best guess: standard layout
 }
 
-// FNameBlockOffsetBits: keep the stock FNamePool width (16) and confirm it — do NOT
-// pretend to measure it (audit #5 G4).
-//
-// FNameBlockOffsetBits is 16 on every stock FNamePool (UE 4.23+); the pre-FNamePool
-// TNameEntryArray builds resolve through s_isUE4Mode, not here. The old loop's probe at
-// testIdx = 1 could NEVER pick 14 over 16 and then logged the outcome as a measurement:
-//   * At testIdx = 1 both widths address the identical byte — chunk 0, offset 1*stride
-//     (Serie::BlockBitsAreIndistinguishable(1, 16, 14, stride) == true), so the 14-bit
-//     arm was structurally unreachable and 16 always "won".
-//   * A discriminating index (>= 2^14) is not a fix either: FName indices encode
-//     variable-length BYTE offsets, so index 0x4000 need not be an entry BOUNDARY even
-//     in a valid 16-bit pool, and "16 failed there" is not evidence for 14 — a
-//     fixed-index probe can WRONGLY downgrade a working pool. So there is no reliable
-//     offline discriminator.
-// We therefore sanity-read index 1 under the stock width (confirms the pool + header
-// format are usable at a low index) and log HONESTLY that the width is assumed, not
-// measured. s_blockOffsetBits / s_blockOffsetMask are already 16 / 0xFFFF from init.
-static void DetectBlockOffsetBits() {
-    const Serie::BlockProbe p = Serie::ComputeBlockProbe(1, s_blockOffsetBits, s_stride);
-    uintptr_t chunkPtr = 0;
-    uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
-    bool decoded = false;
-    char buf[8] = {};
-    int len = 0;
-
-    if (Macht::ReadSafe(chunksBase + p.chunkIndex * sizeof(uintptr_t), chunkPtr) && chunkPtr) {
-        uintptr_t entry = chunkPtr + p.chunkOffset;
-        uint16_t header = 0;
-        if (Macht::ReadSafe(entry + s_headerOffset, header)) {
-            int lenA = (header >> 6) & 0x3FF;      // Format A
-            int lenB = (header >> 1) & 0x7FF;      // Format B
-            len = (lenA >= 1 && lenA <= 256) ? lenA : ((lenB >= 1 && lenB <= 256) ? lenB : 0);
-            if (len > 0) {
-                int readLen = len > 7 ? 7 : len;
-                if (Macht::ReadBytesSafe(entry + s_headerOffset + 2, buf, readLen)) {
-                    decoded = true;
-                    for (int i = 0; i < readLen; ++i) {
-                        auto c = static_cast<unsigned char>(buf[i]);
-                        if (c < 0x20 || c >= 0x7F) { decoded = false; break; }
-                    }
-                }
-            }
-        }
-    }
-
-    if (decoded) {
-        LOG_INFO("FNamePool: BlockOffsetBits = %d (stock FNamePool; ASSUMED, not measured — "
-                 "index 1 decodes '%.7s', but a low-index probe cannot distinguish 14 from 16)",
-                 s_blockOffsetBits, buf);
-    } else {
-        LOG_WARN("FNamePool: BlockOffsetBits = %d (stock default kept; index 1 did NOT decode "
-                 "cleanly at this width — name resolution may be degraded)", s_blockOffsetBits);
-    }
-}
-
 // Auto-detect FNameEntry stride by scanning chunk[0] for the "None" string.
 // Dumper-7 approach: the byte offset where "None" appears = FNameEntryHeaderSize.
 // Stride = (headerSize == 2) ? 2 : 4.
@@ -425,11 +388,28 @@ static void DetectStride() {
     } else {
         LOG_INFO("FNamePool: DetectStride: 'None' at chunk[0]+%d, stride=%d confirmed", noneOffset, s_stride);
     }
+
+    // Publish where entry 0's characters start so the init check can sample a REAL entry
+    // boundary (Serie::FirstEntryAfterNone) instead of an index that is never one.
+    // Set LAST: s_stride may have just changed above, and the two are read together.
+    s_noneOffset = noneOffset;
+}
+
+// Sample the lowest REAL entry boundary above "None" and render it for an init log line.
+// ONE implementation for BOTH Init paths, deliberately: the defect this replaces survived
+// because the same wrong index (1) was hand-written in two places and only one of them was
+// ever looked at (`docs/working-lessons.md` §2.17 — a fix that landed in one of its copies).
+static std::string FirstEntrySampleText() {
+    const int32_t idx = Serie::FirstEntryAfterNone(s_noneOffset, s_stride);
+    if (idx <= 0) return "FName[?]=<entry geometry not established>";
+    char buf[320] = {};
+    snprintf(buf, sizeof(buf), "FName[%d]='%s'", idx, GetString(idx).c_str());
+    return buf;
 }
 
 void InitObfuscated(uintptr_t gnamesAddr, int chunksOffset, int payloadGap, uintptr_t keyTableCtx) {
     // Obfuscated-fork path. Deliberately does NOT run the stock auto-detection
-    // (DetectChunksOffset / DetectStride / DetectBlockOffsetBits / DetectHeaderFormat):
+    // (DetectChunksOffset / DetectStride / DetectHeaderFormat):
     // every one of those probes reads the character payload looking for a literal
     // "None", which cannot work before the payload is decrypted. Genau has already
     // proved the geometry — it recovered a key, decoded entry 0 to exactly "None" and
@@ -449,16 +429,19 @@ void InitObfuscated(uintptr_t gnamesAddr, int chunksOffset, int payloadGap, uint
     s_payloadGap     = payloadGap;
     s_obfuscated     = true;
     s_keyTableCtx    = keyTableCtx;
+    // DetectStride is bypassed here, so publish the same fact it would have: entry 0's
+    // characters start after the 2-byte header plus the fork's inserted field. This is
+    // the case that forbids hardcoding the boundary index — MindsEye's payloadGap of 2
+    // makes it 4, not the 3 both stock layouts give.
+    s_noneOffset     = 2 + payloadGap;
     s_tagKey = std::make_unique<std::atomic<uint16_t>[]>(0x10000);
     for (size_t i = 0; i < 0x10000; ++i) s_tagKey[i].store(0, std::memory_order_relaxed);
 
     s_initialized.store(true, std::memory_order_release);
 
-    std::string none  = GetString(0);
-    std::string name1 = GetString(1);
-    LOG_INFO("FNamePool: Initialized OBFUSCATED at 0x%llX (chunks+0x%02X, payloadGap=%d, keyTable=0x%llX), FName[0]='%s', FName[1]='%s'",
+    LOG_INFO("FNamePool: Initialized OBFUSCATED at 0x%llX (chunks+0x%02X, payloadGap=%d, keyTable=0x%llX), %s",
              static_cast<unsigned long long>(gnamesAddr), chunksOffset, payloadGap,
-             static_cast<unsigned long long>(keyTableCtx), none.c_str(), name1.c_str());
+             static_cast<unsigned long long>(keyTableCtx), FirstEntrySampleText().c_str());
 }
 
 void Init(uintptr_t gnamesAddr, int headerOffset) {
@@ -467,6 +450,10 @@ void Init(uintptr_t gnamesAddr, int headerOffset) {
     s_headerOffset = headerOffset;
     s_obfuscated = false;
     s_payloadGap = 0;
+    // Reset before detection: DetectStride has two early returns (no chunk[0], no 'None'),
+    // and a stale value carried from a previous Init would make the verification line sample
+    // a boundary derived from the OLD pool's geometry and read as a confirmation of this one.
+    s_noneOffset = -1;
 
     // Initial stride guess based on header offset.
     // Hash-prefixed entries (headerOffset=4) have uint32_t ComparisonId as first member,
@@ -476,19 +463,23 @@ void Init(uintptr_t gnamesAddr, int headerOffset) {
 
     DetectChunksOffset();
     DetectStride(); // Refine stride by scanning chunk[0] for "None"
-    DetectBlockOffsetBits();
     DetectHeaderFormat();
+
+    // Not a detection — a statement of fact. See s_blockOffsetBits for why probing it is
+    // unsatisfiable AND uninformative, and what measures name health instead.
+    LOG_INFO("FNamePool: BlockOffsetBits = %d (stock FNamePool engine constant, UE 4.23+; "
+             "not detectable offline — audit #5 G4)", s_blockOffsetBits);
 
     // Mark initialized with release ordering — fences all preceding writes so
     // any thread that acquire-loads s_initialized==true sees consistent state.
     s_initialized.store(true, std::memory_order_release);
 
-    // Verify by reading a few known names
-    std::string none = GetString(0);
-    std::string name1 = GetString(1);
-    LOG_INFO("FNamePool: Initialized at 0x%llX (hdrOff=%d, stride=%d), FName[0]='%s', FName[1]='%s'",
+    // Verify by reading a real entry. NOT index 0 — GetString short-circuits `nameIndex <= 0`
+    // to the literal "None" without touching memory, so it verifies nothing — and NOT index 1,
+    // which is interior to entry 0 on every layout we support (Serie::FirstEntryAfterNone).
+    LOG_INFO("FNamePool: Initialized at 0x%llX (hdrOff=%d, stride=%d), %s",
              static_cast<unsigned long long>(gnamesAddr), headerOffset, s_stride,
-             none.c_str(), name1.c_str());
+             FirstEntrySampleText().c_str());
 }
 
 void InitUE4(uintptr_t nameArrayAddr, int stringOffset) {
