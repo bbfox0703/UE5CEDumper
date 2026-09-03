@@ -25,7 +25,7 @@ builds ≤696 in
 
 -----
 
-## 2026-09-03 - FName index 1 is INTERIOR to "None": a probe that could never succeed, warning on every session (build 3368, verified live on DumperTest)
+## 2026-09-03 - FName index 1 is INTERIOR to "None": a probe that could never succeed, warning on every session (build 3368, verified live on DumperTest; re-verified 3369)
 
 Two fixes, both found by asking why a log line said something odd, and neither was the thing that
 was actually asked about.
@@ -92,15 +92,27 @@ censuses with 0 `named`/`nonNull` mismatches. Three direct 16-bit proofs the WAR
 doubt — DQ7R resolved `/Script/Engine` at `idx=387225`, Avowed at `idx=24315`, DumperTest at
 `idx=200623`, all far above 2¹⁴ and impossible to decode correctly at 14 bits.
 
-**Verified live on DumperTest (UE504 Development config, 25,213 objects, build 3368):**
-`BlockOffsetBits = 16 (… not detectable offline — audit #5 G4)` as **INFO**, no FNAM WARN anywhere
-in the session, and `FName[3]='ByteProperty'` — the derived boundary resolving in-process to
-exactly what the block-0 hex predicted. Name health `Loaded 25,213 named` of 25,213 = **100%**,
-154 `WalkClass:` lines with **0** empty names (game-specific `BP_ThirdPersonCharacter_C` included).
-This run also exercised the `UE5-Extended` FUObjectItem layout at ItemSize 32, a different one from
-the `Default`/24 the reporting session used.
-*(Honest limit: the test binary is stamped `bdb1f613-dirty` — the fix was still uncommitted when it
-was built. It is byte-for-byte the code now committed, but it is not reproducible from a clean tag.)*
+**Verified live on DumperTest (UE504 Development config, 25,213 objects), TWICE — build 3368
+(`bdb1f613`) and again after a clean recompile at build 3369 (`cbe02dfd`), byte-identical results:**
+`BlockOffsetBits = 16 (… not detectable offline — audit #5 G4)` as **INFO**, **zero** FNAM
+WARN/ERROR in either session, and `FName[3]='ByteProperty'` — the derived boundary resolving
+in-process to exactly what the block-0 hex predicted. Name health `Loaded 25,213 named` of
+25,213 = **100%**, `scanned=25213, nonNull=25213`, 154 `WalkClass:` lines with **0** empty names
+(game-specific `BP_ThirdPersonCharacter_C` included). The only WARNs in either run are the ordinary
+AOB candidate-rejection chatter (`ValidateGNames` / `ValidateGObjects` refusing bad candidates, and
+the cross-module guard refusing `EOSSDK-Win64-Shipping.dll`). These runs also exercised the
+`UE5-Extended` FUObjectItem layout at ItemSize 32 — a different one from the `Default`/24 the
+reporting session used — and the second run's scan log is 12.7 KB against the first's 357 KB
+because the hint cache hit (`GOBJ_ES53_1` / `GNAM_V1` / `GWLD_TQ_1`).
+
+⚠ **Correction to this entry's first draft, because the wrong version would teach a future reader
+to distrust every test binary.** It said the `-dirty` build stamp meant the fix was uncommitted and
+"not reproducible from a clean tag". That is wrong. **The `-dirty` suffix is STRUCTURAL: any build
+that bumps the build number stamps itself dirty.** `dll/CMakeLists.txt:43-52` decides it with
+`git diff --quiet HEAD` over the *whole* tree, and the build has by then already written the bumped
+`build_number.txt` — on both runs `git status` showed that file and nothing else. So `cbe02dfd-dirty`
+means "the source of `cbe02dfd`, built with the counter one ahead", not "someone left changes lying
+around". A genuinely clean stamp requires `-NoBumpBuildNumber` **and** an already-clean tree.
 
 9 new assertions, `dll_helpers_test` 1684 pass / 0 fail. Controls: the `payloadGap=2` case fails if
 the helper is constant-folded to 3; the idx-3 assertion fails if a probe is re-added there.
