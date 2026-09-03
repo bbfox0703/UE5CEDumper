@@ -52,8 +52,10 @@ bool IsUE4Mode();
 void LogDiagnostics();
 
 // ============================================================
-// Pure index-geometry helpers (unit-pinned in dll_helpers_test — no target
-// compiles Serie.cpp, so the rules that matter live here).
+// Pure index-geometry helpers (unit-pinned in dll_helpers_test). These were written
+// when no target compiled Serie.cpp; since build 3355 (`373f3083`) dll_core_test does
+// (`#include "../src/Serie.cpp"`), so a rule may now be pinned in EITHER place — put
+// pure arithmetic here, anything needing a live pool in dll_core_test.
 // ============================================================
 
 // FNamePool entry geometry for a candidate FNameBlockOffsetBits width: the entry for
@@ -63,6 +65,41 @@ struct BlockProbe { int32_t chunkIndex; int32_t chunkOffset; };
 inline BlockProbe ComputeBlockProbe(int32_t nameIndex, int bits, int stride) {
     const int32_t mask = (bits >= 31) ? 0x7FFFFFFF : ((1 << bits) - 1);
     return { nameIndex >> bits, (nameIndex & mask) * stride };
+}
+
+// The lowest NON-ZERO FName index that is a real entry BOUNDARY, derived from the
+// geometry we measured rather than guessed.
+//
+// ⚠⚠ An FName index is a STRIDE-QUANTISED BYTE OFFSET inside its block, not an entry
+// ordinal — `FNameEntryHandle(CurrentBlock, ByteOffset / Stride)`, and `Resolve` is a
+// bare `Blocks[Block] + Stride * Offset` with NO validity check (vendored
+// Core/Private/UObject/UnrealNames.cpp:592 and :679). So an index that lands mid-entry
+// silently returns a pointer into the MIDDLE of a real entry and decodes as garbage.
+// Entry 0 is always "None" (`REGISTER_NAME(0,None)`, UnrealNames.inl:12) and occupies
+// `prefix + 4` bytes, which is ALWAYS more than one stride unit — so **index 1 is never
+// an entry boundary on any layout we support**, and probing it can only ever fail.
+// That is why `FName[1]` came back empty in every log this repo has ever produced.
+//
+// Verified against block[0], byte-identical on five games / two engine generations:
+//   1E 01 | 4E 6F 6E 65 | 10 03 | 42 79 74 65 50 72 6F 70 65 72 74 79 | C0 02 | 49 6E 74…
+//   hdr=4 |  N  o  n  e | hdr=12|  B  y  t  e  P  r  o  p  e  r  t  y | hdr=11|  I  n  t
+//   idx 0 ─────────────── idx 3 ─────────────────────────────────────── idx 10 ─────────
+//
+// ⚠ FNamePool ONLY. In pre-FNamePool `TNameEntryArray` mode (Serie::InitUE4) an index IS
+// a pointer-array ordinal, so index 1 there is a genuine second entry — `InitUE4` samples
+// it correctly and must NOT be "fixed" to match this.
+//
+// `noneOffset` is where the CHARACTERS of entry 0 start (what DetectStride measures):
+// 2 stock, 6 hash-prefixed, 2+payloadGap on an obfuscated fork. Returns -1 when the
+// geometry was never established, so the caller reports "unknown" instead of probing.
+// ⚠ Do NOT replace this with a literal 3: it is 3 for BOTH stock layouts, which is
+// exactly what makes a hardcoded 3 look safe — but a MindsEye-style `payloadGap = 2`
+// fork gives 4, and a literal there would be the index-1 bug again with a new number.
+inline int32_t FirstEntryAfterNone(int noneOffset, int stride) {
+    if (stride <= 0 || noneOffset < 0) return -1;
+    const int bytes   = noneOffset + 4;  // entry 0 = prefix + "None"
+    const int aligned = ((bytes + stride - 1) / stride) * stride;
+    return aligned / stride;
 }
 
 // True when two candidate block-offset-bit widths address the SAME byte for

@@ -6863,6 +6863,44 @@ static void Test_Serie_BlockBitsProbe() {
     EXPECT_EQ_U64("idx 0x4000 @16 offset", b16.chunkOffset, (int64_t)boundary * stride);
     EXPECT("idx 0x4000 @14 chunk 1",     b14.chunkIndex == 1);
     EXPECT_EQ_U64("idx 0x4000 @14 offset 0", b14.chunkOffset, 0);
+
+    // ⛔ REGRESSION GUARD. The probe was deleted (not moved) because moving it to the
+    // first REAL entry boundary would not measure the width either — index 3 is still
+    // indistinguishable — it would merely start succeeding, printing a "confirmation"
+    // beside a number nobody measured. That is the defect G4 removed, coming back.
+    EXPECT("idx3 16 vs 14 ALSO indistinguishable",
+           Serie::BlockBitsAreIndistinguishable(3, 16, 14, stride));
+}
+
+// The lowest non-zero FName index that is a real entry BOUNDARY. An FName index is a
+// stride-quantised BYTE OFFSET, not an ordinal, so entry 0 ("None", prefix + 4 chars)
+// swallows more than one stride unit and index 1 is ALWAYS interior to it — which is why
+// `FName[1]=''` appeared in every log this repo produced, on every game, at every build.
+// Pinned against the block[0] bytes observed byte-identically on five games:
+//   1E 01 | "None" | 10 03 | "ByteProperty" | C0 02 | "IntProperty" | 00 | 34 03 | "Bool…"
+//   idx 0 ───────── idx 3 ─────────────────── idx 10 ──────────────────── idx 17
+static void Test_Serie_FirstEntryAfterNone() {
+    // Stock UE5: 2-byte header, chars at +2, stride 2 -> Align(2+4,2)/2 = 3.
+    EXPECT_EQ_U64("stock -> 3",          Serie::FirstEntryAfterNone(2, 2), 3);
+    // Hash-prefixed UE4.26 (FF7Re): [4B hash][2B header], chars at +6, stride 4
+    // -> Align(6+4,4)/4 = 12/4 = 3. Same ANSWER, different arithmetic.
+    EXPECT_EQ_U64("hash-prefixed -> 3",  Serie::FirstEntryAfterNone(6, 4), 3);
+
+    // ⛔ THE CONTROL THAT MATTERS. Both stock layouts answer 3, which is exactly what
+    // would make a hardcoded 3 look correct. An obfuscated fork that inserts a 2-byte tag
+    // between header and chars (MindsEye, payloadGap=2 -> noneOffset 4) answers 4. If this
+    // ever returns 3, the helper has been constant-folded back into the original bug.
+    EXPECT_EQ_U64("payloadGap=2 -> 4",   Serie::FirstEntryAfterNone(4, 2), 4);
+
+    // Index 1 is never the answer on any supported layout — the whole point.
+    EXPECT("never 1 (stock)",            Serie::FirstEntryAfterNone(2, 2) != 1);
+    EXPECT("never 1 (hash-prefixed)",    Serie::FirstEntryAfterNone(6, 4) != 1);
+    EXPECT("never 1 (payloadGap=2)",     Serie::FirstEntryAfterNone(4, 2) != 1);
+
+    // Unmeasured geometry must report "unknown", not a plausible-looking index: DetectStride
+    // has two early returns (no chunk[0], no 'None') that leave noneOffset at -1.
+    EXPECT_EQ_U64("unmeasured -> -1",    Serie::FirstEntryAfterNone(-1, 2), -1);
+    EXPECT_EQ_U64("bad stride -> -1",    Serie::FirstEntryAfterNone(2, 0), -1);
 }
 
 // audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
@@ -7115,6 +7153,7 @@ int main() {
     RUN(Test_Ubel_ReadEnumRawValue);          // U9  — byte enums read unsigned
     RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
     RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
+    RUN(Test_Serie_FirstEntryAfterNone);      //     — idx 1 is INTERIOR to "None"; derive the boundary
     RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
 
     // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
