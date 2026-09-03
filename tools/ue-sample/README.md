@@ -5,7 +5,7 @@ whose properties exist solely to be found by this dumper. It is not a game and n
 [reference-builds.md](../../docs/reference-builds.md) covers those. This answers a third question:
 *"does the dumper read this property type correctly?"*, with the answer written down in advance.
 
-**Why it exists.** A large share of [todo.md § Pending live-game verification](../../docs/todo.md)
+**Why it exists.** A large share of [the verification register](../../docs/verification-register.md)
 is blocked not on effort but on **finding a game that happens to contain the right UPROPERTY**:
 
 | item | ⬜ since | the blocker, verbatim |
@@ -47,9 +47,39 @@ spawner — destroying the fixture that five verification rows depend on.
    UFunction names are ASCII.** Measured — `DumperTestHolder`: ascii **0**, utf16le 2;
    `Spawn_Holders`: ascii 1, utf16le 0. So `grep -a DumperTestHolder <exe>` finds nothing and reads
    as *"the class does not exist"*. Use `.encode('utf-16-le')`.
-3. **After editing the live project, copy the changed files back here in the same sitting.** Until
-   that happens the fixture exists only on one machine's D: drive and inside a binary — not in git,
-   and not on the other development PC.
+3. ⛔⛔ **CHECK THE DIRECTION BEFORE COPYING ANYTHING — as of 2026-09-03 IT IS INVERTED.**
+   This rule used to read *"after editing the live project, copy the changed files back here"*.
+   Following it today would **destroy the fixture**. Measured 2026-09-03:
+
+   | | `DumperTestActor.cpp` | `DumperTestActor.h` | `Spawn_*` decls |
+   |---|---|---|---|
+   | live `D:\Unreal Projects\DumperTest\Source\DumperTest` | 12,112 B, **2026-08-05** | 12,882 B | **0** |
+   | this mirror | 27,673 B, **2026-08-24** | 30,525 B | **13** |
+
+   **The live project never received the spawner.** It is weeks BEHIND, not ahead, so this mirror
+   is currently the ONLY copy — the exact hazard the section above warns about, with the arrow
+   pointing the other way. `py tools/ue-sample/capture_package_identity.py <pkg> --project <proj>
+   --check` already says so and names the remedy: **copy `tools/ue-sample/DumperTest/Source/
+   DumperTest/*` INTO the live project and re-package.**
+
+   ⚠ So the durable rule is not a direction, it is a **comparison**: `ls -l` both trees and copy
+   from the newer one, every time. A hardcoded direction is what made this stale twice.
+
+   ⚠ **What `--check` does and does not tell you — read its two lines separately.** Run
+   2026-09-03 it printed:
+
+   ```
+   package matches the stored identity
+     PROBLEM (identity still matches): STALE PACKAGE: the project this was built from does
+     not match the repo sources (project 36801960f1e4 vs repo 65de9c3fb2ce).
+   ```
+
+   Line 1 says the package on disk is the one whose identity this repo recorded. Line 2 says
+   the LIVE PROJECT and the REPO SOURCES disagree. **It does not tell you which of the two
+   trees the package was actually built from**, and an earlier draft of this section claimed
+   it did. Do not infer that. What is certain is the file-level measurement in the table
+   above: the live project has none of the spawner, so re-packaging from it now cannot
+   reproduce the documented values — which is what line 2 is warning about.
 4. The stock Third-Person template files (`DumperTest.cpp/.h`, `DumperTestCharacter.*`,
    `DumperTestGameMode.*`) are deliberately **not** mirrored — they are whatever the template
    generates. Only the dumper-specific sources belong here.
@@ -286,7 +316,7 @@ The repo already has the right pattern and it is worth copying exactly: the AOB 
 **Not in CI, and size is the lesser reason.** CI has no UE 5.4 install (tens of GB), no GPU and no
 display — but the real blocker is that **what this sample tests is a live process being injected into
 and walked**: a running game, a ticking game thread, the UI or CE attached. That is the same class of
-thing [todo.md § Pending live-game verification](../../docs/todo.md) exists for, and the existing
+thing [the verification register](../../docs/verification-register.md) exists for, and the existing
 `check_live_verification.py` gate only checks that the register is *well-formed* — it does not run,
 and cannot run, the verification itself. Nothing about packaging this sample changes that.
 
