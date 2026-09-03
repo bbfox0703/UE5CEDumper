@@ -27,7 +27,7 @@ That is the whole justification, and it is structural rather than a matter of th
   being right, and equally consistent with the UI rendering a stale cache while the DLL returns
   nothing. Both look identical to a human watching the screen.
 - **A silent UI is equally ambiguous.** An empty grid can mean the DLL sent no rows, or that it sent
-  rows the UI dropped. `docs/todo.md`'s own history has both: `walk_world` returned
+  rows the UI dropped. This project's own history has both: `walk_world` returned
   `actor_count: 0` for months (audit #5 F8/F9 — `ULevel::Actors` carries no `UPROPERTY`, so the
   reflected lookup could never match), and separately a sorted DataGrid rendered stale rows from a
   recycled container (`[GRIDRECYCLE-2026-08-21]`).
@@ -49,8 +49,15 @@ already covers the cheaper posture — sweeping a real session's logs opportunis
 ## How to enumerate this register
 
 ```
-grep -c '^### ⬜' docs/verification-register.md          # open batch headings
+awk '/^## Pending live-game verification/,0' docs/verification-register.md   | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep -c '^### ⬜'
 ```
+
+⚠ **Scope the count to the register's own `##` section — a whole-file `grep -c '^### ⬜'` is WRONG
+and answers 11, not 9.** The extra two live in the 繁中 step sections further down, which are a
+different queue. I introduced that wrong one-liner in this file's first draft (2026-09-03) and it
+disagreed with the correct command 190 lines below it — two self-enumeration commands in one file
+giving different answers is exactly how the count in `todo.md` drifted to a stale 43 / 36 / 40 / 30
+in turn. Derive it, never hand-edit it, and keep ONE command.
 
 ⚠⚠ **A heading here is NOT evidence** — the single most expensive property of this material, and it
 travelled with it. Closures are recorded under their own `✅ … [TAG-YYYY-MM-DD]` block, often
@@ -216,7 +223,7 @@ matters for `A8` (flat-array CE pointer info) and `AA38` step 4's neighbourhood.
 scan is how anyone picks the next thing to run, so an item whose ID lives only in body prose is an
 item that gets double-run or forgotten. Enumerate with:
 
-`grep -n '^#\{3,4\} ' docs/todo.md` — then keep the lines that fall inside this section.
+`grep -n '^#\{3,4\} ' docs/verification-register.md` — then keep the lines that fall inside this section.
 
 ⚠ **`> ###` lines do NOT count, deliberately.** A blockquoted heading is an *evidence* sub-block — a
 session result, a trap, a refutation — hanging under a real item, and `grep '^### '` cannot see it.
@@ -238,7 +245,7 @@ at all, so a heading-level scan could not tell you *whose* checklist they were. 
 `40` and `0`** — a machine check, since this is the second time the invariant drifted:
 
 ```
-awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
+awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
 ```
 
 ⚠ **Two of those 40 hang under a parent that is already `🟡` or `✅`** (the two just renamed). They
@@ -3690,7 +3697,7 @@ is a **build-flag** property, not a version property — the pattern is what has
 (35 assertions, four negative controls); the LOOKUP half is not** — resolving a `UScriptStruct*` and
 `WalkClass`-ing it touches target memory, and no target compiles `Ubel.cpp`.*
 
-> **There is a known-good vehicle already on record.** `docs/todo.md` names `Map_IntToVec3f` as the
+> **There is a known-good vehicle already on record.** This register names `Map_IntToVec3f` as the
 > field that reproduced the original `f:[6203.0000]`, so the before/after is one row.
 >
 > | step | do this | expect | why it is a real check |

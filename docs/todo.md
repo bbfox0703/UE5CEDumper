@@ -73,10 +73,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **9 open batches** needing a running game (2026-08-26;
+> - [verification-register.md](verification-register.md) — **9 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
->   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
+>   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
 >   **Offer these
 >   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c
 >   VMs/Core/DTOs) AE13/AE20/AE30 batch — fourteen of its seventeen findings need nothing live, two

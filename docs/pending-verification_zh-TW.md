@@ -2,11 +2,11 @@
 
 > **這份寫的是「怎麼操作」，不是「為什麼」。** 每一項只有兩件事：**做什麼**、**預期看到什麼**。
 > 成因、來龍去脈、哪個 build 改了什麼原理，全部在英文正本
-> [todo.md](todo.md) 的 `## Pending live-game verification` —— 需要證據時去那裡查，
+> [verification-register.md](verification-register.md) —— 需要證據時去那裡查，
 > 用項目編號（`PEHOOK`、`G10`、`B4`…）grep 就找得到。
 >
-> **英文版是唯一正本。** 事實有出入以 todo.md 為準，要改也先改那邊。
-> ⚠ **這份不是 todo.md 的翻譯，不要把它翻回去。** 上一版就是逐句翻譯，結果過期了 430 個 build。
+> **英文版是唯一正本。** 事實有出入以 [verification-register.md](verification-register.md) 為準，要改也先改那邊。
+> ⚠ **這份不是驗證登記表的翻譯，不要把它翻回去。** 上一版就是逐句翻譯，結果過期了 430 個 build。
 
 > 每個 marker 落在哪個檔案、怎麼 grep，在
 > [log-verification-checklist.md](log-verification-checklist.md)。
@@ -41,11 +41,11 @@
 
 ⚠ **這條判準以前不存在於這個檔案裡**，只存在於選材時的習慣 —— 檔案自己都寫過
 「`非人工`、`人工`、`肉眼` 這幾個字在本檔案裡一個都沒有」。**沒有寫下來的規則不會活過一次交接**，
-於是它慢慢變成 [todo.md](todo.md) 登記表的中文副本:重整前有 **31 項**、其中 **20 項**帶著證據標記
+於是它慢慢變成 [verification-register.md](verification-register.md) 登記表的中文副本:重整前有 **31 項**、其中 **20 項**帶著證據標記
 (finding tag、`file:line`、log 行、日期化的 ✅)，平均每項 913 字。
 
 **重整做了三件事**（2026-08-22）:
-1. **21 項移回 [todo.md](todo.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
+1. **21 項移回登記表 [verification-register.md](verification-register.md)** —— 它們 Auto + Computer Use 跑得完（開 UI、走 pipe、grep log、
    離線工具）。步驟表格**原封不動**搬過去，沒有刪掉任何東西，見那份文件的
    「Verification steps migrated from the 繁中 checklist」一節。
 2. **當時留下 10 項。**
@@ -61,9 +61,9 @@
 測試。⚠ 反過來說，留在這裡的那幾項就是**真的**不行的：它們的 PASS 是人的判斷，或全世界沒有樣本。
 把一列丟進來之前，先確認它屬於後者而不是前者。
 
-⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 todo.md，不要寫在這裡。
+⛔ **要加新項目之前先問**:Auto + Computer Use 跑得完嗎？跑得完就寫進 [verification-register.md](verification-register.md)，不要寫在這裡。
 ⛔ **不要把證據寫進步驟表格。** 這裡只放**做什麼**和**預期看到什麼**；證據、成因、finding tag
-一律進 todo.md。這正是它上次走樣的方式。
+一律進 verification-register.md。這正是它上次走樣的方式。
 
 ### 分組是「後勤」，不是「誰判定」—— 兩條軸要分開（2026-08-22 修正）
 
@@ -125,7 +125,7 @@ session 的順序很好用，保留。
 > ## ✅ 第 0 步 已全部完成 (2026-08-17)
 >
 > `U1/MG1/MG3`、`D1/D3`、`AA38` 三項都已結案並 commit，證據在
-> [todo.md](todo.md)（grep 項目編號）。**不用開遊戲**的項目目前歸零 ——
+> [verification-register.md](verification-register.md)（grep 項目編號）。**不用開遊戲**的項目目前歸零 ——
 > 現在最便宜的一批是第 1 步。
 
 -----
@@ -152,7 +152,7 @@ session 的順序很好用，保留。
 *優先度 **低** · 需要：人用眼睛判斷「這個數量還能不能用」*
 
 ℹ️ 容器重新配置那一步（原第 1 步）已由 `tools/verify/v1a_container_realloc.py` 在 DumperTest 上關閉，
-証據在 todo.md（grep `V1A-REALLOC`）。
+証據在 verification-register.md 或 archive（grep `V1A-REALLOC`）。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
@@ -169,7 +169,7 @@ session 的順序很好用，保留。
 
 ⚠ 只有這一步留在本檔：它的 PASS 是「影響可不可接受」，那是人的判斷。同組原本的另外四步都已離開——
 b636、b637+644 於 2026-08-24 關閉，b642 於 2026-08-21 關閉，b648 不是「非人工不可」（它的 PASS 是
-grep 一行 log），已移到 todo.md。
+grep 一行 log），已移到 verification-register.md。
 
 ## 第 5 步 — 目前沒有可測的環境
 
@@ -191,7 +191,7 @@ grep 一行 log），已移到 todo.md。
 ⚠ **稽核登記表裡的 ✅ 永遠不是刪掉這裡某一節的理由。** 在那邊 ✅ 的意思是「修好了、已出貨」——
 而那正是「該做實機驗證」這件事開始成立的時刻，不是結束的時刻。
 
-1. 在 [todo.md](todo.md) 把該項打勾，附上**證據**（log 行、截圖說明、實測數字）。
+1. 在 [verification-register.md](verification-register.md) 把該項打勾，附上**證據**（log 行、截圖說明、實測數字）。
 2. 這份檔案把整條刪掉 —— 這裡只留「還沒做完」的。
 3. 驗出新缺陷的話，寫進
    [audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md)，

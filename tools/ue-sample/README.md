@@ -47,9 +47,26 @@ spawner — destroying the fixture that five verification rows depend on.
    UFunction names are ASCII.** Measured — `DumperTestHolder`: ascii **0**, utf16le 2;
    `Spawn_Holders`: ascii 1, utf16le 0. So `grep -a DumperTestHolder <exe>` finds nothing and reads
    as *"the class does not exist"*. Use `.encode('utf-16-le')`.
-3. **After editing the live project, copy the changed files back here in the same sitting.** Until
-   that happens the fixture exists only on one machine's D: drive and inside a binary — not in git,
-   and not on the other development PC.
+3. ⛔⛔ **CHECK THE DIRECTION BEFORE COPYING ANYTHING — as of 2026-09-03 IT IS INVERTED.**
+   This rule used to read *"after editing the live project, copy the changed files back here"*.
+   Following it today would **destroy the fixture**. Measured 2026-09-03:
+
+   | | `DumperTestActor.cpp` | `DumperTestActor.h` | `Spawn_*` decls |
+   |---|---|---|---|
+   | live `D:\Unreal Projects\DumperTest\Source\DumperTest` | 12,112 B, **2026-08-05** | 12,882 B | **0** |
+   | this mirror | 27,673 B, **2026-08-24** | 30,525 B | **13** |
+
+   **The live project never received the spawner.** It is weeks BEHIND, not ahead, so this mirror
+   is currently the ONLY copy — the exact hazard the section above warns about, with the arrow
+   pointing the other way. `py tools/ue-sample/capture_package_identity.py <pkg> --project <proj>
+   --check` already says so and names the remedy: **copy `tools/ue-sample/DumperTest/Source/
+   DumperTest/*` INTO the live project and re-package.**
+
+   ⚠ So the durable rule is not a direction, it is a **comparison**: `ls -l` both trees and copy
+   from the newer one, every time. A hardcoded direction is what made this stale twice. Note also
+   that the packaged binary agrees with THIS mirror — `--check` reports "package matches the
+   stored identity" — so the 2026-08-24 package was built from these sources, not from the live
+   project.
 4. The stock Third-Person template files (`DumperTest.cpp/.h`, `DumperTestCharacter.*`,
    `DumperTestGameMode.*`) are deliberately **not** mirrored — they are whatever the template
    generates. Only the dumper-specific sources belong here.
