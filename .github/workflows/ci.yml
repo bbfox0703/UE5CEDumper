@@ -134,25 +134,10 @@ jobs:
           # Stdlib-only, no engine, <1s. Skips cleanly if the sample folder is absent.
           & $py tools/check_ue_sample_values.py
           if ($LASTEXITCODE -ne 0) { throw "check_ue_sample_values FAILED ($LASTEXITCODE) - tools/ue-sample/README.md and the DumperTest sources disagree. Run 'py tools/check_ue_sample_values.py --list'." }
-          # ADVISORY since 2026-08-23 - reports drift, does NOT fail the build.
-          #
-          # It kept the audit register's open/closed count honest while a fix programme was
-          # running: a fix session twice marked the grouped queue row (1 2 3) while leaving the
-          # individual finding rows unmarked, so the register reported shipped work as open
-          # (eleven rows 2026-08-15, eight more 2026-08-17). Both times the fix was fine and the
-          # dev-log was right; only the marker was missing.
-          #
-          # That programme is SPENT - 0 HIGH, 0 MED, 4 open of 297 (3 LOW + 1 INFO), and
-          # CLAUDE.md marks 3b's fix queue spent - so this was failing the build over a number
-          # nobody acts on. It is also the ONE gate here that does not fail in the same commit
-          # as the change that broke it: the drift lands whenever the dev-log entry does, and
-          # the fix is a tick in a 297-row table. That decoupling is how a team learns to read
-          # red as "probably just docs" and then misses a real one.
-          #
-          # The SCRIPT stays and still runs - '--list' is the only way to find the open HIGH/MED
-          # tier. Re-open an audit round => restore the throw below.
-          & $py tools/check_audit_register.py
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::check_audit_register drift ($LASTEXITCODE) - a finding docs/dev-log.md reports fixed has no tick on its row in the audit doc, so the open count over-reports. ADVISORY: not failing the build. Run 'py tools/check_audit_register.py' for the list." }
+          # check_audit_register was invoked here (advisory) until 2026-09-03. RETIRED: the
+          # audit #5 fix programme it guarded is spent (0 HIGH, 0 MED, 3 open of 297, all
+          # three open by decision), and an advisory gate is a ::warning:: nobody reads.
+          # The script stays for manual use: py tools/check_audit_register.py --list
           # Clear it explicitly. GitHub's pwsh wrapper exits on the FINAL $LASTEXITCODE, so a
           # non-zero here is harmless only because more commands follow and overwrite it -- and
           # that is a property of the ORDER, not of this line. Reset so reordering the step, or

@@ -44,14 +44,15 @@ TSV = os.path.join("out", "sweep", "patterns.tsv")
 # is one that fails LATER, decoupled from the change -- which is how a team learns to
 # read red as "probably just docs" and then misses a real one.
 #
-# check_audit_register (advisory since 2026-08-23): it kept the audit register's OPEN
-# COUNT honest while a fix programme was running. That programme is spent -- 0 HIGH,
-# 0 MED, 4 open of 297 (3 LOW + 1 INFO), and CLAUDE.md marks §3b's fix queue SPENT --
-# so it was blocking the build over a number nobody acts on, and its failure mode is
-# "a ✅ missing from one row of a 297-row table", landing whenever the dev-log entry
-# does rather than with the fix. The SCRIPT stays: --list is still the only way to
-# find the open HIGH/MED tier. Re-open an audit round => move the name out of this set.
-ADVISORY = {"check_audit_register"}
+# check_audit_register was here, advisory, until 2026-09-03. RETIRED as a gate (the
+# SCRIPT stays -- `--list` is still the documented way to derive the register count,
+# and handover/todo/working-lessons all say "never hand-tally"). It existed to keep
+# audit #5's open count honest WHILE a fix programme ran; that programme is spent
+# (0 HIGH, 0 MED, 3 open of 297, all three open by decision). An advisory gate is the
+# worst of both worlds -- it cannot fail the build, so it is a ::warning:: nobody
+# reads, while still costing a run every time. Re-open an audit round => re-add it,
+# BLOCKING this time.
+ADVISORY = set()
 
 # (name, argv, why-it-failed text from ci.yml, needs_pattern_extract)
 GATES = [
@@ -98,11 +99,6 @@ GATES = [
      ["tools/check_ue_sample_values.py"],
      "tools/ue-sample/README.md and the DumperTest sources disagree. "
      "Run 'py tools/check_ue_sample_values.py --list'", False),
-
-    ("check_audit_register",
-     ["tools/check_audit_register.py"],
-     "a finding docs/dev-log.md reports fixed has no tick on its row in the audit doc. "
-     "Marking the grouped queue row is not enough", False),
 
     ("check_no_local_paths",
      ["tools/check_no_local_paths.py"],
