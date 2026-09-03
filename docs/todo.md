@@ -1309,7 +1309,7 @@ reports every class missing from a package that contains them. Control against `
 
 First three rows closed the same hour — see `[SOLIDE-L3L4-2026-08-23]` above.
 
-## 🧪 DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, awaiting a package build
+## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
 to contain X"*: `AD4` (God Mode `ON (contested)`), `MG2` step 1+2 (`TSet<FName>` / `TSet<UObject*>` /
@@ -1395,9 +1395,30 @@ Both are recorded because each is a shape worth recognising, not because they su
 - `TSet<FName>` and `TSet<TObjectPtr<UObject>>` both have engine UPROPERTY precedent
   (`MetaDataTagsForAssetRegistry`, `TemporarilyReferencedObjects`).
 
-### ⬜ What is left — a package build, which is the maintainer's step
+### ✅ The package build is DONE — closed 2026-09-03
 
-Nothing here has been compiled. Build the **Shipping** package to
+Three configs are on disk at `D:\UE_Analyze_Data\For Testing\DumperTest`, all built
+**2026-08-24**: `Development` (279,267,328 B), `DebugGame`, `Shipping`. `py tools/ue-sample/capture_package_identity.py <pkg> --project <proj> --check` reports
+**"package matches the stored identity"**, i.e. what is on disk is the package this repo
+recorded. A live run against it happened 2026-09-03 (build 3369, UE504, 25,213 objects).
+
+⚠⚠ **This closes "was it built", and NOTHING ELSE. Two limits, both load-bearing:**
+
+1. **The four rows' closures were measured against the 2026-08-23 package, and what is on
+   disk is a 2026-08-24 re-cook.** No rig has been re-run against it. Their numbers are
+   RUNTIME measurements, not constants — `MG2`'s 6/6→5/5, `V8`'s 100 / 77 / 76, `V1a`'s
+   `Data 0x18B9D96BC40→0x18BA77009A0`. Symbol presence on the 08-24 build was confirmed;
+   behaviour was not.
+2. **The 2026-09-03 sessions are inert as evidence for this fixture.** Both were browse-only —
+   `get_object_list` / `walk_instance` / `walk_functions` / `walk_world`, and **zero
+   `invoke_function`**, which is the only route to the mutators. Every fixture symbol greps to
+   0 across all of that day's logs. Do not cite those runs for any fixture row.
+
+⛔ And before re-packaging, read `tools/ue-sample/README.md` rule 3: the live project at
+`D:\Unreal Projects\DumperTest` is **weeks behind this repo's mirror** and carries none of the
+spawner, so a naive rebuild from it destroys the fixture.
+
+*Superseded text:* Nothing here has been compiled. Build the **Shipping** package to
 `D:\UE_Analyze_Data\For Testing\DumperTest`, then the four rows run headless through
 `invoke_function`. ⚠ Re-check the escaped caption survives the round trip: it is the one string in
 the fixture whose corruption would look like a *B28 defect* rather than like a build problem.

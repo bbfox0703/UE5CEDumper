@@ -63,10 +63,23 @@ spawner — destroying the fixture that five verification rows depend on.
    DumperTest/*` INTO the live project and re-package.**
 
    ⚠ So the durable rule is not a direction, it is a **comparison**: `ls -l` both trees and copy
-   from the newer one, every time. A hardcoded direction is what made this stale twice. Note also
-   that the packaged binary agrees with THIS mirror — `--check` reports "package matches the
-   stored identity" — so the 2026-08-24 package was built from these sources, not from the live
-   project.
+   from the newer one, every time. A hardcoded direction is what made this stale twice.
+
+   ⚠ **What `--check` does and does not tell you — read its two lines separately.** Run
+   2026-09-03 it printed:
+
+   ```
+   package matches the stored identity
+     PROBLEM (identity still matches): STALE PACKAGE: the project this was built from does
+     not match the repo sources (project 36801960f1e4 vs repo 65de9c3fb2ce).
+   ```
+
+   Line 1 says the package on disk is the one whose identity this repo recorded. Line 2 says
+   the LIVE PROJECT and the REPO SOURCES disagree. **It does not tell you which of the two
+   trees the package was actually built from**, and an earlier draft of this section claimed
+   it did. Do not infer that. What is certain is the file-level measurement in the table
+   above: the live project has none of the spawner, so re-packaging from it now cannot
+   reproduce the documented values — which is what line 2 is warning about.
 4. The stock Third-Person template files (`DumperTest.cpp/.h`, `DumperTestCharacter.*`,
    `DumperTestGameMode.*`) are deliberately **not** mirrored — they are whatever the template
    generates. Only the dumper-specific sources belong here.
