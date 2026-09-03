@@ -1,3 +1,11 @@
+# ⛔⛔ SPENT — DO NOT RUN.
+# This script writes docs/todo.md WHOLESALE from a hardcoded path and is idempotent-hostile
+# by design. On 2026-09-03 the live-game verification register (10,506 lines) moved OUT of
+# todo.md into docs/verification-register.md; re-running this would append the 繁中 sections
+# back into todo.md and silently undo that split — the exact 'stale generator' failure mode
+# CLAUDE.md records (three in one day on 2026-08-27). It did its one job on 2026-08-22 and is
+# kept only as the record of how the zh-TW checklist was rebuilt.
+
 r"""One-shot: restore `pending-verification_zh-TW.md` to its original charter.
 
     py tools/verify/zhtw_restructure.py --dry

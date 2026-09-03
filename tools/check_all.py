@@ -69,7 +69,7 @@ GATES = [
     ("check_live_verification",
      ["tools/check_live_verification.py"],
      "a roadmap 'In-game verification pending' caveat is untagged or untracked in "
-     "todo.md's register", False),
+     "the verification register", False),
 
     ("aob_specificity --check",
      ["tools/pe/aob_specificity.py", "--tsv", TSV,

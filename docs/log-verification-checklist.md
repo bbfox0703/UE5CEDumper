@@ -1,6 +1,6 @@
 # Log-sweep verification checklist
 
-Companion to [todo.md § Pending live-game verification](todo.md#pending-live-game-verification-verify-only--no-code).
+Companion to [the verification register](verification-register.md).
 That section says **what** is unproven and what would count as proof. This says **where to look**
 and **what to do first**, so one game session settles as many of them as possible.
 
@@ -213,5 +213,5 @@ These modules emit **zero** log lines: `Linie`, `Radar`, `Denken`, `Tot`. (`Sens
 7. Load three dumps in Dump Explorer → §2F.
 
 Steps 1–2 are free. Everything after is a few minutes each. Update the ⬜ boxes in
-[todo.md](todo.md#pending-live-game-verification-verify-only--no-code) as you go — this file is the
+[verification-register.md](verification-register.md) as you go — this file is the
 procedure, that one is the status.

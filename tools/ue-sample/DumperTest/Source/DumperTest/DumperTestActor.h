@@ -1,7 +1,7 @@
 ﻿// ============================================================
 // DumperTestActor — the property zoo UE5CEDumper is verified against.
 //
-// WHY THIS EXISTS. Half of docs/todo.md § Pending live-game verification is
+// WHY THIS EXISTS. Half of docs/verification-register.md is
 // blocked not on effort but on FINDING A GAME that happens to contain the right
 // UPROPERTY. `TSet`/`TMap` scanning has been ⬜ since build 927, `TOptional`
 // since 942, the NumericAll byte family since 796 — every one of them reads

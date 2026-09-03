@@ -5,7 +5,7 @@ whose properties exist solely to be found by this dumper. It is not a game and n
 [reference-builds.md](../../docs/reference-builds.md) covers those. This answers a third question:
 *"does the dumper read this property type correctly?"*, with the answer written down in advance.
 
-**Why it exists.** A large share of [todo.md § Pending live-game verification](../../docs/todo.md)
+**Why it exists.** A large share of [the verification register](../../docs/verification-register.md)
 is blocked not on effort but on **finding a game that happens to contain the right UPROPERTY**:
 
 | item | ⬜ since | the blocker, verbatim |
@@ -286,7 +286,7 @@ The repo already has the right pattern and it is worth copying exactly: the AOB 
 **Not in CI, and size is the lesser reason.** CI has no UE 5.4 install (tens of GB), no GPU and no
 display — but the real blocker is that **what this sample tests is a live process being injected into
 and walked**: a running game, a ticking game thread, the UI or CE attached. That is the same class of
-thing [todo.md § Pending live-game verification](../../docs/todo.md) exists for, and the existing
+thing [the verification register](../../docs/verification-register.md) exists for, and the existing
 `check_live_verification.py` gate only checks that the register is *well-formed* — it does not run,
 and cannot run, the verification itself. Nothing about packaging this sample changes that.
 

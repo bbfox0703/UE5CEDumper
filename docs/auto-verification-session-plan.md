@@ -10,7 +10,7 @@
 > **A=11 · B=29 · C=15 · D=2**. §7 lists **three** D_MANUAL rows, one more than that D=2 — `AB1/AB2`'s APC sub-step
 > is impossible but its parent item is otherwise closed, so it is no longer a 繁中 item to count.
 
-This is the *operational* companion to [todo.md § Pending live-game verification](todo.md) and
+This is the *operational* companion to [the verification register](verification-register.md) and
 [pending-verification_zh-TW.md](pending-verification_zh-TW.md). Those two own **what** to verify and
 **why**; this file owns **how to run the batch unattended** — what is already staged, what may be
 launched without a human, and what must never be started without one.

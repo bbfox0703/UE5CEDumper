@@ -5,7 +5,7 @@
 // a UHT failure on one of them is easy to isolate).
 //
 // Every value here is DELIBERATE. Nothing is a placeholder — each field exists
-// to settle a specific ⬜ row in docs/todo.md § Pending live-game verification.
+// to settle a specific ⬜ row in docs/verification-register.md.
 // If you change a literal, change the expectation in tools/ue-sample/README.md
 // with it, or the next person will scan for a number that is no longer there.
 // ============================================================

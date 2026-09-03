@@ -4680,7 +4680,7 @@ with its own helper Lua and its own tests, and it deserves its own control.
 
 ⬜ **Not verified in-game.** The widths are unit-verified against the helper's writer table, but
 nobody has frozen a real `enum class : uint8` and confirmed its neighbours survive. Queued in
-[todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+[verification-register.md](verification-register.md).
 
 -----
 
@@ -4760,7 +4760,7 @@ the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
 ⚠ **Not verified against a real Cheat Engine.** The unload paths are read out of CE's published
 7.5 source; nobody has yet installed the plugin into CE 7.7 and watched it survive
 `Settings → Plugins → Add` and a clean exit. Queued in
-[todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+[verification-register.md](verification-register.md).
 
 -----
 

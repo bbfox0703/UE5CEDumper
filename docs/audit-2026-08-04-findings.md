@@ -21,7 +21,7 @@
 **Progress: 52 of 52 shipped.** Builds: 2560 · 2561 · 2569 · 2577 · 2581 · 2585 · 2592 · 2596 · 2599 ·
 2603 (8 DLL + scripts) · 2610 (12 UI) · 2614 (refactor R1-R4/R6/R7) · 2617 (B39).
 **ALL 52 SHIPPED — but 2 of them FAILED their first in-game check and were refixed.**
-See [todo.md](todo.md#pending-live-game-verification-verify-only--no-code) for the register.
+See [verification-register.md](verification-register.md) for the register.
 Four rounds of live testing (2026-08-04, builds 2622 → 2643): **11 verified, 1 half, 14 not yet
 exercised** — and B14+R5 needed THREE attempts, which produced the two most useful lessons here.
 **B34** and **B14+R5** both failed the same way — a rule applied to an ENUMERATION that had
@@ -40,7 +40,7 @@ counted wrong (three CE filenames; seven thread procs). Two lessons, both earned
 Only R8 remains, filed "later" by the audit itself.
 
 **What is NOT done: the verification.** Every fix is filed in
-[todo.md § Pending live-game verification](todo.md#pending-live-game-verification-verify-only--no-code),
+[the verification register](verification-register.md),
 split into ① log-derivable and ② manual-only. None of it has been run on a real game.
 
 ---
@@ -116,7 +116,7 @@ Do not split `Aura.cpp` beyond steps 1–2. Do not build `MovementKnobCardViewMo
 
 ### Verification, in the two halves the maintainer asked for
 Every fix lands with its verification classified **at the time it ships**, into
-[todo.md § Pending live-game verification](todo.md#pending-live-game-verification-verify-only--no-code):
+[the verification register](verification-register.md):
 1. **Log-derivable** — provable from an ordinary session's logs, or from logs *added for the purpose*.
    Prefer this. If an added log is heavy (per-object, per-tick), say so in its commit and mark it for
    removal once the item is verified.

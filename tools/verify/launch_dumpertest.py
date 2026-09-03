@@ -65,7 +65,7 @@ FLAVOURS = {
 # `(1 && !UE_BUILD_SHIPPING)`, so `dev`/`debug` have a live UCheatManager and `shipping` does not;
 # Shipping also drops most logging (Build.h NO_LOGGING) and editor-only reflection metadata.
 # A row whose claim could depend on any of that must say which flavour it was run on -- and the
-# honest ones get run on more than one. See docs/todo.md, the DumperTest fixture section.
+# honest ones get run on more than one. See docs/verification-register.md, the DumperTest fixture rows.
 # 1280x720 windowed, 15 fps -- see the module docstring.
 # -DumperTestMaxFPS is the sample's OWN switch, applied from C++ with ECVF_SetByCode
 # (DumperTestSubsystem.cpp ApplyMaxFPS), so unlike -ExecCmds it survives a Shipping

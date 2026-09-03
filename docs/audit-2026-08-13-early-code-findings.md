@@ -313,7 +313,7 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 > rejects anything not a power of two in [1,32]; `ReadTSparseArray` reads `NumFreeIndices` at `+0x34`;
 > and a new file-local `Ubel::GetStructAlignment` reads `UScriptStruct::MinAlignment` so struct-typed
 > keys/values stop falling through to the size guess. **Not yet verified on a real game** — see
-> [todo.md § Pending live-game verification](todo.md#pending-live-game-verification-verify-only--no-code).
+> [the verification register](verification-register.md).
 > One correction found while fixing: `MinAlignment` is **`int16`** in UE 5.8 (`StructStateFlags`
 > takes the other half of the word) but was **`int32`** in UE4 / early UE5 — so it is read as
 > `int16_t`, which is correct on **both** on little-endian x64. Reading it as `int32` as originally
@@ -682,7 +682,7 @@ and matter more than any individual row:
 > working-lessons §1.3 the seam test is the one that matters: the pre-existing
 > `FieldValueConverterTests` passed throughout, in both directions, because the helper was never wrong.
 >
-> ⬜ **Not yet verified in-game** — tracked in [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> ⬜ **Not yet verified in-game** — tracked in [verification-register.md](verification-register.md).
 > `Map_I64ToI32` / `Map_StrToInt` in `DumperTest` are existing witnesses for the DLL half; what needs a
 > live check is the **UI** half: that the Address column, an inline edit, and a pushed CE record all
 > land on the value.
@@ -822,7 +822,7 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 >
 > ⬜ **Not verified against a real consumer.** The round-trip proves self-consistency at the widths
 > the vendored writers define; nobody has yet opened the output in FModel. Filed in
-> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> [verification-register.md](verification-register.md).
 
 > ### ✅ W2 and W3 FIXED — build 2842, 2026-08-14
 >
@@ -863,7 +863,7 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 >
 > ⬜ **Not verified in-game.** The unit tests drive the real emitters end-to-end, but the *boundary
 > value* now comes from the DLL, and no headless check confirms a real `super_props_size` on a live
-> class — see [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> class — see [verification-register.md](verification-register.md).
 
 > ### ✅ W4 FIXED — build 2836, 2026-08-14
 >
@@ -1265,7 +1265,7 @@ MEDIUM.
 >
 > ⬜ **Not verified in Cheat Engine itself.** The Lua semantics are measured, but nobody has yet run
 > the generated script against a live game and watched a UFunction receive the right pointer — see
-> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> [verification-register.md](verification-register.md).
 
 > ✅ **Y9 fixed in build 2895** — the dialog is the only place that can tell the user, so it now does.
 >
@@ -1359,7 +1359,7 @@ MEDIUM.
 >
 > ⬜ **Not verified in-game.** The widths are unit-verified against the helper's writer table, but
 > nobody has frozen a real `enum class : uint8` and confirmed its neighbours survive. Queued in
-> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> [verification-register.md](verification-register.md).
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
@@ -4150,7 +4150,7 @@ MG1, MG2, MG3, A2, U1, and U2 (which U1 forced in — they are not independently
 dedupe, and was stopped by the maintainer pending in-game confirmation of the geometry underneath it.
 
 **Verification — five of six confirmed on a live process** (see
-[todo.md](todo.md#pending-live-game-verification-verify-only--no-code) for the evidence table).
+[verification-register.md](verification-register.md) for the evidence table).
 **U2 has no vehicle**: TQ2 and Solarpunk both measured non-CPN, DumperTest cannot be (engine flag).
 
 **Still unfixed and known:** A4 · U3 (*live-confirmed* 2026-08-14, not merely inferred) · G7 (reframed

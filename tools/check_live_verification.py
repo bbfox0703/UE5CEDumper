@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Assert that every "In-game verification pending" caveat in docs/roadmap.md is actually
-tracked in docs/todo.md's "Pending live-game verification" register.
+tracked in docs/verification-register.md.
 
 WHY THIS EXISTS
   The repo had SIX spellings of "shipped but not proven on a real game" scattered across
-  14 files, and the register in todo.md was missing items that roadmap.md had been
+  14 files, and the register (in todo.md until 2026-09-03, now its own file) was missing items roadmap.md had been
   carrying a caveat for since build 796. Nothing machine-checks docs/*.md, so a register
   is a live candidate to become the SEVENTH spelling rather than the first — a doc
   convention that nobody enforces survives about one commit.
@@ -12,7 +12,7 @@ WHY THIS EXISTS
   This does not try to police prose. It enforces one narrow, mechanical invariant:
 
     roadmap.md says "In-game verification pending"  ==>  it carries "(key: X)"
-                                                    ==>  todo.md's register mentions X
+                                                    ==>  the verification register mentions X
 
   The caveat stays attached to the capability it qualifies (a reader of roadmap.md needs
   it there), and the STATUS lives in exactly one place.
@@ -54,7 +54,7 @@ def main():
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     roadmap_path = os.path.join(root, "docs", "roadmap.md")
-    todo_path = os.path.join(root, "docs", "todo.md")
+    todo_path = os.path.join(root, "docs", "verification-register.md")
     for p in (roadmap_path, todo_path):
         if not os.path.isfile(p):
             print("CHECK FAILED: missing %s" % p)
@@ -65,7 +65,7 @@ def main():
     if body is None:
         # A renamed heading must not silently disable the whole check — that is the
         # failure mode this script is guarding against in the first place.
-        print("CHECK FAILED: docs/todo.md has no '%s' heading." % SECTION)
+        print("CHECK FAILED: docs/verification-register.md has no '%s' heading." % SECTION)
         print("  If you renamed the register, update SECTION in this script in the same commit.")
         return 1
 
@@ -78,7 +78,7 @@ def main():
         if not m:
             failures.append(
                 "roadmap.md:%d says '%s' but carries no '(key: X)' — add one and add a matching\n"
-                "    entry to todo.md's register, or drop the caveat if it has been verified." % (n, CAVEAT))
+                "    entry to docs/verification-register.md, or drop the caveat if it has been verified." % (n, CAVEAT))
             continue
         key = m.group(1)
         if ("key: %s" % key) not in body and key not in body:
