@@ -11746,7 +11746,8 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
   empty, since those point at different halves. Effort **S** once reproducible.
 
 
-### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644
+### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644 · FreezeOutcome
+> ⚠ **`FreezeOutcome` is named here as a SECOND carrier on purpose.** `tools/check_live_verification.py` requires every `(key: X)` in roadmap.md to appear somewhere in this register, and until 2026-09-03 the only line carrying it was the `🟡 AA12 / AA13` heading — whose text reads *"the LYING is fixed and verified; STEP 5 CLOSED"*, i.e. it looks archivable. Archiving it would have turned `main` red with an error about a renamed heading, pointing nowhere near the cause. Two carriers means an archival pass can move either one safely.
 
 *Every ID this heading names is a live check that lives in the bullets below and nowhere else. The
 heading exists because this list spent months parented to whatever `###` happened to precede it —
