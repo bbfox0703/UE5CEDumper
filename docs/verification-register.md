@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -649,7 +649,51 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A6: UBoolProperty::FieldSize is now derived
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A6-BOOLFIELD-2026-09-05]` — audit A6: derived `0x80` on the shifted host, `0x70` on the stock control
+
+> **CLOSED on the verification PC, build 3371.** Rig:
+> [`tools/verify/a6_boolfieldsize.py`](../tools/verify/a6_boolfieldsize.py) — takes the log-folder
+> name, so the same command runs both hosts.
+>
+> ⛔ **This row said "DQ XI S … is not installed, so this row stays blocked on a host." That is no
+> longer true — the maintainer installed it on 2026-09-05, and it is on `D:\SteamLibrary`.** The
+> row was blocked on *content*, and the content arrived. `tools/verify/fixture_census.py` did not
+> see it because the install post-dated the census run, not because of anything about the tool.
+>
+> | host | `Offset_Internal` | derived `FieldSize` | reading |
+> |---|---|---|---|
+> | **DQ XI S** (`+0x10` whole-layout shift) | `+0x54` | **`0x80`** | ⭐ **OUTSIDE** the old probe spread `{0x68,0x6C,0x70,0x74,0x78}` — pre-fix **no** probe could reach it |
+> | **OCTOPATH TRAVELER** (stock 4.18) | `+0x44` | **`0x70`** | byte-identical to the old default (`0x44 + 0x2C`) — the fix changed nothing where it must not |
+>
+> Both lines verbatim, `offsets-0.log`, category `DYNO`:
+> `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x80 (Offset_Internal +0x54, UE=418)`
+> `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x70 (Offset_Internal +0x44, UE=418)`
+>
+> ⚠ **The row predicted `UE=422`; both hosts report `UE=418`.** The arithmetic is unaffected — the
+> table's delta is `0x2C` for **all** of 4.18+ — but `docs/test-games.md` contradicts itself about
+> this title (`:19` says UE4.22, `:14` calls it "a known 4.18" while fingerprinting OCTOPATH against
+> it). The DLL says 418. Worth settling separately; it changes no A6 conclusion.
+>
+> ⛔ **THE ROW'S UI OBSERVABLE WAS IN THE WRONG PANEL, and following it would have produced a false
+> FAIL.** It named `ClassStructPanel`, whose DataGrid has exactly five columns — Offset, Name, Type,
+> Size, Address (`ClassStructPanel.axaml:108-125`). **It renders no value column at all**, so no
+> bool value and no mask can ever appear there. The observable that exists is the **Live Walker**
+> Value column: `Ubel.cpp:5162-5170` formats a bool as `"%s (bit %d, mask 0x%02X)"` when the probe
+> landed and as a bare `"true"`/`"false"` when it did not — a direct readout, so **one** field
+> settles it.
+>
+> **And the read side is stronger than the row asked for.** Rather than "two siblings with different
+> values", both hosts produced a full single-byte **mask ladder** — DQ XI S: 8 distinct masks
+> `0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80` across bits 0-7 on `Actor`; OCTOPATH: 6 on `Widget`,
+> *with* differing values (`bIsVariable=true`, `bCreatedByConstructionScript=false`,
+> `bIsEnabled=true`). A ladder like that is unreachable with `boolFieldMask == 0`, which is exactly
+> the pre-fix state on DQ XI S.
+
+<details><summary>original row (kept — its failure analysis is what made the host choice obvious)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A6: UBoolProperty::FieldSize is now derived**
+
+⚠ Deliberately not a `###` heading and carrying no ⬜ — `check_derived_counts` counts `^### .*⬜`.
 
 *`DynOff::UBOOLPROP_FIELDSIZE` had **zero writers** repo-wide against nine readers. The
 FProperty arm of `ValidateAndFixOffsets` derived the entire subclass-extension family and
@@ -699,6 +743,8 @@ distances specifically so a future "cleanup" trips a test instead of removing th
 `>= 1 && <= 8` where the other five copies required `== 1`. Tightened to match — the loose form
 bought nothing and accepted `8`, which is a value the low byte of an 8-aligned pointer can present
 when the probe lands off-field.*
+
+</details>
 
 -----
 
