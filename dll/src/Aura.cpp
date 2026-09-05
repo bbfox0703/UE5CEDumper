@@ -683,22 +683,10 @@ static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
 // Positive signal: named items (strong) or good items (weak).
 // Negative signal: bad items (wrong stride produces many misaligned reads).
 // The correct stride should have high named/good and very low bad.
+// Thin forwarder: the rule (and the reasoning) lives in Lineal.h so the test target,
+// which links headers rather than this .cpp, can pin it.
 static int ComputeStrideScore(int named, int good, int bad) {
-    // If we have named items, the score is primarily based on named count,
-    // heavily penalized by bad count. Wrong strides that get "lucky" hits
-    // via LCM alignment will have both named AND many bad items.
-    if (named > 0) {
-        // Score = (named * 10) - (bad * 3)
-        // This means a stride with 2 named, 0 bad (score=20) beats
-        // a stride with 5 named, 29 bad (score=50-87=-37).
-        return named * 10 - bad * 3;
-    }
-    // No named items — use good count with lesser bad penalty
-    if (good > 0) {
-        return good * 5 - bad * 2;
-    }
-    // Nothing found
-    return -bad;
+    return Lineal::StrideScore(named, good, bad);
 }
 
 // Helper: run ProbeStride for all candidate strides on a given base address, updating best.
@@ -709,8 +697,9 @@ static constexpr int kStrideProbeBudget = 200;
 static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
                             int candidates[], int numCandidates,
                             int& bestStride, int& bestCount, int& bestNamed,
-                            int& bestBad, bool& bestHasNames) {
+                            int& bestBad, bool& bestHasNames, int& bestNull) {
     int bestScore = INT_MIN;
+    bestNull = 0;
 
     // Store results for all candidates (for fallback logic)
     struct ProbeResult { int stride, good, named, null_, bad, score; };
@@ -727,12 +716,14 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
         int score = ComputeStrideScore(named, good, bad);
         results[i] = { stride, good, named, null_, bad, score };
 
-        if (score > bestScore) {
+        // The tie-break rule, and why ties happen at all, live on Lineal::PreferStride.
+        if (Lineal::PreferStride(score, bestScore, stride, bestStride)) {
             bestScore = score;
             bestStride = stride;
             bestCount = good;
             bestNamed = named;
             bestBad = bad;
+            bestNull = null_;
             bestHasNames = (named > 0);
         }
     }
@@ -766,6 +757,7 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
                 bestCount = results[fallbackIdx].good;
                 bestNamed = results[fallbackIdx].named;
                 bestBad = results[fallbackIdx].bad;
+                bestNull = results[fallbackIdx].null_;
                 bestHasNames = (results[fallbackIdx].named > 0);
             } else {
                 LOG_INFO("ObjectArray: %s fallback: stride %d has fewer bad (%d vs %d) but primary stride %d has more named (%d vs %d), keeping primary",
@@ -783,8 +775,9 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
 static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chunk0,
                                             int candidates[], int numCandidates,
                                             int& bestStride, int& bestCount, int& bestNamed,
-                                            int& bestBad, bool& bestHasNames) {
+                                            int& bestBad, bool& bestHasNames, int& bestNull) {
     bestStride = 0; bestCount = 0; bestNamed = 0; bestBad = INT_MAX; bestHasNames = false;
+    bestNull = 0;
     constexpr int MAX_ITEMS_PHASE1 = kStrideProbeBudget;
     bool detected = false;
 
@@ -857,7 +850,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
             s_isFlat = true;
             ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P0-flat",
                             candidates, numCandidates,
-                            bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                            bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
 
             if (bestHasNames && bestNamed >= 2) {
                 LOG_INFO("ObjectArray: Flat (non-chunked) array confirmed (P0-flat: %d named, %d bad)",
@@ -878,7 +871,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     if (!detected) {
         ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
                         candidates, numCandidates,
-                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                        bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
     }
 
     // Phase 2: if Phase 1 yielded nothing, try deeper in chunk (items 1000+).
@@ -887,7 +880,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
         LOG_INFO("ObjectArray: Phase 1 found no items, trying deep scan from item 1000...");
         ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, 100, "P2-deep",
                         candidates, numCandidates,
-                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                        bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
     }
 
     // Phase 3: if still nothing, maybe the array is NOT chunked (some UE4 builds).
@@ -901,13 +894,13 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
 
         ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P3-flat",
                         candidates, numCandidates,
-                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                        bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
 
         if (bestCount == 0) {
             // Try deep scan on flat array too
             ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, 100, "P3-flat-deep",
                             candidates, numCandidates,
-                            bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                            bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
         }
 
         if (bestCount == 0) {
@@ -1064,12 +1057,33 @@ static void DetectItemSize() {
     // object was garbage: UE5_Init resolved obj[0], obj[2], obj[4] and the Object Tree
     // reported 12,588 of 25,175 named -- 50.0% to the decimal (2026-08-05, DumperTest).
     //
-    // Ordering does not decide the winner (ProbeAllStrides scores every candidate and takes
-    // the best), so 32 sits after the two common sizes purely for log readability. With the
-    // real stride present it wins outright: named ~= all / bad ~= 0, against the alias's
-    // named ~= bad ~= half.
-    int candidates[] = { 16, 24, 32, 20 };
-    constexpr int NUM_CANDIDATES = 4;
+    // 40 is here for the SAME bug, second occurrence, and it is the WORSE one. At 5.7.0
+    // Build.h's UE_BUILD_TEST block began defining ENABLE_STATNAMEDEVENTS =
+    // (!FORCE_USE_STATS && !USE_STATS_WITHOUT_ENGINE) and ENABLE_STATNAMEDEVENTS_UOBJECT =
+    // (ENABLE_STATNAMEDEVENTS) (Build.h:307-311 @5.7.0/5.8.2; absent at 5.6.1, where both
+    // fell to the global 0). With the shipping defaults that is 1, which admits BOTH
+    // `TStatId StatID` and `PROFILER_CHAR* StatIDStringStorage` into FUObjectItem
+    // (UObjectArray.h:103-108). STATS is 0 in that same build, so UE_USE_LIGHTWEIGHT_STATS
+    // is 1 and TStatId is a single pointer -- 24 + 8 + 8 = 40, Object still at +0x08.
+    //
+    // ⚠ Why worse than the 32 case: there, the off-boundary reads landed on garbage, so
+    // named ~= bad ~= half and the sweep at least settled TENTATIVELY. Here gcd(40,20)=20,
+    // so stride 20 alternates between the real Object and StatID -- which is LAZILY NULL
+    // ('0 if nobody asked for it yet'). ProbeStride counts a zero as `null`, not `bad`, so
+    // the alias scores named ~= half with bad == 0, sails through `qualityOk`
+    // (bestNamed > bestBad) and is logged as a CONFIDENT success. The tentative/LOG_ERROR
+    // net never runs, and GetByIndex(i) then resolves object i/2 for the rest of the run.
+    //
+    // ORDERING: with the real stride present it wins outright (named ~= all, bad ~= 0).
+    // But a stride and its MULTIPLE tie -- every probe reads maxItems items regardless of
+    // stride, so on a real 20-byte item both 20 and 40 read only valid objects. That was
+    // already true of the 16/32 pair before 40 existed, so the old claim that ordering
+    // cannot decide the winner was overstated. The tie-break is now explicit in
+    // ProbeAllStrides (smaller stride wins a tie) rather than resting on list order.
+    int candidates[std::size(Lineal::kItemStrideCandidates)];
+    std::copy(std::begin(Lineal::kItemStrideCandidates),
+              std::end(Lineal::kItemStrideCandidates), candidates);
+    constexpr int NUM_CANDIDATES = static_cast<int>(std::size(Lineal::kItemStrideCandidates));
     static_assert(NUM_CANDIDATES <= 5, "ProbeAllStrides stores results in a fixed array of 5");
 
     // Object-ptr-offset candidates, classic first (see header comment).
@@ -1083,10 +1097,11 @@ static void DetectItemSize() {
         s_itemObjOffset = objOffPasses[pass];
         s_isFlat = false;
 
-        int bestStride, bestCount, bestNamed, bestBad;
+        int bestStride, bestCount, bestNamed, bestBad, bestNull;
         bool bestHasNames;
         DetectStrideForCurrentObjOffset(chunkTable, chunk0, candidates, NUM_CANDIDATES,
-                                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+                                        bestStride, bestCount, bestNamed, bestBad, bestHasNames,
+                                        bestNull);
 
         int threshold = bestHasNames ? 2 : 3;
         int bestTotal = bestHasNames ? bestNamed : bestCount;
@@ -1095,7 +1110,7 @@ static void DetectItemSize() {
         // the real Object field only ~1/3 of the time (named ≈ bad), so reject a bad-
         // dominated pass and let the +0x08 pass run. A correct layout has bad ≈ 0. The
         // count-only path (no FName check) keeps its prior behaviour (no bad confidence).
-        bool qualityOk = !bestHasNames || bestNamed > bestBad;
+        bool qualityOk = Lineal::StrideQualityOk(bestHasNames ? bestNamed : 0, bestBad);
 
         // Track the strongest pass (strictly-better, so ties keep the earlier/classic pass).
         if (bestNamed > gNamed || (bestNamed == gNamed && bestCount > gCount)) {
@@ -1104,6 +1119,26 @@ static void DetectItemSize() {
         }
 
         if (bestTotal >= threshold && qualityOk) {
+            // ⚠ THE SHAPE THAT GOT PAST qualityOk TWICE. A stride that DIVIDES the real
+            // item size lands off-item on every non-multiple probe. If what it lands on
+            // happens to be a lazily-null field (UE5.7+ Test builds put TStatId there,
+            // '0 if nobody asked for it yet'), ProbeStride scores it `null`, not `bad` --
+            // so named ~= half with bad == 0, and `bestNamed > bestBad` passes with room
+            // to spare. Nothing downstream notices: GetByIndex(i) silently resolves
+            // object i/k for the rest of the run.
+            //
+            // A healthy pool has few nulls (genuinely free slots). Nulls at or above the
+            // valid count, with essentially no bad reads, is the signature -- so say so.
+            // This does NOT reject the result: the candidate list is the fix, and a
+            // legitimately sparse chunk would trip this too. It exists so the NEXT item
+            // size we have not met is loud on the first log instead of silent for months.
+            if (bestNull >= bestCount && bestCount > 0 && bestBad * 4 < bestCount) {
+                LOG_WARN("ObjectArray: stride %d accepted with null=%d >= valid=%d and bad=%d "
+                         "-- if the real item is a MULTIPLE of %d whose extra field is lazily "
+                         "null, this is a confident-looking half-pool. Check the per-stride "
+                         "lines above for a larger candidate with ~2x the named count.",
+                         bestStride, bestNull, bestCount, bestBad, bestStride);
+            }
             s_itemSize = bestStride;   // s_itemObjOffset / s_isFlat already reflect this pass
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;

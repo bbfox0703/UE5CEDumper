@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Lineal — 莉涅爾 ("Ruler / Straightedge" — layout / alignment)
 // FUObjectItem packing: UE5.7+ packed-pointer split / rejoin reconstruction
 //
@@ -121,6 +121,56 @@ inline int SerialOffsetForLayout(ItemLayoutMode mode, int itemSize,
     // Classic. Only the 16-byte item has no ClusterRootIndex ahead of the
     // serial, so it is the sole case that stays at 0x0C.
     return (itemSize <= 16) ? 0x0C : 0x10;
+}
+
+// ============================================================
+// Stride-sweep scoring, in the header so the tests can pin the RULE and not just
+// the candidate list. Aura::ProbeStride classifies each probe as good/named/null/bad
+// and these two decide the winner.
+// ============================================================
+
+// A stride that DIVIDES the real item size still lands on a genuine object every k-th
+// probe, so raw hit counts cannot separate it from the truth. Two things do:
+//   * it lands OFF-item the rest of the time, which usually reads garbage -> `bad`
+//   * even when it does not, it can only score ~1/k of the named count the real stride does
+// Hence: named dominates, bad is punished hard.
+inline constexpr int StrideScore(int named, int good, int bad) noexcept {
+    if (named > 0) return named * 10 - bad * 3;
+    if (good  > 0) return good  * 5  - bad * 2;
+    return -bad;
+}
+
+// ⚠ Ties are REAL and the list order must not be what breaks them. Every candidate is
+// probed against the same NUMBER of items (not the same byte range), so a stride and any
+// MULTIPLE of it both read only valid objects on a correct pool and score identically --
+// true of 16/32 long before 40 existed. In that tie the SMALLER stride is the true item
+// size; the larger merely samples every k-th item. The reverse never ties: a DIVISOR of
+// the true stride lands off-item on most probes and loses on named, or on bad.
+//   bestStride == 0 means "nothing chosen yet".
+inline constexpr bool PreferStride(int score, int bestScore, int stride, int bestStride) noexcept {
+    return score > bestScore || (score == bestScore && bestStride != 0 && stride < bestStride);
+}
+
+// The FUObjectItem sizes the auto-probe sweeps. Here rather than as a local in Aura.cpp
+// so a test can pin the SET -- the supporting rules being correct is no use if the true
+// size is not a candidate at all, which is the entire content of both A5 and its 2026-08-05
+// predecessor.
+//   16  UE5 classic
+//   24  UE4 classic / UE5.7+ reordered (Object @ +0x08)
+//   32  UE 5.4 Development (STATS=1 adds TStatId)
+//   20  Avowed's packed 20-byte item
+//   40  UE 5.7+ TEST build (ENABLE_STATNAMEDEVENTS_UOBJECT adds TStatId + StatIDStringStorage)
+inline constexpr int kItemStrideCandidates[] = { 16, 24, 32, 20, 40 };
+
+// The gate that decides whether a winning stride is trusted OUTRIGHT or only
+// tentatively. ⚠ This -- not the score -- is what the two alias shapes separate on:
+//   * an alias landing on GARBAGE  : named ~= bad -> FAILS here -> tentative path
+//   * an alias landing on a NULL   : named ~= half, bad == 0 -> PASSES -> confident
+// which is exactly why the 40-byte Test-build item was silent where the 32-byte one
+// was merely wrong. Note both still score POSITIVE (StrideScore(100,100,100) = 700),
+// so the score alone never told them apart.
+inline constexpr bool StrideQualityOk(int named, int bad) noexcept {
+    return named == 0 || named > bad;   // no names at all -> no name-based confidence to check
 }
 
 } // namespace Lineal

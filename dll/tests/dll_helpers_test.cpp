@@ -843,9 +843,10 @@ static void Test_Stark_PeValidationFailureVerdict() {
 //
 // Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
 // `s_itemSize >= 24 ? 0x10 : 0x0C` -- a two-way split covering only strides 16
-// and 24. The reachable stride set is {16, 20, 24, 32}: Aura's auto-probe tries
-// {16, 24, 32, 20} and UE5_InitWithExtendedLayout forces any of
-// {0x14, 0x18, 0x10, 0x20}.
+// and 24. The reachable stride set is {16, 20, 24, 32, 40}: Aura's auto-probe tries
+// {16, 24, 32, 20, 40} and UE5_InitWithExtendedLayout forces any of
+// {0x14, 0x18, 0x10, 0x20}. 40 joined the set with A5 -- a UE 5.7+ Test build puts
+// TStatId + StatIDStringStorage after ClusterRootIndex (24 + 8 + 8).
 //
 // At stride 20 the old expression returned 0x0C, which is ClusterRootIndex.
 // Ubel::ResolveWeakObjectPtr then compares that against the stored serial with a
@@ -856,6 +857,105 @@ static void Test_Stark_PeValidationFailureVerdict() {
 //
 // The rule lives in Lineal.h precisely so it can be tested: no target compiles
 // Aura.cpp, but this file already includes Lineal.h.
+
+static void Test_Lineal_StrideSweepRules() {
+    using Lineal::StrideScore;
+    using Lineal::PreferStride;
+
+    // --- THE CANDIDATE SET ITSELF. Correct scoring rules are worthless if the true item
+    //     size is not probed at all, which is the whole of A5 and of its 2026-08-05
+    //     predecessor (16 accepted against a real 32: 12,588 of 25,175 named, 50.0%). ---
+    {
+        bool has16=false, has20=false, has24=false, has32=false, has40=false;
+        for (int st : Lineal::kItemStrideCandidates) {
+            if (st == 16) has16 = true;
+            if (st == 20) has20 = true;
+            if (st == 24) has24 = true;
+            if (st == 32) has32 = true;
+            if (st == 40) has40 = true;
+        }
+        EXPECT("A5: 16 (UE5 classic) is a candidate", has16);
+        EXPECT("A5: 24 (UE4 classic / UE5.7+ reordered) is a candidate", has24);
+        EXPECT("A5: 32 (UE5.4 Development, STATS adds TStatId) is a candidate", has32);
+        EXPECT("A5: 20 (Avowed packed) is a candidate", has20);
+        EXPECT("A5: 40 (UE5.7+ TEST, TStatId + StatIDStringStorage) is a candidate", has40);
+
+        // Every candidate must have its own ProbeResult slot: ProbeAllStrides stores them
+        // in a fixed array of 5 with a matching static_assert. A sixth needs BOTH widened.
+        EXPECT("A5: the candidate set still fits ProbeAllStrides' fixed array of 5",
+               std::size(Lineal::kItemStrideCandidates) <= 5);
+
+        // ⚠ Every value must be 8-aligned or 4-aligned and plausible as an item size --
+        // a typo here is not caught by anything else, and a bogus candidate can only
+        // steal a detection, never add one.
+        for (int st : Lineal::kItemStrideCandidates) {
+            EXPECT("A5: every candidate stride is a plausible item size",
+                   st >= 16 && st <= 64 && (st % 4) == 0);
+        }
+    }
+
+    // A5. UE 5.7.0's Build.h began defining ENABLE_STATNAMEDEVENTS_UOBJECT in the
+    // UE_BUILD_TEST block, which appends TStatId + StatIDStringStorage to FUObjectItem:
+    // 24 + 8 + 8 = 40, Object still at +0x08.
+    //
+    // gcd(40,20) = 20, so a stride-20 probe alternates between the real Object and StatID.
+    // StatID is LAZILY NULL ("0 if nobody asked for it yet"), and Aura::ProbeStride counts
+    // a zero as `null`, NOT `bad`. So the alias produces half the named count with ZERO bad
+    // -- which is why it sailed past `bestNamed > bestBad` and was logged as a confident
+    // success instead of a tentative one. Model that exact profile over 200 probes:
+    {
+        const int realNamed = 200, realBad = 0;          // stride 40 on a real 40-byte item
+        const int aliasNamed = 100, aliasBad = 0;        // stride 20: every other probe is a null StatID
+        const int realScore  = StrideScore(realNamed,  realNamed,  realBad);
+        const int aliasScore = StrideScore(aliasNamed, aliasNamed, aliasBad);
+        EXPECT("A5: the divisor alias scores 0 bad -- which is why it looked confident",
+               aliasBad == 0);
+        EXPECT("A5: but the true stride still outscores it 2:1", realScore > aliasScore);
+        EXPECT("A5: and PreferStride picks the true 40 over the alias 20",
+               PreferStride(realScore, aliasScore, 40, 20));
+    }
+
+    // ⚠ THE OTHER DIRECTION, which is why a bare `score > best` was not enough. Every
+    // candidate is probed against the same NUMBER of items, not the same byte range, so on
+    // a REAL 20-byte item stride 40 reads every other item -- all of them valid. Identical
+    // named, identical bad, identical score. Nothing but the tie-break separates them, and
+    // picking 40 there would halve the pool just as surely.
+    {
+        const int score20 = StrideScore(200, 200, 0);
+        const int score40 = StrideScore(200, 200, 0);
+        EXPECT("A5: a stride and its multiple TIE on a correct pool", score20 == score40);
+        EXPECT("A5: the tie goes to the SMALLER stride (the true item size)",
+               !PreferStride(score40, score20, 40, 20));
+        EXPECT("A5: ...and not to the larger, whichever order they are probed in",
+               PreferStride(score20, score40, 20, 40));
+    }
+
+    // The same tie already existed for 16/32 before 40 was added, so this is not new
+    // behaviour introduced by A5 -- only newly explicit.
+    EXPECT("A5: 16 beats 32 on a tie", PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 16, 32));
+    EXPECT("A5: 32 does not beat 16 on a tie", !PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 32, 16));
+
+    // First candidate always wins against the sentinel, whatever its score.
+    EXPECT("A5: bestStride 0 means nothing chosen yet", PreferStride(-999, INT_MIN, 40, 0));
+
+    // ⚠ WHAT ACTUALLY SEPARATES THE TWO ALIAS SHAPES -- and it is NOT the score. My first
+    // draft of this test asserted the garbage alias scores negative; it does not
+    // (StrideScore(100,100,100) = 1000-300 = 700), and the suite caught it. Both aliases
+    // score positive. The gate they differ on is StrideQualityOk:
+    //   16 vs a real 32 (2026-08-05): lands on garbage, named ~= bad -> FAILS -> tentative
+    //   20 vs a real 40 (A5):         lands on a lazily-null StatID, bad == 0 -> PASSES
+    // which is why the older bug was merely wrong and this one was silent.
+    {
+        EXPECT("A5: both alias shapes score POSITIVE -- the score never told them apart",
+               StrideScore(100, 100, 100) > 0 && StrideScore(100, 100, 0) > 0);
+        EXPECT("A5: the garbage-landing alias FAILS the quality gate (named ~= bad)",
+               !Lineal::StrideQualityOk(100, 100));
+        EXPECT("A5: the null-landing alias PASSES it -- the silent case",
+               Lineal::StrideQualityOk(100, 0));
+        EXPECT("A5: a count-only pass (no names) is not judged on names",
+               Lineal::StrideQualityOk(0, 50));
+    }
+}
 
 static void Test_Lineal_SerialOffsetForLayout() {
     using Lineal::SerialOffsetForLayout;
@@ -872,6 +972,9 @@ static void Test_Lineal_SerialOffsetForLayout() {
 
     EXPECT("classic 24 -> 0x10", SerialOffsetForLayout(M::Classic, 24, 0, 0x0C) == 0x10);
     EXPECT("classic 32 -> 0x10", SerialOffsetForLayout(M::Classic, 32, 0, 0x0C) == 0x10);
+    // A5: UE 5.7+ Test build. The stat tail is APPENDED, so the serial does not move.
+    EXPECT("classic 40 -> 0x10 (5.7+ Test, stat tail)",
+           SerialOffsetForLayout(M::Classic, 40, 0, 0x0C) == 0x10);
 
     // --- UE5.7+ unpacked: FlagsAndRefCount(8) + Object(8) + SerialNumber(4),
     // so the serial sits immediately after the object wherever that landed.
@@ -879,6 +982,10 @@ static void Test_Lineal_SerialOffsetForLayout() {
            SerialOffsetForLayout(M::Unpacked57, 24, 0x08, 0x0C) == 0x10);
     EXPECT("unpacked57 objOff 16 -> 0x18",
            SerialOffsetForLayout(M::Unpacked57, 32, 0x10, 0x0C) == 0x18);
+    // A5: the 40-byte Test-build item keeps Object at +0x08, so the serial stays 0x10 --
+    // the two extra fields sit AFTER ClusterRootIndex, not between Object and Serial.
+    EXPECT("unpacked57 40 objOff 8 -> 0x10 (5.7+ Test)",
+           SerialOffsetForLayout(M::Unpacked57, 40, 0x08, 0x0C) == 0x10);
 
     // --- Packed UE5.7+: layout is UNVERIFIED, so the value is whatever
     // set_packed_consts calibrated. It must pass through untouched -- including
@@ -7247,6 +7354,7 @@ int main() {
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
+    RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
