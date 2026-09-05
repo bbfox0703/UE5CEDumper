@@ -7079,6 +7079,60 @@ static void Test_Aura_StructPathGuard() {
     EXPECT("path empty at the end", path.empty());
 }
 
+static void Test_VersionMarkers() {
+    using DynOff::IsReorderedFUObjectItem57;
+    using DynOff::IsVirtualDtorFFieldClass58;
+
+    // A4. The raise-only ladder topped out at 507, so a string-stripped UE 5.8 title
+    // badged as 5.7 -- the 507 predicate is satisfied by a 5.8 binary too, because
+    // FUObjectItem is byte-identical between them.
+
+    // --- 5.7 reorder: the OFFSET is the signal, the size is a sanity bound ---
+    EXPECT("A4: 5.7 Shipping (24B @ +0x08)",     IsReorderedFUObjectItem57(0x08, 24));
+    EXPECT("A4: 5.7 Development (32B @ +0x08)",  IsReorderedFUObjectItem57(0x08, 32));
+    EXPECT("A4: 5.7 Test (40B @ +0x08)",         IsReorderedFUObjectItem57(0x08, 40));
+
+    // ⚠ THE GAP A5 EXPOSED. Pinning the size to ==24 silently excluded every stripped
+    // 5.7+ Development or Test build from the raise. Assert that both now qualify, and
+    // that they are exactly the sizes Lineal advertises for the reordered layout.
+    for (int st : Lineal::kItemStrideCandidates) {
+        if (st == 16 || st == 20) continue;   // pre-5.7 classic / Avowed packed
+        EXPECT("A4: every post-reorder candidate size qualifies for the 5.7 raise",
+               IsReorderedFUObjectItem57(0x08, st));
+    }
+
+    // --- what must NOT raise ---
+    // Avowed: a CUSTOM 20-byte packed UE5.3 item. Object is at +0x00
+    // (docs/avowed-gobjects-fix.md), so the offset test excludes it by itself -- the size
+    // guard was never the discriminator it was documented as.
+    EXPECT("A4: Avowed 20B @ +0x00 is not a version signal",
+           !IsReorderedFUObjectItem57(0x00, 20));
+    EXPECT("A4: ...and would not be even if its size were 24",
+           !IsReorderedFUObjectItem57(0x00, 24));
+    EXPECT("A4: classic 16B @ +0x00 does not raise", !IsReorderedFUObjectItem57(0x00, 16));
+    EXPECT("A4: an implausible size at the right offset still does not raise",
+           !IsReorderedFUObjectItem57(0x08, 48));
+    EXPECT("A4: a zero/undetected item is not a signal", !IsReorderedFUObjectItem57(0x08, 0));
+
+    // --- 5.8: FFieldClass::Name moved 0x00 -> 0x08 when ~FFieldClass() became virtual ---
+    EXPECT("A4: Name@+0x08 = UE5.8+",  IsVirtualDtorFFieldClass58(0x08));
+    // ⚠ 0x00 is the PRE-PROBE DEFAULT as well as the <=5.7 answer, so it must never raise:
+    // a game whose probe never ran would otherwise be indistinguishable from a real 5.7.
+    EXPECT("A4: Name@+0x00 (<=5.7, and the pre-probe default) does not raise",
+           !IsVirtualDtorFFieldClass58(0x00));
+    // -1 is what PickFFieldClassNameOffset returns when NEITHER candidate matched. It is
+    // never latched, but assert it cannot raise in case that ever changes.
+    EXPECT("A4: a failed probe (-1) does not raise", !IsVirtualDtorFFieldClass58(-1));
+    EXPECT("A4: no other offset raises", !IsVirtualDtorFFieldClass58(0x10));
+
+    // --- the two markers are INDEPENDENT: a 5.8 binary satisfies BOTH, which is exactly
+    //     why 507 alone was not enough to stop at the right version. ---
+    EXPECT("A4: a 5.8 Shipping binary satisfies the 5.7 predicate too",
+           IsReorderedFUObjectItem57(0x08, 24) && IsVirtualDtorFFieldClass58(0x08));
+    EXPECT("A4: a genuine 5.7 satisfies only the first",
+           IsReorderedFUObjectItem57(0x08, 24) && !IsVirtualDtorFFieldClass58(0x00));
+}
+
 static void Test_FFieldClassName_Probe() {
     std::printf("\n[DynOff::PickFFieldClassNameOffset]\n");
 
@@ -7531,6 +7585,7 @@ int main() {
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
+    RUN(Test_VersionMarkers);
     RUN(Test_FFieldClassName_Probe);
 
     // Ubel — reflected struct preview: member width comes from the property (U17)

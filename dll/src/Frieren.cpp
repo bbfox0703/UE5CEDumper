@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
 // ExportAPI: ~30 C ABI exports for CE Lua bridge
 // ============================================================
@@ -431,12 +431,55 @@ bool UE5_Init() {
         // signal). The "unverified" packed reconstruction (IsPacked, never seen in a
         // real game) would also be 24B at +0x00; this offset test stays specific to the
         // reorder.
+        // ⚠ The size set is {24, 32, 40}, not just 24. Object@+0x08 IS the 5.7 reorder,
+        // but the item grows with the build configuration: 24 Shipping, 32 Development
+        // (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
+        // ENABLE_STATNAMEDEVENTS_UOBJECT, appending TStatId + StatIDStringStorage — see
+        // Lineal::kItemStrideCandidates). Pinning ==24 silently excluded every stripped
+        // 5.7+ Development or Test build from this raise. Avowed's custom 20-byte packed
+        // layout is already excluded by the +0x08 test alone: its Object is at +0x00
+        // (docs/avowed-gobjects-fix.md), so the size guard is belt-and-braces, not the
+        // discriminator it was written as.
+        const int itemSz = Aura::GetItemSize();
         if (DynOff::bUseFProperty && g_cachedUEVersion < 507
-            && Aura::GetItemObjOffset() == 0x08 && Aura::GetItemSize() == 24) {
-            LOG_WARN("UE5_Init: structural marker (FUObjectItem Object@+0x08, 24B = UE5.7+) "
-                     "but version=%u — raising floor to 507.", g_cachedUEVersion);
+            && DynOff::IsReorderedFUObjectItem57(Aura::GetItemObjOffset(), itemSz)) {
+            LOG_WARN("UE5_Init: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
+                     "but version=%u — raising floor to 507.", itemSz, g_cachedUEVersion);
             ptrs.UEVersion    = 507;
             g_cachedUEVersion = 507;
+        }
+
+        // Structural marker: UE 5.8 made ~FFieldClass() VIRTUAL (5.7.4 Field.h:100
+        // `COREUOBJECT_API ~FFieldClass();` -> 5.8.0/5.8.1/5.8.2 Field.h:101
+        // `COREUOBJECT_API virtual ~FFieldClass();`). It is UNCONDITIONAL — the
+        // `#if UE_WITH_CONSTINIT_UOBJECT` block begins after it — and FFieldClass has no
+        // base class with `FName Name` first, so the vfptr takes +0x00 and Name moves to
+        // +0x08. Without this the chain topped out at 507, and a string-stripped 5.8 title
+        // badged as UE 5.7: the 507 predicate above is satisfied by a 5.8 binary too,
+        // because FUObjectItem did not change between them.
+        //
+        // FFIELDCLASS_NAME defaults to 0x00 (the <=5.7 layout) and is latched ONLY on a
+        // successful PickFFieldClassNameOffset (Genau.cpp, `fcNameOff >= 0`), so 0x08 can
+        // never be a leftover default — it is always a probe that specifically chose 0x08
+        // against the stricter `LooksLikeFieldClassName` suffix test.
+        //
+        // ⚠ The `>= 500` guard is NOT cosmetic. A false positive in that probe on a UE4
+        // title would otherwise raise 427 -> 508, crossing the >=500 / >=501 gates in
+        // Aura and Ubel — a breaking raise, unlike the harmless 507 -> 508. The 504 marker
+        // above carries the same guard for the same reason.
+        if (DynOff::bUseFProperty && g_cachedUEVersion >= 500 && g_cachedUEVersion < 508
+            && DynOff::IsVirtualDtorFFieldClass58(DynOff::FFIELDCLASS_NAME)) {
+            // ⚠ This badge is NOT independent corroboration of the probe: a wrong
+            // FFIELDCLASS_NAME latch has ALREADY broken the property walk by the time we
+            // get here, so a 5.8 badge on a broken walk means the probe was wrong, not
+            // that the game is 5.8. Say so in the line that will be read during triage.
+            LOG_WARN("UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) "
+                     "but version=%u — raising floor to 508. NOTE: inherits the "
+                     "FFieldClass::Name probe's confidence; if the property walk also looks "
+                     "wrong, suspect the probe rather than trusting this badge.",
+                     g_cachedUEVersion);
+            ptrs.UEVersion    = 508;
+            g_cachedUEVersion = 508;
         }
     } else {
         LOG_WARN("UE5_Init: Partial init — GObjects=%s GNames=%s — skipping offset validation",

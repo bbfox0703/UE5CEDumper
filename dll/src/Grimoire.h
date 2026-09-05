@@ -335,6 +335,36 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
     }
 }
 
+// === Raise-only version markers (the structural half) ===
+//
+// UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
+// (CMC::GravityDirection) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// It exists because heavily-stripped titles lose every version string and fall back to
+// 4.27 while the structural probes have already proved otherwise. The two PURE predicates
+// live here so the tests can pin them; the 503/504 markers walk GObjects and stay in
+// Frieren.
+//
+// ⚠ Both are RAISE-ONLY and both are guarded on `ver >= 500`. That guard is not cosmetic:
+// a false positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
+// turning a harmless badge fix into a breaking layout change.
+
+// UE 5.7 moved FUObjectItem's Object* to +0x08. The SIZE varies with build configuration
+// (24 Shipping, 32 Development with STATS, 40 Test with ENABLE_STATNAMEDEVENTS_UOBJECT --
+// see Lineal::kItemStrideCandidates), so the offset is the version signal and the size is
+// only a sanity bound. Avowed's custom 20-byte packed layout keeps Object at +0x00, so the
+// offset test already excludes it on its own.
+constexpr bool IsReorderedFUObjectItem57(int objOffset, int itemSize) {
+    return objOffset == 0x08 && (itemSize == 24 || itemSize == 32 || itemSize == 40);
+}
+
+// UE 5.8 made ~FFieldClass() virtual -- unconditionally, outside any #if -- and
+// FFieldClass has no base class with `FName Name` first, so the vfptr takes +0x00 and
+// Name moves to +0x08. FFIELDCLASS_NAME defaults to 0x00 and is latched only on a
+// successful probe, so 0x08 is never a leftover default.
+constexpr bool IsVirtualDtorFFieldClass58(int ffieldClassNameOffset) {
+    return ffieldClassNameOffset == 0x08;
+}
+
 // === UFunction::FunctionFlags offset, per engine version ===
 //
 // ⛔ The two readers that use this (Ubel::ReadFuncFlagsAndParams, Aura::ReadFunctionFlags)

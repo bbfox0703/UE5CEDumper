@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`9` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -429,6 +429,52 @@ rows 1–4 and leave 5 open rather than marking the section done.
 > identical, and every mechanism row 5 exercises (`AnchorAtLastUnchainableHop`, `FormatCrumbOffset`,
 > `LogReanchor`) is UI-side. ⛔ Do not generalise this — for any row that turns on DLL behaviour the
 > banner is a stop, not a note.
+
+### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A4: the UE 5.8 version marker
+
+*The raise-only ladder in `UE5_Init` topped out at **507**, so a string-stripped UE 5.8 title
+badged as UE 5.7 — the 507 predicate (`FUObjectItem` Object`@+0x08`) is satisfied by a 5.8
+binary too, because that struct is byte-identical between the two. A 508 marker was added on
+`~FFieldClass()` becoming virtual (5.7.4 `Field.h:100` non-virtual → 5.8.0 `:101` `virtual`,
+unconditional; `FFieldClass` has no base and `FName Name` is its first member, so the vfptr
+takes +0x00 and `Name` moves to +0x08).*
+
+*The same commit widened the **507** marker's size set from `==24` to `{24, 32, 40}`. Object
+`@+0x08` is the version signal; the SIZE varies with build configuration — 24 Shipping, 32
+Development (STATS appends `TStatId`), 40 Test (UE 5.7's `Build.h` added
+`ENABLE_STATNAMEDEVENTS_UOBJECT`, appending `TStatId` + `StatIDStringStorage`; audit A5). The
+`==24` pin had silently excluded every stripped 5.7+ Development or Test build from the raise.*
+
+**Why this cannot be closed by the C++ suite.** Both predicates are pinned by
+`Test_VersionMarkers` (18 assertions, negative-controlled in both directions), but a predicate
+returning the right answer for a given input proves nothing about whether the input is ever
+produced. What is unverified is the *plumbing*: that a real stripped 5.8 game reaches
+`UE5_Init` with `FFIELDCLASS_NAME` latched to 0x08, and that the raise then reaches the badge.
+
+**Acceptance test** — needs a title that is UE 5.8 *and* string-stripped. No such game exists in
+the corpus today (`docs/test-games.md` has no 5.8 row at all), so this is blocked on content,
+not on effort. Two paired observables, and BOTH are required — a DLL-side raise with a stale UI
+badge and a correct badge over a lucky RAW detection look identical on screen:
+
+| side | where | expect |
+|---|---|---|
+| DLL | `init-0.log` | `structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508` |
+| DLL | `offsets-0.log` | `FFieldClass::Name=+0x08` on the same run (the latch the marker reads) |
+| UI  | Pointers panel | the badge reads **UE 5.8**, not 5.7 |
+
+**Negative control, and it is the one that matters**: run a genuine UE **5.7** title (Solarpunk,
+`docs/test-games.md:57`) and confirm the 508 line does **NOT** appear and the badge stays 5.7.
+Without it, a marker that fires unconditionally is indistinguishable from one that works.
+
+⚠ **The badge is not independent corroboration of the probe.** A wrong `FFIELDCLASS_NAME` latch
+has already broken the property walk by the time the marker runs, so a 5.8 badge on a run whose
+walk also looks wrong means the probe was wrong — not that the game is 5.8. The log line says so
+out loud, deliberately, because that is the sentence someone will read during triage.
+
+⚠ `Genau::kVersionDetectLogicRev` is deliberately **not** bumped: `Frieren.cpp` documents this
+ladder as runtime-only and re-applied on every init, so no cached detection needs invalidating.
+
+-----
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 
