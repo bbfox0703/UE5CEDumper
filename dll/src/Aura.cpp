@@ -5986,12 +5986,14 @@ static void EnsureUFunctionFuncOffset() {
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.
 static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
-    int primary = (g_cachedUEVersion >= 550) ? 0xC0
-                : (g_cachedUEVersion >= 425) ? 0xB0
-                : (g_cachedUEVersion >= 421) ? 0x98 : 0x88;
+    // Shares DynOff::FunctionFlagsOffsetFor with Ubel::ReadFuncFlagsAndParams — these two
+    // drifting apart is how one of them kept a dead `>= 550 -> 0xC0` band while the other
+    // was fixed. One table, one sweep, one place to correct.
+    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
+                                                       DynOff::bCasePreservingName);
     uint32_t flags = 0;
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, flags) && flags != 0) return flags;
-    for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+    for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
         if (tryOff == primary) continue;
         if (Macht::ReadSafe<uint32_t>(funcAddr + tryOff, flags) && flags != 0) return flags;
     }

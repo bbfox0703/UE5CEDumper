@@ -5364,6 +5364,73 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
 // Ubel.cpp — but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
+static void Test_FunctionFlagsOffset() {
+    // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
+    // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
+    // not retargeted, because 0xC0 is FirstPropertyToInit (an FProperty*) from UE 5.x.
+    // Both readers accept on `!= 0`, so a retarget would latch a pointer's low dword.
+
+    // --- measured rows, from the 31 UVTD MemberVarLayout templates ---
+    EXPECT("A3: 4.11 = 0x88", DynOff::FunctionFlagsOffsetFor(411, false) == 0x88);
+    EXPECT("A3: 4.21 = 0x88 -- NOT 0x98; the old `>= 421` band was off by one",
+           DynOff::FunctionFlagsOffsetFor(421, false) == 0x88);
+    EXPECT("A3: 4.22 = 0x98", DynOff::FunctionFlagsOffsetFor(422, false) == 0x98);
+    EXPECT("A3: 4.24 = 0x98", DynOff::FunctionFlagsOffsetFor(424, false) == 0x98);
+    EXPECT("A3: 4.25 = 0xB0", DynOff::FunctionFlagsOffsetFor(425, false) == 0xB0);
+
+    // --- FLAT for nine consecutive versions, 4.25 through 5.8. This is the property the
+    //     dead 0xC0 band contradicted, so assert it across the whole range. ---
+    for (unsigned v : { 425u, 426u, 427u, 500u, 501u, 502u, 503u, 504u, 505u, 506u, 507u, 508u }) {
+        EXPECT("A3: FunctionFlags is 0xB0 for every version 4.25-5.8",
+               DynOff::FunctionFlagsOffsetFor(v, false) == 0xB0);
+    }
+
+    // --- 0xC0 IS FirstPropertyToInit. No version, in either case-preserving mode, may
+    //     ever resolve to it, and it must not appear in the fallback sweep either. ---
+    for (unsigned v = 411; v <= 509; ++v) {
+        EXPECT("A3: no version resolves to 0xC0 (FirstPropertyToInit)",
+               DynOff::FunctionFlagsOffsetFor(v, false) != 0xC0);
+        EXPECT("A3: no CPN version resolves to 0xC0 either",
+               DynOff::FunctionFlagsOffsetFor(v, true) != 0xC0);
+    }
+    for (int off : DynOff::FUNCTIONFLAGS_SWEEP) {
+        EXPECT("A3: the sweep never tries 0xC0", off != 0xC0);
+        EXPECT("A3: the sweep never tries 0xA8, which matches no version", off != 0xA8);
+    }
+
+    // --- case-preserving adds a uniform +8 (measured: 4_27_CasePreserving = 0xB8 vs
+    //     4_27's 0xB0). Neither reader consulted it before, and 0xB8 sat LAST in the
+    //     old sweep, behind the 0xC0 that would have matched first. ---
+    EXPECT("A3: 4.27 CPN = 0xB8", DynOff::FunctionFlagsOffsetFor(427, true) == 0xB8);
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;
+        EXPECT("A3: CPN is exactly +8 at every version",
+               DynOff::FunctionFlagsOffsetFor(v, true)
+                   == DynOff::FunctionFlagsOffsetFor(v, false) + 8);
+    }
+
+    // --- the sweep must be able to reach every value the table can produce, or the
+    //     fallback cannot rescue a version whose primary read came back 0 ---
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;
+        for (bool cpn : { false, true }) {
+            const int want = DynOff::FunctionFlagsOffsetFor(v, cpn);
+            bool found = false;
+            for (int off : DynOff::FUNCTIONFLAGS_SWEEP) if (off == want) found = true;
+            EXPECT("A3: the sweep covers every offset the table can produce", found);
+        }
+    }
+
+    // --- 0xB8 must be tried BEFORE anything that is not a real FunctionFlags offset.
+    //     In the old sweep it was last, behind 0xC0 and 0xA8. ---
+    int idxB8 = -1, idxLast = -1, n = 0;
+    for (int off : DynOff::FUNCTIONFLAGS_SWEEP) { if (off == 0xB8) idxB8 = n; idxLast = n; ++n; }
+    EXPECT("A3: 0xB8 (the case-preserving 4.25+ value) is in the sweep", idxB8 >= 0);
+    EXPECT("A3: 0xB8 is not left until last", idxB8 < idxLast);
+    EXPECT("A3: 0xB0 is tried first -- it covers 4.25 through 5.8",
+           DynOff::FUNCTIONFLAGS_SWEEP[0] == 0xB0);
+}
+
 static void Test_ProcessEventVTableSlot() {
     // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
     // NOT a producible version -- versions are major*100+minor, capped at 509. So every
@@ -7257,6 +7324,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_PropertyFamilyIsCoherent);

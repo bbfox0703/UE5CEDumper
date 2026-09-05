@@ -1408,22 +1408,19 @@ int32_t FindFieldOffset(uintptr_t classAddr, const char* exact,
 // WalkFunctions and ResolveFunctionInfo. `funcAddr` must already be a validated
 // UFunction*; all reads are SEH-safe via Macht::ReadSafe.
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
-    // Version-aware probing of UFunction::FunctionFlags. RE-UE4SS templates:
-    //   0x88 = UE 4.18-4.20      0x98 = UE 4.21-4.24
-    //   0xB0 = UE 4.25-4.27 / UE5.0-5.4      0xC0 = UE 5.5+
+    // Version- AND case-preserving-aware. The table, the measurements behind it, and
+    // why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor
+    // (Grimoire.h) — in the header so the test target can pin every row.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
-    int primary;
-    if (g_cachedUEVersion >= 550)      primary = 0xC0;
-    else if (g_cachedUEVersion >= 425) primary = 0xB0;
-    else if (g_cachedUEVersion >= 421) primary = 0x98;
-    else                               primary = 0x88;
+    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
+                                                       DynOff::bCasePreservingName);
 
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
         funcFlagsOff = primary;
     } else {
         // Fallback: try all known offsets (skip primary, already tried).
-        for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+        for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
             if (tryOff == primary) continue;
             if (Macht::ReadSafe<uint32_t>(funcAddr + tryOff, funcFlags) && funcFlags != 0) {
                 funcFlagsOff = tryOff;

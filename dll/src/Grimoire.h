@@ -312,6 +312,45 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
     }
 }
 
+// === UFunction::FunctionFlags offset, per engine version ===
+//
+// ⛔ The two readers that use this (Ubel::ReadFuncFlagsAndParams, Aura::ReadFunctionFlags)
+// both carried a `>= 550 -> 0xC0` band. 550 is not a producible version, so the band was
+// dead — but it must be DELETED, never retargeted. At UE 5.8, offset 0xC0 is
+// `FirstPropertyToInit`, an `FProperty*` (MemberVariableLayout_5_08_Template.ini), which is
+// non-zero for most functions. Both readers accept on `!= 0`, so a retarget to `>= 505`
+// would latch a pointer's low dword AS FunctionFlags — and then read NumParms / ParmsSize /
+// ReturnValueOffset from 0xC4 / 0xC6 / 0xC8, i.e. the rest of that pointer. That is strictly
+// worse than the dead band it replaced.
+//
+// MEASURED across all 31 UVTD templates (vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/,
+// `[UFunction] FunctionFlags`). It is FLAT for nine consecutive versions:
+//   4.07        0x90
+//   4.08-4.21   0x88     <- the old comment said "4.18-4.20", and the band said >= 421
+//   4.22-4.24   0x98     <-   ...both off by one: 4.21 is 0x88, not 0x98
+//   4.25-5.08   0xB0     <- every version from 4.25 to 5.8 inclusive
+//
+// WITH_CASE_PRESERVING_NAME adds a uniform +8: UFunction derives from UStruct -> UField ->
+// UObject, and a case-preserving FName widens UObject's Name slot by 8, shifting everything
+// after it. Measured: MemberVariableLayout_4_27_CasePreserving_Template.ini has
+// FunctionFlags = 0xB8 against 4_27's 0xB0. Neither reader consulted bCasePreservingName
+// before 2026-09-05, and 0xB8 sat LAST in their fallback sweep behind 0xC0.
+constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName) {
+    int base;
+    if      (ueVersion >= 425) base = 0xB0;
+    else if (ueVersion >= 422) base = 0x98;
+    else if (ueVersion >= 408) base = 0x88;
+    else                       base = 0x90;   // 4.07, below our 4.11 floor
+    return base + (casePreservingName ? 8 : 0);
+}
+
+// Fallback sweep, most-likely first. Exactly the six values the templates can produce at or
+// above our 4.11 floor — each base and its +8 case-preserving twin:
+//   0xB0/0xB8 (4.25+), 0x98/0xA0 (4.22-4.24), 0x88/0x90 (4.11-4.21).
+// ⚠ 0xC0 is NOT here (it is FirstPropertyToInit, see above) and neither is 0xA8, which the
+// old sweep tried and which matches no version of anything.
+inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).
