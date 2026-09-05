@@ -1694,8 +1694,15 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
-    // TLazyObjectPtr = FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) — fixed 0x20
-    if (typeName == "LazyObjectProperty")  return 0x20;
+    // sizeof(TLazyObjectPtr) = FWeakObjectPtr(8) + the persistent-ptr envelope + FGuid(16).
+    // ⛔ NOT a fixed 0x20. FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so there is
+    // no pad after the tag: 0x1C up to 5.2, and 0x18 from 5.3 where TagAtLastTest was deleted.
+    // 0x20 is the FWeakObjectPtr+Tag+pad+FGuid model audit A1 deleted, and it is wrong in EVERY
+    // era. Dynamic for exactly the reason NameProperty above is: ValidateArrayElemSize treats
+    // this as AUTHORITATIVE and overrides the engine's own ElementSize, so a wrong value here is
+    // actively substituted for a right one — and ResolveInnerSize returns it before it ever asks
+    // the engine, so nothing downstream could correct it.
+    if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
     // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 16 or 24 depending on
@@ -2955,7 +2962,9 @@ ReadArrayResult ReadSoftObjectArrayElements(
 
 // ============================================================
 // Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
-// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) = 0x20
+// Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
+// ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
+// and 5.3 deleted the tag outright. The old "= 0x20" here was the model audit A1 removed.
 // ============================================================
 bool IsLazyObjectArrayType(const std::string& innerTypeName) {
     return innerTypeName == "LazyObjectProperty";
@@ -2973,9 +2982,16 @@ ReadArrayResult ReadLazyObjectArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    // TLazyObjectPtr is fixed 0x20 — match ReadPointerArrayElements pattern
-    // and force the stride to avoid garbage from FPROPERTY_ELEMSIZE.
-    elemSize = 0x20;
+    // ⛔ DO NOT force a constant here. This read `elemSize = 0x20;` — the
+    // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 deleted — and it cost two things:
+    // element 0 read correctly while every index ≥1 drifted 4 bytes (≤5.2) or 8 (≥5.3), and
+    // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so the
+    // `TLazyObjectPtr payload envelope measured` line could never be emitted from THIS path —
+    // making an operator who reached lazy via an array (the obvious route) score a correct fix
+    // as FAILED. Route through the same envelope the scalar path uses: LazyGuidOffset MEASURES
+    // from a real ElementSize and latches it, and falls back to the version default on garbage,
+    // which is what the old forced constant was really guarding against.
+    elemSize = LazyGuidOffset(elemSize) + 0x10;   // envelope + sizeof(FGuid)
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -6135,7 +6151,9 @@ void ResolvePropertyPreviews(
         // 8 bytes as a UObject* with NO size gate at all — so an FWeakObjectPtr
         // { int32 ObjectIndex; int32 SerialNumber } was published as the address
         // Serial<<32|Index and printed as a plausible-looking "0x…". TLazyObjectPtr
-        // begins with the same FWeakObjectPtr (+0x08 Tag, +0x10 FGuid), so it resolves
+        // begins with the same FWeakObjectPtr (then the envelope: +0x08 Tag and the FGuid at
+        // +0x0C up to 5.2, the FGuid straight at +0x08 from 5.3 — NOT a fixed +0x10, which is
+        // the model audit A1 deleted), so it resolves
         // identically; its FGuid is the honest fallback when nothing is loaded, which
         // is what ReadLazyObjectArrayElements already displays.
         if (t == "WeakObjectProperty" || t == "LazyObjectProperty") {

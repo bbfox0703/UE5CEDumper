@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -779,7 +779,45 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A3: `UFunction::FunctionFlags` on a real UE 4.21 title
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A3-FUNCFLAGS-2026-09-05]` — audit A3: closed on a **4.18** host, without the 4.21 title the row was gated on
+
+> **CLOSED on the verification PC, build 3372.** Rig:
+> [`tools/verify/a3_funcflags_override.py`](../tools/verify/a3_funcflags_override.py).
+>
+> ⛔ **THE HOST GATE IS DISSOLVED, not waived.** This row was blocked on Star Wars Jedi: Fallen
+> Order — a GHOST on *both* machines (folder, no executable) and an EA-launcher title that cannot
+> be installed without the EA client. Two facts, both read out of the code, make a **UE 4.18** host
+> an exact substitute:
+>
+> 1. `DynOff::FunctionFlagsOffsetFor` puts **4.08–4.21 in ONE band at `0x88`** (`Grimoire.h`:
+>    `>= 425 → 0xB0`, `>= 422 → 0x98`, `>= 408 → 0x88`). A 4.18 binary's true offset **is** a 4.21
+>    binary's. For this test they are interchangeable.
+> 2. The offset is **not latched** — both readers recompute it from `g_cachedUEVersion` on every
+>    call (`Ubel.cpp:1432`, `Aura.cpp:6041`), unlike the soft/lazy envelope which *is* latched and
+>    does **not** re-derive on override. So `set_ue_version_override` really does move it.
+>
+> So overriding a 4.18 host to **421** feeds the reader *precisely the input the fix changed*.
+>
+> **Measured on OCTOPATH TRAVELER, 406,060 objects, 3,000 UFunctions per pass:**
+>
+> | `g_cachedUEVersion` | table offset | sane | a sample row |
+> |---|---|---|---|
+> | native **418** | `0x88` | **3000/3000** | `ExecuteUbergraph num_parms=1 parms_size=4 flags=0x8020800` |
+> | override **421** | `0x88` | **3000/3000** | identical — ⭐ **this is the fix**; the pre-fix ladder said `>= 421 → 0x98` |
+> | override **422** | `0x98` | **0/3000** | `num_parms=247 parms_size=0 flags=0x2118ed60` |
+> | restored **418** | `0x88` | **3000/3000** | identical again |
+>
+> ⭐ **The 422 leg is what makes this a test rather than a tautology.** "421 looks fine" is equally
+> true of a reader that ignores the version entirely; 422 collapsing to 0/3000 — with exactly the
+> `2 (65413B)`-shaped nonsense this row warned about — proves the reader follows
+> `g_cachedUEVersion`. And the clean restore shows the override is not sticky, so neither reading is
+> an artefact of ordering.
+>
+> ⚠ **SCOPE, and do not upgrade this claim.** It proves the table's value **reaches the reader** and
+> yields sane parameter data at version input 421 — the half the templates cannot supply. It does
+> **not** prove that a retail 4.21 binary's layout is `0x88`; that rests on the 31 UVTD templates,
+> offline, and no live host of any version can add to it. ⛔ It also does **not** close the CE
+> `Mimic: FIND_FUNCTION` leg, which needs CE and is a separate observable.
 
 *The pre-fix ladder read `>= 421 → 0x98`; the measured table is `4.08-4.21 = 0x88`, `4.22-4.24 = 0x98` (`Grimoire.h:396-403`). Exactly **one** producible version changes: **4.21**. On the 4.21 template `0x98` is `FirstPropertyToInit`, an `FProperty*` — and acceptance is only `funcFlags != 0` (`Ubel.cpp:1435`), so a non-null pointer's low dword latched and `NumParms` / `ParmsSize` / `ReturnValueOffset` were then read from `+0x04/+0x06/+0x08` off that wrong base (`Ubel.cpp:1450-1453`). The same commit deleted a dead `>= 550` band (unreachable: needles top out at 508, `VersionNeedleScan.h:61-62`; the pipe override is clamped 418..509, `Fern.cpp:1726`) and made both readers CPN-aware (no known CPN title).*
 
