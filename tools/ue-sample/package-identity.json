@@ -1,15 +1,15 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "8dde289f",
-  "source_sha256": "10ca85586024439b49dc3415009a864b8f4a6704fa46b30c150463266d58b09e",
-  "captured_utc": "2026-08-24T11:45:35+00:00",
+  "source_commit": "55dd441a",
+  "source_sha256": "6cff0498f1105de5ff7719142577acc492173da1993096b1538fa297391f5eb1",
+  "captured_utc": "2026-09-05T13:49:01+00:00",
   "build_command": "\"C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
-  "packaged_root": "D:\\UE_Analyze_data\\For Testing\\DumperTest",
+  "packaged_root": "D:/UE_Analyze_data/for testing/DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279267328,
-      "sha256": "61909cad164ea87b632bb2817191ca645c4212442edb78d983772d8560141872",
+      "size": 279271936,
+      "sha256": "8413989448c774d0830abb18a544ab587f4f3a49443808ee9936977009652bd3",
       "reflected_present": {
         "DumperTestActor": 5,
         "DumperTestSubsystem": 2,
@@ -23,7 +23,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-08-24T10:54:38+00:00"
+      "exe_mtime": "2026-09-05T13:43:36+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
@@ -64,9 +64,12 @@
       "exe_mtime": "2026-08-24T11:13:56+00:00"
     }
   },
-  "problems": [],
+  "problems": [
+    "STALE BINARY: Shipping was built before 'DumperTestTypes.h' was last edited in D:/Unreal Projects/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it",
+    "STALE BINARY: DebugGame was built before 'DumperTestTypes.h' was last edited in D:/Unreal Projects/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it"
+  ],
   "built_from": {
-    "path": "D:\\Unreal Projects\\DumperTest\\Source\\DumperTest",
-    "source_sha256": "10ca85586024439b49dc3415009a864b8f4a6704fa46b30c150463266d58b09e"
+    "path": "D:/Unreal Projects/DumperTest\\Source\\DumperTest",
+    "source_sha256": "6cff0498f1105de5ff7719142577acc492173da1993096b1538fa297391f5eb1"
   }
 }
