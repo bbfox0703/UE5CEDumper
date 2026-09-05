@@ -312,7 +312,14 @@ int main() {
                                : "re-read — not reproduced by this fixture");
     }
 
-    printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+    // ⚠ THE SUMMARY USED TO BE PRINTED HERE, mid-main, and it UNDERCOUNTED SILENTLY.
+    // `check()` prints nothing on success, so the only visible evidence a block ran is its
+    // `blk()` label and the final tally. Every block appended after this point — SANEPROPS,
+    // and later the A1 lazy-stride block — executed and passed while the printed line still
+    // said "11 checks", i.e. the report and the reality were computed at different points in
+    // the same function. Moved to just before `return`, where it counts everything.
+    // (Found 2026-09-05 while adding the A1 block: its six checks were invisible.)
+
     // -- SANEPROPS-2026-08-26 -- a big class is not a recycled one -----------------
     //
     // One constant answered two questions. P3R has two REAL classes at ~3.67 MB
@@ -368,5 +375,60 @@ int main() {
               bigNoFill.gapFillSkipped == false);
     }
 
+    {   blk("A1 follow-up — sizeof(TLazyObjectPtr) is DERIVED, and is 0x20 in NO era");
+        // ⭐ WHY THIS TEST EXISTS, AND WHY IT IS OFFLINE. `ReadLazyObjectArrayElements` forced
+        // `elemSize = 0x20` — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 was
+        // written to delete — and `InferScalarSize` returned the same constant, while
+        // `ResolveInnerSize` consults InferScalarSize BEFORE it ever asks the engine, so nothing
+        // downstream could correct it. Two costs: every array element from index 1 drifted, and
+        // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS — so the
+        // `payload envelope measured` line could never be emitted from an array walk, and an
+        // operator reaching lazy that way would score a CORRECT fix as FAILED.
+        //
+        // It is offline because no installed title has a TArray<TLazyObjectPtr> (OCTOPATH has 5
+        // scalar lazy properties and zero arrays), and because the 2026-09-05 batch spent itself
+        // believing "Ubel.cpp is in no test target" — it has been in THIS one since 2026-08-25.
+        //
+        // The truth being pinned: FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so
+        // there is no pad after the tag. 0x1C up to 5.2; 0x18 from 5.3, where TagAtLastTest was
+        // deleted. OCTOPATH reported ElementSize 0x1C live on 2026-09-05 — the same number from
+        // the engine's own side, which is what makes these constants a measurement and not a guess.
+        const uint32_t savedVer   = g_cachedUEVersion;
+        const int      savedLatch = DynOff::LAZYPTR_GUID;
+        DynOff::LAZYPTR_GUID = -1;          // no latch, so the version fallback is what answers
+
+        char buf[96];
+        g_cachedUEVersion = 502;
+        const int32_t at502 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at502);
+        check("UE 5.2 -> 0x1C  (FWeakObjectPtr 8 + Tag 4, no pad)", at502 == 0x1C, buf);
+
+        g_cachedUEVersion = 418;
+        const int32_t at418 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at418);
+        check("UE 4.18 -> 0x1C, matching OCTOPATH's measured ElementSize", at418 == 0x1C, buf);
+
+        g_cachedUEVersion = 503;
+        const int32_t at503 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at503);
+        check("UE 5.3 -> 0x18  (TagAtLastTest deleted)", at503 == 0x18, buf);
+
+        g_cachedUEVersion = 508;
+        const int32_t at508 = Ubel::InferScalarSize("LazyObjectProperty");
+        check("UE 5.8 -> 0x18 as well", at508 == 0x18);
+
+        // THE REGRESSION GUARD, and it is the whole point: the old value must be unreachable.
+        check("...and 0x20 is returned by NO era",
+              at502 != 0x20 && at418 != 0x20 && at503 != 0x20 && at508 != 0x20);
+
+        // The boundary is 5.3 exactly, not "somewhere in 5.x" — 5.2 and 5.3 must differ by the
+        // 4-byte tag and nothing else.
+        check("...and the 5.2/5.3 step is exactly the 4-byte tag", at502 - at503 == 4);
+
+        g_cachedUEVersion    = savedVer;
+        DynOff::LAZYPTR_GUID = savedLatch;
+    }
+
+    printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
