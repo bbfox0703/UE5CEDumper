@@ -660,7 +660,35 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A7: the SDK export's empty-base struct fix, end to end
+### ⬜ FIXED 2026-09-05 — audit A7: the SDK export's empty-base struct fix (**wire hops PROVEN 2026-09-05; the empty base has NO live vehicle — fixture written, needs a cook**)
+
+> **PARTIAL, `[A7-WIRE-2026-09-05]`, build 3371.** Two of the four hops are settled; the row's own
+> "rides along on any live session, no dedicated launch" turned out to be false.
+>
+> ✅ **Hops 1–2 (DLL emits → pipe carries) are PROVEN, and not on a hand-built model.**
+> `own_props_start` is present on every `walk_class` response's class object and is internally
+> consistent wherever a super exists — measured across EVERSPACE 2 (1.15 M objects) and DumperTest:
+>
+> | struct | `super_props_size` | `own_props_start` | `props_size` | reading |
+> |---|---|---|---|---|
+> | `ActorTickFunction` (super `TickFunction`) | 40 | **-1** | 48 | derived, adds no own properties |
+> | `Vector_NetQuantizeNormal` (super `Vector`) | 24 | **-1** | 24 | ditto |
+> | `DialogIDs` (ES2, super `DialogIDs_Chunk1`) | 32040 | **32040** | 40896 | the W2 case: split exactly at `superPropsSize` |
+>
+> ⛔ **Hops 3–4 CANNOT be run: the empty base does not exist in any live pool.** The row names
+> `FEmptyPayload` and says it rides along on any session. Measured 2026-09-05: **zero** structs with
+> `PropertiesSize == 1` in EVERSPACE 2's 3,808 loaded classes, and none among DumperTest's reachable
+> structs either. Two reasons, and both are structural rather than bad luck: `list_classes` returns
+> **UClass** objects only, so a `UScriptStruct` is not enumerable that way at all (struct addresses
+> have to be harvested from `walk_instance` field rows); and a whole-pool walk only ever sees what
+> is **LOADED**, which `FEmptyPayload` (an editor-adjacent AnimData type) is not at runtime.
+>
+> ▶ **FIXTURE WRITTEN, awaiting a package build.** `FDumperTestEmptyBase` (empty `USTRUCT`) plus
+> `FDumperTestBracketPayload : FDumperTestEmptyBase` with a single `FString Description` at offset 0,
+> reachable through a new `UPROPERTY() FDumperTestBracketPayload EmptyBasePayload` on the actor and
+> initialised to `A7EmptyBase`. `check_ue_sample_values` green. It needs a DumperTest cook/pack
+> before it can be walked — **ask the maintainer, and name the configuration**; source edits and
+> `Build.bat` are theirs to accept, `RunUAT BuildCookRun` is not something to start unasked.
 
 *UE reports an empty native `USTRUCT`'s `PropertiesSize` as **1**, so the emitter's `Offset >= superPropsSize` split dropped a derived struct's offset-0 field and the trailing-pad pass wrote padding in its place. The floor is now lowered by a new wire field, and the empty base is emitted empty so EBO applies: `Ubel.cpp:1004-1007` captures `OwnPropertiesStart` after the own-chain walk and **before** the super chain is prepended at `:1015-1017`; `Ubel.h:72` defaults it `-1`; `Fern.cpp:2117` sends `own_props_start` from the serialiser shared by `walk_class` and `walk_class_batch`; `DumpService.cs:377` parses it with a load-bearing `?? -1`; `SdkExportService.cs:446` lowers the floor and `:495-496` suppresses the pad.*
 

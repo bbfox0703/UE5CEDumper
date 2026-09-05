@@ -213,6 +213,11 @@ ADumperTestActor::ADumperTestActor()
 	Health.BaseValue    = 100.f;
 	Health.CurrentValue = 100.f;
 
+	// A7: a value the tester can see in Live Walker's Value column at OFFSET 0 of
+	// BracketPayload. If the emitter's empty-base split regresses, this field is
+	// the one that disappears behind a Pad_0000 row.
+	EmptyBasePayload.Description = TEXT("A7EmptyBase");
+
 	TickCount = 0;
 	FrozenInt = 424242;   // never written again — the Unchanged control
 
