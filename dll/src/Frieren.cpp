@@ -1555,25 +1555,32 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
 // here will be cross-checked by post-install hook-fire-count validation
 // in TryInstallGameThreadHook below.
 static int DetectProcessEventVTableOffsetByVersion(uintptr_t vtable) {
-    int primary;
-    if (g_cachedUEVersion >= 550)      primary = 0x228;
-    else if (g_cachedUEVersion >= 500) primary = 0x220;
-    // 4.27 is 0x220, NOT the 0x218 this band used to return. 0x218 is slot 67 =
-    // UObject::OverridePerObjectConfigSection, one slot BEFORE ProcessEvent — hooking it is
-    // exactly the build-647 failure (invokes time out, static fast path returns 0).
-    // Ground truth: the DropIn 4.27.2 PDB, plus four live games (Geri, SBDR, P3R, Elliot).
-    // 4.25/4.26 are deliberately left on 0x218: we have no measured value for either, and
-    // widening the 4.27 number over them would be a guess. Caveat for both: these are
-    // non-editor builds — an editor build inserts the WITH_EDITOR virtual block and shifts
-    // ProcessEvent later.
-    else if (g_cachedUEVersion >= 427) primary = 0x220;
-    else if (g_cachedUEVersion >= 425) primary = 0x218;
-    else if (g_cachedUEVersion >= 420) primary = 0x210;
-    else                               primary = 0x208;
+    // The per-version slot table, and the evidence for it, live on
+    // Grimoire's DynOff::ProcessEventVTableSlotFor — in the header so the test target
+    // can pin every row (the tests link headers, not this .cpp).
+    //
+    // The old ladder here was `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is not a
+    // producible version, so EVERY UE5 game silently took 0x220 — off by 0x38..0x58.
+    // 4.27 = 0x220 is retained and is now corroborated by the PDB oracle; the note it
+    // carried is worth keeping: 0x218 is slot 67, UObject::OverridePerObjectConfigSection,
+    // one slot BEFORE ProcessEvent, and hooking it is exactly the build-647 failure
+    // (invokes time out, static fast path returns 0).
+    int primary = DynOff::ProcessEventVTableSlotFor(g_cachedUEVersion);
+    bool extrapolated = false;
+    if (primary == 0) {
+        // No measurement for this version: below the 4.11 floor, or a future 5.9+.
+        // Take the nearest measured neighbour rather than a blanket constant, and say
+        // out loud that it is a guess — this is the arm that used to lie quietly.
+        primary = (g_cachedUEVersion >= 500) ? DynOff::ProcessEventVTableSlotFor(508)
+                                             : DynOff::ProcessEventVTableSlotFor(411);
+        extrapolated = true;
+    }
 
     LOG_WARN("DetectProcessEvent (fallback): pattern scan missed, "
-             "falling back to UE=%u version-table primary=0x%X",
-             g_cachedUEVersion, primary);
+             "falling back to UE=%u version-table primary=0x%X%s",
+             g_cachedUEVersion, primary,
+             extrapolated ? "  <-- EXTRAPOLATED, no measurement for this version"
+                          : "  (measured, UVTD PDB oracle)");
     for (int delta = -16; delta <= 16; delta += 8) {
         int off = primary + delta;
         if (off < 0) continue;

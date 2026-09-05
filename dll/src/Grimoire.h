@@ -251,6 +251,67 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
     return (ueVersion >= 503) ? 0x08 : taggedEnvelope;
 }
 
+// === UObject::ProcessEvent vtable slot, per engine version ===
+//
+// Only ever a FALLBACK: Frieren's pattern scan over [0x100,0x300) stays primary, and a
+// hook installed off this table is still cross-checked by the post-install fire count.
+//
+// ⛔ The table it replaces was wrong for EVERY UE5 game, and silently. It read
+//      >= 550 -> 0x228 ; >= 500 -> 0x220
+// but 550 is unreachable — versions are encoded major*100+minor and capped at 509
+// (Genau.cpp `major == 5 && minor <= 9`, Fern.cpp's 418..509 bound), so every UE5
+// title took the 0x220 arm, which is off by 0x38 (5.0) to 0x58 (5.5).
+//
+// MEASURED, from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
+// PDB dumps, one .ini per engine version. Slot = count of entries from `[UObjectBase]`
+// to `ProcessEvent`, counting the per-section `__vecDelDtor` once (it is the shared
+// destructor slot, relisted under each class). That dedup rule is exact here: only
+// `[UObjectBase]`, `[UObjectBaseUtility]` and `[UObject]` precede ProcessEvent — one
+// single-inheritance vtable — and `__vecDelDtor` is the ONLY name repeated among them.
+//
+// Cross-checked against six values this repo already had, all six agree:
+//   4.26 0x218 (the FF7R note's "stock 4.26")   4.27 0x220 (DropIn PDB + 4 live games)
+//   5.4  0x268 (DragonSword)                    5.6  0x260 (Lushfoil, Stark.h)
+//   5.7  0x260 (Solarpunk)                      5.8  0x250 (audit PDB work)
+//
+// ⚠ The table is NOT monotonic — 4.20 0x208 then 4.21 0x200, and 5.5 0x278 then 5.6
+// 0x260 — so it must stay an exact lookup. A `>=` ladder invites a "simplification"
+// that silently reintroduces the bug. (5.6 drops 3 non-editor virtuals and adds 2;
+// 5.8 deletes PostInterpChange and IsDestructionThreadSafe, both declared before
+// ProcessEvent, hence 0x260 - 0x10.)
+//
+// ⚠ These are NON-EDITOR dumps, and that is a property of the dump, NOT of where the
+// editor virtuals sit. UE 5.8's Object.h declares 33 WITH_EDITOR virtuals BEFORE
+// ProcessEvent (Object.h:250..1490); the templates simply contain none of them
+// (`PostEditChangeProperty`, `PreEditChange`, `CanEditChange`, … all absent, while
+// every non-editor virtual is present). An editor build shifts ProcessEvent far later
+// and this table does not describe it. Games are non-editor builds, so this is right
+// for our target — but do not "extend" it to an editor process.
+//
+// Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
+// floor; 5.9+ does not exist yet). The caller decides what to do with that.
+constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
+    switch (ueVersion) {
+        case 411: case 412: case 413:            return 0x1A8;
+        case 414:                                return 0x1C8;
+        case 415:                                return 0x1D0;
+        case 416:                                return 0x1F0;
+        case 417: case 418: case 419:            return 0x1F8;
+        case 420:                                return 0x208;
+        case 421: case 422:                      return 0x200;
+        case 423: case 424: case 425:            return 0x210;
+        case 426:                                return 0x218;
+        case 427:                                return 0x220;  // CasePreserving is 0x220 too
+        case 500:                                return 0x258;
+        case 501:                                return 0x260;
+        case 502: case 503: case 504:            return 0x268;
+        case 505:                                return 0x278;
+        case 506: case 507:                      return 0x260;
+        case 508:                                return 0x250;
+        default:                                 return 0;
+    }
+}
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).

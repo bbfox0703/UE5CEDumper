@@ -3687,10 +3687,29 @@ DumperTest Development going from no match at all to exactly one, at `0x268`.
 Lushfoil.** The slot is PDB-confirmed and the scan is file-verified, but nothing has yet watched the
 DLL do it inside the running process.
 
-⚠ **Do NOT "fix" the version table instead.** Measured true slots vs the table: DumperTest 5.4 →
-table `0x220`, true **`0x268`**; Lushfoil 5.6 → table `0x228`, true **`0x260`**. DumperTest carries
-the Iris/replication virtuals ahead of ProcessEvent, so 5.4 sits *later* than 5.6 does. Slot position
-is a **build-flag** property, not a version property — the pattern is what has to work.
+⚠ **The pattern scan is still what has to work — it stays primary and the fire-count validator
+stays the backstop.** But the two reasons this row gave for *not* fixing the version table were both
+wrong, and the table was fixed on 2026-09-05 (audit A2). Recorded so the old wording is not cited
+again:
+
+- **"Lushfoil 5.6 → table `0x228`" is impossible.** The table read `>= 550 → 0x228 / >= 500 → 0x220`,
+  and **550 is not a producible version** — versions are encoded `major*100+minor` and capped at 509
+  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound). The `0x228` arm was dead
+  code. Lushfoil got `0x220`, exactly as DumperTest did, and so did every other UE5 title.
+- **"Slot position is a build-flag property, not a version property" is refuted by these very two
+  observations.** The measured non-editor slots are 5.4 = `0x268` and 5.6 = `0x260`
+  (`vendor/RE-UE4SS/assets/VTableLayoutTemplates/`, cross-checked against six values this repo
+  already held). So DumperTest sitting *later* than Lushfoil is precisely what the **version** table
+  predicts — the two differ by engine version, not by build flags. The audit separately measured
+  5.8 Shipping / Development / DebugGame all at `0x250` and 5.4 Shipping and Development both at
+  `0x268`, i.e. build configuration does not move it. The Iris/replication attribution was a guess
+  that happened to land on a real difference with the wrong cause.
+
+⚠ Still unconfirmed **on a live game**: 5.0, 5.1, 5.2, 5.3 and 5.5. Their slots are measured from
+the PDB oracle but no title at those versions has been run. 4.11–4.25 likewise.
+⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
+*before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
+contain none of those entries. Do not extend the table to an editor build.
 
 -----
 

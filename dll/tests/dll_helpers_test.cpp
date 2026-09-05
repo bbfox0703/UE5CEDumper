@@ -5364,6 +5364,82 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
 // Ubel.cpp — but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
+static void Test_ProcessEventVTableSlot() {
+    // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
+    // NOT a producible version -- versions are major*100+minor, capped at 509. So every
+    // UE5 game silently took 0x220. These assertions exist to make that class of defect
+    // loud rather than silent.
+
+    // --- the six values this repo already had, from sources independent of the oracle ---
+    EXPECT("A2: 4.26 = 0x218 (FF7R note's stock 4.26)",
+           DynOff::ProcessEventVTableSlotFor(426) == 0x218);
+    EXPECT("A2: 4.27 = 0x220 (DropIn PDB + Geri/SBDR/P3R/Elliot)",
+           DynOff::ProcessEventVTableSlotFor(427) == 0x220);
+    EXPECT("A2: 5.4 = 0x268 (DragonSword)",
+           DynOff::ProcessEventVTableSlotFor(504) == 0x268);
+    EXPECT("A2: 5.6 = 0x260 (Lushfoil)",
+           DynOff::ProcessEventVTableSlotFor(506) == 0x260);
+    EXPECT("A2: 5.7 = 0x260 (Solarpunk)",
+           DynOff::ProcessEventVTableSlotFor(507) == 0x260);
+    EXPECT("A2: 5.8 = 0x250 (5.8 drops PostInterpChange + IsDestructionThreadSafe)",
+           DynOff::ProcessEventVTableSlotFor(508) == 0x250);
+
+    // --- 0x218 is slot 67, OverridePerObjectConfigSection, one slot BEFORE
+    //     ProcessEvent on 4.27. Hooking it is the build-647 failure. No version may
+    //     resolve to it except 4.26, where it is genuinely correct. ---
+    for (unsigned v = 411; v <= 509; ++v) {
+        const int slot = DynOff::ProcessEventVTableSlotFor(v);
+        EXPECT("A2: only 4.26 may resolve to 0x218", slot != 0x218 || v == 426);
+    }
+
+    // --- THE DEFECT ITSELF, asserted as unreachable: no UE5 version may return the
+    //     0x220 the old table gave all of them, and none may return the 0x228 that
+    //     the unreachable >= 550 arm held (no engine version has that slot at all). ---
+    for (unsigned v = 500; v <= 509; ++v) {
+        EXPECT("A2: no UE5 version resolves to the old blanket 0x220",
+               DynOff::ProcessEventVTableSlotFor(v) != 0x220);
+        EXPECT("A2: 0x228 is not any version's slot",
+               DynOff::ProcessEventVTableSlotFor(v) != 0x228);
+    }
+
+    // --- the rows A2's own first draft got WRONG. It proposed `>= 500 -> 0x268`,
+    //     which is right only for 5.2-5.4. These three are why the oracle was worth
+    //     reading instead of shipping the hand-derived ladder. ---
+    EXPECT("A2: 5.0 is 0x258, NOT 0x268", DynOff::ProcessEventVTableSlotFor(500) == 0x258);
+    EXPECT("A2: 5.1 is 0x260, NOT 0x268", DynOff::ProcessEventVTableSlotFor(501) == 0x260);
+    EXPECT("A2: 5.5 is 0x278, NOT 0x268 (5.5 inserts GetVersePath + CollectSaveOverrides)",
+           DynOff::ProcessEventVTableSlotFor(505) == 0x278);
+
+    // --- NON-MONOTONIC, in both directions. A `>=` ladder cannot express this, which
+    //     is exactly the "simplification" that would reintroduce the bug. ---
+    EXPECT("A2: 4.21 is LOWER than 4.20 (0x200 < 0x208)",
+           DynOff::ProcessEventVTableSlotFor(421) < DynOff::ProcessEventVTableSlotFor(420));
+    EXPECT("A2: 5.6 is LOWER than 5.5 (0x260 < 0x278)",
+           DynOff::ProcessEventVTableSlotFor(506) < DynOff::ProcessEventVTableSlotFor(505));
+    EXPECT("A2: 5.8 is LOWER than 5.7 (0x250 < 0x260)",
+           DynOff::ProcessEventVTableSlotFor(508) < DynOff::ProcessEventVTableSlotFor(507));
+
+    // --- every version we claim to support has a measurement, and every slot is a
+    //     plausible, 8-aligned vtable offset inside the pattern scanner's own window ---
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;   // 4.28..4.99 are not engine versions
+        const int slot = DynOff::ProcessEventVTableSlotFor(v);
+        EXPECT("A2: every supported version has a measured slot", slot != 0);
+        EXPECT("A2: every slot is 8-aligned", (slot % 8) == 0);
+        EXPECT("A2: every slot is inside the pattern scanner's [0x100,0x300) window",
+               slot >= 0x100 && slot < 0x300);
+    }
+
+    // --- unmeasured versions return 0 so the caller can say "extrapolated" instead of
+    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 is unreleased. ---
+    EXPECT("A2: 4.10 (below the 4.11 floor) has no measurement",
+           DynOff::ProcessEventVTableSlotFor(410) == 0);
+    EXPECT("A2: 5.9 (unreleased) has no measurement",
+           DynOff::ProcessEventVTableSlotFor(509) == 0);
+    EXPECT("A2: 550 -- the value the dead arm tested for -- has no measurement",
+           DynOff::ProcessEventVTableSlotFor(550) == 0);
+}
+
 static void Test_PersistentPtrEnvelope() {
     // A1: UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest (present at
     // 5.2.1-release PersistentObjectPtr.h:243, absent at 5.3.2-release:228), so the
@@ -7181,6 +7257,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
