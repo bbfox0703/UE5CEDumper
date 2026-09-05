@@ -4432,6 +4432,40 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_Ue53_LeafAndDropDownShareOneOffset()
+    {
+        // ⚠ THE INVARIANT THE A1 FIX BROKE AND THEN RESTORED. The DLL reads the
+        // DropDownList keys (RawIntValue) at SoftArrayPathOffset, and the exporter emits the
+        // FName leaf at the SAME offset. A1's first pass moved the leaf to +8 on UE 5.3+ but
+        // left the key read on a literal +0x10, so every key in the DropDown described a
+        // DIFFERENT field than the leaf it was attached to -- strictly worse than the
+        // original bug, where both were 0x10 and at least agreed.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Assets", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = true,
+                SoftArrayPathOffset = 0x08,   // UE 5.3+: the tag is gone
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/A.A", RawIntValue = 1, Hex = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // PackageName leaf at the measured offset, AssetName one fnameSize past it.
+        Assert.Contains("\"PackageName\"", xml);
+        Assert.Contains("<Address>+8</Address>", xml);
+        Assert.Contains("\"AssetName\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+    }
+
+    [Fact]
     public void GenerateInstanceXml_SoftObjectArray_CasePreservingName_AssetNameAt1C()
     {
         // CasePreservingName: sizeof(FName)=12 (three int32, alignof 4, no pad), so the

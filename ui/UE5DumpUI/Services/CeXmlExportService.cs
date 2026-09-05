@@ -2713,8 +2713,12 @@ public static class CeXmlExportService
         }
 
         // Phase G: TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
-        // struct group with WeakPtr leaf at +0 + FName leaf(s) at +0x10 (and
-        // +0x10+fnameSize for UE5.1+'s FTopLevelAssetPath layout). Without
+        // struct group with WeakPtr leaf at +0 + FName leaf(s) at SoftArrayPathOffset
+        // (and +SoftArrayFNameSize for UE5.1+'s FTopLevelAssetPath layout). That offset
+        // is 0x10 only up to UE 5.2 — 5.3 deleted TPersistentObjectPtr::TagAtLastTest and
+        // it became 0x08, which is why it now comes off the wire instead of being baked.
+        // ⚠ The DropDownList keys MUST be read at the same offset the leaf is emitted at;
+        // Ubel.cpp reads them with the same softPathOff for exactly that reason. Without
         // this, the inner element collapses to a single 8B WeakPtr hex blob
         // and the FSoftObjectPath::AssetPathName / PackageName is invisible.
         // Soft array layout metadata (fnameSize + FTopLevelAssetPath flag)

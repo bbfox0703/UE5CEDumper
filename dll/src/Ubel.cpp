@@ -2896,8 +2896,13 @@ ReadArrayResult ReadSoftObjectArrayElements(
         // exporter used to bake "+10"; it now takes softPathOff off the wire.
         // 0 maps to "None" — leave rawIntValue=0 for those so the DropDown
         // dedup naturally drops them.
+        // ⚠ MUST be softPathOff, not a literal 0x10. These keys are attached to the CE
+        // leaf the exporter emits AT softPathOff, so reading them from anywhere else
+        // mismatches every entry in the DropDownList. Before the A1 fix both were 0x10
+        // and at least agreed with each other; splitting them is strictly worse than the
+        // original bug, and it is the CE table -- the artifact that ships.
         uint32_t pathFNameIdx = 0;
-        if (Macht::ReadSafe(elemAddr + 0x10, pathFNameIdx) && pathFNameIdx != 0
+        if (Macht::ReadSafe(elemAddr + softPathOff, pathFNameIdx) && pathFNameIdx != 0
             && pathFNameIdx != 0xFFFFFFFFu) {
             elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
         }
@@ -4071,12 +4076,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         // Handle LazyObjectProperty: read FUniqueObjectGuid (FGuid = 4 x uint32).
-        // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FGuid(16B)
+        // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B) [+ Tag(4B) on UE <= 5.2] + FGuid.
+        // ⚠ NOT +0x10, in any era: FUniqueObjectGuid is a bare FGuid at alignof 4, so there
+        // is no pad after the tag -- the GUID is at +0x0C up to 5.2 and +0x08 from 5.3.
+        // See DynOff::LAZYPTR_GUID. This site was missed by the A1 sweep while all three
+        // siblings were converted, so it stayed 4 bytes off on EVERY version.
         // Mirror Soft path: resolve embedded FWeakObjectPtr when the lazy ptr
         // is currently bound to a live UObject.
         if (fi.TypeName == "LazyObjectProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            uintptr_t guidAddr = fieldAddr + 0x10;
+            uintptr_t guidAddr = fieldAddr + LazyGuidOffset(fi.Size);
             uint32_t a = 0, b = 0, c = 0, d = 0;
             Macht::ReadSafe(guidAddr + 0, a);
             Macht::ReadSafe(guidAddr + 4, b);
