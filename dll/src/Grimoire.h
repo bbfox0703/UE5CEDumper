@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Grimoire — 魔導書 (Book of Spells)
@@ -53,7 +53,8 @@ inline bool IsUserspacePointer(uintptr_t p) {
 
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
-// Most offsets are stable, but Outer shifts when CasePreservingName is active (FName = 0x10):
+// Most offsets are stable, but Outer shifts when CasePreservingName is active (the
+// Name->Outer SLOT becomes 0x10; sizeof(FName) is 0xC -- see bCasePreservingName below):
 //   Standard (UE4.25-UE5.4, UE5.5+ non-CPN): Outer = 0x20
 //   CasePreservingName (UE4.27-CPN):          Outer = 0x28
 // NamePrivate at 0x18 reads ComparisonIndex (first 4 bytes), stable regardless of FName size.
@@ -237,6 +238,28 @@ inline int LAZYPTR_GUID  = -1;   // FGuid           offset inside TLazyObjectPtr
 // and a UE ≥ 5.3 untagged one (0x08 + 0x20 FTopLevelAssetPath path). Subtracting
 // the payload size — which the caller knows from the FTopLevelAssetPath form —
 // is what makes the answer unique.
+// sizeof(FSoftObjectPath) — the payload half of the envelope calculation above.
+//
+//   UE <= 5.0 : { FName AssetPathName;  FString SubPathString; }
+//   UE >= 5.1 : { FTopLevelAssetPath { FName PackageName; FName AssetName; };
+//                 FString/FUtf8String SubPathString; }
+//
+// ⚠ The FName block PADS UP to 8 before the trailing FString, which is 8-aligned. Under
+// CasePreservingName that makes the two arms disagree about which constant is right:
+//   two 0xC FNames = 0x18, already 8-aligned  -> 0x18 + 0x10 = 0x28
+//   one 0xC FName  = 0xC,  NOT 8-aligned      -> 0x10 + 0x10 = 0x20
+// So neither a bare 0x10 (the old code: gave 0x30 for the >=5.1 arm) nor a bare 0xC (the
+// naive fix: gives 0x1C for the <=5.0 arm) is correct for both. Only the AlignUp is.
+//
+// Getting the >=5.1 arm wrong was not just a bad number. With payload 0x30 against a real
+// CPN 5.1 tagged ElementSize of 0x38, PersistentPtrEnvelopeFor sees 0x38-0x30 = 0x08 --
+// which it ACCEPTS as a legal measurement and the caller LATCHES, so a bogus value then
+// outranks the version fallback. That is precisely the failure that function exists to stop.
+constexpr int FSoftObjectPathSizeFor(int fnameSize, bool isTopLevelAssetPath) {
+    const int names = isTopLevelAssetPath ? (2 * fnameSize) : fnameSize;
+    return ((names + 7) & ~7) + 0x10;   // + FString/FUtf8String { Data, Num, Max }
+}
+
 constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
                                        int taggedEnvelope, int latched,
                                        unsigned ueVersion) {
@@ -429,7 +452,18 @@ inline std::atomic<bool> bUEnumNamesDetected{false};
 inline std::atomic<bool> bUEnumNamesFailed{false};
 
 // === Detection state ===
-inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)
+// ⛔ sizeof(FName) under CasePreservingName is 0xC, NOT 0x10: three int32
+// (ComparisonIndex, Number, DisplayIndex), alignof 4, and `class FName` carries no
+// alignas -- there is NO trailing pad inside FName. 0x10 is the UObject NamePrivate->Outer
+// SLOT, which is wide only because OuterPrivate is an 8-aligned pointer.
+// This comment previously asserted the pad, and it is the single most-copied wrong sentence
+// in the tree: every downstream sizeof defect traced back to reading it as a size.
+//   SLOT (0x10)   : UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName, 8-aligned-T> value offset.
+//   sizeof (0xC)  : packed FName[] strides, stepping to an adjacent FName, FScriptDelegate,
+//                   and anything compared against an engine-reported ElementSize.
+// ⚠ Member ORDER also moves and is a separate axis: Number is at +4 from UE 5.1, but at +8
+// on a CasePreserving build of UE <= 5.0 / UE4 (DisplayIndex comes second there).
+inline bool bCasePreservingName  = false;
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as

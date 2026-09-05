@@ -363,7 +363,7 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 // Read an FName at instanceAddr + offset and resolve it to a string
 // via Serie::GetString. Returns "" on failure or "None" for the
 // canonical empty FName. Handles both 8-byte (Index+Number) and
-// 16-byte (CasePreservingName) FName layouts.
+// 12-byte (CasePreservingName) FName layouts.
 std::string ReadFNameAt(uintptr_t instanceAddr, int32_t offset);
 
 // Read an FText at instanceAddr + offset and return the embedded
@@ -410,13 +410,13 @@ struct LiveFieldValue {
     // FName leaf(s) at the FSoftObjectPath sub-offset instead of
     // a single 8B WeakPtr-only hex. 0 means "not a soft array".
     //   FSoftObjectPtr layout per UE version — note the Tag is NOT always there:
-    //     UE4 / UE5.0:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
+    //     UE4 / UE5.0:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|0xC->pads to 0x10) + FString(16) }
     //     UE5.1 / 5.2:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName x2     + FString(16) }
     //     UE5.3+:       { FWeakObjectPtr(8)                   + FName x2     + FString(16) }
     // UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest, moving the path from
     // +0x10 to +0x08. Exporters MUST use softArrayPathOffset rather than baking
     // 0x10 — a CE table built with the wrong one reads AssetName as PackageName.
-    int32_t     softArrayFNameSize = 0;          // 8 (normal) or 16 (CasePreservingName)
+    int32_t     softArrayFNameSize = 0;          // sizeof(FName): 8 (normal) or 12 (CasePreservingName)
     bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
     int32_t     softArrayPathOffset = 0;         // FSoftObjectPath offset in the element (0x10 or 0x08)
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
@@ -1019,7 +1019,7 @@ ReadArrayResult ReadInterfaceArrayElements(
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
-// Stride derives from CasePreservingName: 16 (8B FName) or 24 (16B FName).
+// Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Genau — 葛納烏 (一級魔法使篩選考官 — First-Class Mage Examiner)
 // OffsetFinder: AOB pattern scanning for GObjects, GNames, GWorld
 // ============================================================
@@ -3171,7 +3171,8 @@ static uintptr_t FindStructByName(const char* structName) {
 //   Pick any UObject* from GObjects. Read the pointer at +0x20 (candidate Outer).
 //   If it's a valid pointer, FName is 8 bytes (standard), Outer=0x20.
 //   If not, try +0x28. If THAT is a valid pointer (or null for Package),
-//   FName is 0x10 bytes (CasePreservingName), Outer=0x28.
+//   the Name->Outer SLOT is 0x10 (CasePreservingName), Outer=0x28. sizeof(FName) is 0xC;
+//   the extra 4 bytes are the 8-alignment padding in front of OuterPrivate, not part of FName.
 //
 // Also checks: if the two int32s at UObject::Name (+0x18 and +0x1C) are equal,
 // it's likely ComparisonIndex == DisplayIndex, confirming CPN.
@@ -5310,11 +5311,11 @@ bool DetectUEnumNames() {
         auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
             return Macht::ReadBytesSafe(a, o, n);
         };
-        const int fnameStride = DynOff::bCasePreservingName ? 0x10 : 0x08;
+        const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
 
         for (int off = 0x30; off <= 0x120; off += 8) {
             Neu::EnumNamesLayout layout;
-            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameStride, 16384, layout))
+            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
                 continue;
 
             // Validate count range

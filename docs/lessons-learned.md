@@ -1,4 +1,4 @@
-# Lessons Learned
+﻿# Lessons Learned
 
 > Hard-won lessons from cross-game debugging. Moved from CLAUDE.md.
 
@@ -88,7 +88,12 @@
 
 ## UE Offsets & Version Detection
 
-- **CasePreservingName (UE5.5+/5.7)**: FName grows from 0x8 to 0x10 bytes (adds DisplayIndex), shifting FField::Flags and all FProperty offsets by +0x8. Never hardcode — always detect dynamically.
+- **CasePreservingName**: FName grows from 0x8 to **0xC** bytes (adds DisplayIndex — three int32, alignof 4,
+  **no trailing pad**), and the UObject `NamePrivate`→`OuterPrivate` **slot** grows 0x8 → **0x10** because
+  `OuterPrivate` is an 8-aligned pointer. Those are two different numbers and conflating them was a whole
+  defect family (audit A9): use 0x10 for a slot or a `TPair<FName, 8-aligned-T>`, and 0xC for a packed
+  `FName[]` stride, a step to an adjacent FName, `FScriptDelegate`, or anything compared against an
+  engine-reported `ElementSize`. Never hardcode either — detect dynamically.
 - **Dumper-7 reference patterns**: `FindFFieldNameOffset()` brute-force probing, `FixupHardcodedOffsets()`, `InitFNameSettings()` — gold standard for dynamic offset discovery.
 - **"rty" diagnostic pattern**: When field names show truncated type names (e.g., "rty" from "Property"), Name offset is wrong and reading into adjacent FFieldClass data. Type names correct but field names wrong = ClassPrivate offset OK but Name offset shifted.
 - **Version detection needs context**: Bare version patterns like "5.6." appear in game data. Three-tier approach: (1) exact `++UE5+Release-` prefix, (2) `Release` in preceding 16 bytes, (3) bare pattern with guard against preceding digit/period.

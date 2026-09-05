@@ -1,4 +1,4 @@
-# Technical Notes
+﻿# Technical Notes
 
 > Moved from CLAUDE.md. Covers UE version differences, FField vs UProperty, FNamePool internals, and implementation phases.
 
@@ -18,7 +18,7 @@
 | UE5.2 | `FChunkedFixedUObjectArray` stride may differ |
 | UE5.3+ | Some games enable Object Pointer Encryption |
 | UE5.4+ | `FField` chain structure stable, no major changes |
-| UE5.5+/5.7 | **CasePreservingName**: FName grows from 0x8 to 0x10 bytes (adds DisplayIndex field), shifting FField::Flags +0x8 and all FProperty offsets by +0x8. Must use `DynOff` dynamic detection |
+| any | **CasePreservingName** (= `WITH_EDITORONLY_DATA`, so 0 in every packaged build): `sizeof(FName)` grows 0x8 → **0xC** (adds DisplayIndex; three int32, alignof 4, no pad), while the UObject `NamePrivate`→`OuterPrivate` **slot** grows to **0x10** (OuterPrivate is 8-aligned). FField::Flags and the FProperty offsets shift by the +0x8 *slot* delta. ⚠ 0x10 is the slot, **not** the size — see the A9 note on `DynOff::bCasePreservingName`. Must use `DynOff` dynamic detection |
 | UE5.8 / UE6.0 | **Cache-locality reorder** of `FUObjectArray` / `FChunkedFixedUObjectArray` (shipped in **5.8**, unchanged in 6.0): `ObjObjects` is `FUObjectArray`'s first member; chunked fields `Objects@0x00, NumElements@0x08, MaxElements@0x0C, NumChunks@0x10, MaxChunks@0x14, PreAllocatedObjects@0x18`. Matched by the **"UE5.8" preset** `{0x00,0x0C,0x08,0x14,0x10}` (`Aura.cpp:258` / `Genau.cpp:192`; ArrayLayout = `{objectsOffset, maxElementsOffset, numElementsOffset, maxChunksOffset, numChunksOffset}`). **UE6.0 is layout-identical to 5.8** for every dumper-read structure in normal shipping builds — see the parity note below |
 
 > **UE6.0 vs 5.8 — shipping-build layout parity** (verified `origin/5.8..origin/ue6-main`, 2026-06-30). For normal shipping game builds UE 6.0 reads identically to UE 5.8 across every structure the dumper touches; the core path is already UE6-ready and nothing needs implementing now:
@@ -507,7 +507,8 @@ the read-side path. Three phases:
    `TSetElement<TPair<UObjectBase*, TMap[0x50]>>`. Allocation bits
    come from inline buffer (≤128 bits) or heap-secondary at TMap+0x20.
 3. Linear-scan inner TSparseArray for FName key match. Stride 0x20
-   (FName=8) or 0x28 (`bCasePreservingName`, FName=16). Deref the
+   (FName=8) or 0x28 (`bCasePreservingName`: the FName is 0xC but PADS to a 0x10 slot
+   inside the TPair, because the TSharedPtr value is 8-aligned). Deref the
    matched `TSharedPtr` (16 B: `Object*` + `RefCount*`) to reach
    `FMulticastScriptDelegate`, then walk
    `InvocationList: TArray<FScriptDelegate>` and resolve each

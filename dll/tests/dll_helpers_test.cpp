@@ -434,9 +434,15 @@ static void Test_Alignment_NameProperty_RespectsCpnMode() {
     EXPECT("non-CPN FName @ 0x4 OK",  !Scharf::IsAlignmentSuspicious("NameProperty", 0x4, 8, false));
     EXPECT("non-CPN FName @ 0x3 BAD",  Scharf::IsAlignmentSuspicious("NameProperty", 0x3, 8, false));
 
-    // CPN (Titan Quest II): FName = 16 bytes, aligned to 8.
-    EXPECT("CPN FName @ 0x10 OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0x10, 16, true));
-    EXPECT("CPN FName @ 0xC BAD",  Scharf::IsAlignmentSuspicious("NameProperty", 0xC, 16, true));
+    // CPN: FName = 12 bytes, aligned 4 -- the SAME alignment as non-CPN. `class FName` has
+    // no alignas, so case-preserving widens it without changing its alignment.
+    // (No known live CPN title: TQ2 was measured `votes standard=20, CPN=0`.)
+    EXPECT("CPN FName @ 0x10 OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0x10, 12, true));
+    // INVERTED on purpose (A9): 0xC is a LEGAL offset for a 12-byte, 4-aligned FName. The UVTD
+    // 4.27-CasePreserving template shows FField::NamePrivate=0x28 followed by FlagsPrivate=0x34,
+    // i.e. a 4-aligned FName landing on a non-8-aligned offset. Calling that "suspicious" is
+    // exactly the false warning this module exists to avoid.
+    EXPECT("CPN FName @ 0xC OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0xC, 12, true));
 }
 
 static void Test_Alignment_ScalarPrimitives() {
@@ -4296,10 +4302,13 @@ static void Test_Neu_Legacy_Basic() {
 static void Test_Neu_Legacy_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{5,0},{6,1},{7,2}};
-    NeuPutLegacy(fm, 0x10000000, 0x20000000, es, 0x10);  // FName=16 -> stride 24, value @ +16
+    // The WRITER still lays out the real padded pair: value @ +0x10, stride 0x18. The
+    // READER below is now handed only sizeof(FName)=0xC and must derive that padding
+    // itself -- which turns what used to be a tautology into an actual test.
+    NeuPutLegacy(fm, 0x10000000, 0x20000000, es, 0x10);
     auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
     Neu::EnumNamesLayout L;
-    EXPECT("legacy CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x10, 16384, L));
+    EXPECT("legacy CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x0C, 16384, L));
     int32_t idx = 0; int64_t v = 0;
     Neu::ReadEntry(rd, L, 2, idx, v);
     EXPECT_EQ_U64("legacy CPN idx2", idx, 7);  EXPECT_EQ_U64("legacy CPN val2", v, 2);
@@ -4324,10 +4333,11 @@ static void Test_Neu_FNameData_Basic() {
 static void Test_Neu_FNameData_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{11,0},{22,1},{33,2}};
-    NeuPutFNameData(fm, 0x10000000, 0x30000000, 0x40000000, es, 0x10, true);  // FName=16 stride
+    // Packed FName[]: the stride IS sizeof(FName), so writer and reader agree on 0xC.
+    NeuPutFNameData(fm, 0x10000000, 0x30000000, 0x40000000, es, 0x0C, true);
     auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
     Neu::EnumNamesLayout L;
-    EXPECT("fnd CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x10, 16384, L));
+    EXPECT("fnd CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x0C, 16384, L));
     int32_t idx = 0; int64_t v = 0;
     Neu::ReadEntry(rd, L, 1, idx, v);
     EXPECT_EQ_U64("fnd CPN idx1", idx, 22);  EXPECT_EQ_U64("fnd CPN val1", v, 1);
@@ -5364,6 +5374,54 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
 // Ubel.cpp — but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
+static void Test_SoftObjectPathSize() {
+    // A9: sizeof(FSoftObjectPath). The FName block pads UP to 8 before the trailing
+    // FString, so under CasePreservingName the two engine eras want DIFFERENT constants
+    // and neither a bare 0x10 nor a bare 0xC is right for both.
+
+    // --- non-CPN: slot and sizeof coincide at 8, so nothing here can go wrong ---
+    EXPECT("A9: non-CPN <=5.0  = 8 + 0x10 = 0x18",
+           DynOff::FSoftObjectPathSizeFor(0x08, false) == 0x18);
+    EXPECT("A9: non-CPN >=5.1  = 0x10 + 0x10 = 0x20",
+           DynOff::FSoftObjectPathSizeFor(0x08, true) == 0x20);
+
+    // --- CPN: the whole point ---
+    EXPECT("A9: CPN >=5.1 -- two 0xC FNames are ALREADY 8-aligned (0x18) -> 0x28",
+           DynOff::FSoftObjectPathSizeFor(0x0C, true) == 0x28);
+    EXPECT("A9: CPN <=5.0 -- a LONE 0xC FName pads to 0x10 -> 0x20",
+           DynOff::FSoftObjectPathSizeFor(0x0C, false) == 0x20);
+
+    // --- the two wrong answers this function exists to make unreachable ---
+    EXPECT("A9: the old bare-0x10 bug gave 0x30 for CPN >=5.1; we must not",
+           DynOff::FSoftObjectPathSizeFor(0x0C, true) != 0x30);
+    EXPECT("A9: a naive bare-0xC would give 0x1C for CPN <=5.0; we must not",
+           DynOff::FSoftObjectPathSizeFor(0x0C, false) != 0x1C);
+
+    // --- ⚠ THE REAL DAMAGE, end to end. With the old 0x30 payload, a CPN 5.1 TAGGED
+    //     pointer (true ElementSize 0x38) yields 0x08 -- ACCEPTED and LATCHED as a
+    //     measurement, silently outranking the version fallback. With the correct
+    //     payload the same input yields the true 0x10. ---
+    {
+        const int trueTagged = 0x10;
+        const int elemSize   = trueTagged + DynOff::FSoftObjectPathSizeFor(0x0C, true); // 0x38
+        EXPECT("A9: correct payload recovers the TRUE tagged envelope",
+               DynOff::PersistentPtrEnvelopeFor(elemSize, DynOff::FSoftObjectPathSizeFor(0x0C, true),
+                                                0x10, -1, 502) == trueTagged);
+        EXPECT("A9: the stale 0x30 payload silently yields the WRONG 0x08 instead",
+               DynOff::PersistentPtrEnvelopeFor(elemSize, 0x30, 0x10, -1, 502) == 0x08);
+    }
+
+    // --- the result is always 8-aligned (the FString tail guarantees it) and always
+    //     leaves room for the FString itself ---
+    for (int fn : { 0x08, 0x0C }) {
+        for (bool tlap : { false, true }) {
+            const int sz = DynOff::FSoftObjectPathSizeFor(fn, tlap);
+            EXPECT("A9: FSoftObjectPath size is 8-aligned", (sz % 8) == 0);
+            EXPECT("A9: FSoftObjectPath leaves room for the FString header", sz >= 0x18);
+        }
+    }
+}
+
 static void Test_FunctionFlagsOffset() {
     // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
     // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
@@ -5552,10 +5610,18 @@ static void Test_PersistentPtrEnvelope() {
 
     // --- CasePreservingName widens both FNames, so the path grows and the
     //     envelope must NOT move with it (it is a property of the tag, not the payload) ---
-    EXPECT("A1: soft CPN 5.1-5.2, elem 0x40 - path 0x30 -> +0x10",
-           DynOff::PersistentPtrEnvelopeFor(0x40, 0x30, 0x10, UNMEASURED, 502) == 0x10);
-    EXPECT("A1: soft CPN >=5.3, elem 0x38 - path 0x30 -> +0x08",
-           DynOff::PersistentPtrEnvelopeFor(0x38, 0x30, 0x10, UNMEASURED, 508) == 0x08);
+    // CPN payloads corrected by A9: sizeof(FName) is 0xC, so FTopLevelAssetPath is
+    // 2*0xC = 0x18 (already 8-aligned) + FString 0x10 = 0x28. The old 0x30 came from
+    // reading the UObject Name->Outer SLOT as a sizeof.
+    EXPECT("A1: soft CPN 5.1-5.2, elem 0x38 - path 0x28 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x38, 0x28, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: soft CPN >=5.3, elem 0x30 - path 0x28 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x30, 0x28, 0x10, UNMEASURED, 508) == 0x08);
+    // ⚠ THE TRAP the A9 payload fix removes: with the old 0x30 payload, a CPN 5.1 TAGGED
+    // pointer (real ElementSize 0x38) yields 0x38-0x30 = 0x08, which this function ACCEPTS
+    // and the caller LATCHES -- a bogus measurement that then outranks the version fallback.
+    EXPECT("A9: the stale 0x30 CPN payload would have been accepted as a bogus 0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x38, 0x30, 0x10, UNMEASURED, 502) == 0x08);
 
     // --- a difference the engine cannot produce must be REFUSED, not trusted ---
     EXPECT("A1: implausible difference falls back, does not invent an offset",
@@ -7324,6 +7390,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);

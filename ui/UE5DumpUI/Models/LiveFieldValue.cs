@@ -208,7 +208,7 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>For ArrayProperty (struct arrays): UScriptStruct* address for struct element navigation.</summary>
     public string ArrayStructClassAddr { get; init; } = "";
 
-    /// <summary>For ArrayProperty (Phase G soft arrays): FName size in bytes (8 normal, 16 with CasePreservingName). 0 = not a soft array.</summary>
+    /// <summary>For ArrayProperty (Phase G soft arrays): sizeof(FName) in bytes (8 normal, 12 with CasePreservingName). 0 = not a soft array.</summary>
     public int SoftArrayFNameSize { get; init; }
 
     /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>
@@ -347,7 +347,10 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>For DataTable RowMap: row struct name (e.g., "JackDataTableRecipeBook").</summary>
     public string DataTableStructName { get; init; } = "";
 
-    /// <summary>For DataTable RowMap: FName size in bytes (8 or 16 with CasePreservingName).</summary>
+    /// <summary>For DataTable RowMap: the FName's PADDED SLOT inside the TPair (8, or 16 with CasePreservingName).
+    /// ⚠ NOT sizeof(FName), which is 12 under CasePreservingName — RowMap is TMap&lt;FName, uint8*&gt; and the
+    /// pointer makes the pair alignof 8, so the 12-byte key pads up to 16. Deliberately different from
+    /// SoftArrayFNameSize above, which IS a sizeof. Do not "make them consistent".</summary>
     public int DataTableFNameSize { get; init; }
 
     /// <summary>For DataTable RowMap: TSparseArray element stride (for CE XML offset calculation).</summary>

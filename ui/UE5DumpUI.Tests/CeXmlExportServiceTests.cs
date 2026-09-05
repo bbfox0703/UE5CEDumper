@@ -1,4 +1,4 @@
-using UE5DumpUI.Models;
+﻿using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
 using Xunit;
@@ -4432,16 +4432,17 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
-    public void GenerateInstanceXml_SoftObjectArray_CasePreservingName_AssetNameAt20()
+    public void GenerateInstanceXml_SoftObjectArray_CasePreservingName_AssetNameAt1C()
     {
-        // UE5.5+ CasePreservingName: fnameSize=16, so AssetName is at +0x20.
+        // CasePreservingName: sizeof(FName)=12 (three int32, alignof 4, no pad), so the
+        // second FName of FTopLevelAssetPath is at +0x10+0xC = +0x1C, not +0x20.
         var fields = new[]
         {
             new LiveFieldValue
             {
                 Name = "Assets", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
                 ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x40,
-                SoftArrayFNameSize = 16, SoftArrayIsTopLevelAssetPath = true,
+                SoftArrayFNameSize = 12, SoftArrayIsTopLevelAssetPath = true,
                 ArrayElements = new List<ArrayElementValue>
                 {
                     new() { Index = 0, Value = "/Game/A.A", RawIntValue = 1, Hex = "" },
@@ -4455,7 +4456,7 @@ public class CeXmlExportServiceTests
         Assert.Contains("\"PackageName\"", xml);
         Assert.Contains("<Address>+10</Address>", xml);
         Assert.Contains("\"AssetName\"", xml);
-        Assert.Contains("<Address>+20</Address>", xml);
+        Assert.Contains("<Address>+1C</Address>", xml);
     }
 
     [Fact]
@@ -4651,15 +4652,16 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
-    public void GenerateInstanceXml_DelegateArrayCasePreserving_StrideIs24()
+    public void GenerateInstanceXml_DelegateArrayCasePreserving_StrideIs20()
     {
-        // With CasePreservingName, FName is 16B, so FScriptDelegate = 8 + 16 = 24 (0x18)
+        // With CasePreservingName, sizeof(FName) is 12B and FScriptDelegate is alignof 4,
+        // so there is no padding: 8 + 12 = 20 (0x14).
         var fields = new[]
         {
             new LiveFieldValue
             {
                 Name = "Handlers", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
-                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 24,
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 20,
                 ArrayElements = new List<ArrayElementValue>
                 {
                     new() { Index = 0, Value = "Actor1::OnHit",
@@ -4677,9 +4679,9 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Stride 24 (0x18): [0] at +0, [1] at +18 (hex)
+        // Stride 20 (0x14): [0] at +0, [1] at +14 (hex)
         Assert.Contains("<Address>+0</Address>", xml);
-        Assert.Contains("<Address>+18</Address>", xml);
+        Assert.Contains("<Address>+14</Address>", xml);
     }
 
     [Fact]

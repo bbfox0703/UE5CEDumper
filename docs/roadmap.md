@@ -1,4 +1,4 @@
-# Roadmap — Current State
+﻿# Roadmap — Current State
 
 Snapshot of capabilities and per-game configuration. Updated when
 behaviour or test coverage changes; pair with [todo.md](todo.md) for
@@ -427,9 +427,13 @@ Delete-cache button; a UE version override still wins over everything.
   finds 9 matches across 5 real classes + 4 test-object fields.
   **`SPARSE_ES2_1` resolves SparseDelegates @ +9AA5F10** (build 575,
   ground truth from PDB).
-- **Titan Quest II** ✅ (UE 5.7, bCasePreservingName=**true**, 486k
-  objects): cross-version validation — same `SPARSE_ES2_1` AOB hits
-  `+D46D170`, exercises FName=16 walker branch (inner stride 0x28).
+- **Titan Quest II** ✅ (UE 5.7, 486k objects): cross-version validation —
+  same `SPARSE_ES2_1` AOB hits `+D46D170`. ⚠ The
+  `bCasePreservingName=**true**` claim that used to be on this row is
+  **REFUTED** — a live inject logged `votes standard=20, CPN=0` / `CPN=no`
+  (see `docs/test-games.md:13`), so this does **not** exercise the
+  case-preserving walker branch (pair slot 0x10, inner stride 0x28); that
+  branch has never been run against a real game.
   Was source of 194 `ValidateArrayElemSize` warnings/session pre-build
   583 → now Debug-only.
 - **DQ I&II HD-2D / FF7 Rebirth / FF7 Remake** (UE4 forks, Square Enix

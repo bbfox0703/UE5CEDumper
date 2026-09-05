@@ -4106,7 +4106,7 @@ public static class CeXmlExportService
 
             // Phase J: FScriptDelegate — first 8 bytes is FWeakObjectPtr (target).
             // Element stride uses ArrayElemSize so consecutive elements stay aligned
-            // (16 without CasePreservingName, 24 with).
+            // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase K: FMulticastScriptDelegate — first 8 bytes is the inner

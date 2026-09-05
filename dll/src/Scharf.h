@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Scharf — 夏爾夫 (鋒利目光的觀察者 — Sharp-eyed Scrutinizer)
 // FProperty alignment validation: catches misaligned fields that would
 // indicate a wrong FPROPERTY_OFFSET probe.
@@ -27,8 +27,8 @@ namespace Scharf {
 // reports for this property. EnumProperty in particular is variable:
 // uint8 enum is 1-byte aligned, uint32 enum is 4-byte aligned.
 //
-// casePreservingName: if true, FName/NameProperty is 16 bytes aligned 8;
-// otherwise 8 bytes aligned 4.
+// casePreservingName: if true, FName/NameProperty is 12 bytes -- still ALIGNED 4;
+// otherwise 8 bytes, also aligned 4. The flag does not change FName's alignment at all.
 inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize, bool casePreservingName) noexcept {
     // Order matters: "WeakObjectProperty" / "SoftObjectProperty" / "LazyObjectProperty" all
     // contain "ObjectProperty" as a substring, so the specific variants must match first.
@@ -53,8 +53,13 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize, 
     if (typeName.find("MulticastDelegateProperty") != std::string::npos) return 8;
     if (typeName == "MulticastSparseDelegateProperty") return 1;  // FSparseDelegate { uint8 bIsBound; }
 
-    // FName: 8 bytes aligned 4 (non-CPN), or 16 bytes aligned 8 (CPN).
-    if (typeName == "NameProperty") return casePreservingName ? 8 : 4;
+    // FName: 8 bytes (non-CPN) or 12 bytes (CPN) -- three int32, alignof 4 in BOTH modes.
+    // `class FName` carries no alignas, so case-preserving does NOT raise its alignment.
+    // The 8 seen in a TPair<FName, ptr> comes from the VALUE via max(keyAlign, valAlign),
+    // never from FName -- which is why returning 8 here corrupted TMap<uint8,FName>:
+    // ComputeMapValueOffset put the value at +8 where the engine puts it at +4.
+    // casePreservingName stays a live parameter (other arms use it); do not remove it.
+    if (typeName == "NameProperty") return 4;
 
     // Primitive scalars — alignment == size.
     if (typeName == "BoolProperty"  || typeName == "ByteProperty") return 1;

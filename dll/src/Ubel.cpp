@@ -156,7 +156,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
         ? Neu::EnumNamesFormat::FNameData57
         : Neu::EnumNamesFormat::Legacy;
-    const int fnameStride = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
 
     std::vector<std::pair<int64_t, std::string>> entries;
     Neu::EnumNamesLayout layout;
@@ -166,7 +166,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     // is not a UEnum — lands there, and caching "" for it is correct and must stay
     // cached, or every lookup re-probes. A half-read table is the opposite case.
     bool tableComplete = true;
-    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameStride, 16384, layout)) {
+    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
             int32_t nameIdx = 0;
@@ -408,9 +408,12 @@ static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
 
 // FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
 static int32_t SoftObjectPathPayloadSize() {
-    const int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
-    const int pathNames = (g_cachedUEVersion >= 501) ? (2 * fnameSize) : fnameSize;
-    return static_cast<int32_t>(pathNames + 0x10);  // + FString/FUtf8String { Data, Num, Max }
+    // sizeof(FName), NOT the UObject Name->Outer slot. See DynOff::bCasePreservingName.
+    const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+    // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
+    // in the header so the test target can pin it.
+    return static_cast<int32_t>(
+        DynOff::FSoftObjectPathSizeFor(fnameSize, g_cachedUEVersion >= 501));
 }
 
 // Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
@@ -1664,13 +1667,17 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ByteProperty")   return 1;
     if (typeName == "BoolProperty")   return 1;
     // Engine types with known fixed sizes
-    // FName is { ComparisonIndex(4) + Number(4) } = 8, but 0x10 under
-    // WITH_CASE_PRESERVING_NAME (UE5.5+/5.7). This MUST be dynamic: ValidateArrayElemSize
-    // treats InferScalarSize as authoritative and OVERRIDES the engine's reported size, so
-    // a hardcoded 8 actively replaced a correct 16 and halved every TArray<FName> /
-    // TMap<FName,V> stride on those games. Same expression as the rest of the tree
-    // (Ubel.cpp:126, Aura.cpp:2901/2924/3437/5791, Genau.cpp:5045).
-    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x10 : 0x08;
+    // sizeof(FName): { ComparisonIndex(4) + Number(4) } = 8, and 0xC -- NOT 0x10 -- under
+    // WITH_CASE_PRESERVING_NAME (+ DisplayIndex(4), alignof 4, no trailing padding).
+    // 0x10 is the UObject NamePrivate->Outer SLOT, which is a different question: that
+    // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
+    // This MUST be dynamic: ValidateArrayElemSize treats InferScalarSize as authoritative
+    // and OVERRIDES the engine's reported ElementSize -- which for a NameProperty is
+    // ALREADY the correct 0xC, so a wrong value here is actively substituted for a right one.
+    // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
+    // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
+    // the UNPADDED sizeof.
+    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x0C : 0x08;
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <cstddef>   // size_t — used by the compile-time table-order assertions below
@@ -1052,10 +1052,15 @@ constexpr const char* AOB_GWORLD_SP57_4 = "48 8B 05 ?? ?? ?? ?? 48 8B B8 98 02 0
 //        is the 3-byte mov rdx,rXX (param register varies by build).
 //
 //        Cross-version validated:
-//          ES2 (UE 5.4, bCasePreservingName=false) → SparseDelegates @ +9AA5F10
-//          TQ2 (UE 5.7, bCasePreservingName=true ) → SparseDelegates @ +D46D170
-//        Effectively universal across UE 5.x — same pattern, different layout
-//        branches handled by Aura::WalkSparseDelegateBindings (FName=8 vs 16).
+//          ES2 (UE 5.4) → SparseDelegates @ +9AA5F10
+//          TQ2 (UE 5.7) → SparseDelegates @ +D46D170
+//        ⚠ The 'TQ2 is bCasePreservingName=true' label that used to sit on that second
+//        row is REFUTED: a live inject logged `votes standard=20, CPN=0` and `CPN=no`
+//        (docs/verification-register.md:6201, docs/test-games.md:13). Both AOB hits are
+//        real; only the CPN attribution was wrong, so this pair validates the pattern
+//        across VERSIONS, not across case-preserving modes — and no CPN title has ever
+//        been measured. Effectively universal across UE 5.x; the layout branches in
+//        Aura::WalkSparseDelegateBindings (pair slot 8 vs 0x10) remain untested in the wild.
 constexpr const char* AOB_SPARSE_ES2_1 =
     "48 8D 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8B ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05";
 
