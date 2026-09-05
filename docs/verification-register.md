@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -506,7 +506,55 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A1: soft/lazy object-pointer offsets are now measured
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A1-ENVELOPE-2026-09-05]` — audit A1: both envelopes, on both sides of the 5.3 boundary
+
+> **CLOSED on the verification PC, build 3371**, on the row's own terms: the DLL and Live Walker
+> legs closed independently, the CE leg recorded as **not exercised** (this row's own instruction —
+> *"If no such array exists, record the CE leg as not exercised … Do not synthesise one."*).
+> Rig: [`tools/verify/a1_softlazy_envelope.py`](../tools/verify/a1_softlazy_envelope.py) — takes the
+> log-folder name and **derives** the expectation from the reported UE version, so the same command
+> scores a 5.6 host and a 4.18 control without being told which is which.
+>
+> | host | UE | `TSoftObjectPtr` | `TLazyObjectPtr` |
+> |---|---|---|---|
+> | **EVERSPACE 2** | 506 | `+0x08 (ElementSize 0x28 - payload 0x20)` | `+0x08 (ElementSize 0x18 - payload 0x10)` |
+> | **OCTOPATH TRAVELER** (negative control) | 418 | `+0x10 (ElementSize 0x28 - payload 0x18)` | **`+0x0C`** `(ElementSize 0x1C - payload 0x10)` |
+>
+> ⭐ **The control is where the lazy fix is actually visible.** Post-5.3 both types collapse to
+> `+0x08`, so a 5.3+ host alone cannot distinguish "the lazy half was fixed" from "the lazy half
+> happens to share the soft answer". OCTOPATH separates them: `0x10` vs **`0x0C`** in the same
+> process, one second apart. `0x0C` is `FWeakObjectPtr(8) + Tag(4)` with **no pad**, because
+> `FUniqueObjectGuid` is a bare `FGuid` (4×uint32, alignof 4) — and `ElementSize 0x1C` = 8+4+16
+> confirms it from the engine's own side. The pre-fix code read `+0x10` here, which is the
+> commit's claim that lazy *"was wrong in every era"*, measured.
+>
+> **UI leg (Live Walker Value column).** On ES2, **164** distinct soft properties render a package
+> path **beginning with `/`** — e.g.
+> `/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst`
+> and `/Game/Audio/MusikSets/DA_MusicSet_Sector_001.DA_MusicSet_Sector_001`. Pre-fix the read began
+> at `AssetName`, so it could never begin with `/`. The other 890 are `(none)` / empty arrays —
+> unset pointers, a different code path, and correctly not counted either way.
+>
+> ⚠ **The rig was wrong before the DLL was.** Its first run scored OCTOPATH a FAIL by expecting
+> `+0x10` for lazy, having assumed soft and lazy share a tagged envelope. They do not:
+> `PersistentPtrEnvelopeFor` takes it as a parameter and the two call sites pass `0x10` and `0x0C`
+> (`Ubel.cpp:421-432`, whose comment says *"There is no era in which 0x10 is correct here"*).
+> Recorded because a verification rig that encodes the pre-fix model will manufacture a false
+> regression against a correct fix.
+>
+> ⛔ **STILL OPEN, and found offline, not here — `ReadLazyObjectArrayElements` forces the discredited
+> stride.** `Ubel.cpp:2976-2978` discards the caller's `elemSize` and sets `elemSize = 0x20`, the
+> exact `FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)` model this audit deleted; `sizeof(TLazyObjectPtr)`
+> is `0x1C`/`0x18`, never `0x20`. So a `TArray<TLazyObjectPtr>` drifts 4 or 8 bytes per element from
+> index 1, and `LazyGuidOffset(0x20)` yields `0x10`, which `PersistentPtrEnvelopeFor` **rejects** —
+> meaning the lazy log line **cannot** be emitted from the array path at all. Filed in
+> [`todo.md`](todo.md); it does not affect this closure, which measured the scalar path.
+
+<details><summary>original row (kept — its precondition and scoping notes are what made this cheap)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A1: soft/lazy object-pointer offsets are now measured**
+
+⚠ Deliberately not a `###` heading and carrying no ⬜ — `check_derived_counts` counts `^### .*⬜`.
 
 *`TSoftObjectPtr`'s `FSoftObjectPath` was read at a hardcoded `+0x10`. That is right only to UE 5.2: 5.3 deleted `TPersistentObjectPtr::TagAtLastTest` and the path moved to `+0x08`. `TLazyObjectPtr`'s `FGuid` was read at `+0x10` too, and `FUniqueObjectGuid` is a bare `FGuid` (alignof 4) — so the tagged envelope is `0x0C` and there is **no era** in which `0x10` was right there. Both are now derived from the property's own `ElementSize` (`Grimoire.h:263-266`, `:268-280`; wrappers `Ubel.cpp:410-433`), and `CeXmlExportService.cs:3100` no longer bakes a literal `"+10"`.*
 
@@ -528,6 +576,8 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 ⚠ **Scope the CE leg or it cannot be closed.** `soft_path_offset` reaches the wire only inside the array block gated on `softArrayFNameSize > 0` (`Fern.cpp:1482-1489`), and the exporter's path-leaf branch requires `ArrayInnerType == "SoftObjectProperty"/"SoftClassProperty"` (`CeXmlExportService.cs:2722-2727`). A **scalar** soft property exports as a bare `8 Bytes` hex leaf (`:3952-3953`) with no path leaves at all. So the CE leg needs a discovery step first — Property Search for an `ArrayProperty` whose inner is `SoftObjectProperty`. The DLL and Live Walker legs need no array and close independently.
 
 **Negative control**: **Hogwarts Legacy 4.27** (`docs/test-games.md:21`) or **OCTOPATH 4.18** (`:14`, installed at `E:\SteamLibrary`) — a pre-5.3 title must still land on the tagged `0x10` envelope, and the Live Walker path must be unchanged from the pre-fix build. ⛔ **Do NOT use DQ III HD-2D as the control.** `docs/test-games.md:18` records the SE HD-2D fork as reporting **UE505** while using the UE 5.0 field layout, and both `ReadSoftObjectPath` (`Ubel.cpp:335`) and `SoftObjectPathPayloadSize` (`:410-418`) discriminate on `g_cachedUEVersion >= 501` — so on a 5.0-layout title mis-badged 505 the payload is computed `0x20` against a real `ElementSize 0x28`, the candidate is `0x08`, and `PersistentPtrEnvelopeFor` **accepts and latches it** (`Grimoire.h:255-262`; `dll_helpers_test.cpp:5511-5519` asserts exactly that bogus latch). DQ III would log `+0x08` and be scored a regression against a control that cannot discriminate. It is a plausible **new victim**, not a control — run it separately, with no pre-declared pass value, and report what it logs.
+
+</details>
 
 -----
 

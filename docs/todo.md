@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **13 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **12 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -265,6 +265,47 @@ Where they live now:
   the authority; the copy here was a snapshot of it.
 - **PE build-identity (`/Brepro`, `duplicate_copies`)** — [dev-log.md](dev-log.md), and the standing
   rule about `IMAGE_DEBUG_TYPE_REPRO` is stated with it.
+-----
+
+## `TArray<TLazyObjectPtr>` still strides `0x20` — the one site audit A1 did not reach
+
+*Found 2026-09-05 by an offline audit of the A1 batch on the verification PC (adversarially
+verified, then confirmed against the vendored engine source). **Effort: S. Risk: LOW** — it is the
+same substitution `5eafd419` and `fffe5fcf` already made elsewhere. Not a regression: this site
+predates the audit and was simply missed twice.*
+
+`5eafd419` replaced the hardcoded `FWeakObjectPtr(8) + Tag(4) + pad(4) + FGuid(16) = 0x20` model
+with a measured envelope, and `fffe5fcf` swept up two sites it had missed. **A third survives.**
+
+* [`dll/src/Ubel.cpp:2976-2978`](../dll/src/Ubel.cpp) — `ReadLazyObjectArrayElements` **discards**
+  the caller's `elemSize` and forces `elemSize = 0x20`, with a comment still stating the deleted
+  model. `sizeof(TLazyObjectPtr)` is `0x1C` (≤5.2) or `0x18` (≥5.3) — **never `0x20`**, which the
+  live OCTOPATH measurement confirms from the engine's own side (`ElementSize 0x1C`).
+* [`dll/src/Ubel.cpp`](../dll/src/Ubel.cpp) `InferScalarSize` returns a hardcoded `0x20` for
+  `LazyObjectProperty`, and `ValidateArrayElemSize` treats `InferScalarSize` as **authoritative**,
+  overriding the engine's correctly-reported `ElementSize` whenever they disagree.
+
+**Two consequences, and the second is the nastier one.**
+
+1. Element 0 reads correctly; every index ≥ 1 drifts **4 bytes/element** (≤5.2) or **8** (≥5.3), so
+   both the `FGuid` and the embedded `FWeakObjectPtr` land in the wrong element. `fv.arrayElemSize`
+   is also what the CE XML exporter uses for per-element offsets, so an exported
+   `TArray<TLazyObjectPtr>` table strides `0x20` on every UE version.
+2. ⭐ **It makes the lazy half look unverifiable.** `LazyGuidOffset(0x20)` computes `0x20-0x10 =
+   0x10`, which `PersistentPtrEnvelopeFor` **rejects** (it accepts only the tagged envelope or
+   `0x08`), so `measured` at `Ubel.cpp:394` is false and the
+   `TLazyObjectPtr payload envelope measured` line **cannot be emitted from the array path at all**.
+   `[A1-ENVELOPE-2026-09-05]` calls that line "required", so an operator who exercises lazy by
+   drilling into a `TArray<TLazyObjectPtr>` — the obvious way to find one — sees no line and scores
+   a **correct** fix as FAILED. The line can only come from a **scalar** `LazyObjectProperty` walk
+   (`Ubel.cpp:4088` / `:6150`), which is how it was obtained on both hosts.
+
+**Fix**: delete the forced stride and the `InferScalarSize` special case; let the engine's
+`ElementSize` through and route the offset via `LazyGuidOffset` as the other 11 call sites do.
+**Then re-run** `py tools/verify/a1_softlazy_envelope.py <host>` on OCTOPATH (tagged, `0x0C`) and any
+5.3+ title (untagged, `0x08`) — the rig already separates the two types, and a
+`TArray<TLazyObjectPtr>` walk should then emit the line the scalar path emits today.
+
 -----
 
 ## UE5 non-Shipping: GNames reaches nothing — decide whether to mine a pattern
