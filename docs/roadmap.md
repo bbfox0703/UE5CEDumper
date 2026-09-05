@@ -634,7 +634,19 @@ shipping any major Walker / Detection change:
   [technical-notes.md](technical-notes.md)): (1) if a UE6 game ships the
   experimental `UE_WITH_REMOTE_OBJECT_HANDLE` ON (off in normal shipping),
   hardcoded `OFF_UOBJECT_*` offsets shift by `sizeof(FRemoteObjectId)` and
-  FUObjectItem packing is forced off; (2) the version-string map tops out at
-  `{"5.8.",508}` — UE6 games fall to a bias fallback (dynamic detection still
-  works), so a `{"6.0.",600}` entry is optional prep gated on a
-  `kVersionDetectLogicRev` bump. No pre-emptive UE6 AOBs needed.
+  FUObjectItem packing is forced off; (2) the version-needle table
+  (`kVersionNeedles`, `VersionNeedleScan.h`) tops out at `{"5.8.",508}`, so a
+  UE6 binary matches no needle and, when nothing else answers, lands on the
+  **flat `504` default** in `Genau.cpp` — not on "a bias fallback": the bias
+  branch just above it is reachable only for a thumbprinted shipper, and
+  `kPublishers[]` holds exactly one (`SQUARE_ENIX` → 427). Dynamic detection is
+  unaffected (the AOB scan is version-agnostic) and the runtime marker ladder
+  still raises a string-stripped UE5 title as far as 508 (`Frieren.cpp`), so the
+  residue is a cosmetic badge. **UE 5.9 needs nothing added today** — the
+  PE-VERSIONINFO path already answers `5.9 → 509` and the pipe accepts
+  `418..509`; only a 5.9 title that is *also* string-stripped badges one minor
+  low, and nothing in the 505–509 band is version-gated. If `{"5.9.",509}` and
+  `{"6.0.",600}` are ever added, add them together so the
+  `kVersionDetectLogicRev` bump is paid once; 600 additionally needs the pipe's
+  upper bound and `PointerPanelViewModel`'s override list widened. No
+  pre-emptive UE6 AOBs needed.

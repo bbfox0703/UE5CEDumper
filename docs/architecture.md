@@ -175,13 +175,15 @@ UE5CEDumper/
 │   ├── DEPLOY_README.md            ← End-user readme; copied to dist/README.md
 │   └── test_pipe.ps1               ← Dev-only pipe test client (not deployed)
 │
-└── vendor/                         ← Git submodules
-    ├── Dumper-7/                   ← Reference: AOB patterns, offset detection
-    ├── RE-UE4SS/                   ← Reference: CustomGameConfigs, UE4 patterns
-    ├── minhook/                    ← MinHook inline hooking library (built)
-    ├── zydis/                      ← Zydis v5.0 x64 decoder + nested zycore (built static, decoder-only; Denken/Path 2)
-    ├── nlohmann/                   ← nlohmann/json (header-only)
-    └── UnrealEngine/               ← UE source reference headers
+└── vendor/                         ← 2 submodules + 1 committed header + 3 gitignored reference clones
+    ├── Dumper-7/                   ← Gitignored clone (sync_tools.ps1) — reference: AOB patterns, offset detection
+    ├── RE-UE4SS/                   ← Gitignored clone (sync_tools.ps1) — reference: CustomGameConfigs, UE4 patterns;
+    │                                 its own submodules deps/first/{Unreal (UEPseudo), patternsleuth} are pulled
+    │                                 too, and are likewise unpinned by us and compiled into nothing
+    ├── minhook/                    ← Submodule, pinned by our index — MinHook inline hooking library (built)
+    ├── zydis/                      ← Submodule, pinned by our index — Zydis v5.0 x64 decoder + nested zycore (built static, decoder-only; Denken/Path 2)
+    ├── nlohmann/                   ← Committed header copy — nlohmann/json (json.hpp is TRACKED CONTENT, not a submodule)
+    └── UnrealEngine/               ← Gitignored clone (sync_tools.ps1, --filter=blob:none) — UE source reference headers
 ```
 
 -----

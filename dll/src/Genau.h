@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Genau — 葛納烏 (一級魔法使篩選考官 — First-Class Mage Examiner)
@@ -152,10 +152,13 @@ struct EnginePointers {
     /// wrong for UE3, whose override list has no expressible value and whose structures do not
     /// exist at any version. See str.Pointers.VersionTooOld vs str.Pointers.EnginePreUE4.
     ///
-    /// UE 4.10 and earlier have no `FUObjectItem` at all: `FUObjectArray::ObjObjects` is a
-    /// `TStaticIndirectArrayThreadSafeRead` of raw `UObjectBase*` (stride 8) whose chunk table is
-    /// INLINE, so `ArrayLayout` cannot even express it (`objectsOffset` means "read a pointer
-    /// here"; 4.10 needs "take the ADDRESS of here") — see docs/technical-notes.md. Scanning
+    /// UE 4.10 and earlier have no `FUObjectItem` at all, in two distinct shapes. At **4.8-4.10**
+    /// `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead` of raw `UObjectBase*`
+    /// (stride 8) whose chunk table is INLINE, so `ArrayLayout` cannot even express it
+    /// (`objectsOffset` means "read a pointer here"; 4.10 needs "take the ADDRESS of here"). At
+    /// **<=4.7** it is a flat `TArray<UObjectBase*>` at `FUObjectArray+0x10`, which `ArrayLayout`
+    /// *can* express and which is blocked by the stride-8 element instead (untested — no oracle
+    /// and no pattern exists below 4.8) — see docs/technical-notes.md. Scanning
     /// anyway just burns ~4 s of AVX2 passes to reach "no winner", which is what these titles did
     /// before this flag existed. Only ever set on a CONFIDENTLY detected version: a
     /// low-confidence or user-overridden version is never gated, because misdetecting a working

@@ -482,7 +482,12 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
 // ============================================================
 // ReadFTextString — read the display string from an FText.
 //
-// FText = { ITextData* Data (8B); void* SharedRefController (8B); ... }
+// FText = { ITextData* TextData (8B); ... } -- only that leading pointer is read
+// here, and it is at +0x00 in every version. The TAIL changed at UE 5.4:
+// UE4.18-5.3 is TSharedRef<ITextData,ThreadSafe> {obj ptr; ref-controller ptr}
+// + uint32 Flags@+0x10 (sizeof 0x18); UE5.4-5.8 is TRefCountPtr<ITextData>
+// {obj ptr} + uint32 Flags@+0x08 (sizeof 0x10), the refcount having moved into
+// ITextData itself (it now derives from IRefCountedObject). Neither tail is read.
 // The display FString lives at a version/fork-dependent spot inside ITextData,
 // in one of two shapes:
 //   (a) INLINE   — the FString sits by value at ITextData+offset (UE4 / UE5.0
@@ -3416,7 +3421,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                     delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
                 // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
                 // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
-                // differ later (UE5.7 puts EArrayPropertyFlags before Inner); the helper only
+                // differ later (UE5.3+ puts EArrayPropertyFlags before Inner); the helper only
                 // sets the shared STARTING point, and the ArrayProperty probe further down
                 // this file re-probes it with delta=8. That probe is deliberately NOT routed
                 // through the helper for exactly that reason.
@@ -4168,8 +4173,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Read FArrayProperty::Inner (FProperty*) to get element type info.
-            // Note: In UE5.7+, FArrayProperty may store EArrayPropertyFlags (4B + 4B pad)
-            // BEFORE Inner, so Inner can be at FARRAYPROP_INNER + 8. The probe list
+            // Note: on UE5.3+, FArrayProperty stores EArrayPropertyFlags (a uint8, so 1B + 7B
+            // pad) BEFORE Inner, so Inner can be at FARRAYPROP_INNER + 8. The probe list
             // includes delta=8 to handle this.  Delta=0xC covers the case where the base
             // offset hasn't been corrected yet (0x74 + 0xC = 0x80 for TQ2).
             if (DynOff::bUseFProperty) {
@@ -5250,10 +5255,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
         }
 
-        // Verse VM property types (UE5.8 / UEFN): VValue/VRestValue/VCell hold a
-        // Verse VM cell handle and VerseString wraps Verse::FNativeString — none
-        // are a plain FString/scalar, so label them and show the raw pointer
-        // rather than mis-decoding. (Recognized-but-not-decoded; safe.)
+        // Verse property types (UEFN / Verse-authored content). WHICH names appear is a
+        // build-flag question, and the DEFAULT is not the Verse VM: UBT's
+        // TargetRules.bUseVerseBPVM defaults to TRUE, which yields WITH_VERSE_BPVM=1 and
+        // WITH_VERSE_VM=0. VValue/VRestValue/VCell are compiled ONLY under
+        // WITH_VERSE_VM=1 (and of those three only VRestValueProperty is ever emitted --
+        // nothing in the engine constructs an FVValueProperty). In a default BPVM build
+        // the same UPROPERTY comes out as "VerseDynamicProperty" instead, and the
+        // VerseCell codegen case does not exist. Only VerseStringProperty -- which wraps
+        // Verse::FNativeString -- is unconditional. None of these is a plain
+        // FString/scalar, so label them and show the raw pointer rather than
+        // mis-decoding. (Recognized-but-not-decoded; safe.)
+        // Deliberately NOT matched here: "VerseDynamicProperty" and "VerseClassProperty"
+        // (an FClassProperty subclass, also unguarded). Both fall through to the generic
+        // hex path, which is safe, and no injectable Verse title exists to verify a
+        // decoder against.
         if (fi.TypeName == "VValueProperty"  || fi.TypeName == "VRestValueProperty" ||
             fi.TypeName == "VCellProperty"   || fi.TypeName == "VerseStringProperty") {
             fv.typedValue = "(Verse: " + fi.TypeName + ")";
@@ -5266,7 +5282,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle TextProperty: FText = { ITextData* Data; void* SharedRefController; ... }
+        // Handle TextProperty: FText = { ITextData* Data; ... } -- Data sits at +0x00 in
+        // every version; only the tail after it changed at UE 5.4 (see ReadFTextString).
         // Dereference Data pointer, then probe for FString at common offsets within ITextData.
         if (fi.TypeName == "TextProperty") {
             fv.strValue = ReadFTextString(instanceAddr + fi.Offset);
@@ -5424,8 +5441,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // FText display (audit #5 U11): decode via ReadFTextString, which follows
                 // the ITextData* at FText+0 and scans it for the display FString — the SAME
                 // decoder the plain TextProperty path uses. The old code read an inline
-                // FString at FText+0x10, where stock UE stores the uint32 Flags (the display
-                // string is NOT there), so it produced garbage or "" for a real value.
+                // FString at FText+0x10 -- the uint32 Flags on UE<=5.3, and past the END of the
+                // 16-byte FText on 5.4+ (the display string is NOT there either way), so it
+                // produced garbage or "" for a real value.
                 if (isSet) {
                     std::string s = ReadFTextString(fieldAddr);
                     if (!s.empty()) fv.strValue = std::move(s);

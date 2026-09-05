@@ -5036,9 +5036,16 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // Two distinct refusals share this one exit, distinguished by the version number alone:
     //
     //  (a) UE 4.0-4.10 — the right engine family, a version too old. Pre-4.11 predates
-    //      FUObjectItem entirely: ObjObjects is a TStaticIndirectArrayThreadSafeRead of raw
-    //      UObjectBase* (stride 8) with an INLINE chunk table, which ArrayLayout cannot express
-    //      at all. Verified against Epic's source: 4.10.2 has no FUObjectItem; 4.11.0 introduces
+    //      FUObjectItem entirely, but in TWO different shapes and for two different reasons:
+    //      4.8-4.10 put ObjObjects in a TStaticIndirectArrayThreadSafeRead of raw UObjectBase*
+    //      (stride 8) with an INLINE chunk table, which ArrayLayout cannot express at all;
+    //      <=4.7 used a plain flat TArray<UObjectBase*> at FUObjectArray+0x10, which ArrayLayout
+    //      CAN express (Flat-Base with Num/Max transposed) and which is blocked instead by the
+    //      stride-8 element — 8 is not one of our stride candidates, and every candidate that
+    //      IS in the list would alias onto it. Nothing at or below 4.7 has ever been run: no
+    //      oracle, no pattern, so that half is reasoned, not measured. Verified against Epic's
+    //      source: 4.7 is the flat TArray, 4.8 introduces the indirect array;
+    //      4.10.2 has no FUObjectItem; 4.11.0 introduces
     //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY via DetectVersionFromPEResource's
     //      major==4 branch — the memory needle table floors at "4.18." and can never go below it,
     //      which is worth knowing before assuming this path is exercised often. (It is not: no
@@ -5075,9 +5082,10 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
                      "GObjects. This is a refusal by design, not a scan failure.");
         } else {
             LOG_WARN("FindAll: UE %u is older than the minimum supported %u — SKIPPING the scan. "
-                     "Pre-4.11 has no FUObjectItem (raw UObjectBase* in an inline chunk table), so "
-                     "no pattern or preset can resolve GObjects. Set a UE version override if this "
-                     "detection is wrong.",
+                     "Pre-4.11 has no FUObjectItem: 4.8-4.10 use a raw UObjectBase* array with an "
+                     "inline chunk table, and 4.7 or older a flat TArray<UObjectBase*> of stride-8 "
+                     "raw pointers. Neither is supported, and no pattern or preset can resolve "
+                     "GObjects. Set a UE version override if this detection is wrong.",
                      out.UEVersion, Grimoire::MIN_SUPPORTED_UE_VERSION);
         }
         return true;   // not a failure — a clean, explained no-op

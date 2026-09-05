@@ -1,15 +1,52 @@
-# Export Formats — CE XML, CSX, SDK Header
+# Export Formats — CE XML, CSX, SDK Header, USMAP
 
-This document describes how LiveWalker exports field data to Cheat Engine and C++ formats.
+This document describes how the UI exports reflection data: per-node field exports from LiveWalker (CE XML, CSX) and whole-pool exports from the toolbar (SDK Header, USMAP, Dump All `.jsonl`).
 
 ---
 
 ## Table of Contents
 
+- [Coverage — an export sees only what is LOADED](#coverage--an-export-sees-only-what-is-loaded)
 - [CE XML Export](#ce-xml-export)
 - [CSX Export (CE Structure Dissect)](#csx-export)
 - [SDK Header Export (.h)](#sdk-header-export)
+- [USMAP Export (.usmap)](#usmap-export-usmap)
 - [Type Mapping Reference](#type-mapping-reference)
+
+---
+
+## Coverage — an export sees only what is LOADED
+
+⚠ **This governs the three whole-pool exports: USMAP, SDK Header, and Dump All (`.jsonl`).**
+(CE XML / CSX export a node you already walked, so they can only ever cover what you already
+have — the caveat is trivially true there and is not the point.)
+
+All three page the *live* GObjects pool at the moment you click Export and take whatever is in it:
+
+| Export | Enumeration |
+|--------|-------------|
+| USMAP | `UsmapExportService.cs` (Class-like + `ScriptStruct`); enums via `list_enums`, which walks the same pool (`Fern.cpp`, `CMD_LIST_ENUMS`) |
+| SDK Header | `SdkExportService.cs` (same Class-like + `ScriptStruct` filter) |
+| Dump All (`.jsonl`) | `DumpAllService.cs` — pass 1 instance counts, pass 2 classes |
+
+**There is no pre-load / force-load step, and we have no equivalent to RE-UE4SS's opt-in
+"load all assets before dumping"** — `LoadPackage` / `StaticLoadObject` / `ForceLoad` /
+asset-registry appear nowhere in `ui/` or `dll/` except as a denylisted package *name*.
+
+**Consequence.** A Blueprint class, struct or enum exists in memory only after its asset has
+loaded, so an export taken at the title screen misses most of a game's Blueprint reflection —
+and it misses it **silently**: the file is well-formed, the counts look plausible, and nothing
+warns you. Native (`/Script/*`) types are compiled into the executable and are always present,
+so the loss is invisible unless you go looking for `_C` names.
+
+**What to do.** Load a level — ideally the area you care about — before exporting, and re-export
+after entering a new map if you need its content. Two exports of the same game legitimately
+differ in struct count; that is the pool changing, not a regression.
+
+**Scale, measured.** DQ7R (UE 4.27, 149,408 objects) in-game yields **507** distinct `_C` names in
+the `.usmap` against **513** `BlueprintGeneratedClass`-family instances in the pool — 98.8 %
+(`[W8-USMAP-2026-08-20]`, `docs/verification-register.md`). That is what a *loaded* export looks
+like; a title-screen one has no such population to find.
 
 ---
 
@@ -384,6 +421,29 @@ EBO is the only shape that intrudes on a derived member's offset.*
   `OptionalProperty` in the header a syntax error. `MapCppDecl` returns the element type and the
   array suffix as separate halves so the two cannot be concatenated in the wrong order; a zero size
   degrades to `[0x1]` because MSVC rejects a zero-length array (C2466).
+
+---
+
+## USMAP Export (.usmap)
+
+A mappings file for FModel / CUE4Parse and the wider unreal-modding toolchain — the type
+layout those parsers need to read a game's assets, saves and network traffic.
+
+- **Writer:** `Services/UsmapExportService.cs`. **Format v4** (`ExplicitEnumValues`), magic
+  `0x30C4`, **uncompressed** (compression byte `0`).
+- **Contents:** every `Class`-like object (`Class`, `BlueprintGeneratedClass`,
+  `AnimBlueprintGeneratedClass`, `WidgetBlueprintGeneratedClass`, `DynamicClass` — via
+  `DumpAllService.IsClassLikeMetaName`) and every `ScriptStruct`, each with its property list;
+  plus every `UEnum` with explicit values.
+- ⛔ **Before changing the format, read the two canonical writers vendored here** —
+  `vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp` and
+  `vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp`; both emit v4.
+  The version byte and the body layout MUST agree, and three thresholds each change the bytes
+  (`>=1` makes the `int32 bHasVersionInfo` field mandatory, `>=2` makes name lengths `uint16`,
+  `>=3` makes enum member counts `uint16`). Stamping v3 over a v0 body desynchronised the
+  stream before the first name was read, so no consumer could open the output at all
+  (audit #5 W1).
+- ⚠ **Coverage:** loaded classes only — see [Coverage](#coverage--an-export-sees-only-what-is-loaded).
 
 ---
 

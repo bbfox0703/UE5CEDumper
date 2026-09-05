@@ -184,8 +184,13 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
 inline int FSTRUCTPROP_STRUCT = 0x78;
 
 // === FArrayProperty (subclass of FProperty) ===
-// FProperty* Inner — element type descriptor, same offset as FSTRUCTPROP_STRUCT.
-// Both are the first subclass field after FProperty base layout.
+// FProperty* Inner — element type descriptor. The value here is only the STARTING guess.
+// Inner is the first subclass field on UE4.25-5.2, which declare `FProperty* Inner` before
+// `EArrayPropertyFlags ArrayFlags`; UE5.3 swapped the two AND narrowed the flags to uint8,
+// so on UE5.3+ ArrayFlags occupies the family base (1 byte + 7 padding) and Inner sits at
+// base + 8. Verified against vendor/UnrealEngine UnrealType.h at 5.2.1 vs 5.3.0, unchanged
+// through 5.8.2. Ubel's ProbeInnerProperty recovers the +8 at walk time and writes it back
+// here — this is the one family member that may legitimately leave the shared base.
 inline int FARRAYPROP_INNER   = 0x78;
 
 // === FBoolProperty layout (subclass of FProperty) ===
@@ -682,8 +687,10 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
 /// unloads it — `Settings → Plugins → Add` does LoadLibrary → `CEPlugin_GetVersion` →
 /// FreeLibrary, and every CE exit unloads every plugin before writing its settings. A
 /// thread of ours still running in that image executes unmapped memory and takes CE down.
-/// `DLL_PROCESS_DETACH` cannot save us: it cannot distinguish a FreeLibrary unload from
-/// process exit, and joining threads under the loader lock would deadlock.
+/// `DLL_PROCESS_DETACH` cannot save us. It *can* tell the two cases apart — `lpReserved`
+/// is NULL for a FreeLibrary unload and non-NULL for process exit — but that changes
+/// nothing: DETACH runs under the loader lock, so joining our threads there deadlocks,
+/// and returning without joining leaves them in an image about to be unmapped.
 ///
 /// **Fails OPEN.** An empty or unreadable host path returns `true`, preserving the
 /// behaviour that shipped for every non-CE host rather than silently disabling the DLL on

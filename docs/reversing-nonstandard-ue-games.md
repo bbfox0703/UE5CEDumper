@@ -39,7 +39,11 @@ cargo run --release -p patternsleuth_cli -- scan --path "<game>.exe" \
 
 The second command yields a few candidate function VAs (it can't always pick one — that's fine,
 we disambiguate next). RE-UE4SS's `UEPseudo` repo has the per-version standard layouts to compare
-against (`generated_include/FunctionBodies/5_03_..._FUObjectArray.cpp` etc.).
+against, and `sync_tools.ps1` checks it out, so read them on disk at
+`vendor/RE-UE4SS/deps/first/Unreal/generated_include/FunctionBodies/` — one
+`*_MemberVariableLayout_DefaultSetter_FUObjectArray.cpp` per version, 4_07 through 5_08. An empty
+`deps/first/` means the sync has not run, not that the submodule is gated: it is a public repo, and
+only the `git@github.com:` URL in RE-UE4SS's own `.gitmodules` makes it look otherwise.
 
 ## 2. Read the .data cluster — capstone
 
@@ -120,9 +124,11 @@ Cross-check: the field accesses in step 3 should line up against this base (e.g.
 We periodically re-evaluate whether to adopt the two reference dumpers under `vendor/` to
 handle **encrypted** games. **Decision: no — and there is nothing to gain on the
 encryption axis.** Both repos (and this project) only provide a *plug-in hook*; neither
-decrypts any title out of the box. Re-confirmed 2026-06-28 against
-`vendor/Dumper-7@c891b17` and `vendor/RE-UE4SS@2352d15b` (these are local reference clones,
-**not** git submodules — see `.gitmodules`).
+decrypts any title out of the box. Read in full 2026-06-28 against `vendor/Dumper-7@c891b17` and
+`vendor/RE-UE4SS@2352d15b`; re-checked 2026-09-05 at `Dumper-7@b88241b` and `RE-UE4SS@24b12662`,
+where neither delta (37 and 135 commits) adds a decrypt path — no `encrypt`/`decrypt`/`aes` in
+either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`include` still hold zero
+`decrypt` hits. These are local reference clones, **not** git submodules — see `.gitmodules`.
 
 ### First, disambiguate "encrypted"
 
@@ -141,7 +147,7 @@ decrypts any title out of the box. Re-confirmed 2026-06-28 against
 | GObjects pointer-decrypt hook | ✅ `InitObjectArrayDecryption(lambda)`, default identity | ❌ none | ✅ `Aura::SetDecryptFunc` → `UE5_SetObjectDecryption` export, default nullptr |
 | Ships any per-game key/routine | ❌ zero (README `^ 0x8375` is a sample) | ❌ zero | ❌ zero (hook only) |
 | `TEncryptedObjectProperty` | ⚠️ opt-in `bEnableEncryptedObjectPropertySupport` (default off) | ❌ | ❌ |
-| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (33 titles) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
+| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (34 titles) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
 
 ### Findings
 
@@ -155,7 +161,7 @@ decrypts any title out of the box. Re-confirmed 2026-06-28 against
   iframe). It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
   offset / engine-version / vtable *overrides*, not decryption. It assumes `GUObjectArray` /
   `FName` are directly readable, so it does not target pointer-encrypted / strong-anti-cheat
-  titles. Its 33 shipped profiles (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
+  titles. Its 34 shipped profiles (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
   Survivor, Lies of P, …) are forked-engine tuning, not encrypted-pointer cases.
 - **This project already has parity** with Dumper-7's pointer-decrypt hook: `Aura::SetDecryptFunc`
   / `Aura::DecryptObjectPtr` (`dll/src/Aura.cpp`), wired through the CE-Lua export

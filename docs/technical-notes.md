@@ -8,7 +8,8 @@
 
 | Version | Key Differences |
 |---------|----------------|
-| **UE4.10 and earlier** | **Pre-`FUObjectItem` regime — the dumper does NOT support this.** `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead<UObjectBase,8388608,16384>` whose element is a **raw `UObjectBase*` (stride 8)**, and whose chunk table is an **INLINE `UObjectBase*[512]` array**, not a pointer — see the dedicated section below |
+| **UE4.7 and earlier** | Pre-`FUObjectItem`, and a **different, simpler** shape than 4.8–4.10: `FUObjectArray::ObjObjects` is a flat `TArray<UObjectBase*>` at `FUObjectArray+0x10` (Data/Num/Max = `0x10`/`0x18`/`0x1C`), the global is a plain `extern GUObjectArray`, and `UObjectBase` is byte-identical to 4.11. **Still not supported** — the blocker is the stride-8 raw-pointer element, not the layout — see the dedicated section below |
+| **UE4.8–4.10** | **Pre-`FUObjectItem` regime — the dumper does NOT support this.** `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead<UObjectBase,8388608,16384>` whose element is a **raw `UObjectBase*` (stride 8)**, and whose chunk table is an **INLINE `UObjectBase*[512]` array**, not a pointer; the global is the Meyers singleton `GetUObjectArray()` — see the dedicated section below |
 | **UE4.11–4.12** | `FFixedUObjectArray` (flat). **`FUObjectItem` is 16 BYTES** — `Object` / `ClusterAndFlags` / `SerialNumber`: the cluster index and the internal flags share ONE `int32`. `UProperty` chain |
 | **UE4.13–4.19** | `FFixedUObjectArray` (flat, single indirection). `FUObjectItem` splits into `Object` / `Flags` / `ClusterIndex` / `SerialNumber` = **24 bytes**. `UProperty` chain. TNameEntryArray |
 | **UE4.20–4.24** | `FChunkedFixedUObjectArray` — chunked. `UProperty` still in use |
@@ -19,7 +20,7 @@
 | UE5.3+ | Some games enable Object Pointer Encryption |
 | UE5.4+ | `FField` chain structure stable, no major changes |
 | any | **CasePreservingName** (= `WITH_EDITORONLY_DATA`, so 0 in every packaged build): `sizeof(FName)` grows 0x8 → **0xC** (adds DisplayIndex; three int32, alignof 4, no pad), while the UObject `NamePrivate`→`OuterPrivate` **slot** grows to **0x10** (OuterPrivate is 8-aligned). FField::Flags and the FProperty offsets shift by the +0x8 *slot* delta. ⚠ 0x10 is the slot, **not** the size — see the A9 note on `DynOff::bCasePreservingName`. Must use `DynOff` dynamic detection |
-| UE5.8 / UE6.0 | **Cache-locality reorder** of `FUObjectArray` / `FChunkedFixedUObjectArray` (shipped in **5.8**, unchanged in 6.0): `ObjObjects` is `FUObjectArray`'s first member; chunked fields `Objects@0x00, NumElements@0x08, MaxElements@0x0C, NumChunks@0x10, MaxChunks@0x14, PreAllocatedObjects@0x18`. Matched by the **"UE5.8" preset** `{0x00,0x0C,0x08,0x14,0x10}` (`Aura.cpp:258` / `Genau.cpp:192`; ArrayLayout = `{objectsOffset, maxElementsOffset, numElementsOffset, maxChunksOffset, numChunksOffset}`). **UE6.0 is layout-identical to 5.8** for every dumper-read structure in normal shipping builds — see the parity note below |
+| UE5.8 / UE6.0 | **Cache-locality reorder** of `FUObjectArray` / `FChunkedFixedUObjectArray` (shipped in **5.8**, unchanged in 6.0): `ObjObjects` is `FUObjectArray`'s first member; chunked fields `Objects@0x00, NumElements@0x08, MaxElements@0x0C, NumChunks@0x10, MaxChunks@0x14, PreAllocatedObjects@0x18`. Matched by the **"UE5.8" preset** `{0x00,0x0C,0x08,0x14,0x10}` — grep the string `"UE5.8"` to find it: `Aura.cpp`'s chunked-preset table and `Genau.cpp`'s Tier-1 preset table in `ValidateGObjects`, both written in ArrayLayout order = `{objectsOffset, maxElementsOffset, numElementsOffset, maxChunksOffset, numChunksOffset}`. ⚠ There is a **THIRD** site, and it is not greppable by the tuple: `Genau.cpp`'s Tier-2 relaxed fallback row `"F"` encodes the same layout as `{0x08,0x0C,0x00,0x14,0x10}`, because that table's struct is `{numOff, maxOff, objOff, maxCOff, numCOff, isFlat, name}` — `numOff`/`objOff` swapped. Same five offsets, permuted; a change to one row must be mirrored in all three. **UE6.0 is layout-identical to 5.8** for every dumper-read structure in normal shipping builds — see the parity note below |
 
 > **UE6.0 vs 5.8 — shipping-build layout parity** (verified `origin/5.8..origin/ue6-main`, 2026-06-30). For normal shipping game builds UE 6.0 reads identically to UE 5.8 across every structure the dumper touches; the core path is already UE6-ready and nothing needs implementing now:
 >
@@ -158,7 +159,7 @@ Detection, in priority order:
 > patterns carry that adjustment, so before `"Flat-Base"` existed, any pre-4.20 title those five
 > missed was unfixable by pattern work at *any* priority.
 
-### Pre-`FUObjectItem` (UE 4.10 and earlier) — NOT SUPPORTED
+### Pre-`FUObjectItem` (UE 4.8–4.10) — NOT SUPPORTED
 
 Verified against a **UE 4.10.2 PDB** (IS Defense Editor's `UE4Editor-Cmd.pdb`, 30.9 MB of type
 records), with every offset independently re-confirmed from instruction encodings in
@@ -209,6 +210,52 @@ shipping build, but **`Outer` is +0x28 in the editor and +0x20 shipping** — do
 anywhere. `FUObjectArray`, `TStaticIndirectArrayThreadSafeRead`, `FNameEntry`/`TNameEntryArray`
 and `EObjectFlags` are not editor-gated and transfer as-is; the `UField`/`UStruct`/`UProperty`
 family does NOT (which is moot — those are resolved dynamically by `DynOff`).
+
+#### UE 4.7 and earlier — a DIFFERENT pre-`FUObjectItem` shape, blocked for a different reason
+
+Everything above is 4.8–4.10. The indirect array and the `GetUObjectArray()` singleton both arrive
+**at 4.8**; 4.7 and older are a plainer thing, verified against Epic's source at `origin/4.0` …
+`origin/4.7` (all eight branches declare it identically) and corroborated by RE-UE4SS's own version
+bands (`UVTD/src/Helpers.cpp` — `tarray_407_and_earlier` vs `indirect_408_to_410`).
+
+```
+FUObjectArray  (no base class, no virtual of its own -> NO vtable)
+  +0x0000: ObjFirstGCIndex / ObjLastNonGCIndex / OpenForDisregardForGC  (int32 x3)
+  +0x000C: (4 bytes padding, TArray is 8-aligned)
+  +0x0010: ObjObjects = TArray<UObjectBase*>
+             +0x0010  Data (UObjectBase**)
+             +0x0018  ArrayNum
+             +0x001C  ArrayMax
+extern COREUOBJECT_API FUObjectArray GUObjectArray;   // a plain global, not a magic static
+```
+
+| | UE 4.8–4.10 | UE 4.7 and earlier |
+|---|---|---|
+| element | raw `UObjectBase*`, stride 8 | raw `UObjectBase*`, stride 8 (same) |
+| container | `TStaticIndirectArrayThreadSafeRead`, INLINE chunk table | flat `TArray<UObjectBase*>` — **no chunks at all** |
+| the global | Meyers singleton `GetUObjectArray()` | plain `extern GUObjectArray` |
+| `UObjectBase` | 0x28: Flags `+0x08` / Index `+0x0C` / Class `+0x10` / Name `+0x18` / Outer `+0x20` | **identical** (diff of RE-UE4SS's `4_07` vs `4_11` `[UObjectBase]` blocks is empty) |
+| what blocks us | `ArrayLayout` cannot express an inline chunk table | **not the layout** — see below |
+
+**The layout is already expressible.** `Aura::ArrayLayout` would encode this as
+`{0x10, 0x1C, 0x18, -1, -1}` — literally the `"Flat-Base"` preset with `maxElementsOffset` and
+`numElementsOffset` transposed, because `FFixedUObjectArray` orders them Max-then-Num while
+`TArray` orders them Num-then-Max. Same expressiveness point already recorded for UE3 below.
+
+**What actually blocks it, measured:** `8` is not in `Lineal::kItemStrideCandidates`
+(`{16, 24, 32, 20, 40}`), so stride detection can never select the right stride.
+
+**What is reasoned but NOT measured:** four of those five candidates (16/24/32/40) are multiples of
+8, so a probe would land on a *strict subset of the real pointers* — every slot a genuine
+`UObject*`, giving `named` ≈ 100% and `bad` == 0. That is the "PASSES → confident" shape the gate
+comment in `Lineal.h` warns about, and it is worse than its NULL case: the array would be silently
+accepted at half (or a third, or a fifth) of its true length. **This has never been run.** There is
+no ≤4.7 reference build in the corpus (`docs/reference-builds.md`'s oldest rows are the two 4.10
+ones) and no ≤4.7 GObjects pattern — the version-needle table floors at `"4.18."`, so the only
+route below 4.11 at all is the PE-resource `major == 4` branch. Treat the aliasing paragraph as a
+prediction to be checked if a ≤4.7 oracle is ever built, not as a result.
+
+The floor stays `MIN_SUPPORTED_UE_VERSION = 411`. Both sub-regimes are refused by the same gate.
 
 **Deciding which regime an unknown old binary is in** — one instruction-level look at the
 index→object accessor:
