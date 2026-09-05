@@ -5755,6 +5755,74 @@ static void Test_PersistentPtrEnvelope() {
            DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 503) == 0x08);
 }
 
+static void Test_UBoolPropFieldSize() {
+    using DynOff::UBoolPropFieldSizeFor;
+
+    // A6. UBOOLPROP_FIELDSIZE had ZERO writers against nine readers -- the FProperty arm of
+    // ValidateAndFixOffsets derived the whole subclass family and had no `else`, so every
+    // UE4 <4.25 game kept the 0x70 default no matter what its Offset_Internal probed to.
+
+    // --- the measured rows, from all 31 UVTD MemberVarLayout templates ---
+    EXPECT("A6: 4.18-4.24 stock, 0x44 -> 0x70", UBoolPropFieldSizeFor(0x44, 422, false) == 0x70);
+    EXPECT("A6: 4.11-4.17 stock, 0x50 -> 0x78", UBoolPropFieldSizeFor(0x50, 415, false) == 0x78);
+    EXPECT("A6: 4.27 CasePreserving, 0x4C -> 0x80", UBoolPropFieldSizeFor(0x4C, 427, true) == 0x80);
+
+    // ⚠ THE ROW THE AUDIT WOULD HAVE GOT WRONG. It prescribed a flat `+ 0x2C`. The delta is
+    // 0x28 for 4.11-4.17 because Offset_Internal and RepNotifyFunc are in the OPPOSITE order
+    // there (4.11: RepNotifyFunc 0x48 then Offset_Internal 0x50, total 0x78; 4.18:
+    // Offset_Internal 0x44 then RepNotifyFunc 0x48, total 0x70). Seven versions, all inside
+    // our 4.11 floor.
+    EXPECT("A6: 4.17 uses the 0x28 delta, NOT 0x2C",
+           UBoolPropFieldSizeFor(0x50, 417, false) == 0x50 + 0x28);
+    EXPECT("A6: 4.18 is where it becomes 0x2C",
+           UBoolPropFieldSizeFor(0x44, 418, false) == 0x44 + 0x2C);
+    EXPECT("A6: a flat +0x2C would be WRONG at 4.11-4.17",
+           UBoolPropFieldSizeFor(0x50, 415, false) != 0x50 + 0x2C);
+
+    // --- THE REGRESSION ROW. DQ XI S (UE4.22, UProperty mode, a whole-layout +0x10 shift,
+    //     docs/test-games.md). Offset_Internal probes to 0x54, so the true FieldSize is
+    //     0x80 -- and the old default 0x70 plus Ubel's ±4/+8/-8 spread tops out at 0x78,
+    //     so NO probe could reach it. boolFieldMask stayed 0 and the reader fell back to
+    //     `byteVal != 0`, reporting a native bitfield bool as true whenever ANY sibling in
+    //     its byte was set. ---
+    EXPECT("A6: DQ XI S shifted 4.22, 0x54 -> 0x80", UBoolPropFieldSizeFor(0x54, 422, false) == 0x80);
+    EXPECT("A6: ...which the old 0x70 default could not reach even with the ±8 spread",
+           UBoolPropFieldSizeFor(0x54, 422, false) > 0x70 + 8);
+
+    // --- deriving from the PROBE is what makes a shifted game work: the same version with
+    //     an unshifted probe still lands on the stock value. ---
+    EXPECT("A6: the same version, unshifted, still gives the stock 0x70",
+           UBoolPropFieldSizeFor(0x44, 422, false) == 0x70);
+    for (int shift : { 0x00, 0x08, 0x10, 0x18 }) {
+        EXPECT("A6: a whole-layout shift moves FieldSize by exactly the same amount",
+               UBoolPropFieldSizeFor(0x44 + shift, 422, false) == 0x70 + shift);
+    }
+
+    // --- ⚠ WHY UBEL'S PROBE SPREAD MUST SURVIVE THIS FIX. The two live deltas differ by
+    //     exactly 4 and the CasePreserving case by 8, so a MISDETECTED version is still
+    //     rescued by the { base, ±4, +8, -8 } spread. Narrowing it "now that the base is
+    //     derived" would remove that net. ---
+    {
+        const int trueAt415 = UBoolPropFieldSizeFor(0x50, 415, false);
+        const int guessAs420 = UBoolPropFieldSizeFor(0x50, 420, false);   // version misdetected high
+        EXPECT("A6: a wrong-version guess is off by exactly 4 -- inside the spread",
+               guessAs420 - trueAt415 == 4);
+        const int cpn = UBoolPropFieldSizeFor(0x44, 422, true);
+        const int nonCpn = UBoolPropFieldSizeFor(0x44, 422, false);
+        EXPECT("A6: a missed CasePreserving is off by exactly 8 -- also inside the spread",
+               cpn - nonCpn == 8);
+    }
+
+    // --- every result must be a plausible offset, and strictly past Offset_Internal ---
+    for (unsigned v : { 411u, 415u, 417u, 418u, 422u, 424u }) {
+        for (bool cpn : { false, true }) {
+            const int r = UBoolPropFieldSizeFor(0x44, v, cpn);
+            EXPECT("A6: FieldSize always lands past Offset_Internal", r > 0x44);
+            EXPECT("A6: FieldSize is 4-aligned", (r % 4) == 0);
+        }
+    }
+}
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -7556,6 +7624,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
+    RUN(Test_UBoolPropFieldSize);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);

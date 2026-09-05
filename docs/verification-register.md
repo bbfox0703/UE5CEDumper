@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -429,6 +429,51 @@ rows 1–4 and leave 5 open rather than marking the section done.
 > identical, and every mechanism row 5 exercises (`AnchorAtLastUnchainableHop`, `FormatCrumbOffset`,
 > `LogReanchor`) is UI-side. ⛔ Do not generalise this — for any row that turns on DLL behaviour the
 > banner is a stop, not a note.
+
+### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A6: UBoolProperty::FieldSize is now derived
+
+*`DynOff::UBOOLPROP_FIELDSIZE` had **zero writers** repo-wide against nine readers. The
+FProperty arm of `ValidateAndFixOffsets` derived the entire subclass-extension family and
+simply had no `else`, so every UE4 <4.25 game kept the `0x70` default regardless of what its
+`Offset_Internal` actually probed to. It is now derived from the probe.*
+
+*⚠ The delta is **not** the flat `+0x2C` the audit prescribed. Measured across all 31 UVTD
+templates: `0x28` for **4.11–4.17**, `0x2C` for **4.18+**, `+8` more under CasePreservingName.
+The 4.17/4.18 step is structural — `Offset_Internal` and `RepNotifyFunc` swap order there.
+4.11–4.17 is seven versions inside our floor, so the flat form would have been wrong on all
+of them.*
+
+**Failure shape being fixed** — DQ XI S (`docs/test-games.md:19`, UE4.22, UProperty mode, a
+whole-layout **+0x10 shift**) puts the true `FieldSize` at `0x80`. The old `0x70` default plus
+Ubel's `{base, ±4, +8, −8}` spread tops out at `0x78`, so **no probe could reach it**:
+`boolFieldMask` stayed 0 and the reader fell back to `byteVal != 0`, which reports a native
+C++ bitfield bool as **true whenever any sibling in its byte is set**.
+
+**Acceptance test** — needs a **UProperty-mode** game (UE4 <4.25), ideally a shifted one. DQ XI S
+is the named exemplar. Two paired observables, both required:
+
+| side | where | expect |
+|---|---|---|
+| DLL | `offsets-0.log` | `UBoolProperty::FieldSize derived at +0x80 (Offset_Internal +0x54, UE=422)` — the numbers must be the game's own, not the defaults |
+| UI  | ClassStructPanel | two **sibling bitfield bools on the same native class showing DIFFERENT values**. That is the whole point: with `boolFieldMask == 0` they were all reported true together, so identical values prove nothing |
+
+**Negative control, and it is the load-bearing one**: run a STOCK pre-4.25 title (OCTOPATH 4.18,
+NEKOPALIVE 4.11) and confirm the derived value is **byte-identical to the old default** —
+`0x44 + 0x2C == 0x70` at 4.18, and at 4.11 the derivation gives `0x50 + 0x28 == 0x78`, which the
+old default did **not** produce. So 4.11 is the more interesting control of the two: it should
+CHANGE, and the bools should get *better*.
+
+⚠ **Do not narrow Ubel's `{base, ±4, +8, −8}` spread now that the base is derived.** It is what
+makes a misdetected version survivable: the two live deltas differ by exactly 4 and the
+CasePreserving case by 8, both inside the spread. `Test_UBoolPropFieldSize` asserts those two
+distances specifically so a future "cleanup" trips a test instead of removing the net silently.
+
+*Also in the same commit: the `fieldSize` acceptance in `Frieren` and one site in `Ubel` accepted
+`>= 1 && <= 8` where the other five copies required `== 1`. Tightened to match — the loose form
+bought nothing and accepted `8`, which is a value the low byte of an 8-aligned pointer can present
+when the probe lands off-field.*
+
+-----
 
 ### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A4: the UE 5.8 version marker
 

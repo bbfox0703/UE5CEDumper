@@ -4136,6 +4136,22 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // already coherent; routing it through the helper is what stops it and Step 2.5's
         // default block from drifting apart again.
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff));
+    } else if (propOffsetOff >= 0) {
+        // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
+        // in this function with zero writers -- it kept its 0x70 default on every UE4
+        // <4.25 game, including shifted ones. On DQ XI S (4.22, +0x10 shift) the true
+        // value is 0x80 and Ubel's ±4/+8/-8 spread tops out at 0x78, so no probe reached
+        // it, boolFieldMask stayed 0, and the reader fell back to `byteVal != 0` -- which
+        // reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
+        //
+        // The `>= 0` guard mirrors the FProperty arm: an unmeasured probe must leave the
+        // default alone rather than derive from -1.
+        DynOff::UBOOLPROP_FIELDSIZE = DynOff::UBoolPropFieldSizeFor(
+            propOffsetOff, ueVersion, DynOff::bCasePreservingName);
+        Sein::Info("DYNO", "ValidateAndFixOffsets: UBoolProperty::FieldSize derived at "
+                   "+0x%02X (Offset_Internal +0x%02X, UE=%u%s)",
+                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, ueVersion,
+                   DynOff::bCasePreservingName ? ", CPN" : "");
     }
 
     // Infer tagged FFieldVariant from probed offsets:

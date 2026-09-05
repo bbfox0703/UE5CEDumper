@@ -404,6 +404,41 @@ constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName
 // old sweep tried and which matches no version of anything.
 inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
 
+// === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
+//
+// ⛔ This was the ONE UProperty-mode offset nothing calibrated. UBOOLPROP_FIELDSIZE had
+// ZERO writers repo-wide against nine readers, while every other UProperty-mode offset in
+// ValidateAndFixOffsets IS derived (UPROPERTY_OFFSET, _ELEMSIZE, _FLAGS, UFIELD_NEXT) --
+// the FProperty arm derived the whole subclass family and simply had no `else`.
+//
+// The four bytes { FieldSize, ByteOffset, ByteMask, FieldMask } sit at the property base's
+// TOTAL SIZE, so the delta from Offset_Internal is whatever the tail after it measures.
+// MEASURED across all 31 UVTD templates ([FProperty]/[UProperty] Offset_Internal vs
+// [FBoolProperty] FieldSize) -- and it is NOT the single +0x2C the audit prescribed:
+//
+//   4.07-4.10   Offset_Internal 0x4C -> FieldSize 0x70   delta 0x24   (below our 4.11 floor)
+//   4.11-4.17   Offset_Internal 0x50 -> FieldSize 0x78   delta 0x28
+//   4.18-5.08   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
+//   4.27 CPN    Offset_Internal 0x4C -> FieldSize 0x80   delta 0x34  (= 0x2C + 8)
+//
+// The 4.17/4.18 step is not a curve fit: Offset_Internal and RepNotifyFunc SWAPPED order.
+// Up to 4.17 the tail is RepNotifyFunc(FName) + Offset_Internal + 4 pointers; from 4.18
+// Offset_Internal moves ahead of RepNotifyFunc, shortening the tail by 4. 4.11-4.17 is
+// SEVEN versions inside our supported range, so a flat +0x2C would have been wrong there.
+// The CPN +8 is the usual padded-FName SLOT delta (RepNotifyFunc is an FName followed by
+// 8-aligned pointers) -- see bCasePreservingName.
+//
+// ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
+// survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
+// inside the spread. Narrowing it "now that the base is derived" would remove the net.
+constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
+                                    bool casePreservingName) {
+    const int delta = (ueVersion >= 418) ? 0x2C
+                    : (ueVersion >= 411) ? 0x28
+                    : 0x24;                       // 4.07-4.10, below the floor
+    return offsetInternal + delta + (casePreservingName ? 8 : 0);
+}
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).

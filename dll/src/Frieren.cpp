@@ -980,7 +980,8 @@ int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
         if (Macht::ReadBytesSafe(fieldAddr + tryOff, boolBytes, 4)) {
             uint8_t fieldSize = boolBytes[0];
             uint8_t fieldMask = boolBytes[3];
-            if (fieldSize >= 1 && fieldSize <= 8 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+            // fieldSize == 1, matching the other six copies of this probe (see Ubel).
+            if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
                 return static_cast<int32_t>(fieldMask);
             }
         }

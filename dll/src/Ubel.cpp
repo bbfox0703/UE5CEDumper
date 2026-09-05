@@ -2544,7 +2544,12 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
                 uint8_t fieldMask = boolBytes[3];
-                if (fieldSize >= 1 && fieldSize <= 8 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                // fieldSize == 1, not `>= 1 && <= 8`. Five of the seven copies of this
+                // probe already required 1; these two had drifted. FieldSize is the
+                // bitfield CONTAINER size and UHT only ever emits a 1-byte one, so the
+                // loose form bought nothing and accepted 8 -- which is exactly the low
+                // byte an 8-aligned pointer can present when the probe lands off-field.
+                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
                     cf.boolFieldMask = fieldMask;
                     break;
                 }
