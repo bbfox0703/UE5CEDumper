@@ -264,6 +264,8 @@ prose was near-entirely duplicated, plus **six claims that had gone stale or wer
 doc they pointed at**. Trimmed to ~11 KB; CLAUDE.md 77.5 KB → 39 KB.*
 ⚠ The few **bold counts** below are pinned by `tools/check_derived_counts.py` — leave them exactly
 as written, or update the registry with them.
+⛔ **The WHOLE FILE stays ≤ 40 KB (40,960 bytes)** — it loads on every turn, so these are the most
+expensive bytes in the repo. `ls -l CLAUDE.md` before committing; over the line, trim a row, do not grow.
 
 | Document | Contents |
 |----------|----------|
@@ -279,6 +281,7 @@ as written, or update the registry with them.
 | [docs/auto-verification-classification-2026-08-23.md](docs/auto-verification-classification-2026-08-23.md) | Which open verification rows Auto + Computer Use can close, and what the rest need (fixture / environment / human). ⚠ Agent-produced and unrefuted — re-derive before acting. |
 | [docs/auto-verification-session-plan.md](docs/auto-verification-session-plan.md) | **How to RUN the register unattended.** Still owns grant mechanics (§3) and the authorised out-of-tree writes (§4, ask first). ⛔ **§5's run order is SPENT and §10's classification is RETIRED** — do not plan a batch off either. |
 | [docs/audit-2026-08-26-dxgi-appcompat-crash.md](docs/audit-2026-08-26-dxgi-appcompat-crash.md) | ⚠ **Read before changing a proxy DLL export or resolver.** Why dxgi stopped OCTOPATH booting while the same binary as winmm worked: an AppCompat shim calls our export before our CRT exists. Fix, rig, and the WER-reading traps. |
+| [docs/audit-2026-09-05-vendor-ue582.md](docs/audit-2026-09-05-vendor-ue582.md) | **Vendor audit #6** — UE 5.8.2 changed nothing for us; the value is the 6 defects of ours it found. ⛔ Read its top block before touching the ProcessEvent vtable table. |
 | [docs/audit-2026-08-13-early-code-findings.md](docs/audit-2026-08-13-early-code-findings.md) | Audit #5 register — the pre-June-2026 "early" code. ⛔ Scanning AND fixing are both DONE (the fix queue is SPENT); open it only when the maintainer names a finding, or to record a NEW defect found while verifying. |
 | [docs/audit-2026-08-04-findings.md](docs/audit-2026-08-04-findings.md) | **Bug/leak/refactor audit #4** (build 2554) — working tracker, all items shipped. Open for the per-finding detail, the refuted "do not re-raise" list, and the two cross-cutting root causes worth fixing as patterns. |
 | [docs/audit-2026-07-14-findings.md](docs/audit-2026-07-14-findings.md) | **Bug/leak audit #3** (build 2168) — working tracker for the Solide/Hemmung/Linie/Schlacht/Grausam + Auto-Snapshot/Dump-Explorer/Live-Funcs findings, each with failure scenario, fix shape and effort/risk. |

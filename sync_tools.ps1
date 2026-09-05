@@ -147,6 +147,28 @@ if (-not $SkipClones) {
             Write-Host "  HEAD: $head"
             if ($desc) { Write-Host "  tag:  $desc" }
         }
+
+        # RE-UE4SS keeps its engine-layout knowledge in submodules, not in the main
+        # repo, so a diff of main alone misses it -- that was the largest blind spot
+        # in the 2026-09-05 vendor audit. deps/first/Unreal is UEPseudo (their
+        # reverse-engineered Unreal headers, where AdjustOffsetsForStatsBuild moved),
+        # deps/first/patternsleuth is trumank's global resolver.
+        #
+        # Both are PUBLIC GitHub repos. .gitmodules gives them git@github.com: URLs,
+        # which is the only reason they look gated -- no Epic account is involved and
+        # never was (neither is Epic's UnrealEngine). The insteadOf rewrite is
+        # per-command, so it does not touch the user's git config.
+        #
+        # These live on the CLONE side of this script's split deliberately: RE-UE4SS
+        # is gitignored, so its submodules are too. Nothing here pins or compiles them.
+        if ($name -eq "RE-UE4SS" -and (Test-Path "$dir\.gitmodules")) {
+            Write-Host "  syncing RE-UE4SS submodules (UEPseudo + patternsleuth)..." -ForegroundColor DarkGray
+            git -C $dir -c url."https://github.com/".insteadOf="git@github.com:" `
+                submodule update --init --recursive deps/first/Unreal deps/first/patternsleuth 2>&1 |
+                Where-Object { $_ -notmatch '^Cloning into' } | Write-Host
+            git -C $dir submodule status deps/first/Unreal deps/first/patternsleuth 2>$null |
+                ForEach-Object { Write-Host "    $_" }
+        }
     }
 }
 
