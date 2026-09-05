@@ -308,6 +308,92 @@ with a measured envelope, and `fffe5fcf` swept up two sites it had missed. **A t
 
 -----
 
+## What the 2026-09-05 verification pass found *besides* the four rows it closed
+
+*Produced on the verification PC, 2026-09-05, build 3371: an offline re-derivation of the fifteen
+commits against the vendored engine, every finding then handed to an independent agent told to
+**refute** it. 51 survived, 13 were killed. The stale citations went straight into
+[`verification-register.md`](verification-register.md); what is left below is **code**, and none of
+it is a regression — every item is a site the audit's own classification covers and its sweep did
+not reach. ⚠ Each entry names the file:line, so **re-derive before acting**; line numbers drift.*
+
+### 1. `bCasePreservingName` — A9 changed the contract but left seven sites on the old value
+
+`ea844833` established that `sizeof(FName)` under CasePreservingName is **`0xC`, not `0x10`** — the
+`0x10` was the UObject `Name`→`Outer` **slot**, which is a different quantity — and it rewrote the
+header docs and the C# tests to the `0xC` contract. **Seven sites that A9's own classification puts
+in the `sizeof` bucket were left at `0x10`.** Before the commit the tree was uniformly (and wrongly)
+`0x10`; it now **contradicts itself** under CPN, which is strictly worse to debug.
+
+* [`dll/src/Ubel.cpp:333`](../dll/src/Ubel.cpp) `ReadSoftObjectPath` steps `PackageName`→`AssetName`
+  with `bCasePreservingName ? 0x10 : 0x08` — a textbook "step to an adjacent FName" — while
+  `SoftObjectPathPayloadSize` **79 lines below in the same family** uses `0xC`, and
+  `Grimoire.h`'s `FSoftObjectPathSizeFor` is built on `0xC`.
+* [`dll/src/Ubel.cpp:4313`](../dll/src/Ubel.cpp) and `:4476` set `fv.softArrayFNameSize` to `0x10`
+  under CPN, while [`Ubel.h:435`](../dll/src/Ubel.h) documents that field as a **`sizeof(FName)`**.
+  ⚠ The header next to it explicitly forbids the naive reconciliation — *"Deliberately different
+  from `SoftArrayFNameSize` above, which IS a sizeof. Do not make them consistent."* — so read both
+  comments before touching either.
+* `Ubel.cpp:3188` and three more in the same shape.
+
+⚠ **Impact today is ZERO and that is exactly why it is easy to leave rotting**: `bCasePreservingName`
+has only two writers (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can
+force it true, and **12 titles have measured false with zero CPN**. The register was right to open
+no row — a row would be unfalsifiable. It belongs here instead. **Effort S, risk LOW.**
+
+### 2. A6's version table comment is wrong for six versions inside a band it prints as one
+
+[`dll/src/Grimoire.h:419-422`](../dll/src/Grimoire.h) prints `4.18-5.08  Offset_Internal 0x44 →
+FieldSize 0x70`. Measured against the UVTD templates, **4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all
+have `0x4C → 0x78`**; only 4.18-4.24 and 5.03-5.07 have the pair as printed. ⭐ **The shipped code is
+unaffected** — it reads only the *delta* (`0x2C`), which is right across the whole band, and the
+live measurements confirm it (`0x54 → 0x80` on DQ XI S, `0x44 → 0x70` on OCTOPATH). But a reviewer
+sanity-checking the derivation on a UE 5.0/5.1 game will find `0x4C/0x78`, conclude the table is
+broken, and "fix" a correct one. Also: `5.08` is asserted with **no `5_08` template on this
+machine** (highest is `5_07`). **Fix the comment, not the code. Effort XS, risk LOW.**
+
+### 3. A6's two spread tests pin the error terms independently — they do not compose
+
+[`dll/tests/dll_helpers_test.cpp:5808-5813`](../dll/tests/dll_helpers_test.cpp) asserts
+`guessAs420 - trueAt415 == 4` and `cpn - nonCpn == 8` **separately**. A version misdetected across
+the 4.17/4.18 boundary **and** a missed CPN sum to `0xC`, which is **outside** the probe spread
+`{0, ±4, +8, −8}`. RE-UE4SS ships a real-world shape that lands there (Kingdom Hearts 3: pre-4.18
+tail order with `RepNotifyFunc 0x60` before `Offset_Internal`). ⛔ This is **not** an argument for
+widening the spread — `[A6-BOOLFIELD-2026-09-05]` and the register both say do not — it is an
+argument for not describing the spread as an unconditional net. **Effort S (a third test + a
+comment), risk LOW.**
+
+### 4. `set_ue_version_override` does **not** re-derive the soft/lazy envelope
+
+`PersistentPtrEnvelopeFor` consults `latched` **before** it looks at `ueVersion`
+([`Grimoire.h:278-279`](../dll/src/Grimoire.h)), and `set_ue_version_override`
+([`Fern.cpp:1757-1760`](../dll/src/Fern.cpp)) sets only `g_cachedUEVersion` — it never clears
+`DynOff::SOFTPTR_PATH` / `DynOff::LAZYPTR_GUID`. So after an override, any call that cannot produce
+a fresh accepted measurement returns the **pre-override** latch. ⚠ This matters for A3's planned
+`421→422→421` A/B and for any "override to test a hypothesis" step: the version changes, the
+envelope does not. Either clear the two latches in the override handler or say so in the row.
+**Effort S, risk LOW.**
+
+### 5. Comments that still state the pre-fix layout as fact
+
+[`Ubel.cpp:2958`](../dll/src/Ubel.cpp) — `// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B)
++ FGuid(16B) = 0x20` — sits **immediately above** `ReadLazyObjectArrayElements`, i.e. above the code
+in §*`TArray<TLazyObjectPtr>` still strides `0x20`* below, and `:6138` repeats it. Read in isolation
+either says `+0x10` is the right answer, which is what an operator judging A1 will be doing.
+**Delete with the stride fix. Effort XS.**
+
+### 6. A5's "provable no-op" argument is incomplete (the conclusion still holds)
+
+[`verification-register.md`](verification-register.md) closes A5's tie-break with *"a provable no-op
+over `{16, 24, 32, 20, 40}` — every divisor pair already has the smaller candidate earlier in the
+list"*. True of the divisor pairs `(16,32)` and `(20,40)`, but `PreferStride` fires on **any** equal
+score, and the list holds two **non-divisor** pairs where the smaller sits **later**: `(24,20)` and
+`(32,20)`. On a score tie in either, old and new select differently. ⚠ The *decision* not to open a
+row stands; the **recorded reason** is not the reason. Fix the sentence so it is not cited later as
+a proof. **Effort XS, doc only.**
+
+-----
+
 ## UE5 non-Shipping: GNames reaches nothing — decide whether to mine a pattern
 
 *Parent: the 2026-07-29 PDB+replay pass. Full evidence in
