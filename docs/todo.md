@@ -267,7 +267,24 @@ Where they live now:
   rule about `IMAGE_DEBUG_TYPE_REPRO` is stated with it.
 -----
 
-## `TArray<TLazyObjectPtr>` still strides `0x20` — the one site audit A1 did not reach
+## ✅ DONE 2026-09-05 (build 3374) — `TArray<TLazyObjectPtr>` no longer strides `0x20`
+
+> **FIXED.** `InferScalarSize` and `ReadLazyObjectArrayElements` both route through
+> `LazyGuidOffset` now: `LazyGuidOffset(elemSize) + 0x10`. Passing the caller's `elemSize`
+> **in** is deliberate — a real `ElementSize` gets measured and latched, so the array path
+> can finally emit the `payload envelope measured` line it structurally could not before;
+> garbage still falls back to the version default, which is what the forced constant was
+> actually guarding against. All three stale `= 0x20` comments deleted with it.
+>
+> ⚠ **Not live-verified, and it cannot be here**: no installed title has a
+> `TArray<TLazyObjectPtr>` (OCTOPATH has 5 scalar lazy properties and zero arrays). Pinned
+> offline instead, in `dll_core_test` — six checks including *"0x20 is returned by NO era"*
+> and a 4.18 row asserting the same `0x1C` OCTOPATH reported live as its `ElementSize`.
+> That offline route is the one this batch believed did not exist; see item 6 below.
+
+<details><summary>original entry (kept — the failure analysis is why the fix took the shape it did)</summary>
+
+**`TArray<TLazyObjectPtr>` still strides `0x20` — the one site audit A1 did not reach**
 
 *Found 2026-09-05 by an offline audit of the A1 batch on the verification PC (adversarially
 verified, then confirmed against the vendored engine source). **Effort: S. Risk: LOW** — it is the
@@ -305,6 +322,8 @@ with a measured envelope, and `fffe5fcf` swept up two sites it had missed. **A t
 **Then re-run** `py tools/verify/a1_softlazy_envelope.py <host>` on OCTOPATH (tagged, `0x0C`) and any
 5.3+ title (untagged, `0x08`) — the rig already separates the two types, and a
 `TArray<TLazyObjectPtr>` walk should then emit the line the scalar path emits today.
+
+</details>
 
 -----
 
@@ -374,7 +393,7 @@ a fresh accepted measurement returns the **pre-override** latch. ⚠ This matter
 envelope does not. Either clear the two latches in the override handler or say so in the row.
 **Effort S, risk LOW.**
 
-### 5. Comments that still state the pre-fix layout as fact
+### 5. ✅ DONE 2026-09-05 — comments that still stated the pre-fix layout as fact
 
 [`Ubel.cpp:2958`](../dll/src/Ubel.cpp) — `// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B)
 + FGuid(16B) = 0x20` — sits **immediately above** `ReadLazyObjectArrayElements`, i.e. above the code
