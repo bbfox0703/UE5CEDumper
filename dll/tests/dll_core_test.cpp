@@ -1,4 +1,4 @@
-// dll_core_test.cpp
+﻿// dll_core_test.cpp
 // UE5CEDumper — the first test target that compiles the DLL's CORE.
 //
 // WHY THIS EXISTS
@@ -47,14 +47,30 @@ namespace Stark { void SetInvokeTimeoutMs(int) {} }
 // the test chooses the UE version the core code branches on.
 uint32_t g_cachedUEVersion = 0;
 
-#include "../src/Macht.cpp"    // NOLINT
-#include "../src/Serie.cpp"    // NOLINT
-#include "../src/Ubel.cpp"     // NOLINT
-#include "../src/Radar.cpp"    // NOLINT
-#include "../src/Denken.cpp"   // NOLINT
-#include "../src/Flamme.cpp"   // NOLINT
-#include "../src/Aura.cpp"     // NOLINT
-#include "../src/Genau.cpp"    // NOLINT
+// ⚠ #undef between every include, and it is not just warning silencing.
+// Each of these .cpp files is its own translation unit in the real DLL, and each either
+// #defines LOG_CAT itself or inherits Sein.h's `#ifndef LOG_CAT -> ""` default. Concatenated
+// into ONE TU here, the second and later #defines are redefinitions (C4005) -- and worse, the
+// two files that define NOTHING (Radar.cpp, Denken.cpp) silently inherited whatever the
+// PREVIOUS include happened to leave behind, so their log lines were attributed to another
+// module's category in a way the shipping build never does. Undef-ing makes this harness
+// match the real build instead of merely compiling quietly.
+#undef LOG_CAT
+#include "../src/Macht.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Serie.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Ubel.cpp"       // NOLINT
+#undef LOG_CAT
+#include "../src/Radar.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Denken.cpp"     // NOLINT
+#undef LOG_CAT
+#include "../src/Flamme.cpp"     // NOLINT
+#undef LOG_CAT
+#include "../src/Aura.cpp"       // NOLINT
+#undef LOG_CAT
+#include "../src/Genau.cpp"      // NOLINT
 
 // ── harness ──────────────────────────────────────────────────────────
 

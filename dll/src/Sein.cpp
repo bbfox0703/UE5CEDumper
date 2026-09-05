@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Sein — 贊恩 (僧侶・記錄者 — Priest, Chronicler)
 // Logger: 5-category per-process file logging with rotation
 // ============================================================
@@ -337,8 +337,11 @@ static void RotateIfNeeded(LogFileState& fs_state) {
     ArchiveByWriteTime(fs_state.currentPath, fs_state.currentPath.parent_path(),
                        fs_state.baseName.c_str());
 
-    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
-    const int reopenErr = fs_state.file ? 0 : errno;
+    // _wfopen_s, not _wfopen: it returns the error code DIRECTLY instead of leaving it in
+    // errno, which removes the clobber window the sibling call site below documents. Also
+    // silences C4996 in the test target, which (unlike the DLL target) does not define
+    // _CRT_SECURE_NO_WARNINGS -- so the deprecation was live there and invisible here.
+    const errno_t reopenErr = _wfopen_s(&fs_state.file, fs_state.currentPath.c_str(), L"w");
     fs_state.written = 0;
 
     if (fs_state.file) {
@@ -381,11 +384,12 @@ static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
     MigrateLegacyGenerations(dir, baseName);
     ArchiveByWriteTime(fs_state.currentPath, dir, baseName);   // last run -> dated archive
 
-    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
-    if (!fs_state.file) {
-        // Captured immediately: any later CRT call can overwrite errno, and the
-        // notice that reports this is written after four more open attempts.
-        if (outErr) *outErr = errno;
+    // _wfopen_s hands the error back as a RETURN VALUE, so the errno-clobber hazard this
+    // block used to guard against cannot arise: the notice that reports the failure is
+    // written four more open attempts later, and errno would not have survived that.
+    const errno_t openErr = _wfopen_s(&fs_state.file, fs_state.currentPath.c_str(), L"w");
+    if (openErr != 0 || !fs_state.file) {
+        if (outErr) *outErr = (openErr != 0) ? openErr : errno;
         return false;
     }
     fs_state.written = 0;

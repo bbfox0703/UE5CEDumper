@@ -7447,7 +7447,12 @@ int main() {
     // exactly when something goes wrong tells you nothing at the only moment it
     // matters, and it passed locally, so there was nothing else to go on.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    g_trace = std::getenv("DLL_TEST_TRACE") != nullptr;
+    // getenv_s, not std::getenv: the shipping DLL target defines _CRT_SECURE_NO_WARNINGS
+    // (dll/CMakeLists.txt) but the test targets deliberately do not, so the deprecation is
+    // live here. Fixed at the call rather than by widening the suppression to the whole
+    // test target -- a real getenv misuse should still be able to warn.
+    size_t traceLen = 0;
+    g_trace = (getenv_s(&traceLen, nullptr, 0, "DLL_TEST_TRACE") == 0 && traceLen > 0);
 
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
