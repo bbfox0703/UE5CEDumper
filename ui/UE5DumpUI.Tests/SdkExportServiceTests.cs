@@ -1,4 +1,4 @@
-using UE5DumpUI.Models;
+﻿using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
 
@@ -332,6 +332,136 @@ public class SdkExportServiceTests
 
         Assert.Contains("bool bReplicates;", header);
         Assert.DoesNotContain(" : 1;", header);
+    }
+
+    // --- Empty-base structs (audit A7) ---
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_EmptyBase_OwnFieldAtOffsetZeroSurvives()
+    {
+        // THE REAL SHAPE, not an invented deep intrusion. UE sets a native USTRUCT's
+        // PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so an EMPTY base
+        // reports 1 -- while C++ empty-base optimisation puts the derived struct's first
+        // member at offset 0. `Offset >= superPropsSize` then dropped it, and the trailing
+        // pad pass replaced it with uint8_t Pad_0001[0x0003].
+        //
+        // BEFORE the fix this test fails on the first assert: "float Weight;" is absent and
+        // "Pad_0001" is present in its place.
+        //
+        // UE 5.8.2 ships 62 such bases with 302 property-bearing children -- FEmptyPayload
+        // (Engine module, no editor guard), the FMassFragment family, FEditorDataStorageColumn.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "FAttributePayload",
+            SuperName = "FEmptyPayload",
+            PropertiesSize = 4,
+            SuperPropertiesSize = 1,   // sizeof(empty struct) == 1, NOT 0
+            OwnPropertiesStart = 0,    // EBO: the derived member really is at 0
+            Fields = { new FieldInfoModel { Name = "Weight", TypeName = "FloatProperty", Offset = 0, Size = 4 } },
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains(": public FEmptyPayload", header);
+        Assert.Contains("float Weight;", header);
+        Assert.DoesNotContain("Pad_0001", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_EmptyBase_NegativeOwnStartKeepsW2Behaviour()
+    {
+        // ⚠ THE REGRESSION GUARD. -1 means "the DLL said nothing", and folding it into the
+        // min() would drive ownStart to -1/0 and re-emit the ENTIRE inherited chain -- audit
+        // #5 W2, a far worse bug than the one A7 fixes. A pre-fix DLL must behave exactly as
+        // it did before.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "BP_Player_C",
+            SuperName = "AActor",
+            PropertiesSize = 0x2A0,
+            SuperPropertiesSize = 0x290,
+            OwnPropertiesStart = -1,   // pre-fix DLL
+            Fields =
+            {
+                new FieldInfoModel { Name = "RootComponent", TypeName = "ObjectProperty", Offset = 0x120, Size = 8 },
+                new FieldInfoModel { Name = "Health", TypeName = "FloatProperty", Offset = 0x290, Size = 4 },
+            },
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains("float Health;", header);
+        Assert.DoesNotContain("RootComponent", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_OwnStartNeverRaisesTheFloor()
+    {
+        // Only ever a LOWER floor. A class whose own properties start ABOVE the super's size
+        // (padding between base and derived) must not have inherited fields let back in.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "Derived",
+            SuperName = "Base",
+            PropertiesSize = 0x20,
+            SuperPropertiesSize = 0x10,
+            OwnPropertiesStart = 0x18,   // higher than the super size
+            Fields =
+            {
+                new FieldInfoModel { Name = "Inherited", TypeName = "IntProperty", Offset = 0x08, Size = 4 },
+                new FieldInfoModel { Name = "Own", TypeName = "IntProperty", Offset = 0x18, Size = 4 },
+            },
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains("Own;", header);
+        Assert.DoesNotContain("Inherited", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_EmptyStructIsEmittedEmptySoEboApplies()
+    {
+        // ⚠ The SECOND half of A7, and fixing ownStart alone does not cover it. The empty
+        // BASE itself has PropertiesSize 1, so the trailing-pad pass emitted
+        // `uint8_t Pad_0000[0x0001];` -- which makes the emitted base NON-empty, defeats
+        // empty-base optimisation in the generated C++, and puts every derived struct's first
+        // member at 1 where the game has it at 0. `struct X {};` is already sizeof 1, so the
+        // size comment stays honest.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "FEmptyPayload",
+            SuperName = "",
+            PropertiesSize = 1,
+            SuperPropertiesSize = 0,
+            OwnPropertiesStart = -1,   // genuinely declares nothing
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.DoesNotContain("Pad_", header);
+        Assert.Contains("Size: 0x0001", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_OpaqueStructKeepsItsPadding()
+    {
+        // NEGATIVE CONTROL for the above: the suppression is narrow. A struct with no
+        // properties but a real size must still be padded to that size, or every consumer
+        // of the header gets the wrong sizeof.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "FOpaqueThing",
+            SuperName = "",
+            PropertiesSize = 0x10,
+            SuperPropertiesSize = 0,
+            OwnPropertiesStart = -1,
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains("Pad_", header);
+        Assert.Contains("Size: 0x0010", header);
     }
 
     // --- Inherited properties (audit #5 W2) ---

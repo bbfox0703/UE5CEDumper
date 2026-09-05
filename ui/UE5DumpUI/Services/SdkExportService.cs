@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 
@@ -22,11 +22,13 @@ public static class SdkExportService
     /// </param>
     public static string GenerateClassHeader(
         string className, string superName, int propsSize,
-        IReadOnlyList<LiveFieldValue> fields, string? fullPath = null, int superPropsSize = 0)
+        IReadOnlyList<LiveFieldValue> fields, string? fullPath = null, int superPropsSize = 0,
+        int ownPropsStart = -1)
     {
         var sb = new StringBuilder(fields.Count * 80 + 256);
         EmitFileHeader(sb);
-        EmitClassHeaderFromLive(sb, className, superName, propsSize, fields, fullPath, superPropsSize);
+        EmitClassHeaderFromLive(sb, className, superName, propsSize, fields, fullPath, superPropsSize,
+                                ownPropsStart);
         return sb.ToString();
     }
 
@@ -390,7 +392,7 @@ public static class SdkExportService
             sb,
             classInfo.Fields.Select(f => new SdkField(
                 f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
-            superName, classInfo.SuperPropertiesSize, propsSize);
+            superName, classInfo.SuperPropertiesSize, propsSize, classInfo.OwnPropertiesStart);
     }
 
     /// <summary>
@@ -419,7 +421,8 @@ public static class SdkExportService
     /// bits UE left unused, so the byte reconstructs exactly.</para>
     /// </summary>
     private static void EmitStructBody(
-        StringBuilder sb, List<SdkField> fields, string superName, int superPropsSize, int propsSize)
+        StringBuilder sb, List<SdkField> fields, string superName, int superPropsSize, int propsSize,
+        int ownPropsStart = -1)
     {
         // Order by offset, then by bit position so a packed byte reads low bit first.
         var sorted = fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolMask).ToList();
@@ -427,7 +430,22 @@ public static class SdkExportService
         // Where this class's OWN properties start.
         int ownStart = 0;
         if (superPropsSize > 0)
+        {
             ownStart = superPropsSize;
+            // ⚠ superPropsSize is one too HIGH when the super is an EMPTY USTRUCT. UE sets a
+            // native struct's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so
+            // an empty base reports 1 — while C++ empty-base optimisation puts the derived
+            // struct's first member at offset 0. `Offset >= 1` then silently dropped it, and
+            // the trailing-padding pass replaced it with `uint8_t Pad_0001[0x0003]`.
+            // UE 5.8.2 ships 62 such bases with 302 property-bearing children
+            // (FEmptyPayload, the FMassFragment family, FEditorDataStorageColumn, ...).
+            //
+            // A NEGATIVE ownPropsStart means the DLL said nothing (or the class declares no
+            // own properties) — it must NOT enter the comparison. Folding -1 or 0 in here
+            // re-emits the entire inherited chain, which is audit #5 W2 all over again.
+            if (ownPropsStart >= 0 && ownPropsStart < ownStart)
+                ownStart = ownPropsStart;
+        }
         else if (sorted.Count > 0 && !string.IsNullOrEmpty(superName))
             ownStart = sorted[0].Offset;   // legacy fallback — see the remark above
 
@@ -466,7 +484,16 @@ public static class SdkExportService
             i = j;
         }
 
-        if (propsSize > cursor && propsSize > 0)
+        // ⚠ An EMPTY USTRUCT must be emitted EMPTY, or the generated header's offsets are
+        // wrong even once the field above is no longer dropped. UE reports its PropertiesSize
+        // as 1, so this would emit `uint8_t Pad_0000[0x0001];` -- which makes the emitted base
+        // NON-empty, defeats empty-base optimisation in the generated C++, and puts every
+        // derived struct's first member at 1 where the game has it at 0. `struct X {};` is
+        // already sizeof 1 in C++, so suppressing the pad keeps the size comment honest AND
+        // reproduces the real layout. Narrow on purpose: only a struct with no own fields at
+        // all and a PropertiesSize of exactly 1 -- a 4-byte opaque struct still needs its pad.
+        bool emptyBase = own.Count == 0 && ownStart == 0 && propsSize == 1;
+        if (propsSize > cursor && propsSize > 0 && !emptyBase)
             EmitPadding(sb, cursor, propsSize - cursor);
 
         sb.Append("}; // Size: 0x");
@@ -512,7 +539,8 @@ public static class SdkExportService
 
     private static void EmitClassHeaderFromLive(
         StringBuilder sb, string className, string superName, int propsSize,
-        IReadOnlyList<LiveFieldValue> fields, string? fullPath, int superPropsSize)
+        IReadOnlyList<LiveFieldValue> fields, string? fullPath, int superPropsSize,
+        int ownPropsStart)
     {
         sb.Append("// ");
         sb.Append(!string.IsNullOrEmpty(fullPath) ? fullPath : className);
@@ -532,7 +560,7 @@ public static class SdkExportService
             sb,
             fields.Select(f => new SdkField(
                 f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
-            superName, superPropsSize, propsSize);
+            superName, superPropsSize, propsSize, ownPropsStart);
     }
 
     private static void EmitPadding(StringBuilder sb, int offset, int size)

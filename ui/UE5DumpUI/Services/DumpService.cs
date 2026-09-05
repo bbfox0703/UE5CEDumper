@@ -370,6 +370,11 @@ public sealed class DumpService : IDumpService
             SuperName = classObj["super_name"]?.GetValue<string>() ?? "",
             PropertiesSize = classObj["props_size"]?.GetValue<int>() ?? 0,
             SuperPropertiesSize = classObj["super_props_size"]?.GetValue<int>() ?? 0,
+            // ⚠ The default is load-bearing. A pre-fix DLL sends no own_props_start, and -1
+            // means "no information" — a `?? 0` here would drive the min() in EmitStructBody to
+            // 0 and re-emit every inherited property (audit #5 W2), which is a far worse bug
+            // than the one own_props_start exists to fix.
+            OwnPropertiesStart = classObj["own_props_start"]?.GetValue<int>() ?? -1,
         };
 
         if (classObj["fields"] is JsonArray fields)

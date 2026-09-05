@@ -2110,6 +2110,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // SuperStruct chain, and nothing else in this reply implies the boundary
             // (audit #5 W2).
             classData["super_props_size"] = ci.SuperPropertiesSize;
+            // Lower floor for the own/inherited split. super_props_size alone is wrong
+            // when the super is an EMPTY USTRUCT: UE reports its PropertiesSize as 1
+            // (CppStructOps->GetSize()) while empty-base optimisation puts the derived
+            // struct's first member at 0. -1 means "no own properties / not measured".
+            classData["own_props_start"] = ci.OwnPropertiesStart;
 
             json fields = json::array();
             for (const auto& f : ci.Fields) {

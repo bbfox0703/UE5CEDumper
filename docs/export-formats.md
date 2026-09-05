@@ -334,6 +334,46 @@ struct ClassName : public SuperName
 }; // Size: 0x0020
 ```
 
+### The own-vs-inherited boundary — and why it needs TWO numbers
+
+`walk_class` returns the **entire** SuperStruct chain, so the emitter must split own from
+inherited or it re-declares every base property inside a `struct X : public Super` that
+already inherits it (audit #5 W2). The boundary is the super's `PropertiesSize`, on the wire
+as `super_props_size`.
+
+⚠ **That number alone is one too HIGH when the super is an EMPTY USTRUCT** (audit A7). UE sets
+a native struct's `PropertiesSize` from `CppStructOps->GetSize()`
+(`CoreUObject/Private/UObject/Class.cpp:947`), so an empty base reports **1**, not 0 — while
+C++ **empty-base optimisation** puts the derived struct's first member at offset **0**. A
+`Offset >= super_props_size` split then dropped that member, and the trailing-padding pass
+replaced it with `uint8_t Pad_0001[0x0003];`. UE 5.8.2 ships **62** empty USTRUCTs that are
+inherited from, with **302** property-bearing children — `FEmptyPayload` (Engine module, no
+editor guard), the `FMassFragment` family, `FEditorDataStorageColumn`.
+
+So the DLL also sends `own_props_start`: the lowest `Offset` among the class's **own**
+properties, captured in `Ubel::WalkClass` before the super chain is prepended. The emitter
+takes the **lower** of the two.
+
+- ⛔ `own_props_start` is **−1** when the class declares no properties of its own, or when an
+  older DLL does not send it. A negative means **no information** and must fall back to
+  `super_props_size`. Folding −1 or 0 into the comparison re-emits the whole inherited chain,
+  which is W2 again and strictly worse than the bug A7 fixes.
+- ⛔ It is only ever a **lower** floor, never a higher one.
+
+### Empty structs are emitted EMPTY
+
+A struct with no own properties and `PropertiesSize == 1` gets **no padding member**. Emitting
+`uint8_t Pad_0000[0x0001];` would keep `sizeof` at 1 but make the struct **non-empty**, which
+defeats empty-base optimisation in the *generated* C++ and puts every derived struct's first
+member at 1 where the game has it at 0. `struct X {};` is already `sizeof` 1, so the
+`// Size: 0x0001` comment stays honest. Deliberately narrow: an opaque struct with a real size
+still gets its padding.
+
+*Measured on MSVC (5 toolsets, `/std:c++17` and `c++20`, cross-checked with clang and with
+`/d1reportSingleClassLayout`): a non-empty base **never** has its trailing padding reused —
+that is the Itanium rule, and the same translation units compiled for Linux do show reuse — so
+EBO is the only shape that intrudes on a derived member's offset.*
+
 ### Features
 
 - Sorts fields by offset, inserts padding for gaps

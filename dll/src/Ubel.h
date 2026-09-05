@@ -54,6 +54,22 @@ struct ClassInfo {
     // that must tell own from inherited -- the SDK header emitter -- cannot do it without
     // this number, and nothing else on the wire implies it (audit #5 W2).
     int32_t                SuperPropertiesSize = 0;
+    // The LOWEST Offset among this class's OWN properties -- captured before the super
+    // chain is prepended, because after that the two are indistinguishable.
+    //
+    // ⚠ It exists because SuperPropertiesSize is NOT a safe floor. UE sets a native
+    // USTRUCT's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so an EMPTY
+    // USTRUCT reports 1, not 0 -- while C++ empty-base optimisation puts the derived
+    // struct's first member at offset 0. `Offset >= SuperPropertiesSize` then drops it.
+    // Measured on MSVC: an empty base (including one carrying only GENERATED_BODY-shaped
+    // typedefs) gives sizeof 1 with the derived member at 0, while a NON-empty base never
+    // has its trailing padding reused. So EBO is the only intruding shape -- and UE 5.8.2
+    // ships 62 empty USTRUCTs that are inherited from, with 302 property-bearing children.
+    //
+    // -1 = not measured / this class declares no properties of its own. Consumers MUST
+    // treat a negative as "no information" and fall back to SuperPropertiesSize: taking a
+    // min() against 0 or -1 re-emits the entire inherited chain (audit #5 W2).
+    int32_t                OwnPropertiesStart = -1;
     std::vector<FieldInfo> Fields;
 };
 

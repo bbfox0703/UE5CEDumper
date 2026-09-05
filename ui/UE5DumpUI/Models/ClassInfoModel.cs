@@ -1,4 +1,4 @@
-namespace UE5DumpUI.Models;
+﻿namespace UE5DumpUI.Models;
 
 /// <summary>
 /// Represents the full structure info of a UClass.
@@ -22,5 +22,14 @@ public sealed class ClassInfoModel
     /// </para>
     /// </summary>
     public int SuperPropertiesSize { get; init; }
+
+    /// <summary>Lowest Offset among this class's OWN properties, or <c>-1</c> when it declares none
+    /// (or the DLL predates the field). ⚠ NOT interchangeable with <see cref="SuperPropertiesSize"/>:
+    /// UE reports an EMPTY USTRUCT's PropertiesSize as 1 (CppStructOps-&gt;GetSize()), while C++
+    /// empty-base optimisation puts the derived struct's first member at offset 0 — so the super's
+    /// size is one too high to use as a floor. A negative value means NO INFORMATION and must fall
+    /// back to SuperPropertiesSize; folding it into a min() would re-emit the whole inherited
+    /// chain (audit #5 W2).</summary>
+    public int OwnPropertiesStart { get; init; } = -1;
     public List<FieldInfoModel> Fields { get; init; } = new();
 }

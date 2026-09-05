@@ -994,6 +994,14 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         }
     }
 
+    // Capture the own-properties floor HERE -- after the own chain walk and BEFORE the
+    // super chain is prepended below, which is the only point where info.Fields holds
+    // exactly this class's own properties. See ClassInfo::OwnPropertiesStart.
+    for (const auto& f : info.Fields) {
+        if (info.OwnPropertiesStart < 0 || f.Offset < info.OwnPropertiesStart)
+            info.OwnPropertiesStart = f.Offset;
+    }
+
     // Walk inherited fields from SuperStruct chain.
     // Optimization: if a super class is already cached, reuse its fields
     // (which already include ITS super chain) instead of re-walking.

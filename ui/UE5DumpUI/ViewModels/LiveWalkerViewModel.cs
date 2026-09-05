@@ -4981,6 +4981,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Get the superclass name from the first breadcrumb's class info if available
             var superName = "";
             var superPropsSize = 0;
+            var ownPropsStart = -1;   // -1 = no information; see ClassInfoModel
             if (Breadcrumbs.Count > 0)
             {
                 var bc = Breadcrumbs[^1];
@@ -4993,6 +4994,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         // Where this class's own properties start — without it the header
                         // re-declares every inherited property (audit #5 W2).
                         superPropsSize = classInfo.SuperPropertiesSize;
+                        // Lower floor for an EMPTY super -- see ClassInfoModel.OwnPropertiesStart.
+                        ownPropsStart = classInfo.OwnPropertiesStart;
                     }
                     catch
                     {
@@ -5011,7 +5014,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             var header = SdkExportService.GenerateClassHeader(
                 CurrentClassName, superName, propsSize, Fields.ToList(),
-                fullPath: null, superPropsSize: superPropsSize);
+                fullPath: null, superPropsSize: superPropsSize, ownPropsStart: ownPropsStart);
 
             await File.WriteAllTextAsync(filePath, header);
 
