@@ -52,6 +52,26 @@ Regenerate with `py tools/ghidra/inventory_builds.py --md`; do not hand-edit.
 
 | engine | config | sweep tag | binary |
 |---|---|---|---|
+⛔ **There are no `Test`-configuration rows here, and that is a wall rather than an oversight.**
+A UE 5.7+ **Test** build is the only shape that produces a **40-byte `FUObjectItem`**
+(`UE_BUILD_TEST` began defining `ENABLE_STATNAMEDEVENTS_UOBJECT` at 5.7.0, adding `TStatId` +
+`StatIDStringStorage` after `ClusterRootIndex`), and audit **A5** added stride 40 to the sweep
+for it. It cannot be verified with what is here, on two independent counts:
+
+* **A launcher engine cannot build it at all.** `Engine\Binaries\Win64\` ships
+  `UnrealGame.target`, `-DebugGame.target` and `-Shipping.target` — there is no `-Test.target`,
+  and `BaseEngine.ini` contains no `Configuration="Test"`. UnrealBuildTool refuses at target
+  validation, before any linker runs.
+* **DumperTest cannot serve even if it could be built.** It is UE **5.4**, and the `Build.h`
+  change landed at 5.7.0, so a Test build of it would still yield a 24-byte item.
+
+Producing one means a from-source engine build (hours, >150 GB). **Not worth it for one stride
+candidate** — A5's 40-byte half is deliberately left unverified, and no register row was opened
+for it, because a row with no producible fixture is unfalsifiable. A5's other two halves (the
+explicit tie-break and the high-null warning) need no fixture: the tie-break is a provable
+no-op over the current candidate set, and the warning's silence on a healthy pool is the
+expected result.
+
 | 4.10 | Development | UE4.10-GameDev | `4.10\Development\UE4Game.exe` |
 | 4.10 | Shipping | UE4.10-Game | `4.10\Shipping\UE4Game-Win64-Shipping.exe` |
 | 4.15.3 | DebugGame | UE4.15-FlyingDbgGame | `4.15.3\DebugGame\UE415_Flyinh-Win64-DebugGame.exe` |
