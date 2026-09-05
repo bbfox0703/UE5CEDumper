@@ -407,13 +407,18 @@ struct LiveFieldValue {
     uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
     // Phase G layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
     // Lets the CE XML / CSX exporter emit per-element struct groups with
-    // FName leaf(s) at the FSoftObjectPath sub-offset (+0x10) instead of
+    // FName leaf(s) at the FSoftObjectPath sub-offset instead of
     // a single 8B WeakPtr-only hex. 0 means "not a soft array".
-    //   FSoftObjectPtr layout per UE version:
-    //     UE4 / UE5.0: { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
-    //     UE5.1+:      { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FName(8|16) + FString(16) }
+    //   FSoftObjectPtr layout per UE version — note the Tag is NOT always there:
+    //     UE4 / UE5.0:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
+    //     UE5.1 / 5.2:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName x2     + FString(16) }
+    //     UE5.3+:       { FWeakObjectPtr(8)                   + FName x2     + FString(16) }
+    // UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest, moving the path from
+    // +0x10 to +0x08. Exporters MUST use softArrayPathOffset rather than baking
+    // 0x10 — a CE table built with the wrong one reads AssetName as PackageName.
     int32_t     softArrayFNameSize = 0;          // 8 (normal) or 16 (CasePreservingName)
     bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
+    int32_t     softArrayPathOffset = 0;         // FSoftObjectPath offset in the element (0x10 or 0x08)
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList

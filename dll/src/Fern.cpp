@@ -1482,6 +1482,10 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             if (fv.softArrayFNameSize > 0) {
                 fj["soft_fname_size"] = fv.softArrayFNameSize;
                 fj["soft_top_level_asset_path"] = fv.softArrayIsTopLevelAssetPath;
+                // The path is at +0x10 only up to UE 5.2; 5.3 deleted the
+                // TPersistentObjectPtr tag and it moved to +0x08. Exporters
+                // baked 0x10 before this was on the wire.
+                fj["soft_path_offset"] = fv.softArrayPathOffset;
             }
         }
         // array_inner_addr is the Inner FProperty* handle for a follow-up

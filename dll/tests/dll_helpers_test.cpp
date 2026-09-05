@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // dll_helpers_test
 //
 // Stand-alone executable (no GoogleTest / Catch2 dependency) covering pure
@@ -5364,6 +5364,81 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
 // Ubel.cpp — but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
+static void Test_PersistentPtrEnvelope() {
+    // A1: UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest (present at
+    // 5.2.1-release PersistentObjectPtr.h:243, absent at 5.3.2-release:228), so the
+    // payload of a soft/lazy pointer moves up -- by 8 for an 8-aligned payload,
+    // by only 4 for a 4-aligned one. Both offsets were hardcoded 0x10 before this.
+    //
+    //   payload             align   <=5.2   >=5.3    sizeof <=5.2 / >=5.3
+    //   FSoftObjectPath       8     0x10    0x08     0x30|0x28 / 0x28
+    //   FUniqueObjectGuid     4     0x0C    0x08     0x1C      / 0x18
+    const int UNMEASURED = -1;
+
+    // --- soft, measured from a real ElementSize (the version argument is ignored
+    //     on this path -- that is the entire point of measuring) ---
+    // UE <= 5.0: path is FName(8) + FString(16) = 0x18, envelope 0x10 -> 0x28
+    EXPECT("A1: soft <=5.0 tagged, elem 0x28 - path 0x18 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x18, 0x10, UNMEASURED, 427) == 0x10);
+    // UE 5.1-5.2: path is FTopLevelAssetPath(16) + FString(16) = 0x20, envelope 0x10 -> 0x30
+    EXPECT("A1: soft 5.1-5.2 tagged, elem 0x30 - path 0x20 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x30, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    // UE >= 5.3: same path, tag gone -> 0x28
+    EXPECT("A1: soft >=5.3 untagged, elem 0x28 - path 0x20 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, UNMEASURED, 508) == 0x08);
+
+    // ⚠ THE AMBIGUITY THIS FUNCTION EXISTS TO RESOLVE: 0x28 is a legal ElementSize
+    // in BOTH eras. Matching whole sizes against a table would be a coin flip; only
+    // subtracting the payload size separates them. Same elemSize, opposite answers:
+    EXPECT("A1: elem 0x28 is ambiguous alone -- payload 0x18 says tagged",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x18, 0x10, UNMEASURED, 508) == 0x10);
+    EXPECT("A1: elem 0x28 is ambiguous alone -- payload 0x20 says untagged",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, UNMEASURED, 427) == 0x08);
+
+    // --- lazy: FUniqueObjectGuid is a bare FGuid at alignof 4, so the tagged
+    //     envelope is 0x0C. 0x10 is correct in NO era, which is what made the
+    //     pre-fix code read 4 bytes into the GUID and 4 bytes past its end. ---
+    EXPECT("A1: lazy <=5.2 tagged, elem 0x1C - guid 0x10 -> +0x0C",
+           DynOff::PersistentPtrEnvelopeFor(0x1C, 0x10, 0x0C, UNMEASURED, 502) == 0x0C);
+    EXPECT("A1: lazy >=5.3 untagged, elem 0x18 - guid 0x10 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x18, 0x10, 0x0C, UNMEASURED, 508) == 0x08);
+    for (unsigned ver : { 411u, 427u, 500u, 502u, 503u, 508u }) {
+        EXPECT("A1: lazy never resolves to 0x10 in any era",
+               DynOff::PersistentPtrEnvelopeFor(0x1C, 0x10, 0x0C, UNMEASURED, ver) != 0x10);
+    }
+
+    // --- CasePreservingName widens both FNames, so the path grows and the
+    //     envelope must NOT move with it (it is a property of the tag, not the payload) ---
+    EXPECT("A1: soft CPN 5.1-5.2, elem 0x40 - path 0x30 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x40, 0x30, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: soft CPN >=5.3, elem 0x38 - path 0x30 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x38, 0x30, 0x10, UNMEASURED, 508) == 0x08);
+
+    // --- a difference the engine cannot produce must be REFUSED, not trusted ---
+    EXPECT("A1: implausible difference falls back, does not invent an offset",
+           DynOff::PersistentPtrEnvelopeFor(0x2C, 0x18, 0x10, UNMEASURED, 508) == 0x08);
+    EXPECT("A1: elemSize <= payload cannot measure anything",
+           DynOff::PersistentPtrEnvelopeFor(0x10, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: a garbage elemSize of 0 falls back to the version default",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+
+    // --- once latched, an unmeasurable call returns the LATCH, never the version
+    //     guess. This is the case the fix is really for: a misdetected version. ---
+    EXPECT("A1: a latch beats the version fallback (misdetected version)",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, 0x08, 427) == 0x08);
+    EXPECT("A1: a latch beats the version fallback, the other way",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, 0x10, 508) == 0x10);
+    // ...but a real measurement still overrides a stale latch.
+    EXPECT("A1: a real measurement overrides a stale latch",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, 0x10, 427) == 0x08);
+
+    // --- the version fallback's own cut is exactly 5.3, on both sides ---
+    EXPECT("A1: fallback at 5.2 is tagged",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: fallback at 5.3 is untagged",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 503) == 0x08);
+}
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -7106,6 +7181,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_PersistentPtrEnvelope);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);

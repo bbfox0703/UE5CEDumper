@@ -370,23 +370,56 @@ driven by these on-disk layouts. `fnameSize` = 8 (default) or 16 (when
 
 ### Smart pointers (TPersistentObjectPtr family)
 
+⚠ **The `Tag` is not always there, and this is the single most-repeated mistake in
+this family.** `TPersistentObjectPtr` carried `mutable int32 TagAtLastTest` between
+the `FWeakObjectPtr` and the payload up to UE 5.2 (present at `5.2.1-release`
+`PersistentObjectPtr.h:243`), and **UE 5.3 deleted it** (absent at `5.3.2-release:228`,
+and at 5.4 / 5.6 / 5.8). The payload therefore moves up — by 8 for an 8-aligned
+payload, by only **4** for a 4-aligned one:
+
+| payload | align | ≤ 5.2 | ≥ 5.3 | sizeof ≤5.2 / ≥5.3 |
+|---|---|---|---|---|
+| `FSoftObjectPath` | 8 | `+0x10` | `+0x08` | `0x30` (5.1-5.2) or `0x28` (≤5.0) / `0x28` |
+| `FUniqueObjectGuid` | 4 | `+0x0C` | `+0x08` | `0x1C` / `0x18` |
+
+So `+0x10` is right for soft **only up to 5.2**, and is right for lazy in **no era at
+all**. Both were hardcoded `0x10` until 2026-09-05.
+
 ```
 TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
 +0x00 FWeakObjectPtr (8B)
-+0x08 Tag (4B) + pad (4B)
-+0x10 FSoftObjectPath
+[+0x08 Tag (4B) + pad (4B)]                 <- UE <= 5.2 ONLY
++0x10 (<=5.2) / +0x08 (>=5.3) FSoftObjectPath
         UE4 / UE5.0:  FName AssetPathName + FString SubPathString
         UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
-total: 0x28 (UE4 default) ... 0x48 (UE5.1+ with CasePreservingName)
+total: 0x28 (UE4, and UE5.3+ non-CPN) ... 0x48 (UE5.1-5.2 with CasePreservingName)
 ```
 
 ```
 TLazyObjectPtr<T>                          // Phase H
 +0x00 FWeakObjectPtr (8B)
-+0x08 Tag (4B) + pad (4B)
-+0x10 FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
-total: 0x20 (fixed)
+[+0x08 Tag (4B)]                            <- UE <= 5.2 ONLY; NO pad, FGuid is 4-aligned
++0x0C (<=5.2) / +0x08 (>=5.3) FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
+total: 0x1C (<=5.2) / 0x18 (>=5.3)
 ```
+
+**We measure this rather than gate on the version**, because a misdetected version is
+exactly the case where a hardcoded offset does the most damage:
+
+```
+envelope = ElementSize - sizeof(payload)
+```
+
+⚠ `ElementSize` **alone is ambiguous** and must never be matched against a table of
+whole sizes: `0x28` is both a ≤5.0 tagged soft pointer (`0x10` + a `0x18` FName/FString
+path) and a ≥5.3 untagged one (`0x08` + a `0x20` `FTopLevelAssetPath` path). Subtracting
+the payload size — which the `FTopLevelAssetPath` discriminator already gives us — is
+what makes the answer unique. The arithmetic is `DynOff::PersistentPtrEnvelopeFor`
+in [`dll/src/Grimoire.h`](../dll/src/Grimoire.h), pinned by `Test_PersistentPtrEnvelope`;
+the latching, the `DYNO:PersistPtr` log line and the fallback live in
+`PersistentObjectPtrEnvelope` in [`dll/src/Ubel.cpp`](../dll/src/Ubel.cpp).
+The measured offset also goes on the wire as `soft_path_offset`, because the CE XML
+exporter used to bake `+10` into every emitted table.
 
 Both expose the embedded `FWeakObjectPtr` so when the asset is currently
 loaded the live `UObject*` resolves and is set on `fv.ptrValue` — Live

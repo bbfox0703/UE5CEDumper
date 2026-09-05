@@ -200,6 +200,57 @@ inline int FBOOLPROP_FIELDSIZE = 0x78;
 // Typical UE4.22: 0x70, may vary ±0x08 by version.
 inline int UBOOLPROP_FIELDSIZE = 0x70;
 
+// === TPersistentObjectPtr envelope — where the payload sits inside a soft/lazy ptr ===
+//
+//   TSoftObjectPtr = TPersistentObjectPtr<FSoftObjectPath>
+//   TLazyObjectPtr = TPersistentObjectPtr<FUniqueObjectGuid>   (FUniqueObjectGuid = { FGuid })
+//
+// UE ≤ 5.2 — and every UE4 (verified at 4.18, 4.27-plus, 5.2.1-release:243):
+//     +0x00  FWeakObjectPtr WeakPtr      (2×int32, so 8 bytes at alignof 4)
+//     +0x08  mutable int32 TagAtLastTest
+//     +0x0C  payload, at the payload's OWN alignment
+// UE ≥ 5.3 deleted TagAtLastTest (absent at 5.3.2-release:228, and at 5.4/5.6/5.8),
+// so the payload moves up — by 8 for an 8-aligned payload, by only 4 for a 4-aligned one:
+//
+//   payload             align   ≤5.2    ≥5.3     sizeof ≤5.2 / ≥5.3
+//   FSoftObjectPath       8     0x10    0x08     0x30 (5.1-5.2) or 0x28 (≤5.0) / 0x28
+//   FUniqueObjectGuid     4     0x0C    0x08     0x1C              / 0x18
+//
+// ⚠ 0x10 is right for soft ONLY up to 5.2, and is right for lazy in NO era. Both were
+// hardcoded 0x10 before this existed, so every UE 5.3+ title read the soft path one
+// field late and every title read the lazy GUID 4 bytes into it.
+//
+// MEASURED, not version-gated: the property's own ElementSize already reaches us, and a
+// misdetected version is precisely the case where a hardcoded offset does the most harm.
+// -1 = not yet measured; Ubel falls back to a version-derived value until a real
+// property is seen. See PersistentObjectPtrEnvelope() in Ubel.cpp.
+inline int SOFTPTR_PATH  = -1;   // FSoftObjectPath offset inside TSoftObjectPtr
+inline int LAZYPTR_GUID  = -1;   // FGuid           offset inside TLazyObjectPtr
+
+// The pure-arithmetic half of that decision, in the header so the test target can
+// pin it — the tests link headers, not Ubel.cpp, so a rule left in the .cpp is a
+// rule nothing measures. Ubel owns the latching and the log line; this owns the
+// numbers. `latched` < 0 means "nothing measured yet".
+//
+// ⚠ elemSize is deliberately NOT matched against a table of whole sizes: 0x28 is
+// both a UE ≤ 5.0 tagged soft pointer (0x10 envelope + 0x18 FName/FString path)
+// and a UE ≥ 5.3 untagged one (0x08 + 0x20 FTopLevelAssetPath path). Subtracting
+// the payload size — which the caller knows from the FTopLevelAssetPath form —
+// is what makes the answer unique.
+constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
+                                       int taggedEnvelope, int latched,
+                                       unsigned ueVersion) {
+    if (elemSize > payloadSize) {
+        const int candidate = elemSize - payloadSize;
+        // Only the two shapes the engine can produce. Any other difference means
+        // payloadSize is wrong for this build, and a bogus "measurement" is worse
+        // than the default.
+        if (candidate == taggedEnvelope || candidate == 0x08) return candidate;
+    }
+    if (latched >= 0) return latched;
+    return (ueVersion >= 503) ? 0x08 : taggedEnvelope;
+}
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).

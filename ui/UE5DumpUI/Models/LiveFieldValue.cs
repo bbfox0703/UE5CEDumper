@@ -211,8 +211,14 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>For ArrayProperty (Phase G soft arrays): FName size in bytes (8 normal, 16 with CasePreservingName). 0 = not a soft array.</summary>
     public int SoftArrayFNameSize { get; init; }
 
-    /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at +0x10 / +0x10+fnameSize. False = single FName AssetPathName at +0x10 (UE4 / UE5.0).</summary>
+    /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>
     public bool SoftArrayIsTopLevelAssetPath { get; init; }
+
+    /// <summary>For ArrayProperty (Phase G soft arrays): byte offset of FSoftObjectPath inside the TSoftObjectPtr element.
+    /// 0x10 up to UE 5.2, 0x08 from UE 5.3 — which deleted TPersistentObjectPtr::TagAtLastTest.
+    /// Measured DLL-side from the property's ElementSize; 0 = not a soft array (or a pre-fix DLL, where 0x10 is the only safe assumption).
+    /// ⚠ Do not bake 0x10: on any UE 5.3+ title that reads AssetName where PackageName should be.</summary>
+    public int SoftArrayPathOffset { get; init; }
 
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).
     /// Settable so NavigateToArrayContainerAsync can persist on-demand-fetched elements

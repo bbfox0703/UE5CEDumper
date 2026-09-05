@@ -345,17 +345,87 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         return packageName + "." + assetName;
     } else {
         // UE4 / UE5.0: FName AssetPathName
+        //
+        // There used to be a "fallback: try UE5.1+ layout in case version was
+        // misdetected" block here. It could never run: its guard was the exact
+        // negation of the condition that reaches this branch, and it re-read the
+        // same `addr` the line above had already read. Deleted rather than
+        // repaired — a genuinely misdetected 5.1+ game returns above with a
+        // non-None PackageName and never arrives here at all.
         std::string assetPathName = ReadFName(addr);
         if (!assetPathName.empty() && assetPathName != "None")
             return assetPathName;
-        // Fallback: try UE5.1+ layout in case version was misdetected
-        std::string packageName = ReadFName(addr);
-        std::string assetName   = ReadFName(addr + fnameSize);
-        if (!packageName.empty() && packageName != "None"
-            && !assetName.empty() && assetName != "None")
-            return packageName + "." + assetName;
         return "";
     }
+}
+
+// ============================================================
+// PersistentObjectPtrEnvelope — offset of the payload inside a
+// TPersistentObjectPtr (i.e. a soft or lazy object pointer).
+//
+// UE ≤ 5.2 carries `mutable int32 TagAtLastTest` between the FWeakObjectPtr and
+// the payload; UE ≥ 5.3 deleted it. The full layout table and the version
+// evidence live on DynOff::SOFTPTR_PATH in Grimoire.h.
+//
+// We derive the envelope by SUBTRACTION rather than by a version gate:
+//
+//     envelope = ElementSize − sizeof(payload)
+//
+// ⚠ ElementSize alone is ambiguous and must not be matched on its own — 0x28 is
+// both a ≤5.0 tagged soft pointer (0x10 + FName/FString path) and a ≥5.3
+// untagged one (0x08 + FTopLevelAssetPath). Subtracting the payload size, which
+// the FTopLevelAssetPath discriminator already tells us, makes it unique.
+//
+// Returns the measured envelope and latches it, or the version-derived default
+// when `elemSize` is not one of the shapes we can account for (0 for a caller
+// that has no size to offer, a static C-array whose stride we were handed, a
+// packed licensee fork). Latching matters because the fallback is the case we
+// are trying to stop trusting.
+// ============================================================
+static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
+                                       int taggedEnvelope, int& latched,
+                                       const char* what) {
+    const int envelope = DynOff::PersistentPtrEnvelopeFor(
+        elemSize, payloadSize, taggedEnvelope, latched, g_cachedUEVersion);
+
+    // Latch only a real measurement. The header's fallback arms return either the
+    // existing latch or a version-derived guess, and re-latching a guess would turn
+    // one unmeasured call into a permanent "measured" answer.
+    const bool measured = (elemSize > payloadSize) && (elemSize - payloadSize == envelope);
+    if (measured && latched != envelope) {
+        // "DYNO" routes to offsets.log (Sein.cpp's category table), which is where a
+        // measured offset belongs and where this fix's verification row will look
+        // for its DLL-side observable.
+        Sein::Info("DYNO:PersistPtr",
+                   "%s payload envelope measured: +0x%02X "
+                   "(ElementSize 0x%X - payload 0x%X, UEver=%u)%s",
+                   what, envelope, elemSize, payloadSize, g_cachedUEVersion,
+                   latched < 0 ? "" : "  <-- CHANGED, a previous measurement disagreed");
+        latched = envelope;
+    }
+    return envelope;
+}
+
+// FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
+static int32_t SoftObjectPathPayloadSize() {
+    const int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    const int pathNames = (g_cachedUEVersion >= 501) ? (2 * fnameSize) : fnameSize;
+    return static_cast<int32_t>(pathNames + 0x10);  // + FString/FUtf8String { Data, Num, Max }
+}
+
+// Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
+// own ElementSize; pass 0 when the caller has none.
+static int SoftPathOffset(int32_t elemSize) {
+    return PersistentObjectPtrEnvelope(elemSize, SoftObjectPathPayloadSize(), 0x10,
+                                       DynOff::SOFTPTR_PATH, "TSoftObjectPtr");
+}
+
+// Offset of the FGuid inside a TLazyObjectPtr. FUniqueObjectGuid is a bare FGuid
+// (4×uint32, alignof 4), so the tagged envelope is 0x0C — NOT 0x10. There is no
+// era in which 0x10 is correct here.
+static int LazyGuidOffset(int32_t elemSize) {
+    return PersistentObjectPtrEnvelope(elemSize, 0x10, 0x0C,
+                                       DynOff::LAZYPTR_GUID, "TLazyObjectPtr");
 }
 
 // ============================================================
@@ -2667,10 +2737,10 @@ ReadArrayResult ReadStructArrayElements(
                     sf.value = "null";
                 }
             } else if (cf.typeName == "SoftObjectProperty" || cf.typeName == "SoftClassProperty") {
-                sf.value = ReadSoftObjectPath(elemAddr + cf.offset + 0x10);
+                sf.value = ReadSoftObjectPath(elemAddr + cf.offset + SoftPathOffset(cf.size));
                 if (sf.value.empty()) sf.value = "(none)";
             } else if (cf.typeName == "LazyObjectProperty") {
-                uintptr_t gAddr = elemAddr + cf.offset + 0x10;
+                uintptr_t gAddr = elemAddr + cf.offset + LazyGuidOffset(cf.size);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
                 Macht::ReadSafe(gAddr, ga); Macht::ReadSafe(gAddr + 4, gb);
                 Macht::ReadSafe(gAddr + 8, gc); Macht::ReadSafe(gAddr + 12, gd);
@@ -2747,17 +2817,18 @@ ReadArrayResult ReadSoftObjectArrayElements(
     result.ok = false;
 
     // Validate stride. TSoftObjectPtr layout:
-    //   FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath
+    //   FWeakObjectPtr(8) [+ Tag(4) + pad(4), UE ≤ 5.2 only] + FSoftObjectPath
     // FSoftObjectPath spans:
     //   UE4 / UE5.0: FName + FString(16)         → 8|16 + 16 = 24 or 32
     //   UE5.1+:      FName x2 + FString(16)      → 16|32 + 16 = 32 or 48
-    // Combined element size ranges 0x28 .. 0x48 across versions.
+    // Combined element size ranges 0x20 .. 0x48 across versions — the low end
+    // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
     if (elemSize < 0x18 || elemSize > 0x80) {
-        int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
-        bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
-        int pathSize = (isTopLevelAssetPath ? 2 * fnameSize : fnameSize) + 0x10; // + FString
-        int derived = 0x10 + pathSize;
+        int pathSize = SoftObjectPathPayloadSize();
+        // Pass 0: there is no trustworthy ElementSize here by definition, so take
+        // whatever has already been measured, or the version-derived default.
+        int derived = SoftPathOffset(0) + pathSize;
         Sein::Warn("WALK:ArrayG", "Invalid SoftObject elemSize=%d, defaulting to 0x%X",
             elemSize, derived);
         elemSize = derived;
@@ -2795,10 +2866,12 @@ ReadArrayResult ReadSoftObjectArrayElements(
         uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
         // Asset path string (display value)
-        std::string assetPath = ReadSoftObjectPath(elemAddr + 0x10);
+        const int softPathOff = SoftPathOffset(static_cast<int32_t>(elemSize));
+        std::string assetPath = ReadSoftObjectPath(elemAddr + softPathOff);
 
         // Surface the AssetPathName / PackageName ComparisonIndex so the CE XML
-        // exporter can build a shared DropDownList for the FName leaf at +0x10.
+        // exporter can build a shared DropDownList for the FName leaf. The
+        // exporter used to bake "+10"; it now takes softPathOff off the wire.
         // 0 maps to "None" — leave rawIntValue=0 for those so the DropDown
         // dedup naturally drops them.
         uint32_t pathFNameIdx = 0;
@@ -2908,12 +2981,15 @@ ReadArrayResult ReadLazyObjectArrayElements(
 
         uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
-        // FGuid at +0x10 (4 x uint32)
+        // FGuid inside the TLazyObjectPtr (4 x uint32). NOT +0x10 — FUniqueObjectGuid
+        // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
+        // from 5.3. See DynOff::LAZYPTR_GUID.
+        const int guidOff = LazyGuidOffset(elemSize);
         uint32_t a = 0, b = 0, c = 0, d = 0;
-        Macht::ReadSafe(elemAddr + 0x10 + 0,  a);
-        Macht::ReadSafe(elemAddr + 0x10 + 4,  b);
-        Macht::ReadSafe(elemAddr + 0x10 + 8,  c);
-        Macht::ReadSafe(elemAddr + 0x10 + 12, d);
+        Macht::ReadSafe(elemAddr + guidOff + 0,  a);
+        Macht::ReadSafe(elemAddr + guidOff + 4,  b);
+        Macht::ReadSafe(elemAddr + guidOff + 8,  c);
+        Macht::ReadSafe(elemAddr + guidOff + 12, d);
 
         char guidStr[48];
         snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
@@ -3915,13 +3991,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         // Handle SoftObjectProperty / SoftClassProperty: read FSoftObjectPath asset path.
-        // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FSoftObjectPath
+        // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), then the path — at +0x10 on
+        // UE ≤ 5.2 (Tag(4B) + pad(4B) in between) and at +0x08 from 5.3, which deleted
+        // the tag. Measured from ElementSize; see DynOff::SOFTPTR_PATH.
         // When the asset is currently loaded the embedded FWeakObjectPtr resolves
         // to the live UObject*; expose it via ptrValue so the UI can drill in
         // and the Address Finder can route through soft references.
         if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            std::string assetPath = ReadSoftObjectPath(fieldAddr + 0x10);
+            std::string assetPath = ReadSoftObjectPath(fieldAddr + SoftPathOffset(fi.Size));
             fv.strValue = assetPath;
 
             // Resolve embedded FWeakObjectPtr at +0x00 → live UObject* (when loaded)
@@ -4200,9 +4278,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     // Stamp soft-array layout metadata even when arr is empty
                     // — the CE XML / CSX exporter needs it to lay out the
-                    // per-element FName leaf(s) at +0x10 / +0x10+fnameSize.
+                    // per-element FName leaf(s) at pathOffset / pathOffset+fnameSize.
                     fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
 
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(
@@ -4365,6 +4444,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(
                             instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
@@ -6023,11 +6103,12 @@ void ResolvePropertyPreviews(
                 std::string name = GetName(resolved);
                 m.preview = name.empty() ? "(loaded)" : name;
             } else if (t == "LazyObjectProperty") {
+                const int gOff = LazyGuidOffset(sz);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
-                Macht::ReadSafe(inst + off + 0x10,      ga);
-                Macht::ReadSafe(inst + off + 0x10 + 4,  gb);
-                Macht::ReadSafe(inst + off + 0x10 + 8,  gc);
-                Macht::ReadSafe(inst + off + 0x10 + 12, gd);
+                Macht::ReadSafe(inst + off + gOff,      ga);
+                Macht::ReadSafe(inst + off + gOff + 4,  gb);
+                Macht::ReadSafe(inst + off + gOff + 8,  gc);
+                Macht::ReadSafe(inst + off + gOff + 12, gd);
                 char gs[48];
                 snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
                 m.preview = gs;
@@ -6040,14 +6121,15 @@ void ResolvePropertyPreviews(
         }
 
         // --- SoftObjectProperty / SoftClassProperty: FSoftObjectPath asset path ---
-        // TSoftObjectPtr = FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath(0x10),
-        // so the readable value is the asset path at +0x10, never a pointer.
+        // TSoftObjectPtr = FWeakObjectPtr(8) [+ Tag(4) + pad(4) on UE ≤ 5.2] +
+        // FSoftObjectPath, so the readable value is the asset path at the measured
+        // envelope (+0x10 up to 5.2, +0x08 from 5.3), never a pointer.
         // SoftClassProperty was read as a raw pointer here and SoftObjectProperty had
         // no branch at all (so it silently got NO preview) — audit #5 U13. Display
         // order matches WalkInstance's own soft-pointer handler: path, then the
         // resolved target when the asset happens to be loaded, then "(none)".
         if (t == "SoftObjectProperty" || t == "SoftClassProperty") {
-            std::string assetPath = ReadSoftObjectPath(inst + off + 0x10);
+            std::string assetPath = ReadSoftObjectPath(inst + off + SoftPathOffset(sz));
             if (!assetPath.empty()) {
                 m.preview = assetPath;
                 continue;

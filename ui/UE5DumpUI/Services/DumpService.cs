@@ -1439,6 +1439,9 @@ public sealed class DumpService : IDumpService
             ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
             SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
             SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
+            // Absent from a pre-fix DLL. 0x10 is the pre-fix behaviour, so it is the
+            // only fallback that cannot make an older pairing worse than it was.
+            SoftArrayPathOffset = fo["soft_path_offset"]?.GetValue<int>() ?? 0x10,
             ArrayElements = ParseArrayElements(fo["elements"]),
             ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
             ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),
