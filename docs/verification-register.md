@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -679,7 +679,60 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 -----
 
-### ⬜ FIXED 2026-09-05 — audit A7: the SDK export's empty-base struct fix (**wire hops PROVEN 2026-09-05; the empty base has NO live vehicle — fixture written, needs a cook**)
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A7-EMPTYBASE-2026-09-05]` — audit A7: all four hops, plus a real-world before/after on **96** engine structs
+
+> **CLOSED on the verification PC, build 3371, DumperTest Development (re-cooked today).** Rig:
+> [`tools/verify/a7_emptybase.py`](../tools/verify/a7_emptybase.py) for the DLL/pipe half; the
+> emitter half is a diff of two whole SDK exports.
+>
+> **DLL → pipe (rig, on the new fixture):**
+>
+> | | `props_size` | `super_props_size` | `own_props_start` | fields |
+> |---|---|---|---|---|
+> | `DumperTestEmptyBase` (base) | **1** | — | **-1** | **0** |
+> | `DumperTestBracketPayload` | 0x10 | **1** | **0** | `Description` @ **offset 0** |
+>
+> and the live read at offset 0 returns **`'A7EmptyBase'`** — the field is not merely *described*
+> at 0, it is *readable* there.
+>
+> **UI → emitter (the generated header):**
+> ```
+> struct DumperTestEmptyBase
+> {
+> }; // Size: 0x0001                                       <- empty, no Pad_0000[0x0001]
+>
+> struct DumperTestBracketPayload : public DumperTestEmptyBase
+> {
+>     FString Description; // 0x0000 (0x0010) StrProperty  <- at 0x0000, no leading pad
+> }; // Size: 0x0010
+> ```
+>
+> ⭐ **AND THE REAL EVIDENCE IS NOT THE FIXTURE — it is a before/after on stock engine types.** An
+> SDK export of the *same* fixture taken **2026-08-20** (pre-fix) still sat in `out/`, so the two
+> are directly diffable. Same game, same machine, one emitter change between them:
+>
+> * **69 empty bases** emitted a spurious `uint8_t Pad_0000[0x0001]`; they are now emitted empty.
+> * **27 derived structs had their offset-0 field REPLACED BY PADDING** and now have it back —
+>   `TypedElementLabelColumn` `Pad_0001[0x000F]` → `FString Label`, `TypedElementAlertColumn`
+>   `Pad_0001[0x0019]` → `FText Message`, `TypedElementLocalTransformColumn` `Pad_0001[0x005F]` →
+>   `struct Transform Transform`, `TypedElementSelectionColumn` → `FName SelectionSet`, and 23 more.
+>   In every case the **rest** of the layout is byte-identical, which is what shows the fix restored
+>   the missing field without disturbing anything around it.
+> * `UniversalObjectLocatorEmptyPayload` is among the 69 — i.e. this row's originally-named
+>   `FEmptyPayload` family was affected after all.
+>
+> **Negative control (the W2 guard, the one this fix could plausibly break):** a non-empty super must
+> still split at `superPropsSize` and must not re-emit the inherited chain. `struct Subsystem :
+> public Object` begins at **`Pad_0028`**, and `Object`'s own `Pad_0000[0x0028]` appears only in
+> `Object`. Unchanged between the two exports.
+>
+> ⛔ **CORRECTION TO MY OWN EARLIER NOTE ON THIS ROW.** It said "the empty base does not exist in any
+> live pool… zero structs with `PropertiesSize == 1`". **That was wrong**, and the mistake is worth
+> keeping: I harvested struct addresses from `walk_instance` field rows on a handful of walked
+> instances, which reaches only structs that are *fields of something I happened to walk*. The SDK
+> export walks the **whole pool** and found 92. The fixture is still worth having — it is
+> deterministic and does not depend on which engine types a given title happens to load — but it was
+> not *necessary*, and "I could not find one" is not "there is none".
 
 > **PARTIAL, `[A7-WIRE-2026-09-05]`, build 3371.** Two of the four hops are settled; the row's own
 > "rides along on any live session, no dedicated launch" turned out to be false.
