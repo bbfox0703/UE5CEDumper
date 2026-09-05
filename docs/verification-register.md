@@ -437,10 +437,29 @@ rows 1–4 and leave 5 open rather than marking the section done.
 
 **One game at a time, sequential, never parallel.** Injecting a second title while the first holds `\\.\pipe\UE5DumpBfx` is how a session measures the wrong process.
 
+#### ⭐ MACHINE FACTS — measured on the verification PC 2026-09-05, and they differ from this plan
+
+*This block exists because the run order below was written on the primary PC and **four of its
+stated facts are false here**. Each cost, or would have cost, a launch.*
+
+| the plan says | the verification PC actually has |
+|---|---|
+| EVERSPACE 2 at `D:\SteamLibrary\…\EVERSPACE™ 2\` | **`C:\Program Files (x86)\Steam\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\`.** ⚠ `D:\SteamLibrary\…\EVERSPACE\` **does** exist and **does** carry a deployed proxy — it is EVERSPACE **1** (`RSG-Win64-Shipping.exe`), a different title |
+| Lushfoil / OCTOPATH at `E:\SteamLibrary`, Satisfactory at `H:\SteamLibrary` | **no `E:` and no `H:` drive exists.** `libraryfolders.vdf` lists exactly **two** libraries: `C:\Program Files (x86)\Steam` and `D:\SteamLibrary`. All three titles are under `D:\SteamLibrary\steamapps\common\` |
+| Satisfactory is the **UE 5.3** "second era" for A1 | **it is UE 5.6.1 here** (v1.2.3.1). The 5.3 era needs a different host — **DragonSword Awakening 5.3.2** and **Avowed 5.3.2** are both installed |
+| Star Wars Jedi: Fallen Order gates A3 | **a GHOST here too** — the folder exists with no executable (`fixture_census.py`). A3 is blocked on both machines |
+
+**Two fixtures the plan does not know about, and both are useful:**
+
+* **Light Maze, UE 5.0.3** (`D:\SteamLibrary\steamapps\common\Light Maze\`) — a UE5 title **below** 5.3, so it is a sharper A1 negative control than OCTOPATH: it separates "pre-5.3" from "UE4" rather than conflating them. 0.21 GB, boots fast.
+* **DRAGON QUEST XI S** (`D:\SteamLibrary\steamapps\common\DRAGON QUEST XI S\Game\Binaries\Win64\`) — installed 2026-09-05, which is what **unblocked A6**. ⚠ `fixture_census.py` will not list a title installed after its last run; re-run it, do not trust a remembered census.
+
+⚠ **The full version sweep is cheap and worth re-running** (`py tools/verify/pe_version_probe.py`-style read of `dwFileVersionMS` over every `*-Win64-Shipping.exe`): 4.20 EVERSPACE 1 · 4.27 Glimmith · **5.0.3 Light Maze** · 5.3.2 Avowed / DragonSword · 5.5.4 Manor Lords · 5.6.1 ES2 / Lushfoil / Satisfactory · 5.6.0 STVoyager · **5.7.1 Solarpunk** (the newest UE on this machine — which is why A4's positive half is blocked on content).
+
 #### Step 0 — before any game (offline, ~20 min)
 
-1. `git -C D:\Github\UE5CEDumper status -sb` — expect ` M docs/handover-2026-08-22.md`, `ahead 14`. Apply the §4(a) corrections, then commit.
-2. **Fix D1 and D2** (`Ubel.cpp:2900` → `elemAddr + softPathOff`; `Ubel.cpp:4079` → `LazyGuidOffset(fi.Size)`, and correct the stale comment at `:4074`). Fix D3 while there.
+1. ~~`git status -sb` — expect ` M docs/handover-2026-08-22.md`, `ahead 14`~~ ⚠ **STALE, corrected 2026-09-05 on the verification PC.** `handover-2026-08-22.md` is CLEAN — `fffe5fcf` committed it (57 changed lines in its `--stat`). `dev` is **level with** `origin/dev`, and 17 ahead of `origin/main`, never 14. The only dirty path is `build_number.txt`.
+2. ~~**Fix D1 and D2**~~ ⛔ **ALREADY DONE — do not apply.** Commit `fffe5fcf` (18:37) made both edits **seven minutes before** `37c034de` (18:44) added this instruction, and `fffe5fcf` is its git **ancestor**. Worse than redundant: the cited lines no longer hold that code, so an operator following it patches unrelated lines. Verified in the current tree — `Ubel.cpp:2891/2905` use `softPathOff` and `:4088` uses `LazyGuidOffset(fi.Size)`.
 3. `build.ps1 -Target DLL`, then **`build.ps1 -Mode Publish`** — hand-over rule. Verify `dist\UE5DumpUI.exe` is ~54.7 MiB (57,398,784 B), **not** ~107 MB, and record the sha.
 4. `py tools/check_all.py` — 12 gates green, including `check_derived_counts` at its new number.
 5. **Census the fixtures on THIS machine** — the Steam layout may differ from the primary PC. Parse `libraryfolders.vdf` and check for: Lushfoil, Satisfactory, EVERSPACE 2, OCTOPATH, Solarpunk, and **Star Wars Jedi: Fallen Order** (the A3 gate — on the primary PC it is a ghost, only `steam_appid.txt`). Record what is present before planning further.
@@ -502,7 +521,7 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 8. **Do not grep `walk-0.log` for A1's DLL observable.** It lives in `Ubel.cpp` but its category is `DYNO:PersistPtr`, which routes to **offsets**. The natural grep returns nothing and reads as a failure.
 9. **Do not use DQ III or DQ I&II as A1's negative control** (§3, Row 1) — they cannot discriminate and would be scored as a regression against a title the register already records as version-misdetecting.
 10. **Do not "simplify" the ProcessEvent table into a `>=` ladder**, do not narrow Ubel's `{base, ±4, +8, −8}` bool probe spread now that the base is derived, and do not enable the `Bookmarks\` age sweep. All three are deliberate; the first two are the exact bugs A2 and A6 fixed.
-11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which `handover:75-99` measured false. Use it for §3 grant mechanics and §4 authorised writes only — and read §4.1 as spent (its Light Maze target is not installed in any of this machine's four Steam libraries).
+11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which `handover:75-99` measured false. Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
 
 -----
 
@@ -560,7 +579,7 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 *⚠ Six installed titles are ≥ 5.3 and were reading one field late: Satisfactory v1.1.3.1 UE5.3 (`docs/test-games.md:28`), Manor Lords UE5.5 (`:27`), Lushfoil UE5.6 (`:26`), Satisfactory v1.2.3.1 UE5.6 (`:29`), EverSpace 2 (now 5.6, see the A2 row), Titan Quest II UE5.7 (`:13`).*
 
-**Why the suite cannot close it.** `dll/CMakeLists.txt:539-543` compiles only `dll_helpers_test.cpp` + `Radar.cpp` + `Denken.cpp` — `Ubel.cpp` is **not** in any test target. `dll_helpers_test.cpp:5491-5530` pins `FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor` arithmetic; nothing exercises the latch, the log line, the wire field, or — the load-bearing one — **whether `fi.Size` is a trustworthy `ElementSize` at all**. `Ubel.cpp:2523` and `:5878` already document `FPROPERTY_ELEMSIZE` as returning garbage (e.g. `1073742336`) for members of certain `UScriptStruct` layouts, and the entire fix is `elemSize - payloadSize`. No C# test covers `SoftArrayPathOffset` either.
+**Why the suite cannot close it.** `dll/CMakeLists.txt:539-543` compiles only `dll_helpers_test.cpp` + `Radar.cpp` + `Denken.cpp`. ⚠ **CORRECTED 2026-09-05 — the conclusion that followed ("`Ubel.cpp` is not in any test target") is FALSE, and has been since 2026-08-25, eleven days before this row was written.** A fifth target, `dll_core_test` (`dll/CMakeLists.txt:650`), compiles `Ubel.cpp`, `Aura.cpp`, `Genau.cpp`, `Serie.cpp`, `Macht.cpp` and `Flamme.cpp` by `#include`-ing the `.cpp` into one TU (`dll_core_test.cpp:63`), against a fake pool built in the test's own process — no game needed. The row's *narrow* point survives (nothing currently **exercises** the soft/lazy latch), but the stated reason wrongly forecloses an offline route on a batch whose whole premise is that live game time is scarce. `dll_helpers_test.cpp:5491-5530` pins `FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor` arithmetic; nothing exercises the latch, the log line, the wire field, or — the load-bearing one — **whether `fi.Size` is a trustworthy `ElementSize` at all**. `Ubel.cpp:2523` and `:5878` already document `FPROPERTY_ELEMSIZE` as returning garbage (e.g. `1073742336`) for members of certain `UScriptStruct` layouts, and the entire fix is `elemSize - payloadSize`. No C# test covers `SoftArrayPathOffset` either.
 
 **Acceptance test** — any UE ≥5.3 title; **Lushfoil UE5.6** (`docs/test-games.md:26`, installed at `E:\SteamLibrary`) is the named exemplar, Satisfactory v1.1.3.1 UE5.3 (`H:\SteamLibrary`) the second era. Three paired observables:
 
