@@ -296,10 +296,56 @@ Land together; none affects behaviour, none trips a gate (`tools/check_derived_c
 
 ### A11 · **idea** · effort S–M — optional, none is a defect
 
-- **`FVerseStringProperty` is decodable to text.** Two hops: `FNativeString` → `FCopyOnWrite` → `TSharedPtr<FCopyOnWriteContents>` whose first member is `FUtf8String` at +0x00 (`VVMNativeString.h:33-44,:107,:130`; `SharedPointer.h:1286`; `SharedPointerInternals.h:429-445` confirms the TSharedPtr points at the object, not the controller). Split it out of the opaque block at `Ubel.cpp:5160`, guard the pointer with `Grimoire::IsUserspacePointer` (`Grimoire.h:50`), call `ReadFUtf8String(ptr, 0)` (`Ubel.cpp:301`). **Apply at both sites** — `:5160` and the Property-Search preview at `:5984-5987` — or the two panels will disagree. Treat `ptr == 0` as "(empty)", not a decode failure (`TIsZeroConstructType<FNativeString>::Value = true`). **Deferred:** no Verse/UEFN title exists in our corpus, and this is a standing opportunity, not a 5.8.2 delta (the three Verse headers are byte-identical 5.8.0..5.8.2).
-- **Record the two unhandled Verse property names** in a comment beside `Ubel.cpp:5157-5161` — `"VerseClassProperty"` (FClassProperty layout, unguarded upstream since 5.7, a real `UClass*` at +0) and `"VerseDynamicProperty"` — noting both fall through to the safe hex path and no injectable sample exists. If ever built, do the whole family behind **one** shared predicate, never a 30th literal across ~50 exact-match sites.
-- **nlohmann/json 3.11.3 → 3.12.0.** Pure currency: no advisory (`security-advisories` and `advisories?affects=` both return `[]`), and all three candidate fixes are unreachable here (`get_ptr` has **zero** call sites repo-wide; the `parse(FILE*)` overload is never used; #4506's errno path is blocked by the `errno = 0` reset at `vendor/nlohmann/json.hpp:8620` plus MSVC's `strtoull` never producing EINTR). If bumped, verify against the published v3.12.0 sha256 and rebuild with `build.ps1 -Target DLL`. ⚠ **Do not** run `-Target Test` to validate — it does not compile the DLL and it overwrites `dist\UE5DumpUI.exe` with the ~107 MB non-trimmed build.
-- **Optionally surface `ffieldclass_name`** in the System tab — `Fern.cpp:4962` already publishes it and no `ui/` file consumes it.
+- ⛔ **`FVerseStringProperty` decode — EVALUATED 2026-09-05, DO NOT BUILD.** The recipe in this row
+  is **wrong for UE 5.5–5.6 and would fail silently there.** `Verse::FNativeString` changed shape
+  at **5.7**, and the two forms are byte-shape INDISTINGUISHABLE — both 16 bytes with a pointer at
+  `+0x00`:
+
+  | engine | `FNativeString` is | `+0x00` | chars are |
+  |---|---|---|---|
+  | 5.5 – 5.6 | `private: FUtf8String String;` — **inline** | `UTF8CHAR* Data` | **ONE** deref away |
+  | 5.7 – 5.8 | `struct FCopyOnWriteContents` + `TSharedPtr` | `FCopyOnWriteContents*` | **TWO** derefs away |
+
+  (Verified directly: `git show 5.6.1-release:.../VVMNativeString.h` has the inline `FUtf8String`;
+  `5.7.0-release` has the copy-on-write struct.) An unconditional two-hop read therefore
+  dereferences the **character buffer** as if it were a pointer on every 5.5/5.6 title, and no size
+  check can catch it — the same silent-aliasing class as the stride-20-onto-a-40-byte-`FUObjectItem`
+  bug (A5). ⛔ Do not implement this row as written.
+
+  Three further reasons it stays unbuilt, the last decisive:
+  (i) **Zero addressable users** — Verse ships in Fortnite and UEFN only; neither is injectable and
+  `docs/test-games.md` has no Verse row.
+  (ii) **The test would be circular** — `dll_core_test.cpp` `#include`s `Ubel.cpp`, so the
+  arithmetic *is* reachable, but any fixture is built from the same 5.8.2 headers the decoder is
+  derived from. Green would prove the code matches my reading of the header, never that the reading
+  is right. There is no oracle and none is coming.
+  (iii) **The current display is HONEST.** It shows `(Verse: VerseStringProperty)` plus the raw
+  pointer, and that pointer really is the `TSharedPtr` object pointer. Replacing an honest "I do not
+  decode this" with a possibly-wrong `"(empty)"` is a net loss.
+
+  ⚠ One citation in the original row also invites the WRONG reading of the `TSharedPtr` hop:
+  `SharedPointerInternals.h:429-445` is `TIntrusiveReferenceController`, where the object lives
+  *inside* the controller. The line that actually settles it is `SharedPointer.h`'s `MakeShared`,
+  which passes `Controller->GetObjectPtr()` — an interior address — as `Object`.
+
+  **If a Verse title ever becomes injectable**, the derivation is on file and the build is short —
+  but it MUST branch on the engine version (or probe), and it must land at BOTH match sites plus
+  `WalkDataTableRows`, or the panels disagree.
+- ✅ **SHIPPED 2026-09-05 (`d1dcf413`)** — **Record the two unhandled Verse property names** in a comment beside `Ubel.cpp:5157-5161` — `"VerseClassProperty"` (FClassProperty layout, unguarded upstream since 5.7, a real `UClass*` at +0) and `"VerseDynamicProperty"` — noting both fall through to the safe hex path and no injectable sample exists. If ever built, do the whole family behind **one** shared predicate, never a 30th literal across ~50 exact-match sites.
+- ✅ **SHIPPED 2026-09-05 (`f0882eb3`)** — and the exposure was WIDER than this row: the release carries 10 fixes and 11 features, not 3 candidates, and two of the fixes are observable OUTPUT changes (empty tuple -> `[]`; filesystem paths as UTF-8). Every one was checked against our usage and none reaches us — notably no `fs::path` is ever serialised anywhere in the tree. **nlohmann/json 3.11.3 → 3.12.0.** Pure currency: no advisory (`security-advisories` and `advisories?affects=` both return `[]`), and all three candidate fixes are unreachable here (`get_ptr` has **zero** call sites repo-wide; the `parse(FILE*)` overload is never used; #4506's errno path is blocked by the `errno = 0` reset at `vendor/nlohmann/json.hpp:8620` plus MSVC's `strtoull` never producing EINTR). If bumped, verify against the published v3.12.0 sha256 and rebuild with `build.ps1 -Target DLL`. ⚠ **Do not** run `-Target Test` to validate — it does not compile the DLL and it overwrites `dist\UE5DumpUI.exe` with the ~107 MB non-trimmed build.
+- ⛔ **Surface `ffieldclass_name` in the System tab — EVALUATED 2026-09-05, DO NOT BUILD.** The
+  actionable information is already on screen: this offset's whole job is to decide the UE version,
+  and the UE Version card renders that; when the probe gives up, the amber banner already names the
+  failure (`childprops-probe-failed`). A raw value row would be **worse than nothing**, because
+  `0x00` is **four-way ambiguous** — measured ≤5.7, probe gave up, probe gave up earlier, or
+  UProperty mode — and in the UProperty case `validated` stays **true**, so the banner that would
+  disambiguate it is not even rendered. It would also be the first raw UE offset ever shown while a
+  dozen siblings on the same response stay hidden. The one genuinely invisible state (the latch and
+  the version badge disagreeing) is log triage, and `Frieren.cpp`'s init summary already carries it.
+  ⚠ That marker is spelled `FCName=` in the log while the repo's other three sites say
+  `FFieldClass::Name=`, so the natural grep misses it — recorded in
+  `docs/log-verification-checklist.md`; rename the token on the next `Frieren.cpp` change rather
+  than paying a full DLL rebuild + AOT hand-over for a log string.
 
 ---
 
