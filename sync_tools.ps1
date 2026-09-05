@@ -66,7 +66,7 @@ function Write-Section($text) {
 #     throwaway clones: 'git ls-files vendor' returns three entries, and one of
 #     them is a genuinely tracked FILE.
 #
-#       vendor/nlohmann/json.hpp   TRACKED CONTENT (v3.11.3, ~944 KB, a committed
+#       vendor/nlohmann/json.hpp   TRACKED CONTENT (v3.11.3, ~900 KB, a committed
 #                                  header copy, not a submodule). It is on the
 #                                  include path at dll/CMakeLists.txt:171,547,656
 #                                  and is included by Fern.cpp / Flamme.cpp /
@@ -162,7 +162,18 @@ if ($Init) {
 
 if ($UpdateSubmodules) {
     Write-Host "  BUMPING submodules to upstream tip - this stages a code change" -ForegroundColor Yellow
-    git submodule update --remote --recursive
+
+    # NOT '--remote --recursive'. Measured 2026-09-05: that combination walks into
+    # NESTED submodules and moves them to THEIR upstream tip too, which de-syncs
+    # them from what their own parent pins. It took zydis's dependencies/zycore
+    # from 75a36c45 (what zydis@a95bb71 records) to c1fa01ce (zycore master),
+    # leaving `git status` dirty at ' M vendor/zydis' for a bump nobody asked for
+    # and that zydis has never been built against.
+    #
+    # Correct shape is two steps: bump only OUR direct pins, then let each new
+    # parent decide what its own children should be.
+    git submodule update --remote
+    git submodule update --init --recursive
 }
 
 $subs = @(
@@ -200,8 +211,11 @@ foreach ($s in $subs) {
 }
 
 # zydis carries a trap worth printing every time: 'git describe' reports
-# v4.0.0-121-g... because the v5 tag is not in the fetched tag set, so it walks
-# back to the nearest reachable v4 tag. The header is the fact.
+# v4.0.0-121-g... while the header declares 5.0.0. The reason is NOT an
+# incomplete tag fetch -- upstream has published no v5 tag at all (highest is
+# v4.1.1, and the v4.1.x line lives on maintenance/v4, which is not an ancestor
+# of master). So describe walks master's ancestry back to v4.0.0 and is doing
+# the only thing it can. Fetching more tags cannot help. The header is the fact.
 $zydisHeader = "vendor/zydis/include/Zydis/Zydis.h"
 if (Test-Path $zydisHeader) {
     $line = Select-String -Path $zydisHeader -Pattern 'define\s+ZYDIS_VERSION\s+(0x[0-9A-Fa-f]+)' | Select-Object -First 1
