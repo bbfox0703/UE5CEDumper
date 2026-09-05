@@ -798,7 +798,29 @@ when the probe lands off-field.*
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A4: the UE 5.8 version marker
+### ⬜ FIXED 2026-09-05 — audit A4: the UE 5.8 version marker (**NEGATIVE CONTROL PASSED 2026-09-05**; positive still blocked on content)
+
+> ✅ **`[A4-NEGCTL-2026-09-05]` — the negative control this row calls "the one that matters" is
+> DONE.** Solarpunk, UE 5.7, build 3371, injected, 120,863 objects:
+>
+> | check | expected | measured |
+> |---|---|---|
+> | `init-0.log` `raising floor to 508` | **absent** | **0 lines** |
+> | `init-0.log` badge | stays 5.7 | `UE5_Init: Complete (UE507, …, Objects=120863)` |
+> | pipe | stays 5.7 | `ue_version 507` |
+> | ⭐ `offsets-0.log` the marker's INPUT | `FFieldClass::Name=+0x00` | `FFieldClass::Name=+0x00` |
+>
+> ⭐ **The fourth row is what makes this a control rather than a screenshot.** "The 508 line is
+> absent" is equally true of a marker that never ran. The `FFieldClass::Name` latch reading
+> **`+0x00`** shows the discriminating input *was* measured and simply does not satisfy the 5.8
+> predicate (which keys on `Name@+0x08`, i.e. a vfptr having taken `+0x00`). So the marker is live,
+> reachable, and correctly silent on a genuine 5.7 build.
+>
+> ⬜ **Still open: the positive half.** It needs a title that is UE 5.8 *and* string-stripped.
+> `docs/test-games.md` has no 5.8 row, and the verification PC's census confirms none is installed
+> here either — the newest is Solarpunk at 5.7.1. Blocked on **content**, not effort. ⚠ Do not close
+> this row on the control alone: a marker that fires unconditionally would also pass everything
+> above.
 
 *The raise-only ladder in `UE5_Init` topped out at **507**, so a string-stripped UE 5.8 title
 badged as UE 5.7 — the 507 predicate (`FUObjectItem` Object`@+0x08`) is satisfied by a 5.8
