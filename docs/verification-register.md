@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -531,7 +531,41 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 -----
 
-### ⬜ FIXED 2026-09-05, NEEDS A LIVE CHECK — audit A2: EVERSPACE 2 patched to UE 5.6 and crossed the table's own boundary
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A2-ES2-506-2026-09-05]` — audit A2: the 506 row is CORROBORATED at `0x260` on a retail UE 5.6.1 build
+
+> **CLOSED on the verification PC, build 3371, 2026-09-05 21:00.** Rig:
+> [`tools/verify/a2_es2_pehook.py`](../tools/verify/a2_es2_pehook.py) (written for this row; it
+> re-runs from one command). Every observable this row asked for was captured in one session, and
+> **both absence checks held** — which is the half a play-test cannot produce:
+>
+> | observable | expected | measured |
+> |---|---|---|
+> | `scan-0.log` | `DetectVersion: … -> 506` | `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` |
+> | `init-0.log` | pattern match | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF6E6297080` |
+> | `init-0.log` | what was **installed** | `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` |
+> | `init-0.log` | `(fallback)` **absent** | **0 lines** |
+> | `init-0.log` | `VALIDATION FAILED` **absent** | **0 lines** |
+> | invoke | `Add_IntInt(3,4) == 7` | **7** — a computed value, not a plausible one |
+> | diagnostics | hook live | `hook_active=True`, `hook_fire_count=52` |
+> | pipe | right binary | `build 3371`, `ue_version 506`, `79,831` objects, `load_mode proxy:version.dll` |
+>
+> **Verdict: `0x260`.** The 506 row now has a second independent live witness (Lushfoil was the
+> first, the UVTD oracle aside). The title's twice-measured `0x278` stays what it always was — a
+> live witness for the **5.5** row, taken on the pre-patch binary — so the table's deliberate
+> non-monotonicity is confirmed from both sides by the same game. ⛔ Still do **not** collapse the
+> table into a `>=` ladder; that is the exact bug A2 fixed.
+>
+> ⚠ **The build gate below was real and had to be paid twice.** The deployed `version.dll` was
+> dated 2026-08-29 (not 2026-08-27 as written below) and owned the pipe; `proxy_refresh.py` fixed
+> that. The run was then thrown away and repeated anyway, because build 3370 could not be read —
+> see `[SEINSHARE-2026-09-05]`.
+
+<details><summary>original row (kept — its reasoning is what made the row cheap to close)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A2: EVERSPACE 2 patched to UE 5.6 and crossed the table's own boundary**
+
+⚠ Deliberately **not** a `###` heading and deliberately carrying no ⬜: `check_derived_counts`
+counts `^### .*⬜` inside this section, so leaving either here would keep the row counted as open.
 
 *A2 replaced an unreachable `>= 550` band (every UE5 game silently took `0x220`, wrong by `0x28-0x58`) with a measured per-version table, `DynOff::ProcessEventVTableSlotFor`, `dll/src/Grimoire.h:321-341`. The table is deliberately **non-monotonic**: `case 505: return 0x278` (`:336`) then `case 506: case 507: return 0x260` (`:337`). It is **fallback only** — `Frieren.cpp:1693-1701` runs the pattern scan across up to 12 candidate vtables and reaches `DetectProcessEventVTableOffsetByVersion` (`:1601`) at `:1703` only after all miss.*
 
@@ -554,6 +588,8 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 ⛔ **Build gate, and this is the trap `[B648-TWOENGINES]` already hit.** ES2's deployed `version.dll` is dated **2026-08-27** (`init-0.log` line 1: `build: 1.0.0.3367 344d9242-dirty`), i.e. it predates all fourteen commits and **owns the pipe** — a fresh injection does not displace it. Refresh the proxy from a `-Mode Publish` dist and `assert_build()` (`tools/verify/pipe_client.py:11-22`) **before** any number is taken.
 
 **Outcome rule.** `0x260` → the table's 506 row is corroborated on a real retail 5.6 licensee build (Lushfoil and the UVTD oracle are currently its only support). Still `0x278` → the 506 row is wrong **for this title**; record it as a register note, and ⛔ do **not** collapse the table back into a `>=` ladder — the non-monotonicity is the bug A2 fixed.
+
+</details>
 
 -----
 
