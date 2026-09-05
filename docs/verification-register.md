@@ -544,7 +544,9 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > | `init-0.log` | pattern match | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF6E6297080` |
 > | `init-0.log` | what was **installed** | `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` |
 > | `init-0.log` | `(fallback)` **absent** | **0 lines** |
-> | `init-0.log` | `VALIDATION FAILED` **absent** | **0 lines** |
+> | `init-0.log` | `VALIDATION FAILED` **absent** | **0 lines** — ⚠ vacuous, see below |
+> | `init-0.log` | ⭐ **`validation OK — hook fired N times`** | `validation OK — hook fired **660** times in 1500ms` |
+> | `init-0.log` | `fired 0 times in` **absent** | **0 lines** |
 > | invoke | `Add_IntInt(3,4) == 7` | **7** — a computed value, not a plausible one |
 > | diagnostics | hook live | `hook_active=True`, `hook_fire_count=52` |
 > | pipe | right binary | `build 3371`, `ue_version 506`, `79,831` objects, `load_mode proxy:version.dll` |
@@ -554,6 +556,21 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > live witness for the **5.5** row, taken on the pre-patch binary — so the table's deliberate
 > non-monotonicity is confirmed from both sides by the same game. ⛔ Still do **not** collapse the
 > table into a `>=` ladder; that is the exact bug A2 fixed.
+>
+> ⛔ **CORRECTION TO THIS ROW'S OWN GREP SET — "`VALIDATION FAILED` is absent" PROVES NOTHING on
+> the path this row expects.** `Stark::ShouldActOnValidationFailure` returns `offsetFromVersionTable`
+> (`dll/src/Stark.h:305-307`), so a **pattern**-derived offset that fires **zero** times takes the
+> early return at `Frieren.cpp:1951` and logs a line containing neither `VALIDATION FAILED` nor
+> `FAILED` — the hook is deliberately **KEPT**. A mis-detected pattern slot therefore produces
+> *exactly* the log the original grep set scores as a pass: no fallback line, no failure line,
+> `hook_active == true`. Two consequences, both now in the rig:
+>   * the discriminator is the **positive** line `GameThreadDispatch: validation OK — hook fired N
+>     times`, which this run has (660 in the 1500 ms window, and `hook_fire_count` 8.8 M once
+>     in-world). Absence-of-failure was never the evidence; it only corroborates.
+>   * `fired 0 times in` is a **hard fail**, not "the game thread was idle".
+>
+> The verdict is unaffected — it never rested on the absence checks — but the row as written
+> invited a false PASS, and a later session leaning on it would have got one.
 >
 > ⚠ **The build gate below was real and had to be paid twice.** The deployed `version.dll` was
 > dated 2026-08-29 (not 2026-08-27 as written below) and owned the pipe; `proxy_refresh.py` fixed

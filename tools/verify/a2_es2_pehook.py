@@ -132,6 +132,30 @@ def main():
     if validfail:
         fails.append("A2: VALIDATION FAILED is present -- the installed hook did not behave")
 
+    # ⛔ THE ABSENCE OF `VALIDATION FAILED` IS VACUOUS ON THE PATTERN PATH, WHICH IS THE PATH
+    # THIS ROW EXPECTS. `Stark::ShouldActOnValidationFailure` returns `offsetFromVersionTable`
+    # (`Stark.h:305-307`), so a PATTERN-derived offset that fires ZERO times takes the early
+    # return at `Frieren.cpp:1951` and logs a line containing neither "VALIDATION FAILED" nor
+    # "FAILED" -- the hook is deliberately KEPT. A mis-detected pattern slot therefore produces
+    # exactly the log the naive grep set calls a pass. So the discriminator is the POSITIVE
+    # line, not the absent one, and the zero-fire line is a HARD FAIL.
+    ok_line = grep("init", "GameThreadDispatch: validation OK")
+    zero_fire = grep("init", "fired 0 times in")
+    say("\n'GameThreadDispatch: validation OK' lines: %d   <-- MUST be >= 1 (the real discriminator)"
+        % len(ok_line))
+    for l in ok_line:
+        say("   " + l.strip()[:170])
+    say("'fired 0 times in' lines:                 %d   <-- MUST be 0 (pattern-path zero-fire)"
+        % len(zero_fire))
+    for l in zero_fire:
+        say("   " + l.strip()[:170])
+    if not ok_line:
+        fails.append("A2: no 'validation OK' line -- absence of VALIDATION FAILED alone proves NOTHING "
+                     "on the pattern path (Stark.h:305-307); the hook may be installed on a wrong slot")
+    if zero_fire:
+        fails.append("A2: the pattern-path zero-fire line is present -- the hook was KEPT but never "
+                     "dispatched; treat as a hard fail, not as 'the game thread was idle'")
+
     # --- the verdict the row actually asks for ------------------------------------
     slots = set()
     for l in matched + resolved:
@@ -155,7 +179,9 @@ def main():
         for f_ in fails:
             say("   - " + f_)
         return 1
-    say("\nPASS -- every A2 observable captured, both absence checks held.")
+    say("\nPASS -- every A2 observable captured. The load-bearing evidence is the POSITIVE set "
+        "(validation OK, Add_IntInt==7, fire_count>0); the two absence checks are corroborating "
+        "only, and on the pattern path the VALIDATION FAILED one is vacuous by construction.")
     return 0
 
 
