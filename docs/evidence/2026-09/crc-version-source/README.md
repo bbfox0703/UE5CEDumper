@@ -67,3 +67,38 @@ unifying them.
   cache entry for an uninstalled build; DragonSword's documented runtime raise). A title shipping a
   genuinely mismatched CRC would weaken the whole source — the `SOURCES DISAGREE` WARN exists to
   surface exactly that if it ever happens.
+
+-----
+
+## Confirmed on a real game — DragonSword, build 3393
+
+`dragonsword-real-game.log`. The manufactured fixture proves the branches; this proves the whole
+chain on a title nobody prepared:
+
+```
+DetectVersion: CrashReportClient ProductVersion -> UE 5.3 -> 503
+DetectVersion: CrashReportClient at '…\DragonSword  Awakening\Engine\Binaries\Win64\CrashReportClient.exe'
+DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503
+DetectVersion: CrashReportClient and the game exe AGREE on 503
+FindAll: UE Version = 503 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+[WARN] UE5_Init: property marker (CMC::GravityDirection) = UE5.4+ — raising version 503 -> 504.
+UE5_Init: Complete (UE504, …, Objects=72618)
+```
+
+Five things at once, and the last two are the ones that could not be tested any other way:
+
+1. **The walk-up works on a real layout.** The exe is at `…\DS\Binaries\Win64\`, so the file is
+   three ancestors up — and the folder name contains a **double space**, which changed nothing.
+2. **Both resource sources agree** on a title that was never prepared for this.
+3. **`Objects=72618`** — a genuinely booted engine, not the coherent zeros a dead one reports.
+4. ⭐ **The rev-7 bump reached the poisoned entry.** DragonSword's cached record held `ueVersion=504
+   / rev=5` — a persisted runtime raise, the same defect Avowed had. Detection re-ran and the record
+   is now **`ue=503 rev=7`**: a value detection actually produces. That transition is **one-shot**;
+   it cannot be observed again without hand-editing a stamp back down, which is why this log is here.
+5. ⭐ **The raise still does not write back.** The ladder raised 503 → 504 at init and the cache
+   still reads **503**. That is the invariant which makes a rev bump safe — re-deriving every cached
+   verdict cannot lose a raise — now confirmed on a real game rather than a fixture.
+
+⚠ And it is the case that settles the priority question: CrashReportClient says 503, detection says
+503, the runtime marker says 5.4+. Not a contradiction — **they answer different questions**, and
+the ladder rightly has the last word.
