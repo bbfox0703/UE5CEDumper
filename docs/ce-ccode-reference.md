@@ -11,7 +11,7 @@ describes the register marshalling behind the blocks this repo generates. Cross-
 [docs/export-formats.md](export-formats.md) and the "CE Lua output hygiene" rule in `CLAUDE.md`.
 **This file is a mirror, not the master.**
 
-Master copy: `D:\Github\CE-Handwire-Private\docs\CE-CCODE-Reference.md` — edit there first, then mirror here.
+Master copy: `<private-ce-repo>/docs/CE-CCODE-Reference.md` — edit there first, then mirror here.
 
 > This document was written from an analysis of the CE source (`autoassemblercode.pas`, `tcclib.pas`,
 > `autoassembler.pas`, `Assemblerunit.pas`). The goal is a reference complete enough that a developer

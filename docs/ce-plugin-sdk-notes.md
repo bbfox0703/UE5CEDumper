@@ -10,7 +10,7 @@ and the disassembler/symbol output formats. Cross-reference
 [docs/aobmaker-integration.md](aobmaker-integration.md) and
 [docs/CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md).
 
-Master copy: `D:\Github\CE-Handwire-Private\docs\CE-Plugin-SDK-Notes.md` — edit there first, then
+Master copy: `<private-ce-repo>/docs/CE-Plugin-SDK-Notes.md` — edit there first, then
 mirror here.
 
 This document records the SDK details and known traps you must be aware of when developing a CE

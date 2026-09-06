@@ -9,7 +9,7 @@
 > same reason as [ce-plugin-api-reference.md](ce-plugin-api-reference.md). **This is a mirror, not
 > the master.**
 >
-> **Master copy:** `D:\Github\CE-Handwire-Private\docs\CE-Disassembler-Navigation.md` — edit there
+> **Master copy:** `<private-ce-repo>/docs/CE-Disassembler-Navigation.md` — edit there
 > first, then mirror here.
 >
 > ⚠ Every `file:line` below is DERIVED from the EXTERNAL `D:\Github\cheat-engine` tree at tag

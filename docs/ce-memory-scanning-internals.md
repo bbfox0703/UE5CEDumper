@@ -11,7 +11,7 @@
 > [simd-scanning-notes.md](simd-scanning-notes.md) and
 > [aob-block-library-eval.md](aob-block-library-eval.md). **This is a mirror, not the master.**
 >
-> **Master copy:** `D:\Github\CE-Handwire-Private\docs\Memory-Scanning-Internals.md` — edit there
+> **Master copy:** `<private-ce-repo>/docs/Memory-Scanning-Internals.md` — edit there
 > first, then mirror here.
 
 > This document records the core implementation details of the memory scanning engine, based on an
@@ -756,4 +756,4 @@ The `WindowsSequenceScanner` (**note the class name**: there is no type called `
 
 ---
 
-> **§16 is deliberately not mirrored.** Section 16 of the master copy documents a different project's in-process scanner — its current architecture, bottleneck analysis, acceleration roadmap and build numbers — none of which is about CE or about UE5CEDumper. Read it in the master copy: `D:\Github\CE-Handwire-Private\docs\Memory-Scanning-Internals.md`.
+> **§16 is deliberately not mirrored.** Section 16 of the master copy documents a different project's in-process scanner — its current architecture, bottleneck analysis, acceleration roadmap and build numbers — none of which is about CE or about UE5CEDumper. Read it in the master copy: `<private-ce-repo>/docs/Memory-Scanning-Internals.md`.

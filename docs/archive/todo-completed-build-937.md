@@ -266,7 +266,7 @@ offset, #5-v2 ObjectProperty return resolution, LiveWalker batch generator).
 Shipped this session (committed to dev): **P1b parallelization** of the three
 GObjects-walk scans — `ScanForValue` / `FindInContainers` /
 `FindReferencesToUObject` — plus thread-safe `Ubel` caches that the parallel
-walk now requires. Source: `D:\Github\CE-Handwire-Private\docs\Memory-Scanning-Internals.md`
+walk now requires. Source: `<private-ce-repo>/docs/Memory-Scanning-Internals.md`
 §16. Full write-up in [dev-log.md](dev-log.md) 2026-05-29 entry. Build + all
 1358 tests green; **in-game verified OK 2026-05-29** (user-confirmed: correct
 results, no hang/crash, multi-core First-Scan speedup).
