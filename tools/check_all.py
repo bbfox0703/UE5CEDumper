@@ -105,6 +105,12 @@ GATES = [
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
 
+    ("check_evidence_index",
+     ["tools/check_evidence_index.py"],
+     "docs/evidence/ drifted from the claims it serves -- an artifact whose claim tag no "
+     "longer appears anywhere else under docs/ (an ORPHAN), or a directory missing from the "
+     "index. Age is never the reason to delete evidence; orphanhood is", False),
+
     ("check_inert_trimming",
      ["tools/check_inert_trimming.py"],
      "a TextBlock asks for TextTrimming inside a horizontal StackPanel, where it can "
