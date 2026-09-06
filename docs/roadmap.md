@@ -32,6 +32,31 @@ state.
 
 -----
 
+## Current release
+
+**[v3397](https://github.com/bbfox0703/UE5CEDumper/releases/tag/v3397)** (2026-09-06), previous
+[v3362](https://github.com/bbfox0703/UE5CEDumper/releases/tag/v3362) (2026-08-26).
+
+This is STATE, not history -- it says what a user running the latest download actually has. The
+commit trail is in [dev-log.md](dev-log.md); do not summarise the fixes here, for the reason the
+banner above gives.
+
+⚠ **A user on v3397 is not on `main`.** Between a release and the next one, `main` carries fixes
+nobody has downloaded, so "is this fixed?" has two different answers. Derive the gap:
+`git log --oneline v3397..origin/main`.
+
+### What changed in BEHAVIOUR at v3397 (not a changelog -- these alter the rows below)
+
+* **UE version detection has a second, independent source.** `CrashReportClient.exe` ships with the
+  engine rather than being authored by the game team, so its version can never be the *game's*
+  version; where it disagrees with the game exe, the log says so. The `UE version override` row
+  further down still reads `Auto / 4.18-4.27 / 5.0-5.8` and remains correct.
+* **Cached version verdicts re-derive once** on each game's first launch after upgrading.
+* **The `dxgi.dll` proxy no longer stops some games launching** (OCTOPATH TRAVELER was the
+  reproducer), so the proxy-choice advice in the README is now true for dxgi as written.
+
+-----
+
 ## Capability matrix
 
 | Layer | Drill-down | Find Refs |

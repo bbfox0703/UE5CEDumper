@@ -25,6 +25,50 @@ builds ≤696 in
 
 -----
 
+## 2026-09-06 - RELEASED as v3397 -- the first release since v3362, 97 commits
+
+Tag `v3397` on `1b55cce3`, published from the draft the release workflow builds. **This entry is a
+POINTER, not a summary**: every fix it covers already has its own entry below, and a second copy
+would go stale independently -- which is exactly what `roadmap.md`'s banner describes happening to
+it.
+
+**[v3362...v3397](https://github.com/bbfox0703/UE5CEDumper/compare/v3362...v3397)** -- 97 commits,
+33 DLL/UI files, +1755/-415.
+
+### What the release notes say, and what they deliberately do NOT
+
+The notes are written for someone who only uses the tool: ten one-line bullets, no internals. Two
+things were CUT after review, and the reasoning is worth keeping because it applies to every future
+release:
+
+  * ⛔ **Documentation and tooling changes are not release notes.** A user does not care that a
+    filename's case changed.
+  * ⛔ **A defect introduced AND fixed inside the release window never shipped, so it is not a fix.**
+    The `_wfopen_s` logging regression (introduced build 3370, fixed 3371) never reached a user --
+    `git show v3362:dll/src/Sein.cpp` still had the correct `_wfopen`. The proxy SRWLOCK deadlock is
+    the same shape: introduced by the 3363 crash fix, gone by 3365, so the two commits are ONE
+    user-visible item ("the dxgi proxy used to stop some games launching").
+
+⚠ The test for this is not "is the commit newer than the tag" -- that is true of every commit in the
+window, and conflating a FIX commit with an INTRODUCING one gives the wrong answer both ways. Read
+the code at the old tag: `git show v3362:<file>`.
+
+### Verify-then-publish
+
+`release.yml` builds a DRAFT deliberately so the artifact can be checked before anything is public.
+Done, and worth doing every time:
+
+    sha256   recorded == actual                    615b3d6c...df38
+    zip      16 entries
+    UE5DumpUI.exe   54.7 MB  <- the AOT-TRIMMED build, not the ~107 MB one
+    build_number.txt embeds 3397 == the tag
+
+⭐ That 54.7 MB check is the one that matters. CLAUDE.md records that `-Target Test` / `-Target UI`
+silently replace `dist/UE5DumpUI.exe` with the non-trimmed binary, and shipping that would hand
+users a build in which every AOT/trimming defect is invisible.
+
+-----
+
 ## 2026-09-06 - CrashReportClient.exe becomes a second version source, and a file-hash allow-list was measured to reject everything (build 3393)
 
 `Genau::kVersionDetectLogicRev` **6 -> 7**. Evidence:
