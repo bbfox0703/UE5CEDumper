@@ -877,10 +877,14 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 > `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x80 (Offset_Internal +0x54, UE=418)`
 > `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x70 (Offset_Internal +0x44, UE=418)`
 >
-> ⚠ **The row predicted `UE=422`; both hosts report `UE=418`.** The arithmetic is unaffected — the
-> table's delta is `0x2C` for **all** of 4.18+ — but `docs/test-games.md` contradicts itself about
-> this title (`:19` says UE4.22, `:14` calls it "a known 4.18" while fingerprinting OCTOPATH against
-> it). The DLL says 418. Worth settling separately; it changes no A6 conclusion.
+> ✅ **The row predicted `UE=422`; both hosts report `UE=418` — SETTLED 2026-09-06, and the DLL
+> was right.** `DRAGON QUEST XI S.exe` carries `++UE4+Release-4.18` in `.rdata`, byte-identical
+> to OCTOPATH's tag. `docs/test-games.md:19` ("UE4.22") was wrong and is corrected; `:14`,
+> which calls DQ XI S "a known 4.18" and fingerprints OCTOPATH against it, was right all along.
+> ⚠ The `+0x10` shifted layout and `UField::Next=+0x38` are a **licensee fork**, not a version
+> signal — reading them as "must be newer than 4.18" is what produced the wrong number. The A6
+> derivation therefore used the correct band, which strengthens this closure rather than
+> qualifying it.
 >
 > ⛔ **THE ROW'S UI OBSERVABLE WAS IN THE WRONG PANEL, and following it would have produced a false
 > FAIL.** It named `ClassStructPanel`, whose DataGrid has exactly five columns — Offset, Name, Type,
