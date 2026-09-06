@@ -104,7 +104,12 @@ def runtime_identifiers():
 
 
 def mask_account(m):
-    """`C:\\Users\\Andyc` -> `C:\\Users\\A****`. The path stays readable; the identity does not."""
+    """`C:\\Users\\Alice` -> `C:\\Users\\A****`. The path stays readable; the identity does not.
+
+    ⚠ The example name here is FICTIONAL on purpose. An earlier version used this
+    machine's real account, and the gate could not see it because it skipped its own
+    file -- see SKIP below.
+    """
     acct = m.group(1)
     return m.group(0).replace(acct, redact(acct))
 
@@ -161,7 +166,11 @@ def unpushed_commit_messages():
 def tracked_files():
     out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
                          errors="replace").stdout
-    return [f for f in out.splitlines() if f and not f.startswith(SKIP)]
+    # ⚠ Everything is returned, INCLUDING this file. It used to be dropped here, which made the
+    # gate blind to a real account name sitting in one of its own docstrings (found on the public
+    # tip, not by the gate). The two REGEX branches are suppressed for it in main() instead --
+    # that is the narrow thing SKIP was ever needed for.
+    return [f for f in out.splitlines() if f]
 
 
 def main(argv):
@@ -176,10 +185,13 @@ def main(argv):
 
     hits = []
     for path in files:
+        # This file DEFINES the two regexes, so its own source matches them. Suppress just those
+        # two branches for it; the identifier branch below still applies, and must.
+        self_scan = path.replace(chr(92), "/").startswith(SKIP)
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as fh:
                 for n, line in enumerate(fh, 1):
-                    for m in PATTERN.finditer(line):
+                    for m in (() if self_scan else PATTERN.finditer(line)):
                         if m.group(1).lower() in ALLOWED:
                             continue
                         # ⚠ REDACT THE ACCOUNT SEGMENT. This branch used to print m.group(0) and
@@ -187,7 +199,7 @@ def main(argv):
                         # is how a caught leak gets laundered into a commit message or a CI log.
                         hits.append((path, n, mask_account(m), mask_account_line(line)))
                     # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
-                    for m in SESSION_DIR_PATTERN.finditer(line):
+                    for m in (() if self_scan else SESSION_DIR_PATTERN.finditer(line)):
                         hits.append((path, n, m.group(0), line.strip()[:110]))
                     for value, rx in ident_patterns.items():
                         if rx.search(line):
