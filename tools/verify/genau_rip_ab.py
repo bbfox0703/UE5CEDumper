@@ -35,6 +35,7 @@ build 2544", which would differ in ~700 builds of unrelated ways.
 The per-PE-hash hint entry is deleted before EACH side: a cached result changes how
 many patterns are even attempted, which is precisely the quantity being compared.
 """
+import os
 import hashlib
 import json
 import pathlib
@@ -49,7 +50,8 @@ OUT = ROOT / "out" / "genau"
 LOGROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 LOGS = LOGROOT / "python"             # rebound per host by run_side()
 MACHINE_JSON = (pathlib.Path.home()
-                / "AppData/Local/UE5CEDumper/UE5CEDumper.MSI-NB.json")
+                / ("AppData/Local/UE5CEDumper/UE5CEDumper.%s.json"
+                       % os.environ.get("COMPUTERNAME", "")))
 SIDES = {"before": OUT / "before_buggy_UE5Dumper.dll",
          "after": OUT / "after_fixed_UE5Dumper.dll"}
 

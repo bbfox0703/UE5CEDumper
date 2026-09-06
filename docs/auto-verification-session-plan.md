@@ -692,7 +692,7 @@ Conditions:
 *Used by **AA38** step 5 (the cold-scan precondition).*
 
 Delete key `67F515A70001A000` (python.exe) from
-`%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.MSI-NB.json`. App-generated and regenerable, but the file
+`%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{COMPUTERNAME}.json`. App-generated and regenerable, but the file
 also holds every other game's hints, so:
 
 1. Copy the whole file to the scratchpad first.

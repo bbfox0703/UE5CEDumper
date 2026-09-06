@@ -16,7 +16,7 @@ import pathlib
 import shutil
 import sys
 
-STORE = pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / "UE5CEDumper.MSI-NB.json"
+STORE = pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / ("UE5CEDumper.%s.json" % os.environ.get("COMPUTERNAME", ""))
 BACKUPS = pathlib.Path(__file__).parent / "cache-backups"
 
 FIELDS = ("ueVersion", "versionDetected", "lowConfidence", "versionDetectRev",

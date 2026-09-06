@@ -21,6 +21,7 @@ PROXY FRESHNESS IS CHECKED FIRST, not assumed: `assert_build()` compares the DLL
 answering the pipe against `dist/build_number.txt`, and every deployed proxy on this
 machine was stale on 2026-08-19. A stale proxy owns the pipe and answers happily.
 """
+import os
 import argparse
 import json
 import pathlib
@@ -57,7 +58,8 @@ def find_title(match):
 
 
 MACHINE_JSON = (pathlib.Path.home()
-                / "AppData/Local/UE5CEDumper/UE5CEDumper.MSI-NB.json")
+                / ("AppData/Local/UE5CEDumper/UE5CEDumper.%s.json"
+                       % os.environ.get("COMPUTERNAME", "")))
 
 
 def hint_for(exe_name):

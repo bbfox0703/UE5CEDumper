@@ -1573,8 +1573,8 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > injected and had already swept — otherwise the DLL removes the bait, the UI legitimately logs
 > nothing, and that reads as a failure of the UI sweeper. Then the UI was launched and connected.
 >
-> * backdated `UE5CEDumper.MSI-NB.json.tmp.99999` (3 h old) → **gone**
-> * fresh `UE5CEDumper.MSI-NB.json.tmp.88888` → **survives** — this is the age guard, and it is the
+> * backdated `UE5CEDumper.{COMPUTERNAME}.json.tmp.99999` (3 h old) → **gone**
+> * fresh `UE5CEDumper.{COMPUTERNAME}.json.tmp.88888` → **survives** — this is the age guard, and it is the
 >   half that matters: without it the sweeper would delete the DLL's in-flight write.
 > * `init-0.log`: `AobUsageService: removed 1 abandoned staging file(s) older than 1 h`
 > * the real cache still parses afterwards (28 entries)
@@ -3907,7 +3907,7 @@ trap is excluded. Neither the sleeper nor DumperTest carries a proxy, so the inj
 scanned.
 
 * **5 (done first, or the rest proves nothing).** Deleted `67F515A70001A000` from
-  `UE5CEDumper.MSI-NB.json` — it cached `gWorld: aob/GWLD_V3` with `gObjects`/`gNames`
+  `UE5CEDumper.{COMPUTERNAME}.json` — it cached `gWorld: aob/GWLD_V3` with `gObjects`/`gNames`
   `not_found`, i.e. exactly the hint that would let the run resolve MAIN-module *and be accepted by
   design*. File backed up, edited by a `json` round-trip; the Solarpunk and DumperTest control
   entries were left intact and re-checked afterwards. Step 1 was therefore a cold scan.
@@ -4758,7 +4758,7 @@ host**.
 > ### ✅ ALL THREE STEPS PASS 2026-08-20 `[G11-CACHE-2026-08-20]` — headless, across the whole cache
 >
 > **Step 1 — no game's detected version moved, checked on 12 titles rather than the two or three
-> asked for.** `UE5CEDumper.MSI-NB.json` holds **28** game entries; **22** carry
+> asked for.** `UE5CEDumper.{COMPUTERNAME}.json` holds **28** game entries; **22** carry
 > `versionDetectRev: 5`, i.e. they have already re-detected under the new rule (the other six —
 > MindsEye, Solarpunk, TQ2 ×2, ff7rebirth ×2 — sit at rev 1/3/absent because they have not been
 > scanned since). Each rev-5 entry's `ueVersion` was cross-checked against `docs/test-games.md`:
@@ -5043,7 +5043,7 @@ and is decisive — this is the rare case where the regression was captured befo
 > ```
 > The earlier attempt staged a **GWorld** hint and got a HIT; the answer was to stage a **GNames** one.
 >
-> **The run.** `gNames.patternId` set to `GNAM_V2` in `UE5CEDumper.MSI-NB.json` (backup first, JSON
+> **The run.** `gNames.patternId` set to `GNAM_V2` in `UE5CEDumper.{COMPUTERNAME}.json` (backup first, JSON
 > load→edit→dump, never a text rewrite — plan §4.2's rule), then DumperTest launched and injected:
 > ```
 > [GNames] Hint: trying cached pattern 'GNAM_V2' first...
@@ -5163,7 +5163,7 @@ and is decisive — this is the rare case where the regression was captured befo
 
 5. ✅ **DONE 2026-08-18 — MA1's three guards, each checked separately.**
    * **(a) the hint cache is untouched.** After the cancelled run, Elliot's entry
-     `6A577F4E1D91B000` was **still absent** from `UE5CEDumper.MSI-NB.json` (28 games, none of them
+     `6A577F4E1D91B000` was **still absent** from `UE5CEDumper.{COMPUTERNAME}.json` (28 games, none of them
      Elliot). The cancelled scan wrote nothing, exactly as `FindAll` promised.
    * **(b) a re-enable re-scans rather than short-circuiting.** `UE5_AutoStart` in the **same
      process** ran a full scan to `UE5_Init: Complete (UE504, …, Objects=85068)`.
