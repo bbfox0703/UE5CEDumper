@@ -20,11 +20,34 @@ probes `DynOff::FSTRUCTPROP_STRUCT + delta` over
 not publish `FSTRUCTPROP_STRUCT`, so this rig scans an aligned window of the FMapProperty for
 a POINTER PAIR whose ElementSizes match what the field's own name says they must be:
 
-    Map_NameToInt : FName key = 8 bytes, int32 value = 4 bytes
+    Map_IntToVec3f : int32 key = 4 bytes, FDumperTestVec3f value = 12 bytes
 
 Requiring BOTH sizes to match a value known from the type - rather than taking the first
 plausible pointer - is what makes the identification a witness instead of a guess. The rig
 refuses to run if it cannot find exactly one such pair.
+
+⛔⛔ THE FIELD MUST HAVE A **STRUCT** VALUE. THE ROW WAS UNREACHABLE UNTIL 2026-09-06 BECAUSE
+THIS RIG USED `Map_NameToInt`, AND ITS int32 VALUE MAKES THE POKE A NO-OP.
+`ValidateArrayElemSize` (Ubel.cpp:1726) asks `InferScalarSize(typeName)` first; for
+`IntProperty` that returns 4, i.e. `expected > 0`, so the branch taken is
+
+    if (readSize != expected) { ...  "overriding"; return expected; }
+
+- the garbage size is SILENTLY REPLACED BY THE RIGHT ONE and the degraded branch is never
+approached. Only when `InferScalarSize` returns 0 (StructProperty, and the other complex
+types) does control fall through to the `readSize > 65536` sanity cap that zeroes the size
+and produces `Cannot read map elements`. So the register's own suspicion - "it is entirely
+possible this branch is unreachable by data alone and needs a staged build" - was half right:
+unreachable through THAT field, reachable through a struct-valued one, and no staged build,
+no source change and no repackage are needed.
+
+`FDumperTestVec3f` is three floats (DumperTestTypes.h:119), deliberately 4-aligned, and
+`Map_IntToVec3f` holds 3 entries seeded {6201,6202,6203} / {6211,...} / {6221,...}
+(DumperTestActor.cpp:131-133) - so the restore is verifiable by VALUE, not just by byte.
+
+⚠ Do NOT "fix" this by poking a small wrong size such as 16. That is below the 65536 cap, so
+it is accepted, and the walker merely reads the 3 elements at the wrong stride: a silent
+mis-read, which is the opposite of the refusal this row exists to witness.
 
 ⚠ `fproperty_elemsize` is read from `get_offsets` at RUNTIME (52 here), not from
 `Grimoire.h`'s 0x3C default - the two disagree on this build.
@@ -32,11 +55,18 @@ refuses to run if it cannot find exactly one such pair.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import struct
 import sys
 import time
+
+# `--help` prints this module's docstring, which carries ⛔/⭐/⚠ and a 🟡 quoted from the
+# register. On this machine the console is cp950, so without this line `--help` dies with
+# UnicodeEncodeError before printing anything -- and the docstring is now where the reason for
+# the Map_IntToVec3f switch is written down. 47 of the 139 rigs in this directory already do it.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -45,8 +75,10 @@ from mutate_guard import Mutation           # noqa: E402
 from ad4_contested import find_live_actor    # noqa: E402
 
 LOG = pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / "Logs" / "DumperTest"
-FIELD = "Map_NameToInt"
-EXPECT_KEY_SIZE, EXPECT_VAL_SIZE = 8, 4      # FName -> int32, from the field's own name
+FIELD = "Map_IntToVec3f"
+# int32 -> FDumperTestVec3f (3 floats), from the field's own name. ⛔ The VALUE must stay a
+# STRUCT: a scalar value type makes InferScalarSize override the poke and the row unreachable.
+EXPECT_KEY_SIZE, EXPECT_VAL_SIZE = 4, 12
 
 
 def sizes():
@@ -172,6 +204,21 @@ def main(argv=None):
         if not f2 or not f2.get("map_elements"):
             fails.append("4: the map still does not read after the restore -- the walker wedged, "
                          "or the restore did not take")
+        else:
+            # ⭐ WITNESS THE RESTORE BY VALUE, NOT BY PRESENCE. "elements came back" is also true
+            # of a walker reading the right count at the WRONG stride, which is precisely the
+            # silent mis-read this row exists to distinguish from a clean refusal. The three
+            # seeded FDumperTestVec3f components are known in advance (DumperTestActor.cpp:131).
+            # Matched against the stringified payload so the check does not depend on the exact
+            # JSON shape of map_elements, which this rig has never needed to know.
+            blob = json.dumps(f2.get("map_elements"))
+            missing = [v for v in ("6201", "6202", "6203") if v not in blob]
+            print("[4b] seeded components present: %s"
+                  % ("6201/6202/6203 all found" if not missing else "MISSING %s" % missing))
+            if missing:
+                fails.append("4b: the map reads again but element [1] does not carry its seeded "
+                             "components %s -- the stride is wrong, which is a silent mis-read "
+                             "rather than the refusal this row is about" % missing)
 
     print("")
     print("=" * 72)

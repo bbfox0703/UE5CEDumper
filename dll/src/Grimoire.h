@@ -319,6 +319,25 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 //
 // Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
 // floor; 5.9+ does not exist yet). The caller decides what to do with that.
+//
+// ⭐ MACHINE-CHECKED SINCE 2026-09-06 — `tools/check_processevent_slots.py`, in `check_all`.
+// This was a hand-transcribed table over a vendored source, i.e. exactly the shape CLAUDE.md
+// says to derive rather than hand-edit, and nothing pinned it. The gate re-derives all 26 rows
+// from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` and they all match:
+//
+//     slot = index_of("ProcessEvent") * 8
+//     over [UObjectBase] + [UObjectBaseUtility] + [UObject] concatenated,
+//     with the repeated `__vecDelDtor` dropped after the first
+//
+// ⚠ That dedupe is load-bearing: the templates restate the destructor at the head of every
+// class section, but a single-inheritance vtable has ONE destructor slot for the whole chain.
+// Skip it and every row is wrong by a constant 0x10 — constant across all ten versions checked
+// by hand first, which is what identified it as a missing rule rather than a fudge.
+//
+// ⭐ Incidentally this retires a planned Ghidra/PDB pass. The register was scoping how to obtain
+// the **5.2** figure from the Satisfactory UE5.2.1 depot; 5.2 was already here (0x268) and is
+// now corroborated from source, as are 4.11-5.8 entire. A PDB gives one game's build; the
+// templates give the version.
 constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
     switch (ueVersion) {
         case 411: case 412: case 413:            return 0x1A8;

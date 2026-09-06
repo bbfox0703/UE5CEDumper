@@ -2652,6 +2652,32 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
+    /// <summary>Verification escape hatch: set <c>UE5DUMP_ALLFUNCS_LIMIT</c> (e.g. <c>200</c>)
+    /// before launching to lower the <c>list_all_functions</c> cap, so the TRUNCATION path can be
+    /// reached on a title that is nowhere near 100,000 UFunctions.
+    ///
+    /// ⭐ WHY THIS EXISTS. Audit L8's <c>Z8</c> needs the capped-census wording to be seen on
+    /// screen -- Console must stop claiming anything about the game
+    /// ("this scan did not finish, so it is not evidence the game has none") and both panels must
+    /// show the cap suffix. The DLL half is closed (<c>[Z8-TRUNCATED-2026-08-23]</c>), but the UI
+    /// half had no fixture: six titles were surveyed and the best, DQ7R, reaches **51 %** of the
+    /// cap, with the next under half of that. The row named FF7 REBIRTH and SEED; the former is an
+    /// empty folder here and the latter measured **10 %**. Reaching the cap would need a title
+    /// roughly 2x DQ7R and nothing installed is close.
+    ///
+    /// ⭐ So lower the cap instead of hunting a bigger game. The register's own conclusion for this
+    /// row was "stop predicting -- the screen IS the measurement"; this makes the screen reachable.
+    ///
+    /// ⚠ It overrides the caller's argument deliberately, because both UI call sites pass the
+    /// default and the point is to reach them without a code change. Unparseable or non-positive
+    /// values are IGNORED rather than clamped -- a typo must not silently truncate a real census
+    /// and hand back a partial answer that looks complete, which is the exact defect Z8 is about.
+    /// Read once, at startup, like <c>UE5DUMP_PIPE_LOG_FULL</c> in PipeClient.</summary>
+    internal static readonly int? AllFunctionsLimitOverride =
+        int.TryParse(Environment.GetEnvironmentVariable("UE5DUMP_ALLFUNCS_LIMIT"), out var v) && v > 0
+            ? v
+            : null;
+
     /// <summary>
     /// Enumerate every UFunction across every loaded UClass. Backs the
     /// "Interesting Functions Finder" panel.
@@ -2669,7 +2695,7 @@ public sealed class DumpService : IDumpService
         {
             ["cmd"] = "list_all_functions",
             ["game_only"] = gameOnly,
-            ["limit"] = limit,
+            ["limit"] = AllFunctionsLimitOverride ?? limit,
         };
 
         var res = await _pipe.SendAsync(req, ct);

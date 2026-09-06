@@ -406,6 +406,42 @@ had already been solved twice.
 mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
 done — worth checking, never sufficient on its own.
 
+#### 1.ab-2 ⭐ A POINTER FILE ROTS FASTER THAN THE FILE IT POINTS AT — and the entry point rots worst
+
+Added 2026-09-06, after a fixture-coverage audit found the rot had spread from the register into
+the two documents a session is *told to read first*:
+
+* **`docs/handover-2026-08-22.md` — its "rows that are cheaper than their bucket suggests" list was
+  four-fifths stale.** Four of the five bullets had closed, **three of them within two days of the
+  file being written**. The register had even carried a ⛔ SUPERSEDED banner for one of them
+  (`AF16`) since 08-23; the correction existed and simply never propagated to the pointer.
+* **`docs/log-verification-checklist.md` contained ZERO closure tags.** It is a *method* doc — it
+  says how to check a thing and deliberately has no ⬜/✅ column — so four months on it read exactly
+  like an untouched queue. Six of its seven §2 steps were closed, and its §5 "minimum session"
+  recipe settled essentially nothing.
+
+⚠ **Worse than a stale status is a stale PREMISE**, because a reader reuses the premise elsewhere.
+The handover asserted *"DumperTest's `Funcs` column is entirely empty"* (the sample ships **5**
+`*_C` Blueprint classes, written down in the register's own W1/W7 row) and *"DumperTest has no
+repeatable in-process object-recreation lever"* (true when written; `Spawn_Holders` /
+`Spawn_DestroyHolders` / `Spawn_RecycleChurn` landed **the next day**). Both were being quoted
+forward as reasons a row needed a commercial game.
+
+⛔⛔ **AND THE SEARCH ITSELF HAS A FAILURE MODE I COMMITTED THE SAME HOUR.** Auditing that
+checklist I wrote two rows up as *"no closure found"* — because I had grepped only
+`verification-register.md`. Both were closed: one in `auto-verification-classification-2026-08-23.md`,
+one in `docs/archive/`. **A closure is recorded where the WORK happened, not where the row lives.**
+So rule 1 above is not "grep the whole file", it is:
+
+```bash
+grep -rn "<FINDING-ID>\|\[<TAG>" docs/          # the WHOLE tree, archive included
+```
+
+ℹ️ Note the asymmetry that makes this cheap to get wrong: **a closure that is merely hard to find
+costs one wasted session; a stale pointer at the entry point costs every session until someone
+notices.** Fixing a pointer file is therefore worth more per line than fixing the register, and it
+is the one place where a status line is worth duplicating — with its tag, so it can be re-derived.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

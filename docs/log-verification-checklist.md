@@ -100,6 +100,31 @@ measured".
 
 ## 2. DELIBERATE — do this in-game, then grep
 
+> ⛔ **STATUS AUDIT 2026-09-06 — MOST OF THIS SECTION IS ALREADY CLOSED. READ THIS TABLE FIRST.**
+> This file is a **method** doc: it says *how* to check a thing, and it deliberately carries no
+> ⬜/✅ column. That is exactly why it reads, four months on, as if none of it had been done — it
+> contained **zero** references to a closure tag. It is not a queue. Do not plan a session off it
+> without checking the register.
+>
+> | § | subject | state |
+> |---|---|---|
+> | **A** | See-Through, audit M1/M2/M3 | ✅ closed. All four disable arms passed — (c)+(d) 2026-08-22, **(a)+(b) 2026-08-23** `[SEETHRU-ARMS-AB-2026-08-23]`. ⚠ The 繁中 file's *own* arm (a) — "close the game **while** moving" — is a different question and is still open, but is **not** human-gated. |
+> | **B** | Solide hold / Tot latch zombie, audit M4 | ✅ closed `[SOLIDEHOLD-2026-08-22]` |
+> | **C** | 256 pool-truncation badge (build 2531) | ✅ closed by the same tag, which covers "the 256 badge, the release, and the anti-zombie control" |
+> | **D** | GodMode worker lifecycle, audit L1 | ✅ closed `[L1-GODRACE-2026-08-23]` — register:10075, *"DLL LOW L1 — PASS"* |
+> | **E** | UFunction invoke / ProcessEvent | 🟡 **the only one with work left** — `[PEHOOK-LIVE-2026-08-20]` (steps 1b/2/3/5/7) and `[PEHOOK-6-2026-08-20]` closed; two steps remain under `[PEHOOK-2026-08-17]` |
+> | **F** | Dump Explorer cross-game gate (2538) | ✅ closed `[DUMPXGAME-2026-08-22]` — the gate was already pinned by `DumpExplorerTests`; only its diagnostic was not |
+> | **G** | Value Search `V1a` / `NumericAll` | ✅ **VERIFIED 2026-08-05 on DumperTest** — both had been ⬜ since builds 927 and 796 respectively, and the sample closed them along with B28 and V1c |
+>
+> ⭐ **Everything in §2 is closed except two steps of E.** M1–M5 as a whole is complete — the
+> register states *"steps 1, 2, 3, 4 and 5 all closed"*.
+>
+> ⚠⚠ **AND HERE IS THE TRAP, COMMITTED WHILE WRITING THIS VERY TABLE:** D and F were first written
+> up as *"no closure found"* because only `verification-register.md` had been grepped. Both are
+> closed — D in `auto-verification-classification-2026-08-23.md`, F in `docs/archive/`. **A closure
+> is recorded where the work happened, not where the row lives.** Always `grep -rn` the whole of
+> `docs/`, archive included, before concluding anything here is open.
+
 ### A. See-Through / Schlacht — audit M1 / M2 / M3
 **Do:** enable See-Through, then disable it **four different ways** — (a) while moving,
 (b) while the game is paused / the game thread is stalled, (c) by yanking the UI connection,
@@ -194,15 +219,20 @@ These modules emit **zero** log lines: `Linie`, `Radar`, `Denken`, `Tot`. (`Sens
 
 | Item | What to do instead |
 |---|---|
-| **Solide truncation badge** | On-screen badge only (§2C). |
-| **Audit M5 — `UE5_Shutdown` join order** | A **non-event**: with a hold active, close the game while connected → no hang, no crash. There is no positive line; "nothing bad happened" is the whole result. |
-| **Audit L12 — Fern `str_params` leak** | Genuinely unreachable from the normal UI (needs a mid-loop JSON `type_error`). Not checkable in a play session — leave it open or drive it from a crafted pipe client. |
-| **[V1c] `TOptional<T>` scan** | Blocked on *finding* a game with `TOptional` UPROPERTYs. **Prerequisite:** run Dump All and grep the `.jsonl` for `OptionalProperty` before trying to verify anything. |
+| **Solide truncation badge** | On-screen badge only (§2C). ✅ **closed** `[SOLIDEHOLD-2026-08-22]`. |
+| **Audit M5 — `UE5_Shutdown` join order** | A **non-event**: with a hold active, close the game while connected → no hang, no crash. There is no positive line; "nothing bad happened" is the whole result. ✅ **closed 2026-08-24** `[M5-JOINORDER-2026-08-24]`. ⚠ Its recipe was wrong in one word: *"assert sub-second exit"* — UE's own teardown is ~1.5–1.7 s here with or without a hold, so a literal reading files a UE property as an M5 defect. What was measured is hold vs no-hold (1.612/1.334 vs 1.717/1.650 s — a hold is no slower). |
+| **Audit L12 — Fern `str_params` leak** | Genuinely unreachable from the normal UI (needs a mid-loop JSON `type_error`). Not checkable in a play session — drive it from a crafted pipe client. ✅ **closed 2026-08-23** `[L12-STRLEAK-2026-08-23]`, which is exactly how it was done. |
+| **[V1c] `TOptional<T>` scan** | ⛔ **STALE — do NOT go looking for a game.** ✅ **VERIFIED 2026-08-05 on DumperTest** (⬜ since build 942). The sample exists precisely so this is not a hunt: `Opt_Int_Set` / `Opt_Float_Set` / `Opt_Str_Set` / `Opt_Int_Unset` are declared in `DumperTestActor.h`, and UHT emits each as `FGenericPropertyParams` plus an `_Inner`. |
 | **[Verify Return Value] diagnostic** | Read the invoke result grid on screen. |
 
 ---
 
 ## 5. Minimum session that settles the most
+
+> ⛔ **AS OF 2026-09-06 THIS RECIPE SETTLES ALMOST NOTHING — steps 3–7 are all closed** (see the
+> §2 status table). It is kept as the shape of a good session, not as a work list. The only piece
+> with anything left in it is **step 3 / §2E**, and only two of that row's steps. If you want a
+> session that still buys something, take it from `docs/todo.md` or the register, not from here.
 
 1. Note the deployment mode (`proxy DLL mode` present or not). Under proxy, click **Start Scan**.
 2. Let the scan finish → §1 P1–P6 are already in the bag (**Genau ModR/M**, **FPROPERTY_FLAGS**,

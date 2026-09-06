@@ -326,7 +326,7 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 // ordinary "Release Notes 5.4.0" that the narrow form rejected outright.
                 //
                 // (G11) The bare needle must be a WHOLE token: the next byte may not be a
-                // digit. That admits both real shapes — two-component "Release-4.27 " and
+                // digit. That admits both real shapes — two-component "Release-4.27\0" and
                 // three-component "Release-5.4.2", whose next byte is '.' — while still
                 // rejecting "Release 5.40", which is a game version, not an engine one.
                 const uint8_t afterBare = scan[off + bareLen];

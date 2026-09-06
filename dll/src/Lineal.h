@@ -14,17 +14,34 @@
 //     obj = ((FlagsAndRefCount >> 32) & PtrMask) << (32 + AlignBits)
 //         | (uint64(ObjectPtrLow) << AlignBits)
 //
-// Constants (assumed against EpicGames/UnrealEngine 5.7 source; CALIBRATABLE at
-// runtime via Aura::SetPackedConsts / the set_packed_consts pipe command because
-// no shipping game uses this layout yet to live-verify them):
-//   AlignBits = 3   (UObjectAlignment == 8  -> 3 trailing zero bits)
-//   PtrMask   = 0x3FFF (EInternalObjectFlags_MinFlagBitIndex == 14 -> low 14 bits)
+// ⭐ CONSTANTS: PINNED 2026-09-06, READ OUT OF THE VENDORED 5.7 SOURCE. They used to be
+// described here as "assumed" and "best-effort until a packed game exists", which conflated two
+// very different doubts. The constants were never the doubtful part — the engine source is IN
+// THIS TREE and states them, so they are DERIVED, with a citation each:
 //
-// *** UNVERIFIED ***: this whole encoding has never been validated against a real
-// packed game. The reconstruction MATH below is unit-tested for round-trip
-// correctness (Lineal.h has no external dependency so dll_helpers_test can
-// include it directly), but the constants and the in-memory item layout are
-// best-effort until a packed game exists to calibrate against.
+//   AlignBits = 3
+//       vendor/.../UObject/UObjectArray.h:84  `constexpr static int32 UObjectAlignment = 8;`
+//       :85  `UObjectPtrTrailingZeroes = FMath::CountTrailingZeros(UObjectAlignment)` -> 3
+//   PtrMask = 0x3FFF
+//       :87  `FlagsMask = 0xFFFFFFFF << EInternalObjectFlags_MinFlagBitIndex`
+//       :88  `PtrMask   = ~FlagsMask`
+//       and the index is not a comment's word — vendor/.../UObject/ObjectMacros.h:705 is
+//       `#define EInternalObjectFlags_MinFlagBitIndex 14`, so FlagsMask = 0xFFFFC000 and
+//       PtrMask = 0x3FFF. (UObjectArray.h:82 says "at the time of writing this is 14"; that
+//       sentence is what made this look like an assumption. Read the define, not the sentence.)
+//   packed serial_off = 0x0C
+//       the packed struct is FlagsAndRefCount(int64)@+0x00, ObjectPtrLow(uint32)@+0x08,
+//       SerialNumber(int32)@+0x0C, ClusterRootIndex(int32)@+0x10 — UObjectArray.h:55/75/92/94.
+//
+// The reconstruction expression above is byte-for-byte UObjectArray.h:141.
+//
+// *** WHAT IS GENUINELY STILL UNVERIFIED *** — and it is NOT the arithmetic:
+//   1. no SHIPPING game has been observed using this layout at all, so the item layout has never
+//      been confirmed against a real binary (Epic does not default the packing even in ue5-main);
+//   2. therefore whether a real build's compiler laid the struct out as the source implies.
+// Both stay CALIBRATABLE at runtime via Aura::SetPackedConsts / the `set_packed_consts` pipe
+// command. The reconstruction MATH is unit-tested for round-trip correctness (Lineal.h has no
+// external dependency, so dll_helpers_test includes it directly).
 //
 // Dependency-free on purpose (only <cstdint>) so it stays unit-testable.
 // ============================================================
@@ -109,8 +126,10 @@ inline void Encode(uintptr_t obj, const PackedConsts& c,
 // that one is about a passive observer STORING a serial UE allocates lazily.
 inline int SerialOffsetForLayout(ItemLayoutMode mode, int itemSize,
                                  int objOffset, int packedSerialOff) noexcept {
-    // Packed UE5.7+: position is *** UNVERIFIED ***, calibratable at runtime via
-    // set_packed_consts serial_off. A wrong value degrades only weak-ref
+    // Packed UE5.7+. The DEFAULT is now derived rather than guessed — 0x0C, from the vendored
+    // struct (FlagsAndRefCount@+0x00, ObjectPtrLow@+0x08, SerialNumber@+0x0C); see the header
+    // comment for the citations. Still calibratable via set_packed_consts serial_off, because no
+    // shipping game has been seen in this layout, and a wrong value degrades only weak-ref
     // staleness resolution, never the core object walk.
     if (mode == ItemLayoutMode::Packed57) return packedSerialOff;
 

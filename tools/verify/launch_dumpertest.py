@@ -51,11 +51,26 @@ import sys
 import time
 
 ROOT = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest")
+ROOT58 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest58")
 FLAVOURS = {
     "dev": ROOT / "Development/Windows/DumperTest/Binaries/Win64/DumperTest.exe",
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
     "debug": ROOT / "DebugGame/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-DebugGame.exe",
+    # ⚠⚠ THE 5.8 FIXTURE IS A DIFFERENT PROJECT, NOT ANOTHER FLAVOUR OF THIS ONE.
+    # DumperTest58 is the STOCK UE 5.8 Third Person template (with the Combat /
+    # Platforming / SideScrolling variants). It does NOT contain the property zoo --
+    # no ADumperTestActor, no Spawn_*, no mutators, no heartbeat HUD. Measured
+    # 2026-09-06: `DumperTestActor` gets zero utf-16le hits in either exe.
+    #
+    # So it answers ENGINE-LAYOUT questions only (FUObjectItem reorder, FFieldClass
+    # vfptr, version detection, envelope sizes) -- which is exactly what audits A1,
+    # A2 and A4 used it for. Do not point a property-shape row at it and read a
+    # missing field as a defect.
+    "dev58": ROOT58 / "Development/Windows/DumperTest58/Binaries/Win64/DumperTest58.exe",
+    "shipping58": ROOT58 / "Shipping/Windows/DumperTest58/Binaries/Win64/DumperTest58-Win64-Shipping.exe",
 }
+# The 5.8 fixture takes NO sample-specific switch, because none of them exist in it.
+IS_58 = {"dev58", "shipping58"}
 # THREE flavours, and the exe NAME is not derivable from the folder: Development's binary is
 # plain `DumperTest.exe` with no suffix, the other two carry `-Win64-<Flavour>`. A glob written
 # as `DumperTest-Win64*.exe` silently finds two of three and reports the third as absent --
@@ -98,8 +113,26 @@ def main(argv=None):
         print(f"launch_dumpertest.py: FAILED -- not found: {exe}", file=sys.stderr)
         return 1
 
-    args = [str(exe)] + HOUSE_ARGS + (["-DumperTestIdle"] if a.idle else [])
+    if a.flavour in IS_58:
+        # ⚠ Strip every DumperTest-specific switch. `-DumperTestMaxFPS` and
+        # `-DumperTestIdle` are the SAMPLE's own C++ (DumperTestSubsystem.cpp); the stock
+        # 5.8 template has neither, so passing them is inert at best and misleading in a
+        # launch line that claims a 15 fps cap it never applied. `-ExecCmds` is kept: 5.8
+        # Development honours it, which is the only cap available here.
+        house = ["-windowed", "-ResX=1280", "-ResY=720", "-ExecCmds=t.MaxFPS 15"]
+        if a.idle:
+            print("launch_dumpertest.py: FAILED -- --idle is a DumperTest-only switch; the "
+                  "stock 5.8 template has no -DumperTestIdle handler", file=sys.stderr)
+            return 1
+    else:
+        house = HOUSE_ARGS
+
+    args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else [])
     print("launching:", " ".join(args))
+    if a.flavour == "shipping58":
+        print("  note: Shipping discards -ExecCmds, and the 5.8 template has no self-cap "
+               "of its own (that is DumperTest's ApplyMaxFPS, which does not exist here). "
+               "This one runs UNCAPPED -- measure the rate for any timing-sensitive row.")
     if a.flavour == "shipping":
         # Say it at the point of use: an operator reading the launch line sees BOTH
         # switches and should know which of the two is doing the work here.
