@@ -1,0 +1,71 @@
+// ============================================================
+// DumperTest.rc — G2 step 3, the Tier-1 UE5 branch.
+//
+// THE ROW. Genau's version detection tries, in order: (0) CrashReportClient.exe's version,
+// (1) the game exe's PE VERSIONINFO, then a memory string scan for an engine tag. The register
+// records the UE5 Tier-1 branch as "unverifiable on this inventory" because EVERY installed UE
+// game's VERSIONINFO already carries the engine version, so Tier 0/1 always answers and the
+// fallback is never reached.
+//
+// ⛔ `DefaultGame.ini`'s ProjectVersion DOES NOT WORK for this. Only the Android and AppX
+// toolchains read it; on Win64 the VS_FIXEDFILEINFO comes from the engine's own Default.rc2,
+// which hardcodes ENGINE_MAJOR/MINOR/PATCH. That was the original proposal and it would have
+// silently changed nothing.
+//
+// WHAT WORKS: UBT skips Default.rc2 entirely when the module supplies its own .rc
+// (UEBuildBinary.cs). So this file replaces the version block wholesale, and the packaged exe
+// reports 1.2 — a version no UE release ever had, which is exactly the point.
+//
+// EXPECTED, in scan-0.log:
+//     DetectVersion: PE VERSIONINFO Product=1.2 File=1.2 — unrecognised
+//     PE resource failed, falling back to memory string scan
+//     Tier 1 (utf16) '++UE5+Release-5.4' -> 504
+//
+// ⚠⚠ THREE WAYS THIS SILENTLY MEASURES NOTHING:
+//  (a) ⛔ DO NOT tick "Include Crash Reporter" when packaging. The CrashReportClient.exe source
+//      runs FIRST and WINS, so a package carrying it never reaches the PE-resource branch at all.
+//      Neither existing DumperTest package includes it — keep it that way.
+//  (b) The memory-scan fallback reads the '++UE5+Release-' tag. Development's StringFileInfo
+//      carries "5.4.4" while Shipping's ProductVersion string IS that tag, so Shipping needs the
+//      StringFileInfo below to stay clean of it — hence the deliberately plain strings.
+//  (c) The log prints a module-relative RVA, not a file offset. Do not try to seek to it.
+// ============================================================
+
+#include "Windows/WindowsHWrapper.h"
+#include "winresrc.h"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,2,0,0
+ PRODUCTVERSION 1,2,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            // ⚠ Deliberately free of any "++UE5+Release-" or "5.4" substring: this block is the
+            // THIRD detection fallback, and leaving an engine tag here would let the row pass
+            // for the wrong reason.
+            VALUE "CompanyName",      "DumperTest"
+            VALUE "FileDescription",  "DumperTest verification fixture"
+            VALUE "FileVersion",      "1.2.0.0"
+            VALUE "InternalName",     "DumperTest"
+            VALUE "LegalCopyright",   ""
+            VALUE "OriginalFilename", "DumperTest.exe"
+            VALUE "ProductName",      "DumperTest"
+            VALUE "ProductVersion",   "1.2.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

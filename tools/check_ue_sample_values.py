@@ -63,6 +63,20 @@ VALUE_SOURCES = ["DumperTestActor.cpp", "DumperTestActor.h", "DumperTestTypes.h"
 COMPUTED = {
     "FixedArr": "set by a loop, (i + 1) * 100 -- 800 never appears as a literal",
     "TickCount": "starts at 0 and is incremented by the timer",
+    # --- Batch 2 (2026-09-06). Each is computed or seeded at runtime, so no literal exists
+    # to match. They are still checked for EXISTENCE and DOCUMENTATION like everything else;
+    # only the literal comparison is exempt, and each exemption states the formula so a reader
+    # can still derive the expected value.
+    "FrameCountReflected": "mirrors FrameCount every Tick; starts at 0",
+    "HolderHealth": "seeded per holder in Spawn_Holders as 100 - (index % 5) * 10",
+    "LazyAnchors": "GC roots for Arr_LazyPtr's referents; spawned, never literal",
+    "Arr_LazyPtr": "points at three actors spawned in BeginPlay",
+    "Deep_Buckets": "empty until A9_BuildDeepContainers; values are o*1000000 + m*1000 + i",
+    "Subs": "inner container of Deep_Buckets, filled by the same loop",
+    "Leaves": "innermost float array, filled by the same loop",
+    "Arr_TuneBlocks": "3 blocks x 5 ints, value 7000 + block*100 + element",
+    "Tunes": "the int array inside FDumperTestTuneBlock, same formula",
+    "BlockName": "FString::Printf(TEXT(\"Tune_%d\"), b) -- no literal name",
 }
 
 UPROP_RE = re.compile(r"UPROPERTY\s*\([^)]*\)\s*(?P<decl>[^;]+);")
@@ -321,7 +335,7 @@ def check_identity_covers_mirror(root):
     excluded = set(re.findall(r'"([^"]+)"', e.group(1))) if e else set()
 
     on_disk = {f for f in os.listdir(src)
-               if f.endswith((".h", ".cpp", ".cs")) and f not in excluded}
+               if f.endswith((".h", ".cpp", ".cs", ".rc")) and f not in excluded}
     missing = sorted(on_disk - listed)
     phantom = sorted(listed - on_disk - excluded)
     out = []

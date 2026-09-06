@@ -107,6 +107,45 @@ bool UDumperTestSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	return false;
 }
 
+// ============================================================
+// AD18 step 4 — make this exe a genuine dinput8.dll importer.
+//
+// Reading the import table of all 16 installed UE shipping exes found NOT ONE importer of
+// dinput8.dll, so the `dinput8` proxy flavour has never been exercised against a real UE host.
+// The fixture has to be the importer.
+//
+// ⚠ Linking dinput8.lib is NOT sufficient. An import with no referencing call is dropped by the
+// optimizer, so this makes one real call. The result is deliberately ignored -- whether
+// DirectInput initialises is irrelevant; the IMPORT is the artefact under test.
+// ⚠ IID_IDirectInput8W comes from dxguid.lib, not dinput8.lib. See DumperTest.Build.cs.
+//
+// EXPECTED once the proxy is deployed: init-0.log carries
+//     Loaded real dinput8.dll: C:\WINDOWS\system32\dinput8.dll
+// ⛔ NOT `lazily forwarded N/N exports` -- only the dxgi and winmm flavours print that; dinput8
+// takes the version-flavour shape.
+// ============================================================
+#define DIRECTINPUT_VERSION 0x0800
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <dinput.h>
+
+void UDumperTestSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	IDirectInput8W* DI = nullptr;
+	const HRESULT Hr = DirectInput8Create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION,
+	                                      IID_IDirectInput8W, reinterpret_cast<void**>(&DI), nullptr);
+	if (SUCCEEDED(Hr) && DI)
+	{
+		DI->Release();
+	}
+	UE_LOG(LogTemp, Warning,
+	       TEXT("[DumperTest] DirectInput8Create hr=0x%08X (the IMPORT is the point, not the result)"),
+	       static_cast<uint32>(Hr));
+}
+
+#include "Windows/HideWindowsPlatformTypes.h"
+
 void UDumperTestSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
@@ -119,6 +158,24 @@ void UDumperTestSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	ApplyMaxFPS();
 	ApplyIdleWhenNotForeground();
 
+	// ⭐ -DumperTestStarveVM: reserve the ±2 GB window MinHook needs for a trampoline, so
+	// MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC. Four shipped behaviours depend on that
+	// failure and NOT ONE has ever been observed, because it only happens intermittently in
+	// the wild.
+	//
+	// ⛔ IT IS A SWITCH, NOT A UFUNCTION, and that is forced rather than chosen: an invoke is
+	// drained from INSIDE the already-installed detour, so by the time any UFUNCTION of ours
+	// could run, the hook it is meant to starve has already succeeded. It has to happen before
+	// the DLL is injected.
+	//
+	// ⚠ The recovery half is Hook_ReleaseTrampolineVM, and it must be called within ~40 s
+	// (8 attempts x 5 s cooldown) or the retry ladder is spent and `hook RECOVERED on attempt N`
+	// can never appear.
+	if (FParse::Param(FCommandLine::Get(), TEXT("DumperTestStarveVM")))
+	{
+		bStarveVmRequested = true;
+	}
+
 	FActorSpawnParameters Params;
 	Params.Name = TEXT("DumperTestActor_0");
 	// The dumper is often pointed at this actor by NAME, so a collision must not
@@ -130,6 +187,11 @@ void UDumperTestSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	SpawnedActor = InWorld.SpawnActor<ADumperTestActor>(
 		ADumperTestActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, Params);
+
+	if (bStarveVmRequested && SpawnedActor)
+	{
+		SpawnedActor->ReserveTrampolineVm();
+	}
 
 	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] subsystem spawned actor=%p in world '%s'"),
 	       SpawnedActor.Get(), *InWorld.GetName());

@@ -26,6 +26,13 @@ class DUMPERTEST_API UDumperTestSubsystem : public UWorldSubsystem
 
 public:
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+
+	/// ⭐ AD18 step 4. This exists ONLY to make the packaged exe a genuine importer of
+	/// dinput8.dll. Linking dinput8.lib is not enough on its own -- an import with no
+	/// referencing call is dropped by the optimizer, and the row then measures nothing.
+	/// Nothing else in the sample uses DirectInput.
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 private:
@@ -33,6 +40,10 @@ private:
 	/// subsystem for the world's whole lifetime. Without this the actor is
 	/// still owned by the level, but the extra reference makes the ownership
 	/// edge explicit — and gives Related Objects a second inbound edge to find.
+	/// Set by -DumperTestStarveVM in OnWorldBeginPlay, acted on once the actor exists (the actor
+	/// owns the reservation list, so it must be spawned first).
+	bool bStarveVmRequested = false;
+
 	UPROPERTY()
 	TObjectPtr<ADumperTestActor> SpawnedActor;
 };

@@ -115,7 +115,7 @@ def probe(path):
 SOURCES = ["DumperTestActor.h", "DumperTestActor.cpp", "DumperTestTypes.h",
            "DumperTestSubsystem.h", "DumperTestSubsystem.cpp",
            "DumperTestHUD.h", "DumperTestHUD.cpp",
-           "DumperTest.Build.cs"]
+           "DumperTest.Build.cs", "DumperTest.rc"]
 
 # Template files the project generates and we never touch (DumperTest.cpp/.h,
 # DumperTestCharacter.*, DumperTestGameMode.*). README.md rule 4 says they are deliberately NOT
