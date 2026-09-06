@@ -305,7 +305,12 @@ def main():
     # ---- step 3: re-capture the identity record ----------------------------------
     print("\n[3/3] capture_package_identity.py")
     cap = os.path.join(HERE, "capture_package_identity.py")
-    rc, _ = run([sys.executable, cap, archive, "--project", args.project], "capture", 900)
+    # ⚠ `--project` here is a PATH, not a name -- capture_package_identity.py does
+    # os.path.join(args.project, "Source", "DumperTest"). Passing the bare name resolves it
+    # against the CWD, every one of the hashed sources comes back missing, and the record fills
+    # with "project source 'X' is missing" -- which reads exactly like a real staleness problem.
+    # That cost a restore-from-git on 2026-09-06. Pass proj_dir.
+    rc, _ = run([sys.executable, cap, archive, "--project", proj_dir], "capture", 900)
 
     print("\n" + "=" * 78)
     print("DONE. ⚠ The pe_hash changed, so the per-game app-data folders keyed by it are now")
