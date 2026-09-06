@@ -2623,3 +2623,23 @@ on 2026-08-15**; `MEMORY.md` now carries a pointer here plus the section map abo
    is paid only when it is relevant. Keep `MEMORY.md` to pointers and machine-local facts. **Adding a
    second index file does not help** — it either also loads (no saving) or is never read (dead
    weight). The lever is deduplication against git-carried docs, not more files.
+
+### 7.2 CLAUDE.md's Documentation Index is a POINTER table, and it has drifted twice
+
+Same argument as §7.1, applied to the other always-loaded file. `CLAUDE.md` loads on **every turn**,
+so a paragraph there costs more than a paragraph anywhere else in the repo.
+
+* **2026-08-27.** The index had reached **40 KB across 56 rows** — a mean of 716 bytes, i.e. a
+  paragraph per entry. A row-by-row audit against every target doc found the prose was
+  **near-entirely duplicated**, plus **six claims that had gone stale or were refuted by the very
+  doc they pointed at**. Trimmed to ~11 KB; whole file 77.5 KB → 39 KB.
+* **2026-09-06.** It had grown back to ~16 KB and the file was 127 bytes under its own 40,960 cap.
+  A second pass against the same standard cut the whole file to ~33 KB — and again found stale
+  claims *inside the summaries*: `todo.md` billed at 201 KB (really 188), Avalonia at 12.1.0
+  (really 12.1.1), and an App-data rule naming two per-game families when `Constants.cs` says
+  `TeleportCoords\` is **the third**.
+
+⭐ **The recurring finding is not "it got long" — it is that a SUMMARY GOES STALE AND A POINTER
+CANNOT.** A row saying *what a doc contains* has to be re-verified whenever that doc changes, and
+nobody does. A row saying *when you would open it* survives. That is why the rule is phrased as a
+question ("when would I open this?") and capped in bytes.
