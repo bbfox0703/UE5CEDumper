@@ -4418,6 +4418,80 @@ static void Test_Neu_Legacy_Basic() {
 // ⚠ Impact on every title measured to date is ZERO -- `bCasePreservingName` has two writers
 // inside a live 20-object vote, nothing can force it true, and 12 titles measured false. That is
 // precisely why it rotted: no test and no game could ever go red.
+static void Test_UeVersionCodeBounds() {
+    // The mapping itself.
+    EXPECT("UeVersionCode: 5.0 -> 500", Grimoire::UeVersionCode(5, 0) == 500);
+    EXPECT("UeVersionCode: 5.4 -> 504", Grimoire::UeVersionCode(5, 4) == 504);
+    EXPECT("UeVersionCode: 5.9 -> 509 (the top of the UE5 band)",
+           Grimoire::UeVersionCode(5, 9) == 509);
+    EXPECT("UeVersionCode: 4.11 -> 411 (MIN_SUPPORTED_UE_VERSION)",
+           Grimoire::UeVersionCode(4, 11) == 411);
+    EXPECT("UeVersionCode: 4.27 -> 427 (the top of the UE4 band)",
+           Grimoire::UeVersionCode(4, 27) == 427);
+
+    // ⭐ The bounds are the load-bearing half: they are what stops a GAME's version being read as
+    // an ENGINE version. Every literal below is a real ProductVersion measured on this machine.
+    EXPECT("UeVersionCode: OCTOPATH's 1.0 is NOT an engine version", Grimoire::UeVersionCode(1, 0) == 0);
+    EXPECT("UeVersionCode: DQ7R's 1.1 is NOT an engine version", Grimoire::UeVersionCode(1, 1) == 0);
+    EXPECT("UeVersionCode: Elliot's 1.2 is NOT an engine version", Grimoire::UeVersionCode(1, 2) == 0);
+    EXPECT("UeVersionCode: Titan Quest II's 63339.64744 is NOT an engine version",
+           Grimoire::UeVersionCode(63339, 64744) == 0);
+
+    // Just past each band, and the pre-UE4 major.
+    EXPECT("UeVersionCode: 5.10 is out of band (UE_MAX_UE5_MINOR)", Grimoire::UeVersionCode(5, 10) == 0);
+    EXPECT("UeVersionCode: 4.28 is out of band (UE_MAX_UE4_MINOR)", Grimoire::UeVersionCode(4, 28) == 0);
+    EXPECT("UeVersionCode: UE3 majors are rejected, NOT mapped to the sentinel here",
+           Grimoire::UeVersionCode(3, 0) == 0);
+    EXPECT("UeVersionCode: major 6 is rejected until a band is added for it",
+           Grimoire::UeVersionCode(6, 0) == 0);
+
+    // Every entry of the harvested oracle must map, or the arithmetic has drifted from Epic's
+    // real binaries. Values from tools/ue-crc-oracle.json (8 installed UE Editors).
+    struct { uint32_t maj, min, want; } kOracle[] = {
+        {4, 11, 411}, {4, 15, 415}, {4, 18, 418}, {4, 23, 423},
+        {4, 27, 427}, {5, 4, 504},  {5, 7, 507},  {5, 8, 508},
+    };
+    for (const auto& o : kOracle)
+        EXPECT("UeVersionCode: oracle entry maps", Grimoire::UeVersionCode(o.maj, o.min) == o.want);
+}
+
+static void Test_CrashReportCandidates() {
+    // The standard packaged layout: <root>/<Project>/Binaries/Win64/Game.exe, engine binaries at
+    // <root>/Engine/Binaries/Win64/. The correct answer is three levels up.
+    const std::wstring exe = L"D:\\SteamLibrary\\steamapps\\common\\P3R\\P3R\\Binaries\\Win64\\P3R.exe";
+    std::vector<std::wstring> c = Grimoire::CrashReportCandidates(exe);
+    const std::wstring want =
+        L"D:\\SteamLibrary\\steamapps\\common\\P3R\\Engine\\Binaries\\Win64\\CrashReportClient.exe";
+    bool found = false;
+    for (const auto& s : c) if (s == want) found = true;
+    EXPECT("CrashReportCandidates: the real P3R path is produced", found);
+    EXPECT("CrashReportCandidates: nearest ancestor first -- the exe's own dir leads",
+           !c.empty() && c[0].find(L"Win64\\Binaries") == std::wstring::npos
+           && c[0].rfind(L"D:\\SteamLibrary\\steamapps\\common\\P3R\\P3R\\Binaries\\Win64\\Engine", 0) == 0);
+
+    // Win32 is offered beside every Win64 -- older titles ship a 32-bit CrashReportClient.
+    size_t w32 = 0;
+    for (const auto& s : c) if (s.find(L"Win32") != std::wstring::npos) ++w32;
+    EXPECT("CrashReportCandidates: a Win32 candidate accompanies every Win64 one",
+           w32 * 2 == c.size());
+
+    // ⚠ Bounded. An unbounded walk-up would probe the drive root and every folder on the way.
+    EXPECT("CrashReportCandidates: at most CRC_MAX_ANCESTORS levels are probed",
+           c.size() <= static_cast<size_t>(Grimoire::CRC_MAX_ANCESTORS) * 2);
+
+    // Forward slashes are accepted -- paths reach us from GetModuleFileNameW but also from tests
+    // and configs.
+    EXPECT("CrashReportCandidates: forward slashes are a separator too",
+           !Grimoire::CrashReportCandidates(L"D:/Games/X/Binaries/Win64/X.exe").empty());
+
+    // Degenerate inputs must not walk off the top of the tree.
+    EXPECT("CrashReportCandidates: a bare filename yields nothing",
+           Grimoire::CrashReportCandidates(L"Game.exe").empty());
+    std::vector<std::wstring> root = Grimoire::CrashReportCandidates(L"D:\\Game.exe");
+    EXPECT("CrashReportCandidates: a drive root stops the walk rather than probing above it",
+           root.empty());
+}
+
 static void Test_DynOff_FNameSlotVsSizeof() {
     const bool saved = DynOff::bCasePreservingName;
 
@@ -7654,6 +7728,8 @@ int main() {
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
+    RUN(Test_UeVersionCodeBounds);
+    RUN(Test_CrashReportCandidates);
     RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
     RUN(Test_Neu_FNameData_Basic);

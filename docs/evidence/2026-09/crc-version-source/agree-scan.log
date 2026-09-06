@@ -1,0 +1,6 @@
+[2026-09-06 14:36:05.134] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-06 14:36:05.136] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient ProductVersion -> UE 5.4 -> 504
+[2026-09-06 14:36:05.137] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient at 'D:\UE_Analyze_data\for testing\DumperTest\Development\Windows\Engine\Binaries\Win64\CrashReportClient.exe' -> 504
+[2026-09-06 14:36:05.137] [INFO] [SCAN:Ver] DetectVersion: PE VERSIONINFO -> UE 5.4 -> 504
+[2026-09-06 14:36:05.137] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient and the game exe AGREE on 504
+[2026-09-06 14:36:05.137] [INFO] [SCAN] FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)

@@ -25,6 +25,77 @@ builds ≤696 in
 
 -----
 
+## 2026-09-06 - CrashReportClient.exe becomes a second version source, and a file-hash allow-list was measured to reject everything (build 3393)
+
+`Genau::kVersionDetectLogicRev` **6 -> 7**. Evidence:
+[`evidence/2026-09/crc-version-source/`](evidence/2026-09/crc-version-source/), claim tag
+`[CRCSOURCE-2026-09-06]`. Oracle: `tools/ue-crc-oracle.json`.
+
+### Why a second source at all
+
+`CrashReportClient.exe` ships **with the engine** and is never authored by the game team, so unlike
+the game exe its version can never be the GAME's version -- and the game exe's field frequently is
+(measured: OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, Titan Quest II 63339.64744).
+
+⭐ Its value is not the hit rate but WHERE it hits. DQ I&II HD-2D carried a misdetected `UE5.05` in
+this repo's own `docs/test-games.md` for months -- an error **across the UE4/UE5 boundary** -- and
+its CrashReportClient says `4.27.2.0`. P3R (a 4.27 fork) is the same shape. Those are exactly the
+titles where the memory-string tiers struggle.
+
+⭐ And it is INDEPENDENT, which is the real argument (working-lessons.md 1.4). Both poisoned
+hint-cache entries this repo has found -- Avowed and DragonSword, each holding a persisted runtime
+raise of 504 -- would have been caught by it: CrashReportClient reports 503 for both, agreeing with
+detection and disagreeing with the cache.
+
+### What was measured and REFUSED
+
+The proposal included a conservative form: accept a game's CRC only when its version **and file
+hash** match a known-official binary. Measured over 8 installed Editors and 66 game folders, that
+rule **accepts nothing** -- 0 of 8 game copies match an Editor copy, because CrashReportClient is
+rebuilt as part of each game's engine build. The version string is stock; the bytes are not:
+
+    4.27.2.0   Editor 19,469,792 B   DQ I&II 19,496,448 B   P3R 19,487,232 B
+    5.7.4.0    Editor 26,711,480 B   TQ2     26,725,376 B
+
+So `tools/ue-crc-oracle.json` pins the ProductVersion -> code ARITHMETIC against 8 real Epic
+binaries (4.11-5.8, all mapping cleanly) and is explicitly **not** an allow-list.
+
+⚠ Coverage is a per-machine sample, not a rate: 8 of 66 folders here ship one. Avowed, DQ XI S,
+OCTOPATH and DumperTest ship none, so "absent -> skip" is the common path and a first-class branch.
+
+### Priority, and the question it answers
+
+CrashReportClient is a **build-provenance** signal, so it ranks with the static detectors and NOT
+above the runtime ladder in `Frieren.cpp`. Measured on DragonSword: CRC 5.3.2.0 -> 503, detection
+503, and `CMC::GravityDirection` then raises to 504 at init. That is not a conflict -- the two
+answer different questions ("built from which engine" vs "has which engine features"), and a
+licensee fork backports features. The ladder keeps the last word.
+
+Where both resource sources exist and disagree, CRC wins and a WARN says so -- the disagreement is
+itself the finding.
+
+### Implementation notes
+
+`DetectVersionFromPEResource` was split into `ReadUeVersionFromFile(path, productLabel, fileLabel)`
+so both files are parsed by the SAME code; a second reader with its own copy of the parse and its
+own bounds is the defect shape 1.12 catalogues. The version arithmetic -- written out **four times**
+in that one function -- is now `Grimoire::UeVersionCode` once, with the 4.0-4.27 / 5.0-5.9 bounds
+that reject a game's own version.
+
+⚠ Every existing log line is preserved BYTE-FOR-BYTE, including the UE4 branch's different wording:
+`tools/verify/sweep_title.py` greps the literal `PE VERSIONINFO` and a committed evidence README
+quotes the UE5 line verbatim.
+
+Rev 7 is mandatory under `Genau.h`'s own rule: a title cached under rev 6 holds a verdict reached
+without this source and would never consult it.
+
+Tests: `dll_helpers_test` 2337 -> **2365** (+28) -- the version-code bounds, including every real
+game-version literal that must be rejected and every oracle entry that must map, plus the
+walk-up path derivation. Live: both branches on a manufactured fixture, the DISAGREE run being the
+negative control that proves the code runs at all.
+
+-----
+
 ## 2026-09-06 - the version cache held a value detection cannot produce: `kVersionDetectLogicRev` 5 -> 6 (build 3390, measured live on DumperTest)
 
 `Genau::kVersionDetectLogicRev` **5 -> 6**. Evidence:

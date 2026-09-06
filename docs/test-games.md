@@ -39,7 +39,7 @@
 > |---|---|---|---|
 > | 1 | `++UE4+Release-X.Y` / `++UE5+Release-X.Y` | the exe's `.rdata` | the branch the binary was **built from**. Absent in ~90% of shipping titles, and that is its only weakness |
 > | 2 | `UE4PrereqSetup_x64.exe` vs `UEPrereqSetup_x64.exe` | the game folder | **UE4 vs UE5 only**, but on that question it is decisive — UE5 dropped the `4`. Present in ~7 of 16 titles here, 6 of 6 comparable ones correct |
-> | 3 | `CrashReportClient.exe` ProductVersion | `Engine\Binaries\Win64\` | shipped **by the engine**, not by the game, so unlike the game exe it is not the *game's* version. ~7 of 15 titles, 6/7 exact |
+> | 3 | `CrashReportClient.exe` ProductVersion | `Engine\Binaries\Win64\` | shipped **by the engine**, not by the game, so unlike the game exe it is not the *game's* version. ⭐ **The DLL now reads this itself** (build 3393, `kVersionDetectLogicRev` 7) and WARNs when it disagrees with the game exe. Present in 8 of 66 folders here; where both exist it agreed 7 times. ⛔ A file-hash allow-list was measured to reject everything — CrashReportClient is rebuilt per game |
 > | 4 | our own `Genau::DetectVersion` | `scan-0.log`, and the per-PE-hash cache | not independent — it is the thing under test — but it is what the tool will actually DO on this binary |
 > | ✗ | the **game exe's** PE ProductVersion | — | frequently the GAME version: OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744. Never rank it above the four above |
 > | ✗ | the **layout** (stride, `FFieldVariant` width, `UField::Next`) | — | ⛔ **not a version signal at all.** A licensee fork changes the layout without changing the engine, and reading "this looks newer than stock" out of it is exactly what put UE4.22 on the DQ XI S row for six weeks |

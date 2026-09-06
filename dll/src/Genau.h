@@ -79,7 +79,22 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // Cost: one re-detect per cached game (~0.35 s, per rev 4's measurement), after which the cache
 // holds a value detection actually produces. A raise that is still warranted is re-applied at
 // runtime exactly as before, so no verdict the user sees changes — Avowed still badges 504.
-constexpr uint32_t kVersionDetectLogicRev = 6;
+// rev 7 (2026-09-06): DetectVersionDetailed gained a SECOND independent resource source --
+// CrashReportClient.exe, found by walking up from the game exe to <root>/Engine/Binaries/Win{64,32}.
+// Mandatory under the rule at the top: a title cached under rev 6 holds a verdict reached without
+// that source and would never consult it. This is a LOGIC change, unlike rev 6's data one.
+// Why it is worth a file probe: CrashReportClient ships WITH THE ENGINE and is never authored by
+// the game team, so unlike the game exe its version can never be the GAME's version (measured:
+// OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744 all sit in the game exe's field). Its value
+// is not the hit rate but WHERE it hits -- DQ I&II HD-2D carried a misdetected "UE5.05" in this
+// repo's docs for months, across the UE4/UE5 boundary, and its CrashReportClient says 4.27.2.0.
+// ⚠ Coverage is a per-machine sample, not a rate: 8 of 66 folders on the maintainer's PC ship one,
+// and Avowed / DQ XI S / OCTOPATH / DumperTest ship none -- absence is the common path.
+// ⛔ A file-HASH allow-list was proposed and MEASURED TO REJECT EVERYTHING: CrashReportClient is
+// rebuilt per game, so at one version there are three distinct binaries (4.27.2.0 = Editor
+// 19,469,792 B / DQ I&II 19,496,448 B / P3R 19,487,232 B). tools/ue-crc-oracle.json therefore pins
+// the ProductVersion -> code ARITHMETIC against 8 real Epic binaries, and is not an allow-list.
+constexpr uint32_t kVersionDetectLogicRev = 7;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)

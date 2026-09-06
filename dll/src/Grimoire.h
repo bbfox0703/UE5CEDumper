@@ -5,6 +5,7 @@
 // Constants, magic strings, DynOff namespace
 // ============================================================
 
+#include <vector>
 #include <atomic>
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
@@ -635,6 +636,80 @@ constexpr uint32_t MIN_SUPPORTED_UE_VERSION = 411;
 // CORRECT UE3 GObjects address, and neither a UE-version override nor an Extra Scan can bridge
 // it. Skipping the scan and saying so is the only honest answer.
 constexpr uint32_t PRE_UE4_SENTINEL_VERSION = 300;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UE version code arithmetic, and where to find a second opinion about it.
+//
+// ⭐ ONE COPY OF THE ARITHMETIC. `major.minor` -> `major*100 + minor` was written out four times
+// inside DetectVersionFromPEResource (ProductVersion 5.x / 4.x, FileVersion 5.x / 4.x) and is now
+// needed by a SECOND reader (CrashReportClient.exe). Two readers of one field, each carrying its
+// own copy of the mapping and its own bounds, is the exact shape working-lessons.md 1.12 is about
+// — so the mapping and the bounds live here, once.
+//
+// The bounds are load-bearing, not cosmetic: they are what stops a game's OWN version being read
+// as an engine version. Measured across the installed corpus, a game exe's ProductVersion is
+// frequently the GAME's (OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, Titan Quest II 63339.64744); every
+// one falls outside 4.0-4.27 / 5.0-5.9 and is rejected here rather than at each call site.
+constexpr uint32_t UE_MAX_UE4_MINOR = 27;
+constexpr uint32_t UE_MAX_UE5_MINOR = 9;
+
+/// (major, minor) -> our version code, or 0 when the pair cannot be a UE engine version.
+inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
+    if (major == 5 && minor <= UE_MAX_UE5_MINOR) return 500u + minor;
+    if (major == 4 && minor <= UE_MAX_UE4_MINOR) return 400u + minor;
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CrashReportClient.exe as a version source (maintainer proposal, 2026-09-06)
+//
+// ⭐ WHY IT IS WORTH READING: it ships WITH THE ENGINE and is not written by the game team, so
+// unlike the game exe its version can never be the GAME's version. A developer has no reason to
+// pair game engine A with a crash reporter from engine B.
+//
+// ⭐ AND IT IS DECISIVE WHERE OUR OWN DETECTION IS WEAKEST, which matters more than the raw hit
+// rate: the SquareEnix HD-2D fork DQ I&II carried "UE5.05 (detected)" in docs/test-games.md for
+// months — a MISDETECTION RECORDED AS FACT, across the UE4/UE5 boundary — and its
+// CrashReportClient says 4.27.2.0. P3R (4.27 fork) is the same shape. Those are exactly the titles
+// where the memory-string tiers struggle.
+//
+// ⚠ COVERAGE, HONESTLY SCOPED: 8 of 66 folders ON ONE MACHINE ship one. That is a sample from this
+// corpus, not a universal rate — do not quote it as one. Avowed, DQ XI S, OCTOPATH and DumperTest
+// ship none, so "absent -> skip" must be a first-class path, not an error.
+//
+// ⛔ WHAT DOES NOT WORK, MEASURED, so nobody re-proposes it: gating on a FILE HASH against a corpus
+// of known-official binaries accepts NOTHING. CrashReportClient is rebuilt as part of each game's
+// engine build, so the version string is stock while the bytes are not — 0 of 8 game copies matched
+// an Editor copy, and one version had three distinct binaries:
+//     4.27.2.0   Editor 19,469,792 B   DQ I&II 19,496,448 B   P3R 19,487,232 B
+//     5.7.4.0    Editor 26,711,480 B   TQ2     26,725,376 B
+// The oracle at tools/ue-crc-oracle.json is therefore a check on the ProductVersion -> code
+// ARITHMETIC (8 real Epic binaries, 4.11-5.8, all mapping cleanly), never an allow-list.
+//
+// LAYOUT. A packaged title puts the game exe at <root>/<Project>/Binaries/Win64/Game.exe and the
+// engine's own binaries at <root>/Engine/Binaries/Win64/. Rather than assume a fixed depth — which
+// breaks on the launcher-shim layouts this repo has already been bitten by — walk UP from the exe
+// and test each ancestor. Win32 is included because older titles ship a 32-bit one (EVERSPACE).
+constexpr int CRC_MAX_ANCESTORS = 6;
+
+/// Candidate CrashReportClient.exe paths for a game exe, nearest ancestor first.
+/// Pure string work, no filesystem access, so it is unit-testable.
+inline std::vector<std::wstring> CrashReportCandidates(const std::wstring& exePath) {
+    std::vector<std::wstring> out;
+    const std::wstring seps = L"\\/";
+    size_t cut = exePath.find_last_of(seps);
+    if (cut == std::wstring::npos) return out;
+    std::wstring dir = exePath.substr(0, cut);
+    for (int i = 0; i < CRC_MAX_ANCESTORS; ++i) {
+        if (dir.size() <= 2) break;                 // "D:" or shorter is a drive root, not a tree
+        out.push_back(dir + L"\\Engine\\Binaries\\Win64\\CrashReportClient.exe");
+        out.push_back(dir + L"\\Engine\\Binaries\\Win32\\CrashReportClient.exe");
+        size_t up = dir.find_last_of(seps);
+        if (up == std::wstring::npos) break;
+        dir = dir.substr(0, up);
+    }
+    return out;
+}
 
 constexpr int OBJECTS_PER_CHUNK        = 64 * 1024;
 
