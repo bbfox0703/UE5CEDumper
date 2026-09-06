@@ -237,74 +237,24 @@ derive them, never hand-edit** (`tools/check_derived_counts.py` pins the ones wr
 |      +-- PipeClient             async pipe mgmt, two lanes
 +------------------------------------------------------+
 ```
-
 ## Documentation Index
 
-⛔ **A row here is a POINTER, not a summary.** One or two sentences answering *"when would I open
-this?"* — target ≤300 bytes, and keep a ⛔/⚠ only when it changes whether someone opens the doc at
-all. **Findings, counts, `file:line`, derivation commands and traps belong in the document itself**;
-if a fact is not there yet, put it there rather than here.
-*(Why: a 2026-08-27 audit found this table at 40 KB — near-entirely duplicated prose plus six stale
-claims. Full account in [docs/working-lessons.md](docs/working-lessons.md).)*
-⚠ The few **bold counts** below are pinned by `tools/check_derived_counts.py` — leave them exactly
-as written, or update the registry with them.
-⛔ **The WHOLE FILE stays ≤ 40 KB (40,960 bytes)** — it loads on every turn, so these are the most
-expensive bytes in the repo. `ls -l CLAUDE.md` before committing; over the line, trim a row, do not grow.
+⭐ **[docs/README.md](docs/README.md) is the FULL index** — every other document, one row each.
+Only the few below live here, because CLAUDE.md is loaded on **every turn** and a row nobody needs
+yet costs bytes on all of them. **A new document gets its row in `docs/README.md`.**
+⚠ The **bold counts** below are pinned by `tools/check_derived_counts.py` — leave them exactly as
+written, or update the registry with them.
+⛔ **The WHOLE FILE stays ≤ 40 KB (40,960 bytes)** — `ls -l CLAUDE.md` before committing; over the
+line, trim a row, do not grow.
 
 | Document | Contents |
 |----------|----------|
 | [docs/handover-2026-08-22.md](docs/handover-2026-08-22.md) | 🤝 **START HERE — the single entry point.** A fresh session's first ten minutes: tree state, computer-use grants, launching a fixture, the hard rules, gates/tests/builds, driving CE, what is open, traps, closing a row. |
-| [docs/toolchain.md](docs/toolchain.md) | **What a machine needs, and why** — the reasoning behind `bootstrap.cmd`. ⚠ Read before installing anything on a new machine: tiers, the VS2026 winget id + `.vsconfig` list, the do-NOT-install pairs, how to prove the env works. |
-| [docs/roadmap.md](docs/roadmap.md) | **Current state** — capability matrix, per-game configuration, tested games, long-running concerns. ⚠ Rows are stale past build 797; read its own banner before trusting one. |
-| [docs/tips.md](docs/tips.md) | **User-facing how-to recipes** — goal → which panel/button. First recipe: forcing camera rotation in fixed-view (2.5D/45°) games. |
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
-| [docs/pending-verification_zh-TW.md](docs/pending-verification_zh-TW.md) | 🇹🇼 繁中 operational checklist — the how-to steps for verification items that genuinely need a human. The English register is canonical. |
-| [docs/log-verification-checklist.md](docs/log-verification-checklist.md) | **How to sweep a real session's logs** — the procedure companion to the verification register: which file holds which marker, what to grep, what to do in-game first, and which absences prove nothing. |
-| [docs/auto-verification-session-plan.md](docs/auto-verification-session-plan.md) · [docs/auto-verification-classification-2026-08-23.md](docs/auto-verification-classification-2026-08-23.md) | **Running the register unattended** — the plan owns §3's grant mechanics and §4's authorised out-of-tree writes (ask first); the classification says which rows Auto + Computer Use could close. ⛔ §5's already-run batches are SPENT, and both docs are agent-produced — re-derive before planning off either. |
-| [docs/audit-2026-08-26-dxgi-appcompat-crash.md](docs/audit-2026-08-26-dxgi-appcompat-crash.md) | ⚠ **Read before changing a proxy DLL export or resolver.** Why dxgi stopped OCTOPATH booting while the same binary as winmm worked: an AppCompat shim calls our export before our CRT exists. Fix, rig, and the WER-reading traps. |
-| [docs/audit-2026-09-05-vendor-ue582.md](docs/audit-2026-09-05-vendor-ue582.md) | **Vendor audit #6** — UE 5.8.2 changed nothing for us; the value is the 6 defects of ours it found. ⛔ Read its top block before touching the ProcessEvent vtable table. |
-| [docs/audit-2026-08-13-early-code-findings.md](docs/audit-2026-08-13-early-code-findings.md) | Audit #5 register — the pre-June-2026 "early" code. ⛔ Scanning AND fixing are both DONE; open it only to look up a named finding, or to record a new one. |
-| [docs/audit-2026-08-04-findings.md](docs/audit-2026-08-04-findings.md) | **Bug/leak/refactor audit #4** (build 2554) — working tracker, all items shipped. Open for the per-finding detail, the refuted "do not re-raise" list, and the two cross-cutting root causes worth fixing as patterns. |
-| [docs/audit-2026-07-14-findings.md](docs/audit-2026-07-14-findings.md) | **Bug/leak audit #3** (build 2168) — working tracker for the Solide/Hemmung/Linie/Schlacht/Grausam + Auto-Snapshot/Dump-Explorer/Live-Funcs findings, each with failure scenario, fix shape and effort/risk. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
 | [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 39 .h** DLL files, **186** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**59** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
-| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (99 commands incl. Value Search + Group Scan begin/refine/query/end, Request/Response/Event) |
-| [docs/multipipe-eval.md](docs/multipipe-eval.md) | **Multi-pipe IPC evaluation — verdict: do NOT add more pipes.** Read before any pipe/IPC concurrency change. §10 measured and refuted the original head-of-line-blocking reason; §8 is the Phase 0/1 revert postmortem. |
-| [docs/group-value-scan-spec.md](docs/group-value-scan-spec.md) | **Multiple Values Group Scan** — the `Orden` matcher architecture and, more usefully, §3's **extension points**: how a future feature plugs into group matching. |
-| [docs/snapshot-group-match-spec.md](docs/snapshot-group-match-spec.md) | **Snapshot Group Match** (shipped, in-game verified) — N-value group matching over captured snapshots via a C# `Orden` port: Mode A absolute, Mode B temporal, Deep. Read before touching snapshot multi-value. |
-| [docs/native-c-value-scan-spec.md](docs/native-c-value-scan-spec.md) | **Native-C Value Scan** (shipped; P3 in-game verify pending) — opt-in scan of the raw non-`UPROPERTY` bytes in a UObject for native HP/MP, across Value Search / Group Scan / Snapshot→SPC→Pivot. |
-| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack (versions from the .csproj, never from here), AOT compatibility, component specs |
-| [docs/export-formats.md](docs/export-formats.md) | CE XML, CSX, SDK Header, USMAP export rules, pointer chain model, type mappings. ⚠ Read its Coverage section first: a whole-pool export (USMAP / SDK / .jsonl) sees only the classes LOADED at that moment. |
-| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff, Property Type Layouts (Phases B-K), Address Finder layered lookup |
-| [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging (20+ games) |
 | [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here — read before an audit, a verification claim, or an Avalonia/CE/SQLite change.** Verification method, audit-agent calibration, traps in our stack, UE/CE facts, §6 settled decisions. Write new lessons here. |
-| [docs/reference-builds.md](docs/reference-builds.md) | The stock-engine samples we package ourselves as PDB-bearing AOB oracles: the inventory, why each exists, which are deliberately not swept, and how to make another. Answers "what does the ENGINE do at version X", not what a game does. |
-| [docs/test-games.md](docs/test-games.md) | 30+ test games with UE versions, GWorld status, stride info |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |
-| [docs/aobmaker-integration.md](docs/aobmaker-integration.md) | AOBMaker CE Plugin pipe bridge (HEX / ASM / SYM / CreateAAScript) |
-| [docs/mindseye-fork-notes.md](docs/mindseye-fork-notes.md) | **Read first if MindsEye breaks after a game update** — the three things this UE 5.4.4 licensee fork changes, which constants a patch can move, and how to re-derive each offline with capstone + `.pdata` (no Ghidra). |
-| [docs/reversing-nonstandard-ue-games.md](docs/reversing-nonstandard-ue-games.md) | Playbook for forked/repacked engines where AOB + heuristics fail: patternsleuth → capstone → Ghidra → caller LEA → encode the fix (the Avowed case). Plus why we do not vendor Dumper-7/RE-UE4SS. |
-| [docs/corpus-preservation.md](docs/corpus-preservation.md) | ⛔ Read before deleting anything under the Ghidra corpus root or an archive root, or uninstalling a corpus Steam title: what to keep, reinstall or drop, the PDB checklist, the drop order, and the never-drop set. |
-| [docs/aob-block-library-eval.md](docs/aob-block-library-eval.md) | ⚠ Not just an eval — the block library and the n-gram specificity index are BUILT and CI-gated, so this doc is load-bearing. Read before touching either, or for the one decision still open. |
-| [tools/README.md](tools/README.md) | Offline RE helpers — Ghidra scripts (`find_gobjects`/`decompile_functions`/`find_callers` Java + the pyghidra symbol/AOB exporters) and a capstone PE disassembler (`pe/disasm_function.py`). |
-| [scripts/analysis/README.md](scripts/analysis/README.md) | Offline analysis tooling — `analyze_dumps.py` (cross-game keyword calibration) + `diff_dumps.py` (same-game patch diff, build 780). |
-| [docs/CE-Bugs-Minesweeper.md](docs/CE-Bugs-Minesweeper.md) | **CE bugs and undocumented behaviours we actually hit** — open when CE misbehaves, and ⚠ before trusting `celua.txt` or the plugin SDK header: both describe behaviour the shipping binary does not have. |
-| [docs/ce-plugin-api-reference.md](docs/ce-plugin-api-reference.md) | CE Plugin SDK C ABI reference — every `ExportedFunctions` member, the plugin types, enums, `pluginsync` threading. ⚠ A mirror: edit the external master first. |
-| [docs/ce-plugin-sdk-notes.md](docs/ce-plugin-sdk-notes.md) | **CE pitfalls companion** — what CE's Pascal does that its C header does not admit. Read before emitting or changing a CE artifact: `TVariableType` ordering, opcode-nav return types, Lua-state threading, §13 `executeCodeEx`. |
-| [docs/ce-ccode-eval.md](docs/ce-ccode-eval.md) | ⛔ CE `{$CCODE}` — EVALUATED, DO NOT ADOPT: the repo emits no injection hook sites, so there is nothing for it to attach to. Read before re-proposing it, or if a hook site ever appears. |
-| [docs/ce-ccode-reference.md](docs/ce-ccode-reference.md) | CE `{$CCODE}` / `{$C}` manual — the native-code alternative to the `{$lua}` blocks this repo emits. Syntax, the parameter/register layout `{$LUACODE}` shares, the LUACODE comparison, and CE's own defects to avoid. |
-| [docs/ce-memory-scanning-internals.md](docs/ce-memory-scanning-internals.md) | How CE's scanner actually goes fast — the reference implementation our own scanners (`Radar` / `Aura` / `Macht`) are measured against. Buffers, nibble wildcards, the numeric-scan path, AOBMaker's SIMD anchor scan. |
-| [docs/ce-disassembler-navigation.md](docs/ce-disassembler-navigation.md) | Driving CE's Memory Viewer from outside — the verified Lua `SelectedAddress` route (Pascal-property-backed, not just `celua.txt`), reusable from our `{$lua}` blocks; and where the Type 6 pointer-write works. |
-| [docs/teleport-spec.md](docs/teleport-spec.md) | **Teleport / Wirbel design contract** — markers, POV, coord TP, cursor forcing, the `CMD_TELEPORT` op table. |
-| [docs/teleport-coord-library-spec.md](docs/teleport-coord-library-spec.md) | **Teleport Coordinate Library** design contract — the coord list, its CE-Lua + CSV export/import, and the locked decisions (file key, Map filter, character policy, size budget). |
-| [docs/godmode-spec.md](docs/godmode-spec.md) | **GodMode / Solitar design contract** — the invincibility-bool scan + re-assert model, and the **locked Non-Goal** (no universal detection bool; surface per-game via Property Search) that also governs `Solide`. |
-| [docs/output-monitor-pin-eval.md](docs/output-monitor-pin-eval.md) | **Pinning a game to one monitor when it has no monitor-select UI — EVALUATED, NOT BUILT.** Read before re-proposing it: UE reflection has no monitor concept, and the hard part is the game drifting back. |
-| [docs/ue-perf-counters-eval.md](docs/ue-perf-counters-eval.md) | **Surfacing UE's own `stat` counters in the UI — EVALUATED, tiered.** Why the literal ask is impossible from an injected DLL, what shipped instead, and the dispatch/IPC measurements it produced. |
-| [docs/log-compression-eval.md](docs/log-compression-eval.md) | **Log compression — SHIPPED.** Why `compact /c /exe:LZX` in place and not gz/zip, the two triggers, the `-0.log` liveness rule, and the traps a change here must not re-break. |
-| [docs/text-translation-eval.md](docs/text-translation-eval.md) | **In-game S2T conversion + local-LLM translation — EVALUATED, in-memory rewrite REJECTED.** Read before re-proposing live text rewrite: the UE-source walls, the font-glyph risk, why offline `.locres` wins. |
-| [docs/experimental-snapshot-spc-pivot.md](docs/experimental-snapshot-spc-pivot.md) | Snapshot / SPC / Class Pivot — the experimental-tab family: capture model, intersection queries, pivot aggregation. |
-| [docs/ce-export-drilldown-spec.md](docs/ce-export-drilldown-spec.md) | CE-export pointer drill-down spec (depth model, cascade resolution) — the companion to [export-formats.md](docs/export-formats.md). |
-| [docs/avowed-gobjects-fix.md](docs/avowed-gobjects-fix.md) | The Avowed case study — static `FUObjectArray` + 20-byte packed `FUObjectItem` + the GWorld decoy. Read alongside [mindseye-fork-notes.md](docs/mindseye-fork-notes.md) for non-standard-layout work. |
-| [docs/archive/](docs/archive/) | Superseded docs, older `dev-log` halves and closed `todo.md` sections. Its [README](docs/archive/README.md) says what each file holds, which build ranges, why it moved, and which are not byte-identical. |
+| [docs/README.md](docs/README.md) | **Everything else** — the full per-document index: specs, audits, evals, CE/Ghidra references, the archive. Open it whenever the answer is not in the rows above. |
