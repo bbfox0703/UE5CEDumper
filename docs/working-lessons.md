@@ -462,6 +462,72 @@ demanded a `DetectVersion:` line that a cached verdict legitimately suppresses; 
 A rig that encodes the pre-fix model, or that reads a log before the code has finished writing it,
 converts a working fix into a bug report. Rigs need §1.2 applied to themselves.
 
+### 1.13 ⭐ A CACHE STAMPED WITH ITS PRODUCER'S VERSION CANNOT SEE A VALUE A DIFFERENT WRITER PUT THERE
+
+*Sibling of §1.12 and worth its own entry, because the diagnostic is different. §1.12 is "the
+report and the reported thing are computed by different code paths". This one is: **the invalidator
+and the writer are different code paths** — so the guard is watching a door the bad value did not
+come through.*
+
+The pattern is a cache whose freshness is decided by a stamp naming the version of *the code that
+produces the value*: `Genau::kVersionDetectLogicRev` here, but any `schemaVersion` / `cacheEpoch` /
+`algoRev` is the same thing. It answers exactly one question — **"has the producer changed since
+this was written?"** It cannot answer, and is not built to answer, **"did something other than the
+producer write this?"**
+
+Once a foreign value carries the current stamp it is not *hard* to find. It is **structurally
+unreachable**: the reuse branch skips the producer entirely, so the only thing that could ever
+disagree with the value never runs again. Not "until someone notices" — *ever*.
+
+| # | the cache | what got in that the producer never produces |
+|---|---|---|
+| 1 | `ueVersion` + `versionDetectRev` | Avowed cached **504**; `DetectVersionDetailed` yields **503** for that PE. The 504 was the runtime `CMC::GravityDirection` raise, from a write path that no longer exists |
+| 2 | `ueVersionUserOverride` | an override left on OCTOPATH after an A/B. ⛔ **It is checked BEFORE the rev-stamped cache and a rev bump does not clear it** — so even rev 6, the fix for #1, does not reach #2 |
+| 3 | `DynOff::SOFTPTR_PATH` / `LAZYPTR_GUID` latches | latched under one UE version and still authoritative after `set_ue_version_override` changed the version they were derived from (fixed by clearing them in `Fern.cpp`) |
+
+⭐ **THE ONE THAT MATTERS: the dangerous value is the CORRECT one.** Avowed's cached 504 was *right*
+— the runtime ladder raises 503 to 504 anyway, so the badge a user saw was correct either way.
+OCTOPATH's stale override was `418`, which is *also* the right answer for that title. Both were
+invisible **because** they were right. A wrong value gets reported by somebody; a right value
+written by the wrong path is permanent, and it silently disables re-derivation for that key
+forever. So **do not look for wrong outputs. Look for values whose PROVENANCE is not the producer.**
+
+**How to actually find one** (cheap → expensive):
+
+1. **Run the producer and diff it against the cache.** This is the whole detector, and it needs no
+   theory about what could have written the value. Avowed took one forced re-detect: seed the rev
+   down, relaunch, read what detection says now. A disagreement is a poisoned entry by definition —
+   the cache's own justification is *"the same binary always yields the same answer"*.
+2. **Ask who else can write the field.** Grep every assignment to the cached name, not just the one
+   in the producer. In #1 the second writer (`UE5_Init`'s ladder) is in a different file, runs in a
+   different phase, and is correct — it just must never persist.
+3. **Ask what would recompute a wrong value here.** If the honest answer is "the stamp", and the
+   stamp is already current, the answer is **nothing**, and you have found the bug even without an
+   instance of it.
+4. **Check every LAYER of the lookup, not just the stamped one.** #2 is the trap: the override sits
+   *above* the stamped cache, so the mechanism that fixes #1 cannot see it. A bump proves nothing
+   about a tier it does not gate.
+
+**Prevention, strongest first:**
+
+* **Keep the second writer out of the store.** The 503/504/507/508 raise ladder is *correct* as a
+  runtime-only correction and must not write back; that property is what made the rev-6 bump safe
+  (re-deriving cannot lose a raise). Verify it rather than assuming it — that check was A4's, and
+  it is what let rev 6 be argued for at all.
+* **Record provenance in the record.** A `source: "detect" | "raise" | "user"` field makes a
+  poisoned entry *self-identifying* and turns step 1 above from a live re-run into a grep. Cheap,
+  and none of our three caches has it.
+* **Write down what the stamp does NOT cover.** `Genau.h`'s rule said "bump when the logic changes"
+  and was silent on the data, so three separate documents correctly refused to bump for a runtime
+  ladder while a poisoned entry sat unreachable. The rule now carries a second clause: *also bump
+  when a cached VALUE is found that the current detection cannot produce.*
+
+⚠ **A bump is a blunt instrument and its cost is not the number you remember.** Rev 4 recorded
+~0.35 s per cached game; the measured cost of rev 6 on DumperTest was **2 ms**, because a Tier-1
+PE-VERSIONINFO hit never reaches the memory string scan that 0.35 s describes. Both numbers are
+real and neither generalises — a version-stripped title still pays the scan. Quote the conditions
+or do not quote the number (§1.6).
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
