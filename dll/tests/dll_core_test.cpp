@@ -200,6 +200,52 @@ int main() {
               std::to_string(seen).c_str());
     }
 
+    {   blk("A7 (the REAL one) — FindByAddress honours the poll; the two blocks above do NOT cover it");
+        // ⛔ WHY THIS BLOCK EXISTS: A7 WAS RECORDED AS VERIFIED BY TESTS THAT DO NOT TOUCH IT.
+        // The two blocks above are labelled "A7" and drive `Aura::ForEach`. But ForEach ALREADY
+        // had its poll -- it is one of the SIBLINGS A7 was made to match. The audit row says so
+        // exactly (docs/audit-2026-08-13-early-code-findings.md:278): "FindByAddress is the ONLY
+        // full-GObjects walk in the file with neither a Tot::Requested() poll nor a deadline".
+        // And FindByAddress (Aura.cpp:1867) hand-rolls `for (int32_t i = 0; i < count; ++i)` --
+        // it never calls ForEach. Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/`
+        // returned ZERO hits, so deleting A7's poll reddened nothing, while both
+        // verification-register.md and todo.md `[A7-CORETEST-2026-08-25]` said it was verified.
+        // A green claim computed by a different code path than the thing it claims about.
+        //
+        // ⚠ ANTI-VACUITY, and it is why this is four checks and not one: an UNCANCELLED lookup of
+        // an address that is not in the pool ALSO returns found == false. "Not found" therefore
+        // proves nothing on its own. The assertion is the FLIP of ONE FIXED ADDRESS under ONE
+        // CHANGED FLAG -- which is only meaningful because (a) establishes it is findable first.
+        const int32_t kIdx = 8000;      // past the i==4096 poll boundary, so a stop precedes the hit
+        const uintptr_t objAddr =
+            reinterpret_cast<uintptr_t>(pool.objects.data() + static_cast<size_t>(kIdx) * 64);
+
+        // (a) POSITIVE CONTROL -- the address really is findable, and by the EXACT path.
+        // Exactness matters: an exact hit returns at Aura.cpp:1909 and never enters the backward
+        // module scan, which the audit deliberately left unpolled.
+        ResetCancel();
+        auto hit = Aura::FindByAddress(objAddr);
+        check("FindByAddress finds an in-pool object when not cancelled", hit.found == true);
+        check("...as an EXACT match, so the backward scan is never entered", hit.exactMatch == true);
+        check("...at the index we planted it", hit.index == kIdx,
+              std::to_string(hit.index).c_str());
+
+        // (b) THE CASE A7 FIXED. The exact-match return is unconditional, so the ONLY thing that
+        // can turn this same address into a miss is the poll at Aura.cpp:1891.
+        ResetCancel();
+        Tot::g_perCommand.store(true);
+        auto cancelled = Aura::FindByAddress(objAddr);
+        check("A7: a cancelled FindByAddress abandons the walk", cancelled.found == false);
+        check("...and reports no index rather than a stale one", cancelled.index == -1,
+              std::to_string(cancelled.index).c_str());
+
+        // (c) NOT STICKY -- guards against a leaked global cancel turning every later block in
+        // this file into a false pass, which is the hazard ResetCancel's own comment describes.
+        ResetCancel();
+        check("...and the cancel is not sticky: the same address is found again",
+              Aura::FindByAddress(objAddr).found == true);
+    }
+
     // ── B18 — Extra Scan must bail on cancel, and say its results are partial ──────
     //
     // B18 as filed: "Extra Scan is uncancellable under an unbounded join => CE UI freezes".

@@ -2254,7 +2254,38 @@ Nothing was edited, only moved.
 
 -----
 
-## ✅ A7's live half CLOSED 2026-08-25 `[A7-CORETEST-2026-08-25]` — and the DLL core finally has a test target
+## ✅ A7 CLOSED — but the 2026-08-25 closure was against the WRONG LOOP; really closed 2026-09-06 `[A7-FINDBYADDR-2026-09-06]`
+
+> ⛔ **CORRECTION 2026-09-06, and it is the reason to distrust a green claim you did not derive
+> yourself.** `[A7-CORETEST-2026-08-25]` below is right about everything except *which loop it
+> tested*. The two `dll_core_test` blocks it added are labelled "A7" and drive **`Aura::ForEach`** —
+> but ForEach **already had its poll**; it is one of the *siblings* A7 was written to match, and
+> A7's own comment (`Aura.cpp:1892-1894`) names them. The loop A7 actually fixed is
+> **`FindByAddress`** (`Aura.cpp:1867`), which hand-rolls `for (int32_t i = 0; i < count; ++i)` and
+> never calls ForEach. The audit row said so plainly:
+> *"`FindByAddress` is the **only** full-GObjects walk in the file with neither a `Tot::Requested()`
+> poll nor a deadline"* (`docs/audit-2026-08-13-early-code-findings.md:278`).
+>
+> Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/` returned **zero hits**. The
+> shipped fix had **no coverage of any kind** while this file and the register both recorded it as
+> verified — a green claim computed by a different code path than the thing it claims about, which
+> is the same shape as `[SEINSHARE-2026-09-05]` and the A2 vacuous-absence trap.
+>
+> **NOW REALLY CLOSED**, four checks in `dll_core_test` driving `FindByAddress` itself: an in-pool
+> address at index 8000 is found as an **exact** match uncancelled, the *same* address returns
+> `found == false` / `index == -1` under `Tot::g_perCommand`, and is found again after a reset.
+> ⭐ **Proven non-vacuous by deleting the poll**: without it the block fails with
+> `...reports no index rather than a stale one   got: 8000` — it found the object *while cancelled*.
+> With the poll restored (byte-identical to HEAD), 30/0.
+>
+> ⚠ The anti-vacuity design matters here: an **uncancelled** lookup of an address that is not in the
+> pool *also* returns `found == false`, so "not found" alone proves nothing. The assertion is the
+> **flip of one fixed address under one changed flag**, which only means anything because the
+> positive control establishes the address is findable first.
+
+<details><summary>the 2026-08-25 entry (kept — its infrastructure reasoning is sound and is what made tonight's fix a 30-minute job)</summary>
+
+**A7's live half CLOSED 2026-08-25 `[A7-CORETEST-2026-08-25]` — and the DLL core finally has a test target**
 
 A7's fix (the `(i & 0xFFF)==0 && Tot::Requested()` poll in the GObjects walk) shipped long ago; what
 stayed open was verifying it, and it was filed **blocked** for a measured reason: on every title
@@ -2318,3 +2349,5 @@ small modules. The proof is the negative control, not the duration: replacing th
 `if (false)` reddens the cancelled case, which can only happen if the loop **reaches that line**.
 Both cases take the same path up to the poll, so a control that passes there is a control that ran.
 That reasoning is now written into the test, next to the assertion it justifies.
+
+</details>
