@@ -43,6 +43,17 @@
 # NUL-terminated needles) and the image/gz assets are left alone.
 * text=auto eol=lf
 
+# Preserved log evidence — VERBATIM ARTIFACTS, so never normalise them.
+#
+# `docs/evidence/` holds runtime logs that a committed claim rests on, copied out of
+# `%LOCALAPPDATA%\UE5CEDumper\Logs\` before the 21-day age sweep
+# (`Grimoire::LOG_RETENTION_DAYS`) deletes them. The point of the copy is that the bytes are
+# what the DLL actually wrote, so `eol=lf` must NOT rewrite their CRLF endings — a
+# re-formatted artifact is a quotation, not evidence. `-text` disables both the checkout
+# conversion and the index normalisation, while leaving them diffable (unlike `binary`,
+# which would also suppress the diff a reviewer needs).
+docs/evidence/** -text
+
 # Binary assets — never transform, never diff as text.
 *.png  binary
 *.jpg  binary

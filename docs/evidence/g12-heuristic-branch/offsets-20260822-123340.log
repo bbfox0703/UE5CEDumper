@@ -1,0 +1,34 @@
+[2026-08-22 12:33:27.063] [INFO] [INIT] Logger started | build: 1.0.0.3313 91d09b94-dirty (Release, 2026-08-22T04:26:40)
+[2026-08-22 12:33:40.978] [INFO] [FNAM] FNamePool: Entry stride = 2 (initial, hdrOff=0)
+[2026-08-22 12:33:40.978] [INFO] [FNAM] FNamePool: Chunks at offset 0x10 (validated with 'None')
+[2026-08-22 12:33:40.978] [INFO] [FNAM] FNamePool: DetectStride: 'None' at chunk[0]+2, stride=2 confirmed
+[2026-08-22 12:33:40.978] [WARN] [FNAM] FNamePool: BlockOffsetBits = 16 (stock default kept; index 1 did NOT decode cleanly at this width — name resolution may be degraded)
+[2026-08-22 12:33:40.978] [INFO] [FNAM] FNamePool: Header Format A (shift=6, hdrOff=0), verified 'None'
+[2026-08-22 12:33:40.980] [INFO] [FNAM] FNamePool: Initialized at 0x7FF75A0568C0 (hdrOff=0, stride=2), FName[0]='None', FName[1]=''
+[2026-08-22 12:33:40.980] [DEBUG] [OARR] ObjectArray: GObjects@0x206F20149C8: +00:002704000001271B +08:00000206F21C8B60 +10:00000206F2823C70 +18:0027040000012763 +20:00000206F2602C00 +28:00000206F20A9A80
+[2026-08-22 12:33:40.980] [INFO] [OARR] ObjectArray: Strict validation failed for all presets, trying relaxed fallback...
+[2026-08-22 12:33:40.980] [WARN] [OARR] ObjectArray: Could not detect layout, using default
+[2026-08-22 12:33:40.980] [DEBUG] [OARR] ObjectArray: chunkTable@0x2704000001271B: +00:0000000000000000 +08:0000000000000000 +10:0000000000000000 +18:0000000000000000 +20:0000000000000000 +28:0000000000000000 +30:0000000000000000 +38:0000000000000000
+[2026-08-22 12:33:40.980] [WARN] [OARR] ObjectArray: Cannot read chunk[0] for item size detection
+[2026-08-22 12:33:40.980] [INFO] [OARR] ObjectArray: Initialized at 0x206F20149C8, Count=518, ItemSize=16
+[2026-08-22 12:33:40.981] [INFO] [DYNO] ValidateAndFixOffsets: Starting dynamic offset detection...
+[2026-08-22 12:33:40.981] [INFO] [DYNO] DetectCasePreservingName: Probing UObject layout...
+[2026-08-22 12:33:40.982] [INFO] [DYNO] DetectCasePreservingName: votes standard=0, CPN=0 (tested 0 objects)
+[2026-08-22 12:33:40.982] [INFO] [DYNO] DetectCasePreservingName: Standard FName — UObject::Outer = +0x20
+[2026-08-22 12:33:40.982] [INFO] [DYNO] DetectUPropertyMode: Checking for UProperty vs FProperty (UE version=504)...
+[2026-08-22 12:33:40.982] [INFO] [DYNO] DetectUPropertyMode: FProperty mode (UE version 504 >= 425)
+[2026-08-22 12:33:40.982] [INFO] [DYNO] ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)
+[2026-08-22 12:33:40.982] [INFO] [DYNO] ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled
+[2026-08-22 12:33:40.983] [WARN] [DYNO] ValidateAndFixOffsets: Cannot find Guid or Vector struct — trying heuristic fallback
+[2026-08-22 12:33:40.983] [INFO] [DYNO] Phase A: Probing USTRUCT_CHILDPROPS...
+[2026-08-22 12:33:40.985] [INFO] [DYNO]   CHILDPROPS probe +0x40: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.986] [INFO] [DYNO]   CHILDPROPS probe +0x48: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.987] [INFO] [DYNO]   CHILDPROPS probe +0x50: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.988] [INFO] [DYNO]   CHILDPROPS probe +0x58: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.989] [INFO] [DYNO]   CHILDPROPS probe +0x60: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.990] [INFO] [DYNO]   CHILDPROPS probe +0x68: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.990] [INFO] [DYNO]   CHILDPROPS probe +0x70: score=0 (tested 0 objects)
+[2026-08-22 12:33:40.990] [WARN] [DYNO] Phase A: No valid CHILDPROPS offset found, keeping default 0x50
+[2026-08-22 12:33:40.990] [INFO] [DYNO] Phase B: Probing FPROPERTY_OFFSET...
+[2026-08-22 12:33:40.992] [WARN] [DYNO] Phase B: No class with 4+ fields found for FPROPERTY_OFFSET probing
+[2026-08-22 12:33:40.992] [INFO] [DYNO] Heuristic final: USTRUCT_SUPER=0x40 CHILDPROPS=0x50 PROPSSIZE=0x58 FFIELD_NEXT=0x18 FFIELD_NAME=0x20 FPROPERTY_OFFSET=0x44

@@ -456,3 +456,13 @@ vendor/UnrealEngine/
 # These are copies of %LOCALAPPDATA%\U000E5CEDumper\U000E5CEDumper.{Machine}.json,
 # i.e. one machine's whole installed-game inventory. Never commit them.
 tools/verify/cache-backups/
+
+# ── Preserved log evidence ─────────────────────────────────────────────────────
+#
+# `*.log` above is right for the whole tree: runtime logs are transient and machine-local.
+# `docs/evidence/` is the deliberate exception -- a small set of artifacts that a COMMITTED
+# claim rests on, copied out before the 21-day age sweep (Grimoire::LOG_RETENTION_DAYS)
+# deletes them. Without this negation `git add docs/evidence/` SILENTLY adds nothing, which
+# is how the first attempt at this staged the READMEs and none of the evidence.
+# See docs/evidence/README.md for what may go there -- it is not a log archive.
+!docs/evidence/**/*.log
