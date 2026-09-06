@@ -14,6 +14,36 @@
 | OctoPath Traveler | **UE4.18** (was recorded as "4.22 (inferred)" — corrected 2026-07-27, confirmed three ways: the `++UE4+Release-4.18` build tag in `.rdata`, a pattern fingerprint identical to DQ XI S (a known 4.18: GNames 7/28 hit, sparse 0/10), and the live DLL reporting `UE418`) | 406060 objects. GNames via GNAM_CT3 ✅. GObjects via GOBJ_RE2 ✅ (Flat FFixedUObjectArray, validated by "Flat" preset). GWorld via GWLD_TQ_1 ✅. Codename "Kingship". Ghidra: GObjects RVA `0x29E5C20`, GNames RVA `0x29DCF08` (TNameEntryArray stride 0x4000). GOBJ_OT_1/OT_2 also added but untested (lower priority than RE2). **PROXY: use `winmm.dll` — LIVE-VERIFIED 2026-08-18** (180/180 exports forwarded, pipe up, full scan: GObjects/GNames/GWorld/GEngine all `aob`, **273,956 objects**, 0 errors in all 5 logs; `[OCTOPATH-G2T3-2026-08-18]`). ⚠ **The conclusion is right but this entry's former REASONING was wrong in both halves, and the reasoning is what gets reused to predict other titles.** Corrected by parsing the import table (PE32+ data directory 1): the exe has **42 static imports**, and it **DOES import `VERSION.dll`** — three functions, `VerQueryValueW` / `GetFileVersionInfoW` / `GetFileVersionInfoSizeW`. `WINMM.dll`'s imports are `waveOutGetNumDevs` + `timeBeginPeriod`, **not** the `GetVersionExW`/`VerifyVersionInfo*` set this entry used to attribute to it (those are kernel32 APIs). So "it does not import version.dll" was false, and "winmm works because its imports are all `GetVersion*`" was false. ⇒ **Why the app-directory `version.dll` proxy loses is NOT established** — the loaded `VERSION.dll` is System32's and our copy logs nothing (the silent-total-failure signature), but a KnownDLLs explanation was tested and **refuted** (`version.dll` is not in the KnownDLLs list and no KnownDLL imports it). Do not publish a cause for it; rely on the measured outcome. `dxgi.dll` is imported (`CreateDXGIFactory1`/`CreateDXGIFactory`) but CRASHES here — it loads under the early loader lock, see the dxgi thin-shim item in todo.md. |
 | Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. GWorld ✅ |
 | Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅. UProperty fallback ✅. 315304 objects. GWorld ✅. Version: flat+UProperty → 418. Base GameInstance (9 fields, no BP subclass) |
+> ⚠⚠ **VERSION ROWS: RECONCILE, DO NOT TRUST — `py tools/verify/test_games_reconcile.py --quiet`.**
+> Added 2026-09-06, after `DQ XI S` was found stating **UE4.22** for six weeks while its own
+> `.rdata` carried `++UE4+Release-4.18` — and while **line 14 of this very file** already called it
+> "a known 4.18". Two rows of one table disagreeing, with the right answer present the whole time.
+>
+> ⛔ **There is no CI gate for this, and the reason is measured rather than assumed.** No version
+> signal exists on every machine, because the games are not in the repo:
+> * the authoritative `++UE4/5+Release-X.Y` build tag is present in only **2 of 19** exes here;
+> * the game exe's PE ProductVersion is frequently the **game** version, not the engine —
+>   OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744;
+> * `CrashReportClient.exe`'s ProductVersion is **engine-shipped** and the best broad signal at
+>   **7 of 15** titles, 6/7 exact.
+>
+> So the answer is a rerunnable rig, not a gate. Run it after a game patch or a detection change.
+>
+> ⚠ **Never infer a version from a fork's LAYOUT.** DQ XI S's `+0x10` shifted UObject layout and
+> `UField::Next=+0x38` are a **licensee fork**, not a version signal; reading "newer than stock
+> 4.18" out of them is exactly what produced the wrong number.
+>
+> **Open questions the rig currently reports. Both need a boot to settle — do not "fix" a row from
+> the table alone:**
+> * **DQ I&II HD-2D** — this row says UE5.05 (code 505), but the title ships
+>   `CrashReportClient.exe` with ProductVersion **4.27**. The row's own text notes that the SE HD-2D
+>   fork "uses FFieldVariant=0x10 (UE5.0 layout) despite reporting UE505", so "a misdetection
+>   recorded as fact" is the obvious hypothesis — the same shape as DQ XI S.
+> * **Avowed** — this file says UE5.3 (PE: 503); the DLL's own detection cache holds **504**.
+>
+> ℹ️ A disagreement is a **question**, not a verdict. DragonSword Awakening reports CRC 5.3 against a
+> DLL 504, and that is correct and already documented — the 504 is our own runtime raise.
+
 | DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects. GWorld ✅. SE HD-2D fork uses FFieldVariant=0x10 (UE5.0 layout) despite reporting UE505 — fixed by Step 6.5 inference (Name=0x28 from Next=0x20). BP_SantiagoGameInstance_C (64 fields) |
 | DQ III HD-2D Remake | UE5.05 (detected) | 126022 objects. GWorld ✅. Same SE HD-2D fork layout as DQ I&II — FFieldVariant=0x10 inference fix applied |
 | DQ XI S: Echoes of an Elusive Age | **UE4.18** (was recorded as UE4.22 — **corrected 2026-09-06, measured**: the binary carries `++UE4+Release-4.18` in `.rdata`, byte-identical to OCTOPATH's tag, and the live DLL reports `UE418`. This file already said so at `:14`, which calls DQ XI S "a known 4.18" and fingerprints OCTOPATH against it — the two rows contradicted each other. ⚠ The `+0x10` shifted layout and `UField::Next=+0x38` are a LICENSEE FORK, not a version signal; reading them as "must be newer than 4.18" is what produced the wrong number) | 350251 objects. GWorld ✅. UField::Next=+0x38 (non-standard, probed). UProperty mode. Expanded UObject layout (+0x10 shift). BP_GameInstance_C (99 fields), BP_GameFlag_C (10 fields) |
