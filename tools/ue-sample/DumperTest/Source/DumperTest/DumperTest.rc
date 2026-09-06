@@ -29,10 +29,17 @@
 //      carries "5.4.4" while Shipping's ProductVersion string IS that tag, so Shipping needs the
 //      StringFileInfo below to stay clean of it — hence the deliberately plain strings.
 //  (c) The log prints a module-relative RVA, not a file offset. Do not try to seek to it.
+//
+// ⛔ DO NOT #include ANY ENGINE HEADER HERE. rc.exe is handed the Windows SDK include path and
+// NOTHING ELSE -- not `Runtime/Core/Public`, not the module's own PublicIncludePaths. The first
+// version of this file opened with `#include "Windows/WindowsHWrapper.h"` and the whole build
+// died on `RC1015: cannot open include file` before a single .cpp was compiled (2026-09-07).
+// The engine works around exactly this: `Default.rc2` reaches engine headers through relative
+// `../../../Source/...` paths, and `PCLaunch.rc` includes plain `<windows.h>`. We need neither --
+// every field below is a literal, so the SDK header alone is enough.
 // ============================================================
 
-#include "Windows/WindowsHWrapper.h"
-#include "winresrc.h"
+#include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,2,0,0
