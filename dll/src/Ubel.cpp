@@ -156,7 +156,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
         ? Neu::EnumNamesFormat::FNameData57
         : Neu::EnumNamesFormat::Legacy;
-    const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+    const int fnameSize = DynOff::SizeofFName();
 
     std::vector<std::pair<int64_t, std::string>> entries;
     Neu::EnumNamesLayout layout;
@@ -330,7 +330,7 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
 
     bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
 
@@ -409,7 +409,7 @@ static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
 // FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
 static int32_t SoftObjectPathPayloadSize() {
     // sizeof(FName), NOT the UObject Name->Outer slot. See DynOff::bCasePreservingName.
-    const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+    const int fnameSize = DynOff::SizeofFName();
     // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
     // in the header so the test target can pin it.
     return static_cast<int32_t>(
@@ -1690,7 +1690,7 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
     // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
     // the UNPADDED sizeof.
-    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x0C : 0x08;
+    if (typeName == "NameProperty")   return DynOff::SizeofFName();
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
@@ -3201,7 +3201,7 @@ ReadArrayResult ReadDelegateArrayElements(
     result.ok = false;
 
     // FScriptDelegate stride depends on FName width (CasePreservingName)
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
     int32_t elemSize = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -3303,7 +3303,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 
     // Each element: FMulticastScriptDelegate { TArray<FScriptDelegate> } = 16 bytes
     constexpr int32_t elemSize = 16;
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
     int32_t innerStride = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -4326,7 +4326,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // Stamp soft-array layout metadata even when arr is empty
                     // — the CE XML / CSX exporter needs it to lay out the
                     // per-element FName leaf(s) at pathOffset / pathOffset+fnameSize.
-                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    fv.softArrayFNameSize = DynOff::SizeofFName();
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
 
@@ -4489,7 +4489,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
                 // Phase G: Soft object arrays (UProperty mode)
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
-                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    fv.softArrayFNameSize = DynOff::SizeofFName();
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
                     if (arr.Data && fv.arrayCount > 0) {
@@ -5326,7 +5326,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
         if (fi.TypeName == "DelegateProperty") {
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
             int32_t objIdx = 0, serial = 0;
@@ -5731,7 +5731,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Walker succeeded. Expose as implicit DelegateProperty array.
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             int32_t delegateElemSize = 8 + fnameSize;
             int32_t bindingCount = static_cast<int32_t>(sr.bindings.size());
 
@@ -5798,7 +5798,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // Phase J (TArray<FScriptDelegate>) — Offsets=[0] derefs InvocationList.
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             int32_t delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
@@ -6367,7 +6367,7 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
         return false;
     };
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::FNameSlotIn8Aligned();
     int pairSize  = fnameSize + 8;  // FName + uint8*
     // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
     // give an 8-aligned pair here, so this changes no value today — it is passed
@@ -6506,7 +6506,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
         return result;
     }
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::FNameSlotIn8Aligned();
     int pairSize  = fnameSize + 8;
     // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
     // give an 8-aligned pair here, so this changes no value today — it is passed

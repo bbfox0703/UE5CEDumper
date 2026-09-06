@@ -5335,7 +5335,7 @@ bool DetectUEnumNames() {
         auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
             return Macht::ReadBytesSafe(a, o, n);
         };
-        const int fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+        const int fnameSize = DynOff::SizeofFName();
 
         for (int off = 0x30; off <= 0x120; off += 8) {
             Neu::EnumNamesLayout layout;

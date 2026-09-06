@@ -3180,7 +3180,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
               || f.TypeName == "MulticastDelegateProperty") {
 // FScriptDelegate { FWeakObjectPtr(8), FName } is alignof 4 -- NO padding, so this
             // wants sizeof(FName) (0xC under CPN), never the 0x10 pair slot.
-            int32_t fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+            int32_t fnameSize = DynOff::SizeofFName();
             int32_t stride    = 8 + fnameSize;
             out.weakLikeArrays.push_back({ absOffset, fullName,
                                             f.TypeName, stride });
@@ -3204,7 +3204,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 // TArray<FScriptDelegate> — element layout matches the
                 // multicast bindings list. Stride is FName-size dependent.
                 // sizeof(FName): TArray<FScriptDelegate> elements are alignof 4, no padding.
-                int32_t fnameSize = DynOff::bCasePreservingName ? 0x0C : 0x08;
+                int32_t fnameSize = DynOff::SizeofFName();
                 int32_t stride    = 8 + fnameSize;
                 out.weakLikeArrays.push_back({ absOffset, fullName,
                                                 f.innerType, stride });
@@ -3746,13 +3746,13 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                 // TWO DIFFERENT QUESTIONS, and they used to share one variable.
                 // TPair<FName, TSharedPtr> is 8-aligned by the TSharedPtr, so a 0xC
                 // case-preserving FName is PADDED to 0x10 inside the pair -- the SLOT.
-                int fnamePairSlot = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                int fnamePairSlot = DynOff::FNameSlotIn8Aligned();
                 // + TSharedPtr(0x10) + HashNextId/HashIndex(8). DERIVED, not branched on the
                 // magic value `fnameSize == 0x10` -- that test silently dropped innerStride to
                 // the non-CPN 0x20 the moment the shared variable was revalued.
                 int32_t innerStride = fnamePairSlot + 0x18;
                 // FScriptDelegate is alignof 4 -- no padding -- so this wants sizeof(FName).
-                int32_t scriptDelegateSize = 8 + (DynOff::bCasePreservingName ? 0x0C : 0x08);
+                int32_t scriptDelegateSize = 8 + (DynOff::SizeofFName());
 
                 int32_t outerVisited = 0;
                 bool sparseAbort = false;
@@ -6333,7 +6333,7 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 
     // Same split as WalkSparseDelegates: the pair SLOT (FName padded by the TSharedPtr)
     // and sizeof(FName) are different numbers under CasePreservingName.
-    int32_t fnamePairSlot = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int32_t fnamePairSlot = DynOff::FNameSlotIn8Aligned();
     int32_t innerStride = fnamePairSlot + 0x18;   // + TSharedPtr(0x10) + hash fields(8)
     int32_t sharedPtrOffset = fnamePairSlot;      // TPair: FName at +0, TSharedPtr at the padded slot
 
@@ -6365,7 +6365,7 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 
     // FWeakObjectPtr + sizeof(FName). FScriptDelegate is alignof 4, so no padding here --
     // this must NOT reuse fnamePairSlot.
-    int32_t scriptDelegateSize = 8 + (DynOff::bCasePreservingName ? 0x0C : 0x08);
+    int32_t scriptDelegateSize = 8 + (DynOff::SizeofFName());
     int32_t readMax = std::min(invNum, maxBindings);
     result.bindings.reserve(readMax);
     for (int32_t i = 0; invData && i < readMax; ++i) {

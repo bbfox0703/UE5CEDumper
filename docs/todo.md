@@ -336,7 +336,37 @@ commits against the vendored engine, every finding then handed to an independent
 it is a regression — every item is a site the audit's own classification covers and its sweep did
 not reach. ⚠ Each entry names the file:line, so **re-derive before acting**; line numbers drift.*
 
-### 1. `bCasePreservingName` — A9 changed the contract but left seven sites on the old value
+### 1. ✅ DONE 2026-09-06 — `bCasePreservingName`: A9 changed the contract and left EIGHT sites on the old value
+
+> **FIXED, and the count was 8 not 7** — re-derived site by site rather than taken from the
+> finding. Twelve raw `bCasePreservingName ? 0x10 : 0x08` ternaries existed; **four were
+> CORRECT** (a `TPair<FName, 8-aligned-T>` value offset — `Aura.cpp:3749/6336`,
+> `Ubel.cpp:6370/6509`) and **eight were wrong** (`Ubel.cpp:333` stepping to an adjacent
+> FName, `:3204/:3306/:5329/:5734/:5801` FScriptDelegate strides, `:4329/:4492` the
+> `softArrayFNameSize` field that `Ubel.h:435` documents as **12**).
+>
+> ⭐ **The fix is not eight edits, it is making the question un-confusable.** `Grimoire.h`
+> had stated the rule for a long time — and it was copied wrongly anyway, because *both*
+> answers are spelled `bCasePreservingName ? … : 0x08` and the expression does not say
+> which question it answers. `Aura.cpp:3755` sat four lines below one of the correct ones
+> getting it right. So the rule is now two named functions, `DynOff::SizeofFName()` and
+> `DynOff::FNameSlotIn8Aligned()`, and **all 20 sites** (the 12 plus the 8 that already had
+> `0x0C`) go through them — `grep 'bCasePreservingName ?' dll/src/` now returns only log
+> strings and `UFIELD_NEXT`, which is a different quantity.
+>
+> Pinned by `Test_DynOff_FNameSlotVsSizeof`: the two coincide at 8 when CPN is off (which is
+> *why* a wrong site is invisible on every title measured), diverge by exactly the 4 bytes of
+> padding when it is on, and `SizeofFName()` is never `0x10`. `dll_helpers_test`
+> 2,330 → **2,337**.
+>
+> **Live regression check** (20 sites across 3 files, 13 of them in `Ubel.cpp`): OCTOPATH
+> 4.18, build 3380 — soft `+0x10` / lazy `+0x0C` unchanged, and soft paths still render as
+> `/Game/UI/MainMenu/BP/CharacterStandingPanel.WidgetArchetype`. Behaviour is identical by
+> construction on the non-CPN branch, and this confirms it.
+
+<details><summary>original entry</summary>
+
+**`bCasePreservingName` — A9 changed the contract but left seven sites on the old value**
 
 `ea844833` established that `sizeof(FName)` under CasePreservingName is **`0xC`, not `0x10`** — the
 `0x10` was the UObject `Name`→`Outer` **slot**, which is a different quantity — and it rewrote the
@@ -359,6 +389,8 @@ in the `sizeof` bucket were left at `0x10`.** Before the commit the tree was uni
 has only two writers (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can
 force it true, and **12 titles have measured false with zero CPN**. The register was right to open
 no row — a row would be unfalsifiable. It belongs here instead. **Effort S, risk LOW.**
+
+</details>
 
 ### 2. ✅ DONE 2026-09-06 — A6's version table comment was wrong for six versions inside one printed band
 

@@ -550,6 +550,26 @@ inline std::atomic<bool> bUEnumNamesFailed{false};
 // ⚠ Member ORDER also moves and is a separate axis: Number is at +4 from UE 5.1, but at +8
 // on a CasePreserving build of UE <= 5.0 / UE4 (DisplayIndex comes second there).
 inline bool bCasePreservingName  = false;
+
+// ⭐ ASK THE QUESTION BY NAME. The rule above was already written down and was still copied
+// wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
+// and a reader cannot tell from the expression which question it is answering. Measured
+// 2026-09-06: twelve sites used the ternary, four correctly (a TPair value offset) and eight
+// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `Aura.cpp:3755` sat
+// four lines under one of the correct ones getting it right, and `Ubel.h`'s own field comment
+// documented 12 against writers that set 0x10. Prefer these over the literal, always.
+//
+// ⚠ Impact is ZERO on every title measured so far: `bCasePreservingName` has only two writers
+// (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
+// and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
+inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
+    return bCasePreservingName      // FScriptDelegate, anything vs an engine ElementSize.
+        ? 0x0C : 0x08;              // three int32, alignof 4, NO trailing pad.
+}
+inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName, 8-aligned-T>
+    return bCasePreservingName      // value offset -- the FName is PADDED by what follows it.
+        ? 0x10 : 0x08;
+}
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as

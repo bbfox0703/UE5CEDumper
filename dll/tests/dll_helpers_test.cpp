@@ -4406,6 +4406,42 @@ static void Test_Neu_Legacy_Basic() {
     EXPECT_EQ_U64("legacy build count", L2.count, 4);
 }
 
+// ⛔ THE TWO CasePreservingName ANSWERS ARE DIFFERENT NUMBERS AND WERE CONFUSED TWELVE TIMES.
+// `Grimoire.h` has stated the rule for a long time -- SLOT 0x10 for a TPair<FName, 8-aligned-T>
+// value offset, sizeof 0x0C for a step to an adjacent FName / an FScriptDelegate stride -- and
+// it was STILL copied wrongly into eight call sites, because both answers are spelled
+// `bCasePreservingName ? … : 0x08` and the expression does not say which question it answers.
+// Measured 2026-09-06: 12 raw ternaries, 4 right and 8 wrong, with `Aura.cpp:3755` getting it
+// right four lines below one of the wrong ones and `Ubel.h:435` documenting 12 against writers
+// that set 0x10. All 20 sites now go through the two named helpers; this pins them.
+//
+// ⚠ Impact on every title measured to date is ZERO -- `bCasePreservingName` has two writers
+// inside a live 20-object vote, nothing can force it true, and 12 titles measured false. That is
+// precisely why it rotted: no test and no game could ever go red.
+static void Test_DynOff_FNameSlotVsSizeof() {
+    const bool saved = DynOff::bCasePreservingName;
+
+    DynOff::bCasePreservingName = false;
+    EXPECT("FName: sizeof is 8 when not case-preserving", DynOff::SizeofFName() == 0x08);
+    EXPECT("FName: the 8-aligned slot is 8 too -- the two questions COINCIDE here",
+           DynOff::FNameSlotIn8Aligned() == 0x08);
+    EXPECT("FName: ...which is why a wrong site is invisible on every title measured so far",
+           DynOff::SizeofFName() == DynOff::FNameSlotIn8Aligned());
+
+    DynOff::bCasePreservingName = true;
+    EXPECT("FName: sizeof is 0xC under CasePreservingName (3x int32, alignof 4, NO trailing pad)",
+           DynOff::SizeofFName() == 0x0C);
+    EXPECT("FName: the slot is 0x10 -- padded by the 8-aligned member that FOLLOWS it",
+           DynOff::FNameSlotIn8Aligned() == 0x10);
+    EXPECT("FName: and they DIVERGE by exactly the 4 bytes of that padding",
+           DynOff::FNameSlotIn8Aligned() - DynOff::SizeofFName() == 4);
+    // The regression guard proper: 0x10 must never be reachable as a SIZE.
+    EXPECT("FName: sizeof is never 0x10 -- that value is the UObject Name->Outer slot",
+           DynOff::SizeofFName() != 0x10);
+
+    DynOff::bCasePreservingName = saved;
+}
+
 static void Test_Neu_Legacy_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{5,0},{6,1},{7,2}};
@@ -7618,6 +7654,7 @@ int main() {
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
+    RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
     RUN(Test_Neu_FNameData_Basic);
     RUN(Test_Neu_FNameData_CasePreserving);
