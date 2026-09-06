@@ -68,3 +68,4 @@ docs/evidence/
 | directory | claim | citing doc | builds | what it proves |
 |---|---|---|---|---|
 | [`2026-09/g12-heuristic-branch/`](2026-09/g12-heuristic-branch/) | `[G12G3-CLOSE-2026-09-06]` | [`../verification-register.md`](../verification-register.md) | 3313, 3338 | the `ValidateAndFixOffsets` heuristic branch **is** reachable — refuting an earlier "NO FIXTURE EXISTS, 19 of 19" sweep — plus one run of it that the code, byte-identical today, cannot explain |
+| [`2026-09/revbump6-cache-restamp/`](2026-09/revbump6-cache-restamp/) | `[REVBUMP6-2026-09-06]` | [`../dev-log.md`](../dev-log.md) | 3390 | `kVersionDetectLogicRev` 5 → 6 invalidates a cached version and re-derives the **same** verdict — a ONE-SHOT transition no later run can reproduce |

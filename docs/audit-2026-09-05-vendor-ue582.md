@@ -200,7 +200,7 @@ if (DynOff::bUseFProperty && g_cachedUEVersion >= 500 && g_cachedUEVersion < 508
 ```
 The `>= 500` guard is **not** cosmetic: without it a hypothetical FFieldClass-probe false positive on a UE4 title could raise 427→508, crossing the `>= 500`/`>= 501` gates at `Aura.cpp:3695` and `Ubel.cpp:335/:2758/:4205/:4367` — *that* raise would be breaking, unlike the harmless 507→508. The 504 marker at `:417` already carries the same guard.
 
-**Do not bump** `Genau::kVersionDetectLogicRev` (`Genau.h:60`) — `Frieren.cpp:396-401` documents this ladder as runtime-only and re-applied every init. No UI change needed: `PointerPanelViewModel.cs:337` already offers "UE 5.8" and `Fern.cpp:1722` already accepts 508.
+**Do not bump** `Genau::kVersionDetectLogicRev` (`Genau.h`) — `Frieren.cpp:396-401` documents this ladder as runtime-only and re-applied every init. *(Update 2026-09-06: the rev did go 5 → 6, for an unrelated reason — a cached value detection cannot produce, `[REVBUMP6-2026-09-06]`. This instruction was and is correct for the 5.8 ladder.)* No UI change needed: `PointerPanelViewModel.cs:337` already offers "UE 5.8" and `Fern.cpp:1722` already accepts 508.
 
 **Caveat to put in the log line:** this floor inherits the probe's confidence — a wrong `FFIELDCLASS_NAME` latch mislabels the version *and* has already broken the property walk, so the badge is not independent corroboration. Pin the raise predicate in **both** directions in `Test_FFieldClassName_Probe` (`dll/tests/dll_helpers_test.cpp:6691-6749`). Acceptance test cannot be run today (no string-stripped 5.8 title exists); file as ⬜ in `docs/verification-register.md`.
 

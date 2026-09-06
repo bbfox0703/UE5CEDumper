@@ -1026,6 +1026,13 @@ when the probe lands off-field.*
 > and re-applied on every init, so no cached detection needs invalidating". After the run the cache
 > still read **507** — the runtime raise does not write back. Confirmed, not assumed.
 >
+> ⚠ **The rev WAS later bumped to 6 (2026-09-06), and this row is not thereby wrong.** That bump
+> is for a different reason entirely: Avowed's cache was found holding a `504` that detection cannot
+> produce for that binary — the residue of an older write path — and a record stamped with the
+> current rev is skipped forever, so the stamp was the only way to reach it. **This row's finding
+> is what makes that bump safe**: because the ladder does not write back, re-deriving every cached
+> verdict cannot lose a raise. See `[REVBUMP6-2026-09-06]` in `dev-log.md`.
+>
 > **Negative control** (unchanged, `[A4-NEGCTL-2026-09-05]`): Solarpunk UE 5.7 latches
 > `FFieldClass::Name=+0x00`, emits **no** raise line, and stays `UE507`. Positive and negative now
 > differ in the marker's discriminating input on real binaries of both versions.
@@ -1096,6 +1103,8 @@ out loud, deliberately, because that is the sentence someone will read during tr
 
 ⚠ `Genau::kVersionDetectLogicRev` is deliberately **not** bumped: `Frieren.cpp` documents this
 ladder as runtime-only and re-applied on every init, so no cached detection needs invalidating.
+ℹ️ It was nevertheless bumped 5 → 6 on 2026-09-06 — **not for this ladder**, but to reach cached
+values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sentence above stands.
 
 -----
 

@@ -25,6 +25,53 @@ builds ≤696 in
 
 -----
 
+## 2026-09-06 - the version cache held a value detection cannot produce: `kVersionDetectLogicRev` 5 -> 6 (build 3390, measured live on DumperTest)
+
+`Genau::kVersionDetectLogicRev` **5 -> 6**. Evidence:
+[`evidence/2026-09/revbump6-cache-restamp/`](evidence/2026-09/revbump6-cache-restamp/),
+claim tag `[REVBUMP6-2026-09-06]`.
+
+### The first bump that is NOT a logic change
+
+Every previous bump followed `Genau.h`'s own rule -- *the detection logic changed, so re-derive
+every cached verdict under it*. Rev 6 does not: `DetectVersionDetailed` is byte-identical. What
+changed is that a cached **value** was found which the current detection cannot produce.
+
+Measured while settling Avowed's row: its record held `ueVersion=504`, and a forced fresh
+detection re-stamped it **503**. 504 for that binary is the runtime `CMC::GravityDirection`
+raise (`Frieren.cpp`) -- and that ladder runs in `UE5_Init`, **after** `Flamme::SaveResults` at
+the end of `FindAll`, so today it cannot write back. The 504 is residue of a write path that no
+longer exists.
+
+⭐ **And nothing would ever have re-derived it.** The cache-reuse branch skips detection entirely
+for any record stamped with the current rev, *however wrong the value is*. The stamp is not one of
+several ways to reach a poisoned entry -- it is the only one. So `Genau.h`'s bump rule gained a
+second clause: **also bump when a cached VALUE is found that the current detection cannot
+produce.** The rule as written covered the logic and said nothing about the data.
+
+### What it costs, and what it does not
+
+Live on DumperTest Development (cached 504 / rev 5):
+
+```
+FindAll: Cached version 504 was stamped by logic rev 5 (current 6) - re-detecting once and re-stamping.
+DetectVersion: PE VERSIONINFO -> UE 5.4 -> 504
+FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+The invalidation fires and the verdict is **unchanged** -- which is the point. Cost on this binary
+was **2 ms**, not rev 4's ~0.35 s; that older figure is the memory string-scan path, which a Tier-1
+VERSIONINFO hit never reaches. A stripped title (SquareEnix) still pays the scan. Locally this
+re-derives 44 cached records once each; Avowed re-detects 503 and is then raised to 504 at runtime
+exactly as before, so its badge does not move.
+
+⚠ **This does not overturn the A4 decision.** `audit-2026-09-05-vendor-ue582.md` and
+`verification-register.md` both say *do not bump for the 507/508 ladder*, and that still holds --
+the ladder is runtime-only and re-applied on every init, so it needs no invalidation. Rev 6 is for
+the residue of an older write path, not for the ladder.
+
+-----
+
 ## 2026-09-03 - FName index 1 is INTERIOR to "None": a probe that could never succeed, warning on every session (build 3368, verified live on DumperTest; re-verified 3369)
 
 Two fixes, both found by asking why a log line said something odd, and neither was the thing that

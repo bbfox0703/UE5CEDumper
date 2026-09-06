@@ -29,6 +29,11 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 //     HasUEAnchorNearby / publisher-bias change, so every cached version is recomputed once
 //     under the new logic. Do NOT tie it to the build number — that would re-detect on every
 //     rebuild and defeat the cache for stripped-version games (SquareEnix).
+// >>> ALSO BUMP IT when a cached VALUE is found that the current detection cannot produce.
+//     The rule above is about the logic; this clause is about the DATA, and it was added
+//     because rev 6 needed it. A record stamped with the CURRENT rev is skipped forever by
+//     the cache-reuse branch no matter how wrong its value is, so the stamp is the ONLY
+//     mechanism that can reach an entry which is already poisoned.
 // rev 2 (build ~2394): VERSIONINFO StringFileInfo ProductVersion/FileVersion fallback,
 // UTF-16LE pass in the Tier-1 memory scan, and Tier 1 no longer requires the needle
 // table's trailing '.' (real tags are "++UE4+Release-4.27", so it never matched before).
@@ -57,7 +62,24 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // binary we own; the gain is a working fallback for images whose full "++UEx+Release-" tag
 // is stripped but a "Release-X.Y" fragment survives. Bump is mandatory: a game cached under
 // rev 4 would keep its old tier/confidence without ever re-detecting.
-constexpr uint32_t kVersionDetectLogicRev = 5;
+// rev 6 (2026-09-06): NOT a logic change — a DATA one, and the first bump of that kind.
+// MEASURED on Avowed: its cached record held ueVersion=504, and a forced fresh detection
+// re-stamped it 503. 504 is a value DetectVersionDetailed CANNOT PRODUCE for that binary — it
+// is the runtime CMC::GravityDirection raise (Frieren.cpp), which runs in UE5_Init AFTER
+// Flamme::SaveResults (Genau.cpp, end of FindAll) and therefore never writes back. So the 504
+// is residue of a write path that no longer exists, and nothing would ever have re-derived it.
+// ⚠ The cache-reuse branch justifies itself with "the same binary always yields the same
+// answer". That is true OF DETECTION and false of anything else that ever wrote to the field:
+// a raised value breaks the very invariant the cache rests on, and — being stamped current —
+// is unreachable by every mechanism except this one.
+// ⚠ This does NOT make the A4 decision wrong. audit-2026-09-05-vendor-ue582.md and
+// verification-register.md both say "do not bump for the 507/508 ladder", and that stands: the
+// ladder is runtime-only and re-applied on every init, so it needs no invalidation. This bump
+// is for the RESIDUE OF AN OLDER WRITE PATH, not for the ladder.
+// Cost: one re-detect per cached game (~0.35 s, per rev 4's measurement), after which the cache
+// holds a value detection actually produces. A raise that is still warranted is re-applied at
+// runtime exactly as before, so no verdict the user sees changes — Avowed still badges 504.
+constexpr uint32_t kVersionDetectLogicRev = 6;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)
