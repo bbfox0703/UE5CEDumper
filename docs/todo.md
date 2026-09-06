@@ -1245,8 +1245,40 @@ before being written down.*
   > dropped the bulk lane and the router did exactly what §9.7 specifies:
   > `Pipe lane dropped — tearing down both lanes for a clean reconnect` → `Pipe disconnected`, with the
   > in-flight snapshot faulting into H1's delete path rather than half-finishing. No wedge, no orphan.
-  Still open: (6) **watch-event delivery** to the interactive lane (System-tab / address watch still
-  pushes correctly while the bulk lane is busy). Verify opportunistically.
+  ~~Still open: (6) **watch-event delivery** to the interactive lane (System-tab / address watch still
+  pushes correctly while the bulk lane is busy). Verify opportunistically.~~
+  > ### ✅ (6) CLOSED 2026-09-06 `[MULTIPIPE-WATCH-2026-09-06]` — delivery is completely unaffected by a saturated bulk lane
+  >
+  > "Verify opportunistically" had meant *not at all* since 2026-06-28, so it was done deliberately:
+  > `tools/verify/multipipe_watch.py`, DumperTest dev, build 3401. **No UI** — the UI's two lanes
+  > are just two connections, and the DLL side is per-connection by construction
+  > (`Fern::StartWatch`, Fern.cpp:6444, gives each watch its own thread writing
+  > `WriteLine(*ptr->owner, …)`), so two raw pipe clients test the actual mechanism and let both
+  > sides be counted instead of read off a panel.
+  >
+  > | watch | idle window (20 s) | busy window (20 s) |
+  > |---|---|---|
+  > | `TickCount` (the mover, 1 Hz) | **50 pushes** | **50 pushes** |
+  > | `FrozenInt` (the control, never written) | 50 pushes | 50 pushes |
+  >
+  > **Delivery ratio busy/idle = 1.00.** The bulk lane completed **286** `list_all_functions`
+  > calls inside that 20 s window, so it was genuinely saturated, not nominally busy.
+  >
+  > Controls both held: `TickCount` rose monotonically across the busy window (853 → 873, 50
+  > samples, duplicates present because the watch pushes faster than 1 Hz), and `FrozenInt`
+  > reported exactly **one** distinct value, `424242` — so the watch was reading the address we
+  > think it was, and the mover really moved.
+  >
+  > ⚠ **A suspected cadence defect was measured and DISMISSED.** The counts above are ~2.5/sec
+  > against a requested `interval_ms=250`, which looked wrong. Polling at 0.05 s instead of 0.2 s
+  > returns **48 events in 12.0 s = 4.00/sec** with DLL-stamped gaps of **median 254 ms** (min 252,
+  > max 301). The cadence is correct; the low number was the measuring instrument. The ratio above
+  > is unaffected because the poll rate was identical in both windows.
+  >
+  > ⚠ **The rig's first version HUNG** on a raw blocking `read()` of the same handle it sends
+  > requests on, before the busy window ever began — producing a 0-byte output that is
+  > indistinguishable from "no events are being delivered", i.e. from the defect it exists to
+  > detect. It now polls with a bounded request instead, and the docstring forbids reverting that.
   *Parent: multipipe-eval §9 (PR #396).*
   The build-1836 single-handle worker-pool was REVERTED (deadlocked on the synchronous pipe, §8.1).
   The sister repo `D:\Github\discrete` runs a proven alternative: the UI opens **two** client
