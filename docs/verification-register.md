@@ -3236,6 +3236,34 @@ repo's.
 > the next best is less than half of that. Reaching the cap needs a title roughly **2× DQ7R**, and
 > nothing installed is close.
 >
+> ### ⭐ UNBLOCKED 2026-09-06 — LOWER THE CAP, DO NOT HUNT A BIGGER GAME
+>
+> The whole search above assumed the cap was fixed at 100,000 and the *game* was the variable. It is
+> the other way round: `list_all_functions` takes `limit` on the wire, the DLL honours it, and the
+> DLL half already passes (`[Z8-TRUNCATED-2026-08-23]`). The only reason the UI half had no fixture
+> is that **both** UI call sites (`ConsoleViewModel.cs:255`, `InterestingFunctionsViewModel.cs:440`)
+> pass the default and nothing could lower it.
+>
+> `DumpService.AllFunctionsLimitOverride` now reads **`UE5DUMP_ALLFUNCS_LIMIT`** once at startup and
+> overrides the cap for both panels:
+>
+> ```
+> set UE5DUMP_ALLFUNCS_LIMIT=200
+> ```
+>
+> Any connected title then reaches the cap, and this row's acceptance text is unchanged — Console
+> must stop claiming anything about the game, both panels must show the cap suffix, and Interesting
+> Functions' class-noise picker must show `⚠ Counts are partial`.
+>
+> ⚠ **Still run the regression arm with the variable UNSET** on the same title: no spurious warning
+> under the cap is half of what this row asserts, and it is the half a lowered cap cannot show.
+> ⚠ A non-positive or unparseable value is **ignored, not clamped** — a typo must never silently
+> truncate a real census and return a partial answer that looks complete, which is the very defect
+> Z8 exists to catch.
+> ⚠ Needs a **`-Mode Publish` AOT** binary like every UI row here. The change itself is AOT-clean
+> (`int.TryParse` + `GetEnvironmentVariable`, no reflection) and shipped in a 54.7 MB trimmed
+> publish with 4,756 C# tests green.
+>
 > ⚠ **Both titles the row names as the requirement were re-checked and one does not exist.**
 > `FINAL FANTASY VII REBIRTH` is an empty folder here — one directory, no executable
 > (`py tools/verify/fixture_census.py`, which exists because of this). **SEED BATTLE DESTINY
