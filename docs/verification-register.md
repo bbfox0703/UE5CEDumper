@@ -620,6 +620,26 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > | diagnostics | hook live | `hook_active=True`, `hook_fire_count=52` |
 > | pipe | right binary | `build 3371`, `ue_version 506`, `79,831` objects, `load_mode proxy:version.dll` |
 >
+> ➕ **ADDENDUM 2026-09-06 — the `508` row now has a live witness too, and it never had one.**
+> The rig takes a log-folder name now, because the table has **one row per UE version** and each
+> row needs its own witness; every prior live measurement was 506. On **DumperTest58 Development
+> (UE 5.8.2)**: `DetectProcessEvent (pattern): match at vtable+0x250`, `offset resolved to
+> vtable+0x250 via the pattern scan`, `Add_IntInt(3,4) = 7`, `validation OK — hook fired 184 times
+> in 1500ms`, `hook_fire_count` 7,696, no fallback, no `VALIDATION FAILED`. **`0x250` is exactly
+> what `case 508: return 0x250` says**, and it is independently corroborated offline: RE-UE4SS's
+> newly-shipped `VTableLayout_5_08_Template.ini` puts ProcessEvent at raw index 76, and every 5.0x
+> template sits a constant 2 entries (`0x10`) above our table — a calibration that is *measured*,
+> not assumed, because ES2 read `0x260` live at 5.6 where the raw index gives `0x270`.
+>
+> ⚠ **Two rig defects this run exposed, both of which manufactured false FAILs** — recorded because
+> each is the same shape as the register's own traps:
+> * it demanded a `DetectVersion:` line in `scan-0.log`. `FindAll` **skips detection entirely** when
+>   `UE5CEDumper.{Machine}.json` already holds a verdict for that PE hash, so on any previously
+>   scanned host there are zero such lines and a `FindAll: UE Version = N (cached…)` line instead.
+> * it **raced the validator**. `hook installed … validator armed (1500ms)` is written at install
+>   and the verdict lands ~1.5 s later; on a host where listing and invoking is quick, the log read
+>   happened first and the rig reported "no validation OK line". It now waits for the verdict.
+>
 > **Verdict: `0x260`.** The 506 row now has a second independent live witness (Lushfoil was the
 > first, the UVTD oracle aside). The title's twice-measured `0x278` stays what it always was — a
 > live witness for the **5.5** row, taken on the pre-patch binary — so the table's deliberate

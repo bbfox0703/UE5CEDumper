@@ -26,13 +26,22 @@ while measuring nothing. Fixed in Sein.cpp for 3371; this rig refuses to guess r
 """
 import pathlib
 import sys
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from pipe_client import PipeClient  # noqa: E402
 
-PROC = "ES2-Win64-Shipping"
+# The log-folder name, i.e. the image name without .exe. Defaults to EVERSPACE 2 (the row's own
+# host) but takes any host, because the table has ONE row per UE version and each row needs its own
+# live witness -- 508 in particular had none until DumperTest58 existed.
+PROC = sys.argv[1] if len(sys.argv) > 1 else "ES2-Win64-Shipping"
 LOG = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs" / PROC
+
+# What DynOff::ProcessEventVTableSlotFor should answer, per UE version. Kept here rather than
+# hardcoding 0x260 so the rig scores any host against the table's OWN claim for that host.
+EXPECTED_SLOT = {500: 0x258, 501: 0x260, 502: 0x268, 503: 0x268, 504: 0x268,
+                 505: 0x278, 506: 0x260, 507: 0x260, 508: 0x250}
 
 
 def say(s):
@@ -69,19 +78,29 @@ def main():
         ue = p.get("ue_version")
         say("UE version = %s   objects = %s   load_mode = %s"
             % (ue, p.get("object_count"), p.get("load_mode")))
-        if ue != 506:
-            fails.append("A2: UE version is %r, not 506 -- this is not the 5.6 build the row needs" % ue)
+        want = EXPECTED_SLOT.get(ue)
+        if want is None:
+            fails.append("A2: UE %r has no row in ProcessEventVTableSlotFor's UE5 band -- this host "
+                         "cannot score the table" % ue)
+        else:
+            say("the table's own claim for UE %s: vtable+0x%X" % (ue, want))
         if (p.get("object_count") or 0) < 1000:
             fails.append("A2: object_count %r -- the engine did not boot; every number below is a corpse"
                          % p.get("object_count"))
 
         # --- scan-0.log: prove WHICH binary this is -------------------------------
-        dv = grep("scan", "DetectVersion:")
-        say("\n[scan-0.log] DetectVersion lines: %d" % len(dv))
+        # ⚠ TWO WAYS the version legitimately arrives, and an earlier version of this rig knew only
+        # one. `FindAll` SKIPS DetectVersion entirely when UE5CEDumper.{Machine}.json already holds
+        # a verdict for this PE hash, so on any host scanned before, scan-0.log has ZERO
+        # `DetectVersion:` lines and a `FindAll: UE Version = N (cached...)` line instead. Demanding
+        # the first produced a false FAIL on DumperTest58.
+        dv = grep("scan", "DetectVersion:") + grep("scan", "FindAll: UE Version =")
+        say("\n[scan-0.log] version lines: %d" % len(dv))
         for l in dv[-3:]:
             say("   " + l.strip()[:170])
-        if not any("506" in l for l in dv):
-            fails.append("A2: no DetectVersion line reporting 506 in scan-0.log")
+        if not any(str(ue) in l for l in dv):
+            fails.append("A2: no scan-0.log line reporting UE %s (neither a DetectVersion result "
+                         "nor a cached FindAll verdict) -- cannot confirm which binary this is" % ue)
 
         # --- the invoke: this is what makes detection run -------------------------
         fl = c.request("list_all_functions", limit=20000, game_only=False).get("functions") or []
@@ -139,6 +158,20 @@ def main():
     # "FAILED" -- the hook is deliberately KEPT. A mis-detected pattern slot therefore produces
     # exactly the log the naive grep set calls a pass. So the discriminator is the POSITIVE
     # line, not the absent one, and the zero-fire line is a HARD FAIL.
+    # ⚠ THE VALIDATOR IS ARMED FOR 1500 ms AND THIS RIG USED TO RACE IT. `hook installed …
+    # validator armed (1500ms)` is written at install; the verdict lands ~1.5 s later. On a host
+    # where listing functions and invoking is quick, the log read happened FIRST and the rig
+    # reported "no validation OK line" -- a false FAIL, and precisely the "report and reality
+    # computed by different paths" shape this whole exercise is about. Wait for the verdict.
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        if grep("init", "GameThreadDispatch: validation OK") or grep("init", "fired 0 times in") \
+                or grep("init", "VALIDATION FAILED"):
+            break
+        if not grep("init", "validator armed"):
+            break            # the validator was never armed; waiting cannot help
+        time.sleep(0.5)
+
     ok_line = grep("init", "GameThreadDispatch: validation OK")
     zero_fire = grep("init", "fired 0 times in")
     say("\n'GameThreadDispatch: validation OK' lines: %d   <-- MUST be >= 1 (the real discriminator)"
@@ -162,13 +195,20 @@ def main():
         i = l.find("vtable+0x")
         if i >= 0:
             slots.add("0x" + l[i + 9:i + 9 + 3].strip().split()[0].rstrip(":,.").upper())
-    say("\n================ A2 RESULT ================")
-    say("slot(s) observed: %s" % (", ".join(sorted(slots)) or "NONE"))
-    if "0x260" in slots:
-        say("=> 0x260: the table's 506 row is CORROBORATED on a retail UE 5.6.1 licensee build.")
-    elif "0x278" in slots:
-        say("=> 0x278: the 506 row is WRONG FOR THIS TITLE. Record it as a register note.")
-        say("   ⛔ Do NOT collapse the table back into a '>=' ladder -- that is the bug A2 fixed.")
+    say("\n================ A2 RESULT (%s, UE %s) ================" % (PROC, ue))
+    say("slot(s) observed: %s   table says: %s"
+        % (", ".join(sorted(slots)) or "NONE", ("0x%X" % want) if want else "no row"))
+    observed = {int(s, 16) for s in slots} if slots else set()
+    if want and observed == {want}:
+        say("=> the table's %s row is CORROBORATED by a live measurement on this host." % ue)
+    elif want and observed:
+        say("=> MISMATCH: measured %s, table says 0x%X. The %s row is wrong FOR THIS TITLE -- that "
+            "is a RESULT, not a failure. Record it as a register note."
+            % (", ".join(sorted(slots)), want, ue))
+        say("   Do NOT collapse the table back into a '>=' ladder -- that is the bug A2 fixed, and "
+            "the table is deliberately non-monotonic (505 -> 0x278, then 506/507 -> 0x260).")
+        fails.append("A2: measured slot(s) %s != table 0x%X for UE %s"
+                     % (", ".join(sorted(slots)), want, ue))
     else:
         say("=> inconclusive; see the lines above.")
 
