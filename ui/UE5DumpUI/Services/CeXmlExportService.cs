@@ -1050,6 +1050,7 @@ public static class CeXmlExportService
                     ArrayEnumEntries = f.ArrayEnumEntries,
                     SoftArrayFNameSize = f.SoftArrayFNameSize,
                     SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
+                    SoftArrayPathOffset = f.SoftArrayPathOffset,
                     EnumName = f.EnumName,
                     EnumValue = f.EnumValue,
                     EnumAddr = f.EnumAddr,
@@ -2712,8 +2713,12 @@ public static class CeXmlExportService
         }
 
         // Phase G: TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
-        // struct group with WeakPtr leaf at +0 + FName leaf(s) at +0x10 (and
-        // +0x10+fnameSize for UE5.1+'s FTopLevelAssetPath layout). Without
+        // struct group with WeakPtr leaf at +0 + FName leaf(s) at SoftArrayPathOffset
+        // (and +SoftArrayFNameSize for UE5.1+'s FTopLevelAssetPath layout). That offset
+        // is 0x10 only up to UE 5.2 — 5.3 deleted TPersistentObjectPtr::TagAtLastTest and
+        // it became 0x08, which is why it now comes off the wire instead of being baked.
+        // ⚠ The DropDownList keys MUST be read at the same offset the leaf is emitted at;
+        // Ubel.cpp reads them with the same softPathOff for exactly that reason. Without
         // this, the inner element collapses to a single 8B WeakPtr hex blob
         // and the FSoftObjectPath::AssetPathName / PackageName is invisible.
         // Soft array layout metadata (fnameSize + FTopLevelAssetPath flag)
@@ -3089,19 +3094,26 @@ public static class CeXmlExportService
             EmitLeaf(sb, fieldIndent, DecorateDesc("WeakPtr", 0, null), ceWeakPtr, "+0", null);
 
             // FName ComparisonIndex (and Number at +4) for the
-            // AssetPathName / PackageName at +0x10.
+            // AssetPathName / PackageName at the FSoftObjectPath sub-offset.
+            //
+            // ⚠ This used to bake "+10". That is right only up to UE 5.2: 5.3
+            // deleted TPersistentObjectPtr::TagAtLastTest and the path moved to
+            // +0x08, so every table exported from a 5.3+ title labelled AssetName
+            // as PackageName and read SubPathString's FString Data pointer as the
+            // AssetName FName. The DLL now measures it and sends it on the wire.
+            int pathOffset = field.SoftArrayPathOffset > 0 ? field.SoftArrayPathOffset : 0x10;
             string firstFNameLabel = field.SoftArrayIsTopLevelAssetPath
                 ? "PackageName"
                 : "AssetPath";
             if (sharedDropDown != null)
             {
-                EmitLeaf(sb, fieldIndent, DecorateDesc(firstFNameLabel, 0x10, null), ceFNameIdx,
-                    "+10", null, dropDownContent: sharedDropDown);
+                EmitLeaf(sb, fieldIndent, DecorateDesc(firstFNameLabel, pathOffset, null), ceFNameIdx,
+                    $"+{pathOffset:X}", null, dropDownContent: sharedDropDown);
             }
             else
             {
-                EmitLeaf(sb, fieldIndent, DecorateDesc(firstFNameLabel, 0x10, null), ceFNameIdx,
-                    "+10", null);
+                EmitLeaf(sb, fieldIndent, DecorateDesc(firstFNameLabel, pathOffset, null), ceFNameIdx,
+                    $"+{pathOffset:X}", null);
             }
 
             // UE5.1+: FTopLevelAssetPath has a second FName (AssetName) right
@@ -3109,7 +3121,7 @@ public static class CeXmlExportService
             // backing FName.
             if (field.SoftArrayIsTopLevelAssetPath)
             {
-                int assetNameOffset = 0x10 + field.SoftArrayFNameSize;
+                int assetNameOffset = pathOffset + field.SoftArrayFNameSize;
                 EmitLeaf(sb, fieldIndent, DecorateDesc("AssetName", assetNameOffset, null), ceFNameIdx,
                     $"+{assetNameOffset:X}", null);
             }
@@ -4098,7 +4110,7 @@ public static class CeXmlExportService
 
             // Phase J: FScriptDelegate — first 8 bytes is FWeakObjectPtr (target).
             // Element stride uses ArrayElemSize so consecutive elements stay aligned
-            // (16 without CasePreservingName, 24 with).
+            // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase K: FMulticastScriptDelegate — first 8 bytes is the inner

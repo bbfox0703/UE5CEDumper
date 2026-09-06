@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // dll_helpers_test
 //
 // Stand-alone executable (no GoogleTest / Catch2 dependency) covering pure
@@ -434,9 +434,15 @@ static void Test_Alignment_NameProperty_RespectsCpnMode() {
     EXPECT("non-CPN FName @ 0x4 OK",  !Scharf::IsAlignmentSuspicious("NameProperty", 0x4, 8, false));
     EXPECT("non-CPN FName @ 0x3 BAD",  Scharf::IsAlignmentSuspicious("NameProperty", 0x3, 8, false));
 
-    // CPN (Titan Quest II): FName = 16 bytes, aligned to 8.
-    EXPECT("CPN FName @ 0x10 OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0x10, 16, true));
-    EXPECT("CPN FName @ 0xC BAD",  Scharf::IsAlignmentSuspicious("NameProperty", 0xC, 16, true));
+    // CPN: FName = 12 bytes, aligned 4 -- the SAME alignment as non-CPN. `class FName` has
+    // no alignas, so case-preserving widens it without changing its alignment.
+    // (No known live CPN title: TQ2 was measured `votes standard=20, CPN=0`.)
+    EXPECT("CPN FName @ 0x10 OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0x10, 12, true));
+    // INVERTED on purpose (A9): 0xC is a LEGAL offset for a 12-byte, 4-aligned FName. The UVTD
+    // 4.27-CasePreserving template shows FField::NamePrivate=0x28 followed by FlagsPrivate=0x34,
+    // i.e. a 4-aligned FName landing on a non-8-aligned offset. Calling that "suspicious" is
+    // exactly the false warning this module exists to avoid.
+    EXPECT("CPN FName @ 0xC OK", !Scharf::IsAlignmentSuspicious("NameProperty", 0xC, 12, true));
 }
 
 static void Test_Alignment_ScalarPrimitives() {
@@ -837,9 +843,10 @@ static void Test_Stark_PeValidationFailureVerdict() {
 //
 // Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
 // `s_itemSize >= 24 ? 0x10 : 0x0C` -- a two-way split covering only strides 16
-// and 24. The reachable stride set is {16, 20, 24, 32}: Aura's auto-probe tries
-// {16, 24, 32, 20} and UE5_InitWithExtendedLayout forces any of
-// {0x14, 0x18, 0x10, 0x20}.
+// and 24. The reachable stride set is {16, 20, 24, 32, 40}: Aura's auto-probe tries
+// {16, 24, 32, 20, 40} and UE5_InitWithExtendedLayout forces any of
+// {0x14, 0x18, 0x10, 0x20}. 40 joined the set with A5 -- a UE 5.7+ Test build puts
+// TStatId + StatIDStringStorage after ClusterRootIndex (24 + 8 + 8).
 //
 // At stride 20 the old expression returned 0x0C, which is ClusterRootIndex.
 // Ubel::ResolveWeakObjectPtr then compares that against the stored serial with a
@@ -850,6 +857,105 @@ static void Test_Stark_PeValidationFailureVerdict() {
 //
 // The rule lives in Lineal.h precisely so it can be tested: no target compiles
 // Aura.cpp, but this file already includes Lineal.h.
+
+static void Test_Lineal_StrideSweepRules() {
+    using Lineal::StrideScore;
+    using Lineal::PreferStride;
+
+    // --- THE CANDIDATE SET ITSELF. Correct scoring rules are worthless if the true item
+    //     size is not probed at all, which is the whole of A5 and of its 2026-08-05
+    //     predecessor (16 accepted against a real 32: 12,588 of 25,175 named, 50.0%). ---
+    {
+        bool has16=false, has20=false, has24=false, has32=false, has40=false;
+        for (int st : Lineal::kItemStrideCandidates) {
+            if (st == 16) has16 = true;
+            if (st == 20) has20 = true;
+            if (st == 24) has24 = true;
+            if (st == 32) has32 = true;
+            if (st == 40) has40 = true;
+        }
+        EXPECT("A5: 16 (UE5 classic) is a candidate", has16);
+        EXPECT("A5: 24 (UE4 classic / UE5.7+ reordered) is a candidate", has24);
+        EXPECT("A5: 32 (UE5.4 Development, STATS adds TStatId) is a candidate", has32);
+        EXPECT("A5: 20 (Avowed packed) is a candidate", has20);
+        EXPECT("A5: 40 (UE5.7+ TEST, TStatId + StatIDStringStorage) is a candidate", has40);
+
+        // Every candidate must have its own ProbeResult slot: ProbeAllStrides stores them
+        // in a fixed array of 5 with a matching static_assert. A sixth needs BOTH widened.
+        EXPECT("A5: the candidate set still fits ProbeAllStrides' fixed array of 5",
+               std::size(Lineal::kItemStrideCandidates) <= 5);
+
+        // ⚠ Every value must be 8-aligned or 4-aligned and plausible as an item size --
+        // a typo here is not caught by anything else, and a bogus candidate can only
+        // steal a detection, never add one.
+        for (int st : Lineal::kItemStrideCandidates) {
+            EXPECT("A5: every candidate stride is a plausible item size",
+                   st >= 16 && st <= 64 && (st % 4) == 0);
+        }
+    }
+
+    // A5. UE 5.7.0's Build.h began defining ENABLE_STATNAMEDEVENTS_UOBJECT in the
+    // UE_BUILD_TEST block, which appends TStatId + StatIDStringStorage to FUObjectItem:
+    // 24 + 8 + 8 = 40, Object still at +0x08.
+    //
+    // gcd(40,20) = 20, so a stride-20 probe alternates between the real Object and StatID.
+    // StatID is LAZILY NULL ("0 if nobody asked for it yet"), and Aura::ProbeStride counts
+    // a zero as `null`, NOT `bad`. So the alias produces half the named count with ZERO bad
+    // -- which is why it sailed past `bestNamed > bestBad` and was logged as a confident
+    // success instead of a tentative one. Model that exact profile over 200 probes:
+    {
+        const int realNamed = 200, realBad = 0;          // stride 40 on a real 40-byte item
+        const int aliasNamed = 100, aliasBad = 0;        // stride 20: every other probe is a null StatID
+        const int realScore  = StrideScore(realNamed,  realNamed,  realBad);
+        const int aliasScore = StrideScore(aliasNamed, aliasNamed, aliasBad);
+        EXPECT("A5: the divisor alias scores 0 bad -- which is why it looked confident",
+               aliasBad == 0);
+        EXPECT("A5: but the true stride still outscores it 2:1", realScore > aliasScore);
+        EXPECT("A5: and PreferStride picks the true 40 over the alias 20",
+               PreferStride(realScore, aliasScore, 40, 20));
+    }
+
+    // ⚠ THE OTHER DIRECTION, which is why a bare `score > best` was not enough. Every
+    // candidate is probed against the same NUMBER of items, not the same byte range, so on
+    // a REAL 20-byte item stride 40 reads every other item -- all of them valid. Identical
+    // named, identical bad, identical score. Nothing but the tie-break separates them, and
+    // picking 40 there would halve the pool just as surely.
+    {
+        const int score20 = StrideScore(200, 200, 0);
+        const int score40 = StrideScore(200, 200, 0);
+        EXPECT("A5: a stride and its multiple TIE on a correct pool", score20 == score40);
+        EXPECT("A5: the tie goes to the SMALLER stride (the true item size)",
+               !PreferStride(score40, score20, 40, 20));
+        EXPECT("A5: ...and not to the larger, whichever order they are probed in",
+               PreferStride(score20, score40, 20, 40));
+    }
+
+    // The same tie already existed for 16/32 before 40 was added, so this is not new
+    // behaviour introduced by A5 -- only newly explicit.
+    EXPECT("A5: 16 beats 32 on a tie", PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 16, 32));
+    EXPECT("A5: 32 does not beat 16 on a tie", !PreferStride(StrideScore(200,200,0), StrideScore(200,200,0), 32, 16));
+
+    // First candidate always wins against the sentinel, whatever its score.
+    EXPECT("A5: bestStride 0 means nothing chosen yet", PreferStride(-999, INT_MIN, 40, 0));
+
+    // ⚠ WHAT ACTUALLY SEPARATES THE TWO ALIAS SHAPES -- and it is NOT the score. My first
+    // draft of this test asserted the garbage alias scores negative; it does not
+    // (StrideScore(100,100,100) = 1000-300 = 700), and the suite caught it. Both aliases
+    // score positive. The gate they differ on is StrideQualityOk:
+    //   16 vs a real 32 (2026-08-05): lands on garbage, named ~= bad -> FAILS -> tentative
+    //   20 vs a real 40 (A5):         lands on a lazily-null StatID, bad == 0 -> PASSES
+    // which is why the older bug was merely wrong and this one was silent.
+    {
+        EXPECT("A5: both alias shapes score POSITIVE -- the score never told them apart",
+               StrideScore(100, 100, 100) > 0 && StrideScore(100, 100, 0) > 0);
+        EXPECT("A5: the garbage-landing alias FAILS the quality gate (named ~= bad)",
+               !Lineal::StrideQualityOk(100, 100));
+        EXPECT("A5: the null-landing alias PASSES it -- the silent case",
+               Lineal::StrideQualityOk(100, 0));
+        EXPECT("A5: a count-only pass (no names) is not judged on names",
+               Lineal::StrideQualityOk(0, 50));
+    }
+}
 
 static void Test_Lineal_SerialOffsetForLayout() {
     using Lineal::SerialOffsetForLayout;
@@ -866,6 +972,9 @@ static void Test_Lineal_SerialOffsetForLayout() {
 
     EXPECT("classic 24 -> 0x10", SerialOffsetForLayout(M::Classic, 24, 0, 0x0C) == 0x10);
     EXPECT("classic 32 -> 0x10", SerialOffsetForLayout(M::Classic, 32, 0, 0x0C) == 0x10);
+    // A5: UE 5.7+ Test build. The stat tail is APPENDED, so the serial does not move.
+    EXPECT("classic 40 -> 0x10 (5.7+ Test, stat tail)",
+           SerialOffsetForLayout(M::Classic, 40, 0, 0x0C) == 0x10);
 
     // --- UE5.7+ unpacked: FlagsAndRefCount(8) + Object(8) + SerialNumber(4),
     // so the serial sits immediately after the object wherever that landed.
@@ -873,6 +982,10 @@ static void Test_Lineal_SerialOffsetForLayout() {
            SerialOffsetForLayout(M::Unpacked57, 24, 0x08, 0x0C) == 0x10);
     EXPECT("unpacked57 objOff 16 -> 0x18",
            SerialOffsetForLayout(M::Unpacked57, 32, 0x10, 0x0C) == 0x18);
+    // A5: the 40-byte Test-build item keeps Object at +0x08, so the serial stays 0x10 --
+    // the two extra fields sit AFTER ClusterRootIndex, not between Object and Serial.
+    EXPECT("unpacked57 40 objOff 8 -> 0x10 (5.7+ Test)",
+           SerialOffsetForLayout(M::Unpacked57, 40, 0x08, 0x0C) == 0x10);
 
     // --- Packed UE5.7+: layout is UNVERIFIED, so the value is whatever
     // set_packed_consts calibrated. It must pass through untouched -- including
@@ -4293,13 +4406,126 @@ static void Test_Neu_Legacy_Basic() {
     EXPECT_EQ_U64("legacy build count", L2.count, 4);
 }
 
+// ⛔ THE TWO CasePreservingName ANSWERS ARE DIFFERENT NUMBERS AND WERE CONFUSED TWELVE TIMES.
+// `Grimoire.h` has stated the rule for a long time -- SLOT 0x10 for a TPair<FName, 8-aligned-T>
+// value offset, sizeof 0x0C for a step to an adjacent FName / an FScriptDelegate stride -- and
+// it was STILL copied wrongly into eight call sites, because both answers are spelled
+// `bCasePreservingName ? … : 0x08` and the expression does not say which question it answers.
+// Measured 2026-09-06: 12 raw ternaries, 4 right and 8 wrong, with `Aura.cpp:3755` getting it
+// right four lines below one of the wrong ones and `Ubel.h:435` documenting 12 against writers
+// that set 0x10. All 20 sites now go through the two named helpers; this pins them.
+//
+// ⚠ Impact on every title measured to date is ZERO -- `bCasePreservingName` has two writers
+// inside a live 20-object vote, nothing can force it true, and 12 titles measured false. That is
+// precisely why it rotted: no test and no game could ever go red.
+static void Test_UeVersionCodeBounds() {
+    // The mapping itself.
+    EXPECT("UeVersionCode: 5.0 -> 500", Grimoire::UeVersionCode(5, 0) == 500);
+    EXPECT("UeVersionCode: 5.4 -> 504", Grimoire::UeVersionCode(5, 4) == 504);
+    EXPECT("UeVersionCode: 5.9 -> 509 (the top of the UE5 band)",
+           Grimoire::UeVersionCode(5, 9) == 509);
+    EXPECT("UeVersionCode: 4.11 -> 411 (MIN_SUPPORTED_UE_VERSION)",
+           Grimoire::UeVersionCode(4, 11) == 411);
+    EXPECT("UeVersionCode: 4.27 -> 427 (the top of the UE4 band)",
+           Grimoire::UeVersionCode(4, 27) == 427);
+
+    // ⭐ The bounds are the load-bearing half: they are what stops a GAME's version being read as
+    // an ENGINE version. Every literal below is a real ProductVersion measured on this machine.
+    EXPECT("UeVersionCode: OCTOPATH's 1.0 is NOT an engine version", Grimoire::UeVersionCode(1, 0) == 0);
+    EXPECT("UeVersionCode: DQ7R's 1.1 is NOT an engine version", Grimoire::UeVersionCode(1, 1) == 0);
+    EXPECT("UeVersionCode: Elliot's 1.2 is NOT an engine version", Grimoire::UeVersionCode(1, 2) == 0);
+    EXPECT("UeVersionCode: Titan Quest II's 63339.64744 is NOT an engine version",
+           Grimoire::UeVersionCode(63339, 64744) == 0);
+
+    // Just past each band, and the pre-UE4 major.
+    EXPECT("UeVersionCode: 5.10 is out of band (UE_MAX_UE5_MINOR)", Grimoire::UeVersionCode(5, 10) == 0);
+    EXPECT("UeVersionCode: 4.28 is out of band (UE_MAX_UE4_MINOR)", Grimoire::UeVersionCode(4, 28) == 0);
+    EXPECT("UeVersionCode: UE3 majors are rejected, NOT mapped to the sentinel here",
+           Grimoire::UeVersionCode(3, 0) == 0);
+    EXPECT("UeVersionCode: major 6 is rejected until a band is added for it",
+           Grimoire::UeVersionCode(6, 0) == 0);
+
+    // Every entry of the harvested oracle must map, or the arithmetic has drifted from Epic's
+    // real binaries. Values from tools/ue-crc-oracle.json (8 installed UE Editors).
+    struct { uint32_t maj, min, want; } kOracle[] = {
+        {4, 11, 411}, {4, 15, 415}, {4, 18, 418}, {4, 23, 423},
+        {4, 27, 427}, {5, 4, 504},  {5, 7, 507},  {5, 8, 508},
+    };
+    for (const auto& o : kOracle)
+        EXPECT("UeVersionCode: oracle entry maps", Grimoire::UeVersionCode(o.maj, o.min) == o.want);
+}
+
+static void Test_CrashReportCandidates() {
+    // The standard packaged layout: <root>/<Project>/Binaries/Win64/Game.exe, engine binaries at
+    // <root>/Engine/Binaries/Win64/. The correct answer is three levels up.
+    const std::wstring exe = L"D:\\SteamLibrary\\steamapps\\common\\P3R\\P3R\\Binaries\\Win64\\P3R.exe";
+    std::vector<std::wstring> c = Grimoire::CrashReportCandidates(exe);
+    const std::wstring want =
+        L"D:\\SteamLibrary\\steamapps\\common\\P3R\\Engine\\Binaries\\Win64\\CrashReportClient.exe";
+    bool found = false;
+    for (const auto& s : c) if (s == want) found = true;
+    EXPECT("CrashReportCandidates: the real P3R path is produced", found);
+    EXPECT("CrashReportCandidates: nearest ancestor first -- the exe's own dir leads",
+           !c.empty() && c[0].find(L"Win64\\Binaries") == std::wstring::npos
+           && c[0].rfind(L"D:\\SteamLibrary\\steamapps\\common\\P3R\\P3R\\Binaries\\Win64\\Engine", 0) == 0);
+
+    // Win32 is offered beside every Win64 -- older titles ship a 32-bit CrashReportClient.
+    size_t w32 = 0;
+    for (const auto& s : c) if (s.find(L"Win32") != std::wstring::npos) ++w32;
+    EXPECT("CrashReportCandidates: a Win32 candidate accompanies every Win64 one",
+           w32 * 2 == c.size());
+
+    // ⚠ Bounded. An unbounded walk-up would probe the drive root and every folder on the way.
+    EXPECT("CrashReportCandidates: at most CRC_MAX_ANCESTORS levels are probed",
+           c.size() <= static_cast<size_t>(Grimoire::CRC_MAX_ANCESTORS) * 2);
+
+    // Forward slashes are accepted -- paths reach us from GetModuleFileNameW but also from tests
+    // and configs.
+    EXPECT("CrashReportCandidates: forward slashes are a separator too",
+           !Grimoire::CrashReportCandidates(L"D:/Games/X/Binaries/Win64/X.exe").empty());
+
+    // Degenerate inputs must not walk off the top of the tree.
+    EXPECT("CrashReportCandidates: a bare filename yields nothing",
+           Grimoire::CrashReportCandidates(L"Game.exe").empty());
+    std::vector<std::wstring> root = Grimoire::CrashReportCandidates(L"D:\\Game.exe");
+    EXPECT("CrashReportCandidates: a drive root stops the walk rather than probing above it",
+           root.empty());
+}
+
+static void Test_DynOff_FNameSlotVsSizeof() {
+    const bool saved = DynOff::bCasePreservingName;
+
+    DynOff::bCasePreservingName = false;
+    EXPECT("FName: sizeof is 8 when not case-preserving", DynOff::SizeofFName() == 0x08);
+    EXPECT("FName: the 8-aligned slot is 8 too -- the two questions COINCIDE here",
+           DynOff::FNameSlotIn8Aligned() == 0x08);
+    EXPECT("FName: ...which is why a wrong site is invisible on every title measured so far",
+           DynOff::SizeofFName() == DynOff::FNameSlotIn8Aligned());
+
+    DynOff::bCasePreservingName = true;
+    EXPECT("FName: sizeof is 0xC under CasePreservingName (3x int32, alignof 4, NO trailing pad)",
+           DynOff::SizeofFName() == 0x0C);
+    EXPECT("FName: the slot is 0x10 -- padded by the 8-aligned member that FOLLOWS it",
+           DynOff::FNameSlotIn8Aligned() == 0x10);
+    EXPECT("FName: and they DIVERGE by exactly the 4 bytes of that padding",
+           DynOff::FNameSlotIn8Aligned() - DynOff::SizeofFName() == 4);
+    // The regression guard proper: 0x10 must never be reachable as a SIZE.
+    EXPECT("FName: sizeof is never 0x10 -- that value is the UObject Name->Outer slot",
+           DynOff::SizeofFName() != 0x10);
+
+    DynOff::bCasePreservingName = saved;
+}
+
 static void Test_Neu_Legacy_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{5,0},{6,1},{7,2}};
-    NeuPutLegacy(fm, 0x10000000, 0x20000000, es, 0x10);  // FName=16 -> stride 24, value @ +16
+    // The WRITER still lays out the real padded pair: value @ +0x10, stride 0x18. The
+    // READER below is now handed only sizeof(FName)=0xC and must derive that padding
+    // itself -- which turns what used to be a tautology into an actual test.
+    NeuPutLegacy(fm, 0x10000000, 0x20000000, es, 0x10);
     auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
     Neu::EnumNamesLayout L;
-    EXPECT("legacy CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x10, 16384, L));
+    EXPECT("legacy CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x0C, 16384, L));
     int32_t idx = 0; int64_t v = 0;
     Neu::ReadEntry(rd, L, 2, idx, v);
     EXPECT_EQ_U64("legacy CPN idx2", idx, 7);  EXPECT_EQ_U64("legacy CPN val2", v, 2);
@@ -4324,10 +4550,11 @@ static void Test_Neu_FNameData_Basic() {
 static void Test_Neu_FNameData_CasePreserving() {
     NeuFakeMem fm;
     std::vector<std::pair<int32_t,int64_t>> es = {{11,0},{22,1},{33,2}};
-    NeuPutFNameData(fm, 0x10000000, 0x30000000, 0x40000000, es, 0x10, true);  // FName=16 stride
+    // Packed FName[]: the stride IS sizeof(FName), so writer and reader agree on 0xC.
+    NeuPutFNameData(fm, 0x10000000, 0x30000000, 0x40000000, es, 0x0C, true);
     auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
     Neu::EnumNamesLayout L;
-    EXPECT("fnd CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x10, 16384, L));
+    EXPECT("fnd CPN detect", Neu::DetectLayout(rd, 0x10000000, 0x0C, 16384, L));
     int32_t idx = 0; int64_t v = 0;
     Neu::ReadEntry(rd, L, 1, idx, v);
     EXPECT_EQ_U64("fnd CPN idx1", idx, 22);  EXPECT_EQ_U64("fnd CPN val1", v, 1);
@@ -5364,6 +5591,376 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
 // Ubel.cpp — but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
+static void Test_SoftObjectPathSize() {
+    // A9: sizeof(FSoftObjectPath). The FName block pads UP to 8 before the trailing
+    // FString, so under CasePreservingName the two engine eras want DIFFERENT constants
+    // and neither a bare 0x10 nor a bare 0xC is right for both.
+
+    // --- non-CPN: slot and sizeof coincide at 8, so nothing here can go wrong ---
+    EXPECT("A9: non-CPN <=5.0  = 8 + 0x10 = 0x18",
+           DynOff::FSoftObjectPathSizeFor(0x08, false) == 0x18);
+    EXPECT("A9: non-CPN >=5.1  = 0x10 + 0x10 = 0x20",
+           DynOff::FSoftObjectPathSizeFor(0x08, true) == 0x20);
+
+    // --- CPN: the whole point ---
+    EXPECT("A9: CPN >=5.1 -- two 0xC FNames are ALREADY 8-aligned (0x18) -> 0x28",
+           DynOff::FSoftObjectPathSizeFor(0x0C, true) == 0x28);
+    EXPECT("A9: CPN <=5.0 -- a LONE 0xC FName pads to 0x10 -> 0x20",
+           DynOff::FSoftObjectPathSizeFor(0x0C, false) == 0x20);
+
+    // --- the two wrong answers this function exists to make unreachable ---
+    EXPECT("A9: the old bare-0x10 bug gave 0x30 for CPN >=5.1; we must not",
+           DynOff::FSoftObjectPathSizeFor(0x0C, true) != 0x30);
+    EXPECT("A9: a naive bare-0xC would give 0x1C for CPN <=5.0; we must not",
+           DynOff::FSoftObjectPathSizeFor(0x0C, false) != 0x1C);
+
+    // --- ⚠ THE REAL DAMAGE, end to end. With the old 0x30 payload, a CPN 5.1 TAGGED
+    //     pointer (true ElementSize 0x38) yields 0x08 -- ACCEPTED and LATCHED as a
+    //     measurement, silently outranking the version fallback. With the correct
+    //     payload the same input yields the true 0x10. ---
+    {
+        const int trueTagged = 0x10;
+        const int elemSize   = trueTagged + DynOff::FSoftObjectPathSizeFor(0x0C, true); // 0x38
+        EXPECT("A9: correct payload recovers the TRUE tagged envelope",
+               DynOff::PersistentPtrEnvelopeFor(elemSize, DynOff::FSoftObjectPathSizeFor(0x0C, true),
+                                                0x10, -1, 502) == trueTagged);
+        EXPECT("A9: the stale 0x30 payload silently yields the WRONG 0x08 instead",
+               DynOff::PersistentPtrEnvelopeFor(elemSize, 0x30, 0x10, -1, 502) == 0x08);
+    }
+
+    // --- the result is always 8-aligned (the FString tail guarantees it) and always
+    //     leaves room for the FString itself ---
+    for (int fn : { 0x08, 0x0C }) {
+        for (bool tlap : { false, true }) {
+            const int sz = DynOff::FSoftObjectPathSizeFor(fn, tlap);
+            EXPECT("A9: FSoftObjectPath size is 8-aligned", (sz % 8) == 0);
+            EXPECT("A9: FSoftObjectPath leaves room for the FString header", sz >= 0x18);
+        }
+    }
+}
+
+static void Test_FunctionFlagsOffset() {
+    // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
+    // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
+    // not retargeted, because 0xC0 is FirstPropertyToInit (an FProperty*) from UE 5.x.
+    // Both readers accept on `!= 0`, so a retarget would latch a pointer's low dword.
+
+    // --- measured rows, from the 31 UVTD MemberVarLayout templates ---
+    EXPECT("A3: 4.11 = 0x88", DynOff::FunctionFlagsOffsetFor(411, false) == 0x88);
+    EXPECT("A3: 4.21 = 0x88 -- NOT 0x98; the old `>= 421` band was off by one",
+           DynOff::FunctionFlagsOffsetFor(421, false) == 0x88);
+    EXPECT("A3: 4.22 = 0x98", DynOff::FunctionFlagsOffsetFor(422, false) == 0x98);
+    EXPECT("A3: 4.24 = 0x98", DynOff::FunctionFlagsOffsetFor(424, false) == 0x98);
+    EXPECT("A3: 4.25 = 0xB0", DynOff::FunctionFlagsOffsetFor(425, false) == 0xB0);
+
+    // --- FLAT for nine consecutive versions, 4.25 through 5.8. This is the property the
+    //     dead 0xC0 band contradicted, so assert it across the whole range. ---
+    for (unsigned v : { 425u, 426u, 427u, 500u, 501u, 502u, 503u, 504u, 505u, 506u, 507u, 508u }) {
+        EXPECT("A3: FunctionFlags is 0xB0 for every version 4.25-5.8",
+               DynOff::FunctionFlagsOffsetFor(v, false) == 0xB0);
+    }
+
+    // --- 0xC0 IS FirstPropertyToInit. No version, in either case-preserving mode, may
+    //     ever resolve to it, and it must not appear in the fallback sweep either. ---
+    for (unsigned v = 411; v <= 509; ++v) {
+        EXPECT("A3: no version resolves to 0xC0 (FirstPropertyToInit)",
+               DynOff::FunctionFlagsOffsetFor(v, false) != 0xC0);
+        EXPECT("A3: no CPN version resolves to 0xC0 either",
+               DynOff::FunctionFlagsOffsetFor(v, true) != 0xC0);
+    }
+    for (int off : DynOff::FUNCTIONFLAGS_SWEEP) {
+        EXPECT("A3: the sweep never tries 0xC0", off != 0xC0);
+        EXPECT("A3: the sweep never tries 0xA8, which matches no version", off != 0xA8);
+    }
+
+    // --- case-preserving adds a uniform +8 (measured: 4_27_CasePreserving = 0xB8 vs
+    //     4_27's 0xB0). Neither reader consulted it before, and 0xB8 sat LAST in the
+    //     old sweep, behind the 0xC0 that would have matched first. ---
+    EXPECT("A3: 4.27 CPN = 0xB8", DynOff::FunctionFlagsOffsetFor(427, true) == 0xB8);
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;
+        EXPECT("A3: CPN is exactly +8 at every version",
+               DynOff::FunctionFlagsOffsetFor(v, true)
+                   == DynOff::FunctionFlagsOffsetFor(v, false) + 8);
+    }
+
+    // --- the sweep must be able to reach every value the table can produce, or the
+    //     fallback cannot rescue a version whose primary read came back 0 ---
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;
+        for (bool cpn : { false, true }) {
+            const int want = DynOff::FunctionFlagsOffsetFor(v, cpn);
+            bool found = false;
+            for (int off : DynOff::FUNCTIONFLAGS_SWEEP) if (off == want) found = true;
+            EXPECT("A3: the sweep covers every offset the table can produce", found);
+        }
+    }
+
+    // --- 0xB8 must be tried BEFORE anything that is not a real FunctionFlags offset.
+    //     In the old sweep it was last, behind 0xC0 and 0xA8. ---
+    int idxB8 = -1, idxLast = -1, n = 0;
+    for (int off : DynOff::FUNCTIONFLAGS_SWEEP) { if (off == 0xB8) idxB8 = n; idxLast = n; ++n; }
+    EXPECT("A3: 0xB8 (the case-preserving 4.25+ value) is in the sweep", idxB8 >= 0);
+    EXPECT("A3: 0xB8 is not left until last", idxB8 < idxLast);
+    EXPECT("A3: 0xB0 is tried first -- it covers 4.25 through 5.8",
+           DynOff::FUNCTIONFLAGS_SWEEP[0] == 0xB0);
+}
+
+static void Test_ProcessEventVTableSlot() {
+    // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
+    // NOT a producible version -- versions are major*100+minor, capped at 509. So every
+    // UE5 game silently took 0x220. These assertions exist to make that class of defect
+    // loud rather than silent.
+
+    // --- the six values this repo already had, from sources independent of the oracle ---
+    EXPECT("A2: 4.26 = 0x218 (FF7R note's stock 4.26)",
+           DynOff::ProcessEventVTableSlotFor(426) == 0x218);
+    EXPECT("A2: 4.27 = 0x220 (DropIn PDB + Geri/SBDR/P3R/Elliot)",
+           DynOff::ProcessEventVTableSlotFor(427) == 0x220);
+    EXPECT("A2: 5.4 = 0x268 (DragonSword)",
+           DynOff::ProcessEventVTableSlotFor(504) == 0x268);
+    EXPECT("A2: 5.6 = 0x260 (Lushfoil)",
+           DynOff::ProcessEventVTableSlotFor(506) == 0x260);
+    EXPECT("A2: 5.7 = 0x260 (Solarpunk)",
+           DynOff::ProcessEventVTableSlotFor(507) == 0x260);
+    EXPECT("A2: 5.8 = 0x250 (5.8 drops PostInterpChange + IsDestructionThreadSafe)",
+           DynOff::ProcessEventVTableSlotFor(508) == 0x250);
+
+    // --- 0x218 is slot 67, OverridePerObjectConfigSection, one slot BEFORE
+    //     ProcessEvent on 4.27. Hooking it is the build-647 failure. No version may
+    //     resolve to it except 4.26, where it is genuinely correct. ---
+    for (unsigned v = 411; v <= 509; ++v) {
+        const int slot = DynOff::ProcessEventVTableSlotFor(v);
+        EXPECT("A2: only 4.26 may resolve to 0x218", slot != 0x218 || v == 426);
+    }
+
+    // --- THE DEFECT ITSELF, asserted as unreachable: no UE5 version may return the
+    //     0x220 the old table gave all of them, and none may return the 0x228 that
+    //     the unreachable >= 550 arm held (no engine version has that slot at all). ---
+    for (unsigned v = 500; v <= 509; ++v) {
+        EXPECT("A2: no UE5 version resolves to the old blanket 0x220",
+               DynOff::ProcessEventVTableSlotFor(v) != 0x220);
+        EXPECT("A2: 0x228 is not any version's slot",
+               DynOff::ProcessEventVTableSlotFor(v) != 0x228);
+    }
+
+    // --- the rows A2's own first draft got WRONG. It proposed `>= 500 -> 0x268`,
+    //     which is right only for 5.2-5.4. These three are why the oracle was worth
+    //     reading instead of shipping the hand-derived ladder. ---
+    EXPECT("A2: 5.0 is 0x258, NOT 0x268", DynOff::ProcessEventVTableSlotFor(500) == 0x258);
+    EXPECT("A2: 5.1 is 0x260, NOT 0x268", DynOff::ProcessEventVTableSlotFor(501) == 0x260);
+    EXPECT("A2: 5.5 is 0x278, NOT 0x268 (5.5 inserts GetVersePath + CollectSaveOverrides)",
+           DynOff::ProcessEventVTableSlotFor(505) == 0x278);
+
+    // --- NON-MONOTONIC, in both directions. A `>=` ladder cannot express this, which
+    //     is exactly the "simplification" that would reintroduce the bug. ---
+    EXPECT("A2: 4.21 is LOWER than 4.20 (0x200 < 0x208)",
+           DynOff::ProcessEventVTableSlotFor(421) < DynOff::ProcessEventVTableSlotFor(420));
+    EXPECT("A2: 5.6 is LOWER than 5.5 (0x260 < 0x278)",
+           DynOff::ProcessEventVTableSlotFor(506) < DynOff::ProcessEventVTableSlotFor(505));
+    EXPECT("A2: 5.8 is LOWER than 5.7 (0x250 < 0x260)",
+           DynOff::ProcessEventVTableSlotFor(508) < DynOff::ProcessEventVTableSlotFor(507));
+
+    // --- every version we claim to support has a measurement, and every slot is a
+    //     plausible, 8-aligned vtable offset inside the pattern scanner's own window ---
+    for (unsigned v = 411; v <= 508; ++v) {
+        if (v % 100 > 27 && v < 500) continue;   // 4.28..4.99 are not engine versions
+        const int slot = DynOff::ProcessEventVTableSlotFor(v);
+        EXPECT("A2: every supported version has a measured slot", slot != 0);
+        EXPECT("A2: every slot is 8-aligned", (slot % 8) == 0);
+        EXPECT("A2: every slot is inside the pattern scanner's [0x100,0x300) window",
+               slot >= 0x100 && slot < 0x300);
+    }
+
+    // --- unmeasured versions return 0 so the caller can say "extrapolated" instead of
+    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 is unreleased. ---
+    EXPECT("A2: 4.10 (below the 4.11 floor) has no measurement",
+           DynOff::ProcessEventVTableSlotFor(410) == 0);
+    EXPECT("A2: 5.9 (unreleased) has no measurement",
+           DynOff::ProcessEventVTableSlotFor(509) == 0);
+    EXPECT("A2: 550 -- the value the dead arm tested for -- has no measurement",
+           DynOff::ProcessEventVTableSlotFor(550) == 0);
+}
+
+static void Test_PersistentPtrEnvelope() {
+    // A1: UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest (present at
+    // 5.2.1-release PersistentObjectPtr.h:243, absent at 5.3.2-release:228), so the
+    // payload of a soft/lazy pointer moves up -- by 8 for an 8-aligned payload,
+    // by only 4 for a 4-aligned one. Both offsets were hardcoded 0x10 before this.
+    //
+    //   payload             align   <=5.2   >=5.3    sizeof <=5.2 / >=5.3
+    //   FSoftObjectPath       8     0x10    0x08     0x30|0x28 / 0x28
+    //   FUniqueObjectGuid     4     0x0C    0x08     0x1C      / 0x18
+    const int UNMEASURED = -1;
+
+    // --- soft, measured from a real ElementSize (the version argument is ignored
+    //     on this path -- that is the entire point of measuring) ---
+    // UE <= 5.0: path is FName(8) + FString(16) = 0x18, envelope 0x10 -> 0x28
+    EXPECT("A1: soft <=5.0 tagged, elem 0x28 - path 0x18 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x18, 0x10, UNMEASURED, 427) == 0x10);
+    // UE 5.1-5.2: path is FTopLevelAssetPath(16) + FString(16) = 0x20, envelope 0x10 -> 0x30
+    EXPECT("A1: soft 5.1-5.2 tagged, elem 0x30 - path 0x20 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x30, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    // UE >= 5.3: same path, tag gone -> 0x28
+    EXPECT("A1: soft >=5.3 untagged, elem 0x28 - path 0x20 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, UNMEASURED, 508) == 0x08);
+
+    // ⚠ THE AMBIGUITY THIS FUNCTION EXISTS TO RESOLVE: 0x28 is a legal ElementSize
+    // in BOTH eras. Matching whole sizes against a table would be a coin flip; only
+    // subtracting the payload size separates them. Same elemSize, opposite answers:
+    EXPECT("A1: elem 0x28 is ambiguous alone -- payload 0x18 says tagged",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x18, 0x10, UNMEASURED, 508) == 0x10);
+    EXPECT("A1: elem 0x28 is ambiguous alone -- payload 0x20 says untagged",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, UNMEASURED, 427) == 0x08);
+
+    // --- lazy: FUniqueObjectGuid is a bare FGuid at alignof 4, so the tagged
+    //     envelope is 0x0C. 0x10 is correct in NO era, which is what made the
+    //     pre-fix code read 4 bytes into the GUID and 4 bytes past its end. ---
+    EXPECT("A1: lazy <=5.2 tagged, elem 0x1C - guid 0x10 -> +0x0C",
+           DynOff::PersistentPtrEnvelopeFor(0x1C, 0x10, 0x0C, UNMEASURED, 502) == 0x0C);
+    EXPECT("A1: lazy >=5.3 untagged, elem 0x18 - guid 0x10 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x18, 0x10, 0x0C, UNMEASURED, 508) == 0x08);
+    for (unsigned ver : { 411u, 427u, 500u, 502u, 503u, 508u }) {
+        EXPECT("A1: lazy never resolves to 0x10 in any era",
+               DynOff::PersistentPtrEnvelopeFor(0x1C, 0x10, 0x0C, UNMEASURED, ver) != 0x10);
+    }
+
+    // --- CasePreservingName widens both FNames, so the path grows and the
+    //     envelope must NOT move with it (it is a property of the tag, not the payload) ---
+    // CPN payloads corrected by A9: sizeof(FName) is 0xC, so FTopLevelAssetPath is
+    // 2*0xC = 0x18 (already 8-aligned) + FString 0x10 = 0x28. The old 0x30 came from
+    // reading the UObject Name->Outer SLOT as a sizeof.
+    EXPECT("A1: soft CPN 5.1-5.2, elem 0x38 - path 0x28 -> +0x10",
+           DynOff::PersistentPtrEnvelopeFor(0x38, 0x28, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: soft CPN >=5.3, elem 0x30 - path 0x28 -> +0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x30, 0x28, 0x10, UNMEASURED, 508) == 0x08);
+    // ⚠ THE TRAP the A9 payload fix removes: with the old 0x30 payload, a CPN 5.1 TAGGED
+    // pointer (real ElementSize 0x38) yields 0x38-0x30 = 0x08, which this function ACCEPTS
+    // and the caller LATCHES -- a bogus measurement that then outranks the version fallback.
+    EXPECT("A9: the stale 0x30 CPN payload would have been accepted as a bogus 0x08",
+           DynOff::PersistentPtrEnvelopeFor(0x38, 0x30, 0x10, UNMEASURED, 502) == 0x08);
+
+    // --- a difference the engine cannot produce must be REFUSED, not trusted ---
+    EXPECT("A1: implausible difference falls back, does not invent an offset",
+           DynOff::PersistentPtrEnvelopeFor(0x2C, 0x18, 0x10, UNMEASURED, 508) == 0x08);
+    EXPECT("A1: elemSize <= payload cannot measure anything",
+           DynOff::PersistentPtrEnvelopeFor(0x10, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: a garbage elemSize of 0 falls back to the version default",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+
+    // --- once latched, an unmeasurable call returns the LATCH, never the version
+    //     guess. This is the case the fix is really for: a misdetected version. ---
+    EXPECT("A1: a latch beats the version fallback (misdetected version)",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, 0x08, 427) == 0x08);
+    EXPECT("A1: a latch beats the version fallback, the other way",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, 0x10, 508) == 0x10);
+    // ...but a real measurement still overrides a stale latch.
+    EXPECT("A1: a real measurement overrides a stale latch",
+           DynOff::PersistentPtrEnvelopeFor(0x28, 0x20, 0x10, 0x10, 427) == 0x08);
+
+    // --- the version fallback's own cut is exactly 5.3, on both sides ---
+    EXPECT("A1: fallback at 5.2 is tagged",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 502) == 0x10);
+    EXPECT("A1: fallback at 5.3 is untagged",
+           DynOff::PersistentPtrEnvelopeFor(0, 0x20, 0x10, UNMEASURED, 503) == 0x08);
+}
+
+static void Test_UBoolPropFieldSize() {
+    using DynOff::UBoolPropFieldSizeFor;
+
+    // A6. UBOOLPROP_FIELDSIZE had ZERO writers against nine readers -- the FProperty arm of
+    // ValidateAndFixOffsets derived the whole subclass family and had no `else`, so every
+    // UE4 <4.25 game kept the 0x70 default no matter what its Offset_Internal probed to.
+
+    // --- the measured rows, from all 31 UVTD MemberVarLayout templates ---
+    EXPECT("A6: 4.18-4.24 stock, 0x44 -> 0x70", UBoolPropFieldSizeFor(0x44, 422, false) == 0x70);
+    EXPECT("A6: 4.11-4.17 stock, 0x50 -> 0x78", UBoolPropFieldSizeFor(0x50, 415, false) == 0x78);
+    EXPECT("A6: 4.27 CasePreserving, 0x4C -> 0x80", UBoolPropFieldSizeFor(0x4C, 427, true) == 0x80);
+
+    // ⚠ THE ROW THE AUDIT WOULD HAVE GOT WRONG. It prescribed a flat `+ 0x2C`. The delta is
+    // 0x28 for 4.11-4.17 because Offset_Internal and RepNotifyFunc are in the OPPOSITE order
+    // there (4.11: RepNotifyFunc 0x48 then Offset_Internal 0x50, total 0x78; 4.18:
+    // Offset_Internal 0x44 then RepNotifyFunc 0x48, total 0x70). Seven versions, all inside
+    // our 4.11 floor.
+    EXPECT("A6: 4.17 uses the 0x28 delta, NOT 0x2C",
+           UBoolPropFieldSizeFor(0x50, 417, false) == 0x50 + 0x28);
+    EXPECT("A6: 4.18 is where it becomes 0x2C",
+           UBoolPropFieldSizeFor(0x44, 418, false) == 0x44 + 0x2C);
+    EXPECT("A6: a flat +0x2C would be WRONG at 4.11-4.17",
+           UBoolPropFieldSizeFor(0x50, 415, false) != 0x50 + 0x2C);
+
+    // --- THE REGRESSION ROW. DQ XI S (UE4.22, UProperty mode, a whole-layout +0x10 shift,
+    //     docs/test-games.md). Offset_Internal probes to 0x54, so the true FieldSize is
+    //     0x80 -- and the old default 0x70 plus Ubel's ±4/+8/-8 spread tops out at 0x78,
+    //     so NO probe could reach it. boolFieldMask stayed 0 and the reader fell back to
+    //     `byteVal != 0`, reporting a native bitfield bool as true whenever ANY sibling in
+    //     its byte was set. ---
+    EXPECT("A6: DQ XI S shifted 4.22, 0x54 -> 0x80", UBoolPropFieldSizeFor(0x54, 422, false) == 0x80);
+    EXPECT("A6: ...which the old 0x70 default could not reach even with the ±8 spread",
+           UBoolPropFieldSizeFor(0x54, 422, false) > 0x70 + 8);
+
+    // --- deriving from the PROBE is what makes a shifted game work: the same version with
+    //     an unshifted probe still lands on the stock value. ---
+    EXPECT("A6: the same version, unshifted, still gives the stock 0x70",
+           UBoolPropFieldSizeFor(0x44, 422, false) == 0x70);
+    for (int shift : { 0x00, 0x08, 0x10, 0x18 }) {
+        EXPECT("A6: a whole-layout shift moves FieldSize by exactly the same amount",
+               UBoolPropFieldSizeFor(0x44 + shift, 422, false) == 0x70 + shift);
+    }
+
+    // --- ⚠ WHY UBEL'S PROBE SPREAD MUST SURVIVE THIS FIX. The two live deltas differ by
+    //     exactly 4 and the CasePreserving case by 8, so a MISDETECTED version is still
+    //     rescued by the { base, ±4, +8, -8 } spread. Narrowing it "now that the base is
+    //     derived" would remove that net. ---
+    {
+        const int trueAt415 = UBoolPropFieldSizeFor(0x50, 415, false);
+        const int guessAs420 = UBoolPropFieldSizeFor(0x50, 420, false);   // version misdetected high
+        EXPECT("A6: a wrong-version guess is off by exactly 4 -- inside the spread",
+               guessAs420 - trueAt415 == 4);
+        const int cpn = UBoolPropFieldSizeFor(0x44, 422, true);
+        const int nonCpn = UBoolPropFieldSizeFor(0x44, 422, false);
+        EXPECT("A6: a missed CasePreserving is off by exactly 8 -- also inside the spread",
+               cpn - nonCpn == 8);
+
+        // ⛔ BUT THE TWO ERROR TERMS DO NOT COMPOSE, and the pair above cannot show that because
+        // each pins its term IN ISOLATION. Get BOTH wrong in the SAME direction and the miss is
+        // 4 + 8 = 0xC, which is OUTSIDE the spread { 0, -4, +4, +8, -8 } -- so the probe does NOT
+        // recover, and describing the spread as an unconditional net is wrong.
+        //   true   : 4.20, CasePreserving, Offset_Internal 0x50  -> 0x50 + 0x2C + 8 = 0x84
+        //   guessed: misdetected as 4.15 AND CPN missed          -> 0x50 + 0x28 + 0 = 0x78
+        // Direction matters and is why this is a THIRD assertion rather than a sum of the two
+        // above: misdetecting the version HIGH while missing CPN partially CANCELS (+4 then -8,
+        // net -4, still inside). Only a LOW version miss stacks with a missed CPN.
+        // RE-UE4SS ships a real-world shape that can land here: Kingdom Hearts 3's config carries
+        // the pre-4.18 tail order (RepNotifyFunc before Offset_Internal), i.e. exactly the layout
+        // that invites a low version guess.
+        // ⛔ This is NOT an argument for widening the spread -- [A6-BOOLFIELD-2026-09-05] and the
+        // register both say do not. It is an argument for not claiming a net that has a hole.
+        const int trueBoth   = UBoolPropFieldSizeFor(0x50, 420, true);
+        const int wrongBoth  = UBoolPropFieldSizeFor(0x50, 415, false);
+        EXPECT("A6: a LOW version miss AND a missed CPN compose to 0xC",
+               trueBoth - wrongBoth == 0xC);
+        EXPECT("A6: ...which is OUTSIDE the { base, +-4, +8, -8 } spread -- the net has a hole",
+               (trueBoth - wrongBoth) != 0 && (trueBoth - wrongBoth) != 4
+               && (trueBoth - wrongBoth) != -4 && (trueBoth - wrongBoth) != 8
+               && (trueBoth - wrongBoth) != -8);
+        // The counter-case, so the claim above is not mistaken for "any two errors escape":
+        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x50, 420, false);
+        const int trueLoCpn     = UBoolPropFieldSizeFor(0x50, 415, true);
+        EXPECT("A6: a HIGH version miss partially cancels a missed CPN -- net 4, still inside",
+               trueLoCpn - hiMissCpnMiss == 4);
+    }
+
+    // --- every result must be a plausible offset, and strictly past Offset_Internal ---
+    for (unsigned v : { 411u, 415u, 417u, 418u, 422u, 424u }) {
+        for (bool cpn : { false, true }) {
+            const int r = UBoolPropFieldSizeFor(0x44, v, cpn);
+            EXPECT("A6: FieldSize always lands past Offset_Internal", r > 0x44);
+            EXPECT("A6: FieldSize is 4-aligned", (r % 4) == 0);
+        }
+    }
+}
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -6688,6 +7285,60 @@ static void Test_Aura_StructPathGuard() {
     EXPECT("path empty at the end", path.empty());
 }
 
+static void Test_VersionMarkers() {
+    using DynOff::IsReorderedFUObjectItem57;
+    using DynOff::IsVirtualDtorFFieldClass58;
+
+    // A4. The raise-only ladder topped out at 507, so a string-stripped UE 5.8 title
+    // badged as 5.7 -- the 507 predicate is satisfied by a 5.8 binary too, because
+    // FUObjectItem is byte-identical between them.
+
+    // --- 5.7 reorder: the OFFSET is the signal, the size is a sanity bound ---
+    EXPECT("A4: 5.7 Shipping (24B @ +0x08)",     IsReorderedFUObjectItem57(0x08, 24));
+    EXPECT("A4: 5.7 Development (32B @ +0x08)",  IsReorderedFUObjectItem57(0x08, 32));
+    EXPECT("A4: 5.7 Test (40B @ +0x08)",         IsReorderedFUObjectItem57(0x08, 40));
+
+    // ⚠ THE GAP A5 EXPOSED. Pinning the size to ==24 silently excluded every stripped
+    // 5.7+ Development or Test build from the raise. Assert that both now qualify, and
+    // that they are exactly the sizes Lineal advertises for the reordered layout.
+    for (int st : Lineal::kItemStrideCandidates) {
+        if (st == 16 || st == 20) continue;   // pre-5.7 classic / Avowed packed
+        EXPECT("A4: every post-reorder candidate size qualifies for the 5.7 raise",
+               IsReorderedFUObjectItem57(0x08, st));
+    }
+
+    // --- what must NOT raise ---
+    // Avowed: a CUSTOM 20-byte packed UE5.3 item. Object is at +0x00
+    // (docs/avowed-gobjects-fix.md), so the offset test excludes it by itself -- the size
+    // guard was never the discriminator it was documented as.
+    EXPECT("A4: Avowed 20B @ +0x00 is not a version signal",
+           !IsReorderedFUObjectItem57(0x00, 20));
+    EXPECT("A4: ...and would not be even if its size were 24",
+           !IsReorderedFUObjectItem57(0x00, 24));
+    EXPECT("A4: classic 16B @ +0x00 does not raise", !IsReorderedFUObjectItem57(0x00, 16));
+    EXPECT("A4: an implausible size at the right offset still does not raise",
+           !IsReorderedFUObjectItem57(0x08, 48));
+    EXPECT("A4: a zero/undetected item is not a signal", !IsReorderedFUObjectItem57(0x08, 0));
+
+    // --- 5.8: FFieldClass::Name moved 0x00 -> 0x08 when ~FFieldClass() became virtual ---
+    EXPECT("A4: Name@+0x08 = UE5.8+",  IsVirtualDtorFFieldClass58(0x08));
+    // ⚠ 0x00 is the PRE-PROBE DEFAULT as well as the <=5.7 answer, so it must never raise:
+    // a game whose probe never ran would otherwise be indistinguishable from a real 5.7.
+    EXPECT("A4: Name@+0x00 (<=5.7, and the pre-probe default) does not raise",
+           !IsVirtualDtorFFieldClass58(0x00));
+    // -1 is what PickFFieldClassNameOffset returns when NEITHER candidate matched. It is
+    // never latched, but assert it cannot raise in case that ever changes.
+    EXPECT("A4: a failed probe (-1) does not raise", !IsVirtualDtorFFieldClass58(-1));
+    EXPECT("A4: no other offset raises", !IsVirtualDtorFFieldClass58(0x10));
+
+    // --- the two markers are INDEPENDENT: a 5.8 binary satisfies BOTH, which is exactly
+    //     why 507 alone was not enough to stop at the right version. ---
+    EXPECT("A4: a 5.8 Shipping binary satisfies the 5.7 predicate too",
+           IsReorderedFUObjectItem57(0x08, 24) && IsVirtualDtorFFieldClass58(0x08));
+    EXPECT("A4: a genuine 5.7 satisfies only the first",
+           IsReorderedFUObjectItem57(0x08, 24) && !IsVirtualDtorFFieldClass58(0x00));
+}
+
 static void Test_FFieldClassName_Probe() {
     std::printf("\n[DynOff::PickFFieldClassNameOffset]\n");
 
@@ -6934,7 +7585,12 @@ int main() {
     // exactly when something goes wrong tells you nothing at the only moment it
     // matters, and it passed locally, so there was nothing else to go on.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    g_trace = std::getenv("DLL_TEST_TRACE") != nullptr;
+    // getenv_s, not std::getenv: the shipping DLL target defines _CRT_SECURE_NO_WARNINGS
+    // (dll/CMakeLists.txt) but the test targets deliberately do not, so the deprecation is
+    // live here. Fixed at the call rather than by widening the suppression to the whole
+    // test target -- a real getenv misuse should still be able to warn.
+    size_t traceLen = 0;
+    g_trace = (getenv_s(&traceLen, nullptr, 0, "DLL_TEST_TRACE") == 0 && traceLen > 0);
 
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
@@ -6963,6 +7619,7 @@ int main() {
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
+    RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
@@ -7071,6 +7728,9 @@ int main() {
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
+    RUN(Test_UeVersionCodeBounds);
+    RUN(Test_CrashReportCandidates);
+    RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
     RUN(Test_Neu_FNameData_Basic);
     RUN(Test_Neu_FNameData_CasePreserving);
@@ -7106,6 +7766,11 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_SoftObjectPathSize);
+    RUN(Test_FunctionFlagsOffset);
+    RUN(Test_ProcessEventVTableSlot);
+    RUN(Test_PersistentPtrEnvelope);
+    RUN(Test_UBoolPropFieldSize);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);
@@ -7135,6 +7800,7 @@ int main() {
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
+    RUN(Test_VersionMarkers);
     RUN(Test_FFieldClassName_Probe);
 
     // Ubel — reflected struct preview: member width comes from the property (U17)

@@ -25,6 +25,124 @@ builds ≤696 in
 
 -----
 
+## 2026-09-06 - CrashReportClient.exe becomes a second version source, and a file-hash allow-list was measured to reject everything (build 3393)
+
+`Genau::kVersionDetectLogicRev` **6 -> 7**. Evidence:
+[`evidence/2026-09/crc-version-source/`](evidence/2026-09/crc-version-source/), claim tag
+`[CRCSOURCE-2026-09-06]`. Oracle: `tools/ue-crc-oracle.json`.
+
+### Why a second source at all
+
+`CrashReportClient.exe` ships **with the engine** and is never authored by the game team, so unlike
+the game exe its version can never be the GAME's version -- and the game exe's field frequently is
+(measured: OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, Titan Quest II 63339.64744).
+
+⭐ Its value is not the hit rate but WHERE it hits. DQ I&II HD-2D carried a misdetected `UE5.05` in
+this repo's own `docs/test-games.md` for months -- an error **across the UE4/UE5 boundary** -- and
+its CrashReportClient says `4.27.2.0`. P3R (a 4.27 fork) is the same shape. Those are exactly the
+titles where the memory-string tiers struggle.
+
+⭐ And it is INDEPENDENT, which is the real argument (working-lessons.md 1.4). Both poisoned
+hint-cache entries this repo has found -- Avowed and DragonSword, each holding a persisted runtime
+raise of 504 -- would have been caught by it: CrashReportClient reports 503 for both, agreeing with
+detection and disagreeing with the cache.
+
+### What was measured and REFUSED
+
+The proposal included a conservative form: accept a game's CRC only when its version **and file
+hash** match a known-official binary. Measured over 8 installed Editors and 66 game folders, that
+rule **accepts nothing** -- 0 of 8 game copies match an Editor copy, because CrashReportClient is
+rebuilt as part of each game's engine build. The version string is stock; the bytes are not:
+
+    4.27.2.0   Editor 19,469,792 B   DQ I&II 19,496,448 B   P3R 19,487,232 B
+    5.7.4.0    Editor 26,711,480 B   TQ2     26,725,376 B
+
+So `tools/ue-crc-oracle.json` pins the ProductVersion -> code ARITHMETIC against 8 real Epic
+binaries (4.11-5.8, all mapping cleanly) and is explicitly **not** an allow-list.
+
+⚠ Coverage is a per-machine sample, not a rate: 8 of 66 folders here ship one. Avowed, DQ XI S,
+OCTOPATH and DumperTest ship none, so "absent -> skip" is the common path and a first-class branch.
+
+### Priority, and the question it answers
+
+CrashReportClient is a **build-provenance** signal, so it ranks with the static detectors and NOT
+above the runtime ladder in `Frieren.cpp`. Measured on DragonSword: CRC 5.3.2.0 -> 503, detection
+503, and `CMC::GravityDirection` then raises to 504 at init. That is not a conflict -- the two
+answer different questions ("built from which engine" vs "has which engine features"), and a
+licensee fork backports features. The ladder keeps the last word.
+
+Where both resource sources exist and disagree, CRC wins and a WARN says so -- the disagreement is
+itself the finding.
+
+### Implementation notes
+
+`DetectVersionFromPEResource` was split into `ReadUeVersionFromFile(path, productLabel, fileLabel)`
+so both files are parsed by the SAME code; a second reader with its own copy of the parse and its
+own bounds is the defect shape 1.12 catalogues. The version arithmetic -- written out **four times**
+in that one function -- is now `Grimoire::UeVersionCode` once, with the 4.0-4.27 / 5.0-5.9 bounds
+that reject a game's own version.
+
+⚠ Every existing log line is preserved BYTE-FOR-BYTE, including the UE4 branch's different wording:
+`tools/verify/sweep_title.py` greps the literal `PE VERSIONINFO` and a committed evidence README
+quotes the UE5 line verbatim.
+
+Rev 7 is mandatory under `Genau.h`'s own rule: a title cached under rev 6 holds a verdict reached
+without this source and would never consult it.
+
+Tests: `dll_helpers_test` 2337 -> **2365** (+28) -- the version-code bounds, including every real
+game-version literal that must be rejected and every oracle entry that must map, plus the
+walk-up path derivation. Live: both branches on a manufactured fixture, the DISAGREE run being the
+negative control that proves the code runs at all.
+
+-----
+
+## 2026-09-06 - the version cache held a value detection cannot produce: `kVersionDetectLogicRev` 5 -> 6 (build 3390, measured live on DumperTest)
+
+`Genau::kVersionDetectLogicRev` **5 -> 6**. Evidence:
+[`evidence/2026-09/revbump6-cache-restamp/`](evidence/2026-09/revbump6-cache-restamp/),
+claim tag `[REVBUMP6-2026-09-06]`.
+
+### The first bump that is NOT a logic change
+
+Every previous bump followed `Genau.h`'s own rule -- *the detection logic changed, so re-derive
+every cached verdict under it*. Rev 6 does not: `DetectVersionDetailed` is byte-identical. What
+changed is that a cached **value** was found which the current detection cannot produce.
+
+Measured while settling Avowed's row: its record held `ueVersion=504`, and a forced fresh
+detection re-stamped it **503**. 504 for that binary is the runtime `CMC::GravityDirection`
+raise (`Frieren.cpp`) -- and that ladder runs in `UE5_Init`, **after** `Flamme::SaveResults` at
+the end of `FindAll`, so today it cannot write back. The 504 is residue of a write path that no
+longer exists.
+
+⭐ **And nothing would ever have re-derived it.** The cache-reuse branch skips detection entirely
+for any record stamped with the current rev, *however wrong the value is*. The stamp is not one of
+several ways to reach a poisoned entry -- it is the only one. So `Genau.h`'s bump rule gained a
+second clause: **also bump when a cached VALUE is found that the current detection cannot
+produce.** The rule as written covered the logic and said nothing about the data.
+
+### What it costs, and what it does not
+
+Live on DumperTest Development (cached 504 / rev 5):
+
+```
+FindAll: Cached version 504 was stamped by logic rev 5 (current 6) - re-detecting once and re-stamping.
+DetectVersion: PE VERSIONINFO -> UE 5.4 -> 504
+FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+The invalidation fires and the verdict is **unchanged** -- which is the point. Cost on this binary
+was **2 ms**, not rev 4's ~0.35 s; that older figure is the memory string-scan path, which a Tier-1
+VERSIONINFO hit never reaches. A stripped title (SquareEnix) still pays the scan. Locally this
+re-derives 44 cached records once each; Avowed re-detects 503 and is then raised to 504 at runtime
+exactly as before, so its badge does not move.
+
+⚠ **This does not overturn the A4 decision.** `audit-2026-09-05-vendor-ue582.md` and
+`verification-register.md` both say *do not bump for the 507/508 ladder*, and that still holds --
+the ladder is runtime-only and re-applied on every init, so it needs no invalidation. Rev 6 is for
+the residue of an older write path, not for the ladder.
+
+-----
+
 ## 2026-09-03 - FName index 1 is INTERIOR to "None": a probe that could never succeed, warning on every session (build 3368, verified live on DumperTest; re-verified 3369)
 
 Two fixes, both found by asking why a log line said something odd, and neither was the thing that

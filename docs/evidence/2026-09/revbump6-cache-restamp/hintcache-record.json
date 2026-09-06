@@ -1,0 +1,63 @@
+{
+  "note": "The one record the rev-6 acceptance test drove. Machine name and every path are absent from this file by construction -- a HintCache record carries only the PE hash, the image name and the scan verdict.",
+  "peHash": "6A9C1C8410F23000",
+  "before": {
+    "gNames": {
+      "method": "aob",
+      "patternId": "GNAM_V1",
+      "patternsHit": 10,
+      "patternsTried": 31
+    },
+    "gObjects": {
+      "method": "aob",
+      "patternId": "GOBJ_ES53_1",
+      "patternsHit": 1,
+      "patternsTried": 2
+    },
+    "gWorld": {
+      "method": "aob",
+      "patternId": "GWLD_TQ_1",
+      "patternsHit": 1,
+      "patternsTried": 2
+    },
+    "gameName": "DumperTest.exe",
+    "invokeTimeoutMsAt": "",
+    "lastScanUtc": "2026-09-05T13:54:58.2564797Z",
+    "peHash": "6A9C1C8410F23000",
+    "scanCount": 2,
+    "ueVersion": 504,
+    "ueVersionUserOverrideAt": "",
+    "versionDetectRev": 5,
+    "versionDetected": true
+  },
+  "after": {
+    "gNames": {
+      "method": "aob",
+      "patternId": "GNAM_V1",
+      "patternsHit": 1,
+      "patternsTried": 1
+    },
+    "gObjects": {
+      "method": "aob",
+      "patternId": "GOBJ_ES53_1",
+      "patternsHit": 1,
+      "patternsTried": 1
+    },
+    "gWorld": {
+      "method": "aob",
+      "patternId": "GWLD_TQ_1",
+      "patternsHit": 1,
+      "patternsTried": 1
+    },
+    "gameName": "DumperTest.exe",
+    "invokeTimeoutMsAt": "",
+    "lastScanUtc": "2026-09-06T04:48:55Z",
+    "lowConfidence": false,
+    "peHash": "6A9C1C8410F23000",
+    "scanCount": 3,
+    "ueVersion": 504,
+    "ueVersionUserOverrideAt": "",
+    "versionDetectRev": 6,
+    "versionDetected": true
+  }
+}

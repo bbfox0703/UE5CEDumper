@@ -1,0 +1,70 @@
+{
+  "_comment": "Known-official CrashReportClient.exe binaries, harvested from installed UE Editors. A game's CRC whose sha256 appears here is CORROBORATED; one that does not is plausible-but-uncorroborated, which is a lower tier, not a rejection. Harvested because Editors get uninstalled to reclaim disk and the hashes are then unobtainable without re-downloading tens of GB.",
+  "keyedBy": "sha256",
+  "entries": {
+    "89b08db1c62b558454f204c765c493bdd19fb303d91fedea4f999471be38bbdf": {
+      "editor": "UE_4.11",
+      "productVersion": "4.11.2.0",
+      "fileVersion": "4.11.2.0",
+      "code": "411",
+      "size": 13647808,
+      "sha256": "89b08db1c62b558454f204c765c493bdd19fb303d91fedea4f999471be38bbdf"
+    },
+    "e786b519968de0a523dcb3223bc71622c0c9fb51227ff269fa67d1ded82fa91d": {
+      "editor": "UE_4.15",
+      "productVersion": "4.15.3.0",
+      "fileVersion": "4.15.3.0",
+      "code": "415",
+      "size": 16818112,
+      "sha256": "e786b519968de0a523dcb3223bc71622c0c9fb51227ff269fa67d1ded82fa91d"
+    },
+    "c126706329d2942474f5d6b7b16fe7089a0bc4f1dfc404b8105874f3563f6b14": {
+      "editor": "UE_4.18",
+      "productVersion": "4.18.3.0",
+      "fileVersion": "4.18.3.0",
+      "code": "418",
+      "size": 17727424,
+      "sha256": "c126706329d2942474f5d6b7b16fe7089a0bc4f1dfc404b8105874f3563f6b14"
+    },
+    "36cdf4811fe6c6c438048ac7cf9f10fa544fa63934eba5d766b29975338940e7": {
+      "editor": "UE_4.23",
+      "productVersion": "4.23.1.0",
+      "fileVersion": "4.23.1.0",
+      "code": "423",
+      "size": 16771328,
+      "sha256": "36cdf4811fe6c6c438048ac7cf9f10fa544fa63934eba5d766b29975338940e7"
+    },
+    "5c3f2e0a43db12011b0618da788082cf31e1591d9e35fde758d5df4818ad3629": {
+      "editor": "UE_4.27",
+      "productVersion": "4.27.2.0",
+      "fileVersion": "4.27.2.0",
+      "code": "427",
+      "size": 19469792,
+      "sha256": "5c3f2e0a43db12011b0618da788082cf31e1591d9e35fde758d5df4818ad3629"
+    },
+    "17e058cc9a81b2fb351083c62281dda936624034f43190815cc162ddd6dd16cb": {
+      "editor": "UE_5.4",
+      "productVersion": "5.4.4.0",
+      "fileVersion": "5.4.4.0",
+      "code": "504",
+      "size": 25830120,
+      "sha256": "17e058cc9a81b2fb351083c62281dda936624034f43190815cc162ddd6dd16cb"
+    },
+    "f49ba2927f1ba08b1854c3646c3b10bbaabc26fa026f79dcce6f826fee7b2a0e": {
+      "editor": "UE_5.7",
+      "productVersion": "5.7.4.0",
+      "fileVersion": "5.7.4.0",
+      "code": "507",
+      "size": 26711480,
+      "sha256": "f49ba2927f1ba08b1854c3646c3b10bbaabc26fa026f79dcce6f826fee7b2a0e"
+    },
+    "a28450243c43fb68e73ac460a1f163e925a8a5c412a45a7528b116444a4a2ba1": {
+      "editor": "UE_5.8",
+      "productVersion": "5.8.2.0",
+      "fileVersion": "5.8.2.0",
+      "code": "508",
+      "size": 25756600,
+      "sha256": "a28450243c43fb68e73ac460a1f163e925a8a5c412a45a7528b116444a4a2ba1"
+    }
+  }
+}

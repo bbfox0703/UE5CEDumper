@@ -1,4 +1,4 @@
-// dll_core_test.cpp
+﻿// dll_core_test.cpp
 // UE5CEDumper — the first test target that compiles the DLL's CORE.
 //
 // WHY THIS EXISTS
@@ -47,14 +47,30 @@ namespace Stark { void SetInvokeTimeoutMs(int) {} }
 // the test chooses the UE version the core code branches on.
 uint32_t g_cachedUEVersion = 0;
 
-#include "../src/Macht.cpp"    // NOLINT
-#include "../src/Serie.cpp"    // NOLINT
-#include "../src/Ubel.cpp"     // NOLINT
-#include "../src/Radar.cpp"    // NOLINT
-#include "../src/Denken.cpp"   // NOLINT
-#include "../src/Flamme.cpp"   // NOLINT
-#include "../src/Aura.cpp"     // NOLINT
-#include "../src/Genau.cpp"    // NOLINT
+// ⚠ #undef between every include, and it is not just warning silencing.
+// Each of these .cpp files is its own translation unit in the real DLL, and each either
+// #defines LOG_CAT itself or inherits Sein.h's `#ifndef LOG_CAT -> ""` default. Concatenated
+// into ONE TU here, the second and later #defines are redefinitions (C4005) -- and worse, the
+// two files that define NOTHING (Radar.cpp, Denken.cpp) silently inherited whatever the
+// PREVIOUS include happened to leave behind, so their log lines were attributed to another
+// module's category in a way the shipping build never does. Undef-ing makes this harness
+// match the real build instead of merely compiling quietly.
+#undef LOG_CAT
+#include "../src/Macht.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Serie.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Ubel.cpp"       // NOLINT
+#undef LOG_CAT
+#include "../src/Radar.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Denken.cpp"     // NOLINT
+#undef LOG_CAT
+#include "../src/Flamme.cpp"     // NOLINT
+#undef LOG_CAT
+#include "../src/Aura.cpp"       // NOLINT
+#undef LOG_CAT
+#include "../src/Genau.cpp"      // NOLINT
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -184,6 +200,52 @@ int main() {
               std::to_string(seen).c_str());
     }
 
+    {   blk("A7 (the REAL one) — FindByAddress honours the poll; the two blocks above do NOT cover it");
+        // ⛔ WHY THIS BLOCK EXISTS: A7 WAS RECORDED AS VERIFIED BY TESTS THAT DO NOT TOUCH IT.
+        // The two blocks above are labelled "A7" and drive `Aura::ForEach`. But ForEach ALREADY
+        // had its poll -- it is one of the SIBLINGS A7 was made to match. The audit row says so
+        // exactly (docs/audit-2026-08-13-early-code-findings.md:278): "FindByAddress is the ONLY
+        // full-GObjects walk in the file with neither a Tot::Requested() poll nor a deadline".
+        // And FindByAddress (Aura.cpp:1867) hand-rolls `for (int32_t i = 0; i < count; ++i)` --
+        // it never calls ForEach. Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/`
+        // returned ZERO hits, so deleting A7's poll reddened nothing, while both
+        // verification-register.md and todo.md `[A7-CORETEST-2026-08-25]` said it was verified.
+        // A green claim computed by a different code path than the thing it claims about.
+        //
+        // ⚠ ANTI-VACUITY, and it is why this is four checks and not one: an UNCANCELLED lookup of
+        // an address that is not in the pool ALSO returns found == false. "Not found" therefore
+        // proves nothing on its own. The assertion is the FLIP of ONE FIXED ADDRESS under ONE
+        // CHANGED FLAG -- which is only meaningful because (a) establishes it is findable first.
+        const int32_t kIdx = 8000;      // past the i==4096 poll boundary, so a stop precedes the hit
+        const uintptr_t objAddr =
+            reinterpret_cast<uintptr_t>(pool.objects.data() + static_cast<size_t>(kIdx) * 64);
+
+        // (a) POSITIVE CONTROL -- the address really is findable, and by the EXACT path.
+        // Exactness matters: an exact hit returns at Aura.cpp:1909 and never enters the backward
+        // module scan, which the audit deliberately left unpolled.
+        ResetCancel();
+        auto hit = Aura::FindByAddress(objAddr);
+        check("FindByAddress finds an in-pool object when not cancelled", hit.found == true);
+        check("...as an EXACT match, so the backward scan is never entered", hit.exactMatch == true);
+        check("...at the index we planted it", hit.index == kIdx,
+              std::to_string(hit.index).c_str());
+
+        // (b) THE CASE A7 FIXED. The exact-match return is unconditional, so the ONLY thing that
+        // can turn this same address into a miss is the poll at Aura.cpp:1891.
+        ResetCancel();
+        Tot::g_perCommand.store(true);
+        auto cancelled = Aura::FindByAddress(objAddr);
+        check("A7: a cancelled FindByAddress abandons the walk", cancelled.found == false);
+        check("...and reports no index rather than a stale one", cancelled.index == -1,
+              std::to_string(cancelled.index).c_str());
+
+        // (c) NOT STICKY -- guards against a leaked global cancel turning every later block in
+        // this file into a false pass, which is the hazard ResetCancel's own comment describes.
+        ResetCancel();
+        check("...and the cancel is not sticky: the same address is found again",
+              Aura::FindByAddress(objAddr).found == true);
+    }
+
     // ── B18 — Extra Scan must bail on cancel, and say its results are partial ──────
     //
     // B18 as filed: "Extra Scan is uncancellable under an unbounded join => CE UI freezes".
@@ -296,7 +358,14 @@ int main() {
                                : "re-read — not reproduced by this fixture");
     }
 
-    printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+    // ⚠ THE SUMMARY USED TO BE PRINTED HERE, mid-main, and it UNDERCOUNTED SILENTLY.
+    // `check()` prints nothing on success, so the only visible evidence a block ran is its
+    // `blk()` label and the final tally. Every block appended after this point — SANEPROPS,
+    // and later the A1 lazy-stride block — executed and passed while the printed line still
+    // said "11 checks", i.e. the report and the reality were computed at different points in
+    // the same function. Moved to just before `return`, where it counts everything.
+    // (Found 2026-09-05 while adding the A1 block: its six checks were invisible.)
+
     // -- SANEPROPS-2026-08-26 -- a big class is not a recycled one -----------------
     //
     // One constant answered two questions. P3R has two REAL classes at ~3.67 MB
@@ -352,5 +421,247 @@ int main() {
               bigNoFill.gapFillSkipped == false);
     }
 
+    {   blk("A1 follow-up — sizeof(TLazyObjectPtr) is DERIVED, and is 0x20 in NO era");
+        // ⭐ WHY THIS TEST EXISTS, AND WHY IT IS OFFLINE. `ReadLazyObjectArrayElements` forced
+        // `elemSize = 0x20` — the FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 was
+        // written to delete — and `InferScalarSize` returned the same constant, while
+        // `ResolveInnerSize` consults InferScalarSize BEFORE it ever asks the engine, so nothing
+        // downstream could correct it. Two costs: every array element from index 1 drifted, and
+        // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS — so the
+        // `payload envelope measured` line could never be emitted from an array walk, and an
+        // operator reaching lazy that way would score a CORRECT fix as FAILED.
+        //
+        // It is offline because no installed title has a TArray<TLazyObjectPtr> (OCTOPATH has 5
+        // scalar lazy properties and zero arrays), and because the 2026-09-05 batch spent itself
+        // believing "Ubel.cpp is in no test target" — it has been in THIS one since 2026-08-25.
+        //
+        // The truth being pinned: FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so
+        // there is no pad after the tag. 0x1C up to 5.2; 0x18 from 5.3, where TagAtLastTest was
+        // deleted. OCTOPATH reported ElementSize 0x1C live on 2026-09-05 — the same number from
+        // the engine's own side, which is what makes these constants a measurement and not a guess.
+        const uint32_t savedVer   = g_cachedUEVersion;
+        const int      savedLatch = DynOff::LAZYPTR_GUID;
+        DynOff::LAZYPTR_GUID = -1;          // no latch, so the version fallback is what answers
+
+        char buf[96];
+        g_cachedUEVersion = 502;
+        const int32_t at502 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at502);
+        check("UE 5.2 -> 0x1C  (FWeakObjectPtr 8 + Tag 4, no pad)", at502 == 0x1C, buf);
+
+        g_cachedUEVersion = 418;
+        const int32_t at418 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at418);
+        check("UE 4.18 -> 0x1C, matching OCTOPATH's measured ElementSize", at418 == 0x1C, buf);
+
+        g_cachedUEVersion = 503;
+        const int32_t at503 = Ubel::InferScalarSize("LazyObjectProperty");
+        snprintf(buf, sizeof(buf), "0x%X", at503);
+        check("UE 5.3 -> 0x18  (TagAtLastTest deleted)", at503 == 0x18, buf);
+
+        g_cachedUEVersion = 508;
+        const int32_t at508 = Ubel::InferScalarSize("LazyObjectProperty");
+        check("UE 5.8 -> 0x18 as well", at508 == 0x18);
+
+        // THE REGRESSION GUARD, and it is the whole point: the old value must be unreachable.
+        check("...and 0x20 is returned by NO era",
+              at502 != 0x20 && at418 != 0x20 && at503 != 0x20 && at508 != 0x20);
+
+        // The boundary is 5.3 exactly, not "somewhere in 5.x" — 5.2 and 5.3 must differ by the
+        // 4-byte tag and nothing else.
+        check("...and the 5.2/5.3 step is exactly the 4-byte tag", at502 - at503 == 4);
+
+        g_cachedUEVersion    = savedVer;
+        DynOff::LAZYPTR_GUID = savedLatch;
+    }
+
+    {   blk("A1 follow-up (2) — ReadLazyObjectArrayElements itself, which the block above does NOT cover");
+        // ⛔ WHY THE BLOCK ABOVE IS NOT ENOUGH, and I am recording this because it is my own
+        // overstatement from earlier today. That block pins `InferScalarSize` — an arithmetic
+        // helper. The function the `elemSize = 0x20` bug actually lived in is
+        // `ReadLazyObjectArrayElements`, and it had ZERO coverage: grepping dll/tests/ and
+        // tools/verify/ for it returned nothing. Pinning the helper and calling the fix verified is
+        // the same mistake audit A7 made — a test that names a NEIGHBOUR of its subject (§1.12).
+        //
+        // Offline because `Macht::ReadTArray` (Macht.h) only sanity-checks Count/Max, so a
+        // { Data, Num, Max } triple in this process's own memory is a real TArray to it. No
+        // installed title has a TArray<TLazyObjectPtr> — OCTOPATH has 5 scalar lazy properties and
+        // zero arrays, ES2 has 3 and zero — so a live row for this would be unfalsifiable.
+        const uint32_t savedVerArr   = g_cachedUEVersion;
+        const int      savedLatchArr = DynOff::LAZYPTR_GUID;
+
+        constexpr int32_t kN = 6, kStride = 0x18;   // UE >= 5.3: FWeakObjectPtr(8) + FGuid(16)
+        // ⭐ POISON EVERYWHERE, and the index ENCODED IN THE VALUE. A wrong stride then does not
+        // merely read "a different element" — it reads 0xEE, and the failing check names which
+        // element drifted. A "the count came back right" assertion would pass at 0x20 and prove
+        // nothing, because the bug reads element 0 correctly and only drifts from index 1.
+        std::vector<uint8_t> elems(static_cast<size_t>(kN) * 0x20 + 0x40, 0xEE);
+        for (int32_t i = 0; i < kN; ++i) {
+            uint8_t* e = elems.data() + static_cast<size_t>(i) * kStride;
+            int32_t objIdx = -1, serial = -1;        // unresolvable, so `value` is the GUID alone
+            memcpy(e + 0, &objIdx, sizeof(objIdx));
+            memcpy(e + 4, &serial, sizeof(serial));
+            uint32_t a = 0xA0000000u | i, b = 0xB0000000u | i,
+                     c = 0xC0000000u | i, d = 0xD0000000u | i;
+            memcpy(e + 0x08 +  0, &a, sizeof(a));    // FGuid at +0x08 for UE >= 5.3
+            memcpy(e + 0x08 +  4, &b, sizeof(b));
+            memcpy(e + 0x08 +  8, &c, sizeof(c));
+            memcpy(e + 0x08 + 12, &d, sizeof(d));
+        }
+        struct FakeTArray { uintptr_t Data; int32_t Num; int32_t Max; };
+        FakeTArray arr{ reinterpret_cast<uintptr_t>(elems.data()), kN, kN };
+
+        g_cachedUEVersion    = 506;                  // untagged era -> envelope 0x08, stride 0x18
+        DynOff::LAZYPTR_GUID = -1;                   // no latch: make the run derive it
+        auto lr = Ubel::ReadLazyObjectArrayElements(
+            reinterpret_cast<uintptr_t>(&arr), 0, kStride, 0, 64);
+
+        check("lazy array: the read succeeds against an in-process TArray", lr.ok == true);
+        check("...and yields every element", static_cast<int32_t>(lr.elements.size()) == kN,
+              std::to_string(lr.elements.size()).c_str());
+
+        bool allRight = (static_cast<int32_t>(lr.elements.size()) == kN);
+        int firstWrong = -1;
+        for (int32_t i = 0; allRight && i < kN; ++i) {
+            char want[48];
+            snprintf(want, sizeof(want), "{A000000%X-B000000%X-C000000%X-D000000%X}", i, i, i, i);
+            if (lr.elements[i].value.find(want) == std::string::npos) {
+                allRight = false;
+                firstWrong = i;
+            }
+        }
+        check("A1 ⭐: EVERY element decodes at its own stride — index encoded in the GUID, so a "
+              "drift reads poison", allRight,
+              firstWrong >= 0 ? ("first wrong element: " + std::to_string(firstWrong) + " got "
+                                 + lr.elements[firstWrong].value).c_str() : nullptr);
+        // The one that fails first under the old bug: element 0 is read correctly by BOTH strides,
+        // so it is element 1 that discriminates. Asserted separately so the failure says so.
+        if (lr.elements.size() > 1) {
+            check("A1: ...element 1 specifically — the first index the 0x20 stride gets wrong",
+                  lr.elements[1].value.find("{A0000001-B0000001-C0000001-D0000001}")
+                      != std::string::npos,
+                  lr.elements[1].value.c_str());
+        }
+
+        g_cachedUEVersion    = savedVerArr;
+        DynOff::LAZYPTR_GUID = savedLatchArr;
+    }
+
+    {   blk("G6 — the fork's tag→key table is TRI-state: a transient miss must not be cached");
+        // ⛔ WHAT G6 ACTUALLY ASSERTS, and why one bool cannot express it. The old code cached a
+        // permanent TAGKEY_MISS, so a single unlucky read — the fork grows this table WHILE the
+        // game runs — blanked every FName carrying that tag for the rest of the process, even
+        // though the fork's own lookup would have succeeded a millisecond later. The fix splits
+        // "could not determine" from "determined: absent":
+        //
+        //   readError=true   no ctx / count==sentinel / idx>=count / a failed read
+        //                      -> GetTagKey returns false and CACHES NOTHING; the next name retries
+        //   readError=false  the chain ended cleanly at idx<0, i.e. genuinely ABSENT
+        //                      -> the fork stores that block unXOR'd, so key 0 IS the answer.
+        //                         Resolve to 0 and cache it.
+        //
+        // The two misses must get OPPOSITE treatment. That opposition is the whole finding, so
+        // every check below is a PAIR: the same tag before and after the table settles.
+        //
+        // Offline because `Macht::ReadSafe` reads THIS process, so a std::vector shaped like the
+        // fork's hash table is indistinguishable from the fork's own — the same trick the fake
+        // FUObjectArray above uses. G6's live host (MindsEye) is not installed and is not coming.
+        // ⚠ SCOPE: this pins the TRI-STATE LOGIC, not that the ctx offsets match MindsEye's real
+        // table. That half came from RE and can only ever be confirmed on the fork. G6 was filed
+        // as a logic defect, so the logic is the finding.
+        constexpr int32_t kCap = 16, kCountLow = 2, kCountAll = 8;
+        std::vector<uint8_t> ctx(0x80, 0), entries(static_cast<size_t>(kCap) * 24, 0);
+        std::vector<int32_t> buckets(kCap, -1);
+
+        auto putEntry = [&](int i, uint16_t tag, uint8_t k) {
+            uint8_t* e = entries.data() + static_cast<size_t>(i) * 24;
+            uint64_t val = k;            // the key is the LOW BYTE of the u64 value
+            int32_t  next = -1;
+            memcpy(e + 0x00, &tag, sizeof(tag));
+            memcpy(e + 0x08, &val, sizeof(val));
+            memcpy(e + 0x10, &next, sizeof(next));
+        };
+        auto setCount    = [&](int32_t c) { memcpy(ctx.data() + 0x18, &c, sizeof(c)); };
+        auto setSentinel = [&](int32_t s) { memcpy(ctx.data() + 0x44, &s, sizeof(s)); };
+
+        // Bucket index is `tag & (capacity-1)`, so the low nibbles must differ or one tag's
+        // chain walks into another's and the arms stop being independent.
+        constexpr uint16_t T_FOUND = 0x0101, T_ABSENT = 0x0202, T_TORN = 0x0303, T_EMPTY = 0x0404;
+        putEntry(0, T_FOUND, 0x5A);
+        putEntry(1, T_EMPTY, 0x3C);
+        putEntry(5, T_TORN,  0x7E);      // index 5 is PAST kCountLow — the torn-read case
+        buckets[1] = 0; buckets[2] = -1; buckets[3] = 5; buckets[4] = 1;
+
+        const uintptr_t entriesAddr = reinterpret_cast<uintptr_t>(entries.data());
+        const uintptr_t bucketsAddr = reinterpret_cast<uintptr_t>(buckets.data());
+        memcpy(ctx.data() + 0x10, &entriesAddr, sizeof(entriesAddr));
+        memcpy(ctx.data() + 0x50, &bucketsAddr, sizeof(bucketsAddr));
+        memcpy(ctx.data() + 0x58, &kCap, sizeof(kCap));
+        setCount(kCountLow);
+        setSentinel(0x7FFFFFFF);          // never equal to count -> the "empty" guard stays open
+
+        // ⚠ The pool must be all zeroes. InitObfuscated ends by calling FirstEntrySampleText(),
+        // which READS an entry to log a sample; a non-zero header there would decode a name and
+        // seed s_tagKey before a single assertion runs. A zero header is length 0, which GetString
+        // rejects before it ever looks at a tag.
+        std::vector<uint8_t> chunk(0x400, 0), poolHdr(0x20, 0);
+        const uintptr_t chunkAddr = reinterpret_cast<uintptr_t>(chunk.data());
+        memcpy(poolHdr.data() + 0x10, &chunkAddr, sizeof(chunkAddr));
+        Serie::InitObfuscated(reinterpret_cast<uintptr_t>(poolHdr.data()), 0x10, 2,
+                              reinterpret_cast<uintptr_t>(ctx.data()));
+
+        uint8_t key = 0xEE;
+        check("G6 control: a tag PRESENT in the table resolves to its key",
+              Serie::GetTagKey(T_FOUND, key) && key == 0x5A);
+
+        // --- ARM 1: a torn read is transient, so it must NOT be cached ---------------------
+        key = 0xEE;
+        check("G6: a link past the published count does NOT resolve (torn read)",
+              Serie::GetTagKey(T_TORN, key) == false);
+        setCount(kCountAll);                       // the fork's table finishes growing
+        key = 0xEE;
+        check("G6 ⭐: after the table settles the SAME tag resolves — no permanent blanking",
+              Serie::GetTagKey(T_TORN, key) && key == 0x7E);
+
+        // The same arm through the OTHER transient door, because `count == sentinel` and
+        // `idx >= count` are different guards and a fix could restore one and not the other.
+        setSentinel(kCountAll);                    // table reports itself empty
+        key = 0xEE;
+        check("G6: a table reporting itself empty does NOT resolve",
+              Serie::GetTagKey(T_EMPTY, key) == false);
+        setSentinel(0x7FFFFFFF);
+        key = 0xEE;
+        check("G6 ⭐: ...and that tag recovers too once the table settles",
+              Serie::GetTagKey(T_EMPTY, key) && key == 0x3C);
+
+        // --- ARM 2: a clean chain end is DETERMINED, so it must be cached ------------------
+        key = 0xEE;
+        check("G6: a genuinely ABSENT tag RESOLVES rather than failing",
+              Serie::GetTagKey(T_ABSENT, key) == true);
+        check("...to key 0 — the fork stores that block unXOR'd, so plaintext is the answer",
+              key == 0x00);
+
+        // The discriminator between the two arms: pull the table away and ask again. A cached
+        // answer survives; an uncached one cannot, because LookupTagKey needs s_keyTableCtx.
+        const uintptr_t savedCtx = Serie::s_keyTableCtx;
+        Serie::s_keyTableCtx = 0;
+        key = 0xEE;
+        check("G6 ⭐: the ABSENT answer was CACHED (still answers with the table gone)",
+              Serie::GetTagKey(T_ABSENT, key) && key == 0x00);
+        key = 0xEE;
+        check("G6 ⭐: ...while a transient miss was NOT (this tag now fails, having never cached)",
+              Serie::GetTagKey(0x0505, key) == false);
+        Serie::s_keyTableCtx = savedCtx;
+
+        // Leave no global state behind: every later block in this file would inherit it.
+        Serie::s_obfuscated = false;
+        Serie::s_keyTableCtx = 0;
+        Serie::s_poolAddr = 0;
+        Serie::s_payloadGap = 0;
+        Serie::s_tagKey.reset();
+        Serie::s_initialized.store(false, std::memory_order_release);
+    }
+
+    printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

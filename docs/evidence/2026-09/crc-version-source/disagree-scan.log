@@ -1,0 +1,6 @@
+[2026-09-06 14:36:45.305] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-06 14:36:45.308] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient ProductVersion -> UE 5.7 -> 507
+[2026-09-06 14:36:45.308] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient at 'D:\UE_Analyze_data\for testing\DumperTest\Development\Windows\Engine\Binaries\Win64\CrashReportClient.exe' -> 507
+[2026-09-06 14:36:45.308] [INFO] [SCAN:Ver] DetectVersion: PE VERSIONINFO -> UE 5.4 -> 504
+[2026-09-06 14:36:45.309] [WARN] [SCAN:Ver] DetectVersion: SOURCES DISAGREE — CrashReportClient says 507, the game exe's own VERSIONINFO says 504. Taking 507 (engine-shipped beats game-authored). If the property walk also looks wrong, set a UE version override for this title.
+[2026-09-06 14:36:45.309] [INFO] [SCAN] FindAll: UE Version = 507 (tier=1, detected=yes, lowConfidence=no, publisher=-)

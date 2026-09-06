@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Scharf — 夏爾夫 (鋒利目光的觀察者 — Sharp-eyed Scrutinizer)
 // FProperty alignment validation: catches misaligned fields that would
 // indicate a wrong FPROPERTY_OFFSET probe.
@@ -27,9 +27,24 @@ namespace Scharf {
 // reports for this property. EnumProperty in particular is variable:
 // uint8 enum is 1-byte aligned, uint32 enum is 4-byte aligned.
 //
-// casePreservingName: if true, FName/NameProperty is 16 bytes aligned 8;
-// otherwise 8 bytes aligned 4.
-inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize, bool casePreservingName) noexcept {
+// casePreservingName: if true, FName/NameProperty is 12 bytes -- still ALIGNED 4;
+// otherwise 8 bytes, also aligned 4. The flag does not change FName's alignment at all.
+//
+// ⚠ It is therefore [[maybe_unused]]: NO arm of RequiredAlignment reads it any more. Audit A9
+// removed its only use (the NameProperty arm used to return `casePreservingName ? 8 : 4`, which
+// was the defect -- alignof(FName) is 4 in both modes), and a comment claiming "other arms use
+// it" was left behind and is now deleted; it was false the moment that arm changed.
+//
+// KEPT rather than removed, deliberately, for two reasons that are not "churn avoidance":
+//   * IsAlignmentSuspicious below forwards it, and its callers (Ubel's ResolveElementAlignment
+//     and IsAlignmentSuspicious sites) already hold DynOff::bCasePreservingName. Dropping it
+//     would push the flag out of an API whose whole subject is layout-under-CPN.
+//   * The tests pass `true` precisely to assert that the answer does NOT change. Removing the
+//     parameter would silently delete that assertion's subject.
+// If a property type is ever added whose ALIGNMENT (not size) really does depend on CPN, the
+// plumbing is already here -- drop the attribute then, not before.
+inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
+                                 [[maybe_unused]] bool casePreservingName) noexcept {
     // Order matters: "WeakObjectProperty" / "SoftObjectProperty" / "LazyObjectProperty" all
     // contain "ObjectProperty" as a substring, so the specific variants must match first.
     // WeakObjectProperty: 2x int32 (8 bytes), 4-byte aligned.
@@ -53,8 +68,12 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize, 
     if (typeName.find("MulticastDelegateProperty") != std::string::npos) return 8;
     if (typeName == "MulticastSparseDelegateProperty") return 1;  // FSparseDelegate { uint8 bIsBound; }
 
-    // FName: 8 bytes aligned 4 (non-CPN), or 16 bytes aligned 8 (CPN).
-    if (typeName == "NameProperty") return casePreservingName ? 8 : 4;
+    // FName: 8 bytes (non-CPN) or 12 bytes (CPN) -- three int32, alignof 4 in BOTH modes.
+    // `class FName` carries no alignas, so case-preserving does NOT raise its alignment.
+    // The 8 seen in a TPair<FName, ptr> comes from the VALUE via max(keyAlign, valAlign),
+    // never from FName -- which is why returning 8 here corrupted TMap<uint8,FName>:
+    // ComputeMapValueOffset put the value at +8 where the engine puts it at +4.
+    if (typeName == "NameProperty") return 4;
 
     // Primitive scalars — alignment == size.
     if (typeName == "BoolProperty"  || typeName == "ByteProperty") return 1;

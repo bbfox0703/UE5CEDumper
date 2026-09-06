@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **9 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **7 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -265,6 +265,263 @@ Where they live now:
   the authority; the copy here was a snapshot of it.
 - **PE build-identity (`/Brepro`, `duplicate_copies`)** — [dev-log.md](dev-log.md), and the standing
   rule about `IMAGE_DEBUG_TYPE_REPRO` is stated with it.
+-----
+
+## ✅ DONE 2026-09-05 (build 3374) — `TArray<TLazyObjectPtr>` no longer strides `0x20`
+
+> **FIXED.** `InferScalarSize` and `ReadLazyObjectArrayElements` both route through
+> `LazyGuidOffset` now: `LazyGuidOffset(elemSize) + 0x10`. Passing the caller's `elemSize`
+> **in** is deliberate — a real `ElementSize` gets measured and latched, so the array path
+> can finally emit the `payload envelope measured` line it structurally could not before;
+> garbage still falls back to the version default, which is what the forced constant was
+> actually guarding against. All three stale `= 0x20` comments deleted with it.
+>
+> ⚠ **Not live-verified, and it cannot be here**: no installed title has a
+> `TArray<TLazyObjectPtr>` (OCTOPATH has 5 scalar lazy properties and zero arrays, ES2 has
+> 3 and zero). Pinned offline in `dll_core_test` instead.
+>
+> ⛔ **CORRECTION 2026-09-06 — the first pin did NOT cover the function with the bug in it.**
+> It pinned `InferScalarSize`, an arithmetic helper; the `elemSize = 0x20` line lived in
+> `ReadLazyObjectArrayElements`, and grepping `dll/tests/` and `tools/verify/` for that name
+> returned **nothing**. Calling the fix "pinned" on that basis is the same mistake audit A7
+> made — a test that names a **neighbour** of its subject. A second block now drives the
+> array reader itself against a `{ Data, Num, Max }` triple in the test's own memory
+> (`Macht::ReadTArray` only sanity-checks Count/Max, so it is a real TArray to the code).
+>
+> ⭐ **Red-tested**: putting `elemSize = 0x20;` back fails exactly two checks, and the failure
+> text is the diagnosis — `first wrong element: 1 got {C0000001-D0000001-FFFFFFFF-FFFFFFFF}`.
+> Element 1 picks up the TAIL of its own GUID followed by the next element's
+> objIdx/serial: an 8-byte drift, exactly `0x20` against the true `0x18`. Element 0 passes,
+> because both strides read it correctly — which is why "the count came back right" would
+> have proved nothing. `Ubel.cpp` restored byte-identical afterwards.
+
+<details><summary>original entry (kept — the failure analysis is why the fix took the shape it did)</summary>
+
+**`TArray<TLazyObjectPtr>` still strides `0x20` — the one site audit A1 did not reach**
+
+*Found 2026-09-05 by an offline audit of the A1 batch on the verification PC (adversarially
+verified, then confirmed against the vendored engine source). **Effort: S. Risk: LOW** — it is the
+same substitution `5eafd419` and `fffe5fcf` already made elsewhere. Not a regression: this site
+predates the audit and was simply missed twice.*
+
+`5eafd419` replaced the hardcoded `FWeakObjectPtr(8) + Tag(4) + pad(4) + FGuid(16) = 0x20` model
+with a measured envelope, and `fffe5fcf` swept up two sites it had missed. **A third survives.**
+
+* [`dll/src/Ubel.cpp:2976-2978`](../dll/src/Ubel.cpp) — `ReadLazyObjectArrayElements` **discards**
+  the caller's `elemSize` and forces `elemSize = 0x20`, with a comment still stating the deleted
+  model. `sizeof(TLazyObjectPtr)` is `0x1C` (≤5.2) or `0x18` (≥5.3) — **never `0x20`**, which the
+  live OCTOPATH measurement confirms from the engine's own side (`ElementSize 0x1C`).
+* [`dll/src/Ubel.cpp`](../dll/src/Ubel.cpp) `InferScalarSize` returns a hardcoded `0x20` for
+  `LazyObjectProperty`, and `ValidateArrayElemSize` treats `InferScalarSize` as **authoritative**,
+  overriding the engine's correctly-reported `ElementSize` whenever they disagree.
+
+**Two consequences, and the second is the nastier one.**
+
+1. Element 0 reads correctly; every index ≥ 1 drifts **4 bytes/element** (≤5.2) or **8** (≥5.3), so
+   both the `FGuid` and the embedded `FWeakObjectPtr` land in the wrong element. `fv.arrayElemSize`
+   is also what the CE XML exporter uses for per-element offsets, so an exported
+   `TArray<TLazyObjectPtr>` table strides `0x20` on every UE version.
+2. ⭐ **It makes the lazy half look unverifiable.** `LazyGuidOffset(0x20)` computes `0x20-0x10 =
+   0x10`, which `PersistentPtrEnvelopeFor` **rejects** (it accepts only the tagged envelope or
+   `0x08`), so `measured` at `Ubel.cpp:394` is false and the
+   `TLazyObjectPtr payload envelope measured` line **cannot be emitted from the array path at all**.
+   `[A1-ENVELOPE-2026-09-05]` calls that line "required", so an operator who exercises lazy by
+   drilling into a `TArray<TLazyObjectPtr>` — the obvious way to find one — sees no line and scores
+   a **correct** fix as FAILED. The line can only come from a **scalar** `LazyObjectProperty` walk
+   (`Ubel.cpp:4088` / `:6150`), which is how it was obtained on both hosts.
+
+**Fix**: delete the forced stride and the `InferScalarSize` special case; let the engine's
+`ElementSize` through and route the offset via `LazyGuidOffset` as the other 11 call sites do.
+**Then re-run** `py tools/verify/a1_softlazy_envelope.py <host>` on OCTOPATH (tagged, `0x0C`) and any
+5.3+ title (untagged, `0x08`) — the rig already separates the two types, and a
+`TArray<TLazyObjectPtr>` walk should then emit the line the scalar path emits today.
+
+</details>
+
+-----
+
+## What the 2026-09-05 verification pass found *besides* the four rows it closed
+
+*Produced on the verification PC, 2026-09-05, build 3371: an offline re-derivation of the fifteen
+commits against the vendored engine, every finding then handed to an independent agent told to
+**refute** it. 51 survived, 13 were killed. The stale citations went straight into
+[`verification-register.md`](verification-register.md); what is left below is **code**, and none of
+it is a regression — every item is a site the audit's own classification covers and its sweep did
+not reach. ⚠ Each entry names the file:line, so **re-derive before acting**; line numbers drift.*
+
+### 1. ✅ DONE 2026-09-06 — `bCasePreservingName`: A9 changed the contract and left EIGHT sites on the old value
+
+> **FIXED, and the count was 8 not 7** — re-derived site by site rather than taken from the
+> finding. Twelve raw `bCasePreservingName ? 0x10 : 0x08` ternaries existed; **four were
+> CORRECT** (a `TPair<FName, 8-aligned-T>` value offset — `Aura.cpp:3749/6336`,
+> `Ubel.cpp:6370/6509`) and **eight were wrong** (`Ubel.cpp:333` stepping to an adjacent
+> FName, `:3204/:3306/:5329/:5734/:5801` FScriptDelegate strides, `:4329/:4492` the
+> `softArrayFNameSize` field that `Ubel.h:435` documents as **12**).
+>
+> ⭐ **The fix is not eight edits, it is making the question un-confusable.** `Grimoire.h`
+> had stated the rule for a long time — and it was copied wrongly anyway, because *both*
+> answers are spelled `bCasePreservingName ? … : 0x08` and the expression does not say
+> which question it answers. `Aura.cpp:3755` sat four lines below one of the correct ones
+> getting it right. So the rule is now two named functions, `DynOff::SizeofFName()` and
+> `DynOff::FNameSlotIn8Aligned()`, and **all 20 sites** (the 12 plus the 8 that already had
+> `0x0C`) go through them — `grep 'bCasePreservingName ?' dll/src/` now returns only log
+> strings and `UFIELD_NEXT`, which is a different quantity.
+>
+> Pinned by `Test_DynOff_FNameSlotVsSizeof`: the two coincide at 8 when CPN is off (which is
+> *why* a wrong site is invisible on every title measured), diverge by exactly the 4 bytes of
+> padding when it is on, and `SizeofFName()` is never `0x10`. `dll_helpers_test`
+> 2,330 → **2,337**.
+>
+> **Live regression check** (20 sites across 3 files, 13 of them in `Ubel.cpp`): OCTOPATH
+> 4.18, build 3380 — soft `+0x10` / lazy `+0x0C` unchanged, and soft paths still render as
+> `/Game/UI/MainMenu/BP/CharacterStandingPanel.WidgetArchetype`. Behaviour is identical by
+> construction on the non-CPN branch, and this confirms it.
+
+<details><summary>original entry</summary>
+
+**`bCasePreservingName` — A9 changed the contract but left seven sites on the old value**
+
+`ea844833` established that `sizeof(FName)` under CasePreservingName is **`0xC`, not `0x10`** — the
+`0x10` was the UObject `Name`→`Outer` **slot**, which is a different quantity — and it rewrote the
+header docs and the C# tests to the `0xC` contract. **Seven sites that A9's own classification puts
+in the `sizeof` bucket were left at `0x10`.** Before the commit the tree was uniformly (and wrongly)
+`0x10`; it now **contradicts itself** under CPN, which is strictly worse to debug.
+
+* [`dll/src/Ubel.cpp:333`](../dll/src/Ubel.cpp) `ReadSoftObjectPath` steps `PackageName`→`AssetName`
+  with `bCasePreservingName ? 0x10 : 0x08` — a textbook "step to an adjacent FName" — while
+  `SoftObjectPathPayloadSize` **79 lines below in the same family** uses `0xC`, and
+  `Grimoire.h`'s `FSoftObjectPathSizeFor` is built on `0xC`.
+* [`dll/src/Ubel.cpp:4313`](../dll/src/Ubel.cpp) and `:4476` set `fv.softArrayFNameSize` to `0x10`
+  under CPN, while [`Ubel.h:435`](../dll/src/Ubel.h) documents that field as a **`sizeof(FName)`**.
+  ⚠ The header next to it explicitly forbids the naive reconciliation — *"Deliberately different
+  from `SoftArrayFNameSize` above, which IS a sizeof. Do not make them consistent."* — so read both
+  comments before touching either.
+* `Ubel.cpp:3188` and three more in the same shape.
+
+⚠ **Impact today is ZERO and that is exactly why it is easy to leave rotting**: `bCasePreservingName`
+has only two writers (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can
+force it true, and **12 titles have measured false with zero CPN**. The register was right to open
+no row — a row would be unfalsifiable. It belongs here instead. **Effort S, risk LOW.**
+
+</details>
+
+### 2. ✅ DONE 2026-09-06 — A6's version table comment was wrong for six versions inside one printed band
+
+> **FIXED** in `Grimoire.h`: the single `4.18-5.08 0x44 -> 0x70` row is now three —
+> `4.18-4.24 0x44 -> 0x70`, **`4.25-5.02 0x4C -> 0x78`**, `5.03-5.08 0x44 -> 0x70` — with
+> the delta `0x2C` called out as identical across all three, which is why the shipped code
+> was never affected. The re-derivation command is in the comment.
+>
+> ⭐ **And the 5.08 endpoint is no longer an assertion.** It was written with no `5_08`
+> template in existence (the highest was `5_07`); RE-UE4SS shipped
+> `MemberVariableLayout_5_08_Template.ini` on 2026-09-05 and the vendor clone was updated
+> 2026-09-06 — it measures `0x44 -> 0x70`, agreeing with what the comment claimed.
+> Live corroboration for the delta the same day: OCTOPATH 4.18 stock `0x44 -> 0x70`, and
+> DQ XI S `0x54 -> 0x80` — the same `0x2C` off a shifted base, the case no template covers.
+
+<details><summary>original entry</summary>
+
+**A6's version table comment is wrong for six versions inside a band it prints as one**
+
+[`dll/src/Grimoire.h:419-422`](../dll/src/Grimoire.h) prints `4.18-5.08  Offset_Internal 0x44 →
+FieldSize 0x70`. Measured against the UVTD templates, **4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all
+have `0x4C → 0x78`**; only 4.18-4.24 and 5.03-5.07 have the pair as printed. ⭐ **The shipped code is
+unaffected** — it reads only the *delta* (`0x2C`), which is right across the whole band, and the
+live measurements confirm it (`0x54 → 0x80` on DQ XI S, `0x44 → 0x70` on OCTOPATH). But a reviewer
+sanity-checking the derivation on a UE 5.0/5.1 game will find `0x4C/0x78`, conclude the table is
+broken, and "fix" a correct one. Also: `5.08` is asserted with **no `5_08` template on this
+machine** (highest is `5_07`). **Fix the comment, not the code. Effort XS, risk LOW.**
+
+</details>
+
+### 3. ✅ DONE 2026-09-06 — A6's two spread tests pinned the error terms independently and did not compose
+
+> **FIXED** with three more assertions in `dll_helpers_test.cpp`, next to the two that were
+> already there. They pin the compound case **and its direction**, which is the part the
+> original pair could not express:
+> * a **LOW** version miss stacked with a missed CPN composes to **`0xC`** — `0x50+0x2C+8 =
+>   0x84` true, `0x50+0x28+0 = 0x78` guessed — and `0xC` is **outside** the
+>   `{0, ±4, +8, −8}` spread, so the probe does **not** recover;
+> * the counter-case, so this is not read as "any two errors escape": a **HIGH** version
+>   miss partially **cancels** a missed CPN (`+4` then `−8`, net `−4`, still inside).
+>
+> ⛔ Still **not** an argument for widening the spread — `[A6-BOOLFIELD-2026-09-05]` and the
+> register both say do not. It is an argument for not describing the spread as an
+> unconditional net when it has a hole. `dll_helpers_test` 2,327 → **2,330**, 0 failures.
+
+[`dll/tests/dll_helpers_test.cpp:5808-5813`](../dll/tests/dll_helpers_test.cpp) asserts
+`guessAs420 - trueAt415 == 4` and `cpn - nonCpn == 8` **separately**. A version misdetected across
+the 4.17/4.18 boundary **and** a missed CPN sum to `0xC`, which is **outside** the probe spread
+`{0, ±4, +8, −8}`. RE-UE4SS ships a real-world shape that lands there (Kingdom Hearts 3: pre-4.18
+tail order with `RepNotifyFunc 0x60` before `Offset_Internal`). ⛔ This is **not** an argument for
+widening the spread — `[A6-BOOLFIELD-2026-09-05]` and the register both say do not — it is an
+argument for not describing the spread as an unconditional net. **Effort S (a third test + a
+comment), risk LOW.**
+
+### 4. ✅ DONE + LIVE-VERIFIED 2026-09-06 — `set_ue_version_override` now re-derives the soft/lazy envelope
+
+> **FIXED**: the handler clears `DynOff::SOFTPTR_PATH` and `DynOff::LAZYPTR_GUID` when a
+> non-zero version is set, and logs that it did. `PersistentPtrEnvelopeFor` consults
+> `latched` **before** `ueVersion`, so a latch taken under the old version outranked the new
+> one for every call that cannot produce a fresh measurement — the override changed the
+> version and not the layout it implies, which is the one thing an override is for.
+>
+> **Measured on OCTOPATH (UE 4.18), build 3379**, walking a live `KSTextManager` instance:
+> ```
+> before   TSoftObjectPtr payload envelope measured: +0x10 (ElementSize 0x28 - payload 0x18, UEver=418)
+> after    TSoftObjectPtr payload envelope measured: +0x08 (ElementSize 0x28 - payload 0x20, UEver=505)
+> ```
+> The envelope re-derived `0x10 → 0x08` and the payload moved `0x18 → 0x20` (the `>= 501`
+> `FTopLevelAssetPath` arm). ⭐ **Built-in negative control**: the walk taken *before* the
+> override added **zero** new lines — the line only appears when the value actually changes,
+> so the one that appeared is the re-derivation and not just walk traffic.
+>
+> ⚠ **Scope, and it is in the code comment too**: the override deliberately does **not**
+> re-run `ValidateAndFixOffsets`. The rest of the `DynOff` family stays as the real scan
+> probed it, because those are *measured from the running image*, not derived from a version
+> number — re-deriving them from a hypothetical version would replace fact with guess. These
+> two are different precisely because their fallback **is** version-derived.
+>
+> ⚠ This also matters for `tools/verify/a3_funcflags_override.py`, which uses the override as
+> its A/B lever: `FunctionFlagsOffsetFor` is recomputed per call and was never affected, but
+> anyone reusing that technique for soft/lazy before today would have measured the old latch.
+
+`PersistentPtrEnvelopeFor` consults `latched` **before** it looks at `ueVersion`
+([`Grimoire.h:278-279`](../dll/src/Grimoire.h)), and `set_ue_version_override`
+([`Fern.cpp:1757-1760`](../dll/src/Fern.cpp)) sets only `g_cachedUEVersion` — it never clears
+`DynOff::SOFTPTR_PATH` / `DynOff::LAZYPTR_GUID`. So after an override, any call that cannot produce
+a fresh accepted measurement returns the **pre-override** latch. ⚠ This matters for A3's planned
+`421→422→421` A/B and for any "override to test a hypothesis" step: the version changes, the
+envelope does not. Either clear the two latches in the override handler or say so in the row.
+**Effort S, risk LOW.**
+
+### 5. ✅ DONE 2026-09-05 — comments that still stated the pre-fix layout as fact
+
+[`Ubel.cpp:2958`](../dll/src/Ubel.cpp) — `// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B)
++ FGuid(16B) = 0x20` — sits **immediately above** `ReadLazyObjectArrayElements`, i.e. above the code
+in §*`TArray<TLazyObjectPtr>` still strides `0x20`* below, and `:6138` repeats it. Read in isolation
+either says `+0x10` is the right answer, which is what an operator judging A1 will be doing.
+**Delete with the stride fix. Effort XS.**
+
+### 6. ✅ DONE 2026-09-06 — A5's "provable no-op" argument was incomplete (the conclusion still holds)
+
+> **CORRECTED** in the register. The divisor halves are true (`16`@0 before `32`@2, `20`@3
+> before `40`@4), but `PreferStride` fires on **any** equal score — `score == bestScore &&
+> bestStride != 0 && stride < bestStride` — and `{16, 24, 32, 20, 40}` holds two
+> **non-divisor** pairs whose smaller member sits **later**: `(24, 20)` and `(32, 20)`.
+> The conclusion survives on a different argument, which is `Lineal.h`'s own: 24/20 and
+> 32/20 are neither multiples nor divisors, so on a correct pool one of each pair lands
+> off-item and loses on score long before a tie. **The decision not to open a row stands;
+> the old sentence must not be cited as a proof.**
+
+[`verification-register.md`](verification-register.md) closes A5's tie-break with *"a provable no-op
+over `{16, 24, 32, 20, 40}` — every divisor pair already has the smaller candidate earlier in the
+list"*. True of the divisor pairs `(16,32)` and `(20,40)`, but `PreferStride` fires on **any** equal
+score, and the list holds two **non-divisor** pairs where the smaller sits **later**: `(24,20)` and
+`(32,20)`. On a score tie in either, old and new select differently. ⚠ The *decision* not to open a
+row stands; the **recorded reason** is not the reason. Fix the sentence so it is not cited later as
+a proof. **Effort XS, doc only.**
+
 -----
 
 ## UE5 non-Shipping: GNames reaches nothing — decide whether to mine a pattern
@@ -2090,7 +2347,38 @@ Nothing was edited, only moved.
 
 -----
 
-## ✅ A7's live half CLOSED 2026-08-25 `[A7-CORETEST-2026-08-25]` — and the DLL core finally has a test target
+## ✅ A7 CLOSED — but the 2026-08-25 closure was against the WRONG LOOP; really closed 2026-09-06 `[A7-FINDBYADDR-2026-09-06]`
+
+> ⛔ **CORRECTION 2026-09-06, and it is the reason to distrust a green claim you did not derive
+> yourself.** `[A7-CORETEST-2026-08-25]` below is right about everything except *which loop it
+> tested*. The two `dll_core_test` blocks it added are labelled "A7" and drive **`Aura::ForEach`** —
+> but ForEach **already had its poll**; it is one of the *siblings* A7 was written to match, and
+> A7's own comment (`Aura.cpp:1892-1894`) names them. The loop A7 actually fixed is
+> **`FindByAddress`** (`Aura.cpp:1867`), which hand-rolls `for (int32_t i = 0; i < count; ++i)` and
+> never calls ForEach. The audit row said so plainly:
+> *"`FindByAddress` is the **only** full-GObjects walk in the file with neither a `Tot::Requested()`
+> poll nor a deadline"* (`docs/audit-2026-08-13-early-code-findings.md:278`).
+>
+> Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/` returned **zero hits**. The
+> shipped fix had **no coverage of any kind** while this file and the register both recorded it as
+> verified — a green claim computed by a different code path than the thing it claims about, which
+> is the same shape as `[SEINSHARE-2026-09-05]` and the A2 vacuous-absence trap.
+>
+> **NOW REALLY CLOSED**, four checks in `dll_core_test` driving `FindByAddress` itself: an in-pool
+> address at index 8000 is found as an **exact** match uncancelled, the *same* address returns
+> `found == false` / `index == -1` under `Tot::g_perCommand`, and is found again after a reset.
+> ⭐ **Proven non-vacuous by deleting the poll**: without it the block fails with
+> `...reports no index rather than a stale one   got: 8000` — it found the object *while cancelled*.
+> With the poll restored (byte-identical to HEAD), 30/0.
+>
+> ⚠ The anti-vacuity design matters here: an **uncancelled** lookup of an address that is not in the
+> pool *also* returns `found == false`, so "not found" alone proves nothing. The assertion is the
+> **flip of one fixed address under one changed flag**, which only means anything because the
+> positive control establishes the address is findable first.
+
+<details><summary>the 2026-08-25 entry (kept — its infrastructure reasoning is sound and is what made tonight's fix a 30-minute job)</summary>
+
+**A7's live half CLOSED 2026-08-25 `[A7-CORETEST-2026-08-25]` — and the DLL core finally has a test target**
 
 A7's fix (the `(i & 0xFFF)==0 && Tot::Requested()` poll in the GObjects walk) shipped long ago; what
 stayed open was verifying it, and it was filed **blocked** for a measured reason: on every title
@@ -2154,3 +2442,5 @@ small modules. The proof is the negative control, not the duration: replacing th
 `if (false)` reddens the cancelled case, which can only happen if the loop **reaches that line**.
 Both cases take the same path up to the poll, so a control that passes there is a control that ran.
 That reasoning is now written into the test, next to the assertion it justifies.
+
+</details>

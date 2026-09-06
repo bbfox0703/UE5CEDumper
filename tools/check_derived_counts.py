@@ -120,7 +120,7 @@ CHECKS = [
         derive_cmd="grep -c 'constexpr const char* CMD' dll/src/Renge.h",
         claims=[
             ("CLAUDE.md",                 r"the live count is \*\*(\d+)\*\*"),
-            ("CLAUDE.md",                 r"Named Pipe JSON IPC protocol \((\d+) commands"),
+            ("docs/README.md",            r"Named Pipe JSON IPC protocol \((\d+) commands"),
             ("docs/architecture.md",      r"JSON dispatch \((\d+) commands\)"),
             ("docs/architecture.md",      r"Named Pipe JSON IPC protocol \((\d+) commands\)"),
             ("docs/dll-spec.md",          r"For the JSON protocol \((\d+) commands"),

@@ -201,8 +201,9 @@ public static class Constants
     // Both families used to sit at the folder ROOT. They are the only files there whose
     // count grows without bound — one set per game, and a new PE hash on every game
     // patch — so they buried the handful of app-wide files (dll-path.txt,
-    // experimental.json, ui-options.json, teleport-hotkeys.txt, window-state.txt) that
-    // someone actually has to find by hand.
+    // experimental.json, ui-options.json, teleport-hotkeys.txt, window-state.txt,
+    // UE5CEDumper.{COMPUTERNAME}.json — the per-machine hint cache, see
+    // dll/src/Grimoire.h) that someone actually has to find by hand.
     //
     // Sibling folders of Logs\ and Reports\, PascalCase to match them. Files still at
     // the old root location are MOVED here once, at first use, by

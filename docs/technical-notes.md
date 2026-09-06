@@ -1,4 +1,4 @@
-# Technical Notes
+﻿# Technical Notes
 
 > Moved from CLAUDE.md. Covers UE version differences, FField vs UProperty, FNamePool internals, and implementation phases.
 
@@ -8,7 +8,8 @@
 
 | Version | Key Differences |
 |---------|----------------|
-| **UE4.10 and earlier** | **Pre-`FUObjectItem` regime — the dumper does NOT support this.** `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead<UObjectBase,8388608,16384>` whose element is a **raw `UObjectBase*` (stride 8)**, and whose chunk table is an **INLINE `UObjectBase*[512]` array**, not a pointer — see the dedicated section below |
+| **UE4.7 and earlier** | Pre-`FUObjectItem`, and a **different, simpler** shape than 4.8–4.10: `FUObjectArray::ObjObjects` is a flat `TArray<UObjectBase*>` at `FUObjectArray+0x10` (Data/Num/Max = `0x10`/`0x18`/`0x1C`), the global is a plain `extern GUObjectArray`, and `UObjectBase` is byte-identical to 4.11. **Still not supported** — the blocker is the stride-8 raw-pointer element, not the layout — see the dedicated section below |
+| **UE4.8–4.10** | **Pre-`FUObjectItem` regime — the dumper does NOT support this.** `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead<UObjectBase,8388608,16384>` whose element is a **raw `UObjectBase*` (stride 8)**, and whose chunk table is an **INLINE `UObjectBase*[512]` array**, not a pointer; the global is the Meyers singleton `GetUObjectArray()` — see the dedicated section below |
 | **UE4.11–4.12** | `FFixedUObjectArray` (flat). **`FUObjectItem` is 16 BYTES** — `Object` / `ClusterAndFlags` / `SerialNumber`: the cluster index and the internal flags share ONE `int32`. `UProperty` chain |
 | **UE4.13–4.19** | `FFixedUObjectArray` (flat, single indirection). `FUObjectItem` splits into `Object` / `Flags` / `ClusterIndex` / `SerialNumber` = **24 bytes**. `UProperty` chain. TNameEntryArray |
 | **UE4.20–4.24** | `FChunkedFixedUObjectArray` — chunked. `UProperty` still in use |
@@ -18,8 +19,8 @@
 | UE5.2 | `FChunkedFixedUObjectArray` stride may differ |
 | UE5.3+ | Some games enable Object Pointer Encryption |
 | UE5.4+ | `FField` chain structure stable, no major changes |
-| UE5.5+/5.7 | **CasePreservingName**: FName grows from 0x8 to 0x10 bytes (adds DisplayIndex field), shifting FField::Flags +0x8 and all FProperty offsets by +0x8. Must use `DynOff` dynamic detection |
-| UE5.8 / UE6.0 | **Cache-locality reorder** of `FUObjectArray` / `FChunkedFixedUObjectArray` (shipped in **5.8**, unchanged in 6.0): `ObjObjects` is `FUObjectArray`'s first member; chunked fields `Objects@0x00, NumElements@0x08, MaxElements@0x0C, NumChunks@0x10, MaxChunks@0x14, PreAllocatedObjects@0x18`. Matched by the **"UE5.8" preset** `{0x00,0x0C,0x08,0x14,0x10}` (`Aura.cpp:258` / `Genau.cpp:192`; ArrayLayout = `{objectsOffset, maxElementsOffset, numElementsOffset, maxChunksOffset, numChunksOffset}`). **UE6.0 is layout-identical to 5.8** for every dumper-read structure in normal shipping builds — see the parity note below |
+| any | **CasePreservingName** (= `WITH_EDITORONLY_DATA`, so 0 in every packaged build): `sizeof(FName)` grows 0x8 → **0xC** (adds DisplayIndex; three int32, alignof 4, no pad), while the UObject `NamePrivate`→`OuterPrivate` **slot** grows to **0x10** (OuterPrivate is 8-aligned). FField::Flags and the FProperty offsets shift by the +0x8 *slot* delta. ⚠ 0x10 is the slot, **not** the size — see the A9 note on `DynOff::bCasePreservingName`. Must use `DynOff` dynamic detection |
+| UE5.8 / UE6.0 | **Cache-locality reorder** of `FUObjectArray` / `FChunkedFixedUObjectArray` (shipped in **5.8**, unchanged in 6.0): `ObjObjects` is `FUObjectArray`'s first member; chunked fields `Objects@0x00, NumElements@0x08, MaxElements@0x0C, NumChunks@0x10, MaxChunks@0x14, PreAllocatedObjects@0x18`. Matched by the **"UE5.8" preset** `{0x00,0x0C,0x08,0x14,0x10}` — grep the string `"UE5.8"` to find it: `Aura.cpp`'s chunked-preset table and `Genau.cpp`'s Tier-1 preset table in `ValidateGObjects`, both written in ArrayLayout order = `{objectsOffset, maxElementsOffset, numElementsOffset, maxChunksOffset, numChunksOffset}`. ⚠ There is a **THIRD** site, and it is not greppable by the tuple: `Genau.cpp`'s Tier-2 relaxed fallback row `"F"` encodes the same layout as `{0x08,0x0C,0x00,0x14,0x10}`, because that table's struct is `{numOff, maxOff, objOff, maxCOff, numCOff, isFlat, name}` — `numOff`/`objOff` swapped. Same five offsets, permuted; a change to one row must be mirrored in all three. **UE6.0 is layout-identical to 5.8** for every dumper-read structure in normal shipping builds — see the parity note below |
 
 > **UE6.0 vs 5.8 — shipping-build layout parity** (verified `origin/5.8..origin/ue6-main`, 2026-06-30). For normal shipping game builds UE 6.0 reads identically to UE 5.8 across every structure the dumper touches; the core path is already UE6-ready and nothing needs implementing now:
 >
@@ -158,7 +159,7 @@ Detection, in priority order:
 > patterns carry that adjustment, so before `"Flat-Base"` existed, any pre-4.20 title those five
 > missed was unfixable by pattern work at *any* priority.
 
-### Pre-`FUObjectItem` (UE 4.10 and earlier) — NOT SUPPORTED
+### Pre-`FUObjectItem` (UE 4.8–4.10) — NOT SUPPORTED
 
 Verified against a **UE 4.10.2 PDB** (IS Defense Editor's `UE4Editor-Cmd.pdb`, 30.9 MB of type
 records), with every offset independently re-confirmed from instruction encodings in
@@ -209,6 +210,52 @@ shipping build, but **`Outer` is +0x28 in the editor and +0x20 shipping** — do
 anywhere. `FUObjectArray`, `TStaticIndirectArrayThreadSafeRead`, `FNameEntry`/`TNameEntryArray`
 and `EObjectFlags` are not editor-gated and transfer as-is; the `UField`/`UStruct`/`UProperty`
 family does NOT (which is moot — those are resolved dynamically by `DynOff`).
+
+#### UE 4.7 and earlier — a DIFFERENT pre-`FUObjectItem` shape, blocked for a different reason
+
+Everything above is 4.8–4.10. The indirect array and the `GetUObjectArray()` singleton both arrive
+**at 4.8**; 4.7 and older are a plainer thing, verified against Epic's source at `origin/4.0` …
+`origin/4.7` (all eight branches declare it identically) and corroborated by RE-UE4SS's own version
+bands (`UVTD/src/Helpers.cpp` — `tarray_407_and_earlier` vs `indirect_408_to_410`).
+
+```
+FUObjectArray  (no base class, no virtual of its own -> NO vtable)
+  +0x0000: ObjFirstGCIndex / ObjLastNonGCIndex / OpenForDisregardForGC  (int32 x3)
+  +0x000C: (4 bytes padding, TArray is 8-aligned)
+  +0x0010: ObjObjects = TArray<UObjectBase*>
+             +0x0010  Data (UObjectBase**)
+             +0x0018  ArrayNum
+             +0x001C  ArrayMax
+extern COREUOBJECT_API FUObjectArray GUObjectArray;   // a plain global, not a magic static
+```
+
+| | UE 4.8–4.10 | UE 4.7 and earlier |
+|---|---|---|
+| element | raw `UObjectBase*`, stride 8 | raw `UObjectBase*`, stride 8 (same) |
+| container | `TStaticIndirectArrayThreadSafeRead`, INLINE chunk table | flat `TArray<UObjectBase*>` — **no chunks at all** |
+| the global | Meyers singleton `GetUObjectArray()` | plain `extern GUObjectArray` |
+| `UObjectBase` | 0x28: Flags `+0x08` / Index `+0x0C` / Class `+0x10` / Name `+0x18` / Outer `+0x20` | **identical** (diff of RE-UE4SS's `4_07` vs `4_11` `[UObjectBase]` blocks is empty) |
+| what blocks us | `ArrayLayout` cannot express an inline chunk table | **not the layout** — see below |
+
+**The layout is already expressible.** `Aura::ArrayLayout` would encode this as
+`{0x10, 0x1C, 0x18, -1, -1}` — literally the `"Flat-Base"` preset with `maxElementsOffset` and
+`numElementsOffset` transposed, because `FFixedUObjectArray` orders them Max-then-Num while
+`TArray` orders them Num-then-Max. Same expressiveness point already recorded for UE3 below.
+
+**What actually blocks it, measured:** `8` is not in `Lineal::kItemStrideCandidates`
+(`{16, 24, 32, 20, 40}`), so stride detection can never select the right stride.
+
+**What is reasoned but NOT measured:** four of those five candidates (16/24/32/40) are multiples of
+8, so a probe would land on a *strict subset of the real pointers* — every slot a genuine
+`UObject*`, giving `named` ≈ 100% and `bad` == 0. That is the "PASSES → confident" shape the gate
+comment in `Lineal.h` warns about, and it is worse than its NULL case: the array would be silently
+accepted at half (or a third, or a fifth) of its true length. **This has never been run.** There is
+no ≤4.7 reference build in the corpus (`docs/reference-builds.md`'s oldest rows are the two 4.10
+ones) and no ≤4.7 GObjects pattern — the version-needle table floors at `"4.18."`, so the only
+route below 4.11 at all is the PE-resource `major == 4` branch. Treat the aliasing paragraph as a
+prediction to be checked if a ≤4.7 oracle is ever built, not as a result.
+
+The floor stays `MIN_SUPPORTED_UE_VERSION = 411`. Both sub-regimes are refused by the same gate.
 
 **Deciding which regime an unknown old binary is in** — one instruction-level look at the
 index→object accessor:
@@ -370,23 +417,56 @@ driven by these on-disk layouts. `fnameSize` = 8 (default) or 16 (when
 
 ### Smart pointers (TPersistentObjectPtr family)
 
+⚠ **The `Tag` is not always there, and this is the single most-repeated mistake in
+this family.** `TPersistentObjectPtr` carried `mutable int32 TagAtLastTest` between
+the `FWeakObjectPtr` and the payload up to UE 5.2 (present at `5.2.1-release`
+`PersistentObjectPtr.h:243`), and **UE 5.3 deleted it** (absent at `5.3.2-release:228`,
+and at 5.4 / 5.6 / 5.8). The payload therefore moves up — by 8 for an 8-aligned
+payload, by only **4** for a 4-aligned one:
+
+| payload | align | ≤ 5.2 | ≥ 5.3 | sizeof ≤5.2 / ≥5.3 |
+|---|---|---|---|---|
+| `FSoftObjectPath` | 8 | `+0x10` | `+0x08` | `0x30` (5.1-5.2) or `0x28` (≤5.0) / `0x28` |
+| `FUniqueObjectGuid` | 4 | `+0x0C` | `+0x08` | `0x1C` / `0x18` |
+
+So `+0x10` is right for soft **only up to 5.2**, and is right for lazy in **no era at
+all**. Both were hardcoded `0x10` until 2026-09-05.
+
 ```
 TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
 +0x00 FWeakObjectPtr (8B)
-+0x08 Tag (4B) + pad (4B)
-+0x10 FSoftObjectPath
+[+0x08 Tag (4B) + pad (4B)]                 <- UE <= 5.2 ONLY
++0x10 (<=5.2) / +0x08 (>=5.3) FSoftObjectPath
         UE4 / UE5.0:  FName AssetPathName + FString SubPathString
         UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
-total: 0x28 (UE4 default) ... 0x48 (UE5.1+ with CasePreservingName)
+total: 0x28 (UE4, and UE5.3+ non-CPN) ... 0x48 (UE5.1-5.2 with CasePreservingName)
 ```
 
 ```
 TLazyObjectPtr<T>                          // Phase H
 +0x00 FWeakObjectPtr (8B)
-+0x08 Tag (4B) + pad (4B)
-+0x10 FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
-total: 0x20 (fixed)
+[+0x08 Tag (4B)]                            <- UE <= 5.2 ONLY; NO pad, FGuid is 4-aligned
++0x0C (<=5.2) / +0x08 (>=5.3) FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
+total: 0x1C (<=5.2) / 0x18 (>=5.3)
 ```
+
+**We measure this rather than gate on the version**, because a misdetected version is
+exactly the case where a hardcoded offset does the most damage:
+
+```
+envelope = ElementSize - sizeof(payload)
+```
+
+⚠ `ElementSize` **alone is ambiguous** and must never be matched against a table of
+whole sizes: `0x28` is both a ≤5.0 tagged soft pointer (`0x10` + a `0x18` FName/FString
+path) and a ≥5.3 untagged one (`0x08` + a `0x20` `FTopLevelAssetPath` path). Subtracting
+the payload size — which the `FTopLevelAssetPath` discriminator already gives us — is
+what makes the answer unique. The arithmetic is `DynOff::PersistentPtrEnvelopeFor`
+in [`dll/src/Grimoire.h`](../dll/src/Grimoire.h), pinned by `Test_PersistentPtrEnvelope`;
+the latching, the `DYNO:PersistPtr` log line and the fallback live in
+`PersistentObjectPtrEnvelope` in [`dll/src/Ubel.cpp`](../dll/src/Ubel.cpp).
+The measured offset also goes on the wire as `soft_path_offset`, because the CE XML
+exporter used to bake `+10` into every emitted table.
 
 Both expose the embedded `FWeakObjectPtr` so when the asset is currently
 loaded the live `UObject*` resolves and is set on `fv.ptrValue` — Live
@@ -474,7 +554,8 @@ the read-side path. Three phases:
    `TSetElement<TPair<UObjectBase*, TMap[0x50]>>`. Allocation bits
    come from inline buffer (≤128 bits) or heap-secondary at TMap+0x20.
 3. Linear-scan inner TSparseArray for FName key match. Stride 0x20
-   (FName=8) or 0x28 (`bCasePreservingName`, FName=16). Deref the
+   (FName=8) or 0x28 (`bCasePreservingName`: the FName is 0xC but PADS to a 0x10 slot
+   inside the TPair, because the TSharedPtr value is 8-aligned). Deref the
    matched `TSharedPtr` (16 B: `Object*` + `RefCount*`) to reach
    `FMulticastScriptDelegate`, then walk
    `InvocationList: TArray<FScriptDelegate>` and resolve each

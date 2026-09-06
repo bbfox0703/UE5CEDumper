@@ -1,6 +1,6 @@
 # Features for Table Makers
 
-> Part of [UE5CEDumper](../Readme.MD) — see the README for the highlights, the tested version matrix, setup, and workflow. Chinese (Traditional): [專為 Table 製作人員設計的功能](Features_zh-TW.md).
+> Part of [UE5CEDumper](../Readme.md) — see the README for the highlights, the tested version matrix, setup, and workflow. Chinese (Traditional): [專為 Table 製作人員設計的功能](Features_zh-TW.md).
 
 | Feature | Description |
 |---|---|

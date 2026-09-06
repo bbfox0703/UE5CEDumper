@@ -54,6 +54,22 @@ struct ClassInfo {
     // that must tell own from inherited -- the SDK header emitter -- cannot do it without
     // this number, and nothing else on the wire implies it (audit #5 W2).
     int32_t                SuperPropertiesSize = 0;
+    // The LOWEST Offset among this class's OWN properties -- captured before the super
+    // chain is prepended, because after that the two are indistinguishable.
+    //
+    // ⚠ It exists because SuperPropertiesSize is NOT a safe floor. UE sets a native
+    // USTRUCT's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so an EMPTY
+    // USTRUCT reports 1, not 0 -- while C++ empty-base optimisation puts the derived
+    // struct's first member at offset 0. `Offset >= SuperPropertiesSize` then drops it.
+    // Measured on MSVC: an empty base (including one carrying only GENERATED_BODY-shaped
+    // typedefs) gives sizeof 1 with the derived member at 0, while a NON-empty base never
+    // has its trailing padding reused. So EBO is the only intruding shape -- and UE 5.8.2
+    // ships 62 empty USTRUCTs that are inherited from, with 302 property-bearing children.
+    //
+    // -1 = not measured / this class declares no properties of its own. Consumers MUST
+    // treat a negative as "no information" and fall back to SuperPropertiesSize: taking a
+    // min() against 0 or -1 re-emits the entire inherited chain (audit #5 W2).
+    int32_t                OwnPropertiesStart = -1;
     std::vector<FieldInfo> Fields;
 };
 
@@ -363,7 +379,7 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 // Read an FName at instanceAddr + offset and resolve it to a string
 // via Serie::GetString. Returns "" on failure or "None" for the
 // canonical empty FName. Handles both 8-byte (Index+Number) and
-// 16-byte (CasePreservingName) FName layouts.
+// 12-byte (CasePreservingName) FName layouts.
 std::string ReadFNameAt(uintptr_t instanceAddr, int32_t offset);
 
 // Read an FText at instanceAddr + offset and return the embedded
@@ -407,13 +423,18 @@ struct LiveFieldValue {
     uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
     // Phase G layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
     // Lets the CE XML / CSX exporter emit per-element struct groups with
-    // FName leaf(s) at the FSoftObjectPath sub-offset (+0x10) instead of
+    // FName leaf(s) at the FSoftObjectPath sub-offset instead of
     // a single 8B WeakPtr-only hex. 0 means "not a soft array".
-    //   FSoftObjectPtr layout per UE version:
-    //     UE4 / UE5.0: { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
-    //     UE5.1+:      { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FName(8|16) + FString(16) }
-    int32_t     softArrayFNameSize = 0;          // 8 (normal) or 16 (CasePreservingName)
+    //   FSoftObjectPtr layout per UE version — note the Tag is NOT always there:
+    //     UE4 / UE5.0:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|0xC->pads to 0x10) + FString(16) }
+    //     UE5.1 / 5.2:  { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName x2     + FString(16) }
+    //     UE5.3+:       { FWeakObjectPtr(8)                   + FName x2     + FString(16) }
+    // UE 5.3 deleted TPersistentObjectPtr::TagAtLastTest, moving the path from
+    // +0x10 to +0x08. Exporters MUST use softArrayPathOffset rather than baking
+    // 0x10 — a CE table built with the wrong one reads AssetName as PackageName.
+    int32_t     softArrayFNameSize = 0;          // sizeof(FName): 8 (normal) or 12 (CasePreservingName)
     bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
+    int32_t     softArrayPathOffset = 0;         // FSoftObjectPath offset in the element (0x10 or 0x08)
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
@@ -1014,7 +1035,7 @@ ReadArrayResult ReadInterfaceArrayElements(
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
-// Stride derives from CasePreservingName: 16 (8B FName) or 24 (16B FName).
+// Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,

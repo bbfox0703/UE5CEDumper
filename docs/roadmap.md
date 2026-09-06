@@ -1,4 +1,4 @@
-# Roadmap — Current State
+﻿# Roadmap — Current State
 
 Snapshot of capabilities and per-game configuration. Updated when
 behaviour or test coverage changes; pair with [todo.md](todo.md) for
@@ -427,9 +427,13 @@ Delete-cache button; a UE version override still wins over everything.
   finds 9 matches across 5 real classes + 4 test-object fields.
   **`SPARSE_ES2_1` resolves SparseDelegates @ +9AA5F10** (build 575,
   ground truth from PDB).
-- **Titan Quest II** ✅ (UE 5.7, bCasePreservingName=**true**, 486k
-  objects): cross-version validation — same `SPARSE_ES2_1` AOB hits
-  `+D46D170`, exercises FName=16 walker branch (inner stride 0x28).
+- **Titan Quest II** ✅ (UE 5.7, 486k objects): cross-version validation —
+  same `SPARSE_ES2_1` AOB hits `+D46D170`. ⚠ The
+  `bCasePreservingName=**true**` claim that used to be on this row is
+  **REFUTED** — a live inject logged `votes standard=20, CPN=0` / `CPN=no`
+  (see `docs/test-games.md:13`), so this does **not** exercise the
+  case-preserving walker branch (pair slot 0x10, inner stride 0x28); that
+  branch has never been run against a real game.
   Was source of 194 `ValidateArrayElemSize` warnings/session pre-build
   583 → now Debug-only.
 - **DQ I&II HD-2D / FF7 Rebirth / FF7 Remake** (UE4 forks, Square Enix
@@ -630,7 +634,19 @@ shipping any major Walker / Detection change:
   [technical-notes.md](technical-notes.md)): (1) if a UE6 game ships the
   experimental `UE_WITH_REMOTE_OBJECT_HANDLE` ON (off in normal shipping),
   hardcoded `OFF_UOBJECT_*` offsets shift by `sizeof(FRemoteObjectId)` and
-  FUObjectItem packing is forced off; (2) the version-string map tops out at
-  `{"5.8.",508}` — UE6 games fall to a bias fallback (dynamic detection still
-  works), so a `{"6.0.",600}` entry is optional prep gated on a
-  `kVersionDetectLogicRev` bump. No pre-emptive UE6 AOBs needed.
+  FUObjectItem packing is forced off; (2) the version-needle table
+  (`kVersionNeedles`, `VersionNeedleScan.h`) tops out at `{"5.8.",508}`, so a
+  UE6 binary matches no needle and, when nothing else answers, lands on the
+  **flat `504` default** in `Genau.cpp` — not on "a bias fallback": the bias
+  branch just above it is reachable only for a thumbprinted shipper, and
+  `kPublishers[]` holds exactly one (`SQUARE_ENIX` → 427). Dynamic detection is
+  unaffected (the AOB scan is version-agnostic) and the runtime marker ladder
+  still raises a string-stripped UE5 title as far as 508 (`Frieren.cpp`), so the
+  residue is a cosmetic badge. **UE 5.9 needs nothing added today** — the
+  PE-VERSIONINFO path already answers `5.9 → 509` and the pipe accepts
+  `418..509`; only a 5.9 title that is *also* string-stripped badges one minor
+  low, and nothing in the 505–509 band is version-gated. If `{"5.9.",509}` and
+  `{"6.0.",600}` are ever added, add them together so the
+  `kVersionDetectLogicRev` bump is paid once; 600 additionally needs the pipe's
+  upper bound and `PointerPanelViewModel`'s override list widened. No
+  pre-emptive UE6 AOBs needed.

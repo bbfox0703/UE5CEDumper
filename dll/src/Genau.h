@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Genau — 葛納烏 (一級魔法使篩選考官 — First-Class Mage Examiner)
@@ -29,6 +29,11 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 //     HasUEAnchorNearby / publisher-bias change, so every cached version is recomputed once
 //     under the new logic. Do NOT tie it to the build number — that would re-detect on every
 //     rebuild and defeat the cache for stripped-version games (SquareEnix).
+// >>> ALSO BUMP IT when a cached VALUE is found that the current detection cannot produce.
+//     The rule above is about the logic; this clause is about the DATA, and it was added
+//     because rev 6 needed it. A record stamped with the CURRENT rev is skipped forever by
+//     the cache-reuse branch no matter how wrong its value is, so the stamp is the ONLY
+//     mechanism that can reach an entry which is already poisoned.
 // rev 2 (build ~2394): VERSIONINFO StringFileInfo ProductVersion/FileVersion fallback,
 // UTF-16LE pass in the Tier-1 memory scan, and Tier 1 no longer requires the needle
 // table's trailing '.' (real tags are "++UE4+Release-4.27", so it never matched before).
@@ -57,7 +62,39 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // binary we own; the gain is a working fallback for images whose full "++UEx+Release-" tag
 // is stripped but a "Release-X.Y" fragment survives. Bump is mandatory: a game cached under
 // rev 4 would keep its old tier/confidence without ever re-detecting.
-constexpr uint32_t kVersionDetectLogicRev = 5;
+// rev 6 (2026-09-06): NOT a logic change — a DATA one, and the first bump of that kind.
+// MEASURED on Avowed: its cached record held ueVersion=504, and a forced fresh detection
+// re-stamped it 503. 504 is a value DetectVersionDetailed CANNOT PRODUCE for that binary — it
+// is the runtime CMC::GravityDirection raise (Frieren.cpp), which runs in UE5_Init AFTER
+// Flamme::SaveResults (Genau.cpp, end of FindAll) and therefore never writes back. So the 504
+// is residue of a write path that no longer exists, and nothing would ever have re-derived it.
+// ⚠ The cache-reuse branch justifies itself with "the same binary always yields the same
+// answer". That is true OF DETECTION and false of anything else that ever wrote to the field:
+// a raised value breaks the very invariant the cache rests on, and — being stamped current —
+// is unreachable by every mechanism except this one.
+// ⚠ This does NOT make the A4 decision wrong. audit-2026-09-05-vendor-ue582.md and
+// verification-register.md both say "do not bump for the 507/508 ladder", and that stands: the
+// ladder is runtime-only and re-applied on every init, so it needs no invalidation. This bump
+// is for the RESIDUE OF AN OLDER WRITE PATH, not for the ladder.
+// Cost: one re-detect per cached game (~0.35 s, per rev 4's measurement), after which the cache
+// holds a value detection actually produces. A raise that is still warranted is re-applied at
+// runtime exactly as before, so no verdict the user sees changes — Avowed still badges 504.
+// rev 7 (2026-09-06): DetectVersionDetailed gained a SECOND independent resource source --
+// CrashReportClient.exe, found by walking up from the game exe to <root>/Engine/Binaries/Win{64,32}.
+// Mandatory under the rule at the top: a title cached under rev 6 holds a verdict reached without
+// that source and would never consult it. This is a LOGIC change, unlike rev 6's data one.
+// Why it is worth a file probe: CrashReportClient ships WITH THE ENGINE and is never authored by
+// the game team, so unlike the game exe its version can never be the GAME's version (measured:
+// OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744 all sit in the game exe's field). Its value
+// is not the hit rate but WHERE it hits -- DQ I&II HD-2D carried a misdetected "UE5.05" in this
+// repo's docs for months, across the UE4/UE5 boundary, and its CrashReportClient says 4.27.2.0.
+// ⚠ Coverage is a per-machine sample, not a rate: 8 of 66 folders on the maintainer's PC ship one,
+// and Avowed / DQ XI S / OCTOPATH / DumperTest ship none -- absence is the common path.
+// ⛔ A file-HASH allow-list was proposed and MEASURED TO REJECT EVERYTHING: CrashReportClient is
+// rebuilt per game, so at one version there are three distinct binaries (4.27.2.0 = Editor
+// 19,469,792 B / DQ I&II 19,496,448 B / P3R 19,487,232 B). tools/ue-crc-oracle.json therefore pins
+// the ProductVersion -> code ARITHMETIC against 8 real Epic binaries, and is not an allow-list.
+constexpr uint32_t kVersionDetectLogicRev = 7;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)
@@ -152,10 +189,13 @@ struct EnginePointers {
     /// wrong for UE3, whose override list has no expressible value and whose structures do not
     /// exist at any version. See str.Pointers.VersionTooOld vs str.Pointers.EnginePreUE4.
     ///
-    /// UE 4.10 and earlier have no `FUObjectItem` at all: `FUObjectArray::ObjObjects` is a
-    /// `TStaticIndirectArrayThreadSafeRead` of raw `UObjectBase*` (stride 8) whose chunk table is
-    /// INLINE, so `ArrayLayout` cannot even express it (`objectsOffset` means "read a pointer
-    /// here"; 4.10 needs "take the ADDRESS of here") — see docs/technical-notes.md. Scanning
+    /// UE 4.10 and earlier have no `FUObjectItem` at all, in two distinct shapes. At **4.8-4.10**
+    /// `FUObjectArray::ObjObjects` is a `TStaticIndirectArrayThreadSafeRead` of raw `UObjectBase*`
+    /// (stride 8) whose chunk table is INLINE, so `ArrayLayout` cannot even express it
+    /// (`objectsOffset` means "read a pointer here"; 4.10 needs "take the ADDRESS of here"). At
+    /// **<=4.7** it is a flat `TArray<UObjectBase*>` at `FUObjectArray+0x10`, which `ArrayLayout`
+    /// *can* express and which is blocked by the stride-8 element instead (untested — no oracle
+    /// and no pattern exists below 4.8) — see docs/technical-notes.md. Scanning
     /// anyway just burns ~4 s of AVX2 passes to reach "no winner", which is what these titles did
     /// before this flag existed. Only ever set on a CONFIDENTLY detected version: a
     /// low-confidence or user-overridden version is never gated, because misdetecting a working

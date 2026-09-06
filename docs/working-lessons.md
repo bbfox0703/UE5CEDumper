@@ -406,6 +406,128 @@ had already been solved twice.
 mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
 done — worth checking, never sufficient on its own.
 
+### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
+
+*Four independent instances in one 2026-09-05/06 verification session — a logging change, an
+acceptance criterion, a test target, and a struct field. None was a coding mistake in the ordinary
+sense; every one was **a claim that had drifted away from the thing it claimed about**, while every
+gate stayed green. This is not a new observation — audit #4 filed it as root cause 4a — but four in
+one session is the evidence that it is **the** shape to hunt, not one of many.*
+
+| # | the claim | what was actually true |
+|---|---|---|
+| 1 | `70d28548`: "build: zero warnings on a CLEAN publish" | `_wfopen`→`_wfopen_s` also made every live log **unreadable to every process** (`fopen_s` opens exclusively), deleting the DLL-side half of every acceptance test in the repo |
+| 2 | A2's row: "`VALIDATION FAILED` must be ABSENT" | on the pattern path a zero-fire hook logs a **different** line, so the absence is satisfied **by construction** — a wrong slot passes |
+| 3 | todo + register: "A7's live half CLOSED" | the test block drives `Aura::ForEach`; A7 fixed `FindByAddress`, which hand-rolls its own loop. `grep FindByAddress dll/tests/ tools/verify/` = **0 hits** |
+| 4 | `Ubel.h:435`: "`softArrayFNameSize` — sizeof(FName): 8 or **12**" | both writers set **`0x10`**, and six sibling sites did the same |
+
+**What they share, and it is the thing to look for:** in each case the *checker* and the *checked*
+were separated by a step nobody re-derived — a share mode not visible in the diff, a log line whose
+branch was never read, a label that says "A7" over a call to something else, a comment that stopped
+being regenerated from the code. **Green is not evidence. Green plus a demonstrated ability to go
+red is evidence** (§1.2).
+
+**The four questions that found all of them**, in the order they are cheapest to ask:
+
+1. **"What would this check say if the thing under test were deleted?"** If the answer is "the same",
+   the check is decorative. Deleting A7's poll turned two new assertions red with
+   `...reports no index rather than a stale one   got: 8000` — *that* is what closed the row, not
+   the assertions passing.
+2. **"Does the label name the thing, or a neighbour of it?"** `Aura::ForEach` and
+   `Aura::FindByAddress` are siblings in one file and the fix's own comment names ForEach as a
+   *model to copy*. A block titled "A7" over the model instead of the subject reads correct at a
+   glance and forever.
+3. **"Is the absence I am asserting reachable at all?"** An `ABSENT:` criterion needs a paired
+   positive that proves the code path ran (§1.9 says this for strings; it generalises to branches).
+   A2's real evidence turned out to be a line already in the log that nobody had cited —
+   `validation OK — hook fired 660 times in 1500ms`.
+4. **"Does the doc regenerate, or was it typed once?"** `Ubel.h`'s field comment and its two writers
+   could not both be right, and nothing compared them. Where the answer is "typed once", either
+   derive it (`check_derived_counts`) or make the wrong answer unrepresentable — which is what
+   `DynOff::SizeofFName()` / `FNameSlotIn8Aligned()` do: the rule had been written out in full in
+   `Grimoire.h`, *including a warning that it was the most-copied wrong sentence in the tree*, and
+   was still copied wrongly into eight sites, because **both answers are spelled
+   `bCasePreservingName ? … : 0x08`** and the expression cannot say which question it answers.
+
+⛔ **A documented rule is not a defence.** All four had documentation on their side; #4 had the rule
+stated correctly *four lines above* one of the sites that got it wrong. Prefer, in this order:
+**make the wrong answer unrepresentable** (a named function, a type) → **derive it and gate the
+derivation** → **write it down**. Only the third is what most of these had.
+
+⚠ **And the same shape lives in verification rigs, which is worse, because a rig is trusted.** Three
+of mine manufactured false verdicts in the same session: one expected soft and lazy to share a
+tagged envelope (they do not — `0x10` vs `0x0C`) and scored a *correct* DLL as FAIL on OCTOPATH; one
+demanded a `DetectVersion:` line that a cached verdict legitimately suppresses; one **raced a
+1500 ms validator** and reported "no validation OK line" about a line that appeared 1.6 s later.
+A rig that encodes the pre-fix model, or that reads a log before the code has finished writing it,
+converts a working fix into a bug report. Rigs need §1.2 applied to themselves.
+
+### 1.13 ⭐ A CACHE STAMPED WITH ITS PRODUCER'S VERSION CANNOT SEE A VALUE A DIFFERENT WRITER PUT THERE
+
+*Sibling of §1.12 and worth its own entry, because the diagnostic is different. §1.12 is "the
+report and the reported thing are computed by different code paths". This one is: **the invalidator
+and the writer are different code paths** — so the guard is watching a door the bad value did not
+come through.*
+
+The pattern is a cache whose freshness is decided by a stamp naming the version of *the code that
+produces the value*: `Genau::kVersionDetectLogicRev` here, but any `schemaVersion` / `cacheEpoch` /
+`algoRev` is the same thing. It answers exactly one question — **"has the producer changed since
+this was written?"** It cannot answer, and is not built to answer, **"did something other than the
+producer write this?"**
+
+Once a foreign value carries the current stamp it is not *hard* to find. It is **structurally
+unreachable**: the reuse branch skips the producer entirely, so the only thing that could ever
+disagree with the value never runs again. Not "until someone notices" — *ever*.
+
+| # | the cache | what got in that the producer never produces |
+|---|---|---|
+| 1 | `ueVersion` + `versionDetectRev` | Avowed cached **504**; `DetectVersionDetailed` yields **503** for that PE. The 504 was the runtime `CMC::GravityDirection` raise, from a write path that no longer exists |
+| 2 | `ueVersionUserOverride` | an override left on OCTOPATH after an A/B. ⛔ **It is checked BEFORE the rev-stamped cache and a rev bump does not clear it** — so even rev 6, the fix for #1, does not reach #2 |
+| 3 | `DynOff::SOFTPTR_PATH` / `LAZYPTR_GUID` latches | latched under one UE version and still authoritative after `set_ue_version_override` changed the version they were derived from (fixed by clearing them in `Fern.cpp`) |
+
+⭐ **THE ONE THAT MATTERS: the dangerous value is the CORRECT one.** Avowed's cached 504 was *right*
+— the runtime ladder raises 503 to 504 anyway, so the badge a user saw was correct either way.
+OCTOPATH's stale override was `418`, which is *also* the right answer for that title. Both were
+invisible **because** they were right. A wrong value gets reported by somebody; a right value
+written by the wrong path is permanent, and it silently disables re-derivation for that key
+forever. So **do not look for wrong outputs. Look for values whose PROVENANCE is not the producer.**
+
+**How to actually find one** (cheap → expensive):
+
+1. **Run the producer and diff it against the cache.** This is the whole detector, and it needs no
+   theory about what could have written the value. Avowed took one forced re-detect: seed the rev
+   down, relaunch, read what detection says now. A disagreement is a poisoned entry by definition —
+   the cache's own justification is *"the same binary always yields the same answer"*.
+2. **Ask who else can write the field.** Grep every assignment to the cached name, not just the one
+   in the producer. In #1 the second writer (`UE5_Init`'s ladder) is in a different file, runs in a
+   different phase, and is correct — it just must never persist.
+3. **Ask what would recompute a wrong value here.** If the honest answer is "the stamp", and the
+   stamp is already current, the answer is **nothing**, and you have found the bug even without an
+   instance of it.
+4. **Check every LAYER of the lookup, not just the stamped one.** #2 is the trap: the override sits
+   *above* the stamped cache, so the mechanism that fixes #1 cannot see it. A bump proves nothing
+   about a tier it does not gate.
+
+**Prevention, strongest first:**
+
+* **Keep the second writer out of the store.** The 503/504/507/508 raise ladder is *correct* as a
+  runtime-only correction and must not write back; that property is what made the rev-6 bump safe
+  (re-deriving cannot lose a raise). Verify it rather than assuming it — that check was A4's, and
+  it is what let rev 6 be argued for at all.
+* **Record provenance in the record.** A `source: "detect" | "raise" | "user"` field makes a
+  poisoned entry *self-identifying* and turns step 1 above from a live re-run into a grep. Cheap,
+  and none of our three caches has it.
+* **Write down what the stamp does NOT cover.** `Genau.h`'s rule said "bump when the logic changes"
+  and was silent on the data, so three separate documents correctly refused to bump for a runtime
+  ladder while a poisoned entry sat unreachable. The rule now carries a second clause: *also bump
+  when a cached VALUE is found that the current detection cannot produce.*
+
+⚠ **A bump is a blunt instrument and its cost is not the number you remember.** Rev 4 recorded
+~0.35 s per cached game; the measured cost of rev 6 on DumperTest was **2 ms**, because a Tier-1
+PE-VERSIONINFO hit never reaches the memory string scan that 0.35 s describes. Both numbers are
+real and neither generalises — a version-stripped title still pays the scan. Quote the conditions
+or do not quote the number (§1.6).
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
@@ -2501,3 +2623,23 @@ on 2026-08-15**; `MEMORY.md` now carries a pointer here plus the section map abo
    is paid only when it is relevant. Keep `MEMORY.md` to pointers and machine-local facts. **Adding a
    second index file does not help** — it either also loads (no saving) or is never read (dead
    weight). The lever is deduplication against git-carried docs, not more files.
+
+### 7.2 CLAUDE.md's Documentation Index is a POINTER table, and it has drifted twice
+
+Same argument as §7.1, applied to the other always-loaded file. `CLAUDE.md` loads on **every turn**,
+so a paragraph there costs more than a paragraph anywhere else in the repo.
+
+* **2026-08-27.** The index had reached **40 KB across 56 rows** — a mean of 716 bytes, i.e. a
+  paragraph per entry. A row-by-row audit against every target doc found the prose was
+  **near-entirely duplicated**, plus **six claims that had gone stale or were refuted by the very
+  doc they pointed at**. Trimmed to ~11 KB; whole file 77.5 KB → 39 KB.
+* **2026-09-06.** It had grown back to ~16 KB and the file was 127 bytes under its own 40,960 cap.
+  A second pass against the same standard cut the whole file to ~33 KB — and again found stale
+  claims *inside the summaries*: `todo.md` billed at 201 KB (really 188), Avalonia at 12.1.0
+  (really 12.1.1), and an App-data rule naming two per-game families when `Constants.cs` says
+  `TeleportCoords\` is **the third**.
+
+⭐ **The recurring finding is not "it got long" — it is that a SUMMARY GOES STALE AND A POINTER
+CANNOT.** A row saying *what a doc contains* has to be re-verified whenever that doc changes, and
+nobody does. A row saying *when you would open it* survives. That is why the rule is phrased as a
+question ("when would I open this?") and capped in bytes.

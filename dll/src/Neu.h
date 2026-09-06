@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Neu — 諾伊 ("New" / the scout who uncovers the disguised)
 // EnumNames: parse UEnum::Names, telling apart the two on-disk layouts that
 // occupy the SAME UEnum offset, and extract the (FName comparison-index, value)
@@ -8,7 +8,8 @@
 //       +0x00  FName/int64 pairs Data*        (name + value INTERLEAVED)
 //       +0x08  int32 ArrayNum
 //       +0x0C  int32 ArrayMax
-//     entry i @ Data + i*(sizeof(FName)+8):  FName @ +0, int64 value @ +sizeof(FName)
+//     entry i @ Data + i*(Align(sizeof(FName),8)+8):  FName @ +0, int64 value @ +Align(sizeof(FName),8)
+//       (the int64 makes the TPair 8-aligned, so a 0xC CasePreserving FName is PADDED to 0x10 here)
 //
 //   FNameData57 (UE5.6+):     Names is a struct-of-arrays (UEnum::FNameData)
 //       +0x00  UPTRINT TaggedNames    (tagged FName*  — mask &~1)   names array
@@ -54,7 +55,7 @@ struct EnumNamesLayout {
     uintptr_t       namesPtr    = 0;   // FName[] base, tag bit already masked off
     uintptr_t       valuesPtr   = 0;   // int64[] base (FNameData57 only; 0 for Legacy)
     int32_t         count       = 0;   // number of enum members
-    int             fnameStride = 8;   // bytes between FName entries (8 normal / 0x10 CasePreserving)
+    int             fnameSize   = 8;   // sizeof(FName) for this game (8 normal / 0xC CasePreserving)
 };
 
 // Tag bit on the FNameData pointers: 1 = dynamically allocated FName array (the
@@ -72,12 +73,13 @@ inline bool LooksLikePtr(uint64_t p) noexcept {
 // per-game format established once by DetectLayout). This is what the live enum
 // reader uses — no guessing, so it can't mis-pick a format on an arbitrary enum.
 //   read(addr, out, n) -> bool : copy n bytes from game memory; false on fault.
-//   fnameStride                : sizeof(FName) for this game (8, or 0x10 CasePreserving).
+//   fnameSize                  : sizeof(FName) for this game (8, or 0xC CasePreserving). NOT the
+//                                Legacy pair stride — ReadEntry derives that padding itself.
 //   maxCount                   : upper bound on a plausible enum member count (e.g. 16384).
 // Returns true + fills `out` when the region parses sanely under `format`.
 template <typename ReadFn>
 inline bool BuildLayout(ReadFn&& read, uintptr_t regionAddr, EnumNamesFormat format,
-                        int fnameStride, int32_t maxCount, EnumNamesLayout& out) noexcept {
+                        int fnameSize, int32_t maxCount, EnumNamesLayout& out) noexcept {
     uint64_t w0 = 0, w1 = 0;
     if (!read(regionAddr + 0x00, &w0, sizeof(w0))) return false;
     if (!read(regionAddr + 0x08, &w1, sizeof(w1))) return false;
@@ -107,7 +109,7 @@ inline bool BuildLayout(ReadFn&& read, uintptr_t regionAddr, EnumNamesFormat for
         out.namesPtr    = nPtr;
         out.valuesPtr   = vPtr;
         out.count       = static_cast<int32_t>(numNew);
-        out.fnameStride = fnameStride;
+        out.fnameSize   = fnameSize;
         return true;
     }
 
@@ -120,7 +122,7 @@ inline bool BuildLayout(ReadFn&& read, uintptr_t regionAddr, EnumNamesFormat for
     out.namesPtr    = static_cast<uintptr_t>(w0);
     out.valuesPtr   = 0;
     out.count       = num;
-    out.fnameStride = fnameStride;
+    out.fnameSize   = fnameSize;
     return true;
 }
 
@@ -130,11 +132,11 @@ inline bool BuildLayout(ReadFn&& read, uintptr_t regionAddr, EnumNamesFormat for
 // dereferenced. Used at DETECTION time on known enums; the caller still confirms
 // by resolving member FName strings. Returns the winning format in `out.format`.
 template <typename ReadFn>
-inline bool DetectLayout(ReadFn&& read, uintptr_t regionAddr, int fnameStride,
+inline bool DetectLayout(ReadFn&& read, uintptr_t regionAddr, int fnameSize,
                          int32_t maxCount, EnumNamesLayout& out) noexcept {
-    if (BuildLayout(read, regionAddr, EnumNamesFormat::FNameData57, fnameStride, maxCount, out))
+    if (BuildLayout(read, regionAddr, EnumNamesFormat::FNameData57, fnameSize, maxCount, out))
         return true;
-    if (BuildLayout(read, regionAddr, EnumNamesFormat::Legacy, fnameStride, maxCount, out))
+    if (BuildLayout(read, regionAddr, EnumNamesFormat::Legacy, fnameSize, maxCount, out))
         return true;
     return false;
 }
@@ -146,18 +148,23 @@ inline bool ReadEntry(ReadFn&& read, const EnumNamesLayout& L, int32_t i,
                       int32_t& nameIndex, int64_t& value) noexcept {
     if (i < 0 || i >= L.count) return false;
     if (L.format == EnumNamesFormat::FNameData57) {
-        const uintptr_t nameAddr = L.namesPtr  + static_cast<uintptr_t>(i) * static_cast<uintptr_t>(L.fnameStride);
+        // Packed FName[]: UEnum::FNameData allocates FMemory::Malloc(sizeof(FName)*N) and
+        // indexes TmpNames[i], so the stride IS sizeof(FName) -- 0xC under CPN, not 0x10.
+        const uintptr_t nameAddr = L.namesPtr  + static_cast<uintptr_t>(i) * static_cast<uintptr_t>(L.fnameSize);
         const uintptr_t valAddr  = L.valuesPtr + static_cast<uintptr_t>(i) * 8u;
         if (!read(nameAddr, &nameIndex, sizeof(nameIndex))) return false;
         if (!read(valAddr,  &value,     sizeof(value)))     return false;
         return true;
     }
-    // Legacy: interleaved TPair<FName,int64>. Value sits right after the FName,
-    // so the per-entry stride is sizeof(FName)+8 and the value is at +sizeof(FName).
-    const uintptr_t entryStride = static_cast<uintptr_t>(L.fnameStride) + 8u;
+    // Legacy: interleaved TPair<FName,int64>. The int64 makes the pair 8-aligned, so a
+    // 0xC CasePreserving FName is PADDED to 0x10 inside the pair -- the value sits at
+    // Align(sizeof(FName),8) and the stride is that + 8. Do NOT use fnameSize raw here:
+    // that is the whole reason this parameter used to be misnamed 'stride'.
+    const uintptr_t valueOffset = (static_cast<uintptr_t>(L.fnameSize) + 7u) & ~static_cast<uintptr_t>(7u);
+    const uintptr_t entryStride = valueOffset + 8u;
     const uintptr_t entryAddr   = L.namesPtr + static_cast<uintptr_t>(i) * entryStride;
     if (!read(entryAddr, &nameIndex, sizeof(nameIndex))) return false;
-    if (!read(entryAddr + static_cast<uintptr_t>(L.fnameStride), &value, sizeof(value))) return false;
+    if (!read(entryAddr + valueOffset, &value, sizeof(value))) return false;
     return true;
 }
 

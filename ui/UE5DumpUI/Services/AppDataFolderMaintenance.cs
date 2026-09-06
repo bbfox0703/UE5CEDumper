@@ -9,13 +9,15 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Owns the on-disk layout of the per-game data folders under
-/// <c>%LOCALAPPDATA%\UE5CEDumper</c>: creates <c>Snapshots\</c> / <c>Bookmarks\</c>,
+/// <c>%LOCALAPPDATA%\UE5CEDumper</c>: creates <c>Snapshots\</c> / <c>Bookmarks\</c> /
+/// <c>TeleportCoords\</c>,
 /// MOVES anything still sitting at the old flat root into them, and — for the folders
 /// that opt in — ages out the games nobody has touched in a while.
 ///
 /// <para><b>Retention is per CALLER, not per folder.</b> <see cref="SnapshotStore"/>
-/// passes <see cref="Constants.DataMaxAgeDays"/>; <see cref="BookmarkStore"/> passes 0,
-/// which disables the sweep outright. Migration is the shared part; what a folder is
+/// passes <see cref="Constants.DataMaxAgeDays"/>; <see cref="BookmarkStore"/> and
+/// <see cref="CoordinateLibraryStore"/> pass 0, which disables the sweep outright --
+/// both hold hand-made data nobody can regenerate. Migration is the shared part; what a folder is
 /// worth keeping forever is the store's call, not this file's.</para>
 ///
 /// <para><b>Called from the store constructors, not from App.</b> The store that READS

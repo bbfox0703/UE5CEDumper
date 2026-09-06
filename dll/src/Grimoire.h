@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 // ============================================================
 // Grimoire — 魔導書 (Book of Spells)
 // Constants, magic strings, DynOff namespace
 // ============================================================
 
+#include <vector>
 #include <atomic>
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
@@ -53,7 +54,8 @@ inline bool IsUserspacePointer(uintptr_t p) {
 
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
-// Most offsets are stable, but Outer shifts when CasePreservingName is active (FName = 0x10):
+// Most offsets are stable, but Outer shifts when CasePreservingName is active (the
+// Name->Outer SLOT becomes 0x10; sizeof(FName) is 0xC -- see bCasePreservingName below):
 //   Standard (UE4.25-UE5.4, UE5.5+ non-CPN): Outer = 0x20
 //   CasePreservingName (UE4.27-CPN):          Outer = 0x28
 // NamePrivate at 0x18 reads ComparisonIndex (first 4 bytes), stable regardless of FName size.
@@ -183,8 +185,13 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
 inline int FSTRUCTPROP_STRUCT = 0x78;
 
 // === FArrayProperty (subclass of FProperty) ===
-// FProperty* Inner — element type descriptor, same offset as FSTRUCTPROP_STRUCT.
-// Both are the first subclass field after FProperty base layout.
+// FProperty* Inner — element type descriptor. The value here is only the STARTING guess.
+// Inner is the first subclass field on UE4.25-5.2, which declare `FProperty* Inner` before
+// `EArrayPropertyFlags ArrayFlags`; UE5.3 swapped the two AND narrowed the flags to uint8,
+// so on UE5.3+ ArrayFlags occupies the family base (1 byte + 7 padding) and Inner sits at
+// base + 8. Verified against vendor/UnrealEngine UnrealType.h at 5.2.1 vs 5.3.0, unchanged
+// through 5.8.2. Ubel's ProbeInnerProperty recovers the +8 at walk time and writes it back
+// here — this is the one family member that may legitimately leave the shared base.
 inline int FARRAYPROP_INNER   = 0x78;
 
 // === FBoolProperty layout (subclass of FProperty) ===
@@ -199,6 +206,260 @@ inline int FBOOLPROP_FIELDSIZE = 0x78;
 // UProperty (UObject-derived) has a larger base than FProperty (FField-derived).
 // Typical UE4.22: 0x70, may vary ±0x08 by version.
 inline int UBOOLPROP_FIELDSIZE = 0x70;
+
+// === TPersistentObjectPtr envelope — where the payload sits inside a soft/lazy ptr ===
+//
+//   TSoftObjectPtr = TPersistentObjectPtr<FSoftObjectPath>
+//   TLazyObjectPtr = TPersistentObjectPtr<FUniqueObjectGuid>   (FUniqueObjectGuid = { FGuid })
+//
+// UE ≤ 5.2 — and every UE4 (verified at 4.18, 4.27-plus, 5.2.1-release:243):
+//     +0x00  FWeakObjectPtr WeakPtr      (2×int32, so 8 bytes at alignof 4)
+//     +0x08  mutable int32 TagAtLastTest
+//     +0x0C  payload, at the payload's OWN alignment
+// UE ≥ 5.3 deleted TagAtLastTest (absent at 5.3.2-release:228, and at 5.4/5.6/5.8),
+// so the payload moves up — by 8 for an 8-aligned payload, by only 4 for a 4-aligned one:
+//
+//   payload             align   ≤5.2    ≥5.3     sizeof ≤5.2 / ≥5.3
+//   FSoftObjectPath       8     0x10    0x08     0x30 (5.1-5.2) or 0x28 (≤5.0) / 0x28
+//   FUniqueObjectGuid     4     0x0C    0x08     0x1C              / 0x18
+//
+// ⚠ 0x10 is right for soft ONLY up to 5.2, and is right for lazy in NO era. Both were
+// hardcoded 0x10 before this existed, so every UE 5.3+ title read the soft path one
+// field late and every title read the lazy GUID 4 bytes into it.
+//
+// MEASURED, not version-gated: the property's own ElementSize already reaches us, and a
+// misdetected version is precisely the case where a hardcoded offset does the most harm.
+// -1 = not yet measured; Ubel falls back to a version-derived value until a real
+// property is seen. See PersistentObjectPtrEnvelope() in Ubel.cpp.
+inline int SOFTPTR_PATH  = -1;   // FSoftObjectPath offset inside TSoftObjectPtr
+inline int LAZYPTR_GUID  = -1;   // FGuid           offset inside TLazyObjectPtr
+
+// The pure-arithmetic half of that decision, in the header so the test target can
+// pin it — the tests link headers, not Ubel.cpp, so a rule left in the .cpp is a
+// rule nothing measures. Ubel owns the latching and the log line; this owns the
+// numbers. `latched` < 0 means "nothing measured yet".
+//
+// ⚠ elemSize is deliberately NOT matched against a table of whole sizes: 0x28 is
+// both a UE ≤ 5.0 tagged soft pointer (0x10 envelope + 0x18 FName/FString path)
+// and a UE ≥ 5.3 untagged one (0x08 + 0x20 FTopLevelAssetPath path). Subtracting
+// the payload size — which the caller knows from the FTopLevelAssetPath form —
+// is what makes the answer unique.
+// sizeof(FSoftObjectPath) — the payload half of the envelope calculation above.
+//
+//   UE <= 5.0 : { FName AssetPathName;  FString SubPathString; }
+//   UE >= 5.1 : { FTopLevelAssetPath { FName PackageName; FName AssetName; };
+//                 FString/FUtf8String SubPathString; }
+//
+// ⚠ The FName block PADS UP to 8 before the trailing FString, which is 8-aligned. Under
+// CasePreservingName that makes the two arms disagree about which constant is right:
+//   two 0xC FNames = 0x18, already 8-aligned  -> 0x18 + 0x10 = 0x28
+//   one 0xC FName  = 0xC,  NOT 8-aligned      -> 0x10 + 0x10 = 0x20
+// So neither a bare 0x10 (the old code: gave 0x30 for the >=5.1 arm) nor a bare 0xC (the
+// naive fix: gives 0x1C for the <=5.0 arm) is correct for both. Only the AlignUp is.
+//
+// Getting the >=5.1 arm wrong was not just a bad number. With payload 0x30 against a real
+// CPN 5.1 tagged ElementSize of 0x38, PersistentPtrEnvelopeFor sees 0x38-0x30 = 0x08 --
+// which it ACCEPTS as a legal measurement and the caller LATCHES, so a bogus value then
+// outranks the version fallback. That is precisely the failure that function exists to stop.
+constexpr int FSoftObjectPathSizeFor(int fnameSize, bool isTopLevelAssetPath) {
+    const int names = isTopLevelAssetPath ? (2 * fnameSize) : fnameSize;
+    return ((names + 7) & ~7) + 0x10;   // + FString/FUtf8String { Data, Num, Max }
+}
+
+constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
+                                       int taggedEnvelope, int latched,
+                                       unsigned ueVersion) {
+    if (elemSize > payloadSize) {
+        const int candidate = elemSize - payloadSize;
+        // Only the two shapes the engine can produce. Any other difference means
+        // payloadSize is wrong for this build, and a bogus "measurement" is worse
+        // than the default.
+        if (candidate == taggedEnvelope || candidate == 0x08) return candidate;
+    }
+    if (latched >= 0) return latched;
+    return (ueVersion >= 503) ? 0x08 : taggedEnvelope;
+}
+
+// === UObject::ProcessEvent vtable slot, per engine version ===
+//
+// Only ever a FALLBACK: Frieren's pattern scan over [0x100,0x300) stays primary, and a
+// hook installed off this table is still cross-checked by the post-install fire count.
+//
+// ⛔ The table it replaces was wrong for EVERY UE5 game, and silently. It read
+//      >= 550 -> 0x228 ; >= 500 -> 0x220
+// but 550 is unreachable — versions are encoded major*100+minor and capped at 509
+// (Genau.cpp `major == 5 && minor <= 9`, Fern.cpp's 418..509 bound), so every UE5
+// title took the 0x220 arm, which is off by 0x38 (5.0) to 0x58 (5.5).
+//
+// MEASURED, from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
+// PDB dumps, one .ini per engine version. Slot = count of entries from `[UObjectBase]`
+// to `ProcessEvent`, counting the per-section `__vecDelDtor` once (it is the shared
+// destructor slot, relisted under each class). That dedup rule is exact here: only
+// `[UObjectBase]`, `[UObjectBaseUtility]` and `[UObject]` precede ProcessEvent — one
+// single-inheritance vtable — and `__vecDelDtor` is the ONLY name repeated among them.
+//
+// Cross-checked against six values this repo already had, all six agree:
+//   4.26 0x218 (the FF7R note's "stock 4.26")   4.27 0x220 (DropIn PDB + 4 live games)
+//   5.4  0x268 (DragonSword)                    5.6  0x260 (Lushfoil, Stark.h)
+//   5.7  0x260 (Solarpunk)                      5.8  0x250 (audit PDB work)
+//
+// ⚠ The table is NOT monotonic — 4.20 0x208 then 4.21 0x200, and 5.5 0x278 then 5.6
+// 0x260 — so it must stay an exact lookup. A `>=` ladder invites a "simplification"
+// that silently reintroduces the bug. (5.6 drops 3 non-editor virtuals and adds 2;
+// 5.8 deletes PostInterpChange and IsDestructionThreadSafe, both declared before
+// ProcessEvent, hence 0x260 - 0x10.)
+//
+// ⚠ These are NON-EDITOR dumps, and that is a property of the dump, NOT of where the
+// editor virtuals sit. UE 5.8's Object.h declares 33 WITH_EDITOR virtuals BEFORE
+// ProcessEvent (Object.h:250..1490); the templates simply contain none of them
+// (`PostEditChangeProperty`, `PreEditChange`, `CanEditChange`, … all absent, while
+// every non-editor virtual is present). An editor build shifts ProcessEvent far later
+// and this table does not describe it. Games are non-editor builds, so this is right
+// for our target — but do not "extend" it to an editor process.
+//
+// Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
+// floor; 5.9+ does not exist yet). The caller decides what to do with that.
+constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
+    switch (ueVersion) {
+        case 411: case 412: case 413:            return 0x1A8;
+        case 414:                                return 0x1C8;
+        case 415:                                return 0x1D0;
+        case 416:                                return 0x1F0;
+        case 417: case 418: case 419:            return 0x1F8;
+        case 420:                                return 0x208;
+        case 421: case 422:                      return 0x200;
+        case 423: case 424: case 425:            return 0x210;
+        case 426:                                return 0x218;
+        case 427:                                return 0x220;  // CasePreserving is 0x220 too
+        case 500:                                return 0x258;
+        case 501:                                return 0x260;
+        case 502: case 503: case 504:            return 0x268;
+        case 505:                                return 0x278;
+        case 506: case 507:                      return 0x260;
+        case 508:                                return 0x250;
+        default:                                 return 0;
+    }
+}
+
+// === Raise-only version markers (the structural half) ===
+//
+// UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
+// (CMC::GravityDirection) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// It exists because heavily-stripped titles lose every version string and fall back to
+// 4.27 while the structural probes have already proved otherwise. The two PURE predicates
+// live here so the tests can pin them; the 503/504 markers walk GObjects and stay in
+// Frieren.
+//
+// ⚠ Both are RAISE-ONLY and both are guarded on `ver >= 500`. That guard is not cosmetic:
+// a false positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
+// turning a harmless badge fix into a breaking layout change.
+
+// UE 5.7 moved FUObjectItem's Object* to +0x08. The SIZE varies with build configuration
+// (24 Shipping, 32 Development with STATS, 40 Test with ENABLE_STATNAMEDEVENTS_UOBJECT --
+// see Lineal::kItemStrideCandidates), so the offset is the version signal and the size is
+// only a sanity bound. Avowed's custom 20-byte packed layout keeps Object at +0x00, so the
+// offset test already excludes it on its own.
+constexpr bool IsReorderedFUObjectItem57(int objOffset, int itemSize) {
+    return objOffset == 0x08 && (itemSize == 24 || itemSize == 32 || itemSize == 40);
+}
+
+// UE 5.8 made ~FFieldClass() virtual -- unconditionally, outside any #if -- and
+// FFieldClass has no base class with `FName Name` first, so the vfptr takes +0x00 and
+// Name moves to +0x08. FFIELDCLASS_NAME defaults to 0x00 and is latched only on a
+// successful probe, so 0x08 is never a leftover default.
+constexpr bool IsVirtualDtorFFieldClass58(int ffieldClassNameOffset) {
+    return ffieldClassNameOffset == 0x08;
+}
+
+// === UFunction::FunctionFlags offset, per engine version ===
+//
+// ⛔ The two readers that use this (Ubel::ReadFuncFlagsAndParams, Aura::ReadFunctionFlags)
+// both carried a `>= 550 -> 0xC0` band. 550 is not a producible version, so the band was
+// dead — but it must be DELETED, never retargeted. At UE 5.8, offset 0xC0 is
+// `FirstPropertyToInit`, an `FProperty*` (MemberVariableLayout_5_08_Template.ini), which is
+// non-zero for most functions. Both readers accept on `!= 0`, so a retarget to `>= 505`
+// would latch a pointer's low dword AS FunctionFlags — and then read NumParms / ParmsSize /
+// ReturnValueOffset from 0xC4 / 0xC6 / 0xC8, i.e. the rest of that pointer. That is strictly
+// worse than the dead band it replaced.
+//
+// MEASURED across all 31 UVTD templates (vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/,
+// `[UFunction] FunctionFlags`). It is FLAT for nine consecutive versions:
+//   4.07        0x90
+//   4.08-4.21   0x88     <- the old comment said "4.18-4.20", and the band said >= 421
+//   4.22-4.24   0x98     <-   ...both off by one: 4.21 is 0x88, not 0x98
+//   4.25-5.08   0xB0     <- every version from 4.25 to 5.8 inclusive
+//
+// WITH_CASE_PRESERVING_NAME adds a uniform +8: UFunction derives from UStruct -> UField ->
+// UObject, and a case-preserving FName widens UObject's Name slot by 8, shifting everything
+// after it. Measured: MemberVariableLayout_4_27_CasePreserving_Template.ini has
+// FunctionFlags = 0xB8 against 4_27's 0xB0. Neither reader consulted bCasePreservingName
+// before 2026-09-05, and 0xB8 sat LAST in their fallback sweep behind 0xC0.
+constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName) {
+    int base;
+    if      (ueVersion >= 425) base = 0xB0;
+    else if (ueVersion >= 422) base = 0x98;
+    else if (ueVersion >= 408) base = 0x88;
+    else                       base = 0x90;   // 4.07, below our 4.11 floor
+    return base + (casePreservingName ? 8 : 0);
+}
+
+// Fallback sweep, most-likely first. Exactly the six values the templates can produce at or
+// above our 4.11 floor — each base and its +8 case-preserving twin:
+//   0xB0/0xB8 (4.25+), 0x98/0xA0 (4.22-4.24), 0x88/0x90 (4.11-4.21).
+// ⚠ 0xC0 is NOT here (it is FirstPropertyToInit, see above) and neither is 0xA8, which the
+// old sweep tried and which matches no version of anything.
+inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
+
+// === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
+//
+// ⛔ This was the ONE UProperty-mode offset nothing calibrated. UBOOLPROP_FIELDSIZE had
+// ZERO writers repo-wide against nine readers, while every other UProperty-mode offset in
+// ValidateAndFixOffsets IS derived (UPROPERTY_OFFSET, _ELEMSIZE, _FLAGS, UFIELD_NEXT) --
+// the FProperty arm derived the whole subclass family and simply had no `else`.
+//
+// The four bytes { FieldSize, ByteOffset, ByteMask, FieldMask } sit at the property base's
+// TOTAL SIZE, so the delta from Offset_Internal is whatever the tail after it measures.
+// MEASURED across all 31 UVTD templates ([FProperty]/[UProperty] Offset_Internal vs
+// [FBoolProperty] FieldSize) -- and it is NOT the single +0x2C the audit prescribed:
+//
+//   4.07-4.10   Offset_Internal 0x4C -> FieldSize 0x70   delta 0x24   (below our 4.11 floor)
+//   4.11-4.17   Offset_Internal 0x50 -> FieldSize 0x78   delta 0x28
+//   4.18-4.24   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
+//   4.25-5.02   Offset_Internal 0x4C -> FieldSize 0x78   delta 0x2C   <-- SAME delta, other base
+//   5.03-5.08   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
+//   4.27 CPN    Offset_Internal 0x4C -> FieldSize 0x80   delta 0x34  (= 0x2C + 8)
+//
+// ⚠ THE MIDDLE ROW IS WHY THIS TABLE IS SPLIT, corrected 2026-09-06. It used to read a single
+// "4.18-5.08  0x44 -> 0x70", which is right at BOTH ENDS and wrong for the six versions between
+// them: 4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all measure 0x4C -> 0x78. The shipped code was
+// never affected -- it reads only the DELTA, which is 0x2C across all three UE4.18+ rows -- but a
+// reviewer sanity-checking the derivation on a UE 5.0 or 5.1 game would find 0x4C/0x78, conclude
+// the table was broken, and "fix" a correct one.
+// The 5.08 endpoint was ASSERTED when this comment was written (no 5_08 template existed then,
+// the highest was 5_07). RE-UE4SS shipped MemberVariableLayout_5_08_Template.ini on 2026-09-05
+// and it agrees: 0x44 -> 0x70. Re-derive with:
+//   grep -h "^Offset_Internal" vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/*.ini
+// Live corroboration for the delta, both 2026-09-05: OCTOPATH 4.18 stock derived 0x44 -> 0x70,
+// and DQ XI S (UProperty mode, whole-layout +0x10 shift) derived 0x54 -> 0x80 -- the same 0x2C
+// off a shifted base, which is the case no template can supply.
+//
+// The 4.17/4.18 step is not a curve fit: Offset_Internal and RepNotifyFunc SWAPPED order.
+// Up to 4.17 the tail is RepNotifyFunc(FName) + Offset_Internal + 4 pointers; from 4.18
+// Offset_Internal moves ahead of RepNotifyFunc, shortening the tail by 4. 4.11-4.17 is
+// SEVEN versions inside our supported range, so a flat +0x2C would have been wrong there.
+// The CPN +8 is the usual padded-FName SLOT delta (RepNotifyFunc is an FName followed by
+// 8-aligned pointers) -- see bCasePreservingName.
+//
+// ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
+// survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
+// inside the spread. Narrowing it "now that the base is derived" would remove the net.
+constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
+                                    bool casePreservingName) {
+    const int delta = (ueVersion >= 418) ? 0x2C
+                    : (ueVersion >= 411) ? 0x28
+                    : 0x24;                       // 4.07-4.10, below the floor
+    return offsetInternal + delta + (casePreservingName ? 8 : 0);
+}
 
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
@@ -278,7 +539,38 @@ inline std::atomic<bool> bUEnumNamesDetected{false};
 inline std::atomic<bool> bUEnumNamesFailed{false};
 
 // === Detection state ===
-inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)
+// ⛔ sizeof(FName) under CasePreservingName is 0xC, NOT 0x10: three int32
+// (ComparisonIndex, Number, DisplayIndex), alignof 4, and `class FName` carries no
+// alignas -- there is NO trailing pad inside FName. 0x10 is the UObject NamePrivate->Outer
+// SLOT, which is wide only because OuterPrivate is an 8-aligned pointer.
+// This comment previously asserted the pad, and it is the single most-copied wrong sentence
+// in the tree: every downstream sizeof defect traced back to reading it as a size.
+//   SLOT (0x10)   : UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName, 8-aligned-T> value offset.
+//   sizeof (0xC)  : packed FName[] strides, stepping to an adjacent FName, FScriptDelegate,
+//                   and anything compared against an engine-reported ElementSize.
+// ⚠ Member ORDER also moves and is a separate axis: Number is at +4 from UE 5.1, but at +8
+// on a CasePreserving build of UE <= 5.0 / UE4 (DisplayIndex comes second there).
+inline bool bCasePreservingName  = false;
+
+// ⭐ ASK THE QUESTION BY NAME. The rule above was already written down and was still copied
+// wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
+// and a reader cannot tell from the expression which question it is answering. Measured
+// 2026-09-06: twelve sites used the ternary, four correctly (a TPair value offset) and eight
+// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `Aura.cpp:3755` sat
+// four lines under one of the correct ones getting it right, and `Ubel.h`'s own field comment
+// documented 12 against writers that set 0x10. Prefer these over the literal, always.
+//
+// ⚠ Impact is ZERO on every title measured so far: `bCasePreservingName` has only two writers
+// (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
+// and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
+inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
+    return bCasePreservingName      // FScriptDelegate, anything vs an engine ElementSize.
+        ? 0x0C : 0x08;              // three int32, alignof 4, NO trailing pad.
+}
+inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName, 8-aligned-T>
+    return bCasePreservingName      // value offset -- the FName is PADDED by what follows it.
+        ? 0x10 : 0x08;
+}
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as
@@ -344,6 +636,80 @@ constexpr uint32_t MIN_SUPPORTED_UE_VERSION = 411;
 // CORRECT UE3 GObjects address, and neither a UE-version override nor an Extra Scan can bridge
 // it. Skipping the scan and saying so is the only honest answer.
 constexpr uint32_t PRE_UE4_SENTINEL_VERSION = 300;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UE version code arithmetic, and where to find a second opinion about it.
+//
+// ⭐ ONE COPY OF THE ARITHMETIC. `major.minor` -> `major*100 + minor` was written out four times
+// inside DetectVersionFromPEResource (ProductVersion 5.x / 4.x, FileVersion 5.x / 4.x) and is now
+// needed by a SECOND reader (CrashReportClient.exe). Two readers of one field, each carrying its
+// own copy of the mapping and its own bounds, is the exact shape working-lessons.md 1.12 is about
+// — so the mapping and the bounds live here, once.
+//
+// The bounds are load-bearing, not cosmetic: they are what stops a game's OWN version being read
+// as an engine version. Measured across the installed corpus, a game exe's ProductVersion is
+// frequently the GAME's (OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, Titan Quest II 63339.64744); every
+// one falls outside 4.0-4.27 / 5.0-5.9 and is rejected here rather than at each call site.
+constexpr uint32_t UE_MAX_UE4_MINOR = 27;
+constexpr uint32_t UE_MAX_UE5_MINOR = 9;
+
+/// (major, minor) -> our version code, or 0 when the pair cannot be a UE engine version.
+inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
+    if (major == 5 && minor <= UE_MAX_UE5_MINOR) return 500u + minor;
+    if (major == 4 && minor <= UE_MAX_UE4_MINOR) return 400u + minor;
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CrashReportClient.exe as a version source (maintainer proposal, 2026-09-06)
+//
+// ⭐ WHY IT IS WORTH READING: it ships WITH THE ENGINE and is not written by the game team, so
+// unlike the game exe its version can never be the GAME's version. A developer has no reason to
+// pair game engine A with a crash reporter from engine B.
+//
+// ⭐ AND IT IS DECISIVE WHERE OUR OWN DETECTION IS WEAKEST, which matters more than the raw hit
+// rate: the SquareEnix HD-2D fork DQ I&II carried "UE5.05 (detected)" in docs/test-games.md for
+// months — a MISDETECTION RECORDED AS FACT, across the UE4/UE5 boundary — and its
+// CrashReportClient says 4.27.2.0. P3R (4.27 fork) is the same shape. Those are exactly the titles
+// where the memory-string tiers struggle.
+//
+// ⚠ COVERAGE, HONESTLY SCOPED: 8 of 66 folders ON ONE MACHINE ship one. That is a sample from this
+// corpus, not a universal rate — do not quote it as one. Avowed, DQ XI S, OCTOPATH and DumperTest
+// ship none, so "absent -> skip" must be a first-class path, not an error.
+//
+// ⛔ WHAT DOES NOT WORK, MEASURED, so nobody re-proposes it: gating on a FILE HASH against a corpus
+// of known-official binaries accepts NOTHING. CrashReportClient is rebuilt as part of each game's
+// engine build, so the version string is stock while the bytes are not — 0 of 8 game copies matched
+// an Editor copy, and one version had three distinct binaries:
+//     4.27.2.0   Editor 19,469,792 B   DQ I&II 19,496,448 B   P3R 19,487,232 B
+//     5.7.4.0    Editor 26,711,480 B   TQ2     26,725,376 B
+// The oracle at tools/ue-crc-oracle.json is therefore a check on the ProductVersion -> code
+// ARITHMETIC (8 real Epic binaries, 4.11-5.8, all mapping cleanly), never an allow-list.
+//
+// LAYOUT. A packaged title puts the game exe at <root>/<Project>/Binaries/Win64/Game.exe and the
+// engine's own binaries at <root>/Engine/Binaries/Win64/. Rather than assume a fixed depth — which
+// breaks on the launcher-shim layouts this repo has already been bitten by — walk UP from the exe
+// and test each ancestor. Win32 is included because older titles ship a 32-bit one (EVERSPACE).
+constexpr int CRC_MAX_ANCESTORS = 6;
+
+/// Candidate CrashReportClient.exe paths for a game exe, nearest ancestor first.
+/// Pure string work, no filesystem access, so it is unit-testable.
+inline std::vector<std::wstring> CrashReportCandidates(const std::wstring& exePath) {
+    std::vector<std::wstring> out;
+    const std::wstring seps = L"\\/";
+    size_t cut = exePath.find_last_of(seps);
+    if (cut == std::wstring::npos) return out;
+    std::wstring dir = exePath.substr(0, cut);
+    for (int i = 0; i < CRC_MAX_ANCESTORS; ++i) {
+        if (dir.size() <= 2) break;                 // "D:" or shorter is a drive root, not a tree
+        out.push_back(dir + L"\\Engine\\Binaries\\Win64\\CrashReportClient.exe");
+        out.push_back(dir + L"\\Engine\\Binaries\\Win32\\CrashReportClient.exe");
+        size_t up = dir.find_last_of(seps);
+        if (up == std::wstring::npos) break;
+        dir = dir.substr(0, up);
+    }
+    return out;
+}
 
 constexpr int OBJECTS_PER_CHUNK        = 64 * 1024;
 
@@ -432,8 +798,10 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
 /// unloads it — `Settings → Plugins → Add` does LoadLibrary → `CEPlugin_GetVersion` →
 /// FreeLibrary, and every CE exit unloads every plugin before writing its settings. A
 /// thread of ours still running in that image executes unmapped memory and takes CE down.
-/// `DLL_PROCESS_DETACH` cannot save us: it cannot distinguish a FreeLibrary unload from
-/// process exit, and joining threads under the loader lock would deadlock.
+/// `DLL_PROCESS_DETACH` cannot save us. It *can* tell the two cases apart — `lpReserved`
+/// is NULL for a FreeLibrary unload and non-NULL for process exit — but that changes
+/// nothing: DETACH runs under the loader lock, so joining our threads there deadlocks,
+/// and returning without joining leaves them in an image about to be unmapped.
 ///
 /// **Fails OPEN.** An empty or unreadable host path returns `true`, preserving the
 /// behaviour that shipped for every non-CE host rather than silently disabling the DLL on

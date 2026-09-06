@@ -156,7 +156,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
         ? Neu::EnumNamesFormat::FNameData57
         : Neu::EnumNamesFormat::Legacy;
-    const int fnameStride = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    const int fnameSize = DynOff::SizeofFName();
 
     std::vector<std::pair<int64_t, std::string>> entries;
     Neu::EnumNamesLayout layout;
@@ -166,7 +166,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     // is not a UEnum — lands there, and caching "" for it is correct and must stay
     // cached, or every lookup re-probes. A half-read table is the opposite case.
     bool tableComplete = true;
-    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameStride, 16384, layout)) {
+    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
             int32_t nameIdx = 0;
@@ -330,7 +330,7 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
 
     bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
 
@@ -345,17 +345,90 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         return packageName + "." + assetName;
     } else {
         // UE4 / UE5.0: FName AssetPathName
+        //
+        // There used to be a "fallback: try UE5.1+ layout in case version was
+        // misdetected" block here. It could never run: its guard was the exact
+        // negation of the condition that reaches this branch, and it re-read the
+        // same `addr` the line above had already read. Deleted rather than
+        // repaired — a genuinely misdetected 5.1+ game returns above with a
+        // non-None PackageName and never arrives here at all.
         std::string assetPathName = ReadFName(addr);
         if (!assetPathName.empty() && assetPathName != "None")
             return assetPathName;
-        // Fallback: try UE5.1+ layout in case version was misdetected
-        std::string packageName = ReadFName(addr);
-        std::string assetName   = ReadFName(addr + fnameSize);
-        if (!packageName.empty() && packageName != "None"
-            && !assetName.empty() && assetName != "None")
-            return packageName + "." + assetName;
         return "";
     }
+}
+
+// ============================================================
+// PersistentObjectPtrEnvelope — offset of the payload inside a
+// TPersistentObjectPtr (i.e. a soft or lazy object pointer).
+//
+// UE ≤ 5.2 carries `mutable int32 TagAtLastTest` between the FWeakObjectPtr and
+// the payload; UE ≥ 5.3 deleted it. The full layout table and the version
+// evidence live on DynOff::SOFTPTR_PATH in Grimoire.h.
+//
+// We derive the envelope by SUBTRACTION rather than by a version gate:
+//
+//     envelope = ElementSize − sizeof(payload)
+//
+// ⚠ ElementSize alone is ambiguous and must not be matched on its own — 0x28 is
+// both a ≤5.0 tagged soft pointer (0x10 + FName/FString path) and a ≥5.3
+// untagged one (0x08 + FTopLevelAssetPath). Subtracting the payload size, which
+// the FTopLevelAssetPath discriminator already tells us, makes it unique.
+//
+// Returns the measured envelope and latches it, or the version-derived default
+// when `elemSize` is not one of the shapes we can account for (0 for a caller
+// that has no size to offer, a static C-array whose stride we were handed, a
+// packed licensee fork). Latching matters because the fallback is the case we
+// are trying to stop trusting.
+// ============================================================
+static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
+                                       int taggedEnvelope, int& latched,
+                                       const char* what) {
+    const int envelope = DynOff::PersistentPtrEnvelopeFor(
+        elemSize, payloadSize, taggedEnvelope, latched, g_cachedUEVersion);
+
+    // Latch only a real measurement. The header's fallback arms return either the
+    // existing latch or a version-derived guess, and re-latching a guess would turn
+    // one unmeasured call into a permanent "measured" answer.
+    const bool measured = (elemSize > payloadSize) && (elemSize - payloadSize == envelope);
+    if (measured && latched != envelope) {
+        // "DYNO" routes to offsets.log (Sein.cpp's category table), which is where a
+        // measured offset belongs and where this fix's verification row will look
+        // for its DLL-side observable.
+        Sein::Info("DYNO:PersistPtr",
+                   "%s payload envelope measured: +0x%02X "
+                   "(ElementSize 0x%X - payload 0x%X, UEver=%u)%s",
+                   what, envelope, elemSize, payloadSize, g_cachedUEVersion,
+                   latched < 0 ? "" : "  <-- CHANGED, a previous measurement disagreed");
+        latched = envelope;
+    }
+    return envelope;
+}
+
+// FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
+static int32_t SoftObjectPathPayloadSize() {
+    // sizeof(FName), NOT the UObject Name->Outer slot. See DynOff::bCasePreservingName.
+    const int fnameSize = DynOff::SizeofFName();
+    // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
+    // in the header so the test target can pin it.
+    return static_cast<int32_t>(
+        DynOff::FSoftObjectPathSizeFor(fnameSize, g_cachedUEVersion >= 501));
+}
+
+// Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
+// own ElementSize; pass 0 when the caller has none.
+static int SoftPathOffset(int32_t elemSize) {
+    return PersistentObjectPtrEnvelope(elemSize, SoftObjectPathPayloadSize(), 0x10,
+                                       DynOff::SOFTPTR_PATH, "TSoftObjectPtr");
+}
+
+// Offset of the FGuid inside a TLazyObjectPtr. FUniqueObjectGuid is a bare FGuid
+// (4×uint32, alignof 4), so the tagged envelope is 0x0C — NOT 0x10. There is no
+// era in which 0x10 is correct here.
+static int LazyGuidOffset(int32_t elemSize) {
+    return PersistentObjectPtrEnvelope(elemSize, 0x10, 0x0C,
+                                       DynOff::LAZYPTR_GUID, "TLazyObjectPtr");
 }
 
 // ============================================================
@@ -409,7 +482,12 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
 // ============================================================
 // ReadFTextString — read the display string from an FText.
 //
-// FText = { ITextData* Data (8B); void* SharedRefController (8B); ... }
+// FText = { ITextData* TextData (8B); ... } -- only that leading pointer is read
+// here, and it is at +0x00 in every version. The TAIL changed at UE 5.4:
+// UE4.18-5.3 is TSharedRef<ITextData,ThreadSafe> {obj ptr; ref-controller ptr}
+// + uint32 Flags@+0x10 (sizeof 0x18); UE5.4-5.8 is TRefCountPtr<ITextData>
+// {obj ptr} + uint32 Flags@+0x08 (sizeof 0x10), the refcount having moved into
+// ITextData itself (it now derives from IRefCountedObject). Neither tail is read.
 // The display FString lives at a version/fork-dependent spot inside ITextData,
 // in one of two shapes:
 //   (a) INLINE   — the FString sits by value at ITextData+offset (UE4 / UE5.0
@@ -921,6 +999,14 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         }
     }
 
+    // Capture the own-properties floor HERE -- after the own chain walk and BEFORE the
+    // super chain is prepended below, which is the only point where info.Fields holds
+    // exactly this class's own properties. See ClassInfo::OwnPropertiesStart.
+    for (const auto& f : info.Fields) {
+        if (info.OwnPropertiesStart < 0 || f.Offset < info.OwnPropertiesStart)
+            info.OwnPropertiesStart = f.Offset;
+    }
+
     // Walk inherited fields from SuperStruct chain.
     // Optimization: if a super class is already cached, reuse its fields
     // (which already include ITS super chain) instead of re-walking.
@@ -1338,22 +1424,19 @@ int32_t FindFieldOffset(uintptr_t classAddr, const char* exact,
 // WalkFunctions and ResolveFunctionInfo. `funcAddr` must already be a validated
 // UFunction*; all reads are SEH-safe via Macht::ReadSafe.
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
-    // Version-aware probing of UFunction::FunctionFlags. RE-UE4SS templates:
-    //   0x88 = UE 4.18-4.20      0x98 = UE 4.21-4.24
-    //   0xB0 = UE 4.25-4.27 / UE5.0-5.4      0xC0 = UE 5.5+
+    // Version- AND case-preserving-aware. The table, the measurements behind it, and
+    // why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor
+    // (Grimoire.h) — in the header so the test target can pin every row.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
-    int primary;
-    if (g_cachedUEVersion >= 550)      primary = 0xC0;
-    else if (g_cachedUEVersion >= 425) primary = 0xB0;
-    else if (g_cachedUEVersion >= 421) primary = 0x98;
-    else                               primary = 0x88;
+    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
+                                                       DynOff::bCasePreservingName);
 
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
         funcFlagsOff = primary;
     } else {
         // Fallback: try all known offsets (skip primary, already tried).
-        for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+        for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
             if (tryOff == primary) continue;
             if (Macht::ReadSafe<uint32_t>(funcAddr + tryOff, funcFlags) && funcFlags != 0) {
                 funcFlagsOff = tryOff;
@@ -1597,18 +1680,29 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ByteProperty")   return 1;
     if (typeName == "BoolProperty")   return 1;
     // Engine types with known fixed sizes
-    // FName is { ComparisonIndex(4) + Number(4) } = 8, but 0x10 under
-    // WITH_CASE_PRESERVING_NAME (UE5.5+/5.7). This MUST be dynamic: ValidateArrayElemSize
-    // treats InferScalarSize as authoritative and OVERRIDES the engine's reported size, so
-    // a hardcoded 8 actively replaced a correct 16 and halved every TArray<FName> /
-    // TMap<FName,V> stride on those games. Same expression as the rest of the tree
-    // (Ubel.cpp:126, Aura.cpp:2901/2924/3437/5791, Genau.cpp:5045).
-    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x10 : 0x08;
+    // sizeof(FName): { ComparisonIndex(4) + Number(4) } = 8, and 0xC -- NOT 0x10 -- under
+    // WITH_CASE_PRESERVING_NAME (+ DisplayIndex(4), alignof 4, no trailing padding).
+    // 0x10 is the UObject NamePrivate->Outer SLOT, which is a different question: that
+    // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
+    // This MUST be dynamic: ValidateArrayElemSize treats InferScalarSize as authoritative
+    // and OVERRIDES the engine's reported ElementSize -- which for a NameProperty is
+    // ALREADY the correct 0xC, so a wrong value here is actively substituted for a right one.
+    // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
+    // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
+    // the UNPADDED sizeof.
+    if (typeName == "NameProperty")   return DynOff::SizeofFName();
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
-    // TLazyObjectPtr = FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) — fixed 0x20
-    if (typeName == "LazyObjectProperty")  return 0x20;
+    // sizeof(TLazyObjectPtr) = FWeakObjectPtr(8) + the persistent-ptr envelope + FGuid(16).
+    // ⛔ NOT a fixed 0x20. FUniqueObjectGuid is a bare FGuid (4×uint32, alignof 4), so there is
+    // no pad after the tag: 0x1C up to 5.2, and 0x18 from 5.3 where TagAtLastTest was deleted.
+    // 0x20 is the FWeakObjectPtr+Tag+pad+FGuid model audit A1 deleted, and it is wrong in EVERY
+    // era. Dynamic for exactly the reason NameProperty above is: ValidateArrayElemSize treats
+    // this as AUTHORITATIVE and overrides the engine's own ElementSize, so a wrong value here is
+    // actively substituted for a right one — and ResolveInnerSize returns it before it ever asks
+    // the engine, so nothing downstream could correct it.
+    if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
     // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 16 or 24 depending on
@@ -2470,7 +2564,12 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
                 uint8_t fieldMask = boolBytes[3];
-                if (fieldSize >= 1 && fieldSize <= 8 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                // fieldSize == 1, not `>= 1 && <= 8`. Five of the seven copies of this
+                // probe already required 1; these two had drifted. FieldSize is the
+                // bitfield CONTAINER size and UHT only ever emits a 1-byte one, so the
+                // loose form bought nothing and accepted 8 -- which is exactly the low
+                // byte an 8-aligned pointer can present when the probe lands off-field.
+                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
                     cf.boolFieldMask = fieldMask;
                     break;
                 }
@@ -2667,10 +2766,10 @@ ReadArrayResult ReadStructArrayElements(
                     sf.value = "null";
                 }
             } else if (cf.typeName == "SoftObjectProperty" || cf.typeName == "SoftClassProperty") {
-                sf.value = ReadSoftObjectPath(elemAddr + cf.offset + 0x10);
+                sf.value = ReadSoftObjectPath(elemAddr + cf.offset + SoftPathOffset(cf.size));
                 if (sf.value.empty()) sf.value = "(none)";
             } else if (cf.typeName == "LazyObjectProperty") {
-                uintptr_t gAddr = elemAddr + cf.offset + 0x10;
+                uintptr_t gAddr = elemAddr + cf.offset + LazyGuidOffset(cf.size);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
                 Macht::ReadSafe(gAddr, ga); Macht::ReadSafe(gAddr + 4, gb);
                 Macht::ReadSafe(gAddr + 8, gc); Macht::ReadSafe(gAddr + 12, gd);
@@ -2747,17 +2846,18 @@ ReadArrayResult ReadSoftObjectArrayElements(
     result.ok = false;
 
     // Validate stride. TSoftObjectPtr layout:
-    //   FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath
+    //   FWeakObjectPtr(8) [+ Tag(4) + pad(4), UE ≤ 5.2 only] + FSoftObjectPath
     // FSoftObjectPath spans:
     //   UE4 / UE5.0: FName + FString(16)         → 8|16 + 16 = 24 or 32
     //   UE5.1+:      FName x2 + FString(16)      → 16|32 + 16 = 32 or 48
-    // Combined element size ranges 0x28 .. 0x48 across versions.
+    // Combined element size ranges 0x20 .. 0x48 across versions — the low end
+    // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
     if (elemSize < 0x18 || elemSize > 0x80) {
-        int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
-        bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
-        int pathSize = (isTopLevelAssetPath ? 2 * fnameSize : fnameSize) + 0x10; // + FString
-        int derived = 0x10 + pathSize;
+        int pathSize = SoftObjectPathPayloadSize();
+        // Pass 0: there is no trustworthy ElementSize here by definition, so take
+        // whatever has already been measured, or the version-derived default.
+        int derived = SoftPathOffset(0) + pathSize;
         Sein::Warn("WALK:ArrayG", "Invalid SoftObject elemSize=%d, defaulting to 0x%X",
             elemSize, derived);
         elemSize = derived;
@@ -2795,14 +2895,21 @@ ReadArrayResult ReadSoftObjectArrayElements(
         uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
         // Asset path string (display value)
-        std::string assetPath = ReadSoftObjectPath(elemAddr + 0x10);
+        const int softPathOff = SoftPathOffset(static_cast<int32_t>(elemSize));
+        std::string assetPath = ReadSoftObjectPath(elemAddr + softPathOff);
 
         // Surface the AssetPathName / PackageName ComparisonIndex so the CE XML
-        // exporter can build a shared DropDownList for the FName leaf at +0x10.
+        // exporter can build a shared DropDownList for the FName leaf. The
+        // exporter used to bake "+10"; it now takes softPathOff off the wire.
         // 0 maps to "None" — leave rawIntValue=0 for those so the DropDown
         // dedup naturally drops them.
+        // ⚠ MUST be softPathOff, not a literal 0x10. These keys are attached to the CE
+        // leaf the exporter emits AT softPathOff, so reading them from anywhere else
+        // mismatches every entry in the DropDownList. Before the A1 fix both were 0x10
+        // and at least agreed with each other; splitting them is strictly worse than the
+        // original bug, and it is the CE table -- the artifact that ships.
         uint32_t pathFNameIdx = 0;
-        if (Macht::ReadSafe(elemAddr + 0x10, pathFNameIdx) && pathFNameIdx != 0
+        if (Macht::ReadSafe(elemAddr + softPathOff, pathFNameIdx) && pathFNameIdx != 0
             && pathFNameIdx != 0xFFFFFFFFu) {
             elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
         }
@@ -2855,7 +2962,9 @@ ReadArrayResult ReadSoftObjectArrayElements(
 
 // ============================================================
 // Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
-// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) = 0x20
+// Element layout: FWeakObjectPtr(8B) + envelope + FGuid(16B) = 0x1C (≤5.2) or 0x18 (≥5.3).
+// ⚠ NOT 0x20. FUniqueObjectGuid is a bare FGuid (alignof 4) so there is no pad after the tag,
+// and 5.3 deleted the tag outright. The old "= 0x20" here was the model audit A1 removed.
 // ============================================================
 bool IsLazyObjectArrayType(const std::string& innerTypeName) {
     return innerTypeName == "LazyObjectProperty";
@@ -2873,9 +2982,16 @@ ReadArrayResult ReadLazyObjectArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    // TLazyObjectPtr is fixed 0x20 — match ReadPointerArrayElements pattern
-    // and force the stride to avoid garbage from FPROPERTY_ELEMSIZE.
-    elemSize = 0x20;
+    // ⛔ DO NOT force a constant here. This read `elemSize = 0x20;` — the
+    // FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16) model audit A1 deleted — and it cost two things:
+    // element 0 read correctly while every index ≥1 drifted 4 bytes (≤5.2) or 8 (≥5.3), and
+    // LazyGuidOffset(0x20) computes 0x10, which PersistentPtrEnvelopeFor REJECTS, so the
+    // `TLazyObjectPtr payload envelope measured` line could never be emitted from THIS path —
+    // making an operator who reached lazy via an array (the obvious route) score a correct fix
+    // as FAILED. Route through the same envelope the scalar path uses: LazyGuidOffset MEASURES
+    // from a real ElementSize and latches it, and falls back to the version default on garbage,
+    // which is what the old forced constant was really guarding against.
+    elemSize = LazyGuidOffset(elemSize) + 0x10;   // envelope + sizeof(FGuid)
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -2908,12 +3024,15 @@ ReadArrayResult ReadLazyObjectArrayElements(
 
         uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
-        // FGuid at +0x10 (4 x uint32)
+        // FGuid inside the TLazyObjectPtr (4 x uint32). NOT +0x10 — FUniqueObjectGuid
+        // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
+        // from 5.3. See DynOff::LAZYPTR_GUID.
+        const int guidOff = LazyGuidOffset(elemSize);
         uint32_t a = 0, b = 0, c = 0, d = 0;
-        Macht::ReadSafe(elemAddr + 0x10 + 0,  a);
-        Macht::ReadSafe(elemAddr + 0x10 + 4,  b);
-        Macht::ReadSafe(elemAddr + 0x10 + 8,  c);
-        Macht::ReadSafe(elemAddr + 0x10 + 12, d);
+        Macht::ReadSafe(elemAddr + guidOff + 0,  a);
+        Macht::ReadSafe(elemAddr + guidOff + 4,  b);
+        Macht::ReadSafe(elemAddr + guidOff + 8,  c);
+        Macht::ReadSafe(elemAddr + guidOff + 12, d);
 
         char guidStr[48];
         snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
@@ -3082,7 +3201,7 @@ ReadArrayResult ReadDelegateArrayElements(
     result.ok = false;
 
     // FScriptDelegate stride depends on FName width (CasePreservingName)
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
     int32_t elemSize = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -3184,7 +3303,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 
     // Each element: FMulticastScriptDelegate { TArray<FScriptDelegate> } = 16 bytes
     constexpr int32_t elemSize = 16;
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::SizeofFName();
     int32_t innerStride = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -3323,7 +3442,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                     delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
                 // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
                 // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
-                // differ later (UE5.7 puts EArrayPropertyFlags before Inner); the helper only
+                // differ later (UE5.3+ puts EArrayPropertyFlags before Inner); the helper only
                 // sets the shared STARTING point, and the ArrayProperty probe further down
                 // this file re-probes it with delta=8. That probe is deliberately NOT routed
                 // through the helper for exactly that reason.
@@ -3915,13 +4034,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         // Handle SoftObjectProperty / SoftClassProperty: read FSoftObjectPath asset path.
-        // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FSoftObjectPath
+        // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), then the path — at +0x10 on
+        // UE ≤ 5.2 (Tag(4B) + pad(4B) in between) and at +0x08 from 5.3, which deleted
+        // the tag. Measured from ElementSize; see DynOff::SOFTPTR_PATH.
         // When the asset is currently loaded the embedded FWeakObjectPtr resolves
         // to the live UObject*; expose it via ptrValue so the UI can drill in
         // and the Address Finder can route through soft references.
         if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            std::string assetPath = ReadSoftObjectPath(fieldAddr + 0x10);
+            std::string assetPath = ReadSoftObjectPath(fieldAddr + SoftPathOffset(fi.Size));
             fv.strValue = assetPath;
 
             // Resolve embedded FWeakObjectPtr at +0x00 → live UObject* (when loaded)
@@ -3971,12 +4092,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         // Handle LazyObjectProperty: read FUniqueObjectGuid (FGuid = 4 x uint32).
-        // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FGuid(16B)
+        // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B) [+ Tag(4B) on UE <= 5.2] + FGuid.
+        // ⚠ NOT +0x10, in any era: FUniqueObjectGuid is a bare FGuid at alignof 4, so there
+        // is no pad after the tag -- the GUID is at +0x0C up to 5.2 and +0x08 from 5.3.
+        // See DynOff::LAZYPTR_GUID. This site was missed by the A1 sweep while all three
+        // siblings were converted, so it stayed 4 bytes off on EVERY version.
         // Mirror Soft path: resolve embedded FWeakObjectPtr when the lazy ptr
         // is currently bound to a live UObject.
         if (fi.TypeName == "LazyObjectProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            uintptr_t guidAddr = fieldAddr + 0x10;
+            uintptr_t guidAddr = fieldAddr + LazyGuidOffset(fi.Size);
             uint32_t a = 0, b = 0, c = 0, d = 0;
             Macht::ReadSafe(guidAddr + 0, a);
             Macht::ReadSafe(guidAddr + 4, b);
@@ -4073,8 +4198,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Read FArrayProperty::Inner (FProperty*) to get element type info.
-            // Note: In UE5.7+, FArrayProperty may store EArrayPropertyFlags (4B + 4B pad)
-            // BEFORE Inner, so Inner can be at FARRAYPROP_INNER + 8. The probe list
+            // Note: on UE5.3+, FArrayProperty stores EArrayPropertyFlags (a uint8, so 1B + 7B
+            // pad) BEFORE Inner, so Inner can be at FARRAYPROP_INNER + 8. The probe list
             // includes delta=8 to handle this.  Delta=0xC covers the case where the base
             // offset hasn't been corrected yet (0x74 + 0xC = 0x80 for TQ2).
             if (DynOff::bUseFProperty) {
@@ -4200,9 +4325,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     // Stamp soft-array layout metadata even when arr is empty
                     // — the CE XML / CSX exporter needs it to lay out the
-                    // per-element FName leaf(s) at +0x10 / +0x10+fnameSize.
-                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    // per-element FName leaf(s) at pathOffset / pathOffset+fnameSize.
+                    fv.softArrayFNameSize = DynOff::SizeofFName();
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
 
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(
@@ -4363,8 +4489,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
                 // Phase G: Soft object arrays (UProperty mode)
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
-                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    fv.softArrayFNameSize = DynOff::SizeofFName();
                     fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(
                             instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
@@ -5153,10 +5280,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
         }
 
-        // Verse VM property types (UE5.8 / UEFN): VValue/VRestValue/VCell hold a
-        // Verse VM cell handle and VerseString wraps Verse::FNativeString — none
-        // are a plain FString/scalar, so label them and show the raw pointer
-        // rather than mis-decoding. (Recognized-but-not-decoded; safe.)
+        // Verse property types (UEFN / Verse-authored content). WHICH names appear is a
+        // build-flag question, and the DEFAULT is not the Verse VM: UBT's
+        // TargetRules.bUseVerseBPVM defaults to TRUE, which yields WITH_VERSE_BPVM=1 and
+        // WITH_VERSE_VM=0. VValue/VRestValue/VCell are compiled ONLY under
+        // WITH_VERSE_VM=1 (and of those three only VRestValueProperty is ever emitted --
+        // nothing in the engine constructs an FVValueProperty). In a default BPVM build
+        // the same UPROPERTY comes out as "VerseDynamicProperty" instead, and the
+        // VerseCell codegen case does not exist. Only VerseStringProperty -- which wraps
+        // Verse::FNativeString -- is unconditional. None of these is a plain
+        // FString/scalar, so label them and show the raw pointer rather than
+        // mis-decoding. (Recognized-but-not-decoded; safe.)
+        // Deliberately NOT matched here: "VerseDynamicProperty" and "VerseClassProperty"
+        // (an FClassProperty subclass, also unguarded). Both fall through to the generic
+        // hex path, which is safe, and no injectable Verse title exists to verify a
+        // decoder against.
         if (fi.TypeName == "VValueProperty"  || fi.TypeName == "VRestValueProperty" ||
             fi.TypeName == "VCellProperty"   || fi.TypeName == "VerseStringProperty") {
             fv.typedValue = "(Verse: " + fi.TypeName + ")";
@@ -5169,7 +5307,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle TextProperty: FText = { ITextData* Data; void* SharedRefController; ... }
+        // Handle TextProperty: FText = { ITextData* Data; ... } -- Data sits at +0x00 in
+        // every version; only the tail after it changed at UE 5.4 (see ReadFTextString).
         // Dereference Data pointer, then probe for FString at common offsets within ITextData.
         if (fi.TypeName == "TextProperty") {
             fv.strValue = ReadFTextString(instanceAddr + fi.Offset);
@@ -5187,7 +5326,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
         if (fi.TypeName == "DelegateProperty") {
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
             int32_t objIdx = 0, serial = 0;
@@ -5327,8 +5466,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // FText display (audit #5 U11): decode via ReadFTextString, which follows
                 // the ITextData* at FText+0 and scans it for the display FString — the SAME
                 // decoder the plain TextProperty path uses. The old code read an inline
-                // FString at FText+0x10, where stock UE stores the uint32 Flags (the display
-                // string is NOT there), so it produced garbage or "" for a real value.
+                // FString at FText+0x10 -- the uint32 Flags on UE<=5.3, and past the END of the
+                // 16-byte FText on 5.4+ (the display string is NOT there either way), so it
+                // produced garbage or "" for a real value.
                 if (isSet) {
                     std::string s = ReadFTextString(fieldAddr);
                     if (!s.empty()) fv.strValue = std::move(s);
@@ -5591,7 +5731,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Walker succeeded. Expose as implicit DelegateProperty array.
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             int32_t delegateElemSize = 8 + fnameSize;
             int32_t bindingCount = static_cast<int32_t>(sr.bindings.size());
 
@@ -5658,7 +5798,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // Phase J (TArray<FScriptDelegate>) — Offsets=[0] derefs InvocationList.
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
-            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int fnameSize = DynOff::SizeofFName();
             int32_t delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
@@ -6011,7 +6151,9 @@ void ResolvePropertyPreviews(
         // 8 bytes as a UObject* with NO size gate at all — so an FWeakObjectPtr
         // { int32 ObjectIndex; int32 SerialNumber } was published as the address
         // Serial<<32|Index and printed as a plausible-looking "0x…". TLazyObjectPtr
-        // begins with the same FWeakObjectPtr (+0x08 Tag, +0x10 FGuid), so it resolves
+        // begins with the same FWeakObjectPtr (then the envelope: +0x08 Tag and the FGuid at
+        // +0x0C up to 5.2, the FGuid straight at +0x08 from 5.3 — NOT a fixed +0x10, which is
+        // the model audit A1 deleted), so it resolves
         // identically; its FGuid is the honest fallback when nothing is loaded, which
         // is what ReadLazyObjectArrayElements already displays.
         if (t == "WeakObjectProperty" || t == "LazyObjectProperty") {
@@ -6023,11 +6165,12 @@ void ResolvePropertyPreviews(
                 std::string name = GetName(resolved);
                 m.preview = name.empty() ? "(loaded)" : name;
             } else if (t == "LazyObjectProperty") {
+                const int gOff = LazyGuidOffset(sz);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
-                Macht::ReadSafe(inst + off + 0x10,      ga);
-                Macht::ReadSafe(inst + off + 0x10 + 4,  gb);
-                Macht::ReadSafe(inst + off + 0x10 + 8,  gc);
-                Macht::ReadSafe(inst + off + 0x10 + 12, gd);
+                Macht::ReadSafe(inst + off + gOff,      ga);
+                Macht::ReadSafe(inst + off + gOff + 4,  gb);
+                Macht::ReadSafe(inst + off + gOff + 8,  gc);
+                Macht::ReadSafe(inst + off + gOff + 12, gd);
                 char gs[48];
                 snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
                 m.preview = gs;
@@ -6040,14 +6183,15 @@ void ResolvePropertyPreviews(
         }
 
         // --- SoftObjectProperty / SoftClassProperty: FSoftObjectPath asset path ---
-        // TSoftObjectPtr = FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath(0x10),
-        // so the readable value is the asset path at +0x10, never a pointer.
+        // TSoftObjectPtr = FWeakObjectPtr(8) [+ Tag(4) + pad(4) on UE ≤ 5.2] +
+        // FSoftObjectPath, so the readable value is the asset path at the measured
+        // envelope (+0x10 up to 5.2, +0x08 from 5.3), never a pointer.
         // SoftClassProperty was read as a raw pointer here and SoftObjectProperty had
         // no branch at all (so it silently got NO preview) — audit #5 U13. Display
         // order matches WalkInstance's own soft-pointer handler: path, then the
         // resolved target when the asset happens to be loaded, then "(none)".
         if (t == "SoftObjectProperty" || t == "SoftClassProperty") {
-            std::string assetPath = ReadSoftObjectPath(inst + off + 0x10);
+            std::string assetPath = ReadSoftObjectPath(inst + off + SoftPathOffset(sz));
             if (!assetPath.empty()) {
                 m.preview = assetPath;
                 continue;
@@ -6223,7 +6367,7 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
         return false;
     };
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::FNameSlotIn8Aligned();
     int pairSize  = fnameSize + 8;  // FName + uint8*
     // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
     // give an 8-aligned pair here, so this changes no value today — it is passed
@@ -6362,7 +6506,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
         return result;
     }
 
-    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int fnameSize = DynOff::FNameSlotIn8Aligned();
     int pairSize  = fnameSize + 8;
     // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
     // give an 8-aligned pair here, so this changes no value today — it is passed

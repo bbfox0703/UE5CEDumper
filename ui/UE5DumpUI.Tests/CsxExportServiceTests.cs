@@ -1334,13 +1334,13 @@ public class CsxExportServiceTests
     }
 
     [Fact]
-    public async Task GenerateCsx_ArrayProperty_DelegateInnerCasePreserving_StrideIs24()
+    public async Task GenerateCsx_ArrayProperty_DelegateInnerCasePreserving_StrideIs20()
     {
-        // With CasePreservingName, stride is 24
+        // With CasePreservingName, stride is 20 (8 + sizeof(FName) 12; FScriptDelegate is alignof 4)
         var fields = new List<LiveFieldValue>
         {
             new() { Name = "Handlers", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
-                     ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 24,
+                     ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 20,
                      ArrayDataAddr = "0xD000",
                      ArrayElements = new List<ArrayElementValue>
                      {
@@ -1352,9 +1352,9 @@ public class CsxExportServiceTests
 
         var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
 
-        // Stride 24: [0] at 0, [1] at 24
+        // Stride 20: [0] at 0, [1] at 20
         Assert.Contains("Offset=\"0\"", csx);
-        Assert.Contains("Offset=\"24\"", csx);
+        Assert.Contains("Offset=\"20\"", csx);
     }
 
     [Fact]

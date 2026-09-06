@@ -167,4 +167,4 @@ build test
 
 ## 有問題嗎？
 
-歡迎在 [Discussions](../../discussions) 中提問，適用於非 Bug 回報或功能需求的一般問題。
+非 Bug 回報或功能需求的一般問題，歡迎開一個 Issue 提問 —— 本專案並未啟用 Discussions。

@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Genau — 葛納烏 (一級魔法使篩選考官 — First-Class Mage Examiner)
 // OffsetFinder: AOB pattern scanning for GObjects, GNames, GWorld
 // ============================================================
@@ -2717,16 +2717,31 @@ static const PublisherEntry* DetectPublisherFromPE() {
 // UE games embed the engine version in their VS_FIXEDFILEINFO.dwProductVersion:
 //   HIWORD(dwProductVersionMS) = major (5 for UE5)
 //   LOWORD(dwProductVersionMS) = minor (0-4 for UE 5.0-5.4)
-static uint32_t DetectVersionFromPEResource() {
-    wchar_t exePath[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
+// Log a resource-derived version in the EXACT wording each branch has always used. Both strings
+// are consumed outside this file — tools/verify/sweep_title.py greps "PE VERSIONINFO", and a
+// committed evidence README quotes the UE5 line verbatim — so the two formats are preserved
+// rather than unified.
+static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor, uint32_t code) {
+    if (major == 5)
+        Sein::Info("SCAN:Ver", "DetectVersion: %s -> UE %u.%u -> %u", label, major, minor, code);
+    else
+        Sein::Info("SCAN:Ver", "DetectVersion: %s -> UE4.%u (treated as 400+minor)", label, minor);
+}
 
+// Read a UE version out of ONE file's VERSIONINFO resource.
+//
+// Split out of DetectVersionFromPEResource so CrashReportClient.exe is read by the SAME code as
+// the game exe. The alternative — a second reader with its own copy of the parse and its own
+// bounds — is the defect shape working-lessons.md 1.12 catalogues, and the version arithmetic had
+// already been written out four times in this one function before the split.
+static uint32_t ReadUeVersionFromFile(const wchar_t* path,
+                                      const char* productLabel, const char* fileLabel) {
     DWORD handle = 0;
-    DWORD infoSize = GetFileVersionInfoSizeW(exePath, &handle);
+    DWORD infoSize = GetFileVersionInfoSizeW(path, &handle);
     if (!infoSize) return 0;
 
     std::vector<uint8_t> buf(infoSize);
-    if (!GetFileVersionInfoW(exePath, handle, infoSize, buf.data())) return 0;
+    if (!GetFileVersionInfoW(path, handle, infoSize, buf.data())) return 0;
 
     VS_FIXEDFILEINFO* fi = nullptr;
     UINT len = 0;
@@ -2736,29 +2751,17 @@ static uint32_t DetectVersionFromPEResource() {
 
     uint32_t major = HIWORD(fi->dwProductVersionMS);
     uint32_t minor = LOWORD(fi->dwProductVersionMS);
-
-    if (major == 5 && minor <= 9) {
-        Sein::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO -> UE %u.%u -> %u",
-                 major, minor, 500u + minor);
-        return 500u + minor;
+    if (uint32_t code = Grimoire::UeVersionCode(major, minor)) {
+        LogResourceVersion(productLabel, major, minor, code);
+        return code;
     }
 
-    // Some shippers put 4.x in the info (UE4 fork claiming UE5 classes)
-    if (major == 4 && minor <= 27) {
-        Sein::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO -> UE4.%u (treated as 400+minor)", minor);
-        return 400u + minor;
-    }
-
-    // Some shippers put UE version in FileVersion instead of ProductVersion
+    // Some shippers put the UE version in FileVersion instead of ProductVersion.
     uint32_t fmajor = HIWORD(fi->dwFileVersionMS);
     uint32_t fminor = LOWORD(fi->dwFileVersionMS);
-    if (fmajor == 5 && fminor <= 9) {
-        Sein::Info("SCAN:Ver", "DetectVersion: PE FileVersion -> UE %u.%u -> %u", fmajor, fminor, 500u + fminor);
-        return 500u + fminor;
-    }
-    if (fmajor == 4 && fminor <= 27) {
-        Sein::Info("SCAN:Ver", "DetectVersion: PE FileVersion -> UE4.%u (treated as 400+minor)", fminor);
-        return 400u + fminor;
+    if (uint32_t code = Grimoire::UeVersionCode(fmajor, fminor)) {
+        LogResourceVersion(fileLabel, fmajor, fminor, code);
+        return code;
     }
 
     // Last resort inside the resource: the StringFileInfo *strings*. Some games leave
@@ -2778,22 +2781,60 @@ static uint32_t DetectVersionFromPEResource() {
             // expect "<major>.<minor>" right after the tag
             unsigned maj = 0, min = 0;
             if (sscanf_s(s.c_str() + p, "%u.%u", &maj, &min) == 2) {
-                if (maj == 5 && min <= 9) {
+                if (uint32_t code = Grimoire::UeVersionCode(maj, min)) {
                     Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%ls' = '%s' -> %u",
-                               key, s.c_str(), 500u + min);
-                    return 500u + min;
-                }
-                if (maj == 4 && min <= 27) {
-                    Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%ls' = '%s' -> %u",
-                               key, s.c_str(), 400u + min);
-                    return 400u + min;
+                               key, s.c_str(), code);
+                    return code;
                 }
             }
         }
     }
 
-    Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO Product=%u.%u File=%u.%u — unrecognised",
-             major, minor, fmajor, fminor);
+    Sein::Warn("SCAN:Ver", "DetectVersion: %s Product=%u.%u File=%u.%u — unrecognised",
+             productLabel, major, minor, fmajor, fminor);
+    return 0;
+}
+
+static uint32_t DetectVersionFromPEResource() {
+    wchar_t exePath[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
+    return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CrashReportClient.exe — a SECOND, INDEPENDENT opinion about the engine version.
+//
+// ⭐ Why it is worth a file probe: CrashReportClient ships WITH THE ENGINE and is not authored by
+// the game team, so unlike the game exe its version can never be the GAME's version. Its value is
+// not the hit rate but WHERE it hits — the SquareEnix HD-2D fork DQ I&II carried a misdetected
+// "UE5.05" in this repo's own docs for months, across the UE4/UE5 boundary, and its
+// CrashReportClient says 4.27.2.0.
+//
+// ⚠ It is a build-provenance signal, so it ranks with the static detectors and NOT above the
+// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503,
+// detection 503, and the CMC::GravityDirection marker then raises to 504 at init. That is not a
+// conflict — the two answer different questions ("built from which engine" vs "has which engine
+// features"), and a licensee fork backports features. The ladder must keep the last word.
+//
+// ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
+// one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.
+static uint32_t DetectVersionFromCrashReportClient() {
+    wchar_t exePath[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
+
+    for (const std::wstring& cand : Grimoire::CrashReportCandidates(exePath)) {
+        if (GetFileAttributesW(cand.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        uint32_t v = ReadUeVersionFromFile(cand.c_str(),
+                                           "CrashReportClient ProductVersion",
+                                           "CrashReportClient FileVersion");
+        if (v) {
+            Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' -> %u",
+                       cand.c_str(), v);
+            return v;
+        }
+        Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' carries no usable "
+                   "version — ignoring it", cand.c_str());
+    }
     return 0;
 }
 
@@ -2970,8 +3011,29 @@ static VersionScanResult DetectVersionDetailed() {
     VersionScanResult r;
     Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
 
-    // Fast path: PE VERSIONINFO resource (treated as Tier 1 — high confidence)
+    // Fast path: two INDEPENDENT resource reads (both treated as Tier 1 — high confidence).
+    //
+    // ⭐ They are read BEFORE either is used, so they can be compared. Two detectors that agree is
+    // the strongest evidence this file can produce (working-lessons.md 1.4), and where they
+    // disagree the disagreement is itself the finding: both poisoned hint-cache entries this repo
+    // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
+    // have been caught here, because CrashReportClient reports 503 for both.
+    const uint32_t crcVer = DetectVersionFromCrashReportClient();
     uint32_t ver = DetectVersionFromPEResource();
+
+    if (crcVer && ver && crcVer != ver) {
+        // CrashReportClient wins: it is shipped BY the engine, while the game exe's VERSIONINFO is
+        // frequently the GAME's version. Say so loudly rather than silently picking one.
+        Sein::Warn("SCAN:Ver", "DetectVersion: SOURCES DISAGREE — CrashReportClient says %u, the "
+                   "game exe's own VERSIONINFO says %u. Taking %u (engine-shipped beats "
+                   "game-authored). If the property walk also looks wrong, set a UE version "
+                   "override for this title.", crcVer, ver, crcVer);
+    } else if (crcVer && ver) {
+        Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient and the game exe AGREE on %u",
+                   ver);
+    }
+    if (crcVer) ver = crcVer;
+
     if (ver) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
         // that is the most destructive verdict this detector can reach. A single uncorroborated
@@ -3171,7 +3233,8 @@ static uintptr_t FindStructByName(const char* structName) {
 //   Pick any UObject* from GObjects. Read the pointer at +0x20 (candidate Outer).
 //   If it's a valid pointer, FName is 8 bytes (standard), Outer=0x20.
 //   If not, try +0x28. If THAT is a valid pointer (or null for Package),
-//   FName is 0x10 bytes (CasePreservingName), Outer=0x28.
+//   the Name->Outer SLOT is 0x10 (CasePreservingName), Outer=0x28. sizeof(FName) is 0xC;
+//   the extra 4 bytes are the 8-alignment padding in front of OuterPrivate, not part of FName.
 //
 // Also checks: if the two int32s at UObject::Name (+0x18 and +0x1C) are equal,
 // it's likely ComparisonIndex == DisplayIndex, confirming CPN.
@@ -4135,6 +4198,22 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // already coherent; routing it through the helper is what stops it and Step 2.5's
         // default block from drifting apart again.
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff));
+    } else if (propOffsetOff >= 0) {
+        // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
+        // in this function with zero writers -- it kept its 0x70 default on every UE4
+        // <4.25 game, including shifted ones. On DQ XI S (4.22, +0x10 shift) the true
+        // value is 0x80 and Ubel's ±4/+8/-8 spread tops out at 0x78, so no probe reached
+        // it, boolFieldMask stayed 0, and the reader fell back to `byteVal != 0` -- which
+        // reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
+        //
+        // The `>= 0` guard mirrors the FProperty arm: an unmeasured probe must leave the
+        // default alone rather than derive from -1.
+        DynOff::UBOOLPROP_FIELDSIZE = DynOff::UBoolPropFieldSizeFor(
+            propOffsetOff, ueVersion, DynOff::bCasePreservingName);
+        Sein::Info("DYNO", "ValidateAndFixOffsets: UBoolProperty::FieldSize derived at "
+                   "+0x%02X (Offset_Internal +0x%02X, UE=%u%s)",
+                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, ueVersion,
+                   DynOff::bCasePreservingName ? ", CPN" : "");
     }
 
     // Infer tagged FFieldVariant from probed offsets:
@@ -5019,9 +5098,16 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // Two distinct refusals share this one exit, distinguished by the version number alone:
     //
     //  (a) UE 4.0-4.10 — the right engine family, a version too old. Pre-4.11 predates
-    //      FUObjectItem entirely: ObjObjects is a TStaticIndirectArrayThreadSafeRead of raw
-    //      UObjectBase* (stride 8) with an INLINE chunk table, which ArrayLayout cannot express
-    //      at all. Verified against Epic's source: 4.10.2 has no FUObjectItem; 4.11.0 introduces
+    //      FUObjectItem entirely, but in TWO different shapes and for two different reasons:
+    //      4.8-4.10 put ObjObjects in a TStaticIndirectArrayThreadSafeRead of raw UObjectBase*
+    //      (stride 8) with an INLINE chunk table, which ArrayLayout cannot express at all;
+    //      <=4.7 used a plain flat TArray<UObjectBase*> at FUObjectArray+0x10, which ArrayLayout
+    //      CAN express (Flat-Base with Num/Max transposed) and which is blocked instead by the
+    //      stride-8 element — 8 is not one of our stride candidates, and every candidate that
+    //      IS in the list would alias onto it. Nothing at or below 4.7 has ever been run: no
+    //      oracle, no pattern, so that half is reasoned, not measured. Verified against Epic's
+    //      source: 4.7 is the flat TArray, 4.8 introduces the indirect array;
+    //      4.10.2 has no FUObjectItem; 4.11.0 introduces
     //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY via DetectVersionFromPEResource's
     //      major==4 branch — the memory needle table floors at "4.18." and can never go below it,
     //      which is worth knowing before assuming this path is exercised often. (It is not: no
@@ -5058,9 +5144,10 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
                      "GObjects. This is a refusal by design, not a scan failure.");
         } else {
             LOG_WARN("FindAll: UE %u is older than the minimum supported %u — SKIPPING the scan. "
-                     "Pre-4.11 has no FUObjectItem (raw UObjectBase* in an inline chunk table), so "
-                     "no pattern or preset can resolve GObjects. Set a UE version override if this "
-                     "detection is wrong.",
+                     "Pre-4.11 has no FUObjectItem: 4.8-4.10 use a raw UObjectBase* array with an "
+                     "inline chunk table, and 4.7 or older a flat TArray<UObjectBase*> of stride-8 "
+                     "raw pointers. Neither is supported, and no pattern or preset can resolve "
+                     "GObjects. Set a UE version override if this detection is wrong.",
                      out.UEVersion, Grimoire::MIN_SUPPORTED_UE_VERSION);
         }
         return true;   // not a failure — a clean, explained no-op
@@ -5310,11 +5397,11 @@ bool DetectUEnumNames() {
         auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
             return Macht::ReadBytesSafe(a, o, n);
         };
-        const int fnameStride = DynOff::bCasePreservingName ? 0x10 : 0x08;
+        const int fnameSize = DynOff::SizeofFName();
 
         for (int off = 0x30; off <= 0x120; off += 8) {
             Neu::EnumNamesLayout layout;
-            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameStride, 16384, layout))
+            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
                 continue;
 
             // Validate count range

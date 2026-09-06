@@ -1332,25 +1332,59 @@ element cap plus the deadline / visited cap. Default off (heavier).
 
 ### get_offsets
 
+⚠ **The payload is FLAT, not nested.** `Renge::ApplyPayload` splices each key straight into the
+response envelope (`for (it : data) res[it.key()] = ...`), so there is no `"offsets"` object to
+index into. This section previously showed one, along with two key names the DLL has never
+emitted (`case_preserving_name` → `case_preserving`, `offsets_validated` → `validated`) — a client
+written from the old text parsed nothing at all. Keys below are the emitted set, verbatim from
+`Fern.cpp`'s `CMD_GET_OFFSETS` handler.
+
 ```jsonc
 {
   "id": 4, "ok": true,
-  "offsets": {
-    "ustruct_super":          64,
-    "ustruct_children":       72,
-    "ustruct_childprops":     80,
-    "ustruct_propssize":      88,
-    "ffield_class":           8,
-    "ffield_next":            32,
-    "ffield_name":            40,
-    "fproperty_elemsize":     56,
-    "fproperty_flags":        64,
-    "fproperty_offset":       76,
-    "uobject_outer":          32,
-    "case_preserving_name":   false,
-    "use_fproperty":          true,
-    "offsets_validated":      true
-  }
+
+  // --- always present ---
+  "build_info":         "3369 ...",   // BuildStamp::VersionString()
+  "validated":          true,          // DynOff::bOffsetsValidated — the probe agreed with itself
+  "probe_ran":          true,          // the probe ran at all (false = defaults, untouched)
+  "fallback_reason":    "",            // non-empty names WHICH probe gave up, e.g. "childprops-probe-failed"
+  "use_fproperty":      true,          // false = UE4 <4.25 UProperty mode; selects the branch below
+  "case_preserving":    false,         // WITH_CASE_PRESERVING_NAME. ⚠ the Name->Outer SLOT becomes
+                                       // 0x10; sizeof(FName) is 0xC. See DynOff::bCasePreservingName.
+  "uobject_outer":      32,            // 0x20 standard, 0x28 case-preserving
+  "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8
+                                       // (5.8 made ~FFieldClass() virtual). ⚠ 0x00 is FOUR-WAY
+                                       // ambiguous: <=5.7, probe gave up, probe gave up earlier,
+                                       // or UProperty mode. Read `fallback_reason` before it.
+
+  // --- UStruct spine (always present) ---
+  "ustruct_super":      64,
+  "ustruct_children":   72,
+  "ustruct_childprops": 80,            // FField* chain; absent as a CHAIN in UProperty mode
+  "ustruct_propssize":  88,
+  "ustruct_script":     96,            // == propssize + 8 on every measured layout
+
+  // --- FUObjectItem layout (always present; see Lineal.h) ---
+  "item_packed":        false,
+  "item_obj_offset":    0,             // 0x08 on the UE5.7+ reordered item
+  "item_size":          24,            // 16 / 20 / 24 / 32 / 40 — 40 is a UE5.7+ Test build
+  "item_layout_mode":   "classic",     // "classic" | "unpacked57" | "packed57"
+
+  // --- ONE of these two blocks, chosen by use_fproperty ---
+
+  // use_fproperty == true  (UE 4.25+ / UE5)
+  "ffield_class":       8,
+  "ffield_next":        32,
+  "ffield_name":        40,
+  "fproperty_elemsize": 60,            // 0x3C. ⚠ NOT 0x38 — that is ArrayDim (Grimoire.h)
+  "fproperty_flags":    64,
+  "fproperty_offset":   76,
+
+  // use_fproperty == false (UE4 <4.25)
+  "ufield_next":        40,
+  "uproperty_elemsize": 52,
+  "uproperty_flags":    56,
+  "uproperty_offset":   68
 }
 ```
 

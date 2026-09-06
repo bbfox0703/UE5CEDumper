@@ -130,7 +130,7 @@ jobs:
             '',
             '## Setup',
             '- Inject via the bundled Cheat Engine table (UE5CEDumper.CT), or drop the proxy version.dll into the game''s Binaries\Win64.',
-            '- See Readme.MD for details.',
+            '- See Readme.md for details.',
             '',
             '> The exe is unsigned — Windows SmartScreen / antivirus may warn on first run. Verify the download with the included .sha256.'
           )

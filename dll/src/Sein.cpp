@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // Sein — 贊恩 (僧侶・記錄者 — Priest, Chronicler)
 // Logger: 5-category per-process file logging with rotation
 // ============================================================
@@ -10,6 +10,7 @@
 #include <Windows.h>
 #include <ShlObj.h>
 #include <cstdio>
+#include <share.h>       // _SH_DENYWR -- the log must stay READABLE while we hold it open
 #include <cstdarg>
 #include <cstring>
 #include <cerrno>
@@ -337,8 +338,21 @@ static void RotateIfNeeded(LogFileState& fs_state) {
     ArchiveByWriteTime(fs_state.currentPath, fs_state.currentPath.parent_path(),
                        fs_state.baseName.c_str());
 
-    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
-    const int reopenErr = fs_state.file ? 0 : errno;
+    // ⛔ _wfsopen, NOT _wfopen_s. `fopen_s`/`_wfopen_s` open with EXCLUSIVE (deny
+    // read/write) access -- documented CRT behaviour, and the one difference from `_wfopen`
+    // that matters here. Build 3370 shipped the _s form and every live `<cat>-0.log` then
+    // answered ERROR_SHARING_VIOLATION (32) to EVERY reader: no tail, no rig, no operator,
+    // for as long as the game ran. That silently broke the capture method that
+    // docs/verification-register.md and docs/log-verification-checklist.md are built on,
+    // and it is invisible from the UI. Measured on EVERSPACE 2 2026-09-05: an archived
+    // sibling in the same folder read fine at the same instant, the live one did not.
+    // _wfsopen takes the share mode explicitly (_SH_DENYWR: we stay the only writer,
+    // anyone may read) and, being an underscore-prefixed CRT extension rather than a
+    // deprecated ISO name, still raises no C4996 in the test target -- so 70d28548's
+    // zero-warning goal is kept. errno is read only on the failure path and immediately,
+    // so the clobber window the sibling call site documents cannot open either.
+    fs_state.file = _wfsopen(fs_state.currentPath.c_str(), L"w", _SH_DENYWR);
+    const errno_t reopenErr = fs_state.file ? 0 : errno;
     fs_state.written = 0;
 
     if (fs_state.file) {
@@ -381,11 +395,15 @@ static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
     MigrateLegacyGenerations(dir, baseName);
     ArchiveByWriteTime(fs_state.currentPath, dir, baseName);   // last run -> dated archive
 
-    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
+    // ⛔ _wfsopen, NOT _wfopen_s -- see RotateIfNeeded above: the _s form opens EXCLUSIVELY
+    // and makes the live log unreadable to every other process for the life of the game.
+    // _SH_DENYWR keeps us the sole writer while leaving the file readable. errno is
+    // captured on the spot, so the clobber hazard the old comment worried about (the
+    // failure notice is written four more open attempts later) still cannot arise.
+    fs_state.file = _wfsopen(fs_state.currentPath.c_str(), L"w", _SH_DENYWR);
+    const errno_t openErr = fs_state.file ? 0 : errno;
     if (!fs_state.file) {
-        // Captured immediately: any later CRT call can overwrite errno, and the
-        // notice that reports this is written after four more open attempts.
-        if (outErr) *outErr = errno;
+        if (outErr) *outErr = (openErr != 0) ? openErr : EACCES;
         return false;
     }
     fs_state.written = 0;

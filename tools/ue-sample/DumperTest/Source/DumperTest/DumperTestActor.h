@@ -324,6 +324,13 @@ public:
 	/// Nested StructProperty, GAS-attribute shaped.
 	UPROPERTY() FDumperTestAttribute Health;
 
+	/// ⭐ A7 fixture — the only reachable instance of the empty-base pair. Without a
+	/// UPROPERTY of this type nothing loads FDumperTestBracketPayload, and an
+	/// unloaded struct is invisible to a whole-pool walk (see export-formats.md's
+	/// Coverage section). See FDumperTestEmptyBase in DumperTestTypes.h for what
+	/// the pair proves and why no shipping title could supply it.
+	UPROPERTY() FDumperTestBracketPayload EmptyBasePayload;
+
 	/// Strong object pointer to the owned payload.
 	UPROPERTY() TObjectPtr<UDumperTestPayload> Payload;
 

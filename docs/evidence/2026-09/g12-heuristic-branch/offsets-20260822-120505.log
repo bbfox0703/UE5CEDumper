@@ -1,0 +1,83 @@
+[2026-08-22 12:04:45.305] [INFO] [INIT] Logger started | build: 1.0.0.3313 91d09b94-dirty (Release, 2026-08-22T03:58:10)
+[2026-08-22 12:04:59.811] [INFO] [FNAM] FNamePool: Entry stride = 2 (initial, hdrOff=0)
+[2026-08-22 12:04:59.811] [INFO] [FNAM] FNamePool: Chunks at offset 0x10 (validated with 'None')
+[2026-08-22 12:04:59.811] [INFO] [FNAM] FNamePool: DetectStride: 'None' at chunk[0]+2, stride=2 confirmed
+[2026-08-22 12:04:59.811] [WARN] [FNAM] FNamePool: BlockOffsetBits = 16 (stock default kept; index 1 did NOT decode cleanly at this width — name resolution may be degraded)
+[2026-08-22 12:04:59.811] [INFO] [FNAM] FNamePool: Header Format A (shift=6, hdrOff=0), verified 'None'
+[2026-08-22 12:04:59.813] [INFO] [FNAM] FNamePool: Initialized at 0x7FF75A0568C0 (hdrOff=0, stride=2), FName[0]='None', FName[1]=''
+[2026-08-22 12:04:59.813] [DEBUG] [OARR] ObjectArray: GObjects@0x25339EB4E48: +00:0027040000013CD6 +08:000002533A00C310 +10:000002533A6C4E70 +18:0027040000013D7E +20:000002533A6C4FF0 +28:0000025339F4A6A0
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: Strict validation failed for all presets, trying relaxed fallback...
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: Layout B (relaxed alt) detected (Num=2556928, Objects=0x2533A6C4E70)
+[2026-08-22 12:04:59.813] [DEBUG] [OARR] ObjectArray: chunkTable@0x2533A6C4E70: +00:79747265706F7250 +08:6F697469646E6F43 +10:4774736F5020736E +18:6F43656761627261 +20:DDDD007463656C6C +28:DDDDDDDDDDDDDDDD +30:00740065004E0046 +38:0073006F006C0043
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: chunk[1]=0x6F697469646E6F43 is not a valid chunk pointer (need 40 chunks for 2556928 objects) — testing flat layout first
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: P0-flat stride 16: good=55, named=0, null=0, bad=145
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: P0-flat stride 24: good=43, named=0, null=0, bad=157
+[2026-08-22 12:04:59.813] [INFO] [OARR] ObjectArray: P0-flat stride 32: good=61, named=4, null=2, bad=137
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: P0-flat stride 20: good=33, named=0, null=0, bad=167
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: P0-flat fallback: all scores negative, selecting stride 32 (fewest bad=137, named=4) over stride 16 (bad=145, named=0)
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: Flat (non-chunked) array confirmed (P0-flat: 4 named, 137 bad)
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: classic (+0x00) item detection weak (named=4, count=61, bad=137) — retrying with UE5.7+ object-ptr offset +0x08
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: chunk[1]=0x6F697469646E6F43 is not a valid chunk pointer (need 40 chunks for 2556928 objects) — testing flat layout first
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: P0-flat stride 16: good=60, named=0, null=0, bad=140
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: P0-flat stride 24: good=87, named=1, null=1, bad=112
+[2026-08-22 12:04:59.814] [INFO] [OARR] ObjectArray: P0-flat stride 32: good=65, named=0, null=2, bad=133
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P0-flat stride 20: good=36, named=0, null=0, bad=164
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: Flat probe inconclusive (named=0), falling back to chunked detection
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P1 stride 16: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P1 stride 24: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P1 stride 32: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P1 stride 20: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: Phase 1 found no items, trying deep scan from item 1000...
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P2-deep stride 16: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.815] [INFO] [OARR] ObjectArray: P2-deep stride 24: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P2-deep stride 32: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P2-deep stride 20: good=0, named=0, null=0, bad=31
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: Phase 2 found nothing. Trying flat (non-chunked) array at chunkTable=0x2533A6C4E70...
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P3-flat stride 16: good=60, named=0, null=0, bad=140
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P3-flat stride 24: good=87, named=1, null=1, bad=112
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P3-flat stride 32: good=65, named=0, null=2, bad=133
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: P3-flat stride 20: good=36, named=0, null=0, bad=164
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: Flat (non-chunked) array layout detected
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: FUObjectItem size=32, object-ptr offset=+0x08 (UE5.7+ reordered item) — 0 named, 65 total, 133 bad (flat)
+[2026-08-22 12:04:59.816] [INFO] [OARR] ObjectArray: Initialized at 0x25339EB4E48, Count=2556928, ItemSize=32
+[2026-08-22 12:04:59.816] [INFO] [DYNO] ValidateAndFixOffsets: Starting dynamic offset detection...
+[2026-08-22 12:04:59.816] [INFO] [DYNO] DetectCasePreservingName: Probing UObject layout...
+[2026-08-22 12:04:59.816] [INFO] [DYNO] DetectCasePreservingName: votes standard=20, CPN=0 (tested 20 objects)
+[2026-08-22 12:04:59.816] [INFO] [DYNO] DetectCasePreservingName: Standard FName — UObject::Outer = +0x20
+[2026-08-22 12:04:59.816] [INFO] [DYNO] DetectUPropertyMode: Checking for UProperty vs FProperty (UE version=504)...
+[2026-08-22 12:04:59.816] [INFO] [DYNO] DetectUPropertyMode: FProperty mode (UE version 504 >= 425)
+[2026-08-22 12:04:59.816] [INFO] [DYNO] ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)
+[2026-08-22 12:04:59.816] [INFO] [DYNO] ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled
+[2026-08-22 12:05:05.021] [WARN] [DYNO] ValidateAndFixOffsets: Cannot find Guid or Vector struct — trying heuristic fallback
+[2026-08-22 12:05:05.021] [INFO] [DYNO] Phase A: Probing USTRUCT_CHILDPROPS...
+[2026-08-22 12:05:05.021] [INFO] [DYNO]   CHILDPROPS probe +0x40: score=50 (tested 30 objects)
+[2026-08-22 12:05:05.143] [INFO] [DYNO]   CHILDPROPS probe +0x48: score=2 (tested 2 objects)
+[2026-08-22 12:05:05.144] [INFO] [DYNO]   CHILDPROPS probe +0x50: score=30 (tested 30 objects)
+[2026-08-22 12:05:05.268] [INFO] [DYNO]   CHILDPROPS probe +0x58: score=1 (tested 1 objects)
+[2026-08-22 12:05:05.390] [INFO] [DYNO]   CHILDPROPS probe +0x60: score=0 (tested 0 objects)
+[2026-08-22 12:05:05.512] [INFO] [DYNO]   CHILDPROPS probe +0x68: score=0 (tested 0 objects)
+[2026-08-22 12:05:05.633] [INFO] [DYNO]   CHILDPROPS probe +0x70: score=1 (tested 1 objects)
+[2026-08-22 12:05:05.633] [INFO] [DYNO] Phase A: USTRUCT_CHILDPROPS changed 0x50 -> 0x40 (score=50, Super=0x30, PropsSize=0x48)
+[2026-08-22 12:05:05.633] [INFO] [DYNO] Phase B: Probing FPROPERTY_OFFSET...
+[2026-08-22 12:05:05.765] [INFO] [DYNO]   Phase B candidate[0]: '//STATGROUP_Particles//STAT_BeamParticlesKilled///Beam$32$Ptcls$32$Killed///####STATCAT_Advanced####' at 0x25339EBE700, fields=4, propsSize=264886
+[2026-08-22 12:05:05.801] [WARN] [DYNO] Phase B: No valid FPROPERTY_OFFSET found — dumping raw probe data
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x30: 7209064 1635020628 1684367207 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x34: 110 108 0 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x38: 0 0 0 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x3C: 0 0 1802661719 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x40: 7209064 7274580 1399287401 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x44: 110 6357108 1767076965 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x48: 0 108 25978 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x4C: 0 0 1701273936 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x50: 0 1635020628 1701603686 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x54: 0 108 1684370261 0
+[2026-08-22 12:05:05.801] [DEBUG] [DYNO]   raw +0x58: 33554432 0 0 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x5C: -842150451 0 1667330644 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x60: 0 1667330644 543450475 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x64: 0 543450475 1635020628 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x68: 33554432 1635020628 108 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x6C: -842150451 108 1635020373 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x70: 0 7274580 1684367207 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x74: 0 6357108 0 0
+[2026-08-22 12:05:05.802] [DEBUG] [DYNO]   raw +0x78: 33554432 108 0 0
+[2026-08-22 12:05:05.802] [INFO] [DYNO] Heuristic final: USTRUCT_SUPER=0x30 CHILDPROPS=0x40 PROPSSIZE=0x48 FFIELD_NEXT=0x18 FFIELD_NAME=0x20 FPROPERTY_OFFSET=0x44

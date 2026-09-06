@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`9` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`7` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -430,6 +430,684 @@ rows 1–4 and leave 5 open rather than marking the section done.
 > `LogReanchor`) is UI-side. ⛔ Do not generalise this — for any row that turns on DLL behaviour the
 > banner is a stop, not a note.
 
+### Running the 2026-09-05 vendor-audit batch (A1 / A2 / A3 / A7) on the verification PC
+
+*Added 2026-09-05 with the four rows below. The batch is unusual in that its highest-value row
+(A2 / EVERSPACE 2) is also its cheapest, and one row is gated on a game that may not be installed.*
+
+**One game at a time, sequential, never parallel.** Injecting a second title while the first holds `\\.\pipe\UE5DumpBfx` is how a session measures the wrong process.
+
+#### ⭐ MACHINE FACTS — measured on the verification PC 2026-09-05, and they differ from this plan
+
+*This block exists because the run order below was written on the primary PC and **four of its
+stated facts are false here**. Each cost, or would have cost, a launch.*
+
+| the plan says | the verification PC actually has |
+|---|---|
+| EVERSPACE 2 at `D:\SteamLibrary\…\EVERSPACE™ 2\` | **`C:\Program Files (x86)\Steam\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\`.** ⚠ `D:\SteamLibrary\…\EVERSPACE\` **does** exist and **does** carry a deployed proxy — it is EVERSPACE **1** (`RSG-Win64-Shipping.exe`), a different title |
+| Lushfoil / OCTOPATH at `E:\SteamLibrary`, Satisfactory at `H:\SteamLibrary` | **no `E:` and no `H:` drive exists.** `libraryfolders.vdf` lists exactly **two** libraries: `C:\Program Files (x86)\Steam` and `D:\SteamLibrary`. All three titles are under `D:\SteamLibrary\steamapps\common\` |
+| Satisfactory is the **UE 5.3** "second era" for A1 | **it is UE 5.6.1 here** (v1.2.3.1). The 5.3 era needs a different host — **DragonSword Awakening 5.3.2** and **Avowed 5.3.2** are both installed |
+| Star Wars Jedi: Fallen Order gates A3 | **a GHOST here too** — the folder exists with no executable (`fixture_census.py`). A3 is blocked on both machines |
+
+**Two fixtures the plan does not know about, and both are useful:**
+
+* **Light Maze, UE 5.0.3** (`D:\SteamLibrary\steamapps\common\Light Maze\`) — a UE5 title **below** 5.3, so it is a sharper A1 negative control than OCTOPATH: it separates "pre-5.3" from "UE4" rather than conflating them. 0.21 GB, boots fast.
+* **DRAGON QUEST XI S** (`D:\SteamLibrary\steamapps\common\DRAGON QUEST XI S\Game\Binaries\Win64\`) — installed 2026-09-05, which is what **unblocked A6**. ⚠ `fixture_census.py` will not list a title installed after its last run; re-run it, do not trust a remembered census.
+
+⚠ **The full version sweep is cheap and worth re-running** (`py tools/verify/pe_version_probe.py`-style read of `dwFileVersionMS` over every `*-Win64-Shipping.exe`): 4.20 EVERSPACE 1 · 4.27 Glimmith · **5.0.3 Light Maze** · 5.3.2 Avowed / DragonSword · 5.5.4 Manor Lords · 5.6.1 ES2 / Lushfoil / Satisfactory · 5.6.0 STVoyager · **5.7.1 Solarpunk** (the newest UE on this machine — which is why A4's positive half is blocked on content).
+
+#### Step 0 — before any game (offline, ~20 min)
+
+1. ~~`git status -sb` — expect ` M docs/handover-2026-08-22.md`, `ahead 14`~~ ⚠ **STALE, corrected 2026-09-05 on the verification PC.** `handover-2026-08-22.md` is CLEAN — `fffe5fcf` committed it (57 changed lines in its `--stat`). `dev` is **level with** `origin/dev`, and 17 ahead of `origin/main`, never 14. The only dirty path is `build_number.txt`.
+2. ~~**Fix D1 and D2**~~ ⛔ **ALREADY DONE — do not apply.** Commit `fffe5fcf` (18:37) made both edits **seven minutes before** `37c034de` (18:44) added this instruction, and `fffe5fcf` is its git **ancestor**. Worse than redundant: the cited lines no longer hold that code, so an operator following it patches unrelated lines. Verified in the current tree — `Ubel.cpp:2891/2905` use `softPathOff` and `:4088` uses `LazyGuidOffset(fi.Size)`.
+3. `build.ps1 -Target DLL`, then **`build.ps1 -Mode Publish`** — hand-over rule. Verify `dist\UE5DumpUI.exe` is ~54.7 MiB (57,398,784 B), **not** ~107 MB, and record the sha.
+4. `py tools/check_all.py` — 12 gates green, including `check_derived_counts` at its new number.
+5. **Census the fixtures on THIS machine** — the Steam layout may differ from the primary PC. Parse `libraryfolders.vdf` and check for: Lushfoil, Satisfactory, EVERSPACE 2, OCTOPATH, Solarpunk, and **Star Wars Jedi: Fallen Order** (the A3 gate — on the primary PC it is a ghost, only `steam_appid.txt`). Record what is present before planning further.
+6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover-2026-08-22.md:75-99`); the plan doc's §3 claim that they do not is refuted and is being corrected. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
+
+#### Step 1 — EVERSPACE 2 (Row 2, A2) — ~20 min, highest information per minute
+
+The one row whose answer is genuinely unknown and cheap.
+
+1. **Refresh the deployed proxy first.** The `version.dll` in `…\ES2\Binaries\Win64\` is dated 2026-08-27 (build 3367) and owns the pipe; a fresh injection does not displace it. Then `assert_build()`.
+2. Inject → `trigger_scan` → **one invoke** (`Add_IntInt(3,4)`) or `pe_profile_start`. Detection is lazy; connect+scan+walk emits no `DetectProcessEvent` line at all.
+3. **Capture**: `init-0.log` (the `match at vtable+0x…` line, the `offset resolved … via the pattern scan` line, and the *absence* of `(fallback)` and `VALIDATION FAILED`); `scan-0.log`'s `DetectVersion: … -> 506`; the status bar `Connected — UE506`; Live Funcs `HookActive` / `HookFireCount`; the invoke's returned value.
+4. Record whether the slot is `0x260` (table corroborated) or `0x278` (506 row wrong for this title — a result, not a failure).
+
+#### Step 2 — Lushfoil UE5.6 (Row 1, A1 — primary) — ~40 min
+
+1. Inject the fixed DLL. Live Walker → walk any actor with an asset reference.
+2. **Capture**: both `payload envelope measured` lines from `offsets-0.log` (soft **and** lazy); a Live Walker Value cell showing a path that **begins with `/`**.
+3. Property Search for an `ArrayProperty` whose inner is `SoftObjectProperty`; if one exists, Copy CE XML and confirm `<Address>+8</Address>` on the `PackageName` leaf and that the DropDownList keys now match the labels (that is D1's fix, visible only here).
+4. If no such array exists, record the CE leg as **not exercised** and close the DLL + Live Walker legs independently. Do not synthesise one.
+
+#### Step 3 — Satisfactory v1.1.3.1 UE5.3 (Row 1, A1 — second era) — ~25 min
+
+Same captures. `5.3` is the first version where the envelope moved, so this is the boundary case. ⚠ modular build: the launcher is `Engine\Binaries\Win64\FactoryGameSteam-Win64-Shipping.exe`.
+
+#### Step 4 — OCTOPATH TRAVELER UE4.18 (Row 1 negative control + A6 negative control) — ~20 min
+
+1. A1 control: pre-5.3 title must land on the tagged `0x10` envelope; Live Walker soft-path display unchanged.
+2. A6 control, free in the same session: `offsets-0.log` must read `UBoolProperty::FieldSize derived at +0x70 (Offset_Internal +0x44, UE=418)` — byte-identical to the old default.
+3. ⚠ Proxy: **`winmm.dll`**, not `version.dll` (`docs/test-games.md:14`). `dxgi` crashes here.
+
+#### Step 5 — Row 3 (A7), ride-along — ~15 min, no dedicated launch
+
+Attach to whichever of Steps 2–4 is still running. `walk_class` over the pipe on an `EmptyPayload` child, then a full SDK export, then grep. Both negative controls come out of the same export.
+
+#### Step 6 — DQ III HD-2D (A1 falsification probe) — ~20 min, optional
+
+Not a control. Run it, log the `payload envelope measured` line, report the value. A `+0x08` here on a title whose row records the UE 5.0 field layout under a 505 badge is the ambiguity `Grimoire.h:255-262` warns about, and it is worth knowing before a user hits it.
+
+#### Step 7 — Jedi Fallen Order (Row 4, A3) — ONLY if the Step-0 census found it installed
+
+CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Version = 421` **before** anything else; if it says 422, close the row. Then the `set_ue_version_override` 421→422→421 A/B on the same binary.
+
+#### Not scheduled
+
+**DQ XI S (A6's only UI-visible host) and NEKOPALIVE** — exe backups exist under `D:\UE_Analyze_data\Game Binary backup\` but a backup exe cannot be launched. The A6 row stays open, blocked on a host, and its amended text should say so.
+
+---
+
+#### What NOT to verify from this batch
+
+1. **Do not build a UE Test configuration, and do not re-propose "upgrade DumperTest to 5.7".** Both installed engines refuse it at target validation (§2). A5's 40-byte half has no producible fixture on *either* PC — record it in `reference-builds.md` and stop re-deriving it.
+2. **Do not open a row for A5's tie-break or its new warning.** `PreferStride` changes no outcome in practice over `{16, 24, 32, 20, 40}` — ⚠ **but NOT for the reason first recorded here, corrected 2026-09-06.** The old wording was *"a provable no-op — every divisor pair already has the smaller candidate earlier in the list"*. The divisor halves are true (`16`@0 before `32`@2, `20`@3 before `40`@4), but `PreferStride` fires on **any** equal score, not only on divisor ties (`Lineal.h`: `score == bestScore && bestStride != 0 && stride < bestStride`), and the list holds two **non-divisor** pairs whose smaller member sits **later** — `(24, 20)` and `(32, 20)`. On a tie in either, old and new select differently. The conclusion survives on a different argument: 24/20 and 32/20 are neither multiples nor divisors, so on a correct pool one of each pair lands off-item and loses on score long before a tie — which is what `Lineal.h`'s own tie comment actually says. **The decision not to open a row stands; do not cite the old sentence as a proof.**, and the high-null warning is an anomaly detector whose silence on a healthy pool is the expected result. Both belong in the checklist's §1/§3, not the register.
+3. **Do not open a row for A9.** Every branch is gated on `bCasePreservingName`, whose only two writers are `Genau.cpp:3243/3247` inside a live 20-object vote — no config, preset, or UI can force it true — and 12 titles have measured false with zero CPN. Every non-CPN arm is arithmetically identical to the pre-fix code. A row would be unfalsifiable. File the `Ubel.cpp` follow-up in `todo.md` instead.
+4. **Do not open a row for the nlohmann bump, and do not repeat its stated rationale.** The commit's *"the EINTR fix is blocked by json.hpp's own errno reset"* is wrong — that reset exists in **both** versions. The real reasons there is no victim: EINTR is not a Windows/UCRT phenomenon, MSVC's `strtod` sets only `ERANGE` (which the new code excludes and the old code already excluded via a round-trip guard), and every integer on our wire is small (addresses travel as **strings**, `Fern.cpp:1983` etc.), so a float fall-through has no consequence. Also stop citing the C++ suite as coverage: `.dump()` and `json::parse` each occur **0** times in `dll/tests/`.
+5. **Do not add a "verify DumperTest's fallback path" row.** It requires two DLL builds plus a new script, and the existing rig's polarity is **inverted** for A2 — `tools/verify/pehook_3b_refusal.py:136/:147` reports FAIL when there is no `VALIDATION FAILED` and no `-3`, which is exactly the outcome a *fixed* fallback produces. The variant DLL it names also no longer exists on disk and was built pre-A2 anyway. If the fallback is ever checked, budget three builds and three launches and write a new oracle.
+6. **Do not treat `docs/verification-register.md:3774-3775` (PEHOOK steps 7/8) as an open A2 check.** The row header at `:3426` lists steps 7 and 8 as **already verified**; only step 3c remains, and it is structurally unreachable. Those steps ran on the pre-A2 DLL, which is *why* the ES2 row exists — but they are not an open slot to fill.
+7. **Do not use the Self-Test advice strings as a positive UI observable anywhere.** All five (`en.axaml:435-439`) are keyed `Fail.*` and render only on the failure path. "The advice did not appear" is equally true of a UI that never connected.
+8. **Do not grep `walk-0.log` for A1's DLL observable.** It lives in `Ubel.cpp` but its category is `DYNO:PersistPtr`, which routes to **offsets**. The natural grep returns nothing and reads as a failure.
+9. **Do not use DQ III or DQ I&II as A1's negative control** (§3, Row 1) — they cannot discriminate and would be scored as a regression against a title the register already records as version-misdetecting.
+10. **Do not "simplify" the ProcessEvent table into a `>=` ladder**, do not narrow Ubel's `{base, ±4, +8, −8}` bool probe spread now that the base is derived, and do not enable the `Bookmarks\` age sweep. All three are deliberate; the first two are the exact bugs A2 and A6 fixed.
+11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which `handover:75-99` measured false. Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A1-ENVELOPE-2026-09-05]` — audit A1: both envelopes, on both sides of the 5.3 boundary
+
+> **CLOSED on the verification PC, build 3371**, on the row's own terms: the DLL and Live Walker
+> legs closed independently, the CE leg recorded as **not exercised** (this row's own instruction —
+> *"If no such array exists, record the CE leg as not exercised … Do not synthesise one."*).
+> Rig: [`tools/verify/a1_softlazy_envelope.py`](../tools/verify/a1_softlazy_envelope.py) — takes the
+> log-folder name and **derives** the expectation from the reported UE version, so the same command
+> scores a 5.6 host and a 4.18 control without being told which is which.
+>
+> | host | UE | `TSoftObjectPtr` | `TLazyObjectPtr` |
+> |---|---|---|---|
+> | **EVERSPACE 2** | 506 | `+0x08 (ElementSize 0x28 - payload 0x20)` | `+0x08 (ElementSize 0x18 - payload 0x10)` |
+> | **OCTOPATH TRAVELER** (negative control) | 418 | `+0x10 (ElementSize 0x28 - payload 0x18)` | **`+0x0C`** `(ElementSize 0x1C - payload 0x10)` |
+>
+> ⭐ **The control is where the lazy fix is actually visible.** Post-5.3 both types collapse to
+> `+0x08`, so a 5.3+ host alone cannot distinguish "the lazy half was fixed" from "the lazy half
+> happens to share the soft answer". OCTOPATH separates them: `0x10` vs **`0x0C`** in the same
+> process, one second apart. `0x0C` is `FWeakObjectPtr(8) + Tag(4)` with **no pad**, because
+> `FUniqueObjectGuid` is a bare `FGuid` (4×uint32, alignof 4) — and `ElementSize 0x1C` = 8+4+16
+> confirms it from the engine's own side. The pre-fix code read `+0x10` here, which is the
+> commit's claim that lazy *"was wrong in every era"*, measured.
+>
+> **UI leg (Live Walker Value column).** On ES2, **164** distinct soft properties render a package
+> path **beginning with `/`** — e.g.
+> `/Engine/EngineSky/VolumetricClouds/m_SimpleVolumetricCloud_Inst.m_SimpleVolumetricCloud_Inst`
+> and `/Game/Audio/MusikSets/DA_MusicSet_Sector_001.DA_MusicSet_Sector_001`. Pre-fix the read began
+> at `AssetName`, so it could never begin with `/`. The other 890 are `(none)` / empty arrays —
+> unset pointers, a different code path, and correctly not counted either way.
+>
+> ⚠ **The rig was wrong before the DLL was.** Its first run scored OCTOPATH a FAIL by expecting
+> `+0x10` for lazy, having assumed soft and lazy share a tagged envelope. They do not:
+> `PersistentPtrEnvelopeFor` takes it as a parameter and the two call sites pass `0x10` and `0x0C`
+> (`Ubel.cpp:421-432`, whose comment says *"There is no era in which 0x10 is correct here"*).
+> Recorded because a verification rig that encodes the pre-fix model will manufacture a false
+> regression against a correct fix.
+>
+> ⛔ **STILL OPEN, and found offline, not here — `ReadLazyObjectArrayElements` forces the discredited
+> stride.** `Ubel.cpp:2976-2978` discards the caller's `elemSize` and sets `elemSize = 0x20`, the
+> exact `FWeakObjectPtr(8)+Tag(4)+pad(4)+FGuid(16)` model this audit deleted; `sizeof(TLazyObjectPtr)`
+> is `0x1C`/`0x18`, never `0x20`. So a `TArray<TLazyObjectPtr>` drifts 4 or 8 bytes per element from
+> index 1, and `LazyGuidOffset(0x20)` yields `0x10`, which `PersistentPtrEnvelopeFor` **rejects** —
+> meaning the lazy log line **cannot** be emitted from the array path at all. Filed in
+> [`todo.md`](todo.md); it does not affect this closure, which measured the scalar path.
+
+<details><summary>original row (kept — its precondition and scoping notes are what made this cheap)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A1: soft/lazy object-pointer offsets are now measured**
+
+⚠ Deliberately not a `###` heading and carrying no ⬜ — `check_derived_counts` counts `^### .*⬜`.
+
+*`TSoftObjectPtr`'s `FSoftObjectPath` was read at a hardcoded `+0x10`. That is right only to UE 5.2: 5.3 deleted `TPersistentObjectPtr::TagAtLastTest` and the path moved to `+0x08`. `TLazyObjectPtr`'s `FGuid` was read at `+0x10` too, and `FUniqueObjectGuid` is a bare `FGuid` (alignof 4) — so the tagged envelope is `0x0C` and there is **no era** in which `0x10` was right there. Both are now derived from the property's own `ElementSize` (`Grimoire.h:263-266`, `:268-280`; wrappers `Ubel.cpp:410-433`), and `CeXmlExportService.cs:3100` no longer bakes a literal `"+10"`.*
+
+*⚠ Six installed titles are ≥ 5.3 and were reading one field late: Satisfactory v1.1.3.1 UE5.3 (`docs/test-games.md:28`), Manor Lords UE5.5 (`:27`), Lushfoil UE5.6 (`:26`), Satisfactory v1.2.3.1 UE5.6 (`:29`), EverSpace 2 (now 5.6, see the A2 row), Titan Quest II UE5.7 (`:13`).*
+
+**Why the suite cannot close it.** `dll/CMakeLists.txt:539-543` compiles only `dll_helpers_test.cpp` + `Radar.cpp` + `Denken.cpp`. ⚠ **CORRECTED 2026-09-05 — the conclusion that followed ("`Ubel.cpp` is not in any test target") is FALSE, and has been since 2026-08-25, eleven days before this row was written.** A fifth target, `dll_core_test` (`dll/CMakeLists.txt:650`), compiles `Ubel.cpp`, `Aura.cpp`, `Genau.cpp`, `Serie.cpp`, `Macht.cpp` and `Flamme.cpp` by `#include`-ing the `.cpp` into one TU (`dll_core_test.cpp:63`), against a fake pool built in the test's own process — no game needed. The row's *narrow* point survives (nothing currently **exercises** the soft/lazy latch), but the stated reason wrongly forecloses an offline route on a batch whose whole premise is that live game time is scarce. `dll_helpers_test.cpp:5491-5530` pins `FSoftObjectPathSizeFor` / `PersistentPtrEnvelopeFor` arithmetic; nothing exercises the latch, the log line, the wire field, or — the load-bearing one — **whether `fi.Size` is a trustworthy `ElementSize` at all**. `Ubel.cpp:2523` and `:5878` already document `FPROPERTY_ELEMSIZE` as returning garbage (e.g. `1073742336`) for members of certain `UScriptStruct` layouts, and the entire fix is `elemSize - payloadSize`. No C# test covers `SoftArrayPathOffset` either.
+
+**Acceptance test** — any UE ≥5.3 title; **Lushfoil UE5.6** (`docs/test-games.md:26`, installed at `E:\SteamLibrary`) is the named exemplar, Satisfactory v1.1.3.1 UE5.3 (`H:\SteamLibrary`) the second era. Three paired observables:
+
+| side | where | expect |
+|---|---|---|
+| DLL | `offsets-0.log` | `TSoftObjectPtr payload envelope measured: +0x08 (ElementSize 0x28 - payload 0x20, UEver=506)` — the format is `Ubel.cpp:399-403`, and category `DYNO:*` routes to **offsets**, not walk, even though the line lives in `Ubel.cpp` (`Sein.cpp:80` `{ "DYNO", 4, LF_Offsets }`; `Ubel.cpp:8` `#define LOG_CAT "WALK"` binds only the `LOG_*` macros) |
+| DLL | `offsets-0.log` | the sibling `TLazyObjectPtr payload envelope measured: +0x08 (ElementSize 0x18 - payload 0x10, …)`. **Required, not optional** — the lazy half was wrong in every era and has no other observable |
+| UI | Live Walker, Value column | a `SoftObjectProperty` renders a **package path beginning with `/`**. Pre-fix the read started at `AssetName`, so it never began with `/`; post-fix it is a package path and always does. One-glance pass/fail. `Ubel.cpp:4043` sets `fv.typedValue = assetPath` and `LiveFieldValue.cs:395-401` gives `TypedValue` top precedence, so a **loaded** asset still shows the path |
+| UI | CE XML export of a `TArray<TSoftObjectPtr>` | `<Address>+8</Address>` on the leaf described `PackageName` (was `+10`). ⚠ There is no `<Offsets>` element here — `EmitOffsets` (`CeXmlExportService.cs:3781-3790`) emits one only for a non-null array and both soft leaves pass `null`. This is the **stale-UI separator**: `DumpService.cs:1449` defaults `soft_path_offset` to `?? 0x10`, so an old DLL behind a correct UI emits `+10` while the log says `+0x08` |
+
+⚠ **Precondition on the DLL legs.** The measurement fires only when a walk **touches** a soft/lazy property (callers `Ubel.cpp:2762/2765`, `:4024`, `:4306/4469`, `:6141/6167`) and only **once per distinct envelope per process** (guard `Ubel.cpp:394-395`, `measured && latched != envelope`). Absence after walking an object with no such property proves nothing. The unaccountable-`ElementSize` case is silent here and loud elsewhere: `Invalid SoftObject elemSize=` in **walk**-`0.log` (`Ubel.cpp:2854`, category `WALK:ArrayG`).
+
+⚠ **Scope the CE leg or it cannot be closed.** `soft_path_offset` reaches the wire only inside the array block gated on `softArrayFNameSize > 0` (`Fern.cpp:1482-1489`), and the exporter's path-leaf branch requires `ArrayInnerType == "SoftObjectProperty"/"SoftClassProperty"` (`CeXmlExportService.cs:2722-2727`). A **scalar** soft property exports as a bare `8 Bytes` hex leaf (`:3952-3953`) with no path leaves at all. So the CE leg needs a discovery step first — Property Search for an `ArrayProperty` whose inner is `SoftObjectProperty`. The DLL and Live Walker legs need no array and close independently.
+
+**Negative control**: **Hogwarts Legacy 4.27** (`docs/test-games.md:21`) or **OCTOPATH 4.18** (`:14`, installed at `E:\SteamLibrary`) — a pre-5.3 title must still land on the tagged `0x10` envelope, and the Live Walker path must be unchanged from the pre-fix build. ⛔ **Do NOT use DQ III HD-2D as the control.** `docs/test-games.md:18` records the SE HD-2D fork as reporting **UE505** while using the UE 5.0 field layout, and both `ReadSoftObjectPath` (`Ubel.cpp:335`) and `SoftObjectPathPayloadSize` (`:410-418`) discriminate on `g_cachedUEVersion >= 501` — so on a 5.0-layout title mis-badged 505 the payload is computed `0x20` against a real `ElementSize 0x28`, the candidate is `0x08`, and `PersistentPtrEnvelopeFor` **accepts and latches it** (`Grimoire.h:255-262`; `dll_helpers_test.cpp:5511-5519` asserts exactly that bogus latch). DQ III would log `+0x08` and be scored a regression against a control that cannot discriminate. It is a plausible **new victim**, not a control — run it separately, with no pre-declared pass value, and report what it logs.
+
+</details>
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A2-ES2-506-2026-09-05]` — audit A2: the 506 row is CORROBORATED at `0x260` on a retail UE 5.6.1 build
+
+> **CLOSED on the verification PC, build 3371, 2026-09-05 21:00.** Rig:
+> [`tools/verify/a2_es2_pehook.py`](../tools/verify/a2_es2_pehook.py) (written for this row; it
+> re-runs from one command). Every observable this row asked for was captured in one session, and
+> **both absence checks held** — which is the half a play-test cannot produce:
+>
+> | observable | expected | measured |
+> |---|---|---|
+> | `scan-0.log` | `DetectVersion: … -> 506` | `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` |
+> | `init-0.log` | pattern match | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF6E6297080` |
+> | `init-0.log` | what was **installed** | `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` |
+> | `init-0.log` | `(fallback)` **absent** | **0 lines** |
+> | `init-0.log` | `VALIDATION FAILED` **absent** | **0 lines** — ⚠ vacuous, see below |
+> | `init-0.log` | ⭐ **`validation OK — hook fired N times`** | `validation OK — hook fired **660** times in 1500ms` |
+> | `init-0.log` | `fired 0 times in` **absent** | **0 lines** |
+> | invoke | `Add_IntInt(3,4) == 7` | **7** — a computed value, not a plausible one |
+> | diagnostics | hook live | `hook_active=True`, `hook_fire_count=52` |
+> | pipe | right binary | `build 3371`, `ue_version 506`, `79,831` objects, `load_mode proxy:version.dll` |
+>
+> ➕ **ADDENDUM 2026-09-06 — the `508` row now has a live witness too, and it never had one.**
+> The rig takes a log-folder name now, because the table has **one row per UE version** and each
+> row needs its own witness; every prior live measurement was 506. On **DumperTest58 Development
+> (UE 5.8.2)**: `DetectProcessEvent (pattern): match at vtable+0x250`, `offset resolved to
+> vtable+0x250 via the pattern scan`, `Add_IntInt(3,4) = 7`, `validation OK — hook fired 184 times
+> in 1500ms`, `hook_fire_count` 7,696, no fallback, no `VALIDATION FAILED`. **`0x250` is exactly
+> what `case 508: return 0x250` says**, and it is independently corroborated offline: RE-UE4SS's
+> newly-shipped `VTableLayout_5_08_Template.ini` puts ProcessEvent at raw index 76, and every 5.0x
+> template sits a constant 2 entries (`0x10`) above our table — a calibration that is *measured*,
+> not assumed, because ES2 read `0x260` live at 5.6 where the raw index gives `0x270`.
+>
+> ⚠ **Two rig defects this run exposed, both of which manufactured false FAILs** — recorded because
+> each is the same shape as the register's own traps:
+> * it demanded a `DetectVersion:` line in `scan-0.log`. `FindAll` **skips detection entirely** when
+>   `UE5CEDumper.{Machine}.json` already holds a verdict for that PE hash, so on any previously
+>   scanned host there are zero such lines and a `FindAll: UE Version = N (cached…)` line instead.
+> * it **raced the validator**. `hook installed … validator armed (1500ms)` is written at install
+>   and the verdict lands ~1.5 s later; on a host where listing and invoking is quick, the log read
+>   happened first and the rig reported "no validation OK line". It now waits for the verdict.
+>
+> **Verdict: `0x260`.** The 506 row now has a second independent live witness (Lushfoil was the
+> first, the UVTD oracle aside). The title's twice-measured `0x278` stays what it always was — a
+> live witness for the **5.5** row, taken on the pre-patch binary — so the table's deliberate
+> non-monotonicity is confirmed from both sides by the same game. ⛔ Still do **not** collapse the
+> table into a `>=` ladder; that is the exact bug A2 fixed.
+>
+> ⛔ **CORRECTION TO THIS ROW'S OWN GREP SET — "`VALIDATION FAILED` is absent" PROVES NOTHING on
+> the path this row expects.** `Stark::ShouldActOnValidationFailure` returns `offsetFromVersionTable`
+> (`dll/src/Stark.h:305-307`), so a **pattern**-derived offset that fires **zero** times takes the
+> early return at `Frieren.cpp:1951` and logs a line containing neither `VALIDATION FAILED` nor
+> `FAILED` — the hook is deliberately **KEPT**. A mis-detected pattern slot therefore produces
+> *exactly* the log the original grep set scores as a pass: no fallback line, no failure line,
+> `hook_active == true`. Two consequences, both now in the rig:
+>   * the discriminator is the **positive** line `GameThreadDispatch: validation OK — hook fired N
+>     times`, which this run has (660 in the 1500 ms window, and `hook_fire_count` 8.8 M once
+>     in-world). Absence-of-failure was never the evidence; it only corroborates.
+>   * `fired 0 times in` is a **hard fail**, not "the game thread was idle".
+>
+> The verdict is unaffected — it never rested on the absence checks — but the row as written
+> invited a false PASS, and a later session leaning on it would have got one.
+>
+> ⚠ **The build gate below was real and had to be paid twice.** The deployed `version.dll` was
+> dated 2026-08-29 (not 2026-08-27 as written below) and owned the pipe; `proxy_refresh.py` fixed
+> that. The run was then thrown away and repeated anyway, because build 3370 could not be read —
+> see `[SEINSHARE-2026-09-05]`.
+
+<details><summary>original row (kept — its reasoning is what made the row cheap to close)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A2: EVERSPACE 2 patched to UE 5.6 and crossed the table's own boundary**
+
+⚠ Deliberately **not** a `###` heading and deliberately carrying no ⬜: `check_derived_counts`
+counts `^### .*⬜` inside this section, so leaving either here would keep the row counted as open.
+
+*A2 replaced an unreachable `>= 550` band (every UE5 game silently took `0x220`, wrong by `0x28-0x58`) with a measured per-version table, `DynOff::ProcessEventVTableSlotFor`, `dll/src/Grimoire.h:321-341`. The table is deliberately **non-monotonic**: `case 505: return 0x278` (`:336`) then `case 506: case 507: return 0x260` (`:337`). It is **fallback only** — `Frieren.cpp:1693-1701` runs the pattern scan across up to 12 candidate vtables and reaches `DetectProcessEventVTableOffsetByVersion` (`:1601`) at `:1703` only after all miss.*
+
+*⭐ **The open EVERSPACE 2 question is settled, and settled in a way that helps.** The `0x278` measurement is a **live retail witness for the 5.5 row**, not a contradiction of the 5.6 row: it was taken twice (2026-05-11, `docs/lessons-learned.md:140`; 2026-08-20 `[PEHOOK-6-2026-08-20]`, `docs/verification-register.md:3504`) and bracketed by in-process PE-resource detections of **505** on 2026-08-19 (`:4434`) and **505 (5.5)** on 2026-08-24 (`:9031`) — all of it on the exe that Steam replaced on **2026-09-01 22:05**. The installed binary now reads **`prod=5.6.1.0 → 506`** (`py tools/verify/pe_version_probe.py`, measured 2026-09-05) and the 2026-09-03 session logged it in-process: `scan-20260903-123758.log` `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506`, `init-0.log` `UE5_Init: Complete (UE506, …, Objects=1154897)`. So the maintainer's report is correct — and the title has moved from the `0x278` row to the `0x260` row with no slot ever measured on the new build.*
+
+**Why the suite cannot close it.** `dll_helpers_test.cpp:5607-5672` pins every table row *and* its non-monotonicity — 20 assertions of pure header arithmetic. `DetectProcessEventVTableOffset` is `static` in `Frieren.cpp` and the test target links headers, so nothing exercises whether the value is ever reached, and nothing can say what a real 5.6 licensee build's vtable actually looks like.
+
+**Acceptance test** — **EVERSPACE 2**, `D:\SteamLibrary\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\`. Detection is **lazy on the invoke path**: `RunPeDetection` (`Frieren.cpp:1804`) is reached only from `EnsureProcessEventReady` (`:2025`) and `UE5_EnsureGameThreadHook` (`:2188`), so a connect + scan + walk emits **nothing** — confirmed empirically, `grep -c DetectProcessEvent` over the whole 2026-09-03 ES2 log folder returns **0** in all 18 files. Sequence: refresh the proxy → inject → `trigger_scan` → **one invoke** (or `pe_profile_start`) → grep.
+
+| side | where | expect |
+|---|---|---|
+| DLL | `init-0.log` | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x…` (`Frieren.cpp:1589`), and `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` (`Frieren.cpp:1850` — the only line reporting what was actually **installed**; `primary=` is not necessarily the return value, `:1640-1654` sweeps ±8/±16) |
+| DLL | `init-0.log` | **ABSENT**: `DetectProcessEvent (fallback)` (`Frieren.cpp:1623`) and `VALIDATION FAILED` (`Frieren.cpp:1980`). A fallback line means the table quoted itself and the run must be discarded |
+| DLL | `scan-0.log` | `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` (`Genau.cpp:2741`, category `SCAN:Ver` → `Sein.cpp:74`) — the run must be on the 5.6 binary, not a rolled-back one |
+| UI | status bar | `Connected — UE506 (…)` (`MainWindowViewModel.cs:734`, `:2763`) and Pointers panel showing **506** (`PointerPanel.axaml:42`, raw int) |
+| UI | Live Funcs | `HookActive == true` **and** `HookFireCount > 0` (`Fern.cpp:4097-4098` → `DumpService.cs:2832-2833`) |
+
+**Negative control, and it is what makes this a test rather than a screenshot**: the invoke must return a **computed** value — `Add_IntInt(3,4) = 7`, as `[PEHOOK-6]` did. A wrong slot returns 0/unchanged while `HookActive` can still read true. ⚠ Do **not** use the Self-Test advice strings as a positive: all five (`en.axaml:435-439`) are keyed `str.System.SelfTest.Fail.*` and `PointerPanelViewModel.cs:1739` documents `ClassifySelfTestFailureAsync` as running "only on the failure path" — nothing renders on a pass, so their absence is vacuously true for a UI that never connected.
+
+⛔ **Build gate, and this is the trap `[B648-TWOENGINES]` already hit.** ES2's deployed `version.dll` is dated **2026-08-27** (`init-0.log` line 1: `build: 1.0.0.3367 344d9242-dirty`), i.e. it predates all fourteen commits and **owns the pipe** — a fresh injection does not displace it. Refresh the proxy from a `-Mode Publish` dist and `assert_build()` (`tools/verify/pipe_client.py:11-22`) **before** any number is taken.
+
+**Outcome rule.** `0x260` → the table's 506 row is corroborated on a real retail 5.6 licensee build (Lushfoil and the UVTD oracle are currently its only support). Still `0x278` → the 506 row is wrong **for this title**; record it as a register note, and ⛔ do **not** collapse the table back into a `>=` ladder — the non-monotonicity is the bug A2 fixed.
+
+</details>
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A7-EMPTYBASE-2026-09-05]` — audit A7: all four hops, plus a real-world before/after on **96** engine structs
+
+> **CLOSED on the verification PC, build 3371, DumperTest Development (re-cooked today).** Rig:
+> [`tools/verify/a7_emptybase.py`](../tools/verify/a7_emptybase.py) for the DLL/pipe half; the
+> emitter half is a diff of two whole SDK exports.
+>
+> **DLL → pipe (rig, on the new fixture):**
+>
+> | | `props_size` | `super_props_size` | `own_props_start` | fields |
+> |---|---|---|---|---|
+> | `DumperTestEmptyBase` (base) | **1** | — | **-1** | **0** |
+> | `DumperTestBracketPayload` | 0x10 | **1** | **0** | `Description` @ **offset 0** |
+>
+> and the live read at offset 0 returns **`'A7EmptyBase'`** — the field is not merely *described*
+> at 0, it is *readable* there.
+>
+> **UI → emitter (the generated header):**
+> ```
+> struct DumperTestEmptyBase
+> {
+> }; // Size: 0x0001                                       <- empty, no Pad_0000[0x0001]
+>
+> struct DumperTestBracketPayload : public DumperTestEmptyBase
+> {
+>     FString Description; // 0x0000 (0x0010) StrProperty  <- at 0x0000, no leading pad
+> }; // Size: 0x0010
+> ```
+>
+> ⭐ **AND THE REAL EVIDENCE IS NOT THE FIXTURE — it is a before/after on stock engine types.** An
+> SDK export of the *same* fixture taken **2026-08-20** (pre-fix) still sat in `out/`, so the two
+> are directly diffable. Same game, same machine, one emitter change between them:
+>
+> * **69 empty bases** emitted a spurious `uint8_t Pad_0000[0x0001]`; they are now emitted empty.
+> * **27 derived structs had their offset-0 field REPLACED BY PADDING** and now have it back —
+>   `TypedElementLabelColumn` `Pad_0001[0x000F]` → `FString Label`, `TypedElementAlertColumn`
+>   `Pad_0001[0x0019]` → `FText Message`, `TypedElementLocalTransformColumn` `Pad_0001[0x005F]` →
+>   `struct Transform Transform`, `TypedElementSelectionColumn` → `FName SelectionSet`, and 23 more.
+>   In every case the **rest** of the layout is byte-identical, which is what shows the fix restored
+>   the missing field without disturbing anything around it.
+> * `UniversalObjectLocatorEmptyPayload` is among the 69 — i.e. this row's originally-named
+>   `FEmptyPayload` family was affected after all.
+>
+> **Negative control (the W2 guard, the one this fix could plausibly break):** a non-empty super must
+> still split at `superPropsSize` and must not re-emit the inherited chain. `struct Subsystem :
+> public Object` begins at **`Pad_0028`**, and `Object`'s own `Pad_0000[0x0028]` appears only in
+> `Object`. Unchanged between the two exports.
+>
+> ⛔ **CORRECTION TO MY OWN EARLIER NOTE ON THIS ROW.** It said "the empty base does not exist in any
+> live pool… zero structs with `PropertiesSize == 1`". **That was wrong**, and the mistake is worth
+> keeping: I harvested struct addresses from `walk_instance` field rows on a handful of walked
+> instances, which reaches only structs that are *fields of something I happened to walk*. The SDK
+> export walks the **whole pool** and found 92. The fixture is still worth having — it is
+> deterministic and does not depend on which engine types a given title happens to load — but it was
+> not *necessary*, and "I could not find one" is not "there is none".
+
+> **PARTIAL, `[A7-WIRE-2026-09-05]`, build 3371.** Two of the four hops are settled; the row's own
+> "rides along on any live session, no dedicated launch" turned out to be false.
+>
+> ✅ **Hops 1–2 (DLL emits → pipe carries) are PROVEN, and not on a hand-built model.**
+> `own_props_start` is present on every `walk_class` response's class object and is internally
+> consistent wherever a super exists — measured across EVERSPACE 2 (1.15 M objects) and DumperTest:
+>
+> | struct | `super_props_size` | `own_props_start` | `props_size` | reading |
+> |---|---|---|---|---|
+> | `ActorTickFunction` (super `TickFunction`) | 40 | **-1** | 48 | derived, adds no own properties |
+> | `Vector_NetQuantizeNormal` (super `Vector`) | 24 | **-1** | 24 | ditto |
+> | `DialogIDs` (ES2, super `DialogIDs_Chunk1`) | 32040 | **32040** | 40896 | the W2 case: split exactly at `superPropsSize` |
+>
+> ⛔ **Hops 3–4 CANNOT be run: the empty base does not exist in any live pool.** The row names
+> `FEmptyPayload` and says it rides along on any session. Measured 2026-09-05: **zero** structs with
+> `PropertiesSize == 1` in EVERSPACE 2's 3,808 loaded classes, and none among DumperTest's reachable
+> structs either. Two reasons, and both are structural rather than bad luck: `list_classes` returns
+> **UClass** objects only, so a `UScriptStruct` is not enumerable that way at all (struct addresses
+> have to be harvested from `walk_instance` field rows); and a whole-pool walk only ever sees what
+> is **LOADED**, which `FEmptyPayload` (an editor-adjacent AnimData type) is not at runtime.
+>
+> ▶ **FIXTURE WRITTEN, awaiting a package build.** `FDumperTestEmptyBase` (empty `USTRUCT`) plus
+> `FDumperTestBracketPayload : FDumperTestEmptyBase` with a single `FString Description` at offset 0,
+> reachable through a new `UPROPERTY() FDumperTestBracketPayload EmptyBasePayload` on the actor and
+> initialised to `A7EmptyBase`. `check_ue_sample_values` green. It needs a DumperTest cook/pack
+> before it can be walked — **ask the maintainer, and name the configuration**; source edits and
+> `Build.bat` are theirs to accept, `RunUAT BuildCookRun` is not something to start unasked.
+
+*UE reports an empty native `USTRUCT`'s `PropertiesSize` as **1**, so the emitter's `Offset >= superPropsSize` split dropped a derived struct's offset-0 field and the trailing-pad pass wrote padding in its place. The floor is now lowered by a new wire field, and the empty base is emitted empty so EBO applies: `Ubel.cpp:1004-1007` captures `OwnPropertiesStart` after the own-chain walk and **before** the super chain is prepended at `:1015-1017`; `Ubel.h:72` defaults it `-1`; `Fern.cpp:2117` sends `own_props_start` from the serialiser shared by `walk_class` and `walk_class_batch`; `DumpService.cs:377` parses it with a load-bearing `?? -1`; `SdkExportService.cs:446` lowers the floor and `:495-496` suppresses the pad.*
+
+**Why the suite cannot close it — and why the obvious observable is illegal here.** The five C# tests (`SdkExportServiceTests.cs:340, 371, 398, 423, 447`) hand-construct `ClassInfoModel { OwnPropertiesStart = 0 / -1 / 0x18 }` and pin the emitter arithmetic in **both** directions. There is **zero** DLL-side coverage — `grep -rn "OwnPropertiesStart|own_props_start" dll/tests/` returns nothing. But the generated header **alone cannot be the paired observable**: `DumpService.cs:377` defaults a missing field to `-1`, so a pre-fix DLL with a correct UI and a correct DLL with a stale UI produce a **byte-identical wrong header**. That is precisely the ambiguity the register charter exists to break, so the DLL leg must be read off the wire.
+
+**Acceptance test** — rides along on any live session; no dedicated launch. Vehicle: `FEmptyPayload` (`vendor/UnrealEngine/.../Animation/AnimData/AnimDataNotifications.h:88`, Engine module, **outside** the file's only `#if WITH_EDITOR` at `:281-296`, byte-identical in the installed UE 5.4 tree) and a child such as `BracketPayload` (`FString Description`) or `AnimationTrackPayload` (`FName Name`).
+
+| side | where | expect |
+|---|---|---|
+| DLL | `py tools/verify/pipe_client.py walk_class --args '{...}'` | on the derived struct: `own_props_start` **present and == 0**, `super_props_size == 1`, `props_size == 0x10`, `Description` at offset 0. On `EmptyPayload` itself: `props_size == 1`, no fields, `own_props_start == -1`. ⚠ There is **no log line** — `own_props_start` occurs once in `dll/src`, at `Fern.cpp:2117`, and `Fern` logs the request, never the reply body |
+| UI | the generated `.h` | `struct BracketPayload : public EmptyPayload`, then `    FString Description; // 0x0000 (0x0010) StrProperty`, then `}; // Size: 0x0010` — **no** leading `Pad_0001[…]`. And the base emitted as `struct EmptyPayload` / `}; // Size: 0x0001` with **no** `Pad_0000[0x0001]` |
+
+⚠ **Names carry no `F` prefix.** `SdkExportService.cs:380-386` appends `classInfo.Name` and `superName` raw, and a `UScriptStruct`'s FName has no `F`. Grep for `EmptyPayload`, never `FEmptyPayload` — the latter has zero hits in the packaged fixture.
+
+**Negative controls, two, both free in the same export run**: (1) **the W2 guard** — a class with a **non-empty** super must still split at `superPropsSize` and must **not** re-emit the inherited chain (`SdkExportService.cs:443-447`; this is the failure the fix could *cause*, and is the load-bearing one); (2) **narrowness** — an opaque field-less struct with `PropertiesSize > 1` must still receive its `Pad_0000[…]`, proving the `emptyBase` suppression (`:495`, `own.Count == 0 && ownStart == 0 && propsSize == 1`) stayed narrow.
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A3-FUNCFLAGS-2026-09-05]` — audit A3: closed on a **4.18** host, without the 4.21 title the row was gated on
+
+> **CLOSED on the verification PC, build 3372.** Rig:
+> [`tools/verify/a3_funcflags_override.py`](../tools/verify/a3_funcflags_override.py).
+>
+> ⛔ **THE HOST GATE IS DISSOLVED, not waived.** This row was blocked on Star Wars Jedi: Fallen
+> Order — a GHOST on *both* machines (folder, no executable) and an EA-launcher title that cannot
+> be installed without the EA client. Two facts, both read out of the code, make a **UE 4.18** host
+> an exact substitute:
+>
+> 1. `DynOff::FunctionFlagsOffsetFor` puts **4.08–4.21 in ONE band at `0x88`** (`Grimoire.h`:
+>    `>= 425 → 0xB0`, `>= 422 → 0x98`, `>= 408 → 0x88`). A 4.18 binary's true offset **is** a 4.21
+>    binary's. For this test they are interchangeable.
+> 2. The offset is **not latched** — both readers recompute it from `g_cachedUEVersion` on every
+>    call (`Ubel.cpp:1432`, `Aura.cpp:6041`), unlike the soft/lazy envelope which *is* latched and
+>    does **not** re-derive on override. So `set_ue_version_override` really does move it.
+>
+> So overriding a 4.18 host to **421** feeds the reader *precisely the input the fix changed*.
+>
+> **Measured on OCTOPATH TRAVELER, 406,060 objects, 3,000 UFunctions per pass:**
+>
+> | `g_cachedUEVersion` | table offset | sane | a sample row |
+> |---|---|---|---|
+> | native **418** | `0x88` | **3000/3000** | `ExecuteUbergraph num_parms=1 parms_size=4 flags=0x8020800` |
+> | override **421** | `0x88` | **3000/3000** | identical — ⭐ **this is the fix**; the pre-fix ladder said `>= 421 → 0x98` |
+> | override **422** | `0x98` | **0/3000** | `num_parms=247 parms_size=0 flags=0x2118ed60` |
+> | restored **418** | `0x88` | **3000/3000** | identical again |
+>
+> ⭐ **The 422 leg is what makes this a test rather than a tautology.** "421 looks fine" is equally
+> true of a reader that ignores the version entirely; 422 collapsing to 0/3000 — with exactly the
+> `2 (65413B)`-shaped nonsense this row warned about — proves the reader follows
+> `g_cachedUEVersion`. And the clean restore shows the override is not sticky, so neither reading is
+> an artefact of ordering.
+>
+> ⚠ **SCOPE, and do not upgrade this claim.** It proves the table's value **reaches the reader** and
+> yields sane parameter data at version input 421 — the half the templates cannot supply. It does
+> **not** prove that a retail 4.21 binary's layout is `0x88`; that rests on the 31 UVTD templates,
+> offline, and no live host of any version can add to it. ⛔ It also does **not** close the CE
+> `Mimic: FIND_FUNCTION` leg, which needs CE and is a separate observable.
+
+*The pre-fix ladder read `>= 421 → 0x98`; the measured table is `4.08-4.21 = 0x88`, `4.22-4.24 = 0x98` (`Grimoire.h:396-403`). Exactly **one** producible version changes: **4.21**. On the 4.21 template `0x98` is `FirstPropertyToInit`, an `FProperty*` — and acceptance is only `funcFlags != 0` (`Ubel.cpp:1435`), so a non-null pointer's low dword latched and `NumParms` / `ParmsSize` / `ReturnValueOffset` were then read from `+0x04/+0x06/+0x08` off that wrong base (`Ubel.cpp:1450-1453`). The same commit deleted a dead `>= 550` band (unreachable: needles top out at 508, `VersionNeedleScan.h:61-62`; the pipe override is clamped 418..509, `Fern.cpp:1726`) and made both readers CPN-aware (no known CPN title).*
+
+**⛔ HOST GATE — test this first, and close the row if it fails.** The corpus holds exactly one UE 4.21 title: **Star Wars Jedi: Fallen Order** (`docs/test-games.md:24`), an EA-launcher title where `version.dll`/`dinput8.dll` proxies do **not** load — it must be CE-injected after the game is running. On the primary PC it is a **ghost install** (`H:\SteamLibrary\steamapps\common\Jedi Fallen Order\` holds only `steam_appid.txt`; an exe backup exists at `D:\UE_Analyze_data\Game Binary backup\Jedi Fallen Order`, which cannot be launched). If it is not installed on the verification PC either, close this row as *"no reachable victim in the corpus"* rather than forcing it. Second gate, in `scan-0.log`: the run must log `FindAll: UE Version = 421`. `4.21.` is a real needle rung, but if the tag scan misses, detection defaults to 504 and the `TNameEntryArray` override rewrites it to 422 → primary `0x98` → **the fix changes nothing** and the row is moot.
+
+**Why the suite cannot close it.** `dll_helpers_test.cpp:5539-5596` pins `FunctionFlagsOffsetFor` rows, the CPN `+8` invariant and the sweep contents — header arithmetic. `ReadFuncFlagsAndParams` lives in `Ubel.cpp`, which no test target compiles.
+
+| side | where | expect |
+|---|---|---|
+| DLL | `pipe-0.log` | `Mailbox: FIND_FUNCTION '<name>' -> 0x… (parmsSize=%u numParms=%u flags=0x%X)` (`Mimic.cpp:577`, category `PIPE`) — the **only** DLL line printing all three, and CE is this title's injection route anyway. A param-less UFunction must report `numParms=0 parmsSize=0`, and `flags` must carry `FUNC_Native(0x400)` / `FUNC_Public(0x1)`-shaped bits, not a heap-pointer low dword |
+| UI | Interesting Functions grid | `ParamsLabel` reads e.g. `2 (16B)` and not `2 (65413B)` (`AllFunctionsResult.cs:70`), and `ShortFlags` renders sane badges (`:38-51`, BC/BE/BP/Const/Exec/Native/Event/Static) |
+| UI | Console panel | a **non-empty** `UFUNCTION(exec)` list (`IsExec`, `AllFunctionsResult.cs:67` → `ConsoleViewModel.cs:262`, `:612`) |
+
+⚠ **Lead with `num_parms` / `parms_size`, not the badges** — `Ubel.cpp:1450-1453` reads them off `funcFlagsOff + 4/6/8`, so a wrong base corrupts them too, and `2 (65413B)` is self-evidently wrong where a garbage bitmask is not. ⚠ `walk-0.log`'s `WalkFunctions: %zu functions found at 0x%llX` (`Ubel.cpp:1659`) is a **liveness marker only** — count and address, no flags. Do not write the row against it.
+
+**Negative control** — an in-session A/B on the **same binary**, which the pre-fix build could not give you: `set_ue_version_override` (`Fern.cpp:1715-1768`, accepts 418..509, sets `g_cachedUEVersion` immediately, no re-scan). Run at **421** (correct flags), override to **422** (the old garbage reappears — `0x98` on a 4.21 layout is `FirstPropertyToInit`), then back to 421. ⚠ Pass `persist:false`, or clear afterwards — `persist:true` writes into `UE5CEDumper.{Machine}.json` and the next session inherits it. Second control: **OCTOPATH 4.18** must be byte-identical (`0x88` before and after; a stock layout hits the primary so the reordered sweep never runs).
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A6-BOOLFIELD-2026-09-05]` — audit A6: derived `0x80` on the shifted host, `0x70` on the stock control
+
+> **CLOSED on the verification PC, build 3371.** Rig:
+> [`tools/verify/a6_boolfieldsize.py`](../tools/verify/a6_boolfieldsize.py) — takes the log-folder
+> name, so the same command runs both hosts.
+>
+> ⛔ **This row said "DQ XI S … is not installed, so this row stays blocked on a host." That is no
+> longer true — the maintainer installed it on 2026-09-05, and it is on `D:\SteamLibrary`.** The
+> row was blocked on *content*, and the content arrived. `tools/verify/fixture_census.py` did not
+> see it because the install post-dated the census run, not because of anything about the tool.
+>
+> | host | `Offset_Internal` | derived `FieldSize` | reading |
+> |---|---|---|---|
+> | **DQ XI S** (`+0x10` whole-layout shift) | `+0x54` | **`0x80`** | ⭐ **OUTSIDE** the old probe spread `{0x68,0x6C,0x70,0x74,0x78}` — pre-fix **no** probe could reach it |
+> | **OCTOPATH TRAVELER** (stock 4.18) | `+0x44` | **`0x70`** | byte-identical to the old default (`0x44 + 0x2C`) — the fix changed nothing where it must not |
+>
+> Both lines verbatim, `offsets-0.log`, category `DYNO`:
+> `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x80 (Offset_Internal +0x54, UE=418)`
+> `ValidateAndFixOffsets: UBoolProperty::FieldSize derived at +0x70 (Offset_Internal +0x44, UE=418)`
+>
+> ✅ **The row predicted `UE=422`; both hosts report `UE=418` — SETTLED 2026-09-06, and the DLL
+> was right.** `DRAGON QUEST XI S.exe` carries `++UE4+Release-4.18` in `.rdata`, byte-identical
+> to OCTOPATH's tag. `docs/test-games.md:19` ("UE4.22") was wrong and is corrected; `:14`,
+> which calls DQ XI S "a known 4.18" and fingerprints OCTOPATH against it, was right all along.
+> ⚠ The `+0x10` shifted layout and `UField::Next=+0x38` are a **licensee fork**, not a version
+> signal — reading them as "must be newer than 4.18" is what produced the wrong number. The A6
+> derivation therefore used the correct band, which strengthens this closure rather than
+> qualifying it.
+>
+> ⛔ **THE ROW'S UI OBSERVABLE WAS IN THE WRONG PANEL, and following it would have produced a false
+> FAIL.** It named `ClassStructPanel`, whose DataGrid has exactly five columns — Offset, Name, Type,
+> Size, Address (`ClassStructPanel.axaml:108-125`). **It renders no value column at all**, so no
+> bool value and no mask can ever appear there. The observable that exists is the **Live Walker**
+> Value column: `Ubel.cpp:5162-5170` formats a bool as `"%s (bit %d, mask 0x%02X)"` when the probe
+> landed and as a bare `"true"`/`"false"` when it did not — a direct readout, so **one** field
+> settles it.
+>
+> **And the read side is stronger than the row asked for.** Rather than "two siblings with different
+> values", both hosts produced a full single-byte **mask ladder** — DQ XI S: 8 distinct masks
+> `0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80` across bits 0-7 on `Actor`; OCTOPATH: 6 on `Widget`,
+> *with* differing values (`bIsVariable=true`, `bCreatedByConstructionScript=false`,
+> `bIsEnabled=true`). A ladder like that is unreachable with `boolFieldMask == 0`, which is exactly
+> the pre-fix state on DQ XI S.
+
+<details><summary>original row (kept — its failure analysis is what made the host choice obvious)</summary>
+
+**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A6: UBoolProperty::FieldSize is now derived**
+
+⚠ Deliberately not a `###` heading and carrying no ⬜ — `check_derived_counts` counts `^### .*⬜`.
+
+*`DynOff::UBOOLPROP_FIELDSIZE` had **zero writers** repo-wide against nine readers. The
+FProperty arm of `ValidateAndFixOffsets` derived the entire subclass-extension family and
+simply had no `else`, so every UE4 <4.25 game kept the `0x70` default regardless of what its
+`Offset_Internal` actually probed to. It is now derived from the probe.*
+
+*⚠ The delta is **not** the flat `+0x2C` the audit prescribed. Measured across all 31 UVTD
+templates: `0x28` for **4.11–4.17**, `0x2C` for **4.18+**, `+8` more under CasePreservingName.
+The 4.17/4.18 step is structural — `Offset_Internal` and `RepNotifyFunc` swap order there.
+4.11–4.17 is seven versions inside our floor, so the flat form would have been wrong on all
+of them.*
+
+**Failure shape being fixed** — DQ XI S (`docs/test-games.md:19`, UE4.22, UProperty mode, a
+whole-layout **+0x10 shift**) puts the true `FieldSize` at `0x80`. The old `0x70` default plus
+Ubel's `{base, ±4, +8, −8}` spread tops out at `0x78`, so **no probe could reach it**:
+`boolFieldMask` stayed 0 and the reader fell back to `byteVal != 0`, which reports a native
+C++ bitfield bool as **true whenever any sibling in its byte is set**.
+
+**Acceptance test** — needs a **UProperty-mode** game (UE4 <4.25), ideally a shifted one. DQ XI S
+is the named exemplar. Two paired observables, both required:
+
+| side | where | expect |
+|---|---|---|
+| DLL | `offsets-0.log` | `UBoolProperty::FieldSize derived at +0x80 (Offset_Internal +0x54, UE=422)` — the numbers must be the game's own, not the defaults |
+| UI  | ClassStructPanel | two **sibling bitfield bools on the same native class showing DIFFERENT values**. That is the whole point: with `boolFieldMask == 0` they were all reported true together, so identical values prove nothing |
+
+**Negative control**: run a STOCK pre-4.25 title (OCTOPATH 4.18) and confirm the derived value is
+**byte-identical to the old default** — `0x44 + 0x2C == 0x70`.
+
+⛔ **CORRECTION 2026-09-05 — the original wording of this row was WRONG about 4.11, and in the
+direction that would have manufactured a false pass.** It said 4.11 "should CHANGE, and the bools
+should get better", because `0x50 + 0x28 = 0x78` is not the `0x70` default. But Ubel's probe
+spread is `{base, base-4, base+4, base+8, base-8}`, so with the old `0x70` default it already
+covered `{0x68, 0x6C, 0x70, 0x74, 0x78}` — and `0x78` is **base+8, inside that set**. The old
+code therefore already landed on 4.11's true slot, which NEKOPALIVE's own live session
+corroborates (`docs/test-games.md`, `Offset=+0x50`). NEKOPALIVE is a DLL-side-only control, not a
+behaviour-change host. **DQ XI S remains the ONLY host that can show a UI-visible delta**, because
+its shifted `0x54 + 0x2C = 0x80` is above the spread's `0x78` ceiling — and it is not installed,
+so this row stays blocked on a host rather than on effort.
+
+⚠ **Do not narrow Ubel's `{base, ±4, +8, −8}` spread now that the base is derived.** It is what
+makes a misdetected version survivable: the two live deltas differ by exactly 4 and the
+CasePreserving case by 8, both inside the spread. `Test_UBoolPropFieldSize` asserts those two
+distances specifically so a future "cleanup" trips a test instead of removing the net silently.
+
+*Also in the same commit: the `fieldSize` acceptance in `Frieren` and one site in `Ubel` accepted
+`>= 1 && <= 8` where the other five copies required `== 1`. Tightened to match — the loose form
+bought nothing and accepted `8`, which is a value the low byte of an 8-aligned pointer can present
+when the probe lands off-field.*
+
+</details>
+
+-----
+
+### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[A4-508MARKER-2026-09-06]` — audit A4: the raise fires, on a genuine UE 5.8.2 binary
+
+> **CLOSED on the verification PC, build 3374.** The row was blocked on *content* — "a title that
+> is UE 5.8 **and** string-stripped", which the corpus did not contain. The maintainer built a
+> stock **UE 5.8.2** sample on 2026-09-05 (`DumperTest58`, Development + Shipping,
+> `D:\UE_Analyze_data\For Testing\DumperTest58`), and that turned out to close **both** halves.
+>
+> **Half 1 — the 507 marker's widened size set: TWO of the three values now pinned on real
+> binaries.** The commit widened it from `==24` to `{24, 32, 40}` because "the `==24` pin had
+> silently excluded every stripped 5.7+ **Development** or **Test** build". Both DumperTest58
+> configurations were measured — **same engine, same 5.8.2, differing only in build configuration**,
+> which is what makes the pair a controlled comparison rather than two readings:
+>
+> | configuration | `item_size` | objects | notes |
+> |---|---|---|---|
+> | **Development** | **32** | 35,838 | `TStatId` — the shape the old `==24` pin excluded |
+> | **Shipping** | **24** | 34,540 | the classic size the old pin allowed |
+> | Test | 40 | — | ⛔ not producible: a launcher engine has no `Configuration="Test"` and ships no `-Test.target` |
+>
+> Both report `item_layout_mode "unpacked57"`, `item_packed false`, `is_low_confidence false`, and
+> `ue_version 508`. **Derived from the 5.8.2 source, not from the doc** —
+> `CoreUObject/Public/UObject/UObjectArray.h` gives `UObjectBase* Object` (8) + three `int32`
+> (12, padded to 24), then `#if STATS || ENABLE_STATNAMEDEVENTS_UOBJECT` adds `TStatId StatID` (8)
+> and, under `ENABLE_STATNAMEDEVENTS_UOBJECT` alone, `PROFILER_CHAR* StatIDStringStorage` (8).
+> `Core/Public/Misc/Build.h:241-343` maps that to configurations:
+>
+> | | `STATS` | `ENABLE_STATNAMEDEVENTS_UOBJECT` | size |
+> |---|---|---|---|
+> | Debug / **DebugGame** | 1 | 0 | **32** |
+> | Development | 1 | 0 | **32** |
+> | Test | 0 | **1** | **40** |
+> | Shipping | 0 | 0 | **24** |
+>
+> ⚠ **DebugGame is NOT a third data point** — `STATS` is on there too, so it produces the same 32 as
+> Development. And Test is the interesting row precisely because `STATS` is **0** while
+> `ENABLE_STATNAMEDEVENTS_UOBJECT` is 1: the outer `#if` still fires, so it gets *both* fields.
+>
+> **Half 2 — the 508 raise itself.** Stock, the string path wins (`DetectVersion: PE VERSIONINFO ->
+> UE 5.8 -> 508`), so the raise is a no-op and never logs — the marker only exists for titles whose
+> strings are gone. Rather than fabricate a stripped binary, the **detection cache** was seeded:
+> `UE5CEDumper.{Machine}.json` is keyed by PE hash and `FindAll` skips detection on a hit, so
+> setting that entry to `507` reproduces exactly the state a stripped 5.8 title arrives in.
+> Measured on the relaunch:
+>
+> | side | expected | measured |
+> |---|---|---|
+> | `scan-0.log` | detection skipped | `FindAll: UE Version = 507 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion` |
+> | `init-0.log` | the raise | `UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508` |
+> | `offsets-0.log` | the latch it reads | `FFieldClass::Name=+0x08` |
+> | `init-0.log` | the badge | `UE5_Init: Complete (UE508, …, Objects=35837)` |
+> | pipe | the badge | `ue_version 508` |
+>
+> ⚠ **SCOPE — what the seeded cache does and does not stand in for.** Everything downstream of the
+> version *arriving* as 507 is the real code on a real 5.8.2 binary: the probe genuinely latched
+> `+0x08`, the marker genuinely evaluated it, the raise genuinely reached the badge. What is
+> simulated is only *how* 507 got there (a cache hit rather than a failed string scan) — and that
+> path is upstream of everything this row asks about, which it states as "what is unverified is the
+> **plumbing**". ⛔ It does **not** prove `DetectVersion`'s fallback tiers would land a stripped 5.8
+> title on 507 specifically; that rests on the 507 predicate being satisfied by a 5.8 `FUObjectItem`,
+> which is a separate claim the row already makes.
+>
+> ⭐ **A claim in this row's own text got measured for free.** It says
+> `Genau::kVersionDetectLogicRev` is deliberately not bumped because "this ladder is runtime-only
+> and re-applied on every init, so no cached detection needs invalidating". After the run the cache
+> still read **507** — the runtime raise does not write back. Confirmed, not assumed.
+>
+> ⚠ **The rev WAS later bumped to 6 (2026-09-06), and this row is not thereby wrong.** That bump
+> is for a different reason entirely: Avowed's cache was found holding a `504` that detection cannot
+> produce for that binary — the residue of an older write path — and a record stamped with the
+> current rev is skipped forever, so the stamp was the only way to reach it. **This row's finding
+> is what makes that bump safe**: because the ladder does not write back, re-deriving every cached
+> verdict cannot lose a raise. See `[REVBUMP6-2026-09-06]` in `dev-log.md`.
+>
+> **Negative control** (unchanged, `[A4-NEGCTL-2026-09-05]`): Solarpunk UE 5.7 latches
+> `FFieldClass::Name=+0x00`, emits **no** raise line, and stays `UE507`. Positive and negative now
+> differ in the marker's discriminating input on real binaries of both versions.
+>
+> *App-data left as found: the cache entry was backed up, restored byte-for-byte afterwards, and the
+> backup removed.*
+
+> ✅ **`[A4-NEGCTL-2026-09-05]` — the negative control this row calls "the one that matters" is
+> DONE.** Solarpunk, UE 5.7, build 3371, injected, 120,863 objects:
+>
+> | check | expected | measured |
+> |---|---|---|
+> | `init-0.log` `raising floor to 508` | **absent** | **0 lines** |
+> | `init-0.log` badge | stays 5.7 | `UE5_Init: Complete (UE507, …, Objects=120863)` |
+> | pipe | stays 5.7 | `ue_version 507` |
+> | ⭐ `offsets-0.log` the marker's INPUT | `FFieldClass::Name=+0x00` | `FFieldClass::Name=+0x00` |
+>
+> ⭐ **The fourth row is what makes this a control rather than a screenshot.** "The 508 line is
+> absent" is equally true of a marker that never ran. The `FFieldClass::Name` latch reading
+> **`+0x00`** shows the discriminating input *was* measured and simply does not satisfy the 5.8
+> predicate (which keys on `Name@+0x08`, i.e. a vfptr having taken `+0x00`). So the marker is live,
+> reachable, and correctly silent on a genuine 5.7 build.
+>
+> ⬜ **Still open: the positive half.** It needs a title that is UE 5.8 *and* string-stripped.
+> `docs/test-games.md` has no 5.8 row, and the verification PC's census confirms none is installed
+> here either — the newest is Solarpunk at 5.7.1. Blocked on **content**, not effort. ⚠ Do not close
+> this row on the control alone: a marker that fires unconditionally would also pass everything
+> above.
+
+*The raise-only ladder in `UE5_Init` topped out at **507**, so a string-stripped UE 5.8 title
+badged as UE 5.7 — the 507 predicate (`FUObjectItem` Object`@+0x08`) is satisfied by a 5.8
+binary too, because that struct is byte-identical between the two. A 508 marker was added on
+`~FFieldClass()` becoming virtual (5.7.4 `Field.h:100` non-virtual → 5.8.0 `:101` `virtual`,
+unconditional; `FFieldClass` has no base and `FName Name` is its first member, so the vfptr
+takes +0x00 and `Name` moves to +0x08).*
+
+*The same commit widened the **507** marker's size set from `==24` to `{24, 32, 40}`. Object
+`@+0x08` is the version signal; the SIZE varies with build configuration — 24 Shipping, 32
+Development (STATS appends `TStatId`), 40 Test (UE 5.7's `Build.h` added
+`ENABLE_STATNAMEDEVENTS_UOBJECT`, appending `TStatId` + `StatIDStringStorage`; audit A5). The
+`==24` pin had silently excluded every stripped 5.7+ Development or Test build from the raise.*
+
+**Why this cannot be closed by the C++ suite.** Both predicates are pinned by
+`Test_VersionMarkers` (18 assertions, negative-controlled in both directions), but a predicate
+returning the right answer for a given input proves nothing about whether the input is ever
+produced. What is unverified is the *plumbing*: that a real stripped 5.8 game reaches
+`UE5_Init` with `FFIELDCLASS_NAME` latched to 0x08, and that the raise then reaches the badge.
+
+**Acceptance test** — needs a title that is UE 5.8 *and* string-stripped. No such game exists in
+the corpus today (`docs/test-games.md` has no 5.8 row at all), so this is blocked on content,
+not on effort. Two paired observables, and BOTH are required — a DLL-side raise with a stale UI
+badge and a correct badge over a lucky RAW detection look identical on screen:
+
+| side | where | expect |
+|---|---|---|
+| DLL | `init-0.log` | `structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508` |
+| DLL | `offsets-0.log` | `FFieldClass::Name=+0x08` on the same run (the latch the marker reads) |
+| UI  | Pointers panel, "UE Version" card | the number reads **508**, not 507. ⚠ It is a RAW INT — `PointerPanel.axaml` binds `{Binding UeVersion}` with no converter, so it does **not** render as "UE 5.8". The only `"UE 5.8"` string in the app is the override ComboBox's static list, and that box reads **"Auto"** on an auto-detected run, so it is NOT a second observable. Status bar corroborates: `Connected — UE508`. |
+
+**Negative control, and it is the one that matters**: run a genuine UE **5.7** title (Solarpunk,
+`docs/test-games.md:57`) and confirm the 508 line does **NOT** appear and the badge stays 5.7.
+Without it, a marker that fires unconditionally is indistinguishable from one that works.
+
+⚠ **The badge is not independent corroboration of the probe.** A wrong `FFIELDCLASS_NAME` latch
+has already broken the property walk by the time the marker runs, so a 5.8 badge on a run whose
+walk also looks wrong means the probe was wrong — not that the game is 5.8. The log line says so
+out loud, deliberately, because that is the sentence someone will read during triage.
+
+⚠ `Genau::kVersionDetectLogicRev` is deliberately **not** bumped: `Frieren.cpp` documents this
+ladder as runtime-only and re-applied on every init, so no cached detection needs invalidating.
+ℹ️ It was nevertheless bumped 5 → 6 on 2026-09-06 — **not for this ladder**, but to reach cached
+values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sentence above stands.
+
+-----
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 
 *L12 closed **25 of the 26 INFO rows**; only these seven changed runtime behaviour. The other
@@ -547,11 +1225,11 @@ matters is simply "do normal mailbox commands still work".
 > **Why step 2 cannot work.** The figure is produced only by `DiagnosticsProbe`, and it is
 > structurally silent on exactly the scenario the row prescribes:
 > * `BeginAsync` swallows a failed opening `get_diagnostics` and leaves `before` **null**
->   ([DiagnosticsProbe.cs:76-80](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:76)); `DisposeAsync` then
+>   ([DiagnosticsProbe.cs:76-80](../ui/UE5DumpUI/Services/DiagnosticsProbe.cs)); `DisposeAsync` then
 >   returns at `if (_dump == null || _before == null || _log == null) return;`.
 > * If the pipe dies *mid*-operation, the closing `get_diagnostics` throws and `DisposeAsync` does
 >   `catch { return; }` — commented *"disconnected mid-operation: nothing to report"*
->   ([:100-102](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:100)).
+>   ([:101-103](../ui/UE5DumpUI/Services/DiagnosticsProbe.cs)).
 >
 > So **both** ways of making a write fail end with **no PERF line at all**, and the improved
 > `PipeTransportStats` accounting has nowhere to appear. Killing the game to observe a figure that is
@@ -559,7 +1237,7 @@ matters is simply "do normal mailbox commands still work".
 >
 > **The fix itself is real and correctly placed** — `PipeClient.SendAsync` now wraps `SendCoreAsync`
 > (write included) in the `try/finally` that calls `PipeTransportStats.Record`, where it used to wrap
-> only `await tcs.Task` ([PipeClient.cs:195-203](ui/UE5DumpUI/Services/PipeClient.cs:195)). It is the
+> only `await tcs.Task` ([PipeClient.cs:195-203](../ui/UE5DumpUI/Services/PipeClient.cs)). It is the
 > *observation method* that is wrong, not the change.
 >
 > **What would actually check it** (cheap, and belongs in the test project rather than a live
@@ -576,7 +1254,7 @@ matters is simply "do normal mailbox commands still work".
 > This closes both gaps — the unrun drive half, and the limit itself.
 >
 > **1 — The set claim is now PROVED, not observed.** `git show 5374e662` on
-> [ProxyDeployService.cs:417](ui/UE5DumpUI/Services/ProxyDeployService.cs:417) is the whole change:
+> [ProxyDeployService.cs:436](../ui/UE5DumpUI/Services/ProxyDeployService.cs) is the whole change:
 >
 > ```csharp
 > // before:  try { var info = FileVersionInfo.GetVersionInfo(exePath); return null; } catch { return null; }
@@ -617,7 +1295,7 @@ matters is simply "do normal mailbox commands still work".
 > A row pointing at the wrong directory could not produce that.
 >
 > **4 — `UeVersion` is bound by NOTHING.** The grid's `Version` column binds `InstalledVersion`
-> ([ProxyDeployPanel.axaml:373](ui/UE5DumpUI/Views/ProxyDeployPanel.axaml:373)), and a whole-tree
+> ([ProxyDeployPanel.axaml:373](../ui/UE5DumpUI/Views/ProxyDeployPanel.axaml)), and a whole-tree
 > grep finds `DetectedGame.UeVersion` written at the two call sites and read only by
 > `ProxyDeployTests.cs:526`'s `Assert.Null`. ⚠ So "the Version column is empty" — cited on
 > 2026-08-20 — is **not** evidence about `UeVersion`; that column never showed it. (The 08-21 note
@@ -675,7 +1353,7 @@ matters is simply "do normal mailbox commands still work".
 >   memo shows up instantly as a mismatch between two columns computed from different places.
 >
 > ⚠⚠ **The trap that almost produced a false defect report — read this before re-running.** The
-> Package filter is a **prefix** match ([GameClassFilterViewModel.cs:209](ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs:209)),
+> Package filter is a **prefix** match ([GameClassFilterViewModel.cs:246](../ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs)),
 > and the values start with **two** slashes. Typing `Game`, `Script` or even `/Script` returns **zero
 > rows**, while the header keeps reading `4,393 classes shown of 4,393 total` — because that line is
 > the LOAD count, not the filtered count. The combination reads exactly like the blank-Package failure
@@ -760,7 +1438,11 @@ different code paths*). ✅ **FIXED 2026-08-23** (build 3338).
 > backslash numerically as `bytes([92])`. **A whole-file diff on a small edit means the file was
 > corrupted, not reformatted — check for NUL before assuming line endings.**
 
-### ⬜ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
+### ℹ️ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
+
+> ⛔ **MARKER CORRECTED 2026-09-06.** This heading carried a ⬜ and was therefore counted as an open **live-game** batch, which it never was — the row's own second sentence says *"this is unshipped work, not something awaiting a live check"*. There is no observable to verify because **the code was never written**. Two of its own justifications are also now stale:
+> * *"it is counted by `check_audit_register.py`"* — that gate was **RETIRED 2026-09-03** (`tools/check_all.py:47`). Nothing counts it now.
+> * *"no test target compiles `Aura.cpp` or `Fern.cpp`"* — **`Aura.cpp` has been compiled by `dll_core_test` since 2026-08-25** (`dll/tests/dll_core_test.cpp:71`). Four of the six sites are the `Aura.cpp` writes, so the refactor is now mostly verifiable **offline**; only the single `Fern.cpp` read is not. The deferral's stated reason no longer holds as written — re-decide it on that basis rather than inheriting it.
 
 *Referenced from `dll/src/Radar.h` (the `kMaxGroupSessionLeaves` block) and from AB23's register row,
 which stays **open** — this is unshipped work, not something awaiting a live check. Listed here so
@@ -1266,7 +1948,7 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > `IsComplexReturnType`, not through the param refusal. For the record the predicate under test is
 > name-keyed exactly as the row describes —
 > `IsRefusedParam(typeName) => typeName == "TextProperty"`
-> ([ParamBufferBuilder.cs:234](ui/UE5DumpUI/Services/ParamBufferBuilder.cs:234)) — with the reason in
+> ([ParamBufferBuilder.cs:272](../ui/UE5DumpUI/Services/ParamBufferBuilder.cs)) — with the reason in
 > its own comment: an all-zero FText is not an empty FText, it carries a `TSharedRef` the engine
 > dereferences, so zeros crash rather than default. Closing this needs a title with an FText param.
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
@@ -1287,7 +1969,7 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > [WARN] [WALK] ProbeRowMapOffset: could not find RowMap (endReflected=0x98)   ×3
 > ```
 > `RowMap` is a `TMap<FName, uint8*>` and is **not reflected**, so `Ubel::ProbeRowMapOffset`
-> ([Ubel.cpp:6137](dll/src/Ubel.cpp:6137)) has to scan memory past the reflected fields for it. On
+> ([Ubel.cpp:6309](../dll/src/Ubel.cpp)) has to scan memory past the reflected fields for it. On
 > this title it does not find it.
 >
 > 📌 **Sweeping every `walk-*.log` on the machine: `ProbeRowMapOffset` has NEVER been recorded
@@ -1336,7 +2018,7 @@ spot-check rather than a 30-column sweep.
 >
 > ⭐ **Every one of the five dead ends below is now EXPLAINED, and the explanations are the payload
 > — that is the only reason this block still exists.** Attempts 1/4/5 (Xref → 0) asked a
-> **Kismet bytecode** question ([Aura.cpp:5541](dll/src/Aura.cpp:5541)) about fields whose
+> **Kismet bytecode** question ([Aura.cpp:5649](../dll/src/Aura.cpp)) about fields whose
 > references are native, where 0 is the *correct* answer — the dialog's own footer says so.
 > Attempts 2/3 (Props → 0) hit the **`Class fields only` checkbox, which is CHECKED by default**
 > and hid every local; and a `BC,Native` function takes the native-disasm path, so the flag to
@@ -1823,7 +2505,7 @@ spot-check rather than a 30-column sweep.
 >
 > ⚠⚠ **Two reasons the submenu legitimately does NOT appear, and both look like the feature is
 > missing.** The menu is gated on `ForceEnabled && SelectedResult.CanForceAny`
-> ([PropertySearchViewModel.cs:362](ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs:362)), and
+> ([PropertySearchViewModel.cs:398](../ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs)), and
 > `CanForceAny` requires `ShowScalarActions => !IsNested` plus a supported type:
 > * a **nested row** — anything produced with **Deep (structs/containers)** ticked, e.g.
 >   `WorldPartitionDestructible…DestructibleHLODState.Da…` — is excluded, however scalar it looks;
@@ -2222,7 +2904,7 @@ fire. It built, it was unit-pinned with 7 tests including a negative control tha
 
 **Why it cannot work, which is the useful part:** the restore ends in
 `grid.ScrollIntoView(anchor, null)`
-([LiveWalkerPanel.axaml.cs:341](ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs:341)), and
+([LiveWalkerPanel.axaml.cs:361](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs)), and
 `ScrollIntoView` means **"make this row visible"**, not "put this row at the top". A row that
 drifted from viewport position 0 to position 1 is *still visible*, so the call is a no-op. **Any**
 fix built on `ScrollIntoView` is blind to a drift smaller than the viewport, and that rules out the
@@ -2305,11 +2987,11 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > | U11 | ⛔ **LUSHFOIL (UE 5.6) SCREENED 2026-08-21 — 9 optionals, NONE with an FText inner.** ⭐ **This is the run that proves the METHOD, which Avowed could not**: Avowed's zero was consistent with either "no optionals" or "the screen does not work", and `FOptionalProperty` post-dates UE 5.0 so a UE 5.04 title cannot distinguish them. Lushfoil is UE 5.6 and returns **9** — `MovieSceneShotMetaData` ×5 (4× Bool, 1× Int), `MaterialInterface::CachedTexturesSamplingInfo` / `WorldPartitionRuntimeCellData::CellBounds` / `FontFace::PlatformRasterizationModeOverrides` (Struct), `NiagaraSystem::LargeWorldCoordinateTileUpdateMode` (Enum). So the screen reaches optionals; this title simply has no FText one. ⚠ Note `CellBounds` is the very `TOptional<FBox>` `[U11-NOSAMPLE]` found in DumperTest's SDK export — the same engine-side optional, on a different title, still not the FText path. ⚠ Also note **`game_only=true` returns 0 here**: all 9 are engine classes, so a game-only screen would have reported a false absence. Screen with `game_only=false`. | | |
 > | U11 | ⛔ **AVOWED SCREENED 2026-08-21 — ZERO optionals of ANY inner type**, `game_only` both ways, so it cannot supply the fixture either. Method (one pipe call, reusable): `search_properties` with an empty `query` and `types:["OptionalProperty"]`, then read `inner_type` off each row. Sanity-checked in the same session — `types:["BoolProperty"]` and `["StructProperty","TextProperty"]` both return rows on the same connection, so the zero is the title's, not the query's. ⭐ **Screen only UE ≥ 5.1 titles**: `FOptionalProperty` post-dates UE 5.0, and Avowed is UE 5.04 — as is DumperTest, which is why `[U11-NOSAMPLE]` found what it found. ⚠ Field names are `prop_type` / `prop_name` / `inner_type`, not `type` / `property_name`. | | |
 > | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
-> | G7 | ⛔ **NOT REACHABLE HERE, measured 2026-08-19 `[G7-NOSAMPLE-2026-08-19]`.** The step needs a title whose offsets validate **only after a re-scan**, so that the `validated=NO -> YES (re-run)` transition exists to observe. **All NINE titles swept tonight reported `probe_ran=true, validated=true` on the FIRST pass** — Lushfoil, Manor Lords, Solarpunk, EVERSPACE 2, Geri, Avowed, DQ7R, Elliot, OCTOPATH. ⚠ That includes **Solarpunk, which this row names as the example**; it validates immediately today, so the row's own suggested host no longer produces the case. Until a title that fails first-pass validation turns up, there is nothing to transition *from*. (Original step kept below.)<br><br>~~on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path)~~ | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
+> | G7 | ⛔⛔ **UNREACHABLE BY CONSTRUCTION — CLOSED AS UNFALSIFIABLE 2026-09-06 `[G7-UNREACHABLE-2026-09-06]`. Do NOT spend a game boot on this; no title can produce the line.** The `validated=NO -> YES (re-run)` message (`Genau.cpp:4208`) is guarded by `s_lastPublishedValidated != -1` (`:4207`), so it needs `ValidateAndFixOffsets` to reach a publish **twice in one process**. There are exactly two call sites and they are **mutually exclusive**: `Frieren.cpp:355` (init) sits inside `if (ptrs.GObjects && ptrs.GNames)` (`:223`), and `Fern.cpp:5161` (apply_rescan) is gated on that *same* predicate **plus** `!DynOff::bOffsetsProbeRan` (`:5160`) — while **every** exit of `ValidateAndFixOffsets` stores that flag true (`Genau.cpp:3660`/`:3781`/`:4195`, covering the returns at `:3661`/`:3782`/`:4257`; the other six `return`s in the span are nested lambdas). So: init ran ⇒ apply_rescan is gated off ⇒ never a second publish. Init skipped ⇒ apply_rescan's call is the **first** publish ⇒ `s_lastPublishedValidated == -1` ⇒ no line. ⭐ **`!bOffsetsProbeRan` is audit #5 G3, shipped in THIS SAME L1 batch — G3 removed the only path G7's observable had.** `Fern.cpp:5155-5158` states the invariant out loud without drawing that conclusion. The hunt below was therefore chasing a case that could not have produced the line even if a title had been found; it is kept because the nine-title sweep is real evidence about something else (every title validates on the first pass). The correct output here is a code change (a staged one-shot hook, the technique `tools/verify/g3_rescan_apply.py` already uses) or deleting the observable — not a fixture hunt. Verified line-by-line from the primary sources 2026-09-06. *(original:)* **NOT REACHABLE HERE, measured 2026-08-19 `[G7-NOSAMPLE-2026-08-19]`.** The step needs a title whose offsets validate **only after a re-scan**, so that the `validated=NO -> YES (re-run)` transition exists to observe. **All NINE titles swept tonight reported `probe_ran=true, validated=true` on the FIRST pass** — Lushfoil, Manor Lords, Solarpunk, EVERSPACE 2, Geri, Avowed, DQ7R, Elliot, OCTOPATH. ⚠ That includes **Solarpunk, which this row names as the example**; it validates immediately today, so the row's own suggested host no longer produces the case. Until a title that fails first-pass validation turns up, there is nothing to transition *from*. (Original step kept below.)<br><br>~~on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path)~~ | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
 > | A9 | 🟡 **NO STALL OBSERVED 2026-08-19 `[A9-DEEP-2026-08-19]`, but the budget was never STRESSED — see below.** | | |
 > | A9 | on a large game with deep/wide nested containers (a **SEED-class** object), run **Group Scan with Deep** enabled | no ~24 s single-object stall; the per-object element budget (`maxTotalElems`) bites before the global 15 s deadline, so the scan spreads across objects | before, the counter was never threaded so the budget was inert and one object could consume the whole scan window |
 > | A8 | ✅ **PASS 2026-08-19 `[A8-FLAT-2026-08-19]` — see below.** ~~none available here~~ | | |
-> | A7 | on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
+> | A7 | ✅ **CLOSED 2026-09-06 `[A7-FINDBYADDR-2026-09-06]` — OFFLINE, and the previous closure was against the WRONG LOOP.** `[A7-CORETEST-2026-08-25]` added two `dll_core_test` blocks labelled A7 that drive `Aura::ForEach` — but ForEach **already had** its poll; it is one of the *siblings* A7 was written to match. A7 fixed **`FindByAddress`** (`Aura.cpp:1867`), which hand-rolls its own loop and never calls ForEach, exactly as the audit row says (`audit-2026-08-13-early-code-findings.md:278`). Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/` = **zero hits** — the shipped fix had no coverage at all while two documents called it verified. Now four checks drive `FindByAddress` against the in-process fake pool, and they are **proven non-vacuous by deleting the poll**: without it the block fails with `...reports no index rather than a stale one   got: 8000` — found *while cancelled*. No game needed; the live step below is superseded. *(original step:)* on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
 > ### ⛔ A7 NOT REACHABLE HERE, measured 2026-08-20 `[A7-TOOFAST-2026-08-20]`
 >
 > The row needs a `FindByAddress` walk long enough to disconnect **inside**. On the largest title
@@ -2335,7 +3017,7 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 >
 > 📌 Third data point for `Z12`'s parameterised caveat, free from this run: the suffix has now been
 > observed naming **256**, **1,024** and **4,096** — it tracks the option across its whole range.
-> | G6 | (obfuscated fork only — **MindsEye**, no sample here) let name resolution race the fork's live key-table growth; also view a block whose tag is genuinely **absent** from the table | a transiently-unresolvable tag recovers on a later name (no permanent blanking of every FName with that tag); an absent-tag block renders as plaintext | the tri-state `LookupTagKey` no longer caches a transient miss, and a clean-absent resolves to key 0 (plaintext) per Genau's rule |
+> | G6 | ✅ **CLOSED 2026-09-06 `[G6-TRISTATE-2026-09-06]` — OFFLINE, no MindsEye needed.** `Macht::ReadSafe` reads **this** process, so a `std::vector` shaped like the fork's hash table is indistinguishable from the fork's own — the same trick the fake `FUObjectArray` already uses. 9 checks in `dll_core_test`, staging the ctx (`+0x10` entries, `+0x18` count, `+0x44` sentinel, `+0x50` buckets, `+0x58` capacity; 24-byte entries) and driving the real `Serie::InitObfuscated` entry point. **Every check is a PAIR — the same tag before and after the table settles — because the finding is that the two kinds of miss must get OPPOSITE treatment.** ⭐ **Red-tested twice, and the two arms discriminate independently:** making a transient miss cache (the old `TAGKEY_MISS` bug) fails **5** checks, all in the transient arm; making a genuinely-absent tag fail instead of resolving to plaintext fails **3**, all in the absent arm, while the transient arm stays green. `Serie.cpp` restored byte-identical after each. ⚠ **SCOPE:** this pins the **tri-state logic**, not that the ctx offsets match MindsEye's real table — that half came from RE and can only be confirmed on the fork. G6 was filed as a *logic* defect, so the logic is the finding. ⚠ Also measured: `grep -rn 'TagKey|Obfuscated' dll/tests/ tools/verify/` returned **zero** hits before this — the fix had shipped 2026-08-19 with no coverage of any kind, the same shape as A7. *(original:)* (obfuscated fork only — **MindsEye**, no sample here) let name resolution race the fork's live key-table growth; also view a block whose tag is genuinely **absent** from the table | a transiently-unresolvable tag recovers on a later name (no permanent blanking of every FName with that tag); an absent-tag block renders as plaintext | the tri-state `LookupTagKey` no longer caches a transient miss, and a clean-absent resolves to key 0 (plaintext) per Genau's rule |
 
 > ### ✅ A8 PASS + ⛔ A7 NOT OBSERVABLE HERE — 2026-08-19 `[A8-FLAT-2026-08-19]`
 >
@@ -3546,13 +4228,13 @@ LOWERING the cap, not by finding a host*):
 >
 > ⭐⭐ **3c has nothing to do with the pattern.** The note below reasons about pattern hits and
 > SIB alternates, but `this offset is TRUSTED again` is emitted by the **post-install validator**
-> ([Frieren.cpp:1869](dll/src/Frieren.cpp:1869)) when a *previous* validation FAILED and a later one
+> ([Frieren.cpp:1943](../dll/src/Frieren.cpp)) when a *previous* validation FAILED and a later one
 > PASSES. And the failure path only runs when the offset's provenance is the **version table** —
 > a zero-fire reading on a pattern-detected offset is deliberately ignored. So on DumperTest the
 > cycle can never start, for a reason unrelated to which patterns match.
 >
 > ⭐ **The stage is therefore one line, and it cannot crash the host:** relabel the provenance
-> (`fromTable = true`) at [Frieren.cpp:1773](dll/src/Frieren.cpp:1773). **The offset itself is still
+> (`fromTable = true`) at [Frieren.cpp:1830](../dll/src/Frieren.cpp). **The offset itself is still
 > the pattern's**, so the hook is correct and fires normally — only the validator's interpretation of
 > a zero-fire window changes. Nothing is mis-detected, which removes the crash risk a
 > wrong-slot stage would carry.
@@ -3687,10 +4369,29 @@ DumperTest Development going from no match at all to exactly one, at `0x268`.
 Lushfoil.** The slot is PDB-confirmed and the scan is file-verified, but nothing has yet watched the
 DLL do it inside the running process.
 
-⚠ **Do NOT "fix" the version table instead.** Measured true slots vs the table: DumperTest 5.4 →
-table `0x220`, true **`0x268`**; Lushfoil 5.6 → table `0x228`, true **`0x260`**. DumperTest carries
-the Iris/replication virtuals ahead of ProcessEvent, so 5.4 sits *later* than 5.6 does. Slot position
-is a **build-flag** property, not a version property — the pattern is what has to work.
+⚠ **The pattern scan is still what has to work — it stays primary and the fire-count validator
+stays the backstop.** But the two reasons this row gave for *not* fixing the version table were both
+wrong, and the table was fixed on 2026-09-05 (audit A2). Recorded so the old wording is not cited
+again:
+
+- **"Lushfoil 5.6 → table `0x228`" is impossible.** The table read `>= 550 → 0x228 / >= 500 → 0x220`,
+  and **550 is not a producible version** — versions are encoded `major*100+minor` and capped at 509
+  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound). The `0x228` arm was dead
+  code. Lushfoil got `0x220`, exactly as DumperTest did, and so did every other UE5 title.
+- **"Slot position is a build-flag property, not a version property" is refuted by these very two
+  observations.** The measured non-editor slots are 5.4 = `0x268` and 5.6 = `0x260`
+  (`vendor/RE-UE4SS/assets/VTableLayoutTemplates/`, cross-checked against six values this repo
+  already held). So DumperTest sitting *later* than Lushfoil is precisely what the **version** table
+  predicts — the two differ by engine version, not by build flags. The audit separately measured
+  5.8 Shipping / Development / DebugGame all at `0x250` and 5.4 Shipping and Development both at
+  `0x268`, i.e. build configuration does not move it. The Iris/replication attribution was a guess
+  that happened to land on a real difference with the wrong cause.
+
+⚠ Still unconfirmed **on a live game**: 5.0, 5.1, 5.2, 5.3 and 5.5. Their slots are measured from
+the PDB oracle but no title at those versions has been run. 4.11–4.25 likewise.
+⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
+*before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
+contain none of those entries. Do not extend the table to an editor build.
 
 -----
 
@@ -3880,11 +4581,11 @@ whether the record ends ticked or unticked.*
 > ⚠ **The helper must be a TABLE FILE, not a global.** A first attempt loaded 1.1 with `dofile`,
 > which defines `freezeProperty` perfectly well — and the script still refused, because
 > `AppendHelperLoader` resolves it with **`findTableFile('ue5_freeze_helper.lua')`**
-> ([FreezeScriptGenerator.cs:238](ui/UE5DumpUI/Services/FreezeScriptGenerator.cs:238)), a table-file
+> ([FreezeScriptGenerator.cs:238](../ui/UE5DumpUI/Services/FreezeScriptGenerator.cs)), a table-file
 > lookup with *no filesystem fallback*. Embedded properly with the bridge's own documented
 > incantation — `findTableFile` (delete-if-exists) + `createTableFile` +
 > `Stream.copyFrom(createStringStream(...))` + a `Stream.Size` check
-> ([IAobMakerBridge.cs:80-88](ui/UE5DumpUI/Core/IAobMakerBridge.cs:80)) — verified `29535 == 29535`.
+> ([IAobMakerBridge.cs:80-88](../ui/UE5DumpUI/Core/IAobMakerBridge.cs)) — verified `29535 == 29535`.
 >
 > **THE ARM — all three of the step's assertions hold:**
 >
@@ -4043,7 +4744,69 @@ whether the record ends ticked or unticked.*
    must keep working. The keyed-handle table is untouched by this change, and this is the check that
    proves it.
 
-### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
+### ✅ CLOSED 2026-09-06 `[G12G3-CLOSE-2026-09-06]` — G12 / G3: the offset family, and the apply_rescan gate
+
+> **Both remaining sub-items are resolved; the heading was the last thing still open.** Counted
+> inside the row: **10 closed, 1 partial, 1 open** — and neither survivor needed a game.
+>
+> **1. The 🟡 "enum half still open" marker was STALE.** The very next paragraph in its own body
+> already says `✅ BOTH HALVES NOW DONE [G12-PIPE-2026-08-17]`, with four fields across both
+> writers and `Grade` → `Elite` as the discriminating one (the sample's enum has a hole at 3..6, so
+> an index/value confusion could not land on `Elite` by accident). Marker corrected, no work owed.
+>
+> **2. ⛔ The ⬜ item's premise — "NO FIXTURE EXISTS, swept ALL 19 HOSTS" — is REFUTED.** That sweep
+> was taken 2026-08-20 and was correct then. Re-run 2026-09-06 across **all 34 log folders / 26
+> hosts that ever validated**:
+>
+> | | |
+> |---|---|
+> | hosts reaching `ValidateAndFixOffsets: Using struct` | **26** |
+> | hosts reaching `Cannot find Guid or Vector struct` (the heuristic branch) | **1 — DumperTest** |
+>
+> Four occurrences, all *after* the sweep was written: three on build 3313 and one on 3338. **Three
+> are empty-pool runs** (`DetectCasePreservingName: votes standard=0, CPN=0 (tested 0 objects)`,
+> every CHILDPROPS probe scoring 0) — a legitimate fixture for the branch, but an uninteresting one,
+> since nothing is there to probe. **One (build 3313, 12:05) had a real pool** (`votes standard=20`)
+> and produced real heuristic scores (`CHILDPROPS +0x40: score=50 (tested 30 objects)`).
+> So the branch *is* reachable, and injecting into DumperTest before the pool populates reaches it
+> on demand. The row's "no fixture" conclusion should not be inherited.
+>
+> ⚠ **AND ONE OCCURRENCE IS A CONTRADICTION I CANNOT EXPLAIN FROM THE CODE — recorded, not
+> hand-waved.** `DumperTest/offsets-20260823-222542.log`, build 3338, a single healthy run
+> (25,212 objects, one `ValidateAndFixOffsets: Starting`, one `Logger started`):
+>
+> ```
+> FindStructByName: Found 'Guid'   at 0x1DF1A5C9280 (index=4118)
+> FindStructByName: Found 'Vector' at 0x1DF1A5C9100 (index=4124)
+> Cannot find Guid or Vector struct — trying heuristic fallback
+> ```
+>
+> The guard is `if (!guidStruct && !vectorStruct)` with **nothing between it and the two calls**, and
+> `FindStructByName` returns `obj` on the same line it logs `Found`. Both the call site and the
+> function body are **byte-identical** between `e4685592` (3338) and today — checked, not assumed —
+> and today's build takes the validated path on the same fixture with the same struct indices
+> (4118 / 4124). So the code cannot produce this.
+>
+> **Leading hypothesis: cross-process log interleave.** Log folders are keyed by **process name**,
+> not PID, so two `DumperTest` instances share one folder; at 3338 `Sein` opened logs with
+> `_wfopen` (`_SH_DENYNO`), which permits exactly that. ⭐ Today's `_SH_DENYWR`
+> (`[SEINSHARE-2026-09-05]`) would prevent it — a second writer's open now fails into
+> `EmergencyNote` — so the hazard is closed as a **side effect** of an unrelated fix rather than
+> deliberately. Not proven; if a `Found …` / `Cannot find` pair is ever seen again on a current
+> build, that refutes the hypothesis and the guard needs re-examining.
+>
+> ⚠⚠ **THE EVIDENCE ABOVE IS PERISHABLE, AND THAT IS WHY IT IS QUOTED VERBATIM HERE.** Log retention
+> is by **age** — `Grimoire::LOG_RETENTION_DAYS = 21` — and these four files were **13-14 days old**
+> when read, i.e. they purge around **2026-09-13**. They were copied to
+> `out/evidence-g12-heuristic-branch/` on the verification PC, but `out/` is gitignored and does
+> **not** travel, so on any other machine the quotes in this row are the only surviving record.
+> ⛔ **General rule this taught: a conclusion cited from `Logs/` has a 21-day shelf life.** Quote the
+> decisive lines into the doc at the moment you read them, or the claim outlives its evidence — the
+> exact failure this register exists to prevent, one level up.
+
+<details><summary>original row</summary>
+
+**NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate**
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
 is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
@@ -4214,7 +4977,7 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 > `[G3-VOID-2026-08-20]`. The rig's docstring now says so at the top.
 >
 > ⭐ **Staged instead, and the stage is chosen to satisfy the row's own guard.** `apply_rescan` runs
-> its GEngine second pass **only `if (g_cachedGEngine == 0)`** ([Fern.cpp:5159](dll/src/Fern.cpp:5159)),
+> its GEngine second pass **only `if (g_cachedGEngine == 0)`** ([Fern.cpp:5204](../dll/src/Fern.cpp)),
 > so the precondition is enforced in code. A one-shot skip in `Genau::FindGEngineSlot`, placed
 > **after** the existing `bOffsetsProbeRan` deferred gate, forces the first *post-gate* resolve to
 > miss: init's deferred call returns early without consuming it, init's `ResolveGEngineDeferred`
@@ -4244,6 +5007,9 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    kind. Conditions matter here, so record them: this is the *validated-`Guid`* branch (step 2), so
    it proves the family is coherent on the path that was already coherent — it is a regression check,
    not evidence for the repair.
+
+
+</details>
 
 ### 🟡 GROUP 5 opened 2026-08-18 `[CE-2026-08-18]` — plugin bridge live, freeze record reaches CE
 
@@ -5024,13 +5790,18 @@ ersion.dll`, our proxy with **no exe beside it**. **Find leftovers** → `Found 
 >
 > <details><summary>the original finding, as recorded</summary>
 >
-> `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:163](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:163))
+> `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:162](../ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs))
 > does three things: tests `IsScanning || IsRemovingOrphans`, sets **`_busyWith = what`**, sets
 > `IsScanning = true`. **Seven** commands use it and report through
 > `BusyMessage()` → `Busy: {_busyWith} is running — wait for it to finish`.
 >
-> `DeleteSelectedOrphansAsync` ([:959](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:959)) does not.
+> `DeleteSelectedOrphansAsync` ([:956](../ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs)) does not.
 > It hand-rolls the same predicate and then:
+>
+> ⚠ **The line reference above is current (re-derived 2026-09-06); the finding it supports is not.**
+> The code at that site now carries `[ORPHANBUSYMSG-2026-08-24]` and a comment saying the message
+> *used to* be the generic one this paragraph complains about. Read the block as history — the
+> link is accurate about WHERE, and the prose is superseded about WHAT.
 >
 > * reports **`"Wait for the current operation to finish"`** — a generic line that names nothing, and
 >   almost exactly the wording step 1 says the fix exists to replace (*"not the old 'Wait for scan to
@@ -6401,7 +7172,7 @@ about.
 >    `UScriptStruct`'s `PropertiesSize`.
 >
 > ⇒ **A garbage ElementSize is defended three ways.** The degraded branch is guarded by
-> `else if (fv.mapCount > 0 || sa.Data != 0)` ([Ubel.cpp:4573](dll/src/Ubel.cpp:4573)) and is
+> `else if (fv.mapCount > 0 || sa.Data != 0)` ([Ubel.cpp:4713](../dll/src/Ubel.cpp)) and is
 > reached only when the pair layout genuinely cannot be resolved.
 >
 > **What a future attempt must change** (do not repeat the above):
@@ -8230,14 +9001,14 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > ### ⚠ Check the ARMING line first — `client gone mid-command`
   >
   > The latch has its own WARN, emitted immediately before it
-  > ([`Fern.cpp:769`](../dll/src/Fern.cpp:769)): `client gone mid-command (err=…) — aborting
+  > ([`Fern.cpp:859`](../dll/src/Fern.cpp)): `client gone mid-command (err=…) — aborting
   > in-flight op`. **Grep for that BEFORE grepping for the B4 line.** Absent ⇒ `g_perCommand` was
   > never latched ⇒ the B4 WARN was right to stay silent and the run proved nothing. Only when it
   > IS present does the absence of the B4 line mean anything.
   >
   > ### The axis is not "long" — it is "ONE call that blocks for seconds"
   >
-  > `MonitorLoop` sleeps **200 ms** between polls ([`Fern.cpp:732`](../dll/src/Fern.cpp:732)) and
+  > `MonitorLoop` sleeps **200 ms** between polls ([`Fern.cpp:809`](../dll/src/Fern.cpp)) and
   > peeks only connections whose `inFlight` is set (`:743`), so a single command has to still be
   > running when a poll lands. **A CHUNKED operation never arms it, however many minutes it takes**
   > — it is thousands of short commands with gaps in between.
@@ -8245,7 +9016,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > Two that look like the obvious choice and are **both traps** (each cost a real run on
   > 2026-08-06):
   > - **Dump All Metadata** — `DumpAllService` is a `do/while` over
-  >   `GetObjectListAsync(offset, pageSize)` ([`DumpAllService.cs:115-133`](../ui/UE5DumpUI/Services/DumpAllService.cs:115))
+  >   `GetObjectListAsync(offset, pageSize)` ([`DumpAllService.cs:120-137`](../ui/UE5DumpUI/Services/DumpAllService.cs))
   >   plus `WalkClassesBatchAsync` in chunks of 200 (`:262`). **Measured: `get_object_list` pages
   >   50–80 ms apart** (19:45:16.124 → .201 → .249 → .323) — no poll ever caught one. The client's
   >   death surfaced through the connection's own write instead (`Failed to write response` →
@@ -8279,7 +9050,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 
   | half | evidence |
   |---|---|
-  | toggle greyed | `get_pointers` returns `gworld_aob: ""` → `IsAobSymbolAvailable=false` → `CanUseAobSymbol=false` → `IsEnabled` binding at [`LiveWalkerPanel.axaml:231`](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml:231). **Observed on screen**: the *AOB* item in Live Walker → Options renders dim while every sibling is white. |
+  | toggle greyed | `get_pointers` returns `gworld_aob: ""` → `IsAobSymbolAvailable=false` → `CanUseAobSymbol=false` → `IsEnabled` binding at [`LiveWalkerPanel.axaml:231`](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml). **Observed on screen**: the *AOB* item in Live Walker → Options renders dim while every sibling is white. |
   | export resolves | *Copy CE XML* on `GWorld → PersistentLevel`: 160,036 chars, **zero `??`**, **zero AOB markers** (`AOBScanModuleUE` / `aobscan` / the mangled name / `UE_GWorld`), root `<Address>1E4542EAEA0</Address>` literal with `+30` child offsets. |
 
   The mechanism is [`IsCeReplayableAob`](../dll/src/Himmel.h) suppressing the triple for
@@ -9255,7 +10026,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     `gap_samples = 1199 = count-1`** on the same two rows, same game, same rig. The four
     once-per-frame functions were 1.00x in both runs — a **free built-in control** that rules out a
     clock or window-measurement artifact, because no clock error can move exactly the two doubled
-    rows. The guard is now `nowMs >= s.lastMs` ([Linie.cpp:46](dll/src/Linie.cpp:46)) with the
+    rows. The guard is now `nowMs >= s.lastMs` ([Linie.cpp:46](../dll/src/Linie.cpp)) with the
     reorder case (`nowMs < s.lastMs`, the unsigned-underflow input) still excluded, so the
     ~1.8e19-gap hazard L5 was filed for cannot occur.
     ⚠ Two commits, do not conflate: `7f3898ff` (the L1/L5/L8/L10/L12 batch) introduced the guard as
@@ -9282,15 +10053,15 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     **Offline half, on the shipped binary and stronger than reading source:** `GetWindowTextW`
     does not appear in `dist/UE5Dumper.dll`'s import table at all, while `SetWindowLongPtrW` —
     the subclassing call two lines away in the same function — does, so the detector fires. The
-    only source occurrence is the explanatory comment ([Grausam.cpp:175](dll/src/Grausam.cpp:175)).
+    only source occurrence is the explanatory comment ([Grausam.cpp:175](../dll/src/Grausam.cpp)).
     **Live half:** freeze ONLY the UE game thread, then enable the lock so `SubclassEnumProc` runs
     over a window whose thread is not pumping → **0.260 s, `state=1`** (budget 3 s).
     ⚠⚠ **Three separate ways this test was vacuous before it was right — all found, none assumed.**
-    (1) The rig sent `enabled=True`; the DLL reads **`enable`** ([Fern.cpp](dll/src/Fern.cpp)), so
+    (1) The rig sent `enabled=True`; the DLL reads **`enable`** ([Fern.cpp](../dll/src/Fern.cpp)), so
     the unknown key defaulted to **false** and every call disabled an already-disabled lock. The
     reply still said `ok: true`. Caught only because the DLL log showed `set OFF` twice and no
     `set ON`. The rig now asserts the reply's `state == 1`.
-    (2) A **re-enable skips the body**: [Grausam.cpp:167](dll/src/Grausam.cpp:167) is
+    (2) A **re-enable skips the body**: [Grausam.cpp:167](../dll/src/Grausam.cpp) is
     `if (::GetPropW(hwnd, kOrigProcProp)) return TRUE; // already subclassed by us`. So the
     enable must be the **first ever in that process** — which needs a fresh launch, and the rig
     refuses to run if `get_foreground_lock` is not 0. Proof the body ran: the `Subclassed window`
@@ -9387,7 +10158,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     20:19:15.473  [Grausam] Foreground lock DISABLED
     ```
     ⭐ **The ENABLED line is what makes this non-vacuous.** `Foreground lock DISABLED` sits in
-    the unconditional soft-disable branch ([Grausam.cpp:271](dll/src/Grausam.cpp:271)), so on its
+    the unconditional soft-disable branch ([Grausam.cpp:271](../dll/src/Grausam.cpp)), so on its
     own it does not show anything was turned off. Here the reply carried `state=1` **and** the log
     recorded the enable 2 s earlier, so the lock was demonstrably on when shutdown reached it.
     ⬜ **Still owed:** the *"re-subclasses on the GFW hook's rare window re-find"* half needs the

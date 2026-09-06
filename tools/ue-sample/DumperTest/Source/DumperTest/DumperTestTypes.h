@@ -57,6 +57,38 @@ struct FDumperTestAttribute
 	UPROPERTY() float CurrentValue = 0.f;
 };
 
+/// ⭐ A7 fixture — an EMPTY native USTRUCT, and a child whose first field really is
+/// at offset 0. This pair exists because NOTHING ELSE PRODUCES IT: measured
+/// 2026-09-05 across EVERSPACE 2 (3,808 loaded classes) and DumperTest's own
+/// reachable structs, **zero** had `PropertiesSize == 1`, so audit A7's fix had no
+/// live vehicle on any installed title.
+///
+/// Why 1 and not 0: UE reports an empty native USTRUCT's `PropertiesSize` as **1**
+/// (a zero-size struct is not addressable in C++). The SDK emitter splits own from
+/// inherited fields on `Offset >= superPropsSize`, so with `superPropsSize == 1` a
+/// child field at offset 0 fell BELOW the floor, was dropped, and the trailing-pad
+/// pass wrote `Pad_0000[0x1]` in its place. Empty-base optimisation means the child
+/// genuinely starts at 0, so this is not a synthetic shape — it is what EBO does.
+///
+/// Expected once walked: base `props_size == 1`, no fields, `own_props_start == -1`;
+/// child `super_props_size == 1`, `own_props_start == 0`, `Description` at offset 0.
+USTRUCT()
+struct FDumperTestEmptyBase
+{
+	GENERATED_BODY()
+	// Deliberately EMPTY. Adding a UPROPERTY here destroys the fixture.
+};
+
+/// The derived half of the A7 pair. ONE field, and it must sit at offset 0 — that
+/// is the whole test. See FDumperTestEmptyBase above.
+USTRUCT()
+struct FDumperTestBracketPayload : public FDumperTestEmptyBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY() FString Description;
+};
+
 /// Struct used as a CONTAINER ELEMENT (`TArray<FDumperTestStat>`). That is the
 /// one-struct-element-deep container level the opt-in deep descent walks, and it
 /// carries an FText so the deep path has an FText to mis-decode if B28 ever

@@ -138,7 +138,7 @@ The **scan log** is the single most valuable piece of information. It contains h
 
 **To run the gates and tests:**
 
-- **Python 3** (3.12 recommended) with the **`py` launcher**. ⭐ All 13 gates are
+- **Python 3** (3.12 recommended) with the **`py` launcher**. ⭐ Every gate is
   stdlib-only — there is no `pip install` step.
 - Lua 5.4 is optional, for the CE-script rigs in `scripts/tests/`.
 
@@ -168,4 +168,4 @@ Testing requires a running UE4/UE5 game. See `CLAUDE.md` for the list of recomme
 
 ## Questions?
 
-Feel free to open a [Discussion](../../discussions) for questions that aren't bug reports or feature requests.
+Feel free to open an Issue for questions that aren't bug reports or feature requests — this repository does not have Discussions enabled.

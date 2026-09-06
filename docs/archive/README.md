@@ -9,13 +9,41 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 
 > **Relative links INSIDE archived files are knowingly broken.** The convention here is
 > *nothing was edited, only moved*, so a `[x](todo.md)` written when the file lived in `docs/`
-> still says `todo.md` and now resolves to `docs/archive/todo.md`, which does not exist. Read any
-> such link as `../<name>.md`. (8 in `dev-log-2026-07-pre-build-2200.md`, 3 in
-> `dev-log-2026-06-pre-build-940.md`, 1 in `todo-closed-2026-08-build-2715.md`, 7 in
-> `handover-2026-08-19.md`, 1 in `handover-2026-08-20.md`.) The table below
-> uses correct `../` links because it was written here, not moved here. Repairing the links inside
-> the archived files would break the one property that makes them trustworthy — that they are
-> byte-identical to what shipped.
+> still says `todo.md` and now resolves to `docs/archive/todo.md`, which does not exist. Repairing
+> them would break the one property that makes an archived doc trustworthy — that it is
+> byte-identical to what shipped. The table below uses correct `../` links because it was written
+> here, not moved here.
+>
+> ⛔ **Do not quote a count for these — derive it.** This paragraph used to enumerate
+> *"8 + 3 + 1 + 7 + 1"* across five files. The real figure is **more than fifteen times that**,
+> across thirteen files, and the single largest offender (`dev-log-2026-05-pre-build-700.md`) was
+> not in the list at all. Current inventory:
+> `py tools/check_md_links.py --list --include-archive`.
+>
+> **How to read one, and the old rule was too simple.** *"Read it as `../<name>.md`"* covers well
+> under half:
+> * a sibling doc (`](todo.md)`, `](lessons-learned.md)`) → prepend **one** `../`;
+> * a **bare `dll/` or `ui/` source path** (`](dll/src/Sein.cpp:134)`) → prepend **two**. These are
+>   not move damage at all: they were already broken while the text lived in `docs/todo.md`, and
+>   they are the *same authoring bug* that was repaired in `docs/verification-register.md` on
+>   2026-09-06. They stay broken here only because of byte-identity.
+> * a handful resolve at no depth: `../dll/src/ValueScan.h` (historically correct — `ValueScan`
+>   became `Radar`), `UE5CEDumper-SA.md` / `-SD.md` (never existed in this repo), and one absolute
+>   `…/C:/Users/user/.claude/…` path in `todo-completed-build-937.md` that survives only because
+>   `user` is an allowed generic stand-in in `tools/check_no_local_paths.py`. **Leave all of these.**
+>
+> ⚠⚠ **A knowingly-broken link can become a SILENTLY-WRONG one, and that is worse.**
+> `handover-2026-08-19.md`'s three `](handover-2026-08-20.md)` links were broken when it was
+> archived — and **started resolving** when their target was archived beside it. They now point at
+> the **archived** copy with no signal that the reader has left the live document. Archiving a
+> file therefore silently re-points every sibling link that already named it. Run
+> `py tools/check_md_links.py --list --include-archive` **before** an archive move, so the pre-move
+> state is on the record.
+>
+> ⭐ **The convention is not directory-wide — the invariant is "unedited since the move".** Three
+> files here do not have it, so `check_md_links.py` **includes** them and holds them at zero:
+> `README.md` (authored in place), `godmode-implementation-plan.md` and
+> `audit-2026-08-16-med-rederivation.md` (both edited at archive time — see their rows).
 
 ## Files
 
@@ -34,7 +62,7 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 | `todo-closed-2026-09-03-build-3369.md` | **12 closed `###` sections** lifted verbatim out of [`../todo.md`](../todo.md) (662 lines) | The maintainer's question, and it was the right one: *"this isn't a todo any more — a todo is a sticky note you delete when it's done."* `todo.md:247` has said exactly that since it was written (*"then **delete it here**"*); it was simply never enforced. ⭐ **The selection rule gained a clause this pass**, because heading-marker selection keeps producing false positives (58% / 38% / 13% on the three earlier passes): the heading must now **announce its own closure** — a dated `[TAG]` or a closure verb — because in this file `⛔` marks live warnings as well as refutations, and `⛔ PRECONDITION FOR EVERY GAME ROW — ALL NINE deployed proxies are STALE` is a standing precondition that heading-marker selection would have archived. The still-open regex also gained `remains OPEN`, which is what `[STALEDLL-2026-08-18]`'s body says about its half (a). 17 → 14 → 12 as each clause landed. **Nothing was edited, only moved.** ✅ The `FreezeOutcome` single-carrier hazard the 2026-08-23 row warned about was **fixed first** (`a193ff98`): it now has a second carrier on the long-tail ⬜ row, so this pass could not trip it. |
 | `todo-closed-2026-08-25-build-3356.md` | **35 closed `###` sections** lifted verbatim out of [`../todo.md`](../todo.md) (2,199 lines) | `todo.md` had reached **1.19 MB / 15,801 lines**, 28% of it closed material. ⭐⭐ Same selection rule as the 2026-08-23 split and the same reason for it: a `✅` heading is **not** "finished". Of the 78 done-marked sections considered, **30 (38%) still had outstanding work** in their bodies, so a section moved only if its heading is done-marked **and** no *"still owed"* sentence appears anywhere in it. **Nothing was edited, only moved.** ⚠ This row was missing from the table until 2026-08-27 — the file existed, unindexed, for two days. |
 | `todo-closed-2026-08-build-2715.md` | Two **closed** sections of `todo.md`: the audit #3 rollup (build 2168) and the winmm 4th-proxy-DLL section (✅ shipped build 2317) | `todo.md` had grown past 250 KB. Both sections were fully closed — audit #3's 23 scheduled items all shipped and the remainder were refuted or downgraded, and winmm shipped — and the audit's per-finding detail was always in [`../audit-2026-07-14-findings.md`](../audit-2026-07-14-findings.md). **Nothing was edited, only moved**; each section left a stub in the live file pointing here. Open work stayed in `todo.md`. |
-| `godmode-implementation-plan.md` | Ordered build plan for the GodMode (`Solitar`) feature | **Status: DONE at build 1251** — every phase shipped. The design contract [`../godmode-spec.md`](../godmode-spec.md) is still live and authoritative; this was only the step-by-step route to it. |
+| `godmode-implementation-plan.md` | Ordered build plan for the GodMode (`Solitar`) feature | **Status: DONE at build 1251** — every phase shipped. The design contract [`../godmode-spec.md`](../godmode-spec.md) is still live and authoritative; this was only the step-by-step route to it. ⚠ **Not byte-identical** — like `audit-2026-08-16-med-rederivation.md`, its relative links **were corrected at archive time** (commit `a3435848`, git `R099`; the entire diff is `(godmode-spec.md)` → `(../godmode-spec.md)` twice). This went unrecorded until 2026-09-06, so *"nothing was edited, only moved"* does not apply to it and the link gate covers it. |
 | `multi-connection-pipe-proposal.md` | 2026-06-01 design proposal for an interactive/bulk dual-connection pipe split | Superseded by [`../multipipe-eval.md`](../multipipe-eval.md), which re-derived the root cause (DLL-side serial-dispatch head-of-line blocking, not pipe count) and is the doc to read before any IPC concurrency change. The lane split itself shipped in PR #396. |
 | `audit-2026-08-16-med-rederivation.md` | Six pre-vetted MED re-derivations from audit #5 (PX1 / A3 / AF3 / U3 / V3 / V4), written 2026-08-16 so fix sessions would not repeat ~1.5M tokens of agent derivation — each entry carries premise corrections, evidence, `fix_shape` and `residual_risk` | **Queue fully consumed 2026-08-17**: all six shipped (builds 3166–3170) plus `U17`, the follow-on U3 spawned (build 3171). Finding status stays on the audit #5 register ([`../audit-2026-08-13-early-code-findings.md`](../audit-2026-08-13-early-code-findings.md) §3c, CI-gated by `check_audit_register.py`); the owed live-game checks are in [`../todo.md`](../todo.md)'s register. ⚠ Unlike the moved-verbatim logs above, its stale status markers and relative links WERE corrected at archive time (the derivation text is untouched) — the blanket "nothing was edited, only moved" convention does not apply to this one. |
 | `handover-2026-08-20.md` | Closing note for the four-pass, ~103-commit verification programme of 2026-08-20 (build 3263) — what closed, **seven** defects found and not fixed (its §3 heading says so; this row said *five*), the remaining work classified by what it NEEDS, the traps, and how to drive Cheat Engine | Superseded by [`../handover-2026-08-22.md`](../handover-2026-08-22.md), which is now the single entry point. ⚠ Its §3 defect list and §4 queues are **spent** — all seven were fixed or re-scoped by 2026-08-22 — and its §1 build/`dist` facts describe 3263, three builds and one AOT republish ago. Everything still operationally true (the Satisfactory dead-engine trap, the CE driving recipe, the log-window measurement traps, `find_instances` substring matching) was carried forward verbatim. Kept for the **history** of that programme and for its per-row reasoning. **Nothing was edited, only moved.** |

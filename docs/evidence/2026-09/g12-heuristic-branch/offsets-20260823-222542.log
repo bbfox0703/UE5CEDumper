@@ -1,0 +1,49 @@
+[2026-08-23 22:25:07.738] [INFO] [INIT] Logger started | build: 1.0.0.3338 e4685592-dirty (Release, 2026-08-23T14:24:28)
+[2026-08-23 22:25:09.981] [INFO] [FNAM] FNamePool: Entry stride = 2 (initial, hdrOff=0)
+[2026-08-23 22:25:09.981] [INFO] [FNAM] FNamePool: Chunks at offset 0x10 (validated with 'None')
+[2026-08-23 22:25:09.981] [INFO] [FNAM] FNamePool: DetectStride: 'None' at chunk[0]+2, stride=2 confirmed
+[2026-08-23 22:25:09.981] [WARN] [FNAM] FNamePool: BlockOffsetBits = 16 (stock default kept; index 1 did NOT decode cleanly at this width — name resolution may be degraded)
+[2026-08-23 22:25:09.981] [INFO] [FNAM] FNamePool: Header Format A (shift=6, hdrOff=0), verified 'None'
+[2026-08-23 22:25:09.991] [INFO] [FNAM] FNamePool: Initialized at 0x7FF66196DD40 (hdrOff=0, stride=2), FName[0]='None', FName[1]=''
+[2026-08-23 22:25:09.991] [DEBUG] [OARR] ObjectArray: GObjects@0x7FF661A5AAA0: +00:000060FB000060FC +08:00000000000060FC +10:000001DEBF3ED8A0 +18:0000000000000000 +20:0000627C00210000 +28:0000000100000021
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: Layout 'UE5-Extended' detected (strict)
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: Layout 'UE5-Extended': Num=25212, Max=2162688, NumChunks=1, MaxChunks=33, Objects=0x1DEBF3ED8A0
+[2026-08-23 22:25:09.991] [DEBUG] [OARR] ObjectArray: chunkTable@0x1DEBF3ED8A0: +00:000001DEBF810008 +08:0000000000000000 +10:0000000000000000 +18:0000000000000000 +20:0000000000000000 +28:0000000000000000 +30:0000000000000000 +38:0000000000000000
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: P1 stride 16: good=100, named=100, null=0, bad=100
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: P1 stride 24: good=50, named=50, null=0, bad=150
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: P1 stride 32: good=200, named=200, null=0, bad=0
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: P1 stride 20: good=25, named=25, null=25, bad=150
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: FUObjectItem size detected as 32 bytes (200 items with valid names, 200 total valid, 0 bad)
+[2026-08-23 22:25:09.991] [INFO] [OARR] ObjectArray: Initialized at 0x7FF661A5AAA0, Count=25212, ItemSize=32
+[2026-08-23 22:25:09.991] [INFO] [DYNO] ValidateAndFixOffsets: Starting dynamic offset detection...
+[2026-08-23 22:25:09.991] [INFO] [DYNO] DetectCasePreservingName: Probing UObject layout...
+[2026-08-23 22:25:09.991] [INFO] [DYNO] DetectCasePreservingName: votes standard=20, CPN=0 (tested 20 objects)
+[2026-08-23 22:25:09.991] [INFO] [DYNO] DetectCasePreservingName: Standard FName — UObject::Outer = +0x20
+[2026-08-23 22:25:09.991] [INFO] [DYNO] DetectUPropertyMode: Checking for UProperty vs FProperty (UE version=504)...
+[2026-08-23 22:25:09.991] [INFO] [DYNO] DetectUPropertyMode: FProperty mode (UE version 504 >= 425)
+[2026-08-23 22:25:09.991] [INFO] [DYNO] ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)
+[2026-08-23 22:25:09.991] [INFO] [DYNO] ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled
+[2026-08-23 22:25:09.993] [INFO] [DYNO] FindStructByName: Found 'Guid' at 0x1DF1A5C9280 (index=4118)
+[2026-08-23 22:25:09.993] [INFO] [DYNO] FindStructByName: Found 'Vector' at 0x1DF1A5C9100 (index=4124)
+[2026-08-23 22:25:09.993] [WARN] [DYNO] ValidateAndFixOffsets: Cannot find Guid or Vector struct — trying heuristic fallback
+[2026-08-23 22:25:09.993] [INFO] [DYNO] Phase A: Probing USTRUCT_CHILDPROPS...
+[2026-08-23 22:25:10.023] [INFO] [DYNO]   CHILDPROPS probe +0x40: score=3 (tested 1 objects)
+[2026-08-23 22:25:10.038] [INFO] [DYNO]   CHILDPROPS probe +0x48: score=4 (tested 2 objects)
+[2026-08-23 22:25:10.038] [INFO] [DYNO]   CHILDPROPS probe +0x50: score=54 (tested 30 objects)
+[2026-08-23 22:25:10.079] [INFO] [DYNO]   CHILDPROPS probe +0x58: score=6 (tested 2 objects)
+[2026-08-23 22:25:10.117] [INFO] [DYNO]   CHILDPROPS probe +0x60: score=3 (tested 1 objects)
+[2026-08-23 22:25:10.123] [INFO] [DYNO]   CHILDPROPS probe +0x68: score=7 (tested 3 objects)
+[2026-08-23 22:25:10.123] [INFO] [DYNO]   CHILDPROPS probe +0x70: score=54 (tested 30 objects)
+[2026-08-23 22:25:10.123] [INFO] [DYNO] Phase A: USTRUCT_CHILDPROPS confirmed at 0x50 (score=54)
+[2026-08-23 22:25:10.123] [INFO] [DYNO] Phase B: Probing FPROPERTY_OFFSET...
+[2026-08-23 22:25:10.124] [INFO] [DYNO]   Phase B candidate[0]: 'WorldMetricsSubsystem' at 0x1DEBBBF4800, fields=4, propsSize=10368
+[2026-08-23 22:25:10.124] [INFO] [DYNO]   Phase B candidate[1]: 'ToolMenu' at 0x1DEBB187C00, fields=8, propsSize=280
+[2026-08-23 22:25:10.124] [INFO] [DYNO]   Phase B candidate[2]: 'ToolMenus' at 0x1DEBB187200, fields=4, propsSize=856
+[2026-08-23 22:25:10.124] [INFO] [DYNO]   Phase B candidate[3]: 'ConsoleSettings' at 0x1DEBB186600, fields=8, propsSize=112
+[2026-08-23 22:25:10.124] [INFO] [DYNO]   Phase B candidate[4]: 'GameMapsSettings' at 0x1DEBB186400, fields=8, propsSize=288
+[2026-08-23 22:25:10.124] [DEBUG] [DYNO]   probe +0x44: validClasses=5, totalScore=85
+[2026-08-23 22:25:10.124] [INFO] [DYNO] Phase B: Confirmed default FPROPERTY_OFFSET=0x44
+[2026-08-23 22:25:10.124] [INFO] [DYNO] Heuristic final: USTRUCT_SUPER=0x40 CHILDPROPS=0x50 PROPSSIZE=0x58 FFIELD_NEXT=0x18 FFIELD_NAME=0x20 FPROPERTY_OFFSET=0x44
+[2026-08-23 22:25:42.279] [INFO] [DYNO:Enum] DetectUEnumNames: Searching for known enums in GObjects...
+[2026-08-23 22:25:42.279] [INFO] [DYNO:Enum]   Found 'ENetRole' at 0x1DF2E488B80, probing for Names offset...
+[2026-08-23 22:25:42.279] [INFO] [DYNO:Enum]   UEnum::Names detected at UEnum+0x40 (legacy TArray, verified with 'ENetRole', count=5, 5 name matches)

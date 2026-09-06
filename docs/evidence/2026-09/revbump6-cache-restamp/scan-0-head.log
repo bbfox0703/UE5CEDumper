@@ -1,0 +1,9 @@
+[2026-09-06 12:48:53.500] [INFO] [INIT] Logger started | build: 1.0.0.3390 682f3f2b-dirty (Release, 2026-09-06T04:44:03)
+[2026-09-06 12:48:54.519] [INFO] [SCAN] FindAll: Starting global pointer scan...
+[2026-09-06 12:48:54.519] [INFO] [SCAN] FindAll: PE hash = 6A9C1C8410F23000
+[2026-09-06 12:48:54.520] [INFO] [SCAN] HintCache: Loaded hints for PE=6A9C1C8410F23000 (GObj=GOBJ_ES53_1, GNam=GNAM_V1, GWld=GWLD_TQ_1, UE=504 detected)
+[2026-09-06 12:48:54.520] [INFO] [SCAN:Ver] DetectPublisher: no thumbprint match (Copyright='Fill out your copyright notice in the Description page of Project Settings.', Company='Epic Games, Inc.')
+[2026-09-06 12:48:54.520] [INFO] [SCAN] FindAll: Cached version 504 was stamped by logic rev 5 (current 6) — re-detecting once and re-stamping.
+[2026-09-06 12:48:54.520] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-06 12:48:54.522] [INFO] [SCAN:Ver] DetectVersion: PE VERSIONINFO -> UE 5.4 -> 504
+[2026-09-06 12:48:54.522] [INFO] [SCAN] FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)

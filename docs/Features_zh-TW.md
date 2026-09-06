@@ -1,6 +1,6 @@
 # 專為 Table 製作人員設計的功能
 
-> 隸屬於 [UE5CEDumper](../Readme_zh-TW.MD) — 重點亮點、實測版本矩陣、安裝與工作流程請見 README。English: [Features for Table Makers](Features.md)。
+> 隸屬於 [UE5CEDumper](../Readme_zh-TW.md) — 重點亮點、實測版本矩陣、安裝與工作流程請見 README。English: [Features for Table Makers](Features.md)。
 
 | 功能 | 說明 |
 |---|---|

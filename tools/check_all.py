@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 """Run every doc/source gate CI runs, in CI's order, from one command.
 
-    py tools/check_all.py            # the 12 pre-build gates
+    py tools/check_all.py            # every pre-build gate
     py tools/check_all.py --quick    # skip the two that need a Ghidra-pattern re-extract
     py tools/check_all.py --list     # print the sequence and exit
 
 WHY THIS EXISTS. The gates lived only as inline `pwsh` lines inside
-`.github/workflows/ci.yml`, each with its own `throw`. There are **twelve** of them
-before the build (plus a thirteenth over the built artifacts, which needs a build and
-is therefore not run here) -- and a session that knows about "the four doc checks"
-runs those, sees green, opens a PR and reddens CI on a gate it has never heard of.
-Measured 2026-08-22: an entire day's work was committed against 4 of the 12.
+`.github/workflows/ci.yml`, each with its own `throw` -- and a session that knows
+about "the four doc checks" runs those, sees green, opens a PR and reddens CI on a
+gate it has never heard of. Measured 2026-08-22: an entire day's work was committed
+against 4 of the then-12.
+
+⛔ DERIVE THE COUNT, never type it. This docstring said "the 12 pre-build gates" while
+the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason: a
+number in prose does not move when someone appends a tuple. `--list` prints it, and the
+run's own final line reports "N gate(s) run".
+
+⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and nothing enforces that. This file
+and `ci.yml` had silently drifted -- `check_evidence_index` and `check_inert_trimming`
+ran here and were absent from CI from the day they were added until 2026-09-06, so a
+PR could break either and redden nothing. Both sequences are 1:1 again as of that
+date (CI additionally runs `check_proxy_exports --artifacts` post-build, which needs a
+build and is deliberately not here). Compare them with:
+    grep -oE 'py tools/[a-z_/]+[.]py' .github/workflows/ci.yml
+    py tools/check_all.py --list
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.
@@ -104,6 +117,18 @@ GATES = [
      ["tools/check_no_local_paths.py"],
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
+
+    ("check_md_links",
+     ["tools/check_md_links.py"],
+     "a relative link in a tracked .md file does not resolve. Run "
+     "'py tools/check_md_links.py --list'; --fix previews the provable rewrites. "
+     "NOTE it checks the FILE, never the :LINE -- line drift is invisible to it", False),
+
+    ("check_evidence_index",
+     ["tools/check_evidence_index.py"],
+     "docs/evidence/ drifted from the claims it serves -- an artifact whose claim tag no "
+     "longer appears anywhere else under docs/ (an ORPHAN), or a directory missing from the "
+     "index. Age is never the reason to delete evidence; orphanhood is", False),
 
     ("check_inert_trimming",
      ["tools/check_inert_trimming.py"],
