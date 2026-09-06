@@ -99,8 +99,23 @@ def main():
         at422 = survey(c, "override 422")
         show(at422)
 
-        c.request("set_ue_version_override", version=native, timeout=60)
-        back = survey(c, "restored %d" % native)
+        # ⛔ IT TAKES BOTH CALLS, IN THIS ORDER, AND NEITHER ONE ALONE IS ENOUGH.
+        #   * setting the native version restores the IN-PROCESS reads, but writes
+        #     `ueVersionUserOverride` into UE5CEDumper.{Machine}.json -- and `Genau.cpp:4946` checks
+        #     that field BEFORE the rev-stamped detection cache and is NOT invalidated by a
+        #     `kVersionDetectLogicRev` bump. The title would then take the override branch on every
+        #     future launch, never re-detect, and be surfaced as `bVersionDetected=true,
+        #     bLowConfidence=false` -- the code's own words are "user is the source of truth". So a
+        #     "restore" leaves a permanent, confident-looking assertion behind.
+        #   * clearing with 0 removes that record (`Flamme.cpp:33-34` erases both keys) but
+        #     DELIBERATELY does not touch `g_cachedUEVersion` ("would require re-init",
+        #     Fern.cpp's own comment) -- so on its own it leaves the process reading at 422 and the
+        #     final survey below would report a degraded rate that is the rig's own doing.
+        # Measured 2026-09-06: an earlier run of this rig set the native version back and left
+        # exactly that residue on OCTOPATH, which is how the two-call requirement was found.
+        c.request("set_ue_version_override", version=native, timeout=60)   # fix the process
+        c.request("set_ue_version_override", version=0, timeout=60)        # erase the record
+        back = survey(c, "restored + cleared")
         show(back)
 
     say("\n================ A3 (substitute host) RESULT ================")
@@ -126,8 +141,10 @@ def main():
             % (base.get("rate", 0), at422.get("rate", 0)))
 
     if back.get("rate", 0) < base.get("rate", 0) - 5.0:
-        notes.append("restoring the native version did not restore sanity (%.1f%%) -- the override "
-                     "may be sticky; relaunch before trusting a later row" % back.get("rate", 0))
+        fails.append("A3: the restore+clear did not bring sanity back (%.1f%%) -- the process is "
+                     "still reading at the overridden version. Relaunch before trusting ANY later "
+                     "row on this host, and check UE5CEDumper.{Machine}.json for a leftover "
+                     "ueVersionUserOverride" % back.get("rate", 0))
 
     say("\n⚠ SCOPE: this proves the table's value REACHES THE READER and yields sane data at "
         "version input 421. It does NOT prove a retail 4.21 binary's layout is 0x88 -- that is the "
