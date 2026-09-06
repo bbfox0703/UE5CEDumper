@@ -74,6 +74,21 @@ def build_tag(exe):
     return sorted(found)[0] if len(found) == 1 else (",".join(sorted(found)) if found else None)
 
 
+def prereq_major(folder):
+    """UE4 vs UE5, from the redistributable the packager shipped.
+
+    ⭐ Only a MAJOR-version answer, and on that question it is the sharpest thing here: UE4 ships
+    `UE4PrereqSetup_x64.exe`, UE5 dropped the digit and ships `UEPrereqSetup_x64.exe`. Measured
+    across 16 installed titles 2026-09-06: present in 7, and 6 of 6 comparable ones correct, 0
+    wrong. It is what settled DQ I&II HD-2D, whose row had claimed UE5.05 against three signals
+    saying UE4 -- an error that CROSSES the major boundary, which is exactly what this catches
+    and what a minor-version check never would.
+    """
+    for f in folder.rglob("UE*PrereqSetup*.exe"):
+        return "UE4" if f.name.startswith("UE4Prereq") else "UE5"
+    return None
+
+
 def detection_cache():
     """gameName(no .exe) -> the version OUR DLL last detected. Not independent, but decisive
     about what the tool will actually do on this binary."""
@@ -163,13 +178,13 @@ def main():
             if not exes:
                 continue
             crc = next(iter(sorted(d.rglob("CrashReportClient.exe"))), None)
-            titles.append((d.name, exes[0], crc))
+            titles.append((d.name, exes[0], crc, prereq_major(d)))
 
-    print("%-32s %-8s %-8s %-8s %-8s %s"
-          % ("title", "buildtag", "CrashRep", "detected", "doc", "verdict"))
-    print("-" * 100)
+    print("%-30s %-8s %-8s %-6s %-8s %-7s %s"
+          % ("title", "buildtag", "CrashRep", "prereq", "detected", "doc", "verdict"))
+    print("-" * 104)
     disagreements = 0
-    for name, exe, crc in titles:
+    for name, exe, crc, pre in titles:
         tag = build_tag(exe)
         crcv = product_version(crc) if crc else None
         stem = exe.name.replace(".exe", "")
@@ -185,15 +200,23 @@ def main():
         docBad = bool(docv and measured and code(docv) not in measured)
         if a.quiet and not (bad or docBad):
             continue
+        # A MAJOR-version conflict outranks everything: it cannot be a runtime raise or a
+        # patch, only a wrong row or a wrong detection.
+        majors = {c // 100 for c in measured} | ({int(pre[2])} if pre else set())
+        if docv:
+            majors.add(code(docv) // 100)
         note = ""
-        if docv and measured and code(docv) not in measured:
+        if len(majors) > 1:
+            note = "*** UE4/UE5 CONFLICT ***"
+            docBad = True
+        elif docv and measured and code(docv) not in measured:
             note = "*** DOC DISAGREES WITH EVERY MEASURED SIGNAL ***"
         elif bad:
             note = "*** DISAGREE ***"
         elif len(codes) == 1:
             note = "ok"
-        print("%-32s %-8s %-8s %-8s %-8s %s"
-              % (name[:31], tag or "-", crcv or "-",
+        print("%-30s %-8s %-8s %-6s %-8s %-7s %s"
+              % (name[:29], tag or "-", crcv or "-", pre or "-",
                  ",".join(str(x) for x in det) or "-", docv or "(no row)", note))
 
     print("\n%d title(s) scanned, %d disagreement(s)." % (len(titles), disagreements))

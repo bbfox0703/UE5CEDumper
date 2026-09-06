@@ -33,19 +33,28 @@
 > `UField::Next=+0x38` are a **licensee fork**, not a version signal; reading "newer than stock
 > 4.18" out of them is exactly what produced the wrong number.
 >
-> **Open questions the rig currently reports. Both need a boot to settle — do not "fix" a row from
-> the table alone:**
-> * **DQ I&II HD-2D** — this row says UE5.05 (code 505), but the title ships
->   `CrashReportClient.exe` with ProductVersion **4.27**. The row's own text notes that the SE HD-2D
->   fork "uses FFieldVariant=0x10 (UE5.0 layout) despite reporting UE505", so "a misdetection
->   recorded as fact" is the obvious hypothesis — the same shape as DQ XI S.
+> ### ⭐ The authority order, strongest first
+>
+> | # | signal | where | why it ranks here |
+> |---|---|---|---|
+> | 1 | `++UE4+Release-X.Y` / `++UE5+Release-X.Y` | the exe's `.rdata` | the branch the binary was **built from**. Absent in ~90% of shipping titles, and that is its only weakness |
+> | 2 | `UE4PrereqSetup_x64.exe` vs `UEPrereqSetup_x64.exe` | the game folder | **UE4 vs UE5 only**, but on that question it is decisive — UE5 dropped the `4`. Present in ~7 of 16 titles here, 6 of 6 comparable ones correct |
+> | 3 | `CrashReportClient.exe` ProductVersion | `Engine\Binaries\Win64\` | shipped **by the engine**, not by the game, so unlike the game exe it is not the *game's* version. ~7 of 15 titles, 6/7 exact |
+> | 4 | our own `Genau::DetectVersion` | `scan-0.log`, and the per-PE-hash cache | not independent — it is the thing under test — but it is what the tool will actually DO on this binary |
+> | ✗ | the **game exe's** PE ProductVersion | — | frequently the GAME version: OCTOPATH 1.0, DQ7R 1.1, Elliot 1.2, TQ2 63339.64744. Never rank it above the four above |
+> | ✗ | the **layout** (stride, `FFieldVariant` width, `UField::Next`) | — | ⛔ **not a version signal at all.** A licensee fork changes the layout without changing the engine, and reading "this looks newer than stock" out of it is exactly what put UE4.22 on the DQ XI S row for six weeks |
+>
+> ⚠ **Two signals agreeing beats one signal plus an inference**, and an inference from the layout is
+> not a signal. Where the top four disagree, the higher number wins and the row should say so.
+>
+> **Still open — needs a boot, do not "fix" it from the table alone:**
 > * **Avowed** — this file says UE5.3 (PE: 503); the DLL's own detection cache holds **504**.
 >
 > ℹ️ A disagreement is a **question**, not a verdict. DragonSword Awakening reports CRC 5.3 against a
 > DLL 504, and that is correct and already documented — the 504 is our own runtime raise.
 
-| DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects. GWorld ✅. SE HD-2D fork uses FFieldVariant=0x10 (UE5.0 layout) despite reporting UE505 — fixed by Step 6.5 inference (Name=0x28 from Next=0x20). BP_SantiagoGameInstance_C (64 fields) |
-| DQ III HD-2D Remake | UE5.05 (detected) | 126022 objects. GWorld ✅. Same SE HD-2D fork layout as DQ I&II — FFieldVariant=0x10 inference fix applied |
+| DQ I&II HD-2D Remake | **UE4.27** — corrected 2026-09-06 (was "UE5.05 (detected)") | ⛔ **Three independent file signals say UE4, and the old value crossed the UE4/UE5 boundary in the wrong direction**: the folder ships `UE4PrereqSetup_x64.exe` (UE5 ships `UEPrereqSetup_x64.exe`), `Engine\Binaries\Win64\CrashReportClient.exe` has ProductVersion **4.27**, and `Genau::DetectVersion` currently reports **427**. An engine does not go backwards, so the historical `UE505` was a **misdetection recorded as fact** — the same shape as DQ XI S. ⚠ **The layout notes below were written under that wrong version and are NOT re-derived**: Stride 24, 128678 objects, GWorld ✅, FFieldVariant=0x10 with the Step 6.5 inference (Name=0x28 from Next=0x20), BP_SantiagoGameInstance_C (64 fields). Re-check them on the next boot. |
+| DQ III HD-2D Remake | **UE4.27 (INFERRED, not measured)** | ⚠ **Not installed on either machine, so nothing here was measured.** The version follows DQ I&II purely because this row already recorded "same SE HD-2D fork layout" — which is an inference from LAYOUT, the one thing the authority order above says is not a version signal. Treat as unknown until the folder can be checked for `UE4PrereqSetup_x64.exe` / `CrashReportClient.exe`, which needs no launch. Historical notes, written under the old UE505 reading: 126022 objects, GWorld ✅, FFieldVariant=0x10 inference fix applied. |
 | DQ XI S: Echoes of an Elusive Age | **UE4.18** (was recorded as UE4.22 — **corrected 2026-09-06, measured**: the binary carries `++UE4+Release-4.18` in `.rdata`, byte-identical to OCTOPATH's tag, and the live DLL reports `UE418`. This file already said so at `:14`, which calls DQ XI S "a known 4.18" and fingerprints OCTOPATH against it — the two rows contradicted each other. ⚠ The `+0x10` shifted layout and `UField::Next=+0x38` are a LICENSEE FORK, not a version signal; reading them as "must be newer than 4.18" is what produced the wrong number) | 350251 objects. GWorld ✅. UField::Next=+0x38 (non-standard, probed). UProperty mode. Expanded UObject layout (+0x10 shift). BP_GameInstance_C (99 fields), BP_GameFlag_C (10 fields) |
 | Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24. GWorld ✅ (build 1.0.0.27) |
 | Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects. GWorld ✅ (build 1.0.0.27) |
