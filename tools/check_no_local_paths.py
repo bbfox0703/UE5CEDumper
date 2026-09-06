@@ -18,6 +18,7 @@ Use the ENVIRONMENT-VARIABLE form instead, which is correct on every machine:
 Placeholders are allowed (`C:\Users\<you>`), because they cannot be mistaken for
 a real account, as are the shared system accounts. Only concrete names fail.
 """
+import os
 import re
 import subprocess
 import sys
@@ -63,6 +64,53 @@ SESSION_DIR_PATTERN = re.compile(r"[A-Za-z]:" + _SEP + r"(?:[^\s:*?\"<>|]{0,120}
 
 SKIP = ("tools/check_no_local_paths.py",)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS MACHINE's identifiers — derived at run time, stored nowhere.
+#
+# ⭐ THE PROBLEM THIS SOLVES, and it is a real chicken-and-egg: to flag the account name "Xyz" a
+# gate must know "Xyz", and writing it into a tracked file publishes exactly what is being
+# protected. The patterns above sidestep it by matching a SHAPE (`C:\Users\<something>` that is not
+# a known placeholder) and never needing the value. But a bare hostname has no shape — it is just a
+# word — so shape matching cannot see it, and on 2026-09-06 the machine name was found in 13
+# tracked files, six of them in docs/archive/, with two rigs HARD-CODING it (which also broke them
+# on the second PC).
+#
+# Resolution: read the identifiers from the ENVIRONMENT of whichever machine is running the gate —
+# which is precisely the machine that could leak them. Nothing is committed and nothing is hashed.
+#
+# ⛔ HASHING WOULD BE SECURITY THEATRE, so it was rejected: usernames and hostnames come from a tiny
+# search space, and a stored sha256 of one is brute-forced in seconds. A CI secret was rejected too
+# — secrets are unavailable to pull requests from forks (this repo has 10), and the leak is authored
+# LOCALLY, long before CI ever runs.
+#
+# ⚠ ITS LIMIT, STATED RATHER THAN HIDDEN: it only knows the CURRENT machine. If PC A commits PC B's
+# name, A's gate cannot see it. This COMPLEMENTS the shape patterns; those remain the load-bearing
+# half because they need no knowledge at all.
+MIN_IDENTIFIER_LEN = 4
+
+
+def runtime_identifiers():
+    """{value: where it came from} for this machine. Nothing here is ever persisted."""
+    found = {}
+    for var in ("USERNAME", "COMPUTERNAME", "USERDOMAIN"):
+        v = (os.environ.get(var) or "").strip()
+        if len(v) >= MIN_IDENTIFIER_LEN and v.lower() not in ALLOWED:
+            found.setdefault(v, var)
+    home = (os.environ.get("USERPROFILE") or os.environ.get("HOME") or "").rstrip("\\/")
+    leaf = os.path.basename(home)
+    if len(leaf) >= MIN_IDENTIFIER_LEN and leaf.lower() not in ALLOWED:
+        found.setdefault(leaf, "USERPROFILE")
+    return found
+
+
+def redact(value):
+    """⚠ THE GATE'S OWN OUTPUT MUST NOT PRINT THE NAME. CI logs on a public repo are public, so a
+    failure that echoed the identifier would publish the very string it exists to keep out."""
+    return value[0] + "*" * (len(value) - 1)
+
+
+
+
 
 def tracked_files():
     out = subprocess.run(["git", "ls-files"], capture_output=True, text=True,
@@ -73,6 +121,13 @@ def tracked_files():
 def main(argv):
     list_only = "--list" in argv
     files = tracked_files()
+    # Built once. Word-boundary so a name that is a substring of an ordinary word does not fire.
+    idents = runtime_identifiers()
+    ident_patterns = {
+        v: re.compile(r"(?<![A-Za-z0-9_])" + re.escape(v) + r"(?![A-Za-z0-9_])", re.IGNORECASE)
+        for v in idents
+    }
+
     hits = []
     for path in files:
         try:
@@ -85,6 +140,11 @@ def main(argv):
                     # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
                     for m in SESSION_DIR_PATTERN.finditer(line):
                         hits.append((path, n, m.group(0), line.strip()[:110]))
+                    for value, rx in ident_patterns.items():
+                        if rx.search(line):
+                            # Redact in BOTH the fragment and the quoted line.
+                            hits.append((path, n, redact(value),
+                                         rx.sub(redact(value), line.strip())[:110]))
         except (OSError, UnicodeError):
             continue
 

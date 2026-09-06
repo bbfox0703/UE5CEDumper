@@ -36,6 +36,9 @@
 
 [CmdletBinding()]
 param(
+    # Skip the identity guard (account / machine name in tracked files). For debugging the guard
+    # itself; do NOT use it to push past a real finding.
+    [switch]$NoIdentityCheck,
     [ValidateSet("Debug", "Release", "Publish")]
     [string]$Mode = "Release",
 
@@ -374,6 +377,37 @@ function Get-FileSize([string]$Path) {
 # ============================================================
 
 Write-Banner "UE5CEDumper Build  |  Mode: $Mode  |  Target: $Target"
+
+# ============================================================
+# Identity guard — runs FIRST, before the DevShell and before anything compiles.
+#
+# ⭐ WHY AT BUILD TIME. A commit always precedes a push, so the tree is already staged by the time
+# anyone builds — and the build is the last moment a leaked account or machine name is still cheap
+# to remove. Once pushed it is public; with forks in existence it is unrecallable. Measured
+# 2026-09-06: the machine name sat in 13 tracked files, six of them in docs/archive/, and TWO RIGS
+# HARD-CODED IT — which also silently broke them on the second PC.
+#
+# The check derives the names from %USERNAME% / %COMPUTERNAME% at run time and stores nothing, so
+# this repo never contains the strings it is protecting. It redacts them in its own output too,
+# because build logs get pasted into issues.
+#
+# ~4 s over ~1,100 tracked files. Skipped only by -NoIdentityCheck, which exists for the case where
+# the checker itself is what you are debugging.
+if (-not $NoIdentityCheck) {
+    Write-Step "Identity guard (account / machine name in tracked files)"
+    $py = @('py','python','python3') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    if (-not $py) {
+        Write-Fail "no Python interpreter on PATH — cannot run the identity guard"
+        throw "Identity guard could not run (no Python). Re-run with -NoIdentityCheck to skip deliberately."
+    }
+    & $py (Join-Path $ROOT_DIR "tools/check_no_local_paths.py")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "a tracked file carries a machine-local path or this machine's account/computer name"
+        throw "Identity guard FAILED. The names are REDACTED above on purpose. Fix the files it lists, or re-run with -NoIdentityCheck if you are deliberately committing a placeholder."
+    }
+    Write-Ok "no machine-local paths or identifiers in tracked files"
+}
+
 
 Write-Info "Root:   $ROOT_DIR"
 Write-Info "C++:    $CppConfig"

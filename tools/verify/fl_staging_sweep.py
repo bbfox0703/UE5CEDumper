@@ -34,7 +34,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient                       # noqa: E402
 
 APPDATA = pathlib.Path.home() / "AppData/Local/UE5CEDumper"
-CACHE = APPDATA / "UE5CEDumper.MSI-NB.json"
+CACHE = APPDATA / ("UE5CEDumper.%s.json" % os.environ.get("COMPUTERNAME", ""))
 STALE = APPDATA / (CACHE.name + ".tmp.99999")
 FRESH = APPDATA / (CACHE.name + ".tmp.88888")
 LOGROOT = APPDATA / "Logs"
