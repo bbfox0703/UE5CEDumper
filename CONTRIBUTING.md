@@ -168,4 +168,4 @@ Testing requires a running UE4/UE5 game. See `CLAUDE.md` for the list of recomme
 
 ## Questions?
 
-Feel free to open a [Discussion](../../discussions) for questions that aren't bug reports or feature requests.
+Feel free to open an Issue for questions that aren't bug reports or feature requests — this repository does not have Discussions enabled.

@@ -1225,11 +1225,11 @@ matters is simply "do normal mailbox commands still work".
 > **Why step 2 cannot work.** The figure is produced only by `DiagnosticsProbe`, and it is
 > structurally silent on exactly the scenario the row prescribes:
 > * `BeginAsync` swallows a failed opening `get_diagnostics` and leaves `before` **null**
->   ([DiagnosticsProbe.cs:76-80](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:76)); `DisposeAsync` then
+>   ([DiagnosticsProbe.cs:76-80](../ui/UE5DumpUI/Services/DiagnosticsProbe.cs)); `DisposeAsync` then
 >   returns at `if (_dump == null || _before == null || _log == null) return;`.
 > * If the pipe dies *mid*-operation, the closing `get_diagnostics` throws and `DisposeAsync` does
 >   `catch { return; }` — commented *"disconnected mid-operation: nothing to report"*
->   ([:100-102](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:100)).
+>   ([:101-103](../ui/UE5DumpUI/Services/DiagnosticsProbe.cs)).
 >
 > So **both** ways of making a write fail end with **no PERF line at all**, and the improved
 > `PipeTransportStats` accounting has nowhere to appear. Killing the game to observe a figure that is
@@ -1237,7 +1237,7 @@ matters is simply "do normal mailbox commands still work".
 >
 > **The fix itself is real and correctly placed** — `PipeClient.SendAsync` now wraps `SendCoreAsync`
 > (write included) in the `try/finally` that calls `PipeTransportStats.Record`, where it used to wrap
-> only `await tcs.Task` ([PipeClient.cs:195-203](ui/UE5DumpUI/Services/PipeClient.cs:195)). It is the
+> only `await tcs.Task` ([PipeClient.cs:195-203](../ui/UE5DumpUI/Services/PipeClient.cs)). It is the
 > *observation method* that is wrong, not the change.
 >
 > **What would actually check it** (cheap, and belongs in the test project rather than a live
@@ -1254,7 +1254,7 @@ matters is simply "do normal mailbox commands still work".
 > This closes both gaps — the unrun drive half, and the limit itself.
 >
 > **1 — The set claim is now PROVED, not observed.** `git show 5374e662` on
-> [ProxyDeployService.cs:417](ui/UE5DumpUI/Services/ProxyDeployService.cs:417) is the whole change:
+> [ProxyDeployService.cs:436](../ui/UE5DumpUI/Services/ProxyDeployService.cs) is the whole change:
 >
 > ```csharp
 > // before:  try { var info = FileVersionInfo.GetVersionInfo(exePath); return null; } catch { return null; }
@@ -1295,7 +1295,7 @@ matters is simply "do normal mailbox commands still work".
 > A row pointing at the wrong directory could not produce that.
 >
 > **4 — `UeVersion` is bound by NOTHING.** The grid's `Version` column binds `InstalledVersion`
-> ([ProxyDeployPanel.axaml:373](ui/UE5DumpUI/Views/ProxyDeployPanel.axaml:373)), and a whole-tree
+> ([ProxyDeployPanel.axaml:373](../ui/UE5DumpUI/Views/ProxyDeployPanel.axaml)), and a whole-tree
 > grep finds `DetectedGame.UeVersion` written at the two call sites and read only by
 > `ProxyDeployTests.cs:526`'s `Assert.Null`. ⚠ So "the Version column is empty" — cited on
 > 2026-08-20 — is **not** evidence about `UeVersion`; that column never showed it. (The 08-21 note
@@ -1353,7 +1353,7 @@ matters is simply "do normal mailbox commands still work".
 >   memo shows up instantly as a mismatch between two columns computed from different places.
 >
 > ⚠⚠ **The trap that almost produced a false defect report — read this before re-running.** The
-> Package filter is a **prefix** match ([GameClassFilterViewModel.cs:209](ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs:209)),
+> Package filter is a **prefix** match ([GameClassFilterViewModel.cs:246](../ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs)),
 > and the values start with **two** slashes. Typing `Game`, `Script` or even `/Script` returns **zero
 > rows**, while the header keeps reading `4,393 classes shown of 4,393 total` — because that line is
 > the LOAD count, not the filtered count. The combination reads exactly like the blank-Package failure
@@ -1948,7 +1948,7 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > `IsComplexReturnType`, not through the param refusal. For the record the predicate under test is
 > name-keyed exactly as the row describes —
 > `IsRefusedParam(typeName) => typeName == "TextProperty"`
-> ([ParamBufferBuilder.cs:234](ui/UE5DumpUI/Services/ParamBufferBuilder.cs:234)) — with the reason in
+> ([ParamBufferBuilder.cs:272](../ui/UE5DumpUI/Services/ParamBufferBuilder.cs)) — with the reason in
 > its own comment: an all-zero FText is not an empty FText, it carries a `TSharedRef` the engine
 > dereferences, so zeros crash rather than default. Closing this needs a title with an FText param.
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
@@ -1969,7 +1969,7 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > [WARN] [WALK] ProbeRowMapOffset: could not find RowMap (endReflected=0x98)   ×3
 > ```
 > `RowMap` is a `TMap<FName, uint8*>` and is **not reflected**, so `Ubel::ProbeRowMapOffset`
-> ([Ubel.cpp:6137](dll/src/Ubel.cpp:6137)) has to scan memory past the reflected fields for it. On
+> ([Ubel.cpp:6309](../dll/src/Ubel.cpp)) has to scan memory past the reflected fields for it. On
 > this title it does not find it.
 >
 > 📌 **Sweeping every `walk-*.log` on the machine: `ProbeRowMapOffset` has NEVER been recorded
@@ -2018,7 +2018,7 @@ spot-check rather than a 30-column sweep.
 >
 > ⭐ **Every one of the five dead ends below is now EXPLAINED, and the explanations are the payload
 > — that is the only reason this block still exists.** Attempts 1/4/5 (Xref → 0) asked a
-> **Kismet bytecode** question ([Aura.cpp:5541](dll/src/Aura.cpp:5541)) about fields whose
+> **Kismet bytecode** question ([Aura.cpp:5649](../dll/src/Aura.cpp)) about fields whose
 > references are native, where 0 is the *correct* answer — the dialog's own footer says so.
 > Attempts 2/3 (Props → 0) hit the **`Class fields only` checkbox, which is CHECKED by default**
 > and hid every local; and a `BC,Native` function takes the native-disasm path, so the flag to
@@ -2505,7 +2505,7 @@ spot-check rather than a 30-column sweep.
 >
 > ⚠⚠ **Two reasons the submenu legitimately does NOT appear, and both look like the feature is
 > missing.** The menu is gated on `ForceEnabled && SelectedResult.CanForceAny`
-> ([PropertySearchViewModel.cs:362](ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs:362)), and
+> ([PropertySearchViewModel.cs:398](../ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs)), and
 > `CanForceAny` requires `ShowScalarActions => !IsNested` plus a supported type:
 > * a **nested row** — anything produced with **Deep (structs/containers)** ticked, e.g.
 >   `WorldPartitionDestructible…DestructibleHLODState.Da…` — is excluded, however scalar it looks;
@@ -2904,7 +2904,7 @@ fire. It built, it was unit-pinned with 7 tests including a negative control tha
 
 **Why it cannot work, which is the useful part:** the restore ends in
 `grid.ScrollIntoView(anchor, null)`
-([LiveWalkerPanel.axaml.cs:341](ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs:341)), and
+([LiveWalkerPanel.axaml.cs:361](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs)), and
 `ScrollIntoView` means **"make this row visible"**, not "put this row at the top". A row that
 drifted from viewport position 0 to position 1 is *still visible*, so the call is a no-op. **Any**
 fix built on `ScrollIntoView` is blind to a drift smaller than the viewport, and that rules out the
@@ -4228,13 +4228,13 @@ LOWERING the cap, not by finding a host*):
 >
 > ⭐⭐ **3c has nothing to do with the pattern.** The note below reasons about pattern hits and
 > SIB alternates, but `this offset is TRUSTED again` is emitted by the **post-install validator**
-> ([Frieren.cpp:1869](dll/src/Frieren.cpp:1869)) when a *previous* validation FAILED and a later one
+> ([Frieren.cpp:1943](../dll/src/Frieren.cpp)) when a *previous* validation FAILED and a later one
 > PASSES. And the failure path only runs when the offset's provenance is the **version table** —
 > a zero-fire reading on a pattern-detected offset is deliberately ignored. So on DumperTest the
 > cycle can never start, for a reason unrelated to which patterns match.
 >
 > ⭐ **The stage is therefore one line, and it cannot crash the host:** relabel the provenance
-> (`fromTable = true`) at [Frieren.cpp:1773](dll/src/Frieren.cpp:1773). **The offset itself is still
+> (`fromTable = true`) at [Frieren.cpp:1830](../dll/src/Frieren.cpp). **The offset itself is still
 > the pattern's**, so the hook is correct and fires normally — only the validator's interpretation of
 > a zero-fire window changes. Nothing is mis-detected, which removes the crash risk a
 > wrong-slot stage would carry.
@@ -4581,11 +4581,11 @@ whether the record ends ticked or unticked.*
 > ⚠ **The helper must be a TABLE FILE, not a global.** A first attempt loaded 1.1 with `dofile`,
 > which defines `freezeProperty` perfectly well — and the script still refused, because
 > `AppendHelperLoader` resolves it with **`findTableFile('ue5_freeze_helper.lua')`**
-> ([FreezeScriptGenerator.cs:238](ui/UE5DumpUI/Services/FreezeScriptGenerator.cs:238)), a table-file
+> ([FreezeScriptGenerator.cs:238](../ui/UE5DumpUI/Services/FreezeScriptGenerator.cs)), a table-file
 > lookup with *no filesystem fallback*. Embedded properly with the bridge's own documented
 > incantation — `findTableFile` (delete-if-exists) + `createTableFile` +
 > `Stream.copyFrom(createStringStream(...))` + a `Stream.Size` check
-> ([IAobMakerBridge.cs:80-88](ui/UE5DumpUI/Core/IAobMakerBridge.cs:80)) — verified `29535 == 29535`.
+> ([IAobMakerBridge.cs:80-88](../ui/UE5DumpUI/Core/IAobMakerBridge.cs)) — verified `29535 == 29535`.
 >
 > **THE ARM — all three of the step's assertions hold:**
 >
@@ -4977,7 +4977,7 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 > `[G3-VOID-2026-08-20]`. The rig's docstring now says so at the top.
 >
 > ⭐ **Staged instead, and the stage is chosen to satisfy the row's own guard.** `apply_rescan` runs
-> its GEngine second pass **only `if (g_cachedGEngine == 0)`** ([Fern.cpp:5159](dll/src/Fern.cpp:5159)),
+> its GEngine second pass **only `if (g_cachedGEngine == 0)`** ([Fern.cpp:5204](../dll/src/Fern.cpp)),
 > so the precondition is enforced in code. A one-shot skip in `Genau::FindGEngineSlot`, placed
 > **after** the existing `bOffsetsProbeRan` deferred gate, forces the first *post-gate* resolve to
 > miss: init's deferred call returns early without consuming it, init's `ResolveGEngineDeferred`
@@ -5790,13 +5790,18 @@ ersion.dll`, our proxy with **no exe beside it**. **Find leftovers** → `Found 
 >
 > <details><summary>the original finding, as recorded</summary>
 >
-> `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:163](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:163))
+> `TryBeginExclusive(what)` ([ProxyDeployViewModel.cs:162](../ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs))
 > does three things: tests `IsScanning || IsRemovingOrphans`, sets **`_busyWith = what`**, sets
 > `IsScanning = true`. **Seven** commands use it and report through
 > `BusyMessage()` → `Busy: {_busyWith} is running — wait for it to finish`.
 >
-> `DeleteSelectedOrphansAsync` ([:959](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:959)) does not.
+> `DeleteSelectedOrphansAsync` ([:956](../ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs)) does not.
 > It hand-rolls the same predicate and then:
+>
+> ⚠ **The line reference above is current (re-derived 2026-09-06); the finding it supports is not.**
+> The code at that site now carries `[ORPHANBUSYMSG-2026-08-24]` and a comment saying the message
+> *used to* be the generic one this paragraph complains about. Read the block as history — the
+> link is accurate about WHERE, and the prose is superseded about WHAT.
 >
 > * reports **`"Wait for the current operation to finish"`** — a generic line that names nothing, and
 >   almost exactly the wording step 1 says the fix exists to replace (*"not the old 'Wait for scan to
@@ -7167,7 +7172,7 @@ about.
 >    `UScriptStruct`'s `PropertiesSize`.
 >
 > ⇒ **A garbage ElementSize is defended three ways.** The degraded branch is guarded by
-> `else if (fv.mapCount > 0 || sa.Data != 0)` ([Ubel.cpp:4573](dll/src/Ubel.cpp:4573)) and is
+> `else if (fv.mapCount > 0 || sa.Data != 0)` ([Ubel.cpp:4713](../dll/src/Ubel.cpp)) and is
 > reached only when the pair layout genuinely cannot be resolved.
 >
 > **What a future attempt must change** (do not repeat the above):
@@ -8996,14 +9001,14 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > ### ⚠ Check the ARMING line first — `client gone mid-command`
   >
   > The latch has its own WARN, emitted immediately before it
-  > ([`Fern.cpp:769`](../dll/src/Fern.cpp:769)): `client gone mid-command (err=…) — aborting
+  > ([`Fern.cpp:859`](../dll/src/Fern.cpp)): `client gone mid-command (err=…) — aborting
   > in-flight op`. **Grep for that BEFORE grepping for the B4 line.** Absent ⇒ `g_perCommand` was
   > never latched ⇒ the B4 WARN was right to stay silent and the run proved nothing. Only when it
   > IS present does the absence of the B4 line mean anything.
   >
   > ### The axis is not "long" — it is "ONE call that blocks for seconds"
   >
-  > `MonitorLoop` sleeps **200 ms** between polls ([`Fern.cpp:732`](../dll/src/Fern.cpp:732)) and
+  > `MonitorLoop` sleeps **200 ms** between polls ([`Fern.cpp:809`](../dll/src/Fern.cpp)) and
   > peeks only connections whose `inFlight` is set (`:743`), so a single command has to still be
   > running when a poll lands. **A CHUNKED operation never arms it, however many minutes it takes**
   > — it is thousands of short commands with gaps in between.
@@ -9011,7 +9016,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > Two that look like the obvious choice and are **both traps** (each cost a real run on
   > 2026-08-06):
   > - **Dump All Metadata** — `DumpAllService` is a `do/while` over
-  >   `GetObjectListAsync(offset, pageSize)` ([`DumpAllService.cs:115-133`](../ui/UE5DumpUI/Services/DumpAllService.cs:115))
+  >   `GetObjectListAsync(offset, pageSize)` ([`DumpAllService.cs:120-137`](../ui/UE5DumpUI/Services/DumpAllService.cs))
   >   plus `WalkClassesBatchAsync` in chunks of 200 (`:262`). **Measured: `get_object_list` pages
   >   50–80 ms apart** (19:45:16.124 → .201 → .249 → .323) — no poll ever caught one. The client's
   >   death surfaced through the connection's own write instead (`Failed to write response` →
@@ -9045,7 +9050,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 
   | half | evidence |
   |---|---|
-  | toggle greyed | `get_pointers` returns `gworld_aob: ""` → `IsAobSymbolAvailable=false` → `CanUseAobSymbol=false` → `IsEnabled` binding at [`LiveWalkerPanel.axaml:231`](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml:231). **Observed on screen**: the *AOB* item in Live Walker → Options renders dim while every sibling is white. |
+  | toggle greyed | `get_pointers` returns `gworld_aob: ""` → `IsAobSymbolAvailable=false` → `CanUseAobSymbol=false` → `IsEnabled` binding at [`LiveWalkerPanel.axaml:231`](../ui/UE5DumpUI/Views/LiveWalkerPanel.axaml). **Observed on screen**: the *AOB* item in Live Walker → Options renders dim while every sibling is white. |
   | export resolves | *Copy CE XML* on `GWorld → PersistentLevel`: 160,036 chars, **zero `??`**, **zero AOB markers** (`AOBScanModuleUE` / `aobscan` / the mangled name / `UE_GWorld`), root `<Address>1E4542EAEA0</Address>` literal with `+30` child offsets. |
 
   The mechanism is [`IsCeReplayableAob`](../dll/src/Himmel.h) suppressing the triple for
@@ -10021,7 +10026,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     `gap_samples = 1199 = count-1`** on the same two rows, same game, same rig. The four
     once-per-frame functions were 1.00x in both runs — a **free built-in control** that rules out a
     clock or window-measurement artifact, because no clock error can move exactly the two doubled
-    rows. The guard is now `nowMs >= s.lastMs` ([Linie.cpp:46](dll/src/Linie.cpp:46)) with the
+    rows. The guard is now `nowMs >= s.lastMs` ([Linie.cpp:46](../dll/src/Linie.cpp)) with the
     reorder case (`nowMs < s.lastMs`, the unsigned-underflow input) still excluded, so the
     ~1.8e19-gap hazard L5 was filed for cannot occur.
     ⚠ Two commits, do not conflate: `7f3898ff` (the L1/L5/L8/L10/L12 batch) introduced the guard as
@@ -10048,15 +10053,15 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     **Offline half, on the shipped binary and stronger than reading source:** `GetWindowTextW`
     does not appear in `dist/UE5Dumper.dll`'s import table at all, while `SetWindowLongPtrW` —
     the subclassing call two lines away in the same function — does, so the detector fires. The
-    only source occurrence is the explanatory comment ([Grausam.cpp:175](dll/src/Grausam.cpp:175)).
+    only source occurrence is the explanatory comment ([Grausam.cpp:175](../dll/src/Grausam.cpp)).
     **Live half:** freeze ONLY the UE game thread, then enable the lock so `SubclassEnumProc` runs
     over a window whose thread is not pumping → **0.260 s, `state=1`** (budget 3 s).
     ⚠⚠ **Three separate ways this test was vacuous before it was right — all found, none assumed.**
-    (1) The rig sent `enabled=True`; the DLL reads **`enable`** ([Fern.cpp](dll/src/Fern.cpp)), so
+    (1) The rig sent `enabled=True`; the DLL reads **`enable`** ([Fern.cpp](../dll/src/Fern.cpp)), so
     the unknown key defaulted to **false** and every call disabled an already-disabled lock. The
     reply still said `ok: true`. Caught only because the DLL log showed `set OFF` twice and no
     `set ON`. The rig now asserts the reply's `state == 1`.
-    (2) A **re-enable skips the body**: [Grausam.cpp:167](dll/src/Grausam.cpp:167) is
+    (2) A **re-enable skips the body**: [Grausam.cpp:167](../dll/src/Grausam.cpp) is
     `if (::GetPropW(hwnd, kOrigProcProp)) return TRUE; // already subclassed by us`. So the
     enable must be the **first ever in that process** — which needs a fresh launch, and the rig
     refuses to run if `get_foreground_lock` is not 0. Proof the body ran: the `Subclassed window`
@@ -10153,7 +10158,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     20:19:15.473  [Grausam] Foreground lock DISABLED
     ```
     ⭐ **The ENABLED line is what makes this non-vacuous.** `Foreground lock DISABLED` sits in
-    the unconditional soft-disable branch ([Grausam.cpp:271](dll/src/Grausam.cpp:271)), so on its
+    the unconditional soft-disable branch ([Grausam.cpp:271](../dll/src/Grausam.cpp)), so on its
     own it does not show anything was turned off. Here the reply carried `state=1` **and** the log
     recorded the enable 2 s earlier, so the lock was demonstrably on when shutdown reached it.
     ⬜ **Still owed:** the *"re-subclasses on the GFW hook's rare window re-find"* half needs the

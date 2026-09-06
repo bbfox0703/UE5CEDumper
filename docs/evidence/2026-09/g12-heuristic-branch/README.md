@@ -1,6 +1,6 @@
 # G12 — the `ValidateAndFixOffsets` heuristic branch, and one run that contradicts itself
 
-**Supports:** `[G12G3-CLOSE-2026-09-06]` in [`../../verification-register.md`](../../verification-register.md).
+**Supports:** `[G12G3-CLOSE-2026-09-06]` in [`../../../verification-register.md`](../../../verification-register.md).
 **Preserved 2026-09-06**, when the files were 13–14 days old against a 21-day sweep — i.e. roughly a
 week from deletion. Copied verbatim; `.gitattributes` marks this tree `-text` so the CRLF endings the
 DLL wrote are the CRLF endings committed.

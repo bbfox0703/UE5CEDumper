@@ -125,7 +125,7 @@ ONE PREMISE UNDERNEATH THE .def IS FALSE AND MATTERS FOR THE FIX. `ProxyDinput8.
 
 - dll/src/Frieren.h:28 — '__declspec(dllexport) bool     UE5_AutoStart();'  (returns bool; caller of ordinal #6 expects LPCDIDATAFORMAT)
 
-- dll/src/Frieren.cpp:895-899 + :917 — 'HANDLE h = CreateThread(nullptr, 0, [](LPVOID) -> DWORD {' / '        Routine::RunThreadGuarded("UE5_AutoStart", [] { UE5_AutoStartBlocking(); });' ... '    return true;'  — the scan is spawned off-thread and `true` (=1) is returned immediately, so the caller derefs address 1.
+- dll/src/Frieren.cpp:895-899 + :917 — `HANDLE h = CreateThread(nullptr, 0, [](LPVOID) -> DWORD {` / `        Routine::RunThreadGuarded("UE5_AutoStart", [] { UE5_AutoStartBlocking(); });` ... `    return true;`  — the scan is spawned off-thread and `true` (=1) is returned immediately, so the caller derefs address 1.
 
 - dll/src/Frieren.h:113 — '__declspec(dllexport) bool      UE5_EnsureGameThreadHook();'  and dll/src/Mimic.h:405 — 'extern "C" __declspec(dllexport) extern Mimic::MailboxContract g_mailboxContract;'  — both exported by the shipped dinput8 proxy (@9, @66) yet absent from ProxyDinput8.def. Proves the .def's 'suppresses default exports' comment wrong.
 
