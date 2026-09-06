@@ -622,6 +622,18 @@ Stating these so nobody spends a packaging cycle on them:
   `FOptionalProperty` exists (`PropertyOptional.h`), UHT resolves it (`UhtOptionalProperty.cs`), the
   only inner-type rule is `CanBeContainerValue`, and the engine itself ships `TOptional<FBox>` and
   `TOptional<uint32>` UPROPERTYs.
+* ⛔ **`<Staged>\Windows\DumperTest.exe` IS NOT THE GAME — inject into the CHILD.** The exe at the
+  root of a staged/archived build is UE's **bootstrap stub**: 153 KB, and measured 2026-09-07 it
+  imports `CreateProcessW` and carries the literal string
+  `DumperTest\Binaries\Win64\DumperTest-Win64-Shipping.exe`. It launches the real 132 MB exe as a
+  **separate process** and is not the engine at all. This is not cosmetic for the G2 row: the stub
+  still carries the engine's own `Default.rc2` version block, so
+  `pe_version_probe.py` reports **`prod=5.4.4.0 → Tier0 ProductVersion -> 504`** for it while the
+  real child reports `1.2.0.0 → FALLS THROUGH`. **A rig that attaches to the first `DumperTest*.exe`
+  it finds by name will silently measure the wrong binary and report 504** — which looks exactly
+  like "the `.rc` fixture did not work" rather than "you injected into the launcher". Always target
+  `DumperTest\Binaries\Win64\DumperTest*.exe`. (The same shape applies to every packaged UE title,
+  so it is worth knowing beyond this fixture.)
 
 -----
 
