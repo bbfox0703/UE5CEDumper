@@ -73,10 +73,16 @@ def main():
         print("  raw json : %s" % json.dumps(target, ensure_ascii=False)[:400])
 
         # The discriminator. Say which side owns the defect, in the terms the register needs.
-        if v in ("", None):
-            print("\n⭐ THE DLL RETURNS AN EMPTY VALUE (%r)." % v)
-            print("   So `No` on screen is the UI's rendering, NOT the DLL's answer --")
-            print("   the defect, if any, is in the C# value-column path, not ReadFTextString.")
+        # ⭐ "(empty)" IS THE PASS, and it is not the DLL inventing a word. ReadFTextString
+        # returns "", and the wire/display layer renders an empty display string as the
+        # placeholder `(empty)` -- which is exactly the acceptance value README.md has always
+        # documented for this field ("| Text_Empty | *(empty)* | the empty display-string path |").
+        # The tell that it really is empty now: the garbage run also carried a `str_value` key,
+        # and this one does not.
+        if v in ("", None, "(empty)"):
+            print("\n⭐ THE DLL RETURNS AN EMPTY VALUE (%r) -- matches README's acceptance value." % v)
+            print("   [TEXTEMPTY-2026-09-06] is fixed: before the guard this field read 'ࣳ' (U+08F3),")
+            print("   and had been seen as 'No' -- different garbage per run, read from adjacent memory.")
         elif isinstance(v, str) and v.strip().lower() in ("no", "none", "null"):
             print("\n⭐ THE DLL ITSELF RETURNS %r." % v)
             print("   So the screen is faithfully showing what the DLL sent, and the defect is")

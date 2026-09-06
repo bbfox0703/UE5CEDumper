@@ -8901,12 +8901,64 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   >    > `Text_Even4_TwoNull`, `Text_Odd3_OneNull` 走一步, `Text_Even6_NoNull`). So the fault is the
   >    > empty path specifically, not the walk and not B28's decoder.
   >    >
-  >    > ▶ **The fix is a sentinel change, not a scan tweak** — the two passes need to return
-  >    > *found/not-found* separately from the string (an `optional`, an out-param, or a distinct
-  >    > "decoded ok, length 0" result from `TryDecodeFStringAt`). ⚠ Whoever does it must add the
-  >    > negative control this row could not have: an empty FText must read empty **and** a genuinely
-  >    > absent/garbage FTextData must still read empty — today those two are the same code path,
-  >    > which is precisely the bug.
+  >    > ▶ ~~**The fix is a sentinel change, not a scan tweak**~~ — see the closure below; that
+  >    > reading was wrong, and usefully so.
+  >    >
+  >    > > #### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[TEXTEMPTY-FIX-2026-09-06]` — and the diagnosis above was half wrong
+  >    > >
+  >    > > ⛔ **"The fix is a sentinel change" was WRONG, and four independently-designed sentinel
+  >    > > fixes were killed before that became clear.** An empty FString is `{nullptr, 0, 0}` —
+  >    > > byte-identical to zeroed memory — so no amount of found/not-found plumbing can make the
+  >    > > empty slot recognisable. Worse, three designs tried to ANCHOR the display-string offset
+  >    > > (learn it once, reuse it) and all three die to one shape this file's own comment already
+  >    > > describes at [`Ubel.cpp`](../dll/src/Ubel.cpp) §ReadFTextString: `FTextHistory_Base`
+  >    > > carries an **inline** SourceString *and* a **pointer** to a localized display string. Any
+  >    > > cache that answers `""` when the inline slot reads `{0,0,0}` blanks every localized text
+  >    > > of that class, returning before Pass 2 ever dereferences the pointer where the string
+  >    > > actually is. That is a systematic regression on the B28 corpus — worse than the bug.
+  >    > >
+  >    > > ⭐ **What actually shipped is one predicate: a decode must ACCOUNT FOR the length its own
+  >    > > header claimed.** The garbage header claimed 4283 characters and the decode delivered
+  >    > > **1** — because `EncodeUtf16` breaks at the first null unit
+  >    > > ([`Utf8Helpers.h:154`](../dll/src/Utf8Helpers.h)) and a zero-filled page terminates
+  >    > > immediately. Nothing in the pipeline compared those two numbers.
+  >    > > `Ubel::DecodedLengthMatchesFString` now does: `chars*4 + 8 >= Num-1`, which every genuine
+  >    > > FString satisfies with 2× spare on the UTF-16 branch, and which the measured garbage
+  >    > > fails by **357×**.
+  >    > >
+  >    > > ⚠ **Deliberately the WEAK form.** `utf8_helpers_test.cpp`'s
+  >    > > `Test_Decode_TieBreakIsGatedOnUtf8Success` exists to pin a decision that the strong form
+  >    > > ("the first null unit must be at Num-1") silently reverses. A unit test now names that
+  >    > > row so anyone tightening the bound trips over the decision first.
+  >    > >
+  >    > > ⛔ **A Max-window tightening was designed and rejected**: `FString::Reserve` sets ArrayMax
+  >    > > with no relation to Num and nothing shrinks it, so a legitimate `{num=100, max=400}`
+  >    > > would be refused at its REAL slot and the scan would walk past its own answer.
+  >    > >
+  >    > > **LIVE, DumperTest dev, build 3402 — the acceptance test the row asked for:**
+  >    > >
+  >    > > | field | before | after |
+  >    > > |---|---|---|
+  >    > > | `Text_Empty` | **`'ࣳ'` (U+08F3)** | **`(empty)`** — README's own documented value |
+  >    > > | `Text_Ascii` | `DumperTest FText ASCII` | unchanged |
+  >    > > | `Text_Localized` | 統一言語 | unchanged |
+  >    > > | `Text_Even2_OneNull` · `Text_Even2_TwoNull` | 統一 · 一言 | unchanged |
+  >    > > | `Text_Even4_TwoNull` · `Text_Odd3_OneNull` | 統一言語 · 走一步 | unchanged |
+  >    > > | `Text_Even6_NoNull` | 日本語テスト | unchanged |
+  >    > >
+  >    > > All seven controls unchanged, so the guard cost no working read. ⭐ The tell that it is
+  >    > > genuinely empty rather than differently-wrong: the garbage run's JSON carried a
+  >    > > `str_value` key and this one does not.
+  >    > >
+  >    > > **Tests: 265 + 2374 + 22 + 14 + 43 C++ and the full C# suite, 0 failures.**
+  >    > > ⭐ Negative-controlled: making the predicate `return true` fails **exactly one**
+  >    > > assertion — "the measured garbage is rejected" — and no other, so the test exercises the
+  >    > > predicate and the predicate is what rejects the garbage.
+  >    > >
+  >    > > ⚠ The safety property that makes this landable at all: `ReadFTextString` reads `""` as
+  >    > > *"keep scanning"*, so a rejection here can never turn a readable text into an empty one.
+  >    > > The worst it can do is let a scan that was already returning noise continue one slot
+  >    > > further.
   > 2. The package under test was built from a **stale** `DumperTestActor.cpp` (退一步 where the
   >    repo had 走一步), so the odd-length control was not the documented one. It renders correctly
   >    either way, so B28's result stands — but see the identity-record note below; this is exactly

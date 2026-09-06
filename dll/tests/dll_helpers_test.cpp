@@ -250,6 +250,48 @@ static void Test_Ubel_ResolveFunctionInChain_RejectsBadInput() {
 // The ordering rule lives in Aura.h so it can be compiled here; no test target builds
 // Aura.cpp, so a rule left in the walk itself would be unpinnable.
 
+// ----- Ubel::DecodedLengthMatchesFString ------------------------------------
+//
+// The [TEXTEMPTY-2026-09-06] guard: a decode must account for the length its own FString header
+// claimed. See the header comment in Ubel.h for the derivation of the chars*4 + 8 bound.
+static void Test_Ubel_DecodedLengthMatchesFString() {
+    // ⭐ THE MEASURED DEFECT. FTextData+0x40 parsed as {num=4284}; a zero-filled heap page decoded
+    // to ONE character because EncodeUtf16 breaks at the first null unit. 1 vs 4283 claimed.
+    EXPECT("the measured garbage is rejected (1 char vs 4283 claimed)",
+           !Ubel::DecodedLengthMatchesFString("\xE0\xA3\xB3", 4284));
+
+    // ⭐ THE CONTROL THAT MATTERS MOST: the real string from the SAME walk, one field apart.
+    EXPECT("a genuine ASCII display string is accepted",
+           Ubel::DecodedLengthMatchesFString("DumperTest FText ASCII", 23));
+
+    // ⛔ THE PINNED ROW. utf8_helpers_test.cpp's Test_Decode_TieBreakIsGatedOnUtf8Success decodes
+    // 中<NUL>二 (num=4) to a single CJK char, deliberately. The WEAK bound must keep accepting it:
+    // 1*4 + 8 = 12 >= 3. If someone strengthens this predicate, this line fails first and points
+    // at the decision they are silently reversing.
+    EXPECT("the deliberately-gated interior-null row still decodes",
+           Ubel::DecodedLengthMatchesFString("\xE4\xB8\xAD", 4));
+
+    // CJK counts by CHARACTER, not byte: 4 glyphs = 12 UTF-8 bytes, claimed 4.
+    EXPECT("multi-byte glyphs count once, not per byte",
+           Ubel::DecodedLengthMatchesFString("\xE7\xB5\xB1\xE4\xB8\x80\xE8\xA8\x80\xE8\xAA\x9E", 5));
+
+    // An empty decode is never "accounted for" -- and it must not be, because ReadFTextString
+    // reads "" as "keep scanning". This is the property that makes the guard safe: it can only
+    // ever say "not this slot", never "this slot is the answer".
+    EXPECT("an empty decode is rejected", !Ubel::DecodedLengthMatchesFString("", 100));
+    EXPECT("num < 2 is rejected", !Ubel::DecodedLengthMatchesFString("x", 1));
+
+    // The bound is WEAK on purpose. A 4-byte-per-char UTF-8 string is the exact-equality case:
+    // 10 supplementary-plane glyphs, num-1 = 40 claimed -> 10*4 + 8 = 48 >= 40, accepted.
+    std::string wide;
+    for (int i = 0; i < 10; ++i) wide += "\xF0\x9F\x98\x80";   // U+1F600, 4 bytes each
+    EXPECT("the all-4-byte UTF-8 equality case is accepted (this is why the bound is /4)",
+           Ubel::DecodedLengthMatchesFString(wide, 41));
+
+    EXPECT_EQ_U64("CountUtf8Chars counts glyphs", Ubel::CountUtf8Chars(wide), 10);
+    EXPECT_EQ_U64("CountUtf8Chars on ASCII", Ubel::CountUtf8Chars("abc"), 3);
+}
+
 static void Test_Aura_ChoosePreviewSource() {
     using PS = Aura::PreviewSource;
 
@@ -7828,6 +7870,8 @@ int main() {
     RUN(Test_Ubel_ResolveFunctionInChain_ExactBeatsCaseInsensitive);
     RUN(Test_Ubel_ResolveFunctionInChain_MalformedChainTerminates);
     RUN(Test_Ubel_ResolveFunctionInChain_RejectsBadInput);
+    RUN(Test_Ubel_DecodedLengthMatchesFString);   // [TEXTEMPTY-2026-09-06] — a decode must
+                                                  // account for its own header's claimed length
 
     // [CDOSCOPE-2026-08-20] preview scope must match what the row's actions do
     RUN(Test_Aura_ChoosePreviewSource);

@@ -904,6 +904,70 @@ inline bool IsPlausibleStringCount(int32_t count) {
     return count > 0 && count <= kMaxFStringChars;
 }
 
+// === FText display-string length consistency (the Text_Empty garbage) ===
+//
+// MEASURED on DumperTest 2026-09-06: a field initialised with FText::GetEmpty() read back as the
+// single character U+08F3, and had previously been seen as "No" — different garbage on different
+// runs, because it was read from whatever lay nearby. The real display FString sits at
+// FTextData+0x28 as the canonical EMPTY {nullptr, 0, 0}; TryDecodeFStringAt steps over it
+// correctly (!data, num < 2), and ReadFTextString's layout-agnostic scan then reached
+// FTextData+0x40, whose 16 bytes parse as {data=0x2B52A030000, num=4284, max=16384}. That cleared
+// every gate at Ubel.cpp:463-465 — num in [2, 8192]; max >= num; max <= 4*num+256 (17392, with
+// 1008 to spare); data in the user-space range.
+//
+// What happened next is the actual defect. 8568 bytes of a zero-filled heap page were handed to
+// DecodeFStringBuffer. Its UTF-8 hypothesis failed on the interior null, so `utf8Ok` was false —
+// which is exactly what SKIPS the Rule 3a interior-null tie-break. The UTF-16 hypothesis then
+// found its terminator trivially, EncodeUtf16 hit `if (ch == 0) break;` (Utf8Helpers.h:154) at
+// unit index 1, and returned ONE character. LooksLikeDecodedText counts only '?' markers, saw
+// none out of one, and accepted.
+//
+// A header claiming 4283 characters delivered 1, and NOTHING in the pipeline compared those two
+// numbers. That comparison is the whole fix.
+//
+// ⚠ NOT in Utf8Helpers. This is that file's own Rule 3a applied at 25% strength. Rule 3a is gated
+// on utf8Ok DELIBERATELY, and `Test_Decode_TieBreakIsGatedOnUtf8Success`
+// (dll/tests/utf8_helpers_test.cpp:724) exists to pin that gate. The WEAK form below keeps that
+// row's answer (1 char decoded, num=4 -> 1*4+8 = 12 >= 3, accepted) and still rejects the
+// measured garbage by 357x. ⛔ Do not strengthen it to "the first null unit must be at Num-1"
+// without re-deciding that test.
+//
+// ⛔ A Max-window tightening was considered here and REJECTED. FString::Reserve sets ArrayMax with
+// no relation to Num and nothing shrinks it afterwards, so a legitimate {num=100, max=400}
+// display string — accepted today — would be refused at its REAL slot and the scan would walk
+// past its own answer. Ubel.cpp's shipped comment is right that Max is not the discriminator; it
+// was only wrong that DecodeFStringBuffer already was one.
+
+// Decoded characters in a UTF-8 string: lead bytes only, so one multi-byte glyph counts once.
+// Same counting rule as LooksLikeDecodedText, kept separate because that one answers "is this
+// text?" and this one answers "how much of it is there?".
+inline size_t CountUtf8Chars(const std::string& s) {
+    size_t n = 0;
+    for (unsigned char c : s) if ((c & 0xC0) != 0x80) ++n;
+    return n;
+}
+
+// A decode must ACCOUNT FOR the length its own header claimed. An FString is a TArray<TCHAR>
+// whose Num INCLUDES the terminator, so its Num-1 payload units are non-null by construction —
+// which bounds BOTH of DecodeFStringBuffer's branches from below:
+//   * UTF-16: EncodeUtf16 emits one output char per unit, or one per surrogate PAIR, and
+//     Sanitize is 1:1 on its always-valid output          => chars >= (Num-1)/2.
+//   * UTF-8 : Num-1 bytes that IsWellFormedUtf8 already validated, Sanitize byte-for-byte,
+//     longest sequence 4 bytes                            => chars >= (Num-1)/4.
+// So chars*4 >= Num-1 holds for EVERY genuine FString — 2x spare on the UTF-16 branch, exact
+// equality on an all-supplementary-plane UTF-8 one. The +8 is margin for that equality case and
+// for a build whose Num excludes the terminator; it is not a tuned threshold.
+//
+// The only way to fail is a payload null before ~75% of the claimed length, which is what
+// EncodeUtf16's early break produces when the header is a lie. Measured:
+// "DumperTest FText ASCII" 22 chars vs 22 claimed, passes 4x over; the garbage 1 vs 4283, fails
+// by 357x.
+inline bool DecodedLengthMatchesFString(const std::string& decoded, int32_t num) {
+    if (decoded.empty() || num < 2) return false;
+    const size_t claimed = static_cast<size_t>(num) - 1;   // Num includes the null
+    return CountUtf8Chars(decoded) * 4 + 8 >= claimed;
+}
+
 // Heuristically guess field types for a raw byte gap [gapStart, gapEnd) of the
 // object at baseAddr, appending one LiveFieldValue per guessed slot (each with
 // .guessed = true). Reads memory (SEH-safe via Macht). The "Guess What" engine;

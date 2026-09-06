@@ -456,10 +456,16 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
     // Plausibility gate for a real FString header (steps the probe over
     // garbage): non-null Data, Num in [2, 8192] (includes the trailing null
     // unit), Max in [Num, 4*Num+256]. The Max window is generous — a localized
-    // dialogue FString can carry reserved capacity — because the real
-    // discriminators are the null-terminator position + content check inside
-    // DecodeFStringBuffer, not Max. Data must also look like a user-space
-    // heap pointer, which rejects most non-FString 16-byte regions cheaply.
+    // dialogue FString can carry reserved capacity, and FString::Reserve sets Max
+    // with no relation to Num — so Max is deliberately NOT the discriminator.
+    // Data must also look like a user-space heap pointer, which rejects most
+    // non-FString 16-byte regions cheaply.
+    //
+    // ⚠ THIS COMMENT USED TO CLAIM the real discriminators were "the null-terminator
+    // position + content check inside DecodeFStringBuffer". Measured false 2026-09-06:
+    // a zero-filled heap page clears both — the terminator is found trivially and the
+    // content check counts only '?' markers. See DecodedLengthMatchesFString in Ubel.h
+    // for what actually discriminates, and why it lives there and not in Utf8Helpers.
     if (!data || num < 2 || num > 8192) return "";
     if (cap < num || cap > num * 4 + 256) return "";
     if (data < 0x10000 || data >= 0x7FFFFFFFFFFFull) return "";
@@ -476,7 +482,20 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
     } else {
         return "";
     }
-    return Utf8Helpers::DecodeFStringBuffer(buf.data(), got, num);
+    std::string decoded = Utf8Helpers::DecodeFStringBuffer(buf.data(), got, num);
+
+    // A decode that recovered under a quarter of the length its OWN header claimed is
+    // not this string — it is a 16-byte window that happened to parse, and the decode
+    // stopped at the first null it met in unrelated memory.
+    //
+    // Rejecting HERE, rather than inside DecodeFStringBuffer, keeps that shared decoder
+    // and its 25+ pinned rows (the B28 CJK and AD5 ASCII blocks in utf8_helpers_test.cpp)
+    // byte-identical. Rejecting is also the SAFE verdict in this caller: ReadFTextString
+    // treats "" as "keep scanning", so this can never turn a readable text into an empty
+    // one by itself — the worst it can do is let a scan that was already returning noise
+    // continue past one more slot.
+    if (!DecodedLengthMatchesFString(decoded, num)) return "";
+    return decoded;
 }
 
 // ============================================================
