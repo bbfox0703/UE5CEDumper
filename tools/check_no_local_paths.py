@@ -43,6 +43,24 @@ PATTERN = re.compile(r"[A-Za-z]:" + _SEP + "Users" + _SEP +
 ALLOWED = {"public", "default", "all", "username", "user", "you", "youruser",
            "name", "yourname", "someone"}
 
+# A second, NARROWER pattern that ALLOWED does not get to excuse.
+#
+# ⚠ Found 2026-09-06 in docs/archive/todo-completed-build-937.md, which had carried
+# `…/C:/Users/user/.claude/projects/<project>/memory/<file>.md` since it was archived. PATTERN
+# matched it and then waved it through, because `user` is a legitimate generic stand-in and the
+# path genuinely reads like one.
+#
+# The account name is the wrong thing to key on. What makes that path certainly-real and certainly
+# wrong is where it CONTINUES: `.claude/projects/` is a per-session Claude Code directory, and a
+# drive-absolute path into one cannot be meaningful in a tracked file whatever the account is
+# called. So this rule ignores ALLOWED entirely.
+#
+# ⚠ It must NOT fire on the correct form. docs/working-lessons.md references the same folder as
+# `%USERPROFILE%\.claude\projects\…` — no drive letter, so this pattern does not match, which is
+# exactly the distinction being drawn.
+SESSION_DIR_PATTERN = re.compile(r"[A-Za-z]:" + _SEP + r"(?:[^\s:*?\"<>|]{0,120}" + _SEP +
+                                 r")*?\.claude" + _SEP + "projects", re.IGNORECASE)
+
 SKIP = ("tools/check_no_local_paths.py",)
 
 
@@ -63,6 +81,9 @@ def main(argv):
                     for m in PATTERN.finditer(line):
                         if m.group(1).lower() in ALLOWED:
                             continue
+                        hits.append((path, n, m.group(0), line.strip()[:110]))
+                    # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
+                    for m in SESSION_DIR_PATTERN.finditer(line):
                         hits.append((path, n, m.group(0), line.strip()[:110]))
         except (OSError, UnicodeError):
             continue

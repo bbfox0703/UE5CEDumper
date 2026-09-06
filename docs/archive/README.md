@@ -28,9 +28,8 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 >   they are the *same authoring bug* that was repaired in `docs/verification-register.md` on
 >   2026-09-06. They stay broken here only because of byte-identity.
 > * a handful resolve at no depth: `../dll/src/ValueScan.h` (historically correct — `ValueScan`
->   became `Radar`), `UE5CEDumper-SA.md` / `-SD.md` (never existed in this repo), and one absolute
->   `…/C:/Users/user/.claude/…` path in `todo-completed-build-937.md` that survives only because
->   `user` is an allowed generic stand-in in `tools/check_no_local_paths.py`. **Leave all of these.**
+>   became `Radar`) and `UE5CEDumper-SA.md` / `-SD.md` (never existed in this repo).
+>   **Leave both of these.**
 >
 > ⚠⚠ **A knowingly-broken link can become a SILENTLY-WRONG one, and that is worse.**
 > `handover-2026-08-19.md`'s three `](handover-2026-08-20.md)` links were broken when it was
@@ -40,10 +39,16 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 > `py tools/check_md_links.py --list --include-archive` **before** an archive move, so the pre-move
 > state is on the record.
 >
-> ⭐ **The convention is not directory-wide — the invariant is "unedited since the move".** Three
+> ⭐ **The convention is not directory-wide — the invariant is "unedited since the move".** Four
 > files here do not have it, so `check_md_links.py` **includes** them and holds them at zero:
 > `README.md` (authored in place), `godmode-implementation-plan.md` and
-> `audit-2026-08-16-med-rederivation.md` (both edited at archive time — see their rows).
+> `audit-2026-08-16-med-rederivation.md` (both edited at archive time — see their rows), and
+> `todo-completed-build-937.md`, edited on **2026-09-06** to delete a link whose target was a
+> concrete `C:\Users\<name>\.claude\projects\…` path pointing at a Claude Code memory file. That
+> file lives outside the repository on one machine, so the link was unfollowable by every reader
+> and there was no correct target to repair it to; the filename is kept as prose. ⛔ **Byte-identity
+> is not a reason to keep a machine-local path in a public repo** — that is the one edit this
+> convention must always yield to, and `tools/check_no_local_paths.py` now gates the class.
 
 ## Files
 
