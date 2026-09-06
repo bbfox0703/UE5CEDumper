@@ -75,6 +75,14 @@ public class dump_identity extends GhidraScript {
         Map<String, String> md = currentProgram.getMetadata();
         for (String k : new TreeSet<>(md.keySet())) {
             if (!srcFiles && k.startsWith("SourceFile")) continue;
+            // Never emit the LOCAL PATH of the analysed binary. Same argument as SourceFile above,
+            // plus one more: these files are committed to a PUBLIC repo, and "Executable Location"
+            // / "FSRL" disclose the machine's drive layout and game library. They are also dead
+            // weight -- reimport_verify.py lists both by name in its IGNORE set, with the comment
+            // "carries the source path ... and the corpus's recorded paths are stale anyway".
+            // The identity that matters (Executable MD5/SHA256 and the symbol digest) is untouched.
+            // 148 such lines were stripped from the 74 committed exports on 2026-09-06.
+            if (k.equals("Executable Location") || k.equals("FSRL")) continue;
             w.println("meta." + k.replace('\t', ' ') + "\t"
                       + String.valueOf(md.get(k)).replace('\t', ' ').replace('\n', ' '));
         }

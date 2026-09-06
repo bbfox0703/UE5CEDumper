@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 21:30:50 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/SteamLibrary/steamapps/common/DQ7R/DQ7R/Binaries/Win64/DQ7R-Win64-Shipping.exe
 meta.Executable MD5	0258248483c4fce5b427e89d25780563
 meta.Executable SHA256	cad34f3a4be6f1a2e5980c59bb29eacb5f1c37870e5e46a1e5a3845a967390c1
-meta.FSRL	file:///D:/SteamLibrary/steamapps/common/DQ7R/DQ7R/Binaries/Win64/DQ7R-Win64-Shipping.exe?MD5=0258248483c4fce5b427e89d25780563
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	1585aa1ff
 meta.MinGW Relocations	Unsupported

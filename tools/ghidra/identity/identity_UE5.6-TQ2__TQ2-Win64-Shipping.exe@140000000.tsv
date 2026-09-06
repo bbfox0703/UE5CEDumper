@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 08:08:56 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Titan Quest II/TQ2/Binaries/Win64/TQ2-Win64-Shipping.exe
 meta.Executable MD5	7cbd74e9e9569013ec9e0477081c762c
 meta.Executable SHA256	b232ba42057decd67ff65d2669aa944b73e22b6e5f68a2243ad4aa532a0ba82a
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Titan Quest II/TQ2/Binaries/Win64/TQ2-Win64-Shipping.exe?MD5=7cbd74e9e9569013ec9e0477081c762c
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

@@ -103,6 +103,22 @@ def runtime_identifiers():
     return found
 
 
+def mask_account(m):
+    """`C:\\Users\\Andyc` -> `C:\\Users\\A****`. The path stays readable; the identity does not."""
+    acct = m.group(1)
+    return m.group(0).replace(acct, redact(acct))
+
+
+def mask_account_line(line):
+    """Same masking applied to the quoted source line, so the fragment and the line agree."""
+    out = line.strip()
+    for m in PATTERN.finditer(out):
+        if m.group(1).lower() in ALLOWED:
+            continue
+        out = out.replace(m.group(1), redact(m.group(1)))
+    return out[:110]
+
+
 def redact(value):
     """⚠ THE GATE'S OWN OUTPUT MUST NOT PRINT THE NAME. CI logs on a public repo are public, so a
     failure that echoed the identifier would publish the very string it exists to keep out."""
@@ -110,6 +126,36 @@ def redact(value):
 
 
 
+
+
+def unpushed_commit_messages():
+    """(sha, message) for every local commit not yet on any remote branch.
+
+    ⭐ WHY MESSAGES, AND WHY ONLY THE UNPUSHED ONES. A file-level gate reads `git ls-files` and can
+    never see `%B`. That gap is not theoretical: on 2026-09-06 the account name was found in the
+    message of 4b4d6775 -- the commit that REMOVED the same string from a file restated it in its
+    own message, so the file was cleaned and the leak stayed.
+
+    Only unpushed commits are checked, because those are the only ones still fixable: an unpushed
+    commit can be amended or rebased, a pushed one cannot be recalled. That is also exactly the
+    maintainer's own framing -- a commit always precedes a push, so the build is the last cheap
+    moment.
+    """
+    try:
+        rng = subprocess.run(["git", "log", "--branches", "--not", "--remotes",
+                              "--format=%H%x01%B%x02"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace")
+    except OSError:
+        return []
+    out = []
+    for chunk in (rng.stdout or "").split("\x02"):
+        chunk = chunk.strip()
+        if not chunk or "\x01" not in chunk:
+            continue
+        sha, msg = chunk.split("\x01", 1)
+        out.append((sha.strip()[:8], msg))
+    return out
 
 
 def tracked_files():
@@ -136,7 +182,10 @@ def main(argv):
                     for m in PATTERN.finditer(line):
                         if m.group(1).lower() in ALLOWED:
                             continue
-                        hits.append((path, n, m.group(0), line.strip()[:110]))
+                        # ⚠ REDACT THE ACCOUNT SEGMENT. This branch used to print m.group(0) and
+                        # the raw line, i.e. it echoed the account name it had just caught -- which
+                        # is how a caught leak gets laundered into a commit message or a CI log.
+                        hits.append((path, n, mask_account(m), mask_account_line(line)))
                     # ALLOWED deliberately does NOT apply here -- see SESSION_DIR_PATTERN.
                     for m in SESSION_DIR_PATTERN.finditer(line):
                         hits.append((path, n, m.group(0), line.strip()[:110]))
@@ -148,8 +197,36 @@ def main(argv):
         except (OSError, UnicodeError):
             continue
 
+    # Commit MESSAGES of unpushed commits -- see unpushed_commit_messages().
+    msg_hits = []
+    for sha, msg in unpushed_commit_messages():
+        for line in msg.splitlines():
+            for m in PATTERN.finditer(line):
+                if m.group(1).lower() in ALLOWED:
+                    continue
+                msg_hits.append((sha, mask_account(m), mask_account_line(line)))
+            for m in SESSION_DIR_PATTERN.finditer(line):
+                msg_hits.append((sha, m.group(0), line.strip()[:110]))
+            for value, rx in ident_patterns.items():
+                if rx.search(line):
+                    msg_hits.append((sha, redact(value),
+                                     rx.sub(redact(value), line.strip())[:110]))
+
+    if msg_hits:
+        print(f"FOUND {len(msg_hits)} leak(s) in UNPUSHED commit MESSAGE(S):")
+        for sha, frag, line in msg_hits:
+            print(f"  {sha}: {frag}")
+            print(f"      {line}")
+        print()
+        print("These commits are NOT pushed, so they are still fixable:")
+        print("  git commit --amend        (the most recent one)")
+        print("  git rebase -i <base>      (an older one; reword it)")
+        print("A pushed commit message cannot be recalled, which is why only unpushed ones fail here.")
+        return 1
+
     if not hits:
-        print(f"CHECK OK: no machine-local user path in {len(files)} tracked files.")
+        print(f"CHECK OK: no machine-local user path in {len(files)} tracked files, "
+              f"nor in any unpushed commit message.")
         return 0
 
     print(f"FOUND {len(hits)} machine-local path(s) in tracked files:")

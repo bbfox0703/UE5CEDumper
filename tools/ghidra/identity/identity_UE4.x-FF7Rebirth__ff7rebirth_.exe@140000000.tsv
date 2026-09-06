@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 15:19:51 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/SteamLibrary/steamapps/common/FINAL FANTASY VII REBIRTH/End/Binaries/Win64/ff7rebirth_.exe
 meta.Executable MD5	e44e4213e47037b8a497a832e41d2398
 meta.Executable SHA256	752807180c4ed919667ff0ec163046410187e873888dd75248e78aaa72e363dc
-meta.FSRL	file:///D:/SteamLibrary/steamapps/common/FINAL FANTASY VII REBIRTH/End/Binaries/Win64/ff7rebirth_.exe?MD5=e44e4213e47037b8a497a832e41d2398
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

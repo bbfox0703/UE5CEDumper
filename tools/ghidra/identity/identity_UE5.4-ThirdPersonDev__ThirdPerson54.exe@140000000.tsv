@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jul 29 20:54:46 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/UE_Analyze_Data/Varies Version builds/5.4/Development/Windows/ThirdPerson54/Binaries/Win64/ThirdPerson54.exe
 meta.Executable MD5	9f2258f6e85da3f48b52e732942ce4fa
 meta.Executable SHA256	100d5af9d485eeacb7893bcd4b59594734feaaafaf706e9e85fddc0147b0ddc5
-meta.FSRL	file:///D:/UE_Analyze_Data/Varies Version builds/5.4/Development/Windows/ThirdPerson54/Binaries/Win64/ThirdPerson54.exe?MD5=9f2258f6e85da3f48b52e732942ce4fa
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

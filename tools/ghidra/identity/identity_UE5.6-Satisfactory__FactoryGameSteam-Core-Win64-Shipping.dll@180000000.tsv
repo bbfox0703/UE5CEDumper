@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 20:47:26 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/FactoryGameSteam-Core-Win64-Shipping.dll
 meta.Executable MD5	f9fe8df78638fe1e39d4df7fdba9c498
 meta.Executable SHA256	7d0517ad42b571563eac6583118fffa9a75b041e1abd717cb246b68adaef9af4
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/FactoryGameSteam-Core-Win64-Shipping.dll?MD5=f9fe8df78638fe1e39d4df7fdba9c498
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	180000000

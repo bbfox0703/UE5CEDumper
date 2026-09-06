@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 15:57:53 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Breeders of the Nephelym/OBF/Binaries/Win64/OBF-Win64-Shipping.exe
 meta.Executable MD5	b2747cfcc9d56e1ea52717ca1c1958d1
 meta.Executable SHA256	8321f7108c45164dbf24cd2ca9ba2b25715de86339adf3bfef61e9b7f9932597
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Breeders of the Nephelym/OBF/Binaries/Win64/OBF-Win64-Shipping.exe?MD5=b2747cfcc9d56e1ea52717ca1c1958d1
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

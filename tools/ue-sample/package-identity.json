@@ -3,8 +3,8 @@
   "source_commit": "55dd441a",
   "source_sha256": "6cff0498f1105de5ff7719142577acc492173da1993096b1538fa297391f5eb1",
   "captured_utc": "2026-09-05T13:49:01+00:00",
-  "build_command": "\"C:\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
-  "packaged_root": "D:/UE_Analyze_data/for testing/DumperTest",
+  "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
+  "packaged_root": "<CORPUS>/for testing/DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
@@ -65,11 +65,11 @@
     }
   },
   "problems": [
-    "STALE BINARY: Shipping was built before 'DumperTestTypes.h' was last edited in D:/Unreal Projects/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it",
-    "STALE BINARY: DebugGame was built before 'DumperTestTypes.h' was last edited in D:/Unreal Projects/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it"
+    "STALE BINARY: Shipping was built before 'DumperTestTypes.h' was last edited in <UEPROJECTS>/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it",
+    "STALE BINARY: DebugGame was built before 'DumperTestTypes.h' was last edited in <UEPROJECTS>/DumperTest\\Source\\DumperTest -- re-package before trusting any value from it"
   ],
   "built_from": {
-    "path": "D:/Unreal Projects/DumperTest\\Source\\DumperTest",
+    "path": "<UEPROJECTS>/DumperTest\\Source\\DumperTest",
     "source_sha256": "6cff0498f1105de5ff7719142577acc492173da1993096b1538fa297391f5eb1"
   }
 }

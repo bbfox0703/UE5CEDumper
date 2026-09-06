@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 10:38:39 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/The Artisan of Glimmith/Geri/Binaries/Win64/Geri-Win64-Shipping.exe
 meta.Executable MD5	1425c04e00c05ad8a29450070f131415
 meta.Executable SHA256	ce4d1ed01245664d4dcec81a21198f8217584fa9ec46dad14d1c19a0bb16f5f7
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/The Artisan of Glimmith/Geri/Binaries/Win64/Geri-Win64-Shipping.exe?MD5=1425c04e00c05ad8a29450070f131415
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

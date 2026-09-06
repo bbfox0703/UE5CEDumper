@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jul 29 08:42:34 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/UE_Analyze_Data/Varies Version builds/4.27.2/DebugGame/Win64/UE427_Flying-Win64-DebugGame.exe
 meta.Executable MD5	01d316835ae389f6d514dd54f50f44c3
 meta.Executable SHA256	8b82b0814bb5ea9b815ba3c4d4b3a5ac68f825dbf8238a722956ebeee0ba39e0
-meta.FSRL	file:///D:/UE_Analyze_Data/Varies Version builds/4.27.2/DebugGame/Win64/UE427_Flying-Win64-DebugGame.exe?MD5=01d316835ae389f6d514dd54f50f44c3
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 14:01:30 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/tmp/Game archive/DropIn/UE4.24/DropIn/Binaries/Win64/DropIn.exe
 meta.Executable MD5	2f640ff0d11784a430a1edb845743e1f
 meta.Executable SHA256	dbd9a78d9aae4b5003d3730258c8a17f1fabf1b5f5007f225457be7c9daaad3e
-meta.FSRL	file:///D:/tmp/Game archive/DropIn/UE4.24/DropIn/Binaries/Win64/DropIn.exe?MD5=2f640ff0d11784a430a1edb845743e1f
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

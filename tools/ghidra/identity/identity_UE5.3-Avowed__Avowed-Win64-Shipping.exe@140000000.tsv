@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jun 17 08:29:14 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Avowed/Alabama/Binaries/Win64/Avowed-Win64-Shipping.exe
 meta.Executable MD5	b20a14f7dffbbaf3b7bfdce54efc345c
 meta.Executable SHA256	5d99df74bff2c825a8d621730210b4e08442a94ee1b8c6ef0bc88e92cea91c01
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Avowed/Alabama/Binaries/Win64/Avowed-Win64-Shipping.exe?MD5=b20a14f7dffbbaf3b7bfdce54efc345c
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

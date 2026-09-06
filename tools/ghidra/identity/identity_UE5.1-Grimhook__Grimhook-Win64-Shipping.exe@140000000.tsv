@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 14:37:42 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Grimhook/Grimhook/Binaries/Win64/Grimhook-Win64-Shipping.exe
 meta.Executable MD5	aec276fa6110cb944d1be980b894b596
 meta.Executable SHA256	38344f6312b76db79817b04b39c73f9a5276353cb88dd1035d9f669eddc46131
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Grimhook/Grimhook/Binaries/Win64/Grimhook-Win64-Shipping.exe?MD5=aec276fa6110cb944d1be980b894b596
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

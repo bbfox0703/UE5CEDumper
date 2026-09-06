@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 15:20:52 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Meltopia/Meltopia/Binaries/Win64/Meltopia-Win64-Shipping.exe
 meta.Executable MD5	bed6161f888a2f91ccc5d9d1284339f9
 meta.Executable SHA256	f3683db255ddec5fac5e701d1fbeb97ff00afd5dfba8b74643ad91a8fa408f7f
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Meltopia/Meltopia/Binaries/Win64/Meltopia-Win64-Shipping.exe?MD5=bed6161f888a2f91ccc5d9d1284339f9
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

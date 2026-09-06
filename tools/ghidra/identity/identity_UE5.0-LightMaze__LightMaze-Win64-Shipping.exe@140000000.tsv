@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 18:58:20 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Light Maze/LightMaze/Binaries/Win64/LightMaze-Win64-Shipping.exe
 meta.Executable MD5	c7e81c5978209af2dc0660b61c5bdf03
 meta.Executable SHA256	f1c968f5579fbd7f46895825be45f0cbb6bc5828a82f525cfdd73665a5150e17
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Light Maze/LightMaze/Binaries/Win64/LightMaze-Win64-Shipping.exe?MD5=c7e81c5978209af2dc0660b61c5bdf03
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

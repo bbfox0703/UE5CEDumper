@@ -1,6 +1,6 @@
 [2026-09-06 14:47:05.272] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
 [2026-09-06 14:47:05.274] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient ProductVersion -> UE 5.3 -> 503
-[2026-09-06 14:47:05.274] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient at 'D:\SteamLibrary\steamapps\common\DragonSword  Awakening\Engine\Binaries\Win64\CrashReportClient.exe' -> 503
+[2026-09-06 14:47:05.274] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient at '<STEAMLIB>\steamapps\common\DragonSword  Awakening\Engine\Binaries\Win64\CrashReportClient.exe' -> 503
 [2026-09-06 14:47:05.277] [INFO] [SCAN:Ver] DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503
 [2026-09-06 14:47:05.277] [INFO] [SCAN:Ver] DetectVersion: CrashReportClient and the game exe AGREE on 503
 [2026-09-06 14:47:05.277] [INFO] [SCAN] FindAll: UE Version = 503 (tier=1, detected=yes, lowConfidence=no, publisher=-)

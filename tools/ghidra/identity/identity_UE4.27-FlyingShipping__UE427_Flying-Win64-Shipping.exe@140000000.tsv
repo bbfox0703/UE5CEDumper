@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jul 29 08:38:49 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/UE_Analyze_Data/Varies Version builds/4.27.2/Shipping/Win64/UE427_Flying-Win64-Shipping.exe
 meta.Executable MD5	1be3260565f86311bb074966c9fcd3f9
 meta.Executable SHA256	a6abb0eddf90920b658537f3080563e9fa3f57f8eece8eb016f665fc21b24f3c
-meta.FSRL	file:///D:/UE_Analyze_Data/Varies Version builds/4.27.2/Shipping/Win64/UE427_Flying-Win64-Shipping.exe?MD5=1be3260565f86311bb074966c9fcd3f9
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

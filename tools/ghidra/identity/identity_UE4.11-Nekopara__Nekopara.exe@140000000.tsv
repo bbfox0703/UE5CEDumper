@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 20:06:46 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/NEKOPALIVE/Package/Nekopara/Binaries/Win64/Nekopara.exe
 meta.Executable MD5	cfdcb9522f1d6b7cd80deb6dde31f279
 meta.Executable SHA256	d9a6a83666bf8740af5e564e98114bcc4297aaa40ec40f4181e44958cd5da1b5
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/NEKOPALIVE/Package/Nekopara/Binaries/Win64/Nekopara.exe?MD5=cfdcb9522f1d6b7cd80deb6dde31f279
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

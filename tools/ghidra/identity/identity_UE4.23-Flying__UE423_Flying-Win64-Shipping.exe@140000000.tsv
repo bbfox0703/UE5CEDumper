@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Tue Jul 28 09:39:53 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/Unreal Projects/UE423_Flying/Binaries_Shipping/Win64/UE423_Flying-Win64-Shipping.exe
 meta.Executable MD5	f61ec1be259922847178fe6a0a42817b
 meta.Executable SHA256	f50551723f2f48fc437275cad4af81d807ce95bb2ed508667798f37671a1c302
-meta.FSRL	file:///D:/Unreal Projects/UE423_Flying/Binaries_Shipping/Win64/UE423_Flying-Win64-Shipping.exe?MD5=f61ec1be259922847178fe6a0a42817b
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 22:05:08 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/EVERSPACE/RSG/Binaries/Win64/RSG-Win64-Shipping.exe
 meta.Executable MD5	d6e8511c9a6c18bae3377f6584ea5e74
 meta.Executable SHA256	7b2479e78db93781a0c7eb84180e4cb82fc079f57d7dac148b7c8b6f33ff154c
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/EVERSPACE/RSG/Binaries/Win64/RSG-Win64-Shipping.exe?MD5=d6e8511c9a6c18bae3377f6584ea5e74
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 23:06:15 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/tmp/Game archive/ES2/UE4.25.2/ES2/Binaries/Win64/ES2-Win64-Shipping.exe
 meta.Executable MD5	0588eacdee27ea0bf105727789727fd8
 meta.Executable SHA256	39923eeecbb2c38ccd3499b28b515b18168067727e1f206446a71959f7f7762c
-meta.FSRL	file:///D:/tmp/Game archive/ES2/UE4.25.2/ES2/Binaries/Win64/ES2-Win64-Shipping.exe?MD5=0588eacdee27ea0bf105727789727fd8
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

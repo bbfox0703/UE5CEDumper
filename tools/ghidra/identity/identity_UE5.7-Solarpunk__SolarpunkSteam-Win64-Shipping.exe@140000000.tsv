@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 15:01:19 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Solarpunk/Solarpunk/Binaries/Win64/SolarpunkSteam-Win64-Shipping.exe
 meta.Executable MD5	0183b6d7c5545c71d3c48fba527e01f9
 meta.Executable SHA256	32aecc7de5b3ca57aa5d71b472a1992a5469470d66d1c0ecff1706f7e005bd0d
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Solarpunk/Solarpunk/Binaries/Win64/SolarpunkSteam-Win64-Shipping.exe?MD5=0183b6d7c5545c71d3c48fba527e01f9
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

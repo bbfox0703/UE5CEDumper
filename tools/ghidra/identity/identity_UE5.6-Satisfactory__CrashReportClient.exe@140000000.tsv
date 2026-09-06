@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 20:58:54 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/CrashReportClient.exe
 meta.Executable MD5	04e9f6c649e66b244c525b3b3529f83f
 meta.Executable SHA256	57be7edf089d46b6cdb705dc29bea2b17046c5a49c9c26a47e3d1783fd9c9a94
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/CrashReportClient.exe?MD5=04e9f6c649e66b244c525b3b3529f83f
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000
