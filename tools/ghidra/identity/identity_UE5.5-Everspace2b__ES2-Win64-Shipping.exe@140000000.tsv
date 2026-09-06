@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 13:11:19 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/SteamLibrary/steamapps/common/EVERSPACE™ 2/ES2/Binaries/Win64/ES2-Win64-Shipping.exe
 meta.Executable MD5	85daf780d2b1cdf6ffb0ca017d0ba3b2
 meta.Executable SHA256	cb44e9c0a2a30630881f0c5b79d78f389b092d618cbcb8d6eedc6522ba8a9d7c
-meta.FSRL	file:///D:/SteamLibrary/steamapps/common/EVERSPACE%E2%84%A2 2/ES2/Binaries/Win64/ES2-Win64-Shipping.exe?MD5=85daf780d2b1cdf6ffb0ca017d0ba3b2
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

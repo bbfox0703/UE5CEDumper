@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 21:53:25 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/The Adventures of Elliot_The Millennium Tales/Elliot/Binaries/Win64/Elliot-Win64-Shipping.exe
 meta.Executable MD5	793b10b0b6411aa6788d8057d66c4e03
 meta.Executable SHA256	d8c9280a129b5f08a0c4259557acde4bd3195a779e2198ca9095981e0baade3c
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/The Adventures of Elliot_The Millennium Tales/Elliot/Binaries/Win64/Elliot-Win64-Shipping.exe?MD5=793b10b0b6411aa6788d8057d66c4e03
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	15d91a5ff
 meta.Minimum Address	140000000

@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 08:36:02 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/SteamLibrary/steamapps/common/Manor Lords/ManorLords/Binaries/Win64/ManorLords-Win64-Shipping.exe
 meta.Executable MD5	1337fa1f6d488ef2ce12bafc2a201405
 meta.Executable SHA256	42a14f8b66050553027ac8f644e32e74cea00da4cb90057bdfc190bca36f6f1d
-meta.FSRL	file:///D:/SteamLibrary/steamapps/common/Manor Lords/ManorLords/Binaries/Win64/ManorLords-Win64-Shipping.exe?MD5=1337fa1f6d488ef2ce12bafc2a201405
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

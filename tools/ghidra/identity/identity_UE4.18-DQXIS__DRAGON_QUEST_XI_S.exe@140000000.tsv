@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 07:54:07 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/E:/SteamLibrary/steamapps/common/DRAGON QUEST XI S/Game/Binaries/Win64/DRAGON QUEST XI S.exe
 meta.Executable MD5	c19da2f7270cc82d790e2a084f2152bf
 meta.Executable SHA256	6c643291841429d1a507dc3ec256dcbb229c800310036641ed51dcab65e2f061
-meta.FSRL	file:///E:/SteamLibrary/steamapps/common/DRAGON QUEST XI S/Game/Binaries/Win64/DRAGON QUEST XI S.exe?MD5=c19da2f7270cc82d790e2a084f2152bf
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

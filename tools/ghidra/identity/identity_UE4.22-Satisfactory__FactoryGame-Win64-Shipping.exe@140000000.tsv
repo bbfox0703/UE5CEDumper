@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 23:52:16 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/tmp/Game archive/Satisfactory/UE4.2.2/FactoryGame/Binaries/Win64/FactoryGame-Win64-Shipping.exe
 meta.Executable MD5	a1df9f191f8978e6c05d7919237be565
 meta.Executable SHA256	c7377816a6472120ac67920b2b3bbf1356c814cd6dbcf15076cf9219e629e1d4
-meta.FSRL	file:///D:/tmp/Game archive/Satisfactory/UE4.2.2/FactoryGame/Binaries/Win64/FactoryGame-Win64-Shipping.exe?MD5=a1df9f191f8978e6c05d7919237be565
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

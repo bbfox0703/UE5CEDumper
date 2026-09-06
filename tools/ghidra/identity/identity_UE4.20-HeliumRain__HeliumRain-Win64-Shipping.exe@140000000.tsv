@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 17:32:50 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/HeliumRain/HeliumRain/Binaries/Win64/HeliumRain-Win64-Shipping.exe
 meta.Executable MD5	4dd8b021b63fc97f9bd513321a5354cf
 meta.Executable SHA256	4ca37f52dfbf435809bd8639f04c171a18652548a809df3e81990bfdb4a60fb5
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/HeliumRain/HeliumRain/Binaries/Win64/HeliumRain-Win64-Shipping.exe?MD5=4dd8b021b63fc97f9bd513321a5354cf
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

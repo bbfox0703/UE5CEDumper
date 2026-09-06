@@ -9,8 +9,8 @@
 // DLL into the currently attached game process, then calls
 // UE5_AutoStart() (which runs UE5_Init + UE5_StartPipeServer).
 //
-// CE Plugin SDK v6 reference: D:\Github\CE-Handwire-Private\docs\CE-Plugin-API-Reference.md
-// Known traps:             D:\Github\CE-Handwire-Private\docs\CE-Plugin-SDK-Notes.md
+// CE Plugin SDK v6 reference: <private-ce-repo>/docs/CE-Plugin-API-Reference.md
+// Known traps:             <private-ce-repo>/docs/CE-Plugin-SDK-Notes.md
 // ============================================================
 
 #include <Windows.h>

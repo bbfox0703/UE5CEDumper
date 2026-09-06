@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 17:03:06 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Hogwarts Legacy/Phoenix/Binaries/Win64/HogwartsLegacy.exe
 meta.Executable MD5	fd1ab9ddf069ba2b25e1fbc2cf516d7a
 meta.Executable SHA256	b713e88e0034cb23562b7ffeba6febe5d6a679578215cb595e1644cfc56245a1
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Hogwarts Legacy/Phoenix/Binaries/Win64/HogwartsLegacy.exe?MD5=fd1ab9ddf069ba2b25e1fbc2cf516d7a
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

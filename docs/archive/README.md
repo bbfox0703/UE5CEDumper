@@ -39,16 +39,26 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 > `py tools/check_md_links.py --list --include-archive` **before** an archive move, so the pre-move
 > state is on the record.
 >
-> ⭐ **The convention is not directory-wide — the invariant is "unedited since the move".** Four
-> files here do not have it, so `check_md_links.py` **includes** them and holds them at zero:
-> `README.md` (authored in place), `godmode-implementation-plan.md` and
-> `audit-2026-08-16-med-rederivation.md` (both edited at archive time — see their rows), and
-> `todo-completed-build-937.md`, edited on **2026-09-06** to delete a link whose target was a
-> concrete `C:\Users\<name>\.claude\projects\…` path pointing at a Claude Code memory file. That
-> file lives outside the repository on one machine, so the link was unfollowable by every reader
-> and there was no correct target to repair it to; the filename is kept as prose. ⛔ **Byte-identity
-> is not a reason to keep a machine-local path in a public repo** — that is the one edit this
-> convention must always yield to, and `tools/check_no_local_paths.py` now gates the class.
+> ⭐ **The convention is not directory-wide — the invariant is "unedited since the move",** and two
+> different sets of files fail it. They are listed separately because only one of them is fixed.
+>
+> **1. Files the link gate deliberately covers** — a fixed set, in `check_md_links.py`'s
+> `ARCHIVE_INCLUDED`, held at zero broken links: `README.md` (authored in place, never moved),
+> `godmode-implementation-plan.md` and `audit-2026-08-16-med-rederivation.md` (both had their links
+> corrected *at archive time* — see their rows).
+>
+> **2. Files edited afterwards to remove IDENTITY** — an open-ended set, and ⛔ **do not enumerate
+> it here**: an earlier version of this paragraph did, and was stale within a day (it said "four"
+> while three more edits landed the same afternoon). Derive it:
+> `git log --oneline --name-only --diff-filter=M -- docs/archive/`
+>
+> ⛔ **BYTE-IDENTITY NEVER OUTRANKS IDENTITY REMOVAL.** It is the one edit this convention must
+> always yield to, and the reason is simple: the convention exists to make an archived document
+> *citable as what shipped*, which is not a reason to keep a person's account name, a machine name,
+> or a private repository's name in a public repo. Three separate classes have been removed from
+> this directory on those grounds. `tools/check_no_local_paths.py` gates the first two — including
+> in **unpushed commit messages**, which no file-level check can see — and `build.ps1` refuses to
+> build while any of them is present.
 
 ## Files
 

@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Mon Jul 27 20:03:07 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Fantasynth/Fantasynth/Binaries/Win64/Fantasynth-Win64-Shipping.exe
 meta.Executable MD5	632c5330a066c96477b53809a82d6fb6
 meta.Executable SHA256	5380708aaf59992814912122afc3f71d6b18bd41062cde1a5e04fcec4e9f191b
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Fantasynth/Fantasynth/Binaries/Win64/Fantasynth-Win64-Shipping.exe?MD5=632c5330a066c96477b53809a82d6fb6
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

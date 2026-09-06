@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 15:11:53 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Palworld/Pal/Binaries/Win64/Palworld-Win64-Shipping.exe
 meta.Executable MD5	fb10d568f6a3ad2a74572ca46a73af20
 meta.Executable SHA256	2ff94a03bc777661be100249b4940242f70661d890c6b8f8aca4d6dce79ee5a5
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Palworld/Pal/Binaries/Win64/Palworld-Win64-Shipping.exe?MD5=fb10d568f6a3ad2a74572ca46a73af20
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

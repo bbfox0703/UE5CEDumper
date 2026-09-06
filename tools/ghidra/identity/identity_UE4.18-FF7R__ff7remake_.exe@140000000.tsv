@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sun Jul 26 10:28:54 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/SteamLibrary/steamapps/common/FINAL FANTASY VII REMAKE/End/Binaries/Win64/ff7remake_.exe
 meta.Executable MD5	3ea9092f78c168a8a2e165f28c72bb93
 meta.Executable SHA256	25b54c345c94ee9f6c6876b9c7537a69e6b0eef25f322207c32a8ddcee816635
-meta.FSRL	file:///D:/SteamLibrary/steamapps/common/FINAL FANTASY VII REMAKE/End/Binaries/Win64/ff7remake_.exe?MD5=3ea9092f78c168a8a2e165f28c72bb93
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

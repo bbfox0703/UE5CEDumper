@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Sat Jul 25 21:01:07 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/FactoryGameSteam-AudioMixer-Win64-Shipping.dll
 meta.Executable MD5	3e5316692b6780ae0385c4ddbef214e9
 meta.Executable SHA256	c2529e9da1c167805a9310c85aa1f5a8a1af5967c7ff821248d4721e0b39d4e8
-meta.FSRL	file:///H:/SteamLibrary/steamapps/common/Satisfactory/Engine/Binaries/Win64/FactoryGameSteam-AudioMixer-Win64-Shipping.dll?MD5=3e5316692b6780ae0385c4ddbef214e9
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	180000000

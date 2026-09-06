@@ -9,7 +9,7 @@
 > `pluginsync` threading model, the disassembler/symbol output formats), and because shipping our
 > own plugin is a plausible future. **This is a mirror, not the master.**
 >
-> **Master copy:** `D:\Github\CE-Handwire-Private\docs\CE-Plugin-API-Reference.md` — edit there
+> **Master copy:** `<private-ce-repo>/docs/CE-Plugin-API-Reference.md` — edit there
 > first, then mirror here.
 >
 > ⚠ **The numbers in this document are DERIVED from an EXTERNAL tree, and this repo's CI cannot

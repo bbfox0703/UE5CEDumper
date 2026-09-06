@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jul 29 13:58:08 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/UE_Analyze_Data/Varies Version builds/5.8/Stack_O_Bot/Development/Windows/StackOBot/Binaries/Win64/StackOBot.exe
 meta.Executable MD5	5b131ac706d63fbeb233fbc1f46f4758
 meta.Executable SHA256	72c3dc75d7c05e9627876512af060574946f57f6d70d2758a5373f5cdbe67db1
-meta.FSRL	file:///D:/UE_Analyze_Data/Varies Version builds/5.8/Stack_O_Bot/Development/Windows/StackOBot/Binaries/Win64/StackOBot.exe?MD5=5b131ac706d63fbeb233fbc1f46f4758
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	ff0000184f
 meta.Minimum Address	140000000

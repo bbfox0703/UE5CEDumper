@@ -20,10 +20,8 @@ meta.Created With Ghidra Version	12.1.2
 meta.Date Created	Wed Jul 29 15:15:27 GMT+08:00 2026
 meta.Endian	Little
 meta.Executable Format	Portable Executable (PE)
-meta.Executable Location	/D:/UE_Analyze_Data/Varies Version builds/5.8/Binaries_DebugGame/Win64/Titan-Win64-DebugGame.exe
 meta.Executable MD5	4d168828d77a545998f42b536989458e
 meta.Executable SHA256	97c755df71185a96c52fc6ef6dfecb23f5f1bbe40b21027028a3aeb0e89f7d2e
-meta.FSRL	file:///D:/UE_Analyze_Data/Varies Version builds/5.8/Binaries_DebugGame/Win64/Titan-Win64-DebugGame.exe?MD5=4d168828d77a545998f42b536989458e
 meta.Language ID	x86:LE:64:default (4.7)
 meta.Maximum Address	155954fff
 meta.Minimum Address	140000000
