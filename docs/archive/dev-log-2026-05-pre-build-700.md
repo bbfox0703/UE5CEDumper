@@ -113,9 +113,9 @@ build (2026-05-12) — the docs are now corrected to match reality.
 
 ### Docs touched
 
-- [Readme.MD](../Readme.MD) — GWorld bullet bumped to 29 / 29 (100%)
+- [Readme.md](../../Readme.md) — GWorld bullet bumped to 29 / 29 (100%)
   + new EA-launcher proxy caveat bullet
-- [Readme_zh-TW.MD](../Readme_zh-TW.MD) — same updates with Traditional
+- [Readme_zh-TW.md](../../Readme_zh-TW.md) — same updates with Traditional
   Chinese phrasing for the two new bullets
 - [docs/roadmap.md](roadmap.md) — Star Wars Jedi entry added under
   Tested games + GWorld ratio bumped + EA-launcher note appended
