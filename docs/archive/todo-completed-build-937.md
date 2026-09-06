@@ -1286,8 +1286,9 @@ fix as "compiles + tests pass" — not "live-verified". Need:
    `init-*.log` after first invoke. The instance-method invokes that
    previously timed out at `-5` should now succeed.
 2. Run on **Geri / The Artisan of Glimmith (UE 4.27)**, same check.
-3. Re-test KismetMathLibrary helpers ([feedback_kismet_stubs.md](
-   ../../../../../../C:/Users/user/.claude/projects/D--Github-UE5CEDumper/memory/feedback_kismet_stubs.md))
+3. Re-test KismetMathLibrary helpers (the `feedback_kismet_stubs.md` memory
+   note, which is machine-local and not in git — the link that stood here
+   carried a concrete `C:\Users\<name>\...` path and was unfollowable)
    — with a correctly-hooked PE they *might* return real values; if
    they don't, the stub-pattern hypothesis stands. Either way, update
    the memory note based on actual observation.
