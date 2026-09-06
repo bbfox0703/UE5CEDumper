@@ -8864,6 +8864,49 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > 1. `Text_Empty` renders as **`No`**. An `FText::GetEmpty()` should read as empty; `No` looks
   >    like a truncated `None` or a mis-typed render. Cheap to chase, cosmetic, but it is the empty
   >    display-string path and nothing else covers it. **NEW, unfiled.**
+  >
+  >    > ### 🔴 FILED + MECHANISM PROVEN 2026-09-06 `[TEXTEMPTY-2026-09-06]` — it is a DLL defect, it is NOT cosmetic, and the value is NON-DETERMINISTIC
+  >    >
+  >    > ⛔ **Two words above are wrong and they are the reason this sat unfiled: "cosmetic", and
+  >    > the implication that `No` is a fixed wrong string.** Measured headless over the pipe
+  >    > (`tools/verify/text_empty_probe.py`, DumperTest dev, build 3376), `Text_Empty` came back
+  >    > as **`'ࣳ'` (U+08F3)** — a different wrong value from the `No` seen on screen. **Every
+  >    > empty FText in every game reads as garbage taken from adjacent memory, and which garbage
+  >    > depends on what happens to be there.**
+  >    >
+  >    > **The DLL owns it, so the screen was faithful.** That is the disambiguation this register
+  >    > exists for: `walk_instance` returns the wrong value with no UI in the loop at all.
+  >    >
+  >    > **MECHANISM — `Ubel.cpp:503-541` uses "empty" as its NOT-FOUND sentinel.**
+  >    > `ReadFTextString` scans `FTextData+0x08..0x90` for anything that decodes as an FString and
+  >    > returns the first hit, with the found-test written as `if (!s.empty()) return s;`. A
+  >    > genuinely empty display string decodes to `""`, is therefore read as *"nothing here"*, and
+  >    > the scan **walks past the correct answer** and returns whatever noise clears the header
+  >    > gate next. An empty FText is unreachable **by construction**, in both passes.
+  >    >
+  >    > **The proof is the two dumps side by side — same class, same walk, one field apart:**
+  >    >
+  >    > ```
+  >    > Text_Ascii  FTextData +0x28:  60 5b bc fa b5 02 00 00 | 17 00 00 00 | 18 00 00 00
+  >    >                               {ptr, num=23, max=24}  -> 'DumperTest FText ASCII'   ✅ found
+  >    > Text_Empty  FTextData +0x28:  00 00 00 00 00 00 00 00 | 00 00 00 00 | 00 00 00 00
+  >    >                               {nullptr, num=0, max=0} -> ""  -> treated as NOT FOUND ❌
+  >    > ```
+  >    >
+  >    > The empty FString sits exactly where the working one does. Nothing is missing from memory;
+  >    > the reader refuses to believe it.
+  >    >
+  >    > ⚠ **Controls, in the same call:** the other seven FTexts on the actor all read correctly
+  >    > (`Text_Ascii`, `Text_Localized`, `Text_Even2_OneNull`, `Text_Even2_TwoNull`,
+  >    > `Text_Even4_TwoNull`, `Text_Odd3_OneNull` 走一步, `Text_Even6_NoNull`). So the fault is the
+  >    > empty path specifically, not the walk and not B28's decoder.
+  >    >
+  >    > ▶ **The fix is a sentinel change, not a scan tweak** — the two passes need to return
+  >    > *found/not-found* separately from the string (an `optional`, an out-param, or a distinct
+  >    > "decoded ok, length 0" result from `TryDecodeFStringAt`). ⚠ Whoever does it must add the
+  >    > negative control this row could not have: an empty FText must read empty **and** a genuinely
+  >    > absent/garbage FTextData must still read empty — today those two are the same code path,
+  >    > which is precisely the bug.
   > 2. The package under test was built from a **stale** `DumperTestActor.cpp` (退一步 where the
   >    repo had 走一步), so the odd-length control was not the documented one. It renders correctly
   >    either way, so B28's result stands — but see the identity-record note below; this is exactly
