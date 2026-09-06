@@ -84,11 +84,15 @@ static int         s_hintItemObjOff = 0;
 // is *** UNVERIFIED *** (no shipping game uses it yet). Process-lifetime constant after
 // Init() → the GetByIndex Packed57 branch is perfectly predicted on the hot path.
 static Lineal::ItemLayoutMode s_layoutMode = Lineal::ItemLayoutMode::Classic;
-// Calibratable packed reconstruction constants (defaults from assumed UE5.7 source).
-// Overridable at runtime via SetPackedConsts / the set_packed_consts pipe command so a
-// real packed game can be calibrated without a rebuild.
+// Calibratable packed reconstruction constants. ⭐ The defaults are DERIVED from the vendored
+// UE 5.7 source, not assumed — alignBits 3 and ptrMask 0x3FFF are read out of
+// UObjectArray.h:84-88 plus ObjectMacros.h:705; Lineal.h's header carries the line-by-line
+// citations. Still overridable at runtime via SetPackedConsts / the set_packed_consts pipe
+// command, because what remains unverified is whether any SHIPPING game uses this layout at
+// all — not the arithmetic.
 static Lineal::PackedConsts   s_packedConsts;
-// Best-effort SerialNumber offset under packing (layout unknown — see GetSerialNumber).
+// SerialNumber offset under packing. Also derived, not best-effort: the packed struct is
+// FlagsAndRefCount@+0x00, ObjectPtrLow@+0x08, SerialNumber@+0x0C (UObjectArray.h:55/75/92).
 static int         s_packedSerialOff = 0x0C;
 
 // GAP #1: Decryption hook for encrypted GObjects pointers.
