@@ -324,13 +324,6 @@ public:
 	/// Nested StructProperty, GAS-attribute shaped.
 	UPROPERTY() FDumperTestAttribute Health;
 
-	/// ⭐ A7 fixture — the only reachable instance of the empty-base pair. Without a
-	/// UPROPERTY of this type nothing loads FDumperTestBracketPayload, and an
-	/// unloaded struct is invisible to a whole-pool walk (see export-formats.md's
-	/// Coverage section). See FDumperTestEmptyBase in DumperTestTypes.h for what
-	/// the pair proves and why no shipping title could supply it.
-	UPROPERTY() FDumperTestBracketPayload EmptyBasePayload;
-
 	/// Strong object pointer to the owned payload.
 	UPROPERTY() TObjectPtr<UDumperTestPayload> Payload;
 
@@ -556,6 +549,19 @@ public:
 	/// write leaves bytes +1..+3 of WideGrade itself stale and never reaches here.
 	/// The short-write discriminator is Wide_Base and Wide_Target sharing a low byte.
 	UPROPERTY() int32 WideGuard = 0;
+
+	/// ⭐ A7 fixture — the only reachable instance of the empty-base pair. Without a
+	/// UPROPERTY of this type nothing loads FDumperTestBracketPayload, and an
+	/// unloaded struct is invisible to a whole-pool walk (see export-formats.md's
+	/// Coverage section). See FDumperTestEmptyBase in DumperTestTypes.h for what
+	/// the pair proves and why no shipping title could supply it.
+	///
+	/// ⚠ MOVED HERE 2026-09-06. It was added between `Health` and `Payload` by commit
+	/// 7ef46f16, 183 lines above the banner that forbids exactly that — and it shifted
+	/// every later offset by sizeof(FDumperTestBracketPayload) = 0x10, which is why
+	/// TickCount measured +0x6B8 against the +0x6A8 the README documents. Appending it
+	/// instead leaves every field before it where the docs say it is.
+	UPROPERTY() FDumperTestBracketPayload EmptyBasePayload;
 
 	/// Bumped on every spawn/destroy round so a harness can prove churn ACTUALLY
 	/// HAPPENED rather than assuming its invoke landed. A changed count with a flat
