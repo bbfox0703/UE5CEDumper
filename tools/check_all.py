@@ -16,9 +16,14 @@ the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason:
 number in prose does not move when someone appends a tuple. `--list` prints it, and the
 run's own final line reports "N gate(s) run".
 
-⚠ `check_all.py` and `ci.yml` HAVE DRIFTED and this file cannot see it: as of
-2026-09-06 `check_evidence_index` and `check_inert_trimming` run here but are absent
-from `ci.yml`. Adding a gate means adding it to BOTH lists.
+⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and nothing enforces that. This file
+and `ci.yml` had silently drifted -- `check_evidence_index` and `check_inert_trimming`
+ran here and were absent from CI from the day they were added until 2026-09-06, so a
+PR could break either and redden nothing. Both sequences are 1:1 again as of that
+date (CI additionally runs `check_proxy_exports --artifacts` post-build, which needs a
+build and is deliberately not here). Compare them with:
+    grep -oE 'py tools/[a-z_/]+[.]py' .github/workflows/ci.yml
+    py tools/check_all.py --list
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.

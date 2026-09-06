@@ -158,6 +158,19 @@ jobs:
           # such references were stale when this landed, and no path check can see that.
           & $py tools/check_md_links.py
           if ($LASTEXITCODE -ne 0) { throw "check_md_links FAILED ($LASTEXITCODE) - a relative link in a tracked .md file does not resolve. Run 'py tools/check_md_links.py --list'; --fix previews the provable rewrites." }
+          # Evidence orphanhood. docs/evidence/ holds runtime artifacts that committed claims
+          # rest on, and log retention is 21 DAYS - so a cited log outlives nothing and the
+          # claim becomes unfalsifiable. ⭐ AGE IS NOT THE CRITERION, ORPHANHOOD IS: an
+          # artifact whose claim was deleted or reworded is garbage the day it is orphaned,
+          # however new. This asserts every directory names a live claim tag, is indexed, and
+          # holds at least one artifact.
+          & $py tools/check_evidence_index.py
+          if ($LASTEXITCODE -ne 0) { throw "check_evidence_index FAILED ($LASTEXITCODE) - a docs/evidence/ directory is missing its README, cites a claim tag that appears nowhere else under docs/, is absent from the index, or holds no artifact. The failure names each one." }
+          # Inert TextTrimming. An Avalonia TextBlock with TextTrimming but no width
+          # constraint never trims - it just runs off the panel, so the tail is unreadable
+          # and the property that was supposed to protect it does nothing.
+          & $py tools/check_inert_trimming.py
+          if ($LASTEXITCODE -ne 0) { throw "check_inert_trimming FAILED ($LASTEXITCODE) - a TextBlock sets TextTrimming with nothing to trim against, so its tail is unreadable at runtime. The failure names each one." }
           # Proxy export surface. A proxy DLL is a NAME map and an ORDINAL map, and audit PX1
           # found both halves wrong on two of the four at once - silently, for months. A name
           # the real DLL exports and we do not kills the game before DllMain, with no log file
