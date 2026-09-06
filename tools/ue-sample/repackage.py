@@ -303,6 +303,23 @@ def main():
                 return 1
 
     # ---- step 3: re-capture the identity record ----------------------------------
+    # ⛔ capture_package_identity.py IS DUMPERTEST-ONLY, AND IT FAILS DESTRUCTIVELY.
+    # It writes ONE fixed file (tools/ue-sample/package-identity.json, no project in the name)
+    # and hardcodes `Source\DumperTest` / a DumperTest MUST_EXIST + SOURCES list. Run it after
+    # packaging DumperTest58 and it hashes a directory that does not exist, then OVERWRITES the
+    # DumperTest record -- which is the committed evidence for a closed row -- with 5.8 data and
+    # nine "missing source" problems. Nothing about that failure looks like "wrong project".
+    # Until it grows a project axis, refuse rather than corrupt. Steps 1 and 2 are the ones that
+    # produce the package; step 3 only describes it.
+    if args.project != "DumperTest":
+        print("\n[3/3] capture_package_identity.py -- SKIPPED for %s" % args.project)
+        print("      It is DumperTest-only and writes a single shared package-identity.json;")
+        print("      running it here would overwrite DumperTest's record. The package itself is")
+        print("      complete and archived -- only the identity record is not written.")
+        print("\n" + "=" * 78)
+        print("DONE (no identity record for this project). ⚠ The pe_hash changed.")
+        return 0
+
     print("\n[3/3] capture_package_identity.py")
     cap = os.path.join(HERE, "capture_package_identity.py")
     # ⚠ `--project` here is a PATH, not a name -- capture_package_identity.py does
