@@ -389,7 +389,20 @@ machine** (highest is `5_07`). **Fix the comment, not the code. Effort XS, risk 
 
 </details>
 
-### 3. A6's two spread tests pin the error terms independently — they do not compose
+### 3. ✅ DONE 2026-09-06 — A6's two spread tests pinned the error terms independently and did not compose
+
+> **FIXED** with three more assertions in `dll_helpers_test.cpp`, next to the two that were
+> already there. They pin the compound case **and its direction**, which is the part the
+> original pair could not express:
+> * a **LOW** version miss stacked with a missed CPN composes to **`0xC`** — `0x50+0x2C+8 =
+>   0x84` true, `0x50+0x28+0 = 0x78` guessed — and `0xC` is **outside** the
+>   `{0, ±4, +8, −8}` spread, so the probe does **not** recover;
+> * the counter-case, so this is not read as "any two errors escape": a **HIGH** version
+>   miss partially **cancels** a missed CPN (`+4` then `−8`, net `−4`, still inside).
+>
+> ⛔ Still **not** an argument for widening the spread — `[A6-BOOLFIELD-2026-09-05]` and the
+> register both say do not. It is an argument for not describing the spread as an
+> unconditional net when it has a hole. `dll_helpers_test` 2,327 → **2,330**, 0 failures.
 
 [`dll/tests/dll_helpers_test.cpp:5808-5813`](../dll/tests/dll_helpers_test.cpp) asserts
 `guessAs420 - trueAt415 == 4` and `cpn - nonCpn == 8` **separately**. A version misdetected across
@@ -400,7 +413,33 @@ widening the spread — `[A6-BOOLFIELD-2026-09-05]` and the register both say do
 argument for not describing the spread as an unconditional net. **Effort S (a third test + a
 comment), risk LOW.**
 
-### 4. `set_ue_version_override` does **not** re-derive the soft/lazy envelope
+### 4. ✅ DONE + LIVE-VERIFIED 2026-09-06 — `set_ue_version_override` now re-derives the soft/lazy envelope
+
+> **FIXED**: the handler clears `DynOff::SOFTPTR_PATH` and `DynOff::LAZYPTR_GUID` when a
+> non-zero version is set, and logs that it did. `PersistentPtrEnvelopeFor` consults
+> `latched` **before** `ueVersion`, so a latch taken under the old version outranked the new
+> one for every call that cannot produce a fresh measurement — the override changed the
+> version and not the layout it implies, which is the one thing an override is for.
+>
+> **Measured on OCTOPATH (UE 4.18), build 3379**, walking a live `KSTextManager` instance:
+> ```
+> before   TSoftObjectPtr payload envelope measured: +0x10 (ElementSize 0x28 - payload 0x18, UEver=418)
+> after    TSoftObjectPtr payload envelope measured: +0x08 (ElementSize 0x28 - payload 0x20, UEver=505)
+> ```
+> The envelope re-derived `0x10 → 0x08` and the payload moved `0x18 → 0x20` (the `>= 501`
+> `FTopLevelAssetPath` arm). ⭐ **Built-in negative control**: the walk taken *before* the
+> override added **zero** new lines — the line only appears when the value actually changes,
+> so the one that appeared is the re-derivation and not just walk traffic.
+>
+> ⚠ **Scope, and it is in the code comment too**: the override deliberately does **not**
+> re-run `ValidateAndFixOffsets`. The rest of the `DynOff` family stays as the real scan
+> probed it, because those are *measured from the running image*, not derived from a version
+> number — re-deriving them from a hypothetical version would replace fact with guess. These
+> two are different precisely because their fallback **is** version-derived.
+>
+> ⚠ This also matters for `tools/verify/a3_funcflags_override.py`, which uses the override as
+> its A/B lever: `FunctionFlagsOffsetFor` is recomputed per call and was never affected, but
+> anyone reusing that technique for soft/lazy before today would have measured the old latch.
 
 `PersistentPtrEnvelopeFor` consults `latched` **before** it looks at `ueVersion`
 ([`Grimoire.h:278-279`](../dll/src/Grimoire.h)), and `set_ue_version_override`
@@ -419,7 +458,16 @@ in §*`TArray<TLazyObjectPtr>` still strides `0x20`* below, and `:6138` repeats 
 either says `+0x10` is the right answer, which is what an operator judging A1 will be doing.
 **Delete with the stride fix. Effort XS.**
 
-### 6. A5's "provable no-op" argument is incomplete (the conclusion still holds)
+### 6. ✅ DONE 2026-09-06 — A5's "provable no-op" argument was incomplete (the conclusion still holds)
+
+> **CORRECTED** in the register. The divisor halves are true (`16`@0 before `32`@2, `20`@3
+> before `40`@4), but `PreferStride` fires on **any** equal score — `score == bestScore &&
+> bestStride != 0 && stride < bestStride` — and `{16, 24, 32, 20, 40}` holds two
+> **non-divisor** pairs whose smaller member sits **later**: `(24, 20)` and `(32, 20)`.
+> The conclusion survives on a different argument, which is `Lineal.h`'s own: 24/20 and
+> 32/20 are neither multiples nor divisors, so on a correct pool one of each pair lands
+> off-item and loses on score long before a tie. **The decision not to open a row stands;
+> the old sentence must not be cited as a proof.**
 
 [`verification-register.md`](verification-register.md) closes A5's tie-break with *"a provable no-op
 over `{16, 24, 32, 20, 40}` — every divisor pair already has the smaller candidate earlier in the

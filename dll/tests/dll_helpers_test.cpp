@@ -5811,6 +5811,34 @@ static void Test_UBoolPropFieldSize() {
         const int nonCpn = UBoolPropFieldSizeFor(0x44, 422, false);
         EXPECT("A6: a missed CasePreserving is off by exactly 8 -- also inside the spread",
                cpn - nonCpn == 8);
+
+        // ⛔ BUT THE TWO ERROR TERMS DO NOT COMPOSE, and the pair above cannot show that because
+        // each pins its term IN ISOLATION. Get BOTH wrong in the SAME direction and the miss is
+        // 4 + 8 = 0xC, which is OUTSIDE the spread { 0, -4, +4, +8, -8 } -- so the probe does NOT
+        // recover, and describing the spread as an unconditional net is wrong.
+        //   true   : 4.20, CasePreserving, Offset_Internal 0x50  -> 0x50 + 0x2C + 8 = 0x84
+        //   guessed: misdetected as 4.15 AND CPN missed          -> 0x50 + 0x28 + 0 = 0x78
+        // Direction matters and is why this is a THIRD assertion rather than a sum of the two
+        // above: misdetecting the version HIGH while missing CPN partially CANCELS (+4 then -8,
+        // net -4, still inside). Only a LOW version miss stacks with a missed CPN.
+        // RE-UE4SS ships a real-world shape that can land here: Kingdom Hearts 3's config carries
+        // the pre-4.18 tail order (RepNotifyFunc before Offset_Internal), i.e. exactly the layout
+        // that invites a low version guess.
+        // ⛔ This is NOT an argument for widening the spread -- [A6-BOOLFIELD-2026-09-05] and the
+        // register both say do not. It is an argument for not claiming a net that has a hole.
+        const int trueBoth   = UBoolPropFieldSizeFor(0x50, 420, true);
+        const int wrongBoth  = UBoolPropFieldSizeFor(0x50, 415, false);
+        EXPECT("A6: a LOW version miss AND a missed CPN compose to 0xC",
+               trueBoth - wrongBoth == 0xC);
+        EXPECT("A6: ...which is OUTSIDE the { base, +-4, +8, -8 } spread -- the net has a hole",
+               (trueBoth - wrongBoth) != 0 && (trueBoth - wrongBoth) != 4
+               && (trueBoth - wrongBoth) != -4 && (trueBoth - wrongBoth) != 8
+               && (trueBoth - wrongBoth) != -8);
+        // The counter-case, so the claim above is not mistaken for "any two errors escape":
+        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x50, 420, false);
+        const int trueLoCpn     = UBoolPropFieldSizeFor(0x50, 415, true);
+        EXPECT("A6: a HIGH version miss partially cancels a missed CPN -- net 4, still inside",
+               trueLoCpn - hiMissCpnMiss == 4);
     }
 
     // --- every result must be a plausible offset, and strictly past Offset_Internal ---

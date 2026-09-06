@@ -1758,6 +1758,27 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 g_cachedVersionDetected = true;
                 g_cachedIsUserOverride  = true;
                 g_cachedIsLowConfidence = false;
+
+                // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION.
+                // `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
+                // ever looks at ueVersion, so a latch taken under the OLD version outranks the
+                // new one for every call that cannot produce a fresh accepted measurement — and
+                // several cannot: `Ubel.cpp:2853` passes a literal 0 elemSize, and a garbage
+                // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The override then
+                // silently changes the version and NOT the layout it implies, which is the one
+                // thing a version override is for. Clearing them re-derives on the next read
+                // (or re-measures, which re-latches).
+                // ⚠ SCOPE, stated so this is not mistaken for a re-detect: the override does NOT
+                // re-run ValidateAndFixOffsets, so the rest of the DynOff family keeps whatever
+                // the real scan probed. That is deliberate — those are MEASURED from the running
+                // image, not derived from the version number, and re-deriving them from a
+                // hypothetical version would replace fact with guess. These two are different
+                // precisely because their fallback IS version-derived.
+                DynOff::SOFTPTR_PATH = -1;
+                DynOff::LAZYPTR_GUID = -1;
+                Sein::Info("PIPE:cmd", "set_ue_version_override: UE %u — soft/lazy payload "
+                                       "envelopes un-latched so they re-derive for this version",
+                           g_cachedUEVersion);
             }
 
             json data;
