@@ -277,10 +277,23 @@ Where they live now:
 > actually guarding against. All three stale `= 0x20` comments deleted with it.
 >
 > ⚠ **Not live-verified, and it cannot be here**: no installed title has a
-> `TArray<TLazyObjectPtr>` (OCTOPATH has 5 scalar lazy properties and zero arrays). Pinned
-> offline instead, in `dll_core_test` — six checks including *"0x20 is returned by NO era"*
-> and a 4.18 row asserting the same `0x1C` OCTOPATH reported live as its `ElementSize`.
-> That offline route is the one this batch believed did not exist; see item 6 below.
+> `TArray<TLazyObjectPtr>` (OCTOPATH has 5 scalar lazy properties and zero arrays, ES2 has
+> 3 and zero). Pinned offline in `dll_core_test` instead.
+>
+> ⛔ **CORRECTION 2026-09-06 — the first pin did NOT cover the function with the bug in it.**
+> It pinned `InferScalarSize`, an arithmetic helper; the `elemSize = 0x20` line lived in
+> `ReadLazyObjectArrayElements`, and grepping `dll/tests/` and `tools/verify/` for that name
+> returned **nothing**. Calling the fix "pinned" on that basis is the same mistake audit A7
+> made — a test that names a **neighbour** of its subject. A second block now drives the
+> array reader itself against a `{ Data, Num, Max }` triple in the test's own memory
+> (`Macht::ReadTArray` only sanity-checks Count/Max, so it is a real TArray to the code).
+>
+> ⭐ **Red-tested**: putting `elemSize = 0x20;` back fails exactly two checks, and the failure
+> text is the diagnosis — `first wrong element: 1 got {C0000001-D0000001-FFFFFFFF-FFFFFFFF}`.
+> Element 1 picks up the TAIL of its own GUID followed by the next element's
+> objIdx/serial: an 8-byte drift, exactly `0x20` against the true `0x18`. Element 0 passes,
+> because both strides read it correctly — which is why "the count came back right" would
+> have proved nothing. `Ubel.cpp` restored byte-identical afterwards.
 
 <details><summary>original entry (kept — the failure analysis is why the fix took the shape it did)</summary>
 

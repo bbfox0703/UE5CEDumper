@@ -475,6 +475,78 @@ int main() {
         DynOff::LAZYPTR_GUID = savedLatch;
     }
 
+    {   blk("A1 follow-up (2) — ReadLazyObjectArrayElements itself, which the block above does NOT cover");
+        // ⛔ WHY THE BLOCK ABOVE IS NOT ENOUGH, and I am recording this because it is my own
+        // overstatement from earlier today. That block pins `InferScalarSize` — an arithmetic
+        // helper. The function the `elemSize = 0x20` bug actually lived in is
+        // `ReadLazyObjectArrayElements`, and it had ZERO coverage: grepping dll/tests/ and
+        // tools/verify/ for it returned nothing. Pinning the helper and calling the fix verified is
+        // the same mistake audit A7 made — a test that names a NEIGHBOUR of its subject (§1.12).
+        //
+        // Offline because `Macht::ReadTArray` (Macht.h) only sanity-checks Count/Max, so a
+        // { Data, Num, Max } triple in this process's own memory is a real TArray to it. No
+        // installed title has a TArray<TLazyObjectPtr> — OCTOPATH has 5 scalar lazy properties and
+        // zero arrays, ES2 has 3 and zero — so a live row for this would be unfalsifiable.
+        const uint32_t savedVerArr   = g_cachedUEVersion;
+        const int      savedLatchArr = DynOff::LAZYPTR_GUID;
+
+        constexpr int32_t kN = 6, kStride = 0x18;   // UE >= 5.3: FWeakObjectPtr(8) + FGuid(16)
+        // ⭐ POISON EVERYWHERE, and the index ENCODED IN THE VALUE. A wrong stride then does not
+        // merely read "a different element" — it reads 0xEE, and the failing check names which
+        // element drifted. A "the count came back right" assertion would pass at 0x20 and prove
+        // nothing, because the bug reads element 0 correctly and only drifts from index 1.
+        std::vector<uint8_t> elems(static_cast<size_t>(kN) * 0x20 + 0x40, 0xEE);
+        for (int32_t i = 0; i < kN; ++i) {
+            uint8_t* e = elems.data() + static_cast<size_t>(i) * kStride;
+            int32_t objIdx = -1, serial = -1;        // unresolvable, so `value` is the GUID alone
+            memcpy(e + 0, &objIdx, sizeof(objIdx));
+            memcpy(e + 4, &serial, sizeof(serial));
+            uint32_t a = 0xA0000000u | i, b = 0xB0000000u | i,
+                     c = 0xC0000000u | i, d = 0xD0000000u | i;
+            memcpy(e + 0x08 +  0, &a, sizeof(a));    // FGuid at +0x08 for UE >= 5.3
+            memcpy(e + 0x08 +  4, &b, sizeof(b));
+            memcpy(e + 0x08 +  8, &c, sizeof(c));
+            memcpy(e + 0x08 + 12, &d, sizeof(d));
+        }
+        struct FakeTArray { uintptr_t Data; int32_t Num; int32_t Max; };
+        FakeTArray arr{ reinterpret_cast<uintptr_t>(elems.data()), kN, kN };
+
+        g_cachedUEVersion    = 506;                  // untagged era -> envelope 0x08, stride 0x18
+        DynOff::LAZYPTR_GUID = -1;                   // no latch: make the run derive it
+        auto lr = Ubel::ReadLazyObjectArrayElements(
+            reinterpret_cast<uintptr_t>(&arr), 0, kStride, 0, 64);
+
+        check("lazy array: the read succeeds against an in-process TArray", lr.ok == true);
+        check("...and yields every element", static_cast<int32_t>(lr.elements.size()) == kN,
+              std::to_string(lr.elements.size()).c_str());
+
+        bool allRight = (static_cast<int32_t>(lr.elements.size()) == kN);
+        int firstWrong = -1;
+        for (int32_t i = 0; allRight && i < kN; ++i) {
+            char want[48];
+            snprintf(want, sizeof(want), "{A000000%X-B000000%X-C000000%X-D000000%X}", i, i, i, i);
+            if (lr.elements[i].value.find(want) == std::string::npos) {
+                allRight = false;
+                firstWrong = i;
+            }
+        }
+        check("A1 ⭐: EVERY element decodes at its own stride — index encoded in the GUID, so a "
+              "drift reads poison", allRight,
+              firstWrong >= 0 ? ("first wrong element: " + std::to_string(firstWrong) + " got "
+                                 + lr.elements[firstWrong].value).c_str() : nullptr);
+        // The one that fails first under the old bug: element 0 is read correctly by BOTH strides,
+        // so it is element 1 that discriminates. Asserted separately so the failure says so.
+        if (lr.elements.size() > 1) {
+            check("A1: ...element 1 specifically — the first index the 0x20 stride gets wrong",
+                  lr.elements[1].value.find("{A0000001-B0000001-C0000001-D0000001}")
+                      != std::string::npos,
+                  lr.elements[1].value.c_str());
+        }
+
+        g_cachedUEVersion    = savedVerArr;
+        DynOff::LAZYPTR_GUID = savedLatchArr;
+    }
+
     {   blk("G6 — the fork's tag→key table is TRI-state: a transient miss must not be cached");
         // ⛔ WHAT G6 ACTUALLY ASSERTS, and why one bool cannot express it. The old code cached a
         // permanent TAGKEY_MISS, so a single unlucky read — the fork grows this table WHILE the
