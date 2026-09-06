@@ -1296,7 +1296,39 @@ before being written down.*
 - **Class Pivot — rounding-mode + "can't-find-data"/GAS-capture follow-ups (deferred from build 1672)** —
   Effort: **S-M** · Risk: low. The per-panel **RoundingMode {Round/Trunc/Ceil}** (build 1672) was rolled out to Value Search, Snapshot, and SPC but **NOT Class Pivot**. Two distinct gaps:
   (1) **Rounding mode** — Pivot does **no numeric value MATCHING** today: it groups by the *rendered* key string (`PivotEngine` uses `SnapshotNumeric.Render`) and `PivotDiscoveryEngine.Direction()` compares raw `double`s with no reduce. So a rounding-mode switch is largely **N/A** — but if Pivot ever grows a value-target filter, it should reuse `SnapshotNumeric.ExactMatch/OrderedMatch/BetweenMatch(...,FloatRoundMode)` like the other panels. Lower priority: optionally apply the reduce to the grouping KEY so float GAS values bucket by displayed integer (e.g. 513.36/513.4 group as "513").
-  (2) **"Can't find data" / GAS-capture** — the recent snapshot fixes (nested-`StructProperty` GAS capture `Aura::CaptureDirectStructFields`, build 1648; rounded-float matching) flowed into Snapshot/SPC/Group. Pivot reads the **same captured corpus**, so the GAS `Health.BaseValue`-style fields *should* now appear in Pivot automatically — **but this is UNVERIFIED**. Verify in-game that a GAS attribute captured post-1648 actually shows up as a pivotable field/key in Class Pivot; if Pivot has its own field-selection or numeric-only filter that drops nested-struct leaves, fix it. *Parent: rounding-mode switch build 1672; snapshot GAS-capture build 1648 (project-snapshot-nested-struct-gas).*
+  (2) **"Can't find data" / GAS-capture** — the recent snapshot fixes (nested-`StructProperty` GAS capture `Aura::CaptureDirectStructFields`, build 1648; rounded-float matching) flowed into Snapshot/SPC/Group. Pivot reads the **same captured corpus**, so the GAS `Health.BaseValue`-style fields *should* now appear in Pivot automatically — ~~**but this is UNVERIFIED**~~ ✅ **VERIFIED 2026-09-06 `[PIVOTGAS-2026-09-06]`** — see below. Verify in-game that a GAS attribute captured post-1648 actually shows up as a pivotable field/key in Class Pivot; if Pivot has its own field-selection or numeric-only filter that drops nested-struct leaves, fix it. *Parent: rounding-mode switch build 1672; snapshot GAS-capture build 1648 (project-snapshot-nested-struct-gas).*
+
+  > ### ✅ CLOSED 2026-09-06 `[PIVOTGAS-2026-09-06]` — nested-struct leaves reach Pivot, and they are USABLE as keys
+  >
+  > DumperTest dev, **build 3401**, AOT `dist\UE5DumpUI.exe` 54.7 MB, connected `UE504 (25,215
+  > objects)`. Snapshot scope `NumericNoByte`, 652 objects / 12,327 fields; Class Pivot →
+  > `DumperTestActor` (2 instances).
+  >
+  > **The Key field list contains `Health.BaseValue` AND `Health.CurrentValue`**, alongside the
+  > flat fields (`F64_Ticking`, `FixedArr`, `FrozenInt`, `I16/I32/I64`, …). So nothing in Pivot's
+  > field selection drops nested-struct leaves — no fix needed.
+  >
+  > ⭐ **Listed is not the same as usable, so the key was exercised, and it DISCRIMINATES:**
+  >
+  > | key | result |
+  > |---|---|
+  > | `RayTracingGroupId` (default) | **1 group** from 2 instances |
+  > | `Health.CurrentValue` | **2 groups** from 2 instances, keys **100** and **99** |
+  >
+  > The nested leaf partitions the instances where the flat default does not, so it is genuinely
+  > applied rather than merely offered. 100/99 is the CDO against the live actor mid-tick, which is
+  > the expected shape for a field that falls 1/sec.
+  >
+  > ℹ️ Two more nested leaves corroborate that this is general, not special-cased for GAS:
+  > `PrimaryActorTick.TickInterval` is a key, and `AttachmentReplication.LocationOffset.X/.Y/.Z` +
+  > `.RelativeScale3D.*` + `.RotationOffset.*` all appear as pivotable fields.
+  >
+  > ⚠ **UI note, not filed as a defect because one witness is not enough:** selecting the class row
+  > in the picker needed a **double-click**; single clicks left `Run Pivot` disabled. It selected on
+  > a single click earlier in the same session, right after the list was first populated — so the
+  > difference may be freshly-populated vs re-populated (the snapshot was changed in between).
+  > Worth a second look if anyone sees it again; `[project-class-pivot-field-load-freeze]` is the
+  > related trail.
 
 - **Flatten GAS attributes — optional extensions (deferred by user, build 1698)** —
   Effort: **S** · Risk: low. The "Flatten GAS attributes" Options toggle (build 1698) collapses a
@@ -1347,11 +1379,48 @@ before being written down.*
   numericScope-filtered, ≤256/obj); pipe `native_c` on `snapshot_chunk`; C#
   `SnapshotViewModel.IncludeNativeFields` toggle + intro string. SPC Query + Class Pivot
   consume raw rows with ZERO code changes (key on prop_name=offset + canonical declared_type;
-  existing `fields` schema, no migration). **REMAINING: in-game verify P3** — BLOCKED on the
-  snapshot-perf item below (FF7 Rebirth capture with Native-C didn't finish — 16+ min, >50%
-  uncaptured). Verify on a smaller / faster game, or after the perf work: capture a native
-  snapshot pair around a stat change, confirm SPC diff tracks a `<raw@0x..>` value + Class
-  Pivot decodes it (not hex).
+  existing `fields` schema, no migration). ~~**REMAINING: in-game verify P3** — BLOCKED on the
+  snapshot-perf item below~~ ✅ **P3 VERIFIED 2026-09-06 `[NATIVEC-P3-2026-09-06]`** — the block
+  dissolved rather than being cleared: the row said *"Verify on a smaller / faster game"*, and
+  **DumperTest is that game**. The FF7-Rebirth perf item was never a prerequisite.
+
+  > ### ✅ P3 CLOSED 2026-09-06 `[NATIVEC-P3-2026-09-06]` — both halves, on DumperTest dev / build 3401
+  >
+  > AOT `dist\UE5DumpUI.exe` 54.7 MB, `UE504 (25,215 objects)`. Scope `NumericNoByte` with
+  > **Native-C (raw) ticked**. ⭐ The toggle's effect is visible before anything else:
+  > **652 objects / 12,327 fields → 1,066 objects / 20,883 fields**.
+  >
+  > A capture pair 77 s apart (20:51:15 → 20:52:32), then *Compare snapshots (diff)*:
+  >
+  > | field | old | new | |
+  > |---|---|---|---|
+  > | **`<raw@0x180>`** (BP_ThirdPersonCharacter) | 312.3358 | **388.67** | ⭐ a raw hole, tracked across the pair |
+  > | **`<raw@0x4C>`** (CR_Mannequin_BasicFoo) | 312.277 | 388.627 | |
+  > | `TickCount` | 312 | 388 | +76 over 77 s — the 1 Hz control |
+  > | `F64_Ticking` | 20078.125 | 20097.125 | +19.0 vs 0.25/s × 77 = 19.25 |
+  > | `Health.CurrentValue` | 85 | 9 | falls 1/s and wraps, as documented |
+  >
+  > The reflected controls all agree with the 77 s gap, which is what makes the raw deltas
+  > readable rather than merely present.
+  >
+  > **Class Pivot decodes it, and NOT as hex.** On the Native-C snapshot, `<raw@0x7F8>`,
+  > `<raw@0x918>`, `<raw@0x91C>`, `<raw@0x920>` are all selectable pivot **keys**, and pivoting
+  > `DumperTestActor` on `<raw@0x918>` gives **`2 groups from 2 instances`** with group keys
+  > **`5829`** and `(missing)` — a decimal integer. The grid also renders raw rows with their
+  > guessed type resolved (`<raw@0x17E>` → `Int16Property`, `<raw@0x254>` → `IntProperty`).
+  >
+  > ⚠ **Scope precision, because the row's own note is easy to over-read:** `AppendRawHoleFields`
+  > returns immediately unless the numeric scope is a **meta** type (`Aura.cpp:9481`,
+  > `Radar::MultiNumericMembers` → only `NumericNoByte` and `NumericAll` expand). The **default
+  > `NumericNoByte` already qualifies**; what would capture nothing is narrowing the scope to a
+  > single concrete type such as `Int32`.
+  >
+  > ⚠ **Two honest limits.** (1) The diff used was the Snapshot panel's *Compare snapshots*, not
+  > the SPC Query tab — same corpus and same raw rows, but if the row means SPC Query specifically
+  > that arm is still owed. (2) DumperTestActor's own raw rows did **not** appear in the *changed*
+  > list even though its raw fields are captured and pivotable; the changed raw rows came from the
+  > two Blueprint actors. Not chased — it is consistent with those particular holes being static,
+  > but it was not proven, and it is the obvious next question.
   *Parent: P0–P3 shipped on dev (this session); builds on value_search_caveats, the `Orden`
   seam (group-value-scan-spec §3.1), and the "Guess What" build (commit 75ea723).*
 
