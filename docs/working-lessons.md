@@ -406,6 +406,62 @@ had already been solved twice.
 mirror and is deliberately **much** shorter. An item absent from it is weak evidence the work is
 done — worth checking, never sufficient on its own.
 
+### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
+
+*Four independent instances in one 2026-09-05/06 verification session — a logging change, an
+acceptance criterion, a test target, and a struct field. None was a coding mistake in the ordinary
+sense; every one was **a claim that had drifted away from the thing it claimed about**, while every
+gate stayed green. This is not a new observation — audit #4 filed it as root cause 4a — but four in
+one session is the evidence that it is **the** shape to hunt, not one of many.*
+
+| # | the claim | what was actually true |
+|---|---|---|
+| 1 | `70d28548`: "build: zero warnings on a CLEAN publish" | `_wfopen`→`_wfopen_s` also made every live log **unreadable to every process** (`fopen_s` opens exclusively), deleting the DLL-side half of every acceptance test in the repo |
+| 2 | A2's row: "`VALIDATION FAILED` must be ABSENT" | on the pattern path a zero-fire hook logs a **different** line, so the absence is satisfied **by construction** — a wrong slot passes |
+| 3 | todo + register: "A7's live half CLOSED" | the test block drives `Aura::ForEach`; A7 fixed `FindByAddress`, which hand-rolls its own loop. `grep FindByAddress dll/tests/ tools/verify/` = **0 hits** |
+| 4 | `Ubel.h:435`: "`softArrayFNameSize` — sizeof(FName): 8 or **12**" | both writers set **`0x10`**, and six sibling sites did the same |
+
+**What they share, and it is the thing to look for:** in each case the *checker* and the *checked*
+were separated by a step nobody re-derived — a share mode not visible in the diff, a log line whose
+branch was never read, a label that says "A7" over a call to something else, a comment that stopped
+being regenerated from the code. **Green is not evidence. Green plus a demonstrated ability to go
+red is evidence** (§1.2).
+
+**The four questions that found all of them**, in the order they are cheapest to ask:
+
+1. **"What would this check say if the thing under test were deleted?"** If the answer is "the same",
+   the check is decorative. Deleting A7's poll turned two new assertions red with
+   `...reports no index rather than a stale one   got: 8000` — *that* is what closed the row, not
+   the assertions passing.
+2. **"Does the label name the thing, or a neighbour of it?"** `Aura::ForEach` and
+   `Aura::FindByAddress` are siblings in one file and the fix's own comment names ForEach as a
+   *model to copy*. A block titled "A7" over the model instead of the subject reads correct at a
+   glance and forever.
+3. **"Is the absence I am asserting reachable at all?"** An `ABSENT:` criterion needs a paired
+   positive that proves the code path ran (§1.9 says this for strings; it generalises to branches).
+   A2's real evidence turned out to be a line already in the log that nobody had cited —
+   `validation OK — hook fired 660 times in 1500ms`.
+4. **"Does the doc regenerate, or was it typed once?"** `Ubel.h`'s field comment and its two writers
+   could not both be right, and nothing compared them. Where the answer is "typed once", either
+   derive it (`check_derived_counts`) or make the wrong answer unrepresentable — which is what
+   `DynOff::SizeofFName()` / `FNameSlotIn8Aligned()` do: the rule had been written out in full in
+   `Grimoire.h`, *including a warning that it was the most-copied wrong sentence in the tree*, and
+   was still copied wrongly into eight sites, because **both answers are spelled
+   `bCasePreservingName ? … : 0x08`** and the expression cannot say which question it answers.
+
+⛔ **A documented rule is not a defence.** All four had documentation on their side; #4 had the rule
+stated correctly *four lines above* one of the sites that got it wrong. Prefer, in this order:
+**make the wrong answer unrepresentable** (a named function, a type) → **derive it and gate the
+derivation** → **write it down**. Only the third is what most of these had.
+
+⚠ **And the same shape lives in verification rigs, which is worse, because a rig is trusted.** Three
+of mine manufactured false verdicts in the same session: one expected soft and lazy to share a
+tagged envelope (they do not — `0x10` vs `0x0C`) and scored a *correct* DLL as FAIL on OCTOPATH; one
+demanded a `DetectVersion:` line that a cached verdict legitimately suppresses; one **raced a
+1500 ms validator** and reported "no validation OK line" about a line that appeared 1.6 s later.
+A rig that encodes the pre-fix model, or that reads a log before the code has finished writing it,
+converts a working fix into a bug report. Rigs need §1.2 applied to themselves.
+
 ## 2. Audit agents — raw finder output is about half wrong
 
 **Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
