@@ -1040,6 +1040,46 @@ when the probe lands off-field.*
 > *App-data left as found: the cache entry was backed up, restored byte-for-byte afterwards, and the
 > backup removed.*
 
+> ### ✅ HALF 2 CLOSED 2026-09-06 `[A4-507RUNG-2026-09-06]` — the **507** rung has now fired, and it never had
+>
+> The block above closed the **508** rung by seeding the cache to 507. That left the rung *below*
+> it unobserved: nothing had ever produced the `FUObjectItem Object@+0x08` raise, because a genuine
+> 5.8 binary is detected as 508 outright and the ladder has nothing to climb from.
+>
+> **Seed 504 instead of 507 and both rungs fire in sequence.** `tools/verify/a4_raise_ladder.py`,
+> DumperTest58 **Development**, build 3376, run twice with identical output:
+>
+> ```
+> FindAll: UE Version = 504 (cached, rev=7, detected=yes, lowConf=no) — skipped DetectVersion
+> UE5_Init: structural marker (FUObjectItem Object@+0x08, 32B = UE5.7+) but version=504 — raising floor to 507.
+> UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508.
+> UE5_Init: Complete (UE508, GObjects=0x7FF71CBEE340, GNames=0x7FF71CAE5A00, Objects=35837)
+> ```
+>
+> ⭐ **`32B` is the half-1 claim paying off.** That commit widened the size set from `==24` to
+> `{24, 32, 40}` precisely because a pinned `==24` "silently excluded every stripped 5.7+
+> **Development** or **Test** build". This is a Development build at **32 bytes**: under the old
+> pin the rung would not have fired, so this run also red-tests the widening.
+>
+> ⭐ **Two independent witnesses that the seed reached the code**, which is the property that makes
+> the rest meaningful: Genau logs that it read the cached 504 (`SCAN`), and the rung independently
+> reports `version=504` in its own message (`INIT`). Different code paths, same fact.
+>
+> ⚠ **SCOPE is the same as half 1 and does not widen.** What is simulated is only *how* 504 arrived
+> (a cache hit, not a failed detection). Everything downstream — the `FUObjectItem` probe, the
+> marker, the raise, the badge — is the real code on a real 5.8.2 binary.
+>
+> ⚠ **The rig's FIRST version reported all four checks MISS on this very run**, because it sliced
+> the log from a byte offset captured before launch and a new process ROTATES the log — a false
+> FAIL on a genuine PASS, and the exact variant CLAUDE.md lists. It now watermarks by parsing each
+> line's own millisecond timestamp, and it fails loudly with "read 0 log lines after the watermark"
+> rather than emitting four confident MISSes, because a detector that cannot be shown to FIRE says
+> nothing by staying silent.
+>
+> *App-data left as found: the hint cache was snapshotted, seeded, and restored byte-for-byte
+> (34,105 bytes both times, entry back to `ueVersion 508 / rev 5`); the game was killed; no
+> `.a4bak` left behind. Verified after each of the two runs.*
+
 > ✅ **`[A4-NEGCTL-2026-09-05]` — the negative control this row calls "the one that matters" is
 > DONE.** Solarpunk, UE 5.7, build 3371, injected, 120,863 objects:
 >
