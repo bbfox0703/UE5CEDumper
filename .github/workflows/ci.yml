@@ -149,6 +149,15 @@ jobs:
           # usage examples, and nothing else in CI looks. Placeholders and %ENVVAR% forms pass.
           & $py tools/check_no_local_paths.py
           if ($LASTEXITCODE -ne 0) { throw "check_no_local_paths FAILED ($LASTEXITCODE) - a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / %APPDATA% / %USERPROFILE%, or a placeholder. The failure names each hit." }
+          # Markdown link integrity. A broken relative link is invisible to whoever wrote it
+          # (no compiler, and the author sees the target in the folder they had in mind), and
+          # they arrive in BULK on a file move - docs/x.md -> docs/archive/x.md leaves every
+          # ../foo one level too shallow. docs/archive/** is excluded by documented
+          # convention; the three files there that were edited at archive time are not.
+          # NOTE it verifies the FILE exists, never that the :LINE is still right - 16 of 28
+          # such references were stale when this landed, and no path check can see that.
+          & $py tools/check_md_links.py
+          if ($LASTEXITCODE -ne 0) { throw "check_md_links FAILED ($LASTEXITCODE) - a relative link in a tracked .md file does not resolve. Run 'py tools/check_md_links.py --list'; --fix previews the provable rewrites." }
           # Proxy export surface. A proxy DLL is a NAME map and an ORDINAL map, and audit PX1
           # found both halves wrong on two of the four at once - silently, for months. A name
           # the real DLL exports and we do not kills the game before DllMain, with no log file

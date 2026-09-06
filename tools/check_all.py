@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Run every doc/source gate CI runs, in CI's order, from one command.
 
-    py tools/check_all.py            # the 12 pre-build gates
+    py tools/check_all.py            # every pre-build gate
     py tools/check_all.py --quick    # skip the two that need a Ghidra-pattern re-extract
     py tools/check_all.py --list     # print the sequence and exit
 
 WHY THIS EXISTS. The gates lived only as inline `pwsh` lines inside
-`.github/workflows/ci.yml`, each with its own `throw`. There are **twelve** of them
-before the build (plus a thirteenth over the built artifacts, which needs a build and
-is therefore not run here) -- and a session that knows about "the four doc checks"
-runs those, sees green, opens a PR and reddens CI on a gate it has never heard of.
-Measured 2026-08-22: an entire day's work was committed against 4 of the 12.
+`.github/workflows/ci.yml`, each with its own `throw` -- and a session that knows
+about "the four doc checks" runs those, sees green, opens a PR and reddens CI on a
+gate it has never heard of. Measured 2026-08-22: an entire day's work was committed
+against 4 of the then-12.
+
+⛔ DERIVE THE COUNT, never type it. This docstring said "the 12 pre-build gates" while
+the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason: a
+number in prose does not move when someone appends a tuple. `--list` prints it, and the
+run's own final line reports "N gate(s) run".
+
+⚠ `check_all.py` and `ci.yml` HAVE DRIFTED and this file cannot see it: as of
+2026-09-06 `check_evidence_index` and `check_inert_trimming` run here but are absent
+from `ci.yml`. Adding a gate means adding it to BOTH lists.
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.
@@ -104,6 +112,12 @@ GATES = [
      ["tools/check_no_local_paths.py"],
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
+
+    ("check_md_links",
+     ["tools/check_md_links.py"],
+     "a relative link in a tracked .md file does not resolve. Run "
+     "'py tools/check_md_links.py --list'; --fix previews the provable rewrites. "
+     "NOTE it checks the FILE, never the :LINE -- line drift is invisible to it", False),
 
     ("check_evidence_index",
      ["tools/check_evidence_index.py"],
