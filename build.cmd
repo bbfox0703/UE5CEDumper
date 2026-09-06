@@ -1,4 +1,7 @@
 @echo off
+:: >> This file MUST stay CRLF. cmd.exe resolves `goto :label` by SEEKING to a byte
+::    offset, so LF endings shift every offset and the label is never found. Pinned by
+::    .gitattributes (`*.cmd`/`*.bat` -> eol=crlf); see its comment for the repro.
 setlocal EnableDelayedExpansion
 
 :: ============================================================

@@ -43,6 +43,34 @@
 # NUL-terminated needles) and the image/gz assets are left alone.
 * text=auto eol=lf
 
+# ⛔ WINDOWS BATCH MUST BE CRLF IN THE WORKING TREE -- the one exception to the line above.
+#
+# cmd.exe resolves `goto :label` by SEEKING to a byte offset and re-reading from there. Strip the
+# CRs and every offset shifts, so the label is searched for in the wrong place and the script dies
+# with a message that names the label but not the cause:
+#
+#     The system cannot find the batch label specified - parse_args
+#
+# ⭐ REPRODUCED 2026-09-06, and it had already bitten the second PC. `build.cmd` (6 labels, 15
+# gotos) fails on a FRESH CHECKOUT, which is what `eol=lf` produces; the same file with CRLF parses
+# its arguments correctly. It worked on the first machine only because that working tree still held
+# `w/crlf` from before `eol=lf` was pinned and was never re-checked-out -- `git ls-files --eol`
+# showed `i/lf w/crlf` there while every other text file showed `w/lf`. A bug that only appears on
+# a clean clone is the worst kind to leave to chance.
+#
+# ⚠ The EXTENSION is pinned, not the one file that fails today. `count_cloc.bat` also uses a label
+# and happens to survive, because whether the shifted seek lands somewhere fatal depends on where
+# the label sits -- "happens to survive" is not a property to build on, and a `.cmd` that gains a
+# label later would break silently on someone else's clone.
+#
+# ⚠ PowerShell is deliberately NOT included. It has a real parser, not a byte-seeking one:
+# `build.ps1` is `w/lf` here and runs fine, clean AOT publish included. `.ps1`, `.sh` and
+# everything else stay LF.
+#
+# This changes the CHECKOUT only; the index stays LF, which is what keeps the repo portable.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # Preserved log evidence — VERBATIM ARTIFACTS, so never normalise them.
 #
 # `docs/evidence/` holds runtime logs that a committed claim rests on, copied out of
