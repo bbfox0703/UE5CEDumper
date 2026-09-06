@@ -423,8 +423,24 @@ inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x9
 //
 //   4.07-4.10   Offset_Internal 0x4C -> FieldSize 0x70   delta 0x24   (below our 4.11 floor)
 //   4.11-4.17   Offset_Internal 0x50 -> FieldSize 0x78   delta 0x28
-//   4.18-5.08   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
+//   4.18-4.24   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
+//   4.25-5.02   Offset_Internal 0x4C -> FieldSize 0x78   delta 0x2C   <-- SAME delta, other base
+//   5.03-5.08   Offset_Internal 0x44 -> FieldSize 0x70   delta 0x2C
 //   4.27 CPN    Offset_Internal 0x4C -> FieldSize 0x80   delta 0x34  (= 0x2C + 8)
+//
+// ⚠ THE MIDDLE ROW IS WHY THIS TABLE IS SPLIT, corrected 2026-09-06. It used to read a single
+// "4.18-5.08  0x44 -> 0x70", which is right at BOTH ENDS and wrong for the six versions between
+// them: 4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all measure 0x4C -> 0x78. The shipped code was
+// never affected -- it reads only the DELTA, which is 0x2C across all three UE4.18+ rows -- but a
+// reviewer sanity-checking the derivation on a UE 5.0 or 5.1 game would find 0x4C/0x78, conclude
+// the table was broken, and "fix" a correct one.
+// The 5.08 endpoint was ASSERTED when this comment was written (no 5_08 template existed then,
+// the highest was 5_07). RE-UE4SS shipped MemberVariableLayout_5_08_Template.ini on 2026-09-05
+// and it agrees: 0x44 -> 0x70. Re-derive with:
+//   grep -h "^Offset_Internal" vendor/RE-UE4SS/assets/MemberVarLayoutTemplates/*.ini
+// Live corroboration for the delta, both 2026-09-05: OCTOPATH 4.18 stock derived 0x44 -> 0x70,
+// and DQ XI S (UProperty mode, whole-layout +0x10 shift) derived 0x54 -> 0x80 -- the same 0x2C
+// off a shifted base, which is the case no template can supply.
 //
 // The 4.17/4.18 step is not a curve fit: Offset_Internal and RepNotifyFunc SWAPPED order.
 // Up to 4.17 the tail is RepNotifyFunc(FName) + Offset_Internal + 4 pointers; from 4.18

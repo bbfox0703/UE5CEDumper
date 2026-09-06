@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`9` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -936,7 +936,55 @@ when the probe lands off-field.*
 
 -----
 
-### ⬜ FIXED 2026-09-05 — audit A4: the UE 5.8 version marker (**NEGATIVE CONTROL PASSED 2026-09-05**; positive still blocked on content)
+### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[A4-508MARKER-2026-09-06]` — audit A4: the raise fires, on a genuine UE 5.8.2 binary
+
+> **CLOSED on the verification PC, build 3374.** The row was blocked on *content* — "a title that
+> is UE 5.8 **and** string-stripped", which the corpus did not contain. The maintainer built a
+> stock **UE 5.8.2** sample on 2026-09-05 (`DumperTest58`, Development + Shipping,
+> `D:\UE_Analyze_data\For Testing\DumperTest58`), and that turned out to close **both** halves.
+>
+> **Half 1 — the 507 marker's widened size set, free and unplanned.** The commit widened it from
+> `==24` to `{24, 32, 40}` because "the `==24` pin had silently excluded every stripped 5.7+
+> **Development** or **Test** build". DumperTest58 Development reports **`item_size 32`** —
+> `TStatId` appended by STATS — with `item_layout_mode "unpacked57"`, 35,838 objects and
+> `is_low_confidence false`. A real binary of exactly the shape the old pin excluded, scanning
+> cleanly.
+>
+> **Half 2 — the 508 raise itself.** Stock, the string path wins (`DetectVersion: PE VERSIONINFO ->
+> UE 5.8 -> 508`), so the raise is a no-op and never logs — the marker only exists for titles whose
+> strings are gone. Rather than fabricate a stripped binary, the **detection cache** was seeded:
+> `UE5CEDumper.{Machine}.json` is keyed by PE hash and `FindAll` skips detection on a hit, so
+> setting that entry to `507` reproduces exactly the state a stripped 5.8 title arrives in.
+> Measured on the relaunch:
+>
+> | side | expected | measured |
+> |---|---|---|
+> | `scan-0.log` | detection skipped | `FindAll: UE Version = 507 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion` |
+> | `init-0.log` | the raise | `UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508` |
+> | `offsets-0.log` | the latch it reads | `FFieldClass::Name=+0x08` |
+> | `init-0.log` | the badge | `UE5_Init: Complete (UE508, …, Objects=35837)` |
+> | pipe | the badge | `ue_version 508` |
+>
+> ⚠ **SCOPE — what the seeded cache does and does not stand in for.** Everything downstream of the
+> version *arriving* as 507 is the real code on a real 5.8.2 binary: the probe genuinely latched
+> `+0x08`, the marker genuinely evaluated it, the raise genuinely reached the badge. What is
+> simulated is only *how* 507 got there (a cache hit rather than a failed string scan) — and that
+> path is upstream of everything this row asks about, which it states as "what is unverified is the
+> **plumbing**". ⛔ It does **not** prove `DetectVersion`'s fallback tiers would land a stripped 5.8
+> title on 507 specifically; that rests on the 507 predicate being satisfied by a 5.8 `FUObjectItem`,
+> which is a separate claim the row already makes.
+>
+> ⭐ **A claim in this row's own text got measured for free.** It says
+> `Genau::kVersionDetectLogicRev` is deliberately not bumped because "this ladder is runtime-only
+> and re-applied on every init, so no cached detection needs invalidating". After the run the cache
+> still read **507** — the runtime raise does not write back. Confirmed, not assumed.
+>
+> **Negative control** (unchanged, `[A4-NEGCTL-2026-09-05]`): Solarpunk UE 5.7 latches
+> `FFieldClass::Name=+0x00`, emits **no** raise line, and stays `UE507`. Positive and negative now
+> differ in the marker's discriminating input on real binaries of both versions.
+>
+> *App-data left as found: the cache entry was backed up, restored byte-for-byte afterwards, and the
+> backup removed.*
 
 > ✅ **`[A4-NEGCTL-2026-09-05]` — the negative control this row calls "the one that matters" is
 > DONE.** Solarpunk, UE 5.7, build 3371, injected, 120,863 objects:

@@ -1,5 +1,20 @@
 # Vendor audit — UE 5.8.2 + RE-UE4SS / Dumper-7 · 2026-09-05
 
+> ⚠ **PROVENANCE, added 2026-09-06 from the verification PC.** When this audit was written
+> the local `vendor/UnrealEngine` clone was checked out at **5.8.1-release** and had no
+> `5.8.2-release` tag at all, so `16d75d847` could not be resolved on that machine and
+> nothing here could be re-derived against the tree it names. The clone was fetched and
+> checked out to `16d75d84714512edfb744e1fd0a59e9c74d57873` (`5.8.2-release`,
+> `Build.version` = 5.8.2) on 2026-09-06; the citation is now resolvable. ⛔ `vendor/` is
+> **not** a tracked submodule — `git ls-tree HEAD vendor/` lists only minhook, nlohmann and
+> zydis — so nothing pins these clones and every machine must fetch for itself. Check
+> `git -C vendor/UnrealEngine log -1 --format=%D` before trusting any re-derivation here.
+>
+> RE-UE4SS was updated in the same pass (`d7e7826d` → `527a483b`), which **added the 5.08
+> UVTD templates** this audit's own tables had to assert without:
+> `VTableLayout_5_08_Template.ini` and `MemberVariableLayout_5_08_Template.ini`. Both agree
+> with what was asserted — see `Grimoire.h`'s FieldSize band comment and the A2 slot table.
+
 **Scope.** `vendor/UnrealEngine` 5.8.0-release → 5.8.2-release (`16d75d847`) ·
 `vendor/RE-UE4SS` `662df915` → `24b12662` (105 commits) ·
 `vendor/Dumper-7` `c891b17` → `b88241b` (37 commits) · zydis / minhook / nlohmann currency.

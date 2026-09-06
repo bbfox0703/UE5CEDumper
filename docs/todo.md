@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **9 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -360,7 +360,23 @@ has only two writers (`Genau.cpp:3243/3247`, inside a live 20-object vote), no c
 force it true, and **12 titles have measured false with zero CPN**. The register was right to open
 no row — a row would be unfalsifiable. It belongs here instead. **Effort S, risk LOW.**
 
-### 2. A6's version table comment is wrong for six versions inside a band it prints as one
+### 2. ✅ DONE 2026-09-06 — A6's version table comment was wrong for six versions inside one printed band
+
+> **FIXED** in `Grimoire.h`: the single `4.18-5.08 0x44 -> 0x70` row is now three —
+> `4.18-4.24 0x44 -> 0x70`, **`4.25-5.02 0x4C -> 0x78`**, `5.03-5.08 0x44 -> 0x70` — with
+> the delta `0x2C` called out as identical across all three, which is why the shipped code
+> was never affected. The re-derivation command is in the comment.
+>
+> ⭐ **And the 5.08 endpoint is no longer an assertion.** It was written with no `5_08`
+> template in existence (the highest was `5_07`); RE-UE4SS shipped
+> `MemberVariableLayout_5_08_Template.ini` on 2026-09-05 and the vendor clone was updated
+> 2026-09-06 — it measures `0x44 -> 0x70`, agreeing with what the comment claimed.
+> Live corroboration for the delta the same day: OCTOPATH 4.18 stock `0x44 -> 0x70`, and
+> DQ XI S `0x54 -> 0x80` — the same `0x2C` off a shifted base, the case no template covers.
+
+<details><summary>original entry</summary>
+
+**A6's version table comment is wrong for six versions inside a band it prints as one**
 
 [`dll/src/Grimoire.h:419-422`](../dll/src/Grimoire.h) prints `4.18-5.08  Offset_Internal 0x44 →
 FieldSize 0x70`. Measured against the UVTD templates, **4.25, 4.26, 4.27, 5.00, 5.01 and 5.02 all
@@ -370,6 +386,8 @@ live measurements confirm it (`0x54 → 0x80` on DQ XI S, `0x44 → 0x70` on OCT
 sanity-checking the derivation on a UE 5.0/5.1 game will find `0x4C/0x78`, conclude the table is
 broken, and "fix" a correct one. Also: `5.08` is asserted with **no `5_08` template on this
 machine** (highest is `5_07`). **Fix the comment, not the code. Effort XS, risk LOW.**
+
+</details>
 
 ### 3. A6's two spread tests pin the error terms independently — they do not compose
 
