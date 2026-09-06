@@ -141,6 +141,14 @@ GATES = [
      "a dll/src/Proxy*.def omits a real export or fails to pin its real ordinal. "
      "A .def line exports nothing on its own; it needs an implementation in the "
      "matching Lugner_*.cpp/.asm", False),
+
+    ("check_processevent_slots",
+     ["tools/check_processevent_slots.py"],
+     "Grimoire.h's ProcessEvent vtable slot table disagrees with the vendored "
+     "RE-UE4SS templates it was transcribed from. It is DERIVED data -- run "
+     "'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is "
+     "still primary and a per-BUILD difference is not a bug; this only pins the "
+     "fallback table against its own source", False),
 ]
 
 
