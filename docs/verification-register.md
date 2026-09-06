@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`8` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`7` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -4735,7 +4735,69 @@ whether the record ends ticked or unticked.*
    must keep working. The keyed-handle table is untouched by this change, and this is the check that
    proves it.
 
-### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
+### ✅ CLOSED 2026-09-06 `[G12G3-CLOSE-2026-09-06]` — G12 / G3: the offset family, and the apply_rescan gate
+
+> **Both remaining sub-items are resolved; the heading was the last thing still open.** Counted
+> inside the row: **10 closed, 1 partial, 1 open** — and neither survivor needed a game.
+>
+> **1. The 🟡 "enum half still open" marker was STALE.** The very next paragraph in its own body
+> already says `✅ BOTH HALVES NOW DONE [G12-PIPE-2026-08-17]`, with four fields across both
+> writers and `Grade` → `Elite` as the discriminating one (the sample's enum has a hole at 3..6, so
+> an index/value confusion could not land on `Elite` by accident). Marker corrected, no work owed.
+>
+> **2. ⛔ The ⬜ item's premise — "NO FIXTURE EXISTS, swept ALL 19 HOSTS" — is REFUTED.** That sweep
+> was taken 2026-08-20 and was correct then. Re-run 2026-09-06 across **all 34 log folders / 26
+> hosts that ever validated**:
+>
+> | | |
+> |---|---|
+> | hosts reaching `ValidateAndFixOffsets: Using struct` | **26** |
+> | hosts reaching `Cannot find Guid or Vector struct` (the heuristic branch) | **1 — DumperTest** |
+>
+> Four occurrences, all *after* the sweep was written: three on build 3313 and one on 3338. **Three
+> are empty-pool runs** (`DetectCasePreservingName: votes standard=0, CPN=0 (tested 0 objects)`,
+> every CHILDPROPS probe scoring 0) — a legitimate fixture for the branch, but an uninteresting one,
+> since nothing is there to probe. **One (build 3313, 12:05) had a real pool** (`votes standard=20`)
+> and produced real heuristic scores (`CHILDPROPS +0x40: score=50 (tested 30 objects)`).
+> So the branch *is* reachable, and injecting into DumperTest before the pool populates reaches it
+> on demand. The row's "no fixture" conclusion should not be inherited.
+>
+> ⚠ **AND ONE OCCURRENCE IS A CONTRADICTION I CANNOT EXPLAIN FROM THE CODE — recorded, not
+> hand-waved.** `DumperTest/offsets-20260823-222542.log`, build 3338, a single healthy run
+> (25,212 objects, one `ValidateAndFixOffsets: Starting`, one `Logger started`):
+>
+> ```
+> FindStructByName: Found 'Guid'   at 0x1DF1A5C9280 (index=4118)
+> FindStructByName: Found 'Vector' at 0x1DF1A5C9100 (index=4124)
+> Cannot find Guid or Vector struct — trying heuristic fallback
+> ```
+>
+> The guard is `if (!guidStruct && !vectorStruct)` with **nothing between it and the two calls**, and
+> `FindStructByName` returns `obj` on the same line it logs `Found`. Both the call site and the
+> function body are **byte-identical** between `e4685592` (3338) and today — checked, not assumed —
+> and today's build takes the validated path on the same fixture with the same struct indices
+> (4118 / 4124). So the code cannot produce this.
+>
+> **Leading hypothesis: cross-process log interleave.** Log folders are keyed by **process name**,
+> not PID, so two `DumperTest` instances share one folder; at 3338 `Sein` opened logs with
+> `_wfopen` (`_SH_DENYNO`), which permits exactly that. ⭐ Today's `_SH_DENYWR`
+> (`[SEINSHARE-2026-09-05]`) would prevent it — a second writer's open now fails into
+> `EmergencyNote` — so the hazard is closed as a **side effect** of an unrelated fix rather than
+> deliberately. Not proven; if a `Found …` / `Cannot find` pair is ever seen again on a current
+> build, that refutes the hypothesis and the guard needs re-examining.
+>
+> ⚠⚠ **THE EVIDENCE ABOVE IS PERISHABLE, AND THAT IS WHY IT IS QUOTED VERBATIM HERE.** Log retention
+> is by **age** — `Grimoire::LOG_RETENTION_DAYS = 21` — and these four files were **13-14 days old**
+> when read, i.e. they purge around **2026-09-13**. They were copied to
+> `out/evidence-g12-heuristic-branch/` on the verification PC, but `out/` is gitignored and does
+> **not** travel, so on any other machine the quotes in this row are the only surviving record.
+> ⛔ **General rule this taught: a conclusion cited from `Logs/` has a 21-day shelf life.** Quote the
+> decisive lines into the doc at the moment you read them, or the claim outlives its evidence — the
+> exact failure this register exists to prevent, one level up.
+
+<details><summary>original row</summary>
+
+**NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate**
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
 is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
@@ -4936,6 +4998,9 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    kind. Conditions matter here, so record them: this is the *validated-`Guid`* branch (step 2), so
    it proves the family is coherent on the path that was already coherent — it is a regression check,
    not evidence for the repair.
+
+
+</details>
 
 ### 🟡 GROUP 5 opened 2026-08-18 `[CE-2026-08-18]` — plugin bridge live, freeze record reaches CE
 
