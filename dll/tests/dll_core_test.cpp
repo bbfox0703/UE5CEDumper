@@ -475,6 +475,121 @@ int main() {
         DynOff::LAZYPTR_GUID = savedLatch;
     }
 
+    {   blk("G6 — the fork's tag→key table is TRI-state: a transient miss must not be cached");
+        // ⛔ WHAT G6 ACTUALLY ASSERTS, and why one bool cannot express it. The old code cached a
+        // permanent TAGKEY_MISS, so a single unlucky read — the fork grows this table WHILE the
+        // game runs — blanked every FName carrying that tag for the rest of the process, even
+        // though the fork's own lookup would have succeeded a millisecond later. The fix splits
+        // "could not determine" from "determined: absent":
+        //
+        //   readError=true   no ctx / count==sentinel / idx>=count / a failed read
+        //                      -> GetTagKey returns false and CACHES NOTHING; the next name retries
+        //   readError=false  the chain ended cleanly at idx<0, i.e. genuinely ABSENT
+        //                      -> the fork stores that block unXOR'd, so key 0 IS the answer.
+        //                         Resolve to 0 and cache it.
+        //
+        // The two misses must get OPPOSITE treatment. That opposition is the whole finding, so
+        // every check below is a PAIR: the same tag before and after the table settles.
+        //
+        // Offline because `Macht::ReadSafe` reads THIS process, so a std::vector shaped like the
+        // fork's hash table is indistinguishable from the fork's own — the same trick the fake
+        // FUObjectArray above uses. G6's live host (MindsEye) is not installed and is not coming.
+        // ⚠ SCOPE: this pins the TRI-STATE LOGIC, not that the ctx offsets match MindsEye's real
+        // table. That half came from RE and can only ever be confirmed on the fork. G6 was filed
+        // as a logic defect, so the logic is the finding.
+        constexpr int32_t kCap = 16, kCountLow = 2, kCountAll = 8;
+        std::vector<uint8_t> ctx(0x80, 0), entries(static_cast<size_t>(kCap) * 24, 0);
+        std::vector<int32_t> buckets(kCap, -1);
+
+        auto putEntry = [&](int i, uint16_t tag, uint8_t k) {
+            uint8_t* e = entries.data() + static_cast<size_t>(i) * 24;
+            uint64_t val = k;            // the key is the LOW BYTE of the u64 value
+            int32_t  next = -1;
+            memcpy(e + 0x00, &tag, sizeof(tag));
+            memcpy(e + 0x08, &val, sizeof(val));
+            memcpy(e + 0x10, &next, sizeof(next));
+        };
+        auto setCount    = [&](int32_t c) { memcpy(ctx.data() + 0x18, &c, sizeof(c)); };
+        auto setSentinel = [&](int32_t s) { memcpy(ctx.data() + 0x44, &s, sizeof(s)); };
+
+        // Bucket index is `tag & (capacity-1)`, so the low nibbles must differ or one tag's
+        // chain walks into another's and the arms stop being independent.
+        constexpr uint16_t T_FOUND = 0x0101, T_ABSENT = 0x0202, T_TORN = 0x0303, T_EMPTY = 0x0404;
+        putEntry(0, T_FOUND, 0x5A);
+        putEntry(1, T_EMPTY, 0x3C);
+        putEntry(5, T_TORN,  0x7E);      // index 5 is PAST kCountLow — the torn-read case
+        buckets[1] = 0; buckets[2] = -1; buckets[3] = 5; buckets[4] = 1;
+
+        const uintptr_t entriesAddr = reinterpret_cast<uintptr_t>(entries.data());
+        const uintptr_t bucketsAddr = reinterpret_cast<uintptr_t>(buckets.data());
+        memcpy(ctx.data() + 0x10, &entriesAddr, sizeof(entriesAddr));
+        memcpy(ctx.data() + 0x50, &bucketsAddr, sizeof(bucketsAddr));
+        memcpy(ctx.data() + 0x58, &kCap, sizeof(kCap));
+        setCount(kCountLow);
+        setSentinel(0x7FFFFFFF);          // never equal to count -> the "empty" guard stays open
+
+        // ⚠ The pool must be all zeroes. InitObfuscated ends by calling FirstEntrySampleText(),
+        // which READS an entry to log a sample; a non-zero header there would decode a name and
+        // seed s_tagKey before a single assertion runs. A zero header is length 0, which GetString
+        // rejects before it ever looks at a tag.
+        std::vector<uint8_t> chunk(0x400, 0), poolHdr(0x20, 0);
+        const uintptr_t chunkAddr = reinterpret_cast<uintptr_t>(chunk.data());
+        memcpy(poolHdr.data() + 0x10, &chunkAddr, sizeof(chunkAddr));
+        Serie::InitObfuscated(reinterpret_cast<uintptr_t>(poolHdr.data()), 0x10, 2,
+                              reinterpret_cast<uintptr_t>(ctx.data()));
+
+        uint8_t key = 0xEE;
+        check("G6 control: a tag PRESENT in the table resolves to its key",
+              Serie::GetTagKey(T_FOUND, key) && key == 0x5A);
+
+        // --- ARM 1: a torn read is transient, so it must NOT be cached ---------------------
+        key = 0xEE;
+        check("G6: a link past the published count does NOT resolve (torn read)",
+              Serie::GetTagKey(T_TORN, key) == false);
+        setCount(kCountAll);                       // the fork's table finishes growing
+        key = 0xEE;
+        check("G6 ⭐: after the table settles the SAME tag resolves — no permanent blanking",
+              Serie::GetTagKey(T_TORN, key) && key == 0x7E);
+
+        // The same arm through the OTHER transient door, because `count == sentinel` and
+        // `idx >= count` are different guards and a fix could restore one and not the other.
+        setSentinel(kCountAll);                    // table reports itself empty
+        key = 0xEE;
+        check("G6: a table reporting itself empty does NOT resolve",
+              Serie::GetTagKey(T_EMPTY, key) == false);
+        setSentinel(0x7FFFFFFF);
+        key = 0xEE;
+        check("G6 ⭐: ...and that tag recovers too once the table settles",
+              Serie::GetTagKey(T_EMPTY, key) && key == 0x3C);
+
+        // --- ARM 2: a clean chain end is DETERMINED, so it must be cached ------------------
+        key = 0xEE;
+        check("G6: a genuinely ABSENT tag RESOLVES rather than failing",
+              Serie::GetTagKey(T_ABSENT, key) == true);
+        check("...to key 0 — the fork stores that block unXOR'd, so plaintext is the answer",
+              key == 0x00);
+
+        // The discriminator between the two arms: pull the table away and ask again. A cached
+        // answer survives; an uncached one cannot, because LookupTagKey needs s_keyTableCtx.
+        const uintptr_t savedCtx = Serie::s_keyTableCtx;
+        Serie::s_keyTableCtx = 0;
+        key = 0xEE;
+        check("G6 ⭐: the ABSENT answer was CACHED (still answers with the table gone)",
+              Serie::GetTagKey(T_ABSENT, key) && key == 0x00);
+        key = 0xEE;
+        check("G6 ⭐: ...while a transient miss was NOT (this tag now fails, having never cached)",
+              Serie::GetTagKey(0x0505, key) == false);
+        Serie::s_keyTableCtx = savedCtx;
+
+        // Leave no global state behind: every later block in this file would inherit it.
+        Serie::s_obfuscated = false;
+        Serie::s_keyTableCtx = 0;
+        Serie::s_poolAddr = 0;
+        Serie::s_payloadGap = 0;
+        Serie::s_tagKey.reset();
+        Serie::s_initialized.store(false, std::memory_order_release);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
