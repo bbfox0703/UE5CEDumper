@@ -294,6 +294,46 @@ def check(root, verbose):
     return errors
 
 
+def check_identity_covers_mirror(root):
+    """Every mirrored source file must be in capture_package_identity.SOURCES.
+
+    ⛔ WHY THIS IS A GATE AND NOT A COMMENT. That list is used for TWO things — the content
+    digest (`hash_sources`) and the "STALE BINARY" mtime scan — so a file that is mirrored but
+    unlisted is invisible to drift detection twice over, and `package-identity.json` will report
+    "in sync" while the packaged binary genuinely differs. A false negative in the tool whose only
+    job is catching drift is worse than having no tool.
+
+    ⚠ Found by hand 2026-09-06: DumperTestHUD.h/.cpp had been mirrored since 2026-08-14 and were
+    never listed. The HUD is the sample's own health readout and the ONLY way to learn the values
+    of the non-UPROPERTY raw fields, so its silent drift would break exactly the rows that have no
+    other oracle. Nothing would have caught it; hence this check.
+    """
+    src = os.path.join(root, SRC)
+    ident = os.path.join(root, SAMPLE, "capture_package_identity.py")
+    if not os.path.isdir(src) or not os.path.isfile(ident):
+        return []
+    text = open(ident, encoding="utf-8", errors="replace").read()
+    m = re.search(r"^SOURCES\s*=\s*\[(.*?)\]", text, re.S | re.M)
+    if not m:
+        return ["capture_package_identity.py: could not find the SOURCES list to check against"]
+    listed = set(re.findall(r'"([^"]+)"', m.group(1)))
+    e = re.search(r"^EXCLUDED\s*=\s*\((.*?)\)", text, re.S | re.M)
+    excluded = set(re.findall(r'"([^"]+)"', e.group(1))) if e else set()
+
+    on_disk = {f for f in os.listdir(src)
+               if f.endswith((".h", ".cpp", ".cs")) and f not in excluded}
+    missing = sorted(on_disk - listed)
+    phantom = sorted(listed - on_disk - excluded)
+    out = []
+    for f in missing:
+        out.append("%s is mirrored but NOT in capture_package_identity.SOURCES -- its content and "
+                   "its mtime are both invisible to drift detection" % f)
+    for f in phantom:
+        out.append("capture_package_identity.SOURCES lists %s, which is not in the mirror -- "
+                   "hash_sources will silently skip it" % f)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -307,7 +347,7 @@ def main():
         print("SKIP: %s not present" % SAMPLE)
         return 0
 
-    errors = check(root, args.verbose)
+    errors = check_identity_covers_mirror(root) + check(root, args.verbose)
     if errors:
         print("check_ue_sample_values: %d problem(s)\n" % len(errors))
         for e in errors:

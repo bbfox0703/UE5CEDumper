@@ -95,8 +95,33 @@ def probe(path):
     }
 
 
+# ⛔ THIS LIST IS BOTH THE CONTENT HASH *AND* THE STALENESS CHECK. A file that is mirrored but
+# missing from here is INVISIBLE to drift detection twice over: `hash_sources` will not notice its
+# content changing, and the "STALE BINARY" mtime scan will not notice it being edited after a
+# package was built. The record then says "in sync" while the packaged binary genuinely differs —
+# a false negative in the one tool whose entire job is catching that.
+#
+# ⚠ Found 2026-09-06: `DumperTestHUD.h/.cpp` had been mirrored but never listed. They are not
+# incidental — README.md says the HUD readout *is* the sample's health check, and it is the only
+# way to learn the values of the non-UPROPERTY raw fields (there is no reflection to ask), so a
+# silent HUD drift breaks precisely the rows that have no other oracle. `DumperTest.Build.cs` was
+# not even mirrored; it defines the module, and Batch-2 work adds link libraries to it.
+#
+# ⚠ Adding names CHANGES source_sha256, so the stored record reads as drift exactly once. That is
+# the same one-off the LF-normalisation note below describes — re-capture to settle it.
+#
+# The rule: this list must equal the contents of tools/ue-sample/DumperTest/Source/DumperTest/.
+# Anything deliberately excluded belongs in EXCLUDED below, with the reason.
 SOURCES = ["DumperTestActor.h", "DumperTestActor.cpp", "DumperTestTypes.h",
-           "DumperTestSubsystem.h", "DumperTestSubsystem.cpp"]
+           "DumperTestSubsystem.h", "DumperTestSubsystem.cpp",
+           "DumperTestHUD.h", "DumperTestHUD.cpp",
+           "DumperTest.Build.cs"]
+
+# Template files the project generates and we never touch (DumperTest.cpp/.h,
+# DumperTestCharacter.*, DumperTestGameMode.*). README.md rule 4 says they are deliberately NOT
+# mirrored; listing them here would make every stock-template regeneration look like sample drift.
+EXCLUDED = ("DumperTest.cpp", "DumperTest.h", "DumperTestCharacter.cpp", "DumperTestCharacter.h",
+            "DumperTestGameMode.cpp", "DumperTestGameMode.h")
 
 
 def hash_sources(src_dir):
@@ -128,6 +153,54 @@ def hash_sources(src_dir):
         with open(p, "rb") as fh:
             h.update(fh.read().replace(b"\r\n", b"\n"))
     return h.hexdigest(), missing
+
+
+def redact(text, args):
+    """Replace this machine's absolute paths with placeholders before the record is written.
+
+    ⛔ WHY THIS LIVES IN THE GENERATOR. The committed record used to carry `<UEPROJECTS>`,
+    `<CORPUS>` and `<DRIVE>` placeholders — put there BY HAND during the 2026-09-06 leak sweep.
+    This tool knew nothing about them, so the very next capture wrote the raw paths straight back
+    and silently undid the redaction. That is exactly the failure `docs/todo.md` names in its own
+    words: *"After hand-editing a generated file, back-port or the next --apply is a regression."*
+    Three stale generators were found in one day by that pattern; this was the fourth.
+
+    ⚠ The placeholders are not decoration. `package-identity.json` is COMMITTED and public, and
+    an absolute path is exactly the shape the machine-name / account-name sweep spent a day
+    removing from this repo.
+
+    Longest-first, so a nested root cannot be half-replaced by its parent.
+    """
+    subs = []
+    if getattr(args, "project", None):
+        subs.append((os.path.dirname(os.path.abspath(args.project)), "<UEPROJECTS>"))
+        subs.append((os.path.abspath(args.project), "<PROJECT>"))
+    if getattr(args, "root", None):
+        # the corpus root is the package root's parent (…\For Testing\DumperTest -> …\For Testing)
+        subs.append((os.path.dirname(os.path.abspath(args.root)), "<CORPUS>"))
+    for pf in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if pf and len(pf) > 3:
+            subs.append((os.path.splitdrive(pf)[0] + os.sep, "<DRIVE>" + os.sep))
+    for home in (os.environ.get("USERPROFILE"),):
+        if home:
+            subs.append((home, "<HOME>"))
+
+    for real, token in sorted(subs, key=lambda s: -len(s[0])):
+        for form in (real, real.replace("\\", "\\\\"), real.replace("\\", "/")):
+            if not form:
+                continue
+            tok = token.replace("\\", "\\\\") if "\\\\" in form else token
+            # case-insensitive on Windows, where the same path arrives in several casings
+            i = 0
+            low, flow = text.lower(), form.lower()
+            while True:
+                j = low.find(flow, i)
+                if j < 0:
+                    break
+                text = text[:j] + tok + text[j + len(form):]
+                low = text.lower()
+                i = j + len(tok)
+    return text
 
 
 def main():
@@ -265,7 +338,7 @@ def main():
                     "someone reflected it and the Native-C test is dead" % (cfg, n, c))
         record["configs"][cfg] = info
 
-    text = json.dumps(record, indent=2) + "\n"
+    text = redact(json.dumps(record, indent=2) + "\n", args)
     if args.check:
         if not os.path.exists(OUT):
             print("no stored record at %s" % OUT)

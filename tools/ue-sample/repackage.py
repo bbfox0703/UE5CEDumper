@@ -60,10 +60,24 @@ ENGINE_ROOT = "C:\\Program Files\\Epic Games\\UE_%s"
 PROJECTS_ROOT = "D:\\Unreal Projects"
 DEFAULT_ARCHIVE = "D:\\UE_Analyze_data\\For Testing"
 
-# The five files package-identity.json hashes. Kept in sync with capture_package_identity.SOURCES
-# deliberately by duplication rather than import, so a rename there fails loudly here.
-MIRROR_SOURCES = ["DumperTestActor.h", "DumperTestActor.cpp", "DumperTestTypes.h",
-                  "DumperTestSubsystem.h", "DumperTestSubsystem.cpp"]
+def _mirror_sources():
+    """The files package-identity.json hashes — PARSED from capture_package_identity.py.
+
+    ⚠ This used to be a hand-copied duplicate of that list, justified as "a rename there fails
+    loudly here". It does not fail loudly; it fails SILENTLY, by syncing fewer files than the
+    identity record covers. Since 2026-09-06 `check_ue_sample_values.py` gates that list against
+    the mirror directory, so the single source of truth is that list and this reads it.
+    """
+    import re
+    p = os.path.join(HERE, "capture_package_identity.py")
+    m = re.search(r"^SOURCES\s*=\s*\[(.*?)\]",
+                  open(p, encoding="utf-8", errors="replace").read(), re.S | re.M)
+    if not m:
+        raise SystemExit("!! could not parse SOURCES out of capture_package_identity.py")
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
+MIRROR_SOURCES = _mirror_sources()
 
 FORBIDDEN_ARCHIVE = "varies version builds"
 
