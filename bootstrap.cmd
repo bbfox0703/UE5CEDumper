@@ -1,4 +1,7 @@
 @echo off
+:: >> This file MUST stay CRLF. cmd.exe resolves `goto :label` by SEEKING to a byte
+::    offset, so LF endings shift every offset and the label is never found. Pinned by
+::    .gitattributes (`*.cmd`/`*.bat` -> eol=crlf); see its comment for the repro.
 :: Toolchain bootstrap launcher. Two lines of dispatch on purpose -- the logic lives in
 :: tools\bootstrap.py, because an unsigned create-heavy .ps1 is the exact shape Bitdefender
 :: ATD quarantined six files over on this machine (docs/working-lessons.md §3.8). A .cmd
