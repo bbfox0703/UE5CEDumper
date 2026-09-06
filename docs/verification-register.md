@@ -943,12 +943,35 @@ when the probe lands off-field.*
 > stock **UE 5.8.2** sample on 2026-09-05 (`DumperTest58`, Development + Shipping,
 > `D:\UE_Analyze_data\For Testing\DumperTest58`), and that turned out to close **both** halves.
 >
-> **Half 1 — the 507 marker's widened size set, free and unplanned.** The commit widened it from
-> `==24` to `{24, 32, 40}` because "the `==24` pin had silently excluded every stripped 5.7+
-> **Development** or **Test** build". DumperTest58 Development reports **`item_size 32`** —
-> `TStatId` appended by STATS — with `item_layout_mode "unpacked57"`, 35,838 objects and
-> `is_low_confidence false`. A real binary of exactly the shape the old pin excluded, scanning
-> cleanly.
+> **Half 1 — the 507 marker's widened size set: TWO of the three values now pinned on real
+> binaries.** The commit widened it from `==24` to `{24, 32, 40}` because "the `==24` pin had
+> silently excluded every stripped 5.7+ **Development** or **Test** build". Both DumperTest58
+> configurations were measured — **same engine, same 5.8.2, differing only in build configuration**,
+> which is what makes the pair a controlled comparison rather than two readings:
+>
+> | configuration | `item_size` | objects | notes |
+> |---|---|---|---|
+> | **Development** | **32** | 35,838 | `TStatId` — the shape the old `==24` pin excluded |
+> | **Shipping** | **24** | 34,540 | the classic size the old pin allowed |
+> | Test | 40 | — | ⛔ not producible: a launcher engine has no `Configuration="Test"` and ships no `-Test.target` |
+>
+> Both report `item_layout_mode "unpacked57"`, `item_packed false`, `is_low_confidence false`, and
+> `ue_version 508`. **Derived from the 5.8.2 source, not from the doc** —
+> `CoreUObject/Public/UObject/UObjectArray.h` gives `UObjectBase* Object` (8) + three `int32`
+> (12, padded to 24), then `#if STATS || ENABLE_STATNAMEDEVENTS_UOBJECT` adds `TStatId StatID` (8)
+> and, under `ENABLE_STATNAMEDEVENTS_UOBJECT` alone, `PROFILER_CHAR* StatIDStringStorage` (8).
+> `Core/Public/Misc/Build.h:241-343` maps that to configurations:
+>
+> | | `STATS` | `ENABLE_STATNAMEDEVENTS_UOBJECT` | size |
+> |---|---|---|---|
+> | Debug / **DebugGame** | 1 | 0 | **32** |
+> | Development | 1 | 0 | **32** |
+> | Test | 0 | **1** | **40** |
+> | Shipping | 0 | 0 | **24** |
+>
+> ⚠ **DebugGame is NOT a third data point** — `STATS` is on there too, so it produces the same 32 as
+> Development. And Test is the interesting row precisely because `STATS` is **0** while
+> `ENABLE_STATNAMEDEVENTS_UOBJECT` is 1: the outer `#if` still fires, so it gets *both* fields.
 >
 > **Half 2 — the 508 raise itself.** Stock, the string path wins (`DetectVersion: PE VERSIONINFO ->
 > UE 5.8 -> 508`), so the raise is a no-op and never logs — the marker only exists for titles whose
