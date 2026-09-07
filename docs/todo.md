@@ -1730,8 +1730,38 @@ before being written down.*
   already covers that calibration first — don't regress StructProperty struct-name resolution), or
   make the calibrated offsets `std::atomic<int>` with relaxed loads. *Parent: parallel-snapshot race audit, this session.*
 
-- **NEW (Elliot 2026-07-23) — a transient `MH_CreateHook` failure permanently poisons the session
-  into the "unsafe direct call" path** — Effort: **S-M** · Risk: **med** (touches the hook path, the
+- **✅ CLOSED 2026-09-07 (`0a7ac3fb`) — the code half shipped in build 2358; the IN-GAME re-check it
+  owed is now done** — `[MHPOISON-STARVE-2026-09-07]`
+  The row's own acceptance test ran for the first time, against a deliberately starved trampoline
+  window (`-DumperTestStarveVM`). It had never been exercised: the only prior attempt is recorded in
+  this bullet as "Not reproduced on the build-2361 run" — the hook installed first try, so nothing
+  ran.
+  ```
+  13:52:05.862  MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC
+                first-time init complete — offset=616, hook_active=0
+                hook install failed (attempt 1/8) … — will retry
+                game-thread hook NOT active … Logged once per transition
+  13:52:10.893  attempt 2/8      ← 5.03 s apart: the configured cooldown
+  …             attempts 3/8 … 6/8
+  13:52:36.118  hook RECOVERED on attempt 7 — dispatch available again
+  13:52:36.119  hook is ACTIVE again — 61 invoke(s) took the fallback
+  ```
+  **(a)** six retries, not one → the permanent latch is gone. **(b)** ONE fallback WARN for 61
+  fallback invokes → per-invoke logging gone; **nine** WARN lines across two entire runs, against a
+  historical **552 unsafe-call lines in 19 seconds**. **(c)** See-through **refused** while the hook
+  was down — `seethrough_set` returned `active:false` with `hook_active:false` in the same reply, so
+  the UI can say why, instead of hammering the unsafe path. **(d)** recovery observed, which a latch
+  could never reach.
+  ⛔ **The fixture that made this possible was itself broken and looked fine** — `-DumperTestStarveVM`
+  reserved 1 MB at a time stepping 1 MB, and `VirtualAlloc(MEM_RESERVE)` fails for the *whole*
+  request on any overlap, so 272 of 4,096 windows failed and left ~960 KB free apiece. It reported
+  "reserved 3824 block(s)" (93%, reads as working) while MinHook installed on the first attempt.
+  Now it walks the window with `VirtualQuery` and reserves each free run exactly: **2 blocks instead
+  of 3,824**, and the count going *down* is the fix.
+  *Superseded row kept below for the diagnosis trail.*
+
+- ~~**NEW (Elliot 2026-07-23) — a transient `MH_CreateHook` failure permanently poisons the session
+  into the "unsafe direct call" path**~~ — Effort: **S-M** · Risk: **med** (touches the hook path, the
   most crash-prone code in the DLL). **Observed once, on the run right after a session where the same
   hook installed fine at the same address:**
   > `[ERROR] GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`
