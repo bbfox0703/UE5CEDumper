@@ -1464,7 +1464,25 @@ before being written down.*
   the next person who notices the collapse does not pay for the change either. Re-measure if a
   future UE default makes deterministic linking common.
 
-- **Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)** —
+- **✅ Tier 2 ceilings DONE 2026-09-07 (`2b9ffac9`); Tier 3 still deferred** —
+  The row asked to split `0x100000` into "container-element-COUNT vs PropertiesSize-BYTES". It
+  conflated **more than two**, and the axis that matters is not the one proposed. 21 sites
+  classified by tracing each value's producing read and consuming arithmetic, then checked
+  adversarially: `SANITY_MAX_STRUCT_BYTES` (3) · `SANITY_MAX_CONTAINER_NUM` (4, the +0x08
+  field) · `SANITY_MAX_CONTAINER_CAPACITY` (9, the +0x0C field) · `SANITY_MAX_SPARSE_BITS` (1)
+  · `SANITY_MAX_UOBJECTS` (4, the `0x800000` family). All in `Grimoire.h` with their reasoning.
+  ⭐ **The axis came out of a disagreement.** Two independent traces of the same `+0x08` int32
+  reached opposite verdicts — "live COUNT" (UE's `GetMaxIndex()` is literally
+  `{ return Data.Num(); }`) versus "slot EXTENT including freed" (this codebase spells the live
+  count `MaxIndex - NumFreeIndices` six times, and `ReadTMapHeader` never subtracts it). Both
+  hold, so count-vs-index is **not a distinction this code sustains** and gets one name; the
+  real split is +0x08 vs +0x0C, where `Max >= Num` always.
+  ⚠ Behaviour identical and **checked**, not assumed: every constant equals the literal it
+  replaced, and the diff removes exactly 21 lines, all 21 containing that literal.
+  **Tier 3 (single-use knobs) remains deferred** — unchanged from below, and still low priority.
+  *Superseded row kept below for the Tier-1 history and the Tier-3 list.*
+
+- ~~**Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)**~~ —
   Effort: **M** · Risk: med. Tier 1 (dup/tunable literals) + the Tier 2 `IsUserspacePointer` paired-
   bounds helper SHIPPED (dev-log 2026-07-03). LEFT because each carries genuine per-site multi-meaning
   nuance: object-count/size ceilings — `0x800000` (8M UObject count), `0x100000` (1M, but needs
