@@ -52,9 +52,17 @@ internal static class ProxyImportAnalyzer
         ///
         /// <para>The example that used to sit here — "Octopath Traveler imports winmm and dxgi
         /// but NOT version.dll" — is FALSE and was load-bearing for a bug. Its .exe import
-        /// directory names WINMM.dll, dxgi.dll <b>and VERSION.dll</b>. Octopath's real quirk is
-        /// unrelated: it instant-exits under the <i>dxgi</i> proxy, because dxgi is imported so
-        /// early that the game calls it before the CRT is initialised.</para></summary>
+        /// directory names WINMM.dll, dxgi.dll <b>and VERSION.dll</b>.</para>
+        ///
+        /// <para>⚠ The correction that replaced it — "Octopath instant-exits under the dxgi
+        /// proxy, because dxgi is imported before the CRT is initialised" — was true when
+        /// written (2026-08-23) and is <b>no longer true</b>. Builds 3363 + 3365 fixed both
+        /// halves (the AppCompat pre-CRT crash, then the SRWLOCK self-deadlock our own
+        /// <c>LoadLibraryW</c> re-entry caused), and it was verified in-game on that exact title
+        /// on 2026-08-27, build 3366: <c>dxgi proxy: lazily forwarded 20/20 exports</c>, pipe
+        /// server up, 406,060 objects. Octopath is now a dxgi <i>witness</i>, not a
+        /// counter-example. The pre-CRT WARN still appears and is expected — it is the shim
+        /// engine's fingerprint, not a failure.</para></summary>
         public bool Imports(ProxyType type) => type switch
         {
             ProxyType.Version => ImportsVersion,

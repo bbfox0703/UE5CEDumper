@@ -1541,7 +1541,28 @@ before being written down.*
   to avoid surprising collapses ("various cases"). *Parent: Flatten GAS attributes build 1698
   (project-gas-attr-flatten-ce-export).*
 
-- **dxgi proxy early-load fragility — harden (thin-shim + renamed real-dxgi copy), or leave dxgi as "late-load games only"** —
+- **✅ CLOSED 2026-09-07 — BOTH horns are dead, and the second one had leaked into shipping source** —
+  ⛔ Horn 1, the engineering (thin-shim + renamed `dxgi_orig.dll` + 2-file deploy): **never built and
+  no longer needed.** The defect was closed a different way — builds 3363 + 3365 (the AppCompat
+  pre-CRT crash, then the SRWLOCK self-deadlock from our own re-entrant `LoadLibraryW`) — and
+  verified in-game on the exact witness title: Octopath, 2026-08-27 build 3366,
+  `dxgi proxy: lazily forwarded 20/20 exports`, pipe server up, **406,060 objects** (a count
+  independently re-measured on that title 2026-09-07). `thin-shim` / `dxgi_orig` exist nowhere in the
+  tree. The Proxy Deploy 2-file deploy/undeploy/redundancy work was contingent on this path, so it
+  dies with it.
+  ⛔ Horn 2, *"or leave dxgi as late-load games only"*: **that restriction was still in force in
+  SHIPPING C# SOURCE**, stated as present-tense fact, three days out of date and never revisited —
+  `ProxyImportAnalyzer.cs` ("it instant-exits under the dxgi proxy", last touched 2026-08-23) and
+  `ProxyDeployViewModel.cs` ("Octopath Traveler instant-exits with the dxgi proxy … Pick dxgi only
+  for EXEs importing neither version nor dinput8", last touched 2026-08-24). Both now corrected: the
+  restriction is lifted, Octopath is a dxgi **witness** rather than a counter-example, and dxgi
+  remaining a non-default is recorded as a timing *preference* (version.dll activates at ordinary
+  runtime) rather than a capability limit.
+  ⚠ The pre-CRT WARN still appears under dxgi and is **expected** — it is the shim engine's
+  fingerprint, not a failure. Say so wherever it is reported.
+  *Superseded row kept below for the diagnosis trail.*
+
+- ~~**dxgi proxy early-load fragility — harden (thin-shim + renamed real-dxgi copy), or leave dxgi as "late-load games only"**~~ —
   Effort: **M-L** · Risk: med (loader-time code + deploy flow). **Deferred by owner (2026-06-19); the UI default is back to version.dll.** ⚠ **CORRECTION 2026-08-18: Octopath does NOT use version.dll — that proxy never loads there. It needs `winmm.dll`** (verified end-to-end, `[OCTOPATH-G2T3-2026-08-18]`), so this item's premise that Octopath is served by version.dll in the meantime was wrong. The dxgi proxy instant-exits on games that call dxgi **extremely early — under the loader lock, before our CRT is initialised** (Octopath Traveler: debugger-confirmed across 3 distinct crash dumps — execute-0 / `__tzset` uninit CRT lock / `RtlAllocateHeap` null heap; see dev-log 2026-06-19). Two genuine early-load fixes shipped + kept (`Sein::GetTimestamp`→Win32 `GetLocalTime`; dxgi lazy self-resolving thunks), but they do NOT make Octopath's dxgi work — the **root blocker** is that `LoadLibraryW(real same-named System32\dxgi.dll)` returns NULL under the early loader lock. **version.dll dodges it all by being called at normal runtime, not under early loader lock.** Robust fix = **thin-shim split (like RE-UE4SS):** `dxgi.dll` becomes a tiny CRT-free forwarder that (a) loads the real dxgi via a **renamed copy** (`dxgi_orig.dll`) to dodge the same-base-name-under-lock failure, and (b) `LoadLibrary("UE5Dumper.dll")` to run the heavy dumper as a **separate, normally-named, late-loaded** DLL. Deploy becomes **2 files** (`dxgi.dll` + `UE5Dumper.dll`) → the Proxy Deploy panel's deploy/undeploy/redundancy/Update-All must copy/remove both. NOTE: `/MD` (dynamic VCRuntime/UCRT) alone is only a **partial** fix — it removes the CRT-init crashes (Octopath already loads the shared UCRT early) but NOT the loader-lock same-name `LoadLibrary` blocker (that resurfaces as execute-0). version.dll/dinput8.dll don't need any of this (they load late). *Parent: dxgi proxy build 1172; early-load diagnosis + 2 fixes build 1351 (dev-log 2026-06-19).*
 
 - **UE5.7+ packed FUObjectItem — live-verify + calibrate when a packed game appears** —
