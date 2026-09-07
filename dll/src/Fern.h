@@ -73,6 +73,12 @@ private:
         std::mutex         diagMutex;         // guards cmdName only
         std::string        cmdName;           // last/current command on this connection
         std::atomic<long long> cmdStartMs{0}; // steady-clock ms when it began
+        // Per-connection cooperative cancel. Set by MonitorLoop when THIS connection
+        // breaks mid-command; read via Tot::Requested() by the handler thread, which
+        // binds it with Tot::ConnectionCancelScope. Latched, never cleared -- an
+        // orphaned scan must keep seeing it until it unwinds, and the flag outliving
+        // the registry erase is free because the handler thread owns the shared_ptr.
+        std::atomic<bool>  cancel{false};
         std::atomic<bool>  closed{false};     // CloseHandle done exactly once
         // A duplicate of the SERVING thread's own handle, so Stop can call
         // CancelSynchronousIo on it. CancelIoEx cancels ASYNCHRONOUS requests; these
