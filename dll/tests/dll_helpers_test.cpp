@@ -6662,6 +6662,87 @@ static void Test_Tot_CancelImmunityVsBackgroundWorker() {
     Tot::ResetShutdown();
 }
 
+static void Test_Tot_PerConnectionCancelAndContextPropagation() {
+    std::printf("Test_Tot_PerConnectionCancelAndContextPropagation\n");
+
+    Tot::ResetPerCommand();
+    Tot::ResetShutdown();
+
+    // Two "connections", each with its own flag. This is the whole point of
+    // [MULTIPIPE-CANCEL-2026-09-07]: A dying must not cancel B.
+    std::atomic<bool> connA{false};
+    std::atomic<bool> connB{false};
+
+    // A bound thread answers for ITS connection only, and ignores the global — which is
+    // what stops a foreign client's death truncating this connection's scan.
+    std::thread([&] {
+        Tot::ConnectionCancelScope bind(&connA);
+        EXPECT("bound: quiet while its own flag is clear", !Tot::Requested());
+        Tot::RequestPerCommand();                       // someone ELSE dropped
+        EXPECT("bound: IGNORES the global per-command",   !Tot::Requested());
+        connA.store(true);
+        EXPECT("bound: honours ITS OWN flag",              Tot::Requested());
+        connA.store(false);
+        Tot::RequestShutdown();
+        EXPECT("bound: still aborts on real shutdown",     Tot::Requested());
+        Tot::ResetShutdown();
+    }).join();
+
+    // ⛔ The unbound default MUST stay fail-safe. The rejected design made "unbound"
+    // identical to "immune", which silently un-cancels every thread that forgets to bind
+    // (Aura's parallel workers, RunScan/RunRescan, the CE remote thread). If this
+    // expectation ever flips to !Requested(), that regression has been reintroduced.
+    std::thread([] {
+        EXPECT("unbound: still honours the global per-command", Tot::Requested());
+    }).join();
+    Tot::ResetPerCommand();
+
+    // Context propagation into a spawned worker. A thread inherits neither the binding
+    // nor the immunity of its parent, so Aura's parallel workers would otherwise answer
+    // differently from chunk 0, which runs inline on the caller.
+    std::thread([&] {
+        Tot::ConnectionCancelScope bind(&connB);
+        const Tot::CancelContext ctx = Tot::CaptureCancelContext();
+
+        std::thread([&] {
+            EXPECT("worker WITHOUT adopt: does not see the parent's connection",
+                   !Tot::Requested());
+        }).join();
+
+        connB.store(true);
+        std::thread([&] {
+            EXPECT("worker WITHOUT adopt: blind to the parent's cancel", !Tot::Requested());
+            Tot::CancelContextScope adopt(ctx);
+            EXPECT("worker WITH adopt: sees the parent's cancel",         Tot::Requested());
+        }).join();
+        connB.store(false);
+
+        // Immunity propagates too, and restores. The parent here is NOT immune, so the
+        // scope must put that back rather than leaving the worker's value behind.
+        std::thread([&] {
+            Tot::MarkCancelImmune();
+            const Tot::CancelContext immuneCtx = Tot::CaptureCancelContext();
+            EXPECT("captured context carries immunity", immuneCtx.immune);
+        }).join();
+    }).join();
+
+    // The scope RESTORES rather than clearing — nesting must not strand a thread unbound.
+    std::thread([&] {
+        Tot::ConnectionCancelScope bind(&connA);
+        connA.store(true);
+        {
+            std::atomic<bool> other{false};
+            Tot::CancelContextScope inner(Tot::CancelContext{&other, false});
+            EXPECT("inner scope answers for the ADOPTED flag", !Tot::Requested());
+        }
+        EXPECT("outer binding restored after the inner scope", Tot::Requested());
+        connA.store(false);
+    }).join();
+
+    Tot::ResetPerCommand();
+    Tot::ResetShutdown();
+}
+
 static void Test_Sig_IsCeReplayableAob() {
     std::printf("Test_Sig_IsCeReplayableAob\n");
 
@@ -7826,6 +7907,7 @@ int main() {
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
     RUN(Test_Tot_CancelImmunityVsBackgroundWorker);
+    RUN(Test_Tot_PerConnectionCancelAndContextPropagation);
 
     // Routine — SafeThread: ~std::thread on a joinable thread terminates the process
     RUN(Test_Routine_SafeThread);

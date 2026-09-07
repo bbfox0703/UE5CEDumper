@@ -109,6 +109,36 @@ inline thread_local std::atomic<bool>* t_connCancel = nullptr;
 inline void BindConnectionCancel(std::atomic<bool>* flag) { t_connCancel = flag; }
 inline void UnbindConnectionCancel() { t_connCancel = nullptr; }
 
+/// The cancellation identity of the CURRENT thread, as a value that can be handed to a
+/// worker thread this one spawns. Both fields matter: a worker inherits neither the
+/// binding nor the immunity of its parent, because thread_locals do not propagate.
+struct CancelContext {
+    std::atomic<bool>* connCancel = nullptr;
+    bool               immune     = false;
+};
+inline CancelContext CaptureCancelContext() { return CancelContext{t_connCancel, t_cancelImmune}; }
+
+/// Adopt a captured context on THIS thread, restoring the previous one on scope exit.
+///
+/// ⛔ ONLY safe when the spawning thread OUTLIVES the worker -- i.e. it joins it. That
+/// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp:176) and for the
+/// ParallelGObjectsScan cancelWatcher, which is why those may adopt a raw
+/// `std::atomic<bool>*`. It does NOT hold for Fern::RunScan / RunRescan, which outlive
+/// the command that started them -- binding those to a connection would be a
+/// use-after-free in exactly the disconnect case the binding exists for. Give those an
+/// owning token before propagating anything into them.
+struct CancelContextScope {
+    CancelContext prev;
+    explicit CancelContextScope(const CancelContext& c)
+        : prev{t_connCancel, t_cancelImmune} {
+        t_connCancel   = c.connCancel;
+        t_cancelImmune = c.immune;
+    }
+    ~CancelContextScope() { t_connCancel = prev.connCancel; t_cancelImmune = prev.immune; }
+    CancelContextScope(const CancelContextScope&) = delete;
+    CancelContextScope& operator=(const CancelContextScope&) = delete;
+};
+
 /// RAII: binds for the enclosing scope, unbinds on every exit path including a throw.
 /// ⚠ Scope it to the WHOLE handler, not just the command loop: the disconnect-teardown
 /// block runs after the loop and must still see its own connection's cancel.

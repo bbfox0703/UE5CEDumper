@@ -165,12 +165,26 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
     const int64_t chunk = (static_cast<int64_t>(count) + nthreads - 1) / nthreads;
     std::vector<std::thread> pool;
     pool.reserve(static_cast<size_t>(nthreads) - 1);
+    // Workers inherit NEITHER the caller's connection binding nor its cancel immunity --
+    // thread_locals do not propagate -- so chunk 0 (which runs inline on the caller) and
+    // chunks 1..N-1 would answer Tot::Requested() differently. That split is not academic:
+    // it is the heavy-scan half of [MULTIPIPE-CANCEL-2026-09-07]. Without this, a FOREIGN
+    // client's death still aborts every worker through the global flag while the caller's
+    // own chunk carries on -- and ScanThreadCount picks the parallel path for every real
+    // game (>= 8192 objects), i.e. for exactly the scans that matter.
+    // ⭐ Safe to pass the raw pointer: this function JOINS the pool below, so the caller's
+    // binding strictly outlives every worker. See Tot::CancelContextScope's warning for
+    // why the same trick is NOT valid for Fern::RunScan / RunRescan.
+    const Tot::CancelContext cancelCtx = Tot::CaptureCancelContext();
     for (int t = 1; t < nthreads; ++t) {
         const int64_t b = static_cast<int64_t>(t) * chunk;
         if (b >= count) break;
         const int32_t bi = static_cast<int32_t>(b);
         const int32_t ei = static_cast<int32_t>(std::min<int64_t>(b + chunk, count));
-        pool.emplace_back([&runChunk, t, bi, ei]() { runChunk(t, bi, ei); });
+        pool.emplace_back([&runChunk, &cancelCtx, t, bi, ei]() {
+            Tot::CancelContextScope adopt(cancelCtx);
+            runChunk(t, bi, ei);
+        });
     }
     runChunk(0, 0, static_cast<int32_t>(std::min<int64_t>(chunk, count)));  // chunk 0 inline
     for (auto& th : pool) th.join();
@@ -219,8 +233,14 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     // directly at their stride checks, so serial scans still cancel promptly.
     std::atomic<bool> scanDone{false};
     std::thread cancelWatcher;
+    // Same inheritance problem as the workers, and worse here: this watcher is the
+    // parallel path's ONLY bridge from "a client went away" to deadlineHit, so an
+    // unadopted watcher answers for the wrong client entirely -- aborting the whole scan
+    // when someone else's connection dropped. Joined below, so the raw pointer is safe.
+    const Tot::CancelContext watcherCtx = Tot::CaptureCancelContext();
     if (nthreads > 1) {
         cancelWatcher = std::thread([&] {
+            Tot::CancelContextScope adopt(watcherCtx);
             while (!scanDone.load(std::memory_order_relaxed)) {
                 if (Tot::Requested()) {
                     deadlineHit.store(true, std::memory_order_relaxed);
