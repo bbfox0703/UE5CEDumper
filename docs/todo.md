@@ -1377,9 +1377,21 @@ before being written down.*
      `std::vector`. A plain data race, older than the cancel work. Now serialised with a mutex plus
      a latch re-check. ⛔ Not `std::call_once`: MA1 deliberately does not latch a cancelled scan, and
      `call_once` would burn the one-shot on it.
-  3. **The CE case is arguably a fix, not a regression.** Today a pipe client's disconnect cancels a
-     CE user's export call (`Aura.cpp:1410` via `UE5_FindObject`/`UE5_FindClass`) — the exact bug B4
-     fixed for the Mimic poller and never for the direct exports. Decide deliberately.
+  3. ~~**The CE case is arguably a fix, not a regression.**~~ **⛔ DECIDED 2026-09-07: leave it, and
+     do NOT apply the obvious partial fix.** The observation stands — a pipe client's disconnect
+     does cancel a CE user's export call (`Aura.cpp:1410` via `UE5_FindObject`/`UE5_FindClass`),
+     which is the same class of bug B4 fixed for the Mimic poller and never for the direct exports.
+     The tempting fix is `Tot::MarkCancelImmune()` at the top of the CE-facing lookup exports.
+     ⛔ **That is unsafe, and specifically so.** `t_cancelImmune` is set-once with no restore, and
+     CE runs a whole Lua block on ONE `CreateRemoteThread` thread — `scripts/ue5_dissect.lua` calls
+     several exports per block (`callDLL("UE5_FindObject", …)` at :567/:595, `UE5_FindClass` at
+     :605). So a block that calls a marked lookup export and *then* `UE5_Init` would run that
+     initialisation **cancel-immune**, making the DLL's longest scan unabortable — resurrecting
+     failure mode #1 from `Tot.h`'s own header ("game won't close": `Fern::Stop` joins a thread
+     that is mid-scan). A partial marking also leaves an inconsistent mental model, which is worse
+     than the current uniform one.
+     ⭐ The CE path needs the same proper cancellation-context that item 1 needs, not a scattering
+     of immunity calls. Fold it into item 1 rather than doing it separately.
   ⛔ `Tot::PerCommandStillOwed` / `m_cancelOwners` / `ReevaluatePerCommandCancel` are **NOT**
   subsumed by per-connection flags and must not be deleted — that predicate is the only expression
   in the tree of *"does any client still need this work"*.
