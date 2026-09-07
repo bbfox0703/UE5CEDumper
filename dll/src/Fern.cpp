@@ -2224,10 +2224,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         if (cmd == Renge::CMD_LIST_ENUMS) {
             int total = Aura::GetCount();
             json enums = json::array();
+            // ⛔ A cooperative abort used to return a partial array indistinguishable from a
+            // complete one: same shape, `ok: true`, just fewer entries. Measured 2026-09-07
+            // (tools/verify/multipipe_cancel_isolation.py): a FOREIGN client dying mid-command
+            // trips the process-wide Tot::g_perCommand, and this loop then answered 77 bytes
+            // where 720,793 were due -- 5,157 times, every one of them `ok: true`. The caller
+            // cannot tell that from a real answer, so the flag below is the difference between
+            // silent data loss and a detectable one.
+            bool truncated = false;
 
             for (int i = 0; i < total; ++i) {
                 if ((i & 0xFFF) == 0 && Tot::Requested()) {
-                    Sein::Warn("PIPE:cmd", "list_enums: aborted (client gone / shutdown)");
+                    Sein::Warn("PIPE:cmd", "list_enums: aborted (client gone / shutdown) "
+                               "-- returning %d of %d scanned, marked truncated",
+                               static_cast<int>(enums.size()), total);
+                    truncated = true;
                     break;  // return partial result
                 }
                 uintptr_t obj = Aura::GetByIndex(i);
@@ -2261,6 +2272,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["enums"] = enums;
             data["count"] = static_cast<int>(enums.size());
+            if (truncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -2425,6 +2437,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool    defLean         = request.value("lean", false);
 
             json arr = json::array();
+            bool batchTruncated = false;
             for (const auto& item : request["items"]) {
                 // A malformed element must not abort the batch — the UI's fallback
                 // replays a failed chunk as single calls, and losing the whole
@@ -2449,12 +2462,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
                 // Same cooperative-cancel contract as every other bulk loop: a
                 // disconnect mid-batch returns what is done rather than walking on.
-                if (Tot::Requested()) break;
+                // ⛔ ...and SAYS SO -- see the list_enums note; a silently short batch is
+                // indistinguishable from the instances simply not being there.
+                if (Tot::Requested()) { batchTruncated = true; break; }
             }
 
             json data;
             data["instances"] = arr;
             data["count"]     = static_cast<int>(arr.size());
+            if (batchTruncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4182,8 +4198,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // recording is verifiable from the log, not just the UI.
             int periodicCount = 0, periodicLogged = 0;
             std::string periodicSummary;
+            bool profileTruncated = false;
             for (size_t i = 0; i < snap.size() && emitted < limit; ++i) {
-                if ((i & 0xFFF) == 0 && Tot::Requested()) break;  // cooperative abort
+                // Cooperative abort -- and recorded, see the list_enums note. A short
+                // profile reads as "the game called fewer functions", which is exactly
+                // the wrong conclusion to hand a profiler.
+                if ((i & 0xFFF) == 0 && Tot::Requested()) { profileTruncated = true; break; }
                 FunctionInfo fi{};
                 if (!Ubel::ResolveFunctionInfo(snap[i].func, fi)) continue;  // drop stale/recycled
                 uintptr_t classAddr = Ubel::GetOuter(snap[i].func);  // UFunction's Outer == its UClass
@@ -4231,6 +4251,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
             data["functions"]      = functions;
+            if (profileTruncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 

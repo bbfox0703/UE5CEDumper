@@ -184,9 +184,10 @@ def main():
         while time.time() - t0 < 8.0:
             try:
                 r = victim.request(VICTIM_CMD)
-                after.append((round(time.time() - t0, 2), len(json.dumps(r)), bool(r.get("ok"))))
+                after.append((round(time.time() - t0, 2), len(json.dumps(r)), bool(r.get("ok")),
+                              bool(r.get("truncated"))))
             except Exception as exc:                       # noqa: BLE001
-                after.append((round(time.time() - t0, 2), -1, False))
+                after.append((round(time.time() - t0, 2), -1, False, False))
                 print(f"   victim request FAILED: {str(exc)[:90]}")
 
         marks = log_marks()
@@ -205,10 +206,15 @@ def main():
             print(f"  blast radius                : {first_bad:.2f}s -> {last_bad:.2f}s "
                   f"({last_bad - first_bad:.2f}s of degraded replies)")
             print(f"  truncated reply sizes       : {sizes[:4]} vs baseline {baseline}")
+            flagged = sum(1 for a in short if len(a) > 3 and a[3])
             print(f"  ⚠ of those, reported ok=true: {oks} / {len(short)}")
-            if oks:
-                print("  ⚠ A TRUNCATED REPLY THAT SAYS ok=true IS SILENT DATA LOSS -- the")
-                print("    caller cannot tell it from a real, complete answer.")
+            print(f"  ⭐ of those, carried truncated:true: {flagged} / {len(short)}")
+            if oks and not flagged:
+                print("  ⚠ A TRUNCATED REPLY THAT SAYS ok=true AND CARRIES NO FLAG IS SILENT")
+                print("    DATA LOSS -- the caller cannot tell it from a complete answer.")
+            elif flagged == len(short):
+                print("  ✅ every short reply is FLAGGED -- the loss is detectable by the")
+                print("     caller (UI: AllFunctionsResult.IsPartial / ClassListResult.Truncated).")
             recovered = [a for a in after if a[0] > last_bad]
             print(f"  full-size replies after last bad: {len(recovered)}"
                   f"{' (recovered)' if recovered else ' (NEVER recovered in-window)'}")
