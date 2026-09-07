@@ -3664,8 +3664,43 @@ independent blockers, and each needed its own fix:
   binary, so `LoadHints` misses and `DetectVersion` runs the full ladder. Most are also `rev=5`
   against today's `kVersionDetectLogicRev = 7`, which would reject them independently.
 
-⚠ This makes the row **runnable**, not passed — the acceptance evidence is still a
-`Tier 1 (utf16) '++UE5+Release-5.4' -> 504` line in a real `scan-0.log`, which needs an injection.
+### ✅ G2 step 3 — the UE5 Tier-1 branch PASSES 2026-09-07 `[G2-TIER1-UE5-2026-09-07]`
+
+**Half 1 — UE 5.4.** `DumperTest.exe` Development, pid 11660, injected with `tools/verify/inject.py`
+and driven by `tools/verify/run_version_evidence.py` (no UI). `scan-0.log`, verbatim:
+
+```
+[2026-09-07 08:58:03.999] [INFO] [SCAN]     FindAll: PE hash = 6A9DFA2910F21000
+[2026-09-07 08:58:04.009] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-07 08:58:04.010] [WARN] [SCAN:Ver] DetectVersion: PE VERSIONINFO Product=1.2 File=1.2 — unrecognised
+[2026-09-07 08:58:04.010] [WARN] [SCAN:Ver] DetectVersion: PE resource failed, falling back to memory string scan
+[2026-09-07 08:58:04.542] [INFO] [SCAN:Ver] DetectVersion: Tier 1 (utf16) '++UE5+Release-5.4' -> 504 at 0xCB7C10C
+[2026-09-07 08:58:04.542] [INFO] [SCAN]     FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+**This is the first `Tier 1` line ever produced by a UE5 host on this machine.** The survey above
+recorded 6 Tier-1 lines across the whole log corpus and every one was UE4 (4.18 / 4.27).
+
+Four things make it evidence rather than a number that happens to be right:
+
+* **The ladder actually ran.** There is no `(cached, …) — skipped DetectVersion` line, so the cache
+  did not short-circuit it. `FindAll: PE hash = 6A9DFA2910F21000` **is byte-for-byte the hash
+  predicted offline** from the repackaged binary before anything was launched, which is what
+  predicted the cache miss.
+* **It reached the branch by falling through, not by failing.** `Product=1.2 File=1.2` is the `.rc`
+  fixture's version, and `PE resource failed` is Tier 0 declining — the intended path.
+* **It parsed, it did not guess.** `'++UE5+Release-5.4' -> 504` quotes the needle it matched and
+  gives its address; `tier=1` is recorded in the summary line independently.
+* **The host was alive.** `object_count: 25227` — a dead engine reports coherent zeros
+  (handover §3).
+
+⛔ **Half 2 — UE 5.8 — NOT YET RUN.** One injected game at a time; 5.4 was killed before 5.8 was
+launched. Until half 2 lands, this row is evidenced on ONE engine version, which cannot distinguish
+"parsed the needle" from "returned a constant that happens to be 504".
+
+⚠ ~~This makes the row **runnable**, not passed — the acceptance evidence is still a
+`Tier 1 (utf16) '++UE5+Release-5.4' -> 504` line in a real `scan-0.log`, which needs an
+injection.~~ Done, above.
 ⛔ When running it, inject into `<Config>\Windows\<Project>\Binaries\Win64\<Project>*.exe`: the exe
 at the staged root is UE's bootstrap stub, still carries `Default.rc2`'s engine version, and
 reports `Tier0 -> 504` / `-> 508`. See `tools/ue-sample/README.md` § Traps.
