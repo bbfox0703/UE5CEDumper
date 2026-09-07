@@ -70,6 +70,26 @@ MEASURED 2026-09-07, DumperTest Development at 1 FPS, build 3405 -- REPRODUCED t
     blast radius                   0.14s -> 0.71s  (~0.57 s degraded)
     recovered afterwards           yes, 105 full-size replies
 
+⚠ WHAT THIS RIG DOES **NOT** COVER, AND CANNOT ON THIS FIXTURE. It exercises the
+SERIAL path only. `list_enums` walks the object array inline on the connection's own
+thread, so it proves the per-connection cancel for the thread that SERVES a command --
+not for the threads that do the WORK. Aura's heavy scans run through
+ParallelGObjectsScan, whose workers are spawned std::threads that inherit no
+thread_local; they were fixed separately (257878a3, verified by
+Test_Tot_PerConnectionCancelAndContextPropagation) but NOT end-to-end here.
+
+The blocker is size, not design: reproducing the parallel case needs a scan that occupies
+its connection long enough to overlap the doomed client's death, and on DumperTest's
+25,227 objects nothing comes close -- measured 2026-09-07:
+
+    find_property_xrefs 0.00s · find_functions_by_class 0.00s
+    find_by_address 0.05s · find_refs_to_uobject 0.20s (max_results=20000)
+
+The -DumperTestMaxFPS lever does not help: it lengthens a GAME-THREAD dispatch, and these
+scans never touch the game thread. Closing this properly needs a host where a parallel
+scan runs ~1 s -- i.e. a real title (190k-400k objects), not this fixture. Until then the
+parallel half rests on the unit test, and this rig's PASS says nothing about it.
+
 ⛔ THE SEVERITY IS NOT THE TRUNCATION, IT IS THAT ALL 5,157 TRUNCATED REPLIES SAID
 `ok: true`. A caller gets 77 bytes where 720 KB was due and cannot tell it from a
 complete answer. The window is bounded (~0.6 s) because audit #5's

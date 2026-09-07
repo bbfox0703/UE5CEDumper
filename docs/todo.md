@@ -1371,9 +1371,30 @@ before being written down.*
      `&conn->cancel` would dangle exactly in the disconnect case the binding exists for. They need
      an **owning** handle — a `shared_ptr` to a small cancel object that the `Connection` also
      holds — not a borrowed pointer.
-     ⚠ Note `Fern::RunScan` is not simply "cancel it with the requester's flag" either: a scan
-     started by connection A is used by every later client, so cancelling it when A leaves may be
-     wrong. Decide the ownership question before the mechanism.
+     ⭐ **THE OWNERSHIP QUESTION IS ANSWERED (2026-09-07), AND IT RULES OUT THE OBVIOUS MECHANISM.**
+     A scan is a **shared, process-wide product**, not the requester's work: `trigger_scan` is
+     gated by `m_scan.running` (`Fern.cpp:5273`), so a second client gets *"Scan already in
+     progress"* and then polls `scan_status` — B is genuinely waiting on A's scan. Its results land
+     in the global `EnginePointers` and the hint cache that every later client reads. So binding
+     `RunScan` to its requester would be **wrong regardless of lifetime**: A leaving would abort a
+     scan B is still waiting for. ⛔ Do not give it an owning token to "fix" this — the token is a
+     mechanism for a question whose answer is no.
+     The right predicate is *"does any client still need this work"*, which is exactly
+     `Tot::PerCommandStillOwed` — the thing the review said is **not** subsumed by per-connection
+     flags. And it is already wired: `ReevaluatePerCommandCancel` (`Fern.cpp:788`, called at `:970`
+     and `:1213`) clears the latch once no raiser is live, so once A's connection is erased, B's
+     dependence is respected.
+     **What actually remains is a narrow window**, not a missing mechanism: between A's pipe
+     breaking and A's connection being erased, `g_perCommand` is set, so a running `RunScan` can
+     abort even though B is still connected.
+     ⛔ **Judged NOT worth fixing yet, deliberately.** Harm is low — MA1 means a cancelled scan does
+     not latch, so the next `trigger_scan` simply re-scans; the cost is one wasted scan. Risk is
+     high — the candidate fix ("abort only once the registry has gone empty *after* being
+     non-empty") has to stay correct for the CE-only case, where the registry is *always* empty and
+     `UE5_AutoStart` scans before the pipe server exists. Get that predicate wrong in one direction
+     and the DLL never initialises; wrong in the other and `Fern::Stop` joins a scan that never
+     aborts — the "game won't close" freeze `Tot.h` was written for. A one-wasted-scan bug does not
+     justify that exposure. Revisit if the window is ever observed to bite.
   2. ~~**`ScanReport::cancelled` is still a process-global non-atomic file static.**~~
      **✅ CHECKED 2026-09-07 — the finding does not apply, and the check found an older bug
      instead (`55be6f9b`).** The review raised this as fatal, but it was written against design v1
