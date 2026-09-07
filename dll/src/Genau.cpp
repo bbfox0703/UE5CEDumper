@@ -23,6 +23,7 @@
 #include <vector>
 #include <algorithm>  // std::sort
 #include <atomic>     // FindSparseDelegateStorage cache
+#include <mutex>      // FindSparseDelegateStorage slow-path serialisation
 #include <unordered_map>  // RecoverGWorldViaEngine per-class offset cache
 #include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
@@ -2558,9 +2559,26 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
 
 static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
 static std::atomic<bool>      s_sparseDelegatesScanned{false};
+// Serialises the SLOW path only. Unlike the other three scans, this one is reachable from
+// PIPE COMMAND threads -- Aura::FindReferencesToUObject (Aura.cpp:3742) and
+// WalkSparseDelegateBindings (Aura.cpp:6284) -- so two clients can enter it at once before
+// the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
+// file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
+// confused verdict. Found 2026-09-07 while checking whether the per-connection cancel
+// (bea9009c) had made the shared verdict inconsistent -- it had not, the `cancelled` flag is
+// consumed locally by the no-latch branch below, but the underlying race was real and older.
+// ⛔ NOT std::call_once: the MA1 branch below deliberately does NOT latch a cancelled scan so
+// the next call retries, and call_once would burn the one-shot on that cancelled attempt.
+static std::mutex             s_sparseScanMutex;
 
 uintptr_t FindSparseDelegateStorage() {
     // Fast path: already resolved (or already failed).
+    if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
+        return s_sparseDelegatesCache.load(std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> scanLock(s_sparseScanMutex);
+    // Re-check under the lock: a racing caller may have finished and latched while we waited,
+    // and re-running a 2.34 s multi-module scan to reach the same answer helps nobody.
     if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
         return s_sparseDelegatesCache.load(std::memory_order_relaxed);
 
