@@ -3644,9 +3644,31 @@ sweep concluded the only Tier-1-capable hosts installed are UE4; the log corpus 
 other direction — all three games that actually produced a Tier 1 line are UE4 (4.18 / 4.27), so the
 **UE5 branch still has no host**, measured twice by different means.
 
-⚠ DumperTest cannot supply any of this: its version is **cached** (`FindAll: UE Version = 504
+⚠ ~~DumperTest cannot supply any of this: its version is **cached** (`FindAll: UE Version = 504
 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`), so the ladder does not run at
-all, and it has intact VERSIONINFO so it would stop at the first rung anyway.
+all, and it has intact VERSIONINFO so it would stop at the first rung anyway.~~
+**SUPERSEDED 2026-09-07 — both blockers removed offline, `20ac839f`.** That sentence named two
+independent blockers, and each needed its own fix:
+
+* **Intact VERSIONINFO** → `DumperTest.rc` / `DumperTest58.rc`. UBT skips the engine's
+  `Default.rc2` when a module ships its own `.rc`, so the packaged exes now report a version no UE
+  release ever had. **5 binaries across 2 engines** are now `TIER-1 HOST` where the sweep above
+  found none: `1.2.0.0` on 5.4 (Development/Shipping/DebugGame) and `1.8.0.0` on 5.8
+  (Development/Shipping), each still carrying its `++UE5+Release-N.N` needle in utf16. The two
+  versions **disagree deliberately** — one constant would satisfy both halves of the survey on its
+  own, so agreement would not prove the needle was parsed.
+* **The version cache** → removed by the repackage itself, not by a code change. The cache is keyed
+  by `peHash` (`Flamme.cpp`, `games[peHash]`) and `peHash` is `TimeDateStamp + SizeOfImage`
+  (`Genau.cpp:54`); relinking changes both. Verified against the live hint file: **all 13**
+  DumperTest/DumperTest58 records are keyed by pre-repackage hashes and **not one** matches a new
+  binary, so `LoadHints` misses and `DetectVersion` runs the full ladder. Most are also `rev=5`
+  against today's `kVersionDetectLogicRev = 7`, which would reject them independently.
+
+⚠ This makes the row **runnable**, not passed — the acceptance evidence is still a
+`Tier 1 (utf16) '++UE5+Release-5.4' -> 504` line in a real `scan-0.log`, which needs an injection.
+⛔ When running it, inject into `<Config>\Windows\<Project>\Binaries\Win64\<Project>*.exe`: the exe
+at the staged root is UE's bootstrap stub, still carries `Default.rc2`'s engine version, and
+reports `Tier0 -> 504` / `-> 508`. See `tools/ue-sample/README.md` § Traps.
 
 **What steps 1–2 still need**: a game not yet recorded (step 1 asks for at least one more beyond
 Elliot and DragonSword Awakening) and an Avowed injection (step 2). Neither is a grep.
