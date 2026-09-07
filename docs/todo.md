@@ -1354,16 +1354,26 @@ before being written down.*
   erased without a line of them deleted). So the unbound case deliberately falls back to the global
   flag, and `MonitorLoop` still trips it.
   **Still owed, in rough priority order:**
-  1. **Narrow the unbound population.** Three groups still take the global cancel, so a foreign
-     death still aborts them: Aura's `ParallelIndexRanges` workers (`Aura.cpp:173`) and its
-     `cancelWatcher` (`Aura.cpp:221`); `Fern::RunScan`/`RunRescan` (`Fern.cpp:5276`/`5114`) and
-     Frieren's `UE5_AutoStart`; the CE remote thread in the Frieren C-ABI exports.
-     ⚠ This is the hard one, and the naive fix is a bug: binding those threads to `&conn->cancel`
-     is a **use-after-free**, because the connection can be erased while they still run — precisely
-     in the disconnect case the binding exists for. It needs an owning handle (a `shared_ptr` to a
-     small cancel object, not a raw pointer into `Connection`).
-     ⭐ The parallel path is not a corner case: `ScanThreadCount` (`Aura.cpp:129`) goes parallel at
-     ≥8192 objects, i.e. **every real game**, for all seven heavy scans.
+  1. **Narrow the unbound population — HALF DONE (`257878a3`).**
+     ✅ **Aura's parallel workers and its `cancelWatcher` now inherit the caller's context**
+     (`Tot::CaptureCancelContext` / `CancelContextScope`). That was the half that mattered most:
+     `ScanThreadCount` (`Aura.cpp:129`) picks the parallel path at ≥8192 objects — **every real
+     game** — for all seven heavy scans, so until this landed the measured defect was still live
+     for exactly the commands worth cancelling, and the `cancelWatcher` was flipping `deadlineHit`
+     on *any* client's disconnect.
+     ⭐ **Why a raw pointer is safe there and not elsewhere** — the distinction the design review
+     did not draw. `ParallelIndexRanges` **joins** its pool (`Aura.cpp:190`) and
+     `ParallelGObjectsScan` joins the watcher (`Aura.cpp:258`), so the caller's binding strictly
+     outlives both.
+     ⛔ **Still owed, and here the review's use-after-free warning DOES apply:**
+     `Fern::RunScan`/`RunRescan` (`Fern.cpp:5276`/`5114`), Frieren's `UE5_AutoStart`, and the CE
+     remote thread. Those outlive the command that started them, so binding them to
+     `&conn->cancel` would dangle exactly in the disconnect case the binding exists for. They need
+     an **owning** handle — a `shared_ptr` to a small cancel object that the `Connection` also
+     holds — not a borrowed pointer.
+     ⚠ Note `Fern::RunScan` is not simply "cancel it with the requester's flag" either: a scan
+     started by connection A is used by every later client, so cancelling it when A leaves may be
+     wrong. Decide the ownership question before the mechanism.
   2. ~~**`ScanReport::cancelled` is still a process-global non-atomic file static.**~~
      **✅ CHECKED 2026-09-07 — the finding does not apply, and the check found an older bug
      instead (`55be6f9b`).** The review raised this as fatal, but it was written against design v1
