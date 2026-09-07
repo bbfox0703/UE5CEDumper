@@ -25,6 +25,111 @@ builds ≤696 in
 
 -----
 
+## 2026-09-07 (build 3423) — a cancel that crossed connections, a Guess? that invented rows, and a queue that lied
+
+38 commits. Four shipped defects, two verification rows closed on real hosts, one fixture that had
+never worked, and a queue audit whose most useful output was proving my own hypothesis wrong.
+
+### `[MULTIPIPE-CANCEL-2026-09-07]` — a foreign client's death truncated your scan and said `ok:true`
+
+todo.md recorded multipipe-eval §9.6 item 5 as closed. The evidence on file described the **opposite
+experiment**: the item asks for "disconnect only ONE lane, the other keeps working", and the run
+logged had closed the whole GAME mid-snapshot, so both lanes died together. §9.3's mitigation
+(`inFlightHeavy`) had never shipped — `Fern::MonitorLoop` tripped the process-wide
+`Tot::g_perCommand` for **any** broken in-flight connection.
+
+Measured (`tools/verify/multipipe_cancel_isolation.py`): 5,157 of 5,264 replies collapsed to **77
+bytes against a 720,793-byte baseline**, every one reporting `ok: true`. ⛔ The severity was never
+the truncation — it was that a caller could not tell it from a complete answer.
+
+Fixed in three parts: the loss is now **flagged** (`truncated: true`, joining a convention 10 other
+commands already used), pipe handlers got a **per-connection** cancel, and Aura's **parallel
+workers** — which do the actual work on any real game — inherit their caller's cancellation context.
+
+⭐ **Verified with a true before/after on ONE real host.** Octopath Traveler (UE 4.18, 406,060
+objects) still carried a build-3380 proxy from an older session, so the pre-fix state was directly
+measurable: **10 of 125 replies truncated to 238 bytes before, 0 of 115 across three runs after**,
+with `client gone mid-command` logged exactly once in *both* directions — so the AFTER is a real
+negative, not a missed trigger.
+
+⛔ **The obvious design was wrong and is documented as rejected in `Tot.h`.**
+`return (t_connCancel && t_connCancel->load()) || g_shutdown` makes *unbound* identical to
+*cancel-immune*, inverting the module's default from fail-safe to **fail-silent**. Three of four
+review lenses returned FATAL on it before a line was written.
+
+### Guess? invented a phantom row over every static C-array element
+
+The row said "RESOLVED — working as designed". It was resolved for *one* footprint family: its
+evidence was a TArray + TMap, and for a **dynamic** container `ElementSize` is the entire inline
+footprint, so the defect is structurally invisible there. A static `UPROPERTY Type Foo[N]` renders
+as ONE element, so elements 1..N-1 looked unclaimed. Measured on the fixture's `int32 FixedArr[8]`:
+**7 fake rows before, 0 after**, 34 legitimate guessed rows still emitted elsewhere.
+⛔ A comment had asserted the bug was fine ("its output is unchanged by the new ArrayDim field").
+The fix was a **deletion** — `ComputeClassHoles` already had the right formula.
+
+### The FProperty family had a THIRD writer, and it split the family
+
+`Grimoire.h` says "Never assign a member of this family directly"; audit #5 G12 unified the writers
+and recorded "Both writers now go through here". There were three. The failure is silent and
+half-correct: struct reads stay right while TArray element descriptors and every enum name read 8
+bytes off. Now gated (`tools/check_property_family.py`, 16th gate) because a prose invariant plus a
+hand-counted writer list is exactly what failed here twice.
+
+### `[MHPOISON-STARVE-2026-09-07]` — the retry machinery had never run on a live game
+
+Build 2358's fix shipped; its in-game re-check never happened, because the hook kept installing on
+the first try. ⛔ And the fixture built to force a failure **was itself broken in a way that read as
+success** — it reserved 1 MB at a time stepping 1 MB, and `VirtualAlloc(MEM_RESERVE)` fails for the
+*whole* request on any overlap, so it reported "reserved 3824 block(s)" (93%, looks fine) while
+leaving ~960 KB free in each of 272 gaps. MinHook needs a few KB. Now walks the window with
+`VirtualQuery`: **2 blocks instead of 3,824, and the count going down is the fix.**
+
+All four acceptance criteria then landed in one run: six retries at the configured 5 s cooldown
+(not one — the permanent latch is gone), **one** fallback WARN for 61 fallback invokes (against a
+historical 552 unsafe-call lines in 19 s), See-through refusing with `hook_active:false` in its
+reply, and `hook RECOVERED on attempt 7`.
+
+### `[G2-TIER1-UE5-2026-09-07]` — the first UE5 Tier-1 detection on this machine
+
+The register's own sweep found 6 Tier-1 lines across every archived scan log and **all were UE4**.
+Two `.rc` fixtures (5.4 → `1.2`, 5.8 → `1.8`) make the packaged samples fall through Tier 0 while
+keeping their `++UE5+Release-N.N` needle. Both engines now produce a live `Tier 1` line — and they
+report **different** dummy versions deliberately, so a constant could not fake it.
+
+### Smaller, but user-visible
+
+* **dxgi's "late-load games only" restriction was lifted three days after it was written, and
+  shipping C# never heard.** `ProxyDeployViewModel.cs` still steered users away from a proxy that
+  works, as the documented selection rule for the Proxy Deploy radio buttons.
+* **A cancelled bulk reply no longer claims to be a complete one** (`truncated: true` on
+  `list_enums` / `walk_instance_batch` / `pe_profile_get`).
+* **A real data race**: `FindSparseDelegateStorage` is the one scan reachable from pipe-command
+  threads, so two clients could enter its slow path and both write the same file-static
+  `ScanReport` — which owns a `std::vector`. Now serialised. ⛔ Not `call_once`: MA1 deliberately
+  does not latch a cancelled scan.
+* **Native-C P3's SPC-Query arm** closed offline against the 2026-09-06 capture still on disk — all
+  8,556 `<raw@0x..>` rows join under the product's Strict key, none with a vacuous offset.
+* **The `0x100000` ceilings** split five ways by tracing each value's producing read and consuming
+  arithmetic.
+
+### ⚠ What this session got wrong, because the pattern repeats
+
+* **A todo audit over 12 open bullets expected to find stale "already done" rows** — 5 of 12 had
+  bodies contradicting their headers, so the hypothesis felt safe. Two adversarial refuters per
+  verdict, told to default to "still open", **demoted every single one**. Zero were stale. Had the
+  first pass been trusted, the row containing a live bug would have been deleted.
+* **Two proposed fixes in todo.md were both wrong** (the DynOff-atomics row): dropping the
+  "redundant" write would have removed the only probe that can land a ±0x10 layout, and making the
+  offsets atomic would have fixed the race and left the actual bug.
+* **I deleted a bullet and left a header stale** — a patch anchored on a line it did not mean to
+  remove, and a header still reading "REOPENED with a REPRODUCED DEFECT" hours after it was fixed.
+  Both found by re-scanning the queue mechanically instead of answering from memory.
+* **A rig produced a clean, plausible, meaningless green** at 2 FPS: the arithmetic said the window
+  was wide enough, and it wasn't. Rigs now treat "trigger never observed" as INCONCLUSIVE, never a
+  pass.
+
+-----
+
 ## 2026-09-06 - RELEASED as v3397 -- the first release since v3362, 97 commits
 
 Tag `v3397` on `1b55cce3`, published from the draft the release workflow builds. **This entry is a

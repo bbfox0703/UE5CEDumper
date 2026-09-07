@@ -65,6 +65,22 @@ spawner — destroying the fixture that five verification rows depend on.
    ⚠ So the durable rule is not a direction, it is a **comparison**: `ls -l` both trees and copy
    from the newer one, every time. A hardcoded direction is what made this stale twice.
 
+   > ### ✅ RESOLVED 2026-09-06 — the two trees are IN SYNC, and the comparison is now automated
+   >
+   > The inversion above is fixed: the mirror was copied into the live project and
+   > `package-identity.json` now records `source_sha256 == built_from.source_sha256`, so neither
+   > tree is ahead. **The table above is history — do not act on its numbers.**
+   >
+   > `py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest` compares the two by
+   > digest on every run and prints `IN SYNC` or `*** DRIFT ***` before it builds anything;
+   > `--sync-mirror` copies repo → project. That is the comparison this rule asks for, done by a
+   > tool instead of by remembering to.
+   >
+   > ⚠ And the digest now covers **8** files, not 5: `DumperTestHUD.h/.cpp` and
+   > `DumperTest.Build.cs` were mirrored-but-unhashed, so their drift was invisible to both the
+   > hash and the staleness check. `check_ue_sample_values.py` gates that list against this
+   > directory's actual contents.
+
    ⚠ **What `--check` does and does not tell you — read its two lines separately.** Run
    2026-09-03 it printed:
 
@@ -189,7 +205,7 @@ spawner — destroying the fixture that five verification rows depend on.
    > Person template ships no custom HUD so nothing is lost; a project that has one would lose
    > it. `-DumperTestNoHud` opts out of the whole thing.
    >
-   > Whatever the screen says, `TickCount` at `+0x518` in Live Walker is authoritative in both
+   > Whatever the screen says, `TickCount` at `+0x6A8` in Live Walker is authoritative in both
    > configurations.
 
    **That readout IS the health check.** `ADumperTestActor` is invisible by design — no mesh, no
@@ -464,6 +480,39 @@ walk may simply never have reached them.
 | `F32_Ticking` / `F64_Ticking` | start 1000.5 / 20000.125 | the only float and double that **move** — see the temporal table below |
 | `RawInt_Ticking` / `RawFloat_Ticking` / `RawDouble_Ticking` | start 700000 / 300.25 / 50000.5 | **not** UPROPERTY *and* they move — a Native-C scan that can be refined, which the static three above cannot support |
 
+### Batch 2 additions (2026-09-06) — soft/lazy pointers, deep containers, Linie, dinput8
+
+Ten fixtures added in one packaging cycle, each closing a register row that had no host.
+
+| field | value | check |
+|---|---|---|
+| `Soft_Mesh` | `/Engine/BasicShapes/Cube.Cube` | **A1, UI leg.** A `TSoftObjectPtr`. Its value must render as a PATH starting with `/`. ⚠ A ctor/BeginPlay soft reference is **not** a cook dependency — the acceptance is that the path reads back, never that the asset was cooked in |
+| `Arr_SoftMesh` | Cube · Sphere · Cone, then **one default** | ⭐ **The CE leg lives HERE, not on the single pointer.** `soft_path_offset` is only emitted by the array block on the wire, and the CE XML exporter only recognises `ArrayInnerType == SoftObjectProperty` — so Copy CE XML must come from an **instance walk** of this field, PackageName leaf at `<Address>+8</Address>`. Element [3] is the `(none)` control |
+| `Arr_LazyPtr` | three spawned holders | **A1, lazy stride.** ⛔ Do **not** check the log line — it is circular (the ElementSize it prints is re-derived from the version guess under test). Check the **element values**: three DIFFERENT valid GUIDs. The old-stride failure fingerprint is a repeated `{C0000001-D0000001-FFFFFFFF-FFFFFFFF}` |
+| `LazyAnchors` | the same three actors | GC roots. A `TLazyObjectPtr` does not keep its target alive, so without these the row would measure a dangling read |
+| `Deep_Buckets` → `Subs` → `Leaves` | empty until `A9_BuildDeepContainers(300,300,300)` | **A9.** Three levels, because a flat 500×500 cannot work: every container is clamped at 256 *before* the budget is consulted, so 500×500 visits 65,792 elements. Three levels gives ≈16.8M against a 50,000 budget — a ~335× ratio, measurable on a wall clock. **Negative control `(30,30,30)`** = 27,930 visits, under budget, so every leaf must be reached. ⚠ Compare deep-on vs deep-off TIME; `scanned_objects` has no discriminating power on a one-object fixture |
+| `Arr_TuneBlocks` → `BlockName` · `Tunes` | 3 blocks × 5 ints | **Multi-`[N]` drill.** `Arr_TuneBlocks[2].Tunes[4]` must read **7204**; a parser that resolves only the last `[N]` lands on 7104 and is visibly wrong. ⚠ The outer container must stay a `TArray` — a top-level `TSet`/`TMap` of structs has its element direct-fields collected by neither capture path |
+| `FrameCountReflected` | mirrors `FrameCount` each Tick | **Linie's denominator.** `GetFrameCount()` is not a UFUNCTION and `FrameCount` is deliberately not a UPROPERTY, so neither is reachable over the pipe — which left the cadence rows with nothing to divide by |
+| `HolderHealth` (on `ADumperTestHolder`) | `BaseValue` 100, `CurrentValue` in **five buckets** | ⭐ **Class Pivot grouping / Suggest Targets.** Deliberately NOT distinct per instance: `HolderValue` already is, and a unique key gives 300 groups of 1, which proves a key is applied but not that grouping is useful. `Spawn_Holders(300)` then gives many instances in few groups — the shape a real game's HP/team/state field has |
+| `Arr_Name` | `NameA` · `NameBB` · `NameCCC` | Three FNames of deliberately different lengths, so any future FName-stride question has a subject whose entries cannot be confused by size |
+
+**And two that are not fields at all:**
+
+* **`dinput8` import.** `DumperTest.Build.cs` links `dinput8.lib` **and `dxguid.lib`** (the latter is
+  not optional — `IID_IDirectInput8W` lives there), and `UDumperTestSubsystem::Initialize` makes one
+  real `DirectInput8Create` call so the optimizer cannot drop the import. Reading the import table of
+  all 16 installed UE shipping exes had found **not one** importer of `dinput8.dll`.
+  ⚠ **Verify offline before packaging**: `py tools/pe/pe_imports_exports.py <exe>` must list
+  `DINPUT8.dll`. Expected in `init-0.log` once the proxy is deployed:
+  `Loaded real dinput8.dll: …` — ⛔ **not** `lazily forwarded N/N exports`, which only the dxgi and
+  winmm flavours print.
+* **`-DumperTestStarveVM`** reserves the ±2 GB window MinHook needs, so `MH_CreateHook` fails with
+  `MH_ERROR_MEMORY_ALLOC` — the intermittent failure four shipped behaviours depend on and none has
+  ever been observed. ⛔ It is a **switch, not a UFUNCTION**: an invoke is drained from inside the
+  already-installed detour, so by the time a UFUNCTION could run the hook has already succeeded.
+  `Hook_ReleaseTrampolineVM()` is the recovery half. ⚠ Call it within **~40 s** (8 attempts × 5 s
+  cooldown) or the retry ladder is spent and `hook RECOVERED on attempt N` can never appear.
+
 ### Group Scan / Snapshot Mode B (temporal)
 
 A 1 Hz timer drives exactly the documented hard case — *groups need `Unchanged`*:
@@ -573,6 +622,41 @@ Stating these so nobody spends a packaging cycle on them:
   `FOptionalProperty` exists (`PropertyOptional.h`), UHT resolves it (`UhtOptionalProperty.cs`), the
   only inner-type rule is `CanBeContainerValue`, and the engine itself ships `TOptional<FBox>` and
   `TOptional<uint32>` UPROPERTYs.
+* ⛔ **UE 5.8 packaging needs `bUseZenStore=False`, or `BuildCookRun` fails AFTER a successful
+  cook.** 5.8 flipped an engine-wide default; measured across the installed engines 2026-09-07:
+
+  | engine | `Engine/Config/BaseGame.ini` |
+  |---|---|
+  | UE 5.4 | key **absent** → Zen off |
+  | UE 5.7 | `bUseZenStore=False` |
+  | UE 5.8 | **`bUseZenStore=True`** |
+
+  With it on, the cook writes a **Zen oplog** and staging reads it back over
+  `http://[::1]:8558`. On this machine ZenServer exits mid-run — its own log says
+  `exiting since sponsor processes are all gone` — while AutomationTool is still polling it, so
+  the run dies in `ReadZenCookedFilesFromZenServer` with `ZenServer is not running`. ⚠ **The cook
+  itself SUCCEEDED** (`UnrealEditor-Cmd ExitCode=0`, `UnrealPak ExitCode=0` ×3); only staging
+  failed, so the error reads like a broken cook when nothing about the cook was wrong.
+  `DumperTest58/Config/DefaultGame.ini` sets it under
+  `[/Script/UnrealEd.ProjectPackagingSettings]` and carries the reason inline. Loose cooked files
+  need no server; with the override, both configs package in ~40–60 s.
+  ⛔ **Do NOT "fix" this by starting a sponsor-less ZenServer** — tried, and it fails *differently*
+  and more confusingly: `LogIoStore: Error: Failed to add sponsor process IDs to launched
+  ZenServer`, because a server started without `--owner-pid` has no sponsor plumbing to register
+  against. ⛔ And do not install the Windows service (`zen.exe service install`) — that is a
+  machine-wide change for a per-project packaging quirk.
+* ⛔ **`<Staged>\Windows\DumperTest.exe` IS NOT THE GAME — inject into the CHILD.** The exe at the
+  root of a staged/archived build is UE's **bootstrap stub**: 153 KB, and measured 2026-09-07 it
+  imports `CreateProcessW` and carries the literal string
+  `DumperTest\Binaries\Win64\DumperTest-Win64-Shipping.exe`. It launches the real 132 MB exe as a
+  **separate process** and is not the engine at all. This is not cosmetic for the G2 row: the stub
+  still carries the engine's own `Default.rc2` version block, so
+  `pe_version_probe.py` reports **`prod=5.4.4.0 → Tier0 ProductVersion -> 504`** for it while the
+  real child reports `1.2.0.0 → FALLS THROUGH`. **A rig that attaches to the first `DumperTest*.exe`
+  it finds by name will silently measure the wrong binary and report 504** — which looks exactly
+  like "the `.rc` fixture did not work" rather than "you injected into the launcher". Always target
+  `DumperTest\Binaries\Win64\DumperTest*.exe`. (The same shape applies to every packaged UE title,
+  so it is worth knowing beyond this fixture.)
 
 -----
 

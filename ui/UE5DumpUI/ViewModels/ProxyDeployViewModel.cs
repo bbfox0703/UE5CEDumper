@@ -263,11 +263,20 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// the DataGrid reflects the deploy state of the newly-selected DLL.
     /// Defaults to version.dll — called at normal runtime (GetFileVersionInfo /
     /// COM / manifest parsing) rather than under the early loader lock, so it is
-    /// the safest activation timing for the broadest set of games. (dxgi.dll is
-    /// statically imported very early and some games call it before the CRT is
-    /// initialised — e.g. Octopath Traveler instant-exits with the dxgi proxy;
-    /// see docs/dev-log.md. Pick dxgi only for EXEs importing neither version
-    /// nor dinput8.)
+    /// the safest activation timing for the broadest set of games.
+    ///
+    /// ⚠ The old parenthetical here said "Octopath Traveler instant-exits with the
+    /// dxgi proxy … Pick dxgi only for EXEs importing neither version nor dinput8".
+    /// That restriction is LIFTED. It was written 2026-08-24 and the defect was
+    /// fixed three days later: builds 3363 + 3365 (the AppCompat pre-CRT crash,
+    /// then the SRWLOCK self-deadlock caused by our own re-entrant LoadLibraryW),
+    /// verified in-game on Octopath itself 2026-08-27 build 3366 — "dxgi proxy:
+    /// lazily forwarded 20/20 exports", pipe server up, 406,060 objects.
+    ///
+    /// dxgi is still not the DEFAULT, but that is a timing PREFERENCE, not a
+    /// capability limit: version.dll activates at ordinary runtime, which is simply
+    /// the least eventful moment to load into. Choose dxgi freely when the version
+    /// or winmm slot is already taken.
     /// </summary>
     [ObservableProperty] private ProxyType _selectedProxyType = ProxyType.Version;
 

@@ -181,8 +181,43 @@ grep 一行 log），已移到 verification-register.md。
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 對候選遊戲注入後下 get_offsets，看 case_preserving（每款只要一次呼叫，可以便宜地掃很多款）。 | 找到 case_preserving=true 的遊戲。<br>⚠ 必須同時看 probe_ran=true，否則 false 只代表沒偵測。 |
+| ~~1~~ | ~~對候選遊戲注入後下 get_offsets，看 case_preserving。~~ **✅ 已於 2026-09-07 完成，而且不需要遊戲。** | 見下方說明。 |
 | 2 | 若找到，Live Walker 展開任一 actor 的 Tags（TArray<FName>）。 | 每個元素都是完整正確的 FName；不是第二個之後從前一個的中段讀起（stride 16，非 8）。 |
+
+#### ✅ 第 1 步 PASS（2026-09-07）—— 環境一直就裝在這台機器上
+
+`WITH_CASE_PRESERVING_NAME` 的預設值就是 `WITH_EDITORONLY_DATA`
+（`Core/Public/UObject/NameTypes.h:31`，UBT 從頭到尾沒碰過它），而那在 **editor build 是 1**。
+所以不需要「一款 CPN 遊戲」——`UnrealEditor.exe` 自己就是一個 CPN 進程。注入 UE 5.4 editor 後：
+
+```
+DetectCasePreservingName: votes standard=0, CPN=20 (tested 20 objects)
+DetectCasePreservingName: CPN ACTIVE — UObject::Outer = +0x28
+get_offsets: case_preserving=true, probe_ran=true, uobject_outer=40 (0x28)
+```
+
+20/20 一致，且 `probe_ran=true` 同時成立 —— 正是本表自己警告的那個陷阱。
+⭐ 偵測器是在**名稱池完全讀不出來**的情況下仍然投對的（見下），因為它探測的是結構而不是名字。
+
+⛔ **第 2 步仍然卡住，而且 editor 不能拿來代替 —— 這點必須寫清楚，否則下一個人會再跑一次。**
+editor 進程根本讀不動，原因與 CPN 無關：
+
+```
+UE5_Init: Name sanity: 0/10 objects resolved
+WARNING — No objects resolved names! Check FUObjectItem size or FNamePool.
+UE5_Init: Offset validation failed — using default offsets
+UE5_Init: GWorld=0x... does not deref to a UWorld — recovery failed
+```
+
+`walk_instance` 對著遊戲自己 log 出來的 actor 位址，回傳 `class:""`、`name:""`，
+以及一個 offset 113 的 `TextureOffsetParameter`（材質參數，與 DumperTestActor 毫無關係）。
+⚠ **那是垃圾資料，不是 stride 錯誤。** 把它讀成「CPN 下 walker 壞掉」會是完全錯誤的結論——
+editor build 與 game build 的差異遠不只 CPN（`WITH_EDITORONLY_DATA` 改動 UObject/UStruct 佈局），
+DynOff 自己也回報 `validated=NO (DEFAULTS)`。
+
+⛔ 也沒辦法自己編一個 CPN game：三個引擎都是 `InstalledBuild.txt` 存在的**二進位安裝**，
+而 FName 在 Core 裡、被所有東西使用，改它等於要重編整個引擎。
+第 2 步**真的**需要一款外面的 CPN 遊戲。
 
 -----
 

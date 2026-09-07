@@ -304,6 +304,62 @@ void ADumperTestActor::BeginPlay()
 		W->GetTimerManager().SetTimer(TickHandle, this, &ADumperTestActor::OnSecondTick, 1.0f, /*loop*/ true);
 	}
 
+	// ---- A1: the soft/lazy pointer family -------------------------------------------
+	// ⚠ These are PATH references, not loads. A ctor/BeginPlay soft reference is not a cook
+	// dependency, so the acceptance is that the PATH reads back -- never that the asset is
+	// present. Engine paths are used so nothing project-specific has to be cooked at all.
+	Soft_Mesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube")));
+	Arr_SoftMesh.Reset();
+	Arr_SoftMesh.Add(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube"))));
+	Arr_SoftMesh.Add(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere"))));
+	Arr_SoftMesh.Add(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cone.Cone"))));
+	// [3] stays DEFAULT on purpose: the `(none)` control. Without it, "every element shows a
+	// path" is equally consistent with a reader that renders a path for anything at all.
+	Arr_SoftMesh.AddDefaulted(1);
+
+	// ---- the multi-[N] drill subject ------------------------------------------------
+	// value = 7000 + block*100 + element, so Arr_TuneBlocks[2].Tunes[4] is 7204 and a
+	// one-hop parse lands visibly on 7104 instead.
+	Arr_TuneBlocks.Reset();
+	for (int32 b = 0; b < 3; ++b)
+	{
+		FDumperTestTuneBlock Block;
+		Block.BlockName = FName(*FString::Printf(TEXT("Tune_%d"), b));
+		for (int32 e = 0; e < 5; ++e)
+		{
+			Block.Tunes.Add(7000 + b * 100 + e);
+		}
+		Arr_TuneBlocks.Add(MoveTemp(Block));
+	}
+
+	// Deliberately DIFFERENT lengths, so an FName stride question has a subject whose
+	// entries cannot be confused with one another by size alone.
+	Arr_Name.Reset();
+	Arr_Name.Add(FName(TEXT("NameA")));
+	Arr_Name.Add(FName(TEXT("NameBB")));
+	Arr_Name.Add(FName(TEXT("NameCCC")));
+
+	// ---- A1 lazy array: needs REAL actors, so it spawns three of its own ------------
+	// ⚠ Three DISTINCT actors, because the failure fingerprint of the old stride is three
+	// IDENTICAL garbage GUIDs -- with one element that is indistinguishable from success.
+	if (UWorld* W = GetWorld())
+	{
+		FActorSpawnParameters P;
+		P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		P.Owner = this;
+		Arr_LazyPtr.Reset();
+		for (int32 i = 0; i < 3; ++i)
+		{
+			if (ADumperTestHolder* H = W->SpawnActor<ADumperTestHolder>(
+				    ADumperTestHolder::StaticClass(), GetActorLocation(), FRotator::ZeroRotator, P))
+			{
+				H->HolderIndex = 90000 + i;   // out of Spawn_Holders' range, so they never collide
+				LazyAnchors.Add(H);
+				Arr_LazyPtr.Add(TLazyObjectPtr<AActor>(H));
+			}
+		}
+	}
+
 	// Confirms the actor exists WITHOUT attaching the dumper -- but ONLY in Development/Test.
 	//
 	// This comment used to read "Warning level so it survives a Shipping build's default log
@@ -352,7 +408,12 @@ void ADumperTestActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* W = GetWorld())
 	{
 		W->GetTimerManager().ClearTimer(TickHandle);
+		W->GetTimerManager().ClearTimer(LiniePeriodicHandle);
 	}
+	// ⚠ UNCONDITIONAL. If -DumperTestStarveVM reserved the ±2 GB window and the run aborts
+	// before Hook_ReleaseTrampolineVM is called, leaving it reserved would starve every
+	// subsequent hook attempt in a process the next session assumes is clean.
+	ReleaseReservedVm();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -635,6 +696,13 @@ void ADumperTestActor::Spawn_Holders(int32 Count, bool bDerived)
 		H->HolderIndex = Base + i;
 		H->HolderValue = 1000.f + static_cast<float>(Base + i);
 		H->bHolderFlag = ((Base + i) % 2) == 0;
+		// ⭐ DELIBERATELY BUCKETED, not distinct. HolderValue above is unique per instance,
+		// which makes it useless as a pivot KEY -- 300 instances would give 300 groups of 1.
+		// Five buckets over hundreds of instances is the shape Class Pivot grouping and
+		// Suggest Targets exist to surface, and it is the shape a real game's HP/team/state
+		// field actually has.
+		H->HolderHealth.BaseValue    = 100.f;
+		H->HolderHealth.CurrentValue = 100.f - static_cast<float>((Base + i) % 5) * 10.f;
 		SpawnedHolders.Add(H);
 	}
 	++SpawnGeneration;
@@ -780,3 +848,195 @@ void ADumperTestActor::Spawn_ManyComponents(int32 Count)
 	}
 	++SpawnGeneration;
 }
+
+// ============================================================
+// A9 — build the three-level container.
+//
+// ⚠ Cost is Outer*Mid*Inner floats. (300,300,300) is 27,000,000 floats ~= 108 MB and takes a
+// few seconds; that is the POINT (the unclamped visit count must dwarf the 50,000 budget), but
+// it is why this is opt-in rather than seeded in BeginPlay.
+// ⚠ The NEGATIVE control is (30,30,30) = 27,930 visits, deliberately UNDER budget.
+// ============================================================
+void ADumperTestActor::A9_BuildDeepContainers(int32 Outer, int32 Mid, int32 Inner)
+{
+	Outer = FMath::Clamp(Outer, 0, 400);
+	Mid   = FMath::Clamp(Mid,   0, 400);
+	Inner = FMath::Clamp(Inner, 0, 400);
+
+	Deep_Buckets.Reset();
+	Deep_Buckets.Reserve(Outer);
+	for (int32 o = 0; o < Outer; ++o)
+	{
+		FDumperTestDeepMid M;
+		M.Subs.Reserve(Mid);
+		for (int32 m = 0; m < Mid; ++m)
+		{
+			FDumperTestDeepLeaf L;
+			L.Leaves.Reserve(Inner);
+			for (int32 i = 0; i < Inner; ++i)
+			{
+				// Unique per path, so a truncated walk is visible in the VALUES and not only
+				// in a count -- a count alone cannot say WHERE it stopped.
+				L.Leaves.Add(static_cast<float>(o * 1000000 + m * 1000 + i));
+			}
+			M.Subs.Add(MoveTemp(L));
+		}
+		Deep_Buckets.Add(MoveTemp(M));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] A9 deep containers: %d x %d x %d"),
+	       Outer, Mid, Inner);
+}
+
+// ============================================================
+// Linie — ProcessEvent call counting.
+// ============================================================
+void ADumperTestActor::Linie_Marker()
+{
+	// Deliberately empty. Its only job is to BE dispatched, so anything it did would be
+	// another variable in whatever the profiler is measuring.
+}
+
+void ADumperTestActor::Linie_Burst(int32 Times)
+{
+	Times = FMath::Clamp(Times, 0, 100000);
+
+	// ⭐ REFLECTED DISPATCH, NOT A DIRECT CALL. A direct C++ call to Linie_Marker() never
+	// enters ProcessEvent, so Linie would count zero and the row would read as a defect in
+	// the profiler rather than a mistake in the driver.
+	UFunction* Fn = FindFunctionChecked(TEXT("Linie_Marker"));
+	for (int32 i = 0; i < Times; ++i)
+	{
+		ProcessEvent(Fn, nullptr);
+	}
+
+	// ⚠ EXPECT Linie_Burst's OWN count to stay 0 while Linie_Marker reads exactly `Times`.
+	// A queued invoke is drained from inside the installed MinHook trampoline, so this
+	// function does not re-enter the detour. A non-zero count here is the interesting result.
+}
+
+void ADumperTestActor::Linie_StartPeriodic(float PeriodSeconds)
+{
+	// ⚠ Floored at 1/30 s. A UE timer fires at most once per frame and this harness runs at
+	// t.MaxFPS 15, so asking for 1 ms does not stress anything -- it just makes the measured
+	// period the frame time and the cadence row then measures the FPS cap.
+	PeriodSeconds = FMath::Max(PeriodSeconds, 1.0f / 30.0f);
+	if (UWorld* W = GetWorld())
+	{
+		W->GetTimerManager().ClearTimer(LiniePeriodicHandle);
+		W->GetTimerManager().SetTimer(LiniePeriodicHandle, this,
+		                              &ADumperTestActor::Linie_Marker, PeriodSeconds, true);
+	}
+}
+
+void ADumperTestActor::Linie_StopPeriodic()
+{
+	if (UWorld* W = GetWorld())
+	{
+		W->GetTimerManager().ClearTimer(LiniePeriodicHandle);
+	}
+}
+
+// ============================================================
+// MinHook trampoline-VM starvation — release half.
+// ============================================================
+int32 ADumperTestActor::Hook_ReleaseTrampolineVM()
+{
+	const int32 Freed = ReleaseReservedVm();
+	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] released %d reserved VM block(s)"), Freed);
+	return Freed;
+}
+
+// ============================================================
+// Trampoline-VM starvation.
+//
+// MinHook must place its trampoline within ±2 GB of the hooked function, because the detour is
+// a 32-bit relative jump. Reserving that window makes MH_CreateHook fail with
+// MH_ERROR_MEMORY_ALLOC -- which is the intermittent, never-observed failure four shipped
+// behaviours depend on (bounded retry, the single-line fallback WARN, worker refusal -8, and
+// the UI recovering after release).
+//
+// ⚠ MEM_RESERVE only, never MEM_COMMIT: this must consume ADDRESS SPACE, not RAM. Committing
+// ~4 GB would page the machine rather than starve the allocator, and the harness drives the game
+// under test on this same box.
+// ============================================================
+#include "Windows/AllowWindowsPlatformTypes.h"
+
+int32 ADumperTestActor::ReserveTrampolineVm()
+{
+	constexpr SIZE_T kGranularity = 64 * 1024;      // Windows allocation granularity
+	constexpr int32  kMaxBlocks   = 200000;         // hard ceiling on VAD entries we will create
+
+	// Centre the sweep on this module: the functions MinHook will hook live here, so this is the
+	// window its trampoline allocator will search.
+	const uintptr_t Base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+	const uintptr_t Lo   = (Base > 0x7FFFFFFFull) ? (Base - 0x7FFFFFFFull) : kGranularity;
+	const uintptr_t Hi   = Base + 0x7FFFFFFFull;
+
+	// ⛔ WALK THE FREE REGIONS WITH VirtualQuery -- DO NOT STRIDE BLINDLY IN FIXED BLOCKS.
+	// The first version of this reserved 1 MB at a time stepping 1 MB, which LOOKS like full
+	// coverage and is not: VirtualAlloc(MEM_RESERVE) fails for the WHOLE request if any part of
+	// it overlaps an existing allocation, so every 1 MB window that clipped a module or heap
+	// failed outright and left the rest of that megabyte free. Measured 2026-09-07: 3,824 of
+	// 4,096 blocks succeeded -- 93% coverage, which reads like success -- and the 272 failures
+	// left up to ~960 KB free apiece. MinHook needs a few KB. The hook installed on the first
+	// attempt (`hook_active=1`) and the run measured NOTHING.
+	//
+	// Querying instead reserves exactly what is actually free, so nothing is left behind.
+	int32 Reserved = 0;
+	uintptr_t Addr = Lo;
+	while (Addr < Hi && Reserved < kMaxBlocks)
+	{
+		MEMORY_BASIC_INFORMATION Mbi{};
+		if (VirtualQuery(reinterpret_cast<void*>(Addr), &Mbi, sizeof(Mbi)) != sizeof(Mbi))
+		{
+			break;
+		}
+		const uintptr_t RegionBase = reinterpret_cast<uintptr_t>(Mbi.BaseAddress);
+		const uintptr_t RegionEnd  = RegionBase + Mbi.RegionSize;
+
+		if (Mbi.State == MEM_FREE)
+		{
+			// Align up to allocation granularity, clamp to the window, reserve the whole run.
+			uintptr_t Start = (RegionBase + kGranularity - 1) & ~(kGranularity - 1);
+			if (Start < Lo) { Start = Lo; }
+			const uintptr_t End = (RegionEnd < Hi) ? RegionEnd : Hi;
+			if (End > Start)
+			{
+				const SIZE_T Size = static_cast<SIZE_T>(End - Start) & ~(kGranularity - 1);
+				if (Size >= kGranularity)
+				{
+					void* P = VirtualAlloc(reinterpret_cast<void*>(Start), Size,
+					                       MEM_RESERVE, PAGE_NOACCESS);
+					if (P)
+					{
+						ReservedVmBlocks.Add(P);
+						++Reserved;
+					}
+				}
+			}
+		}
+		Addr = (RegionEnd > Addr) ? RegionEnd : (Addr + kGranularity);
+	}
+	UE_LOG(LogTemp, Warning,
+	       TEXT("[DumperTest] -DumperTestStarveVM: reserved %d block(s) around module base %p. ")
+	       TEXT("Call Hook_ReleaseTrampolineVM within ~40s to observe the RECOVERY half."),
+	       Reserved, reinterpret_cast<void*>(Base));
+	return Reserved;
+}
+
+int32 ADumperTestActor::ReleaseReservedVm()
+{
+	int32 Freed = 0;
+	for (void* P : ReservedVmBlocks)
+	{
+		if (P && VirtualFree(P, 0, MEM_RELEASE))
+		{
+			++Freed;
+		}
+	}
+	ReservedVmBlocks.Reset();
+	return Freed;
+}
+
+#include "Windows/HideWindowsPlatformTypes.h"

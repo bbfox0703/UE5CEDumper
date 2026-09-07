@@ -52,6 +52,56 @@ inline bool IsUserspacePointer(uintptr_t p) {
     return p >= PTR_USERSPACE_MIN && p <= PTR_USERSPACE_MAX;
 }
 
+// --- Plausibility ceilings for values read out of the game ---
+//
+// Each guards a value just read from ANOTHER process before it is used as a loop bound or
+// an address multiplier. They are SANITY ceilings, not statements about what the engine may
+// legitimately contain: crossing one means "this is not the structure I think it is", and
+// the caller rejects the candidate rather than clamping it.
+//
+// ⛔ THEY ARE ALL 0x100000 TODAY AND THAT IS A COINCIDENCE OF MAGNITUDE, NOT A SHARED
+// MEANING -- which is the whole reason they are separate names. Classified site-by-site
+// 2026-09-07 by tracing each value's PRODUCING read and CONSUMING arithmetic, then put to
+// independent adversarial re-checks.
+//
+// ⭐ THE SPLIT THAT SURVIVED, AND THE ONE THAT DID NOT. Two reviewers looked at the same
+// int32 at +0x08 and reached OPPOSITE conclusions -- one "it is a live element COUNT"
+// (UE's own `TSparseArray::GetMaxIndex() { return Data.Num(); }`, vendor SparseArray.h:460),
+// the other "it is a slot EXTENT including freed entries" (this codebase spells the live
+// count `MaxIndex - NumFreeIndices` in six places, and ReadTMapHeader reads NumFreeIndices
+// yet never subtracts it). Both arguments are sound, which is the point: count-vs-index is
+// NOT a distinction this code sustains, so it gets ONE name. What IS real is the field
+// split -- +0x08 (num/extent) and +0x0C (capacity) are different members, and Max >= Num
+// always, so capacity can want the looser ceiling. That is where the line is drawn.
+//
+// ⚠ 0x100000 also appears STANDALONE elsewhere with unrelated meanings; only the sites
+// named below are these ceilings. Same warning as PTR_USERSPACE_MIN's 0x10000 above.
+
+/// UStruct::PropertiesSize -- a BYTE budget for one struct/class instance.
+/// Aura.cpp x2 (class-field walks), Genau.cpp x1 (class-candidate probe).
+constexpr int32_t SANITY_MAX_STRUCT_BYTES = 0x100000;      // 1 MiB of instance data
+
+/// A container's OCCUPIED extent: the int32 at +0x08 of a TArray header -- TArray::ArrayNum,
+/// TSparseArray::MaxIndex, a TMap's slot count. Dimensionless entries, never bytes.
+/// Macht.h x2, Aura.cpp x1 (ReadTMapHeader), Genau.cpp x1 (SparseDelegates probe).
+constexpr int32_t SANITY_MAX_CONTAINER_NUM = 0x100000;     // 1M entries/slots
+
+/// A container's ALLOCATED capacity: the int32 at +0x0C -- TArray::ArrayMax,
+/// TSparseArray::MaxCapacity. Always >= the num above, hence its own ceiling.
+/// Aura.cpp x8, Genau.cpp x1.
+constexpr int32_t SANITY_MAX_CONTAINER_CAPACITY = 0x100000;
+
+/// A TSparseArray allocator's BITMAP WIDTH in bits -- not entries, not bytes. Grows by
+/// doubling from 0x80, so it tracks the slot count rather than equalling it. Genau.cpp x1.
+constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
+
+/// GObjects population -- the number of UObjects in the whole process. Separate magnitude
+/// AND separate meaning. Measured, not guessed: a real title reached 0x800000 (8,388,608).
+/// ⚠ Aura.cpp:2073 bounds an InternalIndex rather than a count; an index lives in the same
+/// space as the population and must rise with it, so it belongs here -- but do NOT merge this
+/// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
+constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
+
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
 // Most offsets are stable, but Outer shifts when CasePreservingName is active (the
@@ -319,6 +369,25 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 //
 // Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
 // floor; 5.9+ does not exist yet). The caller decides what to do with that.
+//
+// ⭐ MACHINE-CHECKED SINCE 2026-09-06 — `tools/check_processevent_slots.py`, in `check_all`.
+// This was a hand-transcribed table over a vendored source, i.e. exactly the shape CLAUDE.md
+// says to derive rather than hand-edit, and nothing pinned it. The gate re-derives all 26 rows
+// from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` and they all match:
+//
+//     slot = index_of("ProcessEvent") * 8
+//     over [UObjectBase] + [UObjectBaseUtility] + [UObject] concatenated,
+//     with the repeated `__vecDelDtor` dropped after the first
+//
+// ⚠ That dedupe is load-bearing: the templates restate the destructor at the head of every
+// class section, but a single-inheritance vtable has ONE destructor slot for the whole chain.
+// Skip it and every row is wrong by a constant 0x10 — constant across all ten versions checked
+// by hand first, which is what identified it as a missing rule rather than a fudge.
+//
+// ⭐ Incidentally this retires a planned Ghidra/PDB pass. The register was scoping how to obtain
+// the **5.2** figure from the Satisfactory UE5.2.1 depot; 5.2 was already here (0x268) and is
+// now corroborated from source, as are 4.11-5.8 entire. A PDB gives one game's build; the
+// templates give the version.
 constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
     switch (ueVersion) {
         case 411: case 412: case 413:            return 0x1A8;
@@ -494,9 +563,20 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // concurrency needed. `docs/test-games.md` records Solarpunk resolving via exactly that
 // heuristic fallback with FProperty::Offset +0x44.
 //
-// Both writers now go through here so the two cannot drift again. Pure and constexpr, so
-// dll_helpers_test can pin the invariant — which matters because no test target compiles
-// Genau.cpp.
+// ⚠ G12 recorded "both writers now go through here". There were THREE, and the third was
+// missed: `Ubel.cpp` WalkInstance's StructProperty probe wrote FSTRUCTPROP_STRUCT directly
+// until 2026-09-07, so the split-family failure above stayed reachable by the one path G12
+// had not counted. Writers are now FIVE and all routed: Genau ×3, Ubel::CorrectSubclassOffsets,
+// and Ubel's WalkInstance StructProperty probe.
+// ⛔ ONE deliberate exception, and it is the only one: `Ubel.cpp`'s ArrayProperty probe assigns
+// FARRAYPROP_INNER on its own, because UE5.3+ puts EArrayPropertyFlags before Inner so that
+// member legitimately diverges from the shared base after calibration. It re-probes per field
+// per walk, so a family write that resets it to the base is corrected on the next array.
+// `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
+// the first time.
+//
+// Pure and constexpr, so dll_helpers_test can pin the invariant — which matters because no
+// test target compiles Genau.cpp.
 struct PropertyFamily {
     int structProp;     // FStructProperty::Struct
     int arrayInner;     // FArrayProperty::Inner

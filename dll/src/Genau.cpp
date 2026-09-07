@@ -23,6 +23,7 @@
 #include <vector>
 #include <algorithm>  // std::sort
 #include <atomic>     // FindSparseDelegateStorage cache
+#include <mutex>      // FindSparseDelegateStorage slow-path serialisation
 #include <unordered_map>  // RecoverGWorldViaEngine per-class offset cache
 #include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
@@ -681,7 +682,7 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride) {
     if (!LooksLikeDataPtr(chunkTable)) return 0;
     int32_t num = 0;
     if (!Macht::ReadSafe(base + 0x24, num)) return 0;           // NumElements
-    if (num < 16 || num > 0x800000) return 0;
+    if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) return 0;
     uintptr_t chunk0 = 0;
     if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) return 0;
 
@@ -2505,8 +2506,8 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
     if (!Macht::ReadSafe(addr + 0x2C, allocMaxBits)) return false;
     // Sanity: ArrayMax shouldn't be negative or absurdly large. MaxBits
     // is a power of 2; default 0x80, grows by doubling.
-    if (arrayMax < 0 || arrayMax > 0x100000) return false;
-    if (allocMaxBits < 0 || allocMaxBits > 0x100000) return false;
+    if (arrayMax < 0 || arrayMax > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) return false;
+    if (allocMaxBits < 0 || allocMaxBits > Grimoire::SANITY_MAX_SPARSE_BITS) return false;
 
     // ── Content check (added build 2404) ────────────────────────────────
     // Everything above is shape-only: it accepts ANY .data TMap-looking blob, which
@@ -2526,7 +2527,7 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
     if (!Macht::ReadSafe(addr + 0x00, elemData)) return false;
     if (!Macht::ReadSafe(addr + 0x08, elemNum))  return false;
     if (elemNum <= 0 || !elemData) return true;          // empty / not yet allocated
-    if (elemNum > 0x100000) return false;
+    if (elemNum > Grimoire::SANITY_MAX_CONTAINER_NUM) return false;
 
     constexpr int32_t kOuterStride = 0x60;               // TSetElement<TTuple<ptr, TMap>>
     constexpr int32_t kProbeSlots  = 32;                 // enough to skip freed slots
@@ -2558,9 +2559,26 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
 
 static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
 static std::atomic<bool>      s_sparseDelegatesScanned{false};
+// Serialises the SLOW path only. Unlike the other three scans, this one is reachable from
+// PIPE COMMAND threads -- Aura::FindReferencesToUObject (Aura.cpp:3742) and
+// WalkSparseDelegateBindings (Aura.cpp:6284) -- so two clients can enter it at once before
+// the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
+// file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
+// confused verdict. Found 2026-09-07 while checking whether the per-connection cancel
+// (bea9009c) had made the shared verdict inconsistent -- it had not, the `cancelled` flag is
+// consumed locally by the no-latch branch below, but the underlying race was real and older.
+// ⛔ NOT std::call_once: the MA1 branch below deliberately does NOT latch a cancelled scan so
+// the next call retries, and call_once would burn the one-shot on that cancelled attempt.
+static std::mutex             s_sparseScanMutex;
 
 uintptr_t FindSparseDelegateStorage() {
     // Fast path: already resolved (or already failed).
+    if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
+        return s_sparseDelegatesCache.load(std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> scanLock(s_sparseScanMutex);
+    // Re-check under the lock: a racing caller may have finished and latched while we waited,
+    // and re-running a 2.34 s multi-module scan to reach the same answer helps nobody.
     if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
         return s_sparseDelegatesCache.load(std::memory_order_relaxed);
 
@@ -3614,7 +3632,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
                 int32_t ps = 0;
                 Macht::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, ps);
-                if (ps <= 0 || ps > 0x100000) continue;
+                if (ps <= 0 || ps > Grimoire::SANITY_MAX_STRUCT_BYTES) continue;
                 c.propsSize = ps;
 
                 uint32_t nameIdx = 0;

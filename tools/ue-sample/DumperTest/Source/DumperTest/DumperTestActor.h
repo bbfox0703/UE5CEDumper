@@ -25,6 +25,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+// Soft/lazy object pointers are NOT in CoreMinimal — include them explicitly rather than
+// relying on a transitive path, which is exactly the kind of thing an engine upgrade removes.
+#include "UObject/SoftObjectPtr.h"
+#include "UObject/LazyObjectPtr.h"
+#include "Engine/StaticMesh.h"      // the soft-pointer target type
 #include "DumperTestTypes.h"
 #include "DumperTestActor.generated.h"
 
@@ -87,6 +92,14 @@ public:
 	/// Its own index, so a walker's report can be checked against ground truth
 	/// instead of against another reading from the same walker.
 	UPROPERTY() int32 HolderIndex = 0;
+
+	/// ⭐ The Class Pivot GROUPING subject, and the reason it is a nested struct rather than a
+	/// float: ADumperTestActor has only 2 instances, so pivoting on it can only ever produce 1 or
+	/// 2 groups — enough to prove a key is APPLIED, not enough to prove grouping is USEFUL.
+	/// Spawn_Holders makes 300 of these and seeds CurrentValue into a small number of BUCKETS
+	/// (see the seeding in Spawn_Holders), so a pivot has many instances landing in few groups —
+	/// which is the shape "Suggest Targets" is supposed to surface.
+	UPROPERTY() FDumperTestAttribute HolderHealth;
 };
 
 /// DERIVES from the base. A "holds subclasses too" claim MUST include this.
@@ -324,13 +337,6 @@ public:
 	/// Nested StructProperty, GAS-attribute shaped.
 	UPROPERTY() FDumperTestAttribute Health;
 
-	/// ⭐ A7 fixture — the only reachable instance of the empty-base pair. Without a
-	/// UPROPERTY of this type nothing loads FDumperTestBracketPayload, and an
-	/// unloaded struct is invisible to a whole-pool walk (see export-formats.md's
-	/// Coverage section). See FDumperTestEmptyBase in DumperTestTypes.h for what
-	/// the pair proves and why no shipping title could supply it.
-	UPROPERTY() FDumperTestBracketPayload EmptyBasePayload;
-
 	/// Strong object pointer to the owned payload.
 	UPROPERTY() TObjectPtr<UDumperTestPayload> Payload;
 
@@ -352,8 +358,8 @@ public:
 	// prev-value predicate has a guaranteed hit at each width.
 	//
 	// Appended at the END of the class, not slotted next to their static twins, so that
-	// every offset the docs quote (TickCount +0x518, FrozenInt +0x51C, Opt_Int_Set
-	// +0x468, Set_Int +0x358) still points at the same field.
+	// every offset the docs quote (TickCount +0x6A8, FrozenInt +0x6AC, Opt_Int_Set
+	// +0x608, Set_Int +0x368) still points at the same field.
 	// ========================================================
 
 	/// Falls 10.25/sec from 1000.5, wraps after ~96 s -- Decreased every second, and the
@@ -511,12 +517,17 @@ public:
 	UPROPERTY() TArray<TObjectPtr<AActor>>  SpawnedHolders;
 	UPROPERTY() TArray<TObjectPtr<UObject>> LateSpawns;
 
+	/// GC roots for the three actors Arr_LazyPtr points at. A TLazyObjectPtr does NOT keep its
+	/// target alive, so without these the referents are collected and the row measures a
+	/// dangling-pointer read instead of the stride it is about.
+	UPROPERTY() TArray<TObjectPtr<AActor>>  LazyAnchors;
+
 	// ========================================================
 	// APPENDED-AT-END FIXTURES (U7 / U11 / U3-U17 / Y15).
 	//
 	// Deliberately NOT slotted beside their topical siblings. README.md's own rule:
-	// new members go at the END so every offset the docs quote (TickCount +0x518,
-	// FrozenInt +0x51C, Opt_Int_Set +0x468, Set_Int +0x358) still points at the
+	// new members go at the END so every offset the docs quote (TickCount +0x6A8,
+	// FrozenInt +0x6AC, Opt_Int_Set +0x608, Set_Int +0x368) still points at the
 	// same field. Slotting Str_Even22_TwoNull into the Str_* block would move all four.
 	// ========================================================
 
@@ -556,6 +567,60 @@ public:
 	/// write leaves bytes +1..+3 of WideGrade itself stale and never reaches here.
 	/// The short-write discriminator is Wide_Base and Wide_Target sharing a low byte.
 	UPROPERTY() int32 WideGuard = 0;
+
+	/// ⭐ A7 fixture — the only reachable instance of the empty-base pair. Without a
+	/// UPROPERTY of this type nothing loads FDumperTestBracketPayload, and an
+	/// unloaded struct is invisible to a whole-pool walk (see export-formats.md's
+	/// Coverage section). See FDumperTestEmptyBase in DumperTestTypes.h for what
+	/// the pair proves and why no shipping title could supply it.
+	///
+	/// ⚠ MOVED HERE 2026-09-06. It was added between `Health` and `Payload` by commit
+	/// 7ef46f16, 183 lines above the banner that forbids exactly that — and it shifted
+	/// every later offset by sizeof(FDumperTestBracketPayload) = 0x10, which is why
+	/// TickCount measured +0x6B8 against the +0x6A8 the README documents. Appending it
+	/// instead leaves every field before it where the docs say it is.
+	UPROPERTY() FDumperTestBracketPayload EmptyBasePayload;
+
+	// ========================================================
+	// A1 — the soft/lazy pointer family. ZERO coverage before 2026-09-06: `TSoftObjectPtr`,
+	// `TLazyObjectPtr` and `FSoftObjectPath` got no hits anywhere in this sample, while audit A1
+	// had just rewritten the envelope sizes and the `ReadLazyObjectArrayElements` stride fix
+	// (build 3374) had no live subject at all. Three declarations cover the DLL, UI and CE legs.
+	// ========================================================
+
+	/// Single soft pointer. The UI leg: its value must render as a PATH beginning with '/'.
+	/// ⚠ A ctor-time soft reference is NOT a cook dependency, so do not write an acceptance
+	/// criterion claiming the asset was cooked in — only that the PATH reads back.
+	UPROPERTY() TSoftObjectPtr<UStaticMesh> Soft_Mesh;
+
+	/// ⭐ THE CE LEG LIVES HERE, NOT ON THE SINGLE POINTER. `soft_path_offset` is only emitted by
+	/// the ARRAY block on the wire, and the CE XML exporter only recognises an
+	/// `ArrayInnerType == SoftObjectProperty` — so the Copy-CE-XML check must come from an
+	/// instance walk of THIS field, with the PackageName leaf landing at `<Address>+8</Address>`.
+	/// Element [3] is deliberately left default so `(none)` has a control.
+	UPROPERTY() TArray<TSoftObjectPtr<UStaticMesh>> Arr_SoftMesh;
+
+	/// ⛔ NO SINGLE `Lazy_Single` COMPANION, deliberately. The lazy row's own log line is circular
+	/// — the ElementSize it prints is re-derived from the same version guess being tested — so the
+	/// acceptance must read ELEMENT VALUES: [0]/[1]/[2] must be three DIFFERENT valid GUIDs.
+	/// The old-stride failure fingerprint is the repeated {C0000001-D0000001-FFFFFFFF-FFFFFFFF}.
+	UPROPERTY() TArray<TLazyObjectPtr<AActor>> Arr_LazyPtr;
+
+	/// A9 — three nested levels, filled by A9_BuildDeepContainers. Empty until then, so it costs
+	/// nothing on a normal session. See FDumperTestDeepMid for why flat 500x500 cannot work.
+	UPROPERTY() TArray<FDumperTestDeepMid> Deep_Buckets;
+
+	/// The multi-`[N]` drill subject: 3 blocks x 5 ints, value 7000 + block*100 + element.
+	UPROPERTY() TArray<FDumperTestTuneBlock> Arr_TuneBlocks;
+
+	/// ⭐ Linie needs a frame count the PIPE can read. `GetFrameCount()` is an accessor and not a
+	/// UFUNCTION, and `FrameCount` is deliberately not a UPROPERTY, so neither is reachable over
+	/// the wire — which left the Linie cadence rows with no denominator. Mirrored every Tick.
+	UPROPERTY() int32 FrameCountReflected = 0;
+
+	/// Three NAMED FNames, so any future FName-stride question has a subject with known values
+	/// rather than needing a game. Deliberately distinct lengths.
+	UPROPERTY() TArray<FName> Arr_Name;
 
 	/// Bumped on every spawn/destroy round so a harness can prove churn ACTUALLY
 	/// HAPPENED rather than assuming its invoke landed. A changed count with a flat
@@ -612,7 +677,67 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|Spawn")
 	void Spawn_ManyComponents(int32 Count = 1500);
 
+	// ========================================================
+	// A9 — fill Deep_Buckets to a chosen depth profile.
+	//
+	// Positive case (300,300,300): unclamped visits ~= 256 + 256^2 + 256^3 ~= 16.8M against the
+	// 50,000-element budget, a ~335x ratio that shows up on a wall clock.
+	// NEGATIVE CONTROL (30,30,30): 27,930 visits, UNDER budget, so every leaf must be reached.
+	//
+	// ⚠ The acceptance CANNOT be "scanned_objects differs" — on a one-object fixture that number
+	// has no discriminating power. Compare deep-on against deep-off TIME.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|A9")
+	void A9_BuildDeepContainers(int32 Outer = 300, int32 Mid = 300, int32 Inner = 300);
+
+	// ========================================================
+	// Linie — ProcessEvent call counting.
+	//
+	// ⭐ Linie_Marker is the SUBJECT and Linie_Burst is the DRIVER, and they must be different
+	// functions because they are counted differently: a queued invoke is drained from inside the
+	// already-installed MinHook trampoline, so the DRIVER never re-enters the detour and its own
+	// count stays 0 while the marker's reaches exactly Times.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Linie")
+	void Linie_Marker();
+
+	/// Dispatch Linie_Marker `Times` times THROUGH REFLECTION (ProcessEvent), which is the only
+	/// path Linie can observe. A direct C++ call would not go through ProcessEvent at all.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Linie")
+	void Linie_Burst(int32 Times = 250);
+
+	/// Periodic marker for the cadence arm. ⚠ Do NOT lower this toward 1 ms as a stress test:
+	/// a UE timer fires at most once per frame, and this harness runs at t.MaxFPS 15.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Linie")
+	void Linie_StartPeriodic(float PeriodSeconds = 0.325f);
+
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Linie")
+	void Linie_StopPeriodic();
+
+	// ========================================================
+	// MinHook trampoline-VM starvation — the RECOVERY half.
+	//
+	// ⛔ THE STARVE HALF IS A COMMAND-LINE SWITCH, NOT A UFUNCTION, and that is not a style
+	// choice: an invoke is drained from INSIDE the installed detour, so by the time any UFUNCTION
+	// of ours can run, the hook it is supposed to starve has already been installed successfully.
+	// The switch is `-DumperTestStarveVM`, handled in UDumperTestSubsystem::OnWorldBeginPlay.
+	//
+	// This function releases the reservation so the bounded retry can be observed SUCCEEDING.
+	// ⚠ It must be called within ~40 s of launch (8 attempts x 5 s cooldown) or the retry ladder
+	// is already exhausted and `hook RECOVERED on attempt N` can never appear.
+	/// @return the number of reserved regions actually freed.
+	/// Reserve address space in the ±2 GB window MinHook needs for a trampoline, so
+	/// MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC. Driven by -DumperTestStarveVM, which is a
+	/// COMMAND-LINE switch and not a UFUNCTION -- see Hook_ReleaseTrampolineVM for why.
+	/// @return how many blocks were actually reserved.
+	int32 ReserveTrampolineVm();
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|MinHook")
+	int32 Hook_ReleaseTrampolineVM();
+
 private:
+
+	/// Free everything ReserveTrampolineVm took. Called by Hook_ReleaseTrampolineVM and
+	/// UNCONDITIONALLY from EndPlay, so an aborted run cannot leave the address space starved.
+	int32 ReleaseReservedVm();
+
 	/// Build a UDataTable at runtime with `Rows` rows. No cooked asset involved.
 	UDataTable* BuildTable(const TCHAR* Name, int32 Rows);
 
@@ -644,4 +769,12 @@ private:
 	int32 FrameCount = 0;
 
 	FTimerHandle TickHandle;
+
+	/// Linie's periodic marker. Separate from TickHandle so starting/stopping the cadence arm
+	/// cannot disturb the 1 Hz heartbeat that every other row's liveness check depends on.
+	FTimerHandle LiniePeriodicHandle;
+
+	/// Regions reserved by -DumperTestStarveVM, freed by Hook_ReleaseTrampolineVM (and
+	/// unconditionally in EndPlay, so a crashed run cannot leave the address space starved).
+	TArray<void*> ReservedVmBlocks;
 };

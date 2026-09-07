@@ -157,3 +157,57 @@ struct FDumperTestTableRow : public FTableRowBase
 	/// 走一步 — odd (3), contains U+4E00. Escaped, per the file header rule.
 	UPROPERTY() FText Caption;
 };
+
+// ============================================================
+// A9 — the three-level container the per-object deep-walk budget needs.
+//
+// ⛔ A FLAT 500x500 DOES NOT WORK, and that was the original proposal. Aura's deep
+// walk clamps EVERY container at 256 elements before the budget is consulted, so
+// 500x500 visits 65,792 elements and never approaches the 50,000-element budget in
+// any way that distinguishes "budget bit" from "clamp bit". THREE levels is what
+// makes the two separable: the unclamped visit count is 256 + 256^2 + 256^3 ~= 16.8M
+// against a 50,000 budget, a ~335x ratio that is measurable on a wall clock.
+//
+// Seed with A9_BuildDeepContainers(300, 300, 300) for the positive case. The
+// NEGATIVE control is (30, 30, 30) = 27,930 visits, which is UNDER budget and must
+// therefore reach every leaf.
+// ============================================================
+USTRUCT()
+struct FDumperTestDeepLeaf
+{
+	GENERATED_BODY()
+
+	UPROPERTY() TArray<float> Leaves;
+};
+
+USTRUCT()
+struct FDumperTestDeepMid
+{
+	GENERATED_BODY()
+
+	UPROPERTY() TArray<FDumperTestDeepLeaf> Subs;
+};
+
+// ============================================================
+// Deep Value-Search multi-level 🌍 drill.
+//
+// The only known witness for "a multi-[N] locate lands on the SEEDED element rather
+// than the first one" was a commercial title. Two element hops are the minimum that
+// can tell a correct implementation from one that parses only the LAST [N].
+//
+// ⚠ The OUTER container must stay a TArray. A top-level TSet/TMap of structs has its
+// element direct-fields collected by NEITHER of the two capture paths, so a Set/Map
+// here returns zero rows for a reason that has nothing to do with the drill.
+//
+// Seeded 3 blocks x 5 ints with value 7000 + block*100 + element, so every leaf is
+// unique and its address is derivable from its path: Arr_TuneBlocks[2].Tunes[4] is
+// 7204, while a one-hop parse lands on 7104 and is visibly wrong.
+// ============================================================
+USTRUCT()
+struct FDumperTestTuneBlock
+{
+	GENERATED_BODY()
+
+	UPROPERTY() FName BlockName;
+	UPROPERTY() TArray<int32> Tunes;
+};

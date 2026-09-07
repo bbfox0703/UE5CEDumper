@@ -1,0 +1,87 @@
+// ============================================================
+// DumperTest58.rc — G2 step 3, the CROSS-VERSION half of the Tier-1 UE5 branch.
+//
+// THE ROW. Genau's version detection tries, in order: (0) CrashReportClient.exe's version,
+// (1) the game exe's PE VERSIONINFO, then a memory string scan for an engine tag. Every stock
+// UE title answers at Tier 0, so the memory-scan branch was recorded as "unverifiable on this
+// inventory". `DumperTest.rc` (UE 5.4) removed that blocker; this file adds a SECOND engine
+// version so the row proves the Tier-1 PARSE, not one hard-coded answer.
+//
+// MEASURED BASELINE, before this file existed (2026-09-07):
+//     DumperTest58.exe                 prod=5.8.2.0  Tier0 -> 508  needle=utf16 ['++UE5+Release-5.8']
+//     DumperTest58-Win64-Shipping.exe  prod=5.8.2.0  Tier0 -> 508  needle=utf16 ['++UE5+Release-5.8']
+//     2 binaries. 0 can actually produce a Tier-1 line.
+// The needle was ALREADY there. The only thing missing was a reason to look for it.
+//
+// EXPECTED after this file, in scan-0.log:
+//     DetectVersion: PE VERSIONINFO Product=1.8 File=1.8 — unrecognised
+//     PE resource failed, falling back to memory string scan
+//     Tier 1 (utf16) '++UE5+Release-5.8' -> 508
+//
+// ⭐ WHY 1.8 AND NOT 1.2. The 5.4 fixture reports 1.2 and this one reports 1.8, DELIBERATELY.
+// Two Tier-1 hosts that disagree prove the dumper PARSED the needle; two that agree would also
+// pass if it were echoing a constant. The trailing digit is a mnemonic for the engine minor and
+// nothing reads it — the only hard requirement is that the major is neither 4 nor 5, or Tier 0
+// would recognise it and the row would never reach the scan.
+//
+// ⚠ UE 5.8's UBT IS NOT UE 5.4's — CHECKED, NOT ASSUMED. The suppression moved out of
+// UEBuildBinary.SetupBinaryLinkEnvironment into a new CompileResourceFiles(), and the test was
+// rewritten from `CustomResourceFiles.Length == 0` (over compiled .res) to
+// `!InputFiles.Any(x => x != PCLaunchResource)` (over source .rc). Same outcome for us: a module
+// .rc makes the predicate false and the whole Default.rc2 branch is skipped. 5.8 additionally
+// links Launch's PCLaunch.rc alongside ours — verified harmless, it carries no VERSIONINFO in
+// either 5.4 or 5.8, so this file supplies the exe's ONLY version block.
+//
+// ⛔ DO NOT #include ANY ENGINE HEADER HERE. rc.exe is handed the Windows SDK include path and
+// NOTHING ELSE. The 5.4 fixture opened with `#include "Windows/WindowsHWrapper.h"` and killed the
+// whole build with `RC1015: cannot open include file` before a single .cpp was compiled. Every
+// field below is a literal, so <windows.h> alone is enough.
+//
+// ⚠⚠ THREE WAYS THIS SILENTLY MEASURES NOTHING:
+//  (a) ⛔ DO NOT tick "Include Crash Reporter" when packaging. The CrashReportClient.exe source
+//      runs FIRST and WINS, so a package carrying it never reaches the PE-resource branch at all.
+//      ⚠ Check for the .EXE, not the name: a clean package still stages a dozen
+//      Saved/Config/**/CrashReportClient.ini files and a name glob calls that a false FAIL.
+//  (b) The StringFileInfo below must stay free of any '++UE5+Release-' or '5.8' substring. That
+//      block is the THIRD detection fallback, and an engine tag there passes the row for the
+//      wrong reason.
+//  (c) ⛔ The staged `<Config>\Windows\DumperTest58.exe` is UE's ~150 KB BOOTSTRAP STUB, not the
+//      game — it still carries Default.rc2's 5.8.2.0 and reports Tier0 -> 508. Inject into
+//      `DumperTest58\Binaries\Win64\DumperTest58*.exe`. See README.md § Traps.
+// ============================================================
+
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,8,0,0
+ PRODUCTVERSION 1,8,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            // ⚠ Deliberately free of any "++UE5+Release-" or "5.8" substring — see (b) above.
+            VALUE "CompanyName",      "DumperTest58"
+            VALUE "FileDescription",  "DumperTest58 cross-version verification fixture"
+            VALUE "FileVersion",      "1.8.0.0"
+            VALUE "InternalName",     "DumperTest58"
+            VALUE "LegalCopyright",   ""
+            VALUE "OriginalFilename", "DumperTest58.exe"
+            VALUE "ProductName",      "DumperTest58"
+            VALUE "ProductVersion",   "1.8.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

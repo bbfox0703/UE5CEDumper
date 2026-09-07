@@ -1238,15 +1238,103 @@ before being written down.*
   hand-corrected and the generator was not, so re-running it would silently revert the fix. **After
   hand-editing a generated file, back-port or the next `--apply` is a regression.**
 
-- **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
+- **✅ Multi-pipe Phase 1 — §9.6 item 5 REOPENED, REPRODUCED, FIXED and RE-VERIFIED 2026-09-07;
+  the watch item was already closed** — `[MULTIPIPE-CANCEL-2026-09-07]`
+  ⭐ **Read the body for the trail, not just this line.** Opened the day it was closed-by-mistake:
+  the evidence on file described the *opposite* experiment. Measuring it reproduced a real defect
+  (a foreign client's death truncated another connection's scan and answered `ok:true`), which is
+  now fixed for pipe handlers (`bea9009c`), for Aura's parallel workers (`257878a3`), flagged when
+  it does happen (`c4e270e9`), and **verified end-to-end on a real game with a true before/after**
+  (`0ee59c97`). The two remaining sub-questions were *answered*, not deferred: `RunScan` must NOT
+  bind to its requester (a scan is a shared product), and the CE partial fix is unsafe. What is
+  genuinely still owed is listed below and is small.
+  <!-- superseded header: "⛔ §9.6 item 5 REOPENED with a REPRODUCED DEFECT" -->
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items
   1–5 (dev-log 2026-06-28).
-  > **✅ The lane-drop edge is now verified (Elliot 2026-07-23).** Closing the game mid-snapshot
+  > ~~**✅ The lane-drop edge is now verified (Elliot 2026-07-23).** Closing the game mid-snapshot
   > dropped the bulk lane and the router did exactly what §9.7 specifies:
   > `Pipe lane dropped — tearing down both lanes for a clean reconnect` → `Pipe disconnected`, with the
-  > in-flight snapshot faulting into H1's delete path rather than half-finishing. No wedge, no orphan.
-  Still open: (6) **watch-event delivery** to the interactive lane (System-tab / address watch still
-  pushes correctly while the bulk lane is busy). Verify opportunistically.
+  > in-flight snapshot faulting into H1's delete path rather than half-finishing. No wedge, no orphan.~~
+  >
+  > ### ⛔ THAT EVIDENCE DOES NOT MATCH THE ITEM — reopened 2026-09-07 `[MULTIPIPE-CANCEL-2026-09-07]`
+  >
+  > §9.6 item 5 asks for *"disconnect only ONE lane — **the other keeps working**; a bulk scan isn't
+  > wrongly cancelled by an interactive disconnect (the §9.3.5 caveat)"*. The Elliot run closed the
+  > whole **game** mid-snapshot, so **both** lanes died together and the router tore both down —
+  > the opposite scenario. A whole-process death cannot show one lane surviving the other's drop,
+  > and it never touched the cancellation clause at all.
+  >
+  > **The clause is not just untested, it is violated.** §9.3's mitigation never shipped —
+  > `inFlightHeavy` appears nowhere in the tree. `Fern::MonitorLoop` (`Fern.cpp:861`) calls
+  > `Tot::RequestPerCommand()` **unconditionally** for any broken in-flight connection, and
+  > `Tot::g_perCommand` (`Tot.h:45`) is one process-wide atomic OR-ed into every `Tot::Requested()`.
+  > The comment defends it with a **timing** argument — *"a fast light command finishes before a
+  > 200ms peek catches it in-flight"* — that had never been measured.
+  >
+  > **Measured** by `tools/verify/multipipe_cancel_isolation.py`, DumperTest Development at 1 FPS,
+  > build 3405, reproduced twice:
+  >
+  > | | |
+  > |---|---|
+  > | baseline `list_enums` | 720,793 bytes (5 samples, spread 0) |
+  > | victim replies after a FOREIGN client's death | 5,264, of which **5,157 short** |
+  > | truncated sizes | **77 / 78 / 79 bytes** |
+  > | blast radius | 0.14 s → 0.71 s, then recovers |
+  >
+  > ⛔ **The severity is not the truncation — it is that all 5,157 truncated replies said
+  > `ok: true`.** A caller gets 77 bytes where 720 KB was due, with a success status, and cannot
+  > tell it from a complete answer. Bounded (~0.6 s, audit #5's `ReevaluatePerCommandCancel` clears
+  > the latch) but silent. Reachable in normal use: `kMaxPipeInstances = 3` and the UI takes 2, so
+  > any `tools/verify/*` rig dying mid-command hits the UI's scans.
+  >
+  > ⚠ **Why it stayed untested for months, and the trap in reproducing it.** No ordinary command on
+  > this fixture occupies its connection for >200 ms (`list_enums` 0.09 s, `list_all_functions`
+  > 0.15 s; `trigger_scan`/`rescan` are async), so the monitor essentially never catches one in
+  > flight. The lever is `-DumperTestMaxFPS` + a game-thread `invoke_function`. ⭐ **2 FPS is not
+  > enough even though the arithmetic says it is** — the invoke does take ~0.50 s there, over the
+  > 200 ms poll, yet the run logged **zero** `client gone mid-command` lines because the kill was
+  > seen by the doomed connection's own read/write path first and logged as an ordinary
+  > `Client disconnected`. The window must span *several* polls. 1 FPS reproduces every time.
+  > The rig therefore treats `observed == 0` as **INCONCLUSIVE**, never a pass — at 2 FPS it
+  > produced a clean, plausible, entirely meaningless green.
+  >
+  > **Owed:** either make the cancel per-connection (what §9.3 actually specified), or — at minimum
+  > — stop a cancelled scan from answering `ok: true`. Also `docs/multipipe-eval.md:247-248` still
+  > lists this item as remaining, so that doc was right and todo.md was wrong.
+  ~~Still open: (6) **watch-event delivery** to the interactive lane (System-tab / address watch still
+  pushes correctly while the bulk lane is busy). Verify opportunistically.~~
+  > ### ✅ (6) CLOSED 2026-09-06 `[MULTIPIPE-WATCH-2026-09-06]` — delivery is completely unaffected by a saturated bulk lane
+  >
+  > "Verify opportunistically" had meant *not at all* since 2026-06-28, so it was done deliberately:
+  > `tools/verify/multipipe_watch.py`, DumperTest dev, build 3401. **No UI** — the UI's two lanes
+  > are just two connections, and the DLL side is per-connection by construction
+  > (`Fern::StartWatch`, Fern.cpp:6444, gives each watch its own thread writing
+  > `WriteLine(*ptr->owner, …)`), so two raw pipe clients test the actual mechanism and let both
+  > sides be counted instead of read off a panel.
+  >
+  > | watch | idle window (20 s) | busy window (20 s) |
+  > |---|---|---|
+  > | `TickCount` (the mover, 1 Hz) | **50 pushes** | **50 pushes** |
+  > | `FrozenInt` (the control, never written) | 50 pushes | 50 pushes |
+  >
+  > **Delivery ratio busy/idle = 1.00.** The bulk lane completed **286** `list_all_functions`
+  > calls inside that 20 s window, so it was genuinely saturated, not nominally busy.
+  >
+  > Controls both held: `TickCount` rose monotonically across the busy window (853 → 873, 50
+  > samples, duplicates present because the watch pushes faster than 1 Hz), and `FrozenInt`
+  > reported exactly **one** distinct value, `424242` — so the watch was reading the address we
+  > think it was, and the mover really moved.
+  >
+  > ⚠ **A suspected cadence defect was measured and DISMISSED.** The counts above are ~2.5/sec
+  > against a requested `interval_ms=250`, which looked wrong. Polling at 0.05 s instead of 0.2 s
+  > returns **48 events in 12.0 s = 4.00/sec** with DLL-stamped gaps of **median 254 ms** (min 252,
+  > max 301). The cadence is correct; the low number was the measuring instrument. The ratio above
+  > is unaffected because the poll rate was identical in both windows.
+  >
+  > ⚠ **The rig's first version HUNG** on a raw blocking `read()` of the same handle it sends
+  > requests on, before the busy window ever began — producing a 0-byte output that is
+  > indistinguishable from "no events are being delivered", i.e. from the defect it exists to
+  > detect. It now polls with a bounded request instead, and the docstring forbids reverting that.
   *Parent: multipipe-eval §9 (PR #396).*
   The build-1836 single-handle worker-pool was REVERTED (deadlocked on the synchronous pipe, §8.1).
   The sister repo `D:\Github\discrete` runs a proven alternative: the UI opens **two** client
@@ -1262,7 +1350,139 @@ before being written down.*
   Snapshot SPEED is a SEPARATE issue (§9.5): UI-side single-threaded multi-MB chunk parse (~2.4s/chunk)
   → streaming `Utf8JsonReader`/smaller chunks. *Parent: reverted Phase 1 build 1836 (dev-log 2026-06-28).*
 
-- **Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)** —
+- **✅ DONE 2026-09-07 for pipe handlers (`bea9009c`) — narrowing the UNBOUND population is what
+  remains** — `[MULTIPIPE-CANCEL-2026-09-07]`
+  The measured defect (`6d674989`) is fixed: 5,157-of-5,264 truncated replies → **0 of ~113 across
+  three consecutive runs**, each with `client gone mid-command = 1` so the monitor genuinely
+  observed the foreign death. `Connection` owns a `cancel` flag, `HandleConnection` binds it to its
+  serving thread (`Tot::ConnectionCancelScope`), `MonitorLoop` sets it on the connection that broke.
+  ⛔ **The obvious design was WRONG and is documented as rejected in `Tot.h` — do not re-propose it.**
+  `return (t_connCancel && t_connCancel->load()) || g_shutdown` makes *unbound* identical to
+  *cancel-immune*, inverting the default from **fail-safe to fail-silent**: every thread that does
+  not bind silently stops being cancellable, and `t_cancelImmune` goes semantically dead (M4 and B4
+  erased without a line of them deleted). So the unbound case deliberately falls back to the global
+  flag, and `MonitorLoop` still trips it.
+  **Still owed, in rough priority order:**
+  1. **Narrow the unbound population — HALF DONE (`257878a3`).**
+     ✅ **Aura's parallel workers and its `cancelWatcher` now inherit the caller's context**
+     (`Tot::CaptureCancelContext` / `CancelContextScope`). That was the half that mattered most:
+     `ScanThreadCount` (`Aura.cpp:129`) picks the parallel path at ≥8192 objects — **every real
+     game** — for all seven heavy scans, so until this landed the measured defect was still live
+     for exactly the commands worth cancelling, and the `cancelWatcher` was flipping `deadlineHit`
+     on *any* client's disconnect.
+     ⭐ **Why a raw pointer is safe there and not elsewhere** — the distinction the design review
+     did not draw. `ParallelIndexRanges` **joins** its pool (`Aura.cpp:190`) and
+     `ParallelGObjectsScan` joins the watcher (`Aura.cpp:258`), so the caller's binding strictly
+     outlives both.
+     ✅ **VERIFIED END-TO-END ON A REAL GAME 2026-09-07 (`0ee59c97`)** — Octopath Traveler, UE 4.18,
+     406,060 objects, victim `begin_value_scan` (→ `ScanForValue` → `ParallelGObjectsScan`). The
+     game already carried a **build-3380** proxy from an older session, so this is a true
+     before/after on one host, not fixture-vs-game:
+     **before 10 of 125 replies truncated to 238 bytes; after 0 of 115, three consecutive runs**,
+     with `client gone mid-command` logged exactly once in *both* directions — so the AFTER is a
+     real negative, not a missed trigger.
+     ⛔ **Still owed, and here the review's use-after-free warning DOES apply:**
+     `Fern::RunScan`/`RunRescan` (`Fern.cpp:5276`/`5114`), Frieren's `UE5_AutoStart`, and the CE
+     remote thread. Those outlive the command that started them, so binding them to
+     `&conn->cancel` would dangle exactly in the disconnect case the binding exists for. They need
+     an **owning** handle — a `shared_ptr` to a small cancel object that the `Connection` also
+     holds — not a borrowed pointer.
+     ⭐ **THE OWNERSHIP QUESTION IS ANSWERED (2026-09-07), AND IT RULES OUT THE OBVIOUS MECHANISM.**
+     A scan is a **shared, process-wide product**, not the requester's work: `trigger_scan` is
+     gated by `m_scan.running` (`Fern.cpp:5273`), so a second client gets *"Scan already in
+     progress"* and then polls `scan_status` — B is genuinely waiting on A's scan. Its results land
+     in the global `EnginePointers` and the hint cache that every later client reads. So binding
+     `RunScan` to its requester would be **wrong regardless of lifetime**: A leaving would abort a
+     scan B is still waiting for. ⛔ Do not give it an owning token to "fix" this — the token is a
+     mechanism for a question whose answer is no.
+     The right predicate is *"does any client still need this work"*, which is exactly
+     `Tot::PerCommandStillOwed` — the thing the review said is **not** subsumed by per-connection
+     flags. And it is already wired: `ReevaluatePerCommandCancel` (`Fern.cpp:788`, called at `:970`
+     and `:1213`) clears the latch once no raiser is live, so once A's connection is erased, B's
+     dependence is respected.
+     **What actually remains is a narrow window**, not a missing mechanism: between A's pipe
+     breaking and A's connection being erased, `g_perCommand` is set, so a running `RunScan` can
+     abort even though B is still connected.
+     ⛔ **Judged NOT worth fixing yet, deliberately.** Harm is low — MA1 means a cancelled scan does
+     not latch, so the next `trigger_scan` simply re-scans; the cost is one wasted scan. Risk is
+     high — the candidate fix ("abort only once the registry has gone empty *after* being
+     non-empty") has to stay correct for the CE-only case, where the registry is *always* empty and
+     `UE5_AutoStart` scans before the pipe server exists. Get that predicate wrong in one direction
+     and the DLL never initialises; wrong in the other and `Fern::Stop` joins a scan that never
+     aborts — the "game won't close" freeze `Tot.h` was written for. A one-wasted-scan bug does not
+     justify that exposure. Revisit if the window is ever observed to bite.
+  2. ~~**`ScanReport::cancelled` is still a process-global non-atomic file static.**~~
+     **✅ CHECKED 2026-09-07 — the finding does not apply, and the check found an older bug
+     instead (`55be6f9b`).** The review raised this as fatal, but it was written against design v1
+     (where every non-connection thread became immune). In the shipped version `cancelled` is
+     consumed **locally** — the no-latch branch (`Genau.cpp:2594`) reads it in the same function,
+     immediately after the scan that wrote it — so it is not a persisted cross-connection verdict.
+     The other three reports are written only from `Genau::FindAll` on unbound scan threads.
+     ⭐ What the check *did* find: `FindSparseDelegateStorage` is the one scan reachable from **pipe
+     command** threads (`Aura.cpp:3742`, `Aura.cpp:6284`), so two clients could enter its slow path
+     before the one-shot latch and both write the same file-static `ScanReport` — which owns a
+     `std::vector`. A plain data race, older than the cancel work. Now serialised with a mutex plus
+     a latch re-check. ⛔ Not `std::call_once`: MA1 deliberately does not latch a cancelled scan, and
+     `call_once` would burn the one-shot on it.
+  3. ~~**The CE case is arguably a fix, not a regression.**~~ **⛔ DECIDED 2026-09-07: leave it, and
+     do NOT apply the obvious partial fix.** The observation stands — a pipe client's disconnect
+     does cancel a CE user's export call (`Aura.cpp:1410` via `UE5_FindObject`/`UE5_FindClass`),
+     which is the same class of bug B4 fixed for the Mimic poller and never for the direct exports.
+     The tempting fix is `Tot::MarkCancelImmune()` at the top of the CE-facing lookup exports.
+     ⛔ **That is unsafe, and specifically so.** `t_cancelImmune` is set-once with no restore, and
+     CE runs a whole Lua block on ONE `CreateRemoteThread` thread — `scripts/ue5_dissect.lua` calls
+     several exports per block (`callDLL("UE5_FindObject", …)` at :567/:595, `UE5_FindClass` at
+     :605). So a block that calls a marked lookup export and *then* `UE5_Init` would run that
+     initialisation **cancel-immune**, making the DLL's longest scan unabortable — resurrecting
+     failure mode #1 from `Tot.h`'s own header ("game won't close": `Fern::Stop` joins a thread
+     that is mid-scan). A partial marking also leaves an inconsistent mental model, which is worse
+     than the current uniform one.
+     ⭐ The CE path needs the same proper cancellation-context that item 1 needs, not a scattering
+     of immunity calls. Fold it into item 1 rather than doing it separately.
+  ⛔ `Tot::PerCommandStillOwed` / `m_cancelOwners` / `ReevaluatePerCommandCancel` are **NOT**
+  subsumed by per-connection flags and must not be deleted — that predicate is the only expression
+  in the tree of *"does any client still need this work"*.
+  ⚠ Also unresolved: whether a cancelled reply should flip `ok` to false. More correct, but the UI
+  and every `tools/verify` rig branch on `ok`, so it risks trading silent truncation for a spurious
+  failure. `truncated: true` (`c4e270e9`) is the additive half.
+  ⭐ **The rig reproduces on demand**: `tools/verify/multipipe_cancel_isolation.py`, host at
+  `-DumperTestMaxFPS=1`. ⚠ 2 FPS silently measures nothing and 1 FPS is flaky run-to-run — a run
+  with `observed == 0` is INCONCLUSIVE, never a pass; re-run until the monitor fires.
+  *Parent: multipipe-eval §9.3/§9.6 item 5.*
+
+- **ℹ️ MEASURED AND DELIBERATELY NOT FIXED — `peHash` degenerates when `TimeDateStamp` is 0** —
+  `Genau.cpp:54` builds the per-game key as `TimeDateStamp` + `SizeOfImage`. A deterministic /
+  reproducible link stamps `TimeDateStamp = 0`, and the key then collapses to `SizeOfImage` alone —
+  which is page-granular, so two builds of the same project that differ by under a page would
+  **collide and silently reuse each other's cache entry** (cached UE version, GObjects/GNames
+  pattern hints). Real instance seen: DumperTest58 Development links with `TimeDateStamp=0`
+  (`peHash=000000001424C000`, and its stale sibling `0000000014252000` — only 0x6000 apart).
+  ⛔ **Not worth fixing.** Swept every UE game exe on this machine: **1 of 40** has
+  `TimeDateStamp == 0`, and it is our own 5.8 fixture. Changing `peHash` would invalidate every
+  cached hint and orphan every `Snapshots\` / `Bookmarks\` / `TeleportCoords\` folder keyed by it —
+  a real migration cost to fix a 2%-of-one-machine, same-image-size-required hazard. Recorded so
+  the next person who notices the collapse does not pay for the change either. Re-measure if a
+  future UE default makes deterministic linking common.
+
+- **✅ Tier 2 ceilings DONE 2026-09-07 (`2b9ffac9`); Tier 3 still deferred** —
+  The row asked to split `0x100000` into "container-element-COUNT vs PropertiesSize-BYTES". It
+  conflated **more than two**, and the axis that matters is not the one proposed. 21 sites
+  classified by tracing each value's producing read and consuming arithmetic, then checked
+  adversarially: `SANITY_MAX_STRUCT_BYTES` (3) · `SANITY_MAX_CONTAINER_NUM` (4, the +0x08
+  field) · `SANITY_MAX_CONTAINER_CAPACITY` (9, the +0x0C field) · `SANITY_MAX_SPARSE_BITS` (1)
+  · `SANITY_MAX_UOBJECTS` (4, the `0x800000` family). All in `Grimoire.h` with their reasoning.
+  ⭐ **The axis came out of a disagreement.** Two independent traces of the same `+0x08` int32
+  reached opposite verdicts — "live COUNT" (UE's `GetMaxIndex()` is literally
+  `{ return Data.Num(); }`) versus "slot EXTENT including freed" (this codebase spells the live
+  count `MaxIndex - NumFreeIndices` six times, and `ReadTMapHeader` never subtracts it). Both
+  hold, so count-vs-index is **not a distinction this code sustains** and gets one name; the
+  real split is +0x08 vs +0x0C, where `Max >= Num` always.
+  ⚠ Behaviour identical and **checked**, not assumed: every constant equals the literal it
+  replaced, and the diff removes exactly 21 lines, all 21 containing that literal.
+  **Tier 3 (single-use knobs) remains deferred** — unchanged from below, and still low priority.
+  *Superseded row kept below for the Tier-1 history and the Tier-3 list.*
+
+- ~~**Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)**~~ —
   Effort: **M** · Risk: med. Tier 1 (dup/tunable literals) + the Tier 2 `IsUserspacePointer` paired-
   bounds helper SHIPPED (dev-log 2026-07-03). LEFT because each carries genuine per-site multi-meaning
   nuance: object-count/size ceilings — `0x800000` (8M UObject count), `0x100000` (1M, but needs
@@ -1296,21 +1516,82 @@ before being written down.*
 - **Class Pivot — rounding-mode + "can't-find-data"/GAS-capture follow-ups (deferred from build 1672)** —
   Effort: **S-M** · Risk: low. The per-panel **RoundingMode {Round/Trunc/Ceil}** (build 1672) was rolled out to Value Search, Snapshot, and SPC but **NOT Class Pivot**. Two distinct gaps:
   (1) **Rounding mode** — Pivot does **no numeric value MATCHING** today: it groups by the *rendered* key string (`PivotEngine` uses `SnapshotNumeric.Render`) and `PivotDiscoveryEngine.Direction()` compares raw `double`s with no reduce. So a rounding-mode switch is largely **N/A** — but if Pivot ever grows a value-target filter, it should reuse `SnapshotNumeric.ExactMatch/OrderedMatch/BetweenMatch(...,FloatRoundMode)` like the other panels. Lower priority: optionally apply the reduce to the grouping KEY so float GAS values bucket by displayed integer (e.g. 513.36/513.4 group as "513").
-  (2) **"Can't find data" / GAS-capture** — the recent snapshot fixes (nested-`StructProperty` GAS capture `Aura::CaptureDirectStructFields`, build 1648; rounded-float matching) flowed into Snapshot/SPC/Group. Pivot reads the **same captured corpus**, so the GAS `Health.BaseValue`-style fields *should* now appear in Pivot automatically — **but this is UNVERIFIED**. Verify in-game that a GAS attribute captured post-1648 actually shows up as a pivotable field/key in Class Pivot; if Pivot has its own field-selection or numeric-only filter that drops nested-struct leaves, fix it. *Parent: rounding-mode switch build 1672; snapshot GAS-capture build 1648 (project-snapshot-nested-struct-gas).*
+  (2) **"Can't find data" / GAS-capture** — the recent snapshot fixes (nested-`StructProperty` GAS capture `Aura::CaptureDirectStructFields`, build 1648; rounded-float matching) flowed into Snapshot/SPC/Group. Pivot reads the **same captured corpus**, so the GAS `Health.BaseValue`-style fields *should* now appear in Pivot automatically — ~~**but this is UNVERIFIED**~~ ✅ **VERIFIED 2026-09-06 `[PIVOTGAS-2026-09-06]`** — see below. Verify in-game that a GAS attribute captured post-1648 actually shows up as a pivotable field/key in Class Pivot; if Pivot has its own field-selection or numeric-only filter that drops nested-struct leaves, fix it. *Parent: rounding-mode switch build 1672; snapshot GAS-capture build 1648 (project-snapshot-nested-struct-gas).*
+
+  > ### ✅ CLOSED 2026-09-06 `[PIVOTGAS-2026-09-06]` — nested-struct leaves reach Pivot, and they are USABLE as keys
+  >
+  > DumperTest dev, **build 3401**, AOT `dist\UE5DumpUI.exe` 54.7 MB, connected `UE504 (25,215
+  > objects)`. Snapshot scope `NumericNoByte`, 652 objects / 12,327 fields; Class Pivot →
+  > `DumperTestActor` (2 instances).
+  >
+  > **The Key field list contains `Health.BaseValue` AND `Health.CurrentValue`**, alongside the
+  > flat fields (`F64_Ticking`, `FixedArr`, `FrozenInt`, `I16/I32/I64`, …). So nothing in Pivot's
+  > field selection drops nested-struct leaves — no fix needed.
+  >
+  > ⭐ **Listed is not the same as usable, so the key was exercised, and it DISCRIMINATES:**
+  >
+  > | key | result |
+  > |---|---|
+  > | `RayTracingGroupId` (default) | **1 group** from 2 instances |
+  > | `Health.CurrentValue` | **2 groups** from 2 instances, keys **100** and **99** |
+  >
+  > The nested leaf partitions the instances where the flat default does not, so it is genuinely
+  > applied rather than merely offered. 100/99 is the CDO against the live actor mid-tick, which is
+  > the expected shape for a field that falls 1/sec.
+  >
+  > ℹ️ Two more nested leaves corroborate that this is general, not special-cased for GAS:
+  > `PrimaryActorTick.TickInterval` is a key, and `AttachmentReplication.LocationOffset.X/.Y/.Z` +
+  > `.RelativeScale3D.*` + `.RotationOffset.*` all appear as pivotable fields.
+  >
+  > ⚠ **UI note, not filed as a defect because one witness is not enough:** selecting the class row
+  > in the picker needed a **double-click**; single clicks left `Run Pivot` disabled. It selected on
+  > a single click earlier in the same session, right after the list was first populated — so the
+  > difference may be freshly-populated vs re-populated (the snapshot was changed in between).
+  > Worth a second look if anyone sees it again; `[project-class-pivot-field-load-freeze]` is the
+  > related trail.
 
 - **Flatten GAS attributes — optional extensions (deferred by user, build 1698)** —
   Effort: **S** · Risk: low. The "Flatten GAS attributes" Options toggle (build 1698) collapses a
   `GameplayAttributeData` StructProperty one level in **Copy CE XML / Copy CE Field** only. Two
   follow-ups the user explicitly scoped out of that change:
-  (1) **Export CSX** — apply the same flatten to the CE Structure Dissect (`.csx`) export
-  (`CsxExportService.EmitElement`). The `IsGasAttributeStruct` detection + combined-offset math port
-  directly, but CSX is a separate emitter so it was intentionally left out.
+  (1) ~~**Export CSX** — apply the same flatten to the CE Structure Dissect (`.csx`) export
+  (`CsxExportService.EmitElement`).~~ ⛔ **WON'T DO — maintainer's decision 2026-09-07.** CSX simply
+  does not have this feature, does not need it, and **must not even be passed the flag**. The 2026-09-07
+  todo audit reported this as a gap ("the Options toggle is a strict no-op for Export CSX"), which
+  read the *absence* of a feature as a *missing* feature. It is not: `.csx` is CE's Structure Dissect
+  format, a different emitter with a different job, and CSX already flattens every StructProperty by
+  its own rules.
+  ⚠ Nothing misleads the user here either — `str.Tip.LiveWalker.FlattenGas` already scopes itself in
+  its first sentence, "one level in **Copy CE XML / Copy CE Field**", and never mentions CSX. So there
+  is no plumbing to add and no wording to fix. Do not re-open this by grepping for
+  `flattenGasAttributes` and noticing CsxExportService has no parameter — that absence is the design.
   (2) **Other single-field / wrapper structs** — keep flatten GAS-only "for now"; a general
   "flatten any single-/two-scalar-field struct one level" option would need a careful detection rule
   to avoid surprising collapses ("various cases"). *Parent: Flatten GAS attributes build 1698
   (project-gas-attr-flatten-ce-export).*
 
-- **dxgi proxy early-load fragility — harden (thin-shim + renamed real-dxgi copy), or leave dxgi as "late-load games only"** —
+- **✅ CLOSED 2026-09-07 — BOTH horns are dead, and the second one had leaked into shipping source** —
+  ⛔ Horn 1, the engineering (thin-shim + renamed `dxgi_orig.dll` + 2-file deploy): **never built and
+  no longer needed.** The defect was closed a different way — builds 3363 + 3365 (the AppCompat
+  pre-CRT crash, then the SRWLOCK self-deadlock from our own re-entrant `LoadLibraryW`) — and
+  verified in-game on the exact witness title: Octopath, 2026-08-27 build 3366,
+  `dxgi proxy: lazily forwarded 20/20 exports`, pipe server up, **406,060 objects** (a count
+  independently re-measured on that title 2026-09-07). `thin-shim` / `dxgi_orig` exist nowhere in the
+  tree. The Proxy Deploy 2-file deploy/undeploy/redundancy work was contingent on this path, so it
+  dies with it.
+  ⛔ Horn 2, *"or leave dxgi as late-load games only"*: **that restriction was still in force in
+  SHIPPING C# SOURCE**, stated as present-tense fact, three days out of date and never revisited —
+  `ProxyImportAnalyzer.cs` ("it instant-exits under the dxgi proxy", last touched 2026-08-23) and
+  `ProxyDeployViewModel.cs` ("Octopath Traveler instant-exits with the dxgi proxy … Pick dxgi only
+  for EXEs importing neither version nor dinput8", last touched 2026-08-24). Both now corrected: the
+  restriction is lifted, Octopath is a dxgi **witness** rather than a counter-example, and dxgi
+  remaining a non-default is recorded as a timing *preference* (version.dll activates at ordinary
+  runtime) rather than a capability limit.
+  ⚠ The pre-CRT WARN still appears under dxgi and is **expected** — it is the shim engine's
+  fingerprint, not a failure. Say so wherever it is reported.
+  *Superseded row kept below for the diagnosis trail.*
+
+- ~~**dxgi proxy early-load fragility — harden (thin-shim + renamed real-dxgi copy), or leave dxgi as "late-load games only"**~~ —
   Effort: **M-L** · Risk: med (loader-time code + deploy flow). **Deferred by owner (2026-06-19); the UI default is back to version.dll.** ⚠ **CORRECTION 2026-08-18: Octopath does NOT use version.dll — that proxy never loads there. It needs `winmm.dll`** (verified end-to-end, `[OCTOPATH-G2T3-2026-08-18]`), so this item's premise that Octopath is served by version.dll in the meantime was wrong. The dxgi proxy instant-exits on games that call dxgi **extremely early — under the loader lock, before our CRT is initialised** (Octopath Traveler: debugger-confirmed across 3 distinct crash dumps — execute-0 / `__tzset` uninit CRT lock / `RtlAllocateHeap` null heap; see dev-log 2026-06-19). Two genuine early-load fixes shipped + kept (`Sein::GetTimestamp`→Win32 `GetLocalTime`; dxgi lazy self-resolving thunks), but they do NOT make Octopath's dxgi work — the **root blocker** is that `LoadLibraryW(real same-named System32\dxgi.dll)` returns NULL under the early loader lock. **version.dll dodges it all by being called at normal runtime, not under early loader lock.** Robust fix = **thin-shim split (like RE-UE4SS):** `dxgi.dll` becomes a tiny CRT-free forwarder that (a) loads the real dxgi via a **renamed copy** (`dxgi_orig.dll`) to dodge the same-base-name-under-lock failure, and (b) `LoadLibrary("UE5Dumper.dll")` to run the heavy dumper as a **separate, normally-named, late-loaded** DLL. Deploy becomes **2 files** (`dxgi.dll` + `UE5Dumper.dll`) → the Proxy Deploy panel's deploy/undeploy/redundancy/Update-All must copy/remove both. NOTE: `/MD` (dynamic VCRuntime/UCRT) alone is only a **partial** fix — it removes the CRT-init crashes (Octopath already loads the shared UCRT early) but NOT the loader-lock same-name `LoadLibrary` blocker (that resurfaces as execute-0). version.dll/dinput8.dll don't need any of this (they load late). *Parent: dxgi proxy build 1172; early-load diagnosis + 2 fixes build 1351 (dev-log 2026-06-19).*
 
 - **UE5.7+ packed FUObjectItem — live-verify + calibrate when a packed game appears** —
@@ -1323,7 +1604,25 @@ before being written down.*
   Open sub-question: the packed **SerialNumber** offset (currently best-effort `0x0C`) is unpinned.
   *Parent: PackedItem.h + Aura packed mode + set_packed_consts shipped build 1108 (dev-log 2026-06-14).*
 
-- **Guess? "missing" mid-object data — RESOLVED (working as designed; diagnostic kept).** The
+- **✅ DONE 2026-09-07 (`11748702`) — the "RESOLVED" verdict was right for containers and WRONG for
+  static C-arrays** — Guess? was inventing a phantom row over every element but the first of a
+  `UPROPERTY Type Foo[N]`, because the gap pass built occupancy from the RENDERED field size while a
+  static array renders as ONE element (`WalkInstance` never expands `ArrayDim`). Measured on the
+  fixture's `int32 FixedArr[8]`: **7 fake rows before, 0 after**, with 34 legitimate guessed rows
+  still emitted elsewhere and none overlapping any of the 152 reflected fields.
+  ⚠ **Why the original verdict survived review**: its evidence was a TArray + TMap, and for a
+  *dynamic* container `ElementSize` IS the whole inline footprint, so the defect is structurally
+  invisible there. Correct for the case examined, wrong for the case not examined.
+  ⛔ **And a comment asserted it was fine** — when `ArrayDim` was added, the site gained "so its
+  output is unchanged by the new ArrayDim field". It was not unchanged, it was wrong, and that
+  sentence is why nobody looked again. The fix was a *deletion*: `Ubel::ComputeClassHoles` already
+  had the right formula for the Native-C path, so the duplicate local loop is gone.
+  ✅ The bullet's one named deliverable is also done: `docs/tips.md` now has a **"Guess?"** section
+  covering both shapes (container internals and static arrays) plus what a guessed row is actually
+  worth. Guess? had no user-facing documentation at all beyond one tooltip.
+  *Superseded row kept below for the reasoning trail.*
+
+- ~~**Guess? "missing" mid-object data — RESOLVED (working as designed; diagnostic kept).**~~ The
   `WALK:guess` diagnostic (build 1364+, `Ubel.cpp` `WalkInstance` fillGaps block, one line per
   Guess? walk, opt-in-gated) confirmed it **live on Elliot `LSGameWork`**: `0x170=16(ArrayProperty)`
   covers `0x170–0x180` and `0x180=80(MapProperty)` covers `0x180–0x1D0` exactly — the region the user
@@ -1336,7 +1635,21 @@ before being written down.*
   container internals aren't decomposed into guessed rows. *Parent: Guess-What leading-gap fix (builds
   1330-1333) + diagnostic (build 1364, this session); confirmed live 2026-06-19.*
 
-- **Native-C Value Scan — P0–P3 ALL SHIPPED on dev; only in-game verify of P3 remains** —
+- **✅ Native-C Value Scan — P0–P3 SHIPPED and FULLY VERIFIED (SPC arm closed 2026-09-07, `2b8aad04`)** —
+  The 2026-09-06 run closed the Class Pivot half and recorded two honest limits; **both are now
+  resolved**, and neither needed a game — that run's capture is still on disk
+  (`snapshots.6A9C1C8410F23000.db`).
+  (1) **SPC Query arm.** Replaying the product's Strict join key over the real pair: **all 8,556**
+  `<raw@0x..>` rows join, **none** with a vacuous `prop_offset`, **8** changed across the 77 s gap.
+  (2) **"DumperTestActor's own raw rows did not appear in the changed list — not chased."** They do
+  — four of them, including `<raw@0x918>` **4684 → 5829**, and 5829 is the exact pivot group key
+  that same run recorded. The absence was an artifact of the *Compare snapshots* view, not the data.
+  ⚠ Pinned by two tests rather than left as a one-off replay; the second one exists because a
+  `<raw@0xNN>` name already encodes its offset, so a broken offset term would be **invisible on
+  exactly the rows P3 is about**.
+  *Superseded row kept below for the trail.*
+
+- ~~**Native-C Value Scan — P0–P3 ALL SHIPPED on dev; only in-game verify of P3 remains**~~ —
   Effort: **0** (verify only) · Risk: low. Full design + status in
   [native-c-value-scan-spec.md](native-c-value-scan-spec.md). Opt-in raw/unmanaged
   (non-`UPROPERTY`) scan for native HP/MP via "Guess What" (`Ubel::GuessGapTypes`), across
@@ -1347,11 +1660,48 @@ before being written down.*
   numericScope-filtered, ≤256/obj); pipe `native_c` on `snapshot_chunk`; C#
   `SnapshotViewModel.IncludeNativeFields` toggle + intro string. SPC Query + Class Pivot
   consume raw rows with ZERO code changes (key on prop_name=offset + canonical declared_type;
-  existing `fields` schema, no migration). **REMAINING: in-game verify P3** — BLOCKED on the
-  snapshot-perf item below (FF7 Rebirth capture with Native-C didn't finish — 16+ min, >50%
-  uncaptured). Verify on a smaller / faster game, or after the perf work: capture a native
-  snapshot pair around a stat change, confirm SPC diff tracks a `<raw@0x..>` value + Class
-  Pivot decodes it (not hex).
+  existing `fields` schema, no migration). ~~**REMAINING: in-game verify P3** — BLOCKED on the
+  snapshot-perf item below~~ ✅ **P3 VERIFIED 2026-09-06 `[NATIVEC-P3-2026-09-06]`** — the block
+  dissolved rather than being cleared: the row said *"Verify on a smaller / faster game"*, and
+  **DumperTest is that game**. The FF7-Rebirth perf item was never a prerequisite.
+
+  > ### ✅ P3 CLOSED 2026-09-06 `[NATIVEC-P3-2026-09-06]` — both halves, on DumperTest dev / build 3401
+  >
+  > AOT `dist\UE5DumpUI.exe` 54.7 MB, `UE504 (25,215 objects)`. Scope `NumericNoByte` with
+  > **Native-C (raw) ticked**. ⭐ The toggle's effect is visible before anything else:
+  > **652 objects / 12,327 fields → 1,066 objects / 20,883 fields**.
+  >
+  > A capture pair 77 s apart (20:51:15 → 20:52:32), then *Compare snapshots (diff)*:
+  >
+  > | field | old | new | |
+  > |---|---|---|---|
+  > | **`<raw@0x180>`** (BP_ThirdPersonCharacter) | 312.3358 | **388.67** | ⭐ a raw hole, tracked across the pair |
+  > | **`<raw@0x4C>`** (CR_Mannequin_BasicFoo) | 312.277 | 388.627 | |
+  > | `TickCount` | 312 | 388 | +76 over 77 s — the 1 Hz control |
+  > | `F64_Ticking` | 20078.125 | 20097.125 | +19.0 vs 0.25/s × 77 = 19.25 |
+  > | `Health.CurrentValue` | 85 | 9 | falls 1/s and wraps, as documented |
+  >
+  > The reflected controls all agree with the 77 s gap, which is what makes the raw deltas
+  > readable rather than merely present.
+  >
+  > **Class Pivot decodes it, and NOT as hex.** On the Native-C snapshot, `<raw@0x7F8>`,
+  > `<raw@0x918>`, `<raw@0x91C>`, `<raw@0x920>` are all selectable pivot **keys**, and pivoting
+  > `DumperTestActor` on `<raw@0x918>` gives **`2 groups from 2 instances`** with group keys
+  > **`5829`** and `(missing)` — a decimal integer. The grid also renders raw rows with their
+  > guessed type resolved (`<raw@0x17E>` → `Int16Property`, `<raw@0x254>` → `IntProperty`).
+  >
+  > ⚠ **Scope precision, because the row's own note is easy to over-read:** `AppendRawHoleFields`
+  > returns immediately unless the numeric scope is a **meta** type (`Aura.cpp:9481`,
+  > `Radar::MultiNumericMembers` → only `NumericNoByte` and `NumericAll` expand). The **default
+  > `NumericNoByte` already qualifies**; what would capture nothing is narrowing the scope to a
+  > single concrete type such as `Int32`.
+  >
+  > ⚠ **Two honest limits.** (1) The diff used was the Snapshot panel's *Compare snapshots*, not
+  > the SPC Query tab — same corpus and same raw rows, but if the row means SPC Query specifically
+  > that arm is still owed. (2) DumperTestActor's own raw rows did **not** appear in the *changed*
+  > list even though its raw fields are captured and pivotable; the changed raw rows came from the
+  > two Blueprint actors. Not chased — it is consistent with those particular holes being static,
+  > but it was not proven, and it is the obvious next question.
   *Parent: P0–P3 shipped on dev (this session); builds on value_search_caveats, the `Orden`
   seam (group-value-scan-spec §3.1), and the "Guess What" build (commit 75ea723).*
 
@@ -1396,7 +1746,22 @@ before being written down.*
   clearer "X% captured" progress.
   *Parent: Native-C P3 in-game test (FF7 Rebirth), this session.*
 
-- **DynOff calibrated offsets are non-atomic — tighten the second writer (low-risk hardening)** —
+- **✅ DONE 2026-09-07 (`5d1a6bfe`) — it was not "benign", and neither proposed fix was right** —
+  The write at `Ubel.cpp` WalkInstance was a **third** writer of the `sizeof(FProperty)` family,
+  assigning `FSTRUCTPROP_STRUCT` directly and so **splitting the family** — the exact failure
+  audit #5 G12 introduced `ApplyPropertyFamily` to prevent, still reachable by the one writer G12
+  did not count (its own note says "Both writers now go through here"). Silent and half-right:
+  struct reads stay correct while TArray element descriptors and every enum name read 8 bytes off.
+  ⛔ **Both fixes this row proposed were wrong.** "Drop the redundant write" — it is not redundant,
+  it probes `{0,±4,±8,±0x10}` where `CorrectSubclassOffsets` probes `{0,±4,±8,±0xC}`, so it is the
+  only path that can land a ±0x10 layout. "Make the offsets `std::atomic<int>`" — fixes the
+  technical race and leaves the actual bug, since a lone atomic store still splits the family.
+  Routing it through the helper under the existing `s_calibrationMutex` fixes both.
+  ⭐ Now gated: `tools/check_property_family.py` (16th gate), proven to fail on the reintroduced
+  defect. A prose invariant plus a hand-counted writer list is what failed here twice.
+  *Superseded row kept below for its reasoning trail.*
+
+- ~~**DynOff calibrated offsets are non-atomic — tighten the second writer (low-risk hardening)**~~ —
   Effort: **S** · Risk: low. The race audit of the parallel snapshot flagged a PRE-EXISTING
   technical data race the parallel readers widen: `DynOff::FSTRUCTPROP_STRUCT` (and the sibling
   calibrated `DynOff::` ints) are non-atomic. `Ubel::CorrectSubclassOffsets` serializes its writes
@@ -1408,8 +1773,38 @@ before being written down.*
   already covers that calibration first — don't regress StructProperty struct-name resolution), or
   make the calibrated offsets `std::atomic<int>` with relaxed loads. *Parent: parallel-snapshot race audit, this session.*
 
-- **NEW (Elliot 2026-07-23) — a transient `MH_CreateHook` failure permanently poisons the session
-  into the "unsafe direct call" path** — Effort: **S-M** · Risk: **med** (touches the hook path, the
+- **✅ CLOSED 2026-09-07 (`0a7ac3fb`) — the code half shipped in build 2358; the IN-GAME re-check it
+  owed is now done** — `[MHPOISON-STARVE-2026-09-07]`
+  The row's own acceptance test ran for the first time, against a deliberately starved trampoline
+  window (`-DumperTestStarveVM`). It had never been exercised: the only prior attempt is recorded in
+  this bullet as "Not reproduced on the build-2361 run" — the hook installed first try, so nothing
+  ran.
+  ```
+  13:52:05.862  MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC
+                first-time init complete — offset=616, hook_active=0
+                hook install failed (attempt 1/8) … — will retry
+                game-thread hook NOT active … Logged once per transition
+  13:52:10.893  attempt 2/8      ← 5.03 s apart: the configured cooldown
+  …             attempts 3/8 … 6/8
+  13:52:36.118  hook RECOVERED on attempt 7 — dispatch available again
+  13:52:36.119  hook is ACTIVE again — 61 invoke(s) took the fallback
+  ```
+  **(a)** six retries, not one → the permanent latch is gone. **(b)** ONE fallback WARN for 61
+  fallback invokes → per-invoke logging gone; **nine** WARN lines across two entire runs, against a
+  historical **552 unsafe-call lines in 19 seconds**. **(c)** See-through **refused** while the hook
+  was down — `seethrough_set` returned `active:false` with `hook_active:false` in the same reply, so
+  the UI can say why, instead of hammering the unsafe path. **(d)** recovery observed, which a latch
+  could never reach.
+  ⛔ **The fixture that made this possible was itself broken and looked fine** — `-DumperTestStarveVM`
+  reserved 1 MB at a time stepping 1 MB, and `VirtualAlloc(MEM_RESERVE)` fails for the *whole*
+  request on any overlap, so 272 of 4,096 windows failed and left ~960 KB free apiece. It reported
+  "reserved 3824 block(s)" (93%, reads as working) while MinHook installed on the first attempt.
+  Now it walks the window with `VirtualQuery` and reserves each free run exactly: **2 blocks instead
+  of 3,824**, and the count going *down* is the fix.
+  *Superseded row kept below for the diagnosis trail.*
+
+- ~~**NEW (Elliot 2026-07-23) — a transient `MH_CreateHook` failure permanently poisons the session
+  into the "unsafe direct call" path**~~ — Effort: **S-M** · Risk: **med** (touches the hook path, the
   most crash-prone code in the DLL). **Observed once, on the run right after a session where the same
   hook installed fine at the same address:**
   > `[ERROR] GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`

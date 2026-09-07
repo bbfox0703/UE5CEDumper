@@ -456,10 +456,16 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
     // Plausibility gate for a real FString header (steps the probe over
     // garbage): non-null Data, Num in [2, 8192] (includes the trailing null
     // unit), Max in [Num, 4*Num+256]. The Max window is generous — a localized
-    // dialogue FString can carry reserved capacity — because the real
-    // discriminators are the null-terminator position + content check inside
-    // DecodeFStringBuffer, not Max. Data must also look like a user-space
-    // heap pointer, which rejects most non-FString 16-byte regions cheaply.
+    // dialogue FString can carry reserved capacity, and FString::Reserve sets Max
+    // with no relation to Num — so Max is deliberately NOT the discriminator.
+    // Data must also look like a user-space heap pointer, which rejects most
+    // non-FString 16-byte regions cheaply.
+    //
+    // ⚠ THIS COMMENT USED TO CLAIM the real discriminators were "the null-terminator
+    // position + content check inside DecodeFStringBuffer". Measured false 2026-09-06:
+    // a zero-filled heap page clears both — the terminator is found trivially and the
+    // content check counts only '?' markers. See DecodedLengthMatchesFString in Ubel.h
+    // for what actually discriminates, and why it lives there and not in Utf8Helpers.
     if (!data || num < 2 || num > 8192) return "";
     if (cap < num || cap > num * 4 + 256) return "";
     if (data < 0x10000 || data >= 0x7FFFFFFFFFFFull) return "";
@@ -476,7 +482,20 @@ static std::string TryDecodeFStringAt(uintptr_t addr) {
     } else {
         return "";
     }
-    return Utf8Helpers::DecodeFStringBuffer(buf.data(), got, num);
+    std::string decoded = Utf8Helpers::DecodeFStringBuffer(buf.data(), got, num);
+
+    // A decode that recovered under a quarter of the length its OWN header claimed is
+    // not this string — it is a 16-byte window that happened to parse, and the decode
+    // stopped at the first null it met in unrelated memory.
+    //
+    // Rejecting HERE, rather than inside DecodeFStringBuffer, keeps that shared decoder
+    // and its 25+ pinned rows (the B28 CJK and AD5 ASCII blocks in utf8_helpers_test.cpp)
+    // byte-identical. Rejecting is also the SAFE verdict in this caller: ReadFTextString
+    // treats "" as "keep scanning", so this can never turn a readable text into an empty
+    // one by itself — the worst it can do is let a scan that was already returning noise
+    // continue past one more slot.
+    if (!DecodedLengthMatchesFString(decoded, num)) return "";
+    return decoded;
 }
 
 // ============================================================
@@ -5059,9 +5078,29 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (delta != 0) {
                         Sein::Info("WALK:StructP", "FStructProperty::Struct at FField+0x%X (base=0x%X, delta=%d) for '%s' -> '%s'",
                             tryOffset, DynOff::FSTRUCTPROP_STRUCT, delta, fi.Name.c_str(), sname.c_str());
-                        // Persist correction to DynOff (CorrectSubclassOffsets handles the global
-                        // update, but if it didn't run yet or missed, update here too)
-                        DynOff::FSTRUCTPROP_STRUCT = tryOffset;
+                        // Persist the correction. This writer is NOT redundant with
+                        // CorrectSubclassOffsets: that one probes {0,±4,±8,±0xC} and gives up on a
+                        // class with no StructProperty, while this probes {0,±4,±8,±0x10} — so it
+                        // is the only path that can land a ±0x10 layout.
+                        //
+                        // ⛔ It used to write `DynOff::FSTRUCTPROP_STRUCT = tryOffset;` directly,
+                        // which Grimoire.h forbids in as many words ("Never assign a member of this
+                        // family directly"). Audit #5 G12 unified the writers and recorded that
+                        // "both writers now go through here" — it missed this THIRD one, so the
+                        // exact failure G12 exists to prevent stayed reachable: a split family, in
+                        // which TArray element descriptors and every enum-name read 8 bytes off
+                        // while struct reads look correct. Route it through the helper, under the
+                        // same mutex CorrectSubclassOffsets uses, so the five names move together
+                        // and the write is not a data race against the parallel walkers.
+                        //
+                        // Resetting FARRAYPROP_INNER to the base is intended and matches what
+                        // CorrectSubclassOffsets already does: the ArrayProperty probe above is
+                        // per-field and per-walk, not latched, so it re-corrects on the next array
+                        // it meets.
+                        {
+                            std::lock_guard<std::mutex> lk(s_calibrationMutex);
+                            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset));
+                        }
                     }
                     found = true;
                     break;
@@ -5964,16 +6003,27 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // (vtable/flags/class/name/outer) stays excluded so the well-known
         // UObject header is never turned into guessed rows. Clamping the END to
         // scanEnd guards a field with a garbage-huge size from eating trailing
-        // gaps. (This per-instance pass intervals on the rendered LiveFieldValue
-        // sizes — element-size, not Size*ArrayDim — so its output is unchanged by
-        // the new ArrayDim field; the ArrayDim-aware footprint is used only by the
-        // class-level Ubel::ComputeClassHoles consumed by the Native-C scan.)
-        std::vector<Ubel::Interval> occupied;
-        occupied.reserve(result.fields.size());
-        for (const auto& f : result.fields) {
-            occupied.push_back({ f.offset, f.offset + (f.size > 0 ? f.size : 1) });
-        }
-        std::vector<Ubel::Interval> gaps = Ubel::ComputeHoles(occupied, headerEnd, scanEnd);
+        // gaps.
+        //
+        // ⛔ THIS USES ComputeClassHoles, NOT A LOCAL LOOP OVER result.fields.
+        // It used to build the intervals here from the rendered LiveFieldValue
+        // sizes, and a comment justified that as "element-size, not Size*ArrayDim
+        // — so its output is unchanged by the new ArrayDim field". The output was
+        // NOT unchanged; it was wrong, and had been since Guess? shipped. A static
+        // C-array `UPROPERTY Type Foo[N]` renders as ONE LiveFieldValue of ONE
+        // ELEMENT (WalkInstance never expands ArrayDim), so elements 1..N-1 looked
+        // unclaimed and Guess? invented a phantom row over each. Measured on the
+        // fixture 2026-09-07: `int32 FixedArr[8]` at 0x674 reported size 4, and the
+        // walk emitted SEVEN guessed rows `?0x678_i32` … `?0x690_i32` sitting on
+        // top of a real, reflected array.
+        //
+        // ⭐ The helper already had it right (Offset + Size * ArrayDim) and was
+        // used by the class-level Native-C path. Two implementations of one idea,
+        // one correct — so the fix is to delete the second, not to patch it.
+        // ci.Fields is the authoritative reflected set; if anything there failed to
+        // RENDER, occupancy only grows, which suppresses guessed rows rather than
+        // inventing them. Wrong in the safe direction.
+        std::vector<Ubel::Interval> gaps = Ubel::ComputeClassHoles(ci, headerEnd, scanEnd);
 
         // Diagnostic (Guess?-only): dump the reflected field footprints + the
         // computed raw gaps so a user comparing against a CE Structure Dissect can

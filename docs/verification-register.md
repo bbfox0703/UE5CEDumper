@@ -1040,6 +1040,46 @@ when the probe lands off-field.*
 > *App-data left as found: the cache entry was backed up, restored byte-for-byte afterwards, and the
 > backup removed.*
 
+> ### ✅ HALF 2 CLOSED 2026-09-06 `[A4-507RUNG-2026-09-06]` — the **507** rung has now fired, and it never had
+>
+> The block above closed the **508** rung by seeding the cache to 507. That left the rung *below*
+> it unobserved: nothing had ever produced the `FUObjectItem Object@+0x08` raise, because a genuine
+> 5.8 binary is detected as 508 outright and the ladder has nothing to climb from.
+>
+> **Seed 504 instead of 507 and both rungs fire in sequence.** `tools/verify/a4_raise_ladder.py`,
+> DumperTest58 **Development**, build 3376, run twice with identical output:
+>
+> ```
+> FindAll: UE Version = 504 (cached, rev=7, detected=yes, lowConf=no) — skipped DetectVersion
+> UE5_Init: structural marker (FUObjectItem Object@+0x08, 32B = UE5.7+) but version=504 — raising floor to 507.
+> UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508.
+> UE5_Init: Complete (UE508, GObjects=0x7FF71CBEE340, GNames=0x7FF71CAE5A00, Objects=35837)
+> ```
+>
+> ⭐ **`32B` is the half-1 claim paying off.** That commit widened the size set from `==24` to
+> `{24, 32, 40}` precisely because a pinned `==24` "silently excluded every stripped 5.7+
+> **Development** or **Test** build". This is a Development build at **32 bytes**: under the old
+> pin the rung would not have fired, so this run also red-tests the widening.
+>
+> ⭐ **Two independent witnesses that the seed reached the code**, which is the property that makes
+> the rest meaningful: Genau logs that it read the cached 504 (`SCAN`), and the rung independently
+> reports `version=504` in its own message (`INIT`). Different code paths, same fact.
+>
+> ⚠ **SCOPE is the same as half 1 and does not widen.** What is simulated is only *how* 504 arrived
+> (a cache hit, not a failed detection). Everything downstream — the `FUObjectItem` probe, the
+> marker, the raise, the badge — is the real code on a real 5.8.2 binary.
+>
+> ⚠ **The rig's FIRST version reported all four checks MISS on this very run**, because it sliced
+> the log from a byte offset captured before launch and a new process ROTATES the log — a false
+> FAIL on a genuine PASS, and the exact variant CLAUDE.md lists. It now watermarks by parsing each
+> line's own millisecond timestamp, and it fails loudly with "read 0 log lines after the watermark"
+> rather than emitting four confident MISSes, because a detector that cannot be shown to FIRE says
+> nothing by staying silent.
+>
+> *App-data left as found: the hint cache was snapshotted, seeded, and restored byte-for-byte
+> (34,105 bytes both times, entry back to `ueVersion 508 / rev 5`); the game was killed; no
+> `.a4bak` left behind. Verified after each of the two runs.*
+
 > ✅ **`[A4-NEGCTL-2026-09-05]` — the negative control this row calls "the one that matters" is
 > DONE.** Solarpunk, UE 5.7, build 3371, injected, 120,863 objects:
 >
@@ -3236,6 +3276,34 @@ repo's.
 > the next best is less than half of that. Reaching the cap needs a title roughly **2× DQ7R**, and
 > nothing installed is close.
 >
+> ### ⭐ UNBLOCKED 2026-09-06 — LOWER THE CAP, DO NOT HUNT A BIGGER GAME
+>
+> The whole search above assumed the cap was fixed at 100,000 and the *game* was the variable. It is
+> the other way round: `list_all_functions` takes `limit` on the wire, the DLL honours it, and the
+> DLL half already passes (`[Z8-TRUNCATED-2026-08-23]`). The only reason the UI half had no fixture
+> is that **both** UI call sites (`ConsoleViewModel.cs:255`, `InterestingFunctionsViewModel.cs:440`)
+> pass the default and nothing could lower it.
+>
+> `DumpService.AllFunctionsLimitOverride` now reads **`UE5DUMP_ALLFUNCS_LIMIT`** once at startup and
+> overrides the cap for both panels:
+>
+> ```
+> set UE5DUMP_ALLFUNCS_LIMIT=200
+> ```
+>
+> Any connected title then reaches the cap, and this row's acceptance text is unchanged — Console
+> must stop claiming anything about the game, both panels must show the cap suffix, and Interesting
+> Functions' class-noise picker must show `⚠ Counts are partial`.
+>
+> ⚠ **Still run the regression arm with the variable UNSET** on the same title: no spurious warning
+> under the cap is half of what this row asserts, and it is the half a lowered cap cannot show.
+> ⚠ A non-positive or unparseable value is **ignored, not clamped** — a typo must never silently
+> truncate a real census and return a partial answer that looks complete, which is the very defect
+> Z8 exists to catch.
+> ⚠ Needs a **`-Mode Publish` AOT** binary like every UI row here. The change itself is AOT-clean
+> (`int.TryParse` + `GetEnvironmentVariable`, no reflection) and shipped in a 54.7 MB trimmed
+> publish with 4,756 C# tests green.
+>
 > ⚠ **Both titles the row names as the requirement were re-checked and one does not exist.**
 > `FINAL FANTASY VII REBIRTH` is an empty folder here — one directory, no executable
 > (`py tools/verify/fixture_census.py`, which exists because of this). **SEED BATTLE DESTINY
@@ -3576,9 +3644,93 @@ sweep concluded the only Tier-1-capable hosts installed are UE4; the log corpus 
 other direction — all three games that actually produced a Tier 1 line are UE4 (4.18 / 4.27), so the
 **UE5 branch still has no host**, measured twice by different means.
 
-⚠ DumperTest cannot supply any of this: its version is **cached** (`FindAll: UE Version = 504
+⚠ ~~DumperTest cannot supply any of this: its version is **cached** (`FindAll: UE Version = 504
 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`), so the ladder does not run at
-all, and it has intact VERSIONINFO so it would stop at the first rung anyway.
+all, and it has intact VERSIONINFO so it would stop at the first rung anyway.~~
+**SUPERSEDED 2026-09-07 — both blockers removed offline, `20ac839f`.** That sentence named two
+independent blockers, and each needed its own fix:
+
+* **Intact VERSIONINFO** → `DumperTest.rc` / `DumperTest58.rc`. UBT skips the engine's
+  `Default.rc2` when a module ships its own `.rc`, so the packaged exes now report a version no UE
+  release ever had. **5 binaries across 2 engines** are now `TIER-1 HOST` where the sweep above
+  found none: `1.2.0.0` on 5.4 (Development/Shipping/DebugGame) and `1.8.0.0` on 5.8
+  (Development/Shipping), each still carrying its `++UE5+Release-N.N` needle in utf16. The two
+  versions **disagree deliberately** — one constant would satisfy both halves of the survey on its
+  own, so agreement would not prove the needle was parsed.
+* **The version cache** → removed by the repackage itself, not by a code change. The cache is keyed
+  by `peHash` (`Flamme.cpp`, `games[peHash]`) and `peHash` is `TimeDateStamp + SizeOfImage`
+  (`Genau.cpp:54`); relinking changes both. Verified against the live hint file: **all 13**
+  DumperTest/DumperTest58 records are keyed by pre-repackage hashes and **not one** matches a new
+  binary, so `LoadHints` misses and `DetectVersion` runs the full ladder. Most are also `rev=5`
+  against today's `kVersionDetectLogicRev = 7`, which would reject them independently.
+
+### ✅ G2 step 3 — the UE5 Tier-1 branch PASSES 2026-09-07 `[G2-TIER1-UE5-2026-09-07]`
+
+**Half 1 — UE 5.4.** `DumperTest.exe` Development, pid 11660, injected with `tools/verify/inject.py`
+and driven by `tools/verify/run_version_evidence.py` (no UI). `scan-0.log`, verbatim:
+
+```
+[2026-09-07 08:58:03.999] [INFO] [SCAN]     FindAll: PE hash = 6A9DFA2910F21000
+[2026-09-07 08:58:04.009] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-07 08:58:04.010] [WARN] [SCAN:Ver] DetectVersion: PE VERSIONINFO Product=1.2 File=1.2 — unrecognised
+[2026-09-07 08:58:04.010] [WARN] [SCAN:Ver] DetectVersion: PE resource failed, falling back to memory string scan
+[2026-09-07 08:58:04.542] [INFO] [SCAN:Ver] DetectVersion: Tier 1 (utf16) '++UE5+Release-5.4' -> 504 at 0xCB7C10C
+[2026-09-07 08:58:04.542] [INFO] [SCAN]     FindAll: UE Version = 504 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+**This is the first `Tier 1` line ever produced by a UE5 host on this machine.** The survey above
+recorded 6 Tier-1 lines across the whole log corpus and every one was UE4 (4.18 / 4.27).
+
+Four things make it evidence rather than a number that happens to be right:
+
+* **The ladder actually ran.** There is no `(cached, …) — skipped DetectVersion` line, so the cache
+  did not short-circuit it. `FindAll: PE hash = 6A9DFA2910F21000` **is byte-for-byte the hash
+  predicted offline** from the repackaged binary before anything was launched, which is what
+  predicted the cache miss.
+* **It reached the branch by falling through, not by failing.** `Product=1.2 File=1.2` is the `.rc`
+  fixture's version, and `PE resource failed` is Tier 0 declining — the intended path.
+* **It parsed, it did not guess.** `'++UE5+Release-5.4' -> 504` quotes the needle it matched and
+  gives its address; `tier=1` is recorded in the summary line independently.
+* **The host was alive.** `object_count: 25227` — a dead engine reports coherent zeros
+  (handover §3).
+
+**Half 2 — UE 5.8.** `DumperTest58.exe` Development, pid 41712, same rig. 5.4 was killed first —
+one injected game at a time. `scan-0.log`, verbatim:
+
+```
+[2026-09-07 09:00:45.815] [INFO] [SCAN]     FindAll: PE hash = 000000001424C000
+[2026-09-07 09:00:45.821] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-07 09:00:45.821] [WARN] [SCAN:Ver] DetectVersion: PE VERSIONINFO Product=1.8 File=1.8 — unrecognised
+[2026-09-07 09:00:45.822] [WARN] [SCAN:Ver] DetectVersion: PE resource failed, falling back to memory string scan
+[2026-09-07 09:00:46.466] [INFO] [SCAN:Ver] DetectVersion: Tier 1 (utf16) '++UE5+Release-5.8' -> 508 at 0xF07F18C
+[2026-09-07 09:00:46.477] [INFO] [SCAN]     FindAll: UE Version = 508 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+Pipe corroboration: `ue_version 508`, `object_count 35837`, `is_low_confidence false`.
+
+⭐ **The two halves together are the actual finding, and neither alone would do.**
+
+| | Tier 0 says | Tier 1 parses | result |
+|---|---|---|---|
+| 5.4 | `Product=1.2` unrecognised | `'++UE5+Release-5.4'` | **504** |
+| 5.8 | `Product=1.8` unrecognised | `'++UE5+Release-5.8'` | **508** |
+
+Two different fixture versions, two different needles, two different answers. A code path that
+returned a constant, cached a stale value, or fell back to a default would satisfy **one** row and
+fail the other. This is why the fixtures were given deliberately disagreeing dummy versions rather
+than the same one.
+
+ℹ️ Both `FindAll: PE hash` values — `6A9DFA2910F21000` and `000000001424C000` — match the hashes
+computed offline from the repackaged binaries **before either process was launched**, the second
+including its `TimeDateStamp=0` quirk. The offline cache-miss prediction and the live run agree on
+the exact value that decides whether `DetectVersion` runs at all.
+
+⚠ ~~This makes the row **runnable**, not passed — the acceptance evidence is still a
+`Tier 1 (utf16) '++UE5+Release-5.4' -> 504` line in a real `scan-0.log`, which needs an
+injection.~~ Done, above.
+⛔ When running it, inject into `<Config>\Windows\<Project>\Binaries\Win64\<Project>*.exe`: the exe
+at the staged root is UE's bootstrap stub, still carries `Default.rc2`'s engine version, and
+reports `Tier0 -> 504` / `-> 508`. See `tools/ue-sample/README.md` § Traps.
 
 **What steps 1–2 still need**: a game not yet recorded (step 1 asks for at least one more beyond
 Elliot and DragonSword Awakening) and an Avowed injection (step 2). Neither is a grep.
@@ -8796,6 +8948,101 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > 1. `Text_Empty` renders as **`No`**. An `FText::GetEmpty()` should read as empty; `No` looks
   >    like a truncated `None` or a mis-typed render. Cheap to chase, cosmetic, but it is the empty
   >    display-string path and nothing else covers it. **NEW, unfiled.**
+  >
+  >    > ### 🔴 FILED + MECHANISM PROVEN 2026-09-06 `[TEXTEMPTY-2026-09-06]` — it is a DLL defect, it is NOT cosmetic, and the value is NON-DETERMINISTIC
+  >    >
+  >    > ⛔ **Two words above are wrong and they are the reason this sat unfiled: "cosmetic", and
+  >    > the implication that `No` is a fixed wrong string.** Measured headless over the pipe
+  >    > (`tools/verify/text_empty_probe.py`, DumperTest dev, build 3376), `Text_Empty` came back
+  >    > as **`'ࣳ'` (U+08F3)** — a different wrong value from the `No` seen on screen. **Every
+  >    > empty FText in every game reads as garbage taken from adjacent memory, and which garbage
+  >    > depends on what happens to be there.**
+  >    >
+  >    > **The DLL owns it, so the screen was faithful.** That is the disambiguation this register
+  >    > exists for: `walk_instance` returns the wrong value with no UI in the loop at all.
+  >    >
+  >    > **MECHANISM — `Ubel.cpp:503-541` uses "empty" as its NOT-FOUND sentinel.**
+  >    > `ReadFTextString` scans `FTextData+0x08..0x90` for anything that decodes as an FString and
+  >    > returns the first hit, with the found-test written as `if (!s.empty()) return s;`. A
+  >    > genuinely empty display string decodes to `""`, is therefore read as *"nothing here"*, and
+  >    > the scan **walks past the correct answer** and returns whatever noise clears the header
+  >    > gate next. An empty FText is unreachable **by construction**, in both passes.
+  >    >
+  >    > **The proof is the two dumps side by side — same class, same walk, one field apart:**
+  >    >
+  >    > ```
+  >    > Text_Ascii  FTextData +0x28:  60 5b bc fa b5 02 00 00 | 17 00 00 00 | 18 00 00 00
+  >    >                               {ptr, num=23, max=24}  -> 'DumperTest FText ASCII'   ✅ found
+  >    > Text_Empty  FTextData +0x28:  00 00 00 00 00 00 00 00 | 00 00 00 00 | 00 00 00 00
+  >    >                               {nullptr, num=0, max=0} -> ""  -> treated as NOT FOUND ❌
+  >    > ```
+  >    >
+  >    > The empty FString sits exactly where the working one does. Nothing is missing from memory;
+  >    > the reader refuses to believe it.
+  >    >
+  >    > ⚠ **Controls, in the same call:** the other seven FTexts on the actor all read correctly
+  >    > (`Text_Ascii`, `Text_Localized`, `Text_Even2_OneNull`, `Text_Even2_TwoNull`,
+  >    > `Text_Even4_TwoNull`, `Text_Odd3_OneNull` 走一步, `Text_Even6_NoNull`). So the fault is the
+  >    > empty path specifically, not the walk and not B28's decoder.
+  >    >
+  >    > ▶ ~~**The fix is a sentinel change, not a scan tweak**~~ — see the closure below; that
+  >    > reading was wrong, and usefully so.
+  >    >
+  >    > > #### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[TEXTEMPTY-FIX-2026-09-06]` — and the diagnosis above was half wrong
+  >    > >
+  >    > > ⛔ **"The fix is a sentinel change" was WRONG, and four independently-designed sentinel
+  >    > > fixes were killed before that became clear.** An empty FString is `{nullptr, 0, 0}` —
+  >    > > byte-identical to zeroed memory — so no amount of found/not-found plumbing can make the
+  >    > > empty slot recognisable. Worse, three designs tried to ANCHOR the display-string offset
+  >    > > (learn it once, reuse it) and all three die to one shape this file's own comment already
+  >    > > describes at [`Ubel.cpp`](../dll/src/Ubel.cpp) §ReadFTextString: `FTextHistory_Base`
+  >    > > carries an **inline** SourceString *and* a **pointer** to a localized display string. Any
+  >    > > cache that answers `""` when the inline slot reads `{0,0,0}` blanks every localized text
+  >    > > of that class, returning before Pass 2 ever dereferences the pointer where the string
+  >    > > actually is. That is a systematic regression on the B28 corpus — worse than the bug.
+  >    > >
+  >    > > ⭐ **What actually shipped is one predicate: a decode must ACCOUNT FOR the length its own
+  >    > > header claimed.** The garbage header claimed 4283 characters and the decode delivered
+  >    > > **1** — because `EncodeUtf16` breaks at the first null unit
+  >    > > ([`Utf8Helpers.h:154`](../dll/src/Utf8Helpers.h)) and a zero-filled page terminates
+  >    > > immediately. Nothing in the pipeline compared those two numbers.
+  >    > > `Ubel::DecodedLengthMatchesFString` now does: `chars*4 + 8 >= Num-1`, which every genuine
+  >    > > FString satisfies with 2× spare on the UTF-16 branch, and which the measured garbage
+  >    > > fails by **357×**.
+  >    > >
+  >    > > ⚠ **Deliberately the WEAK form.** `utf8_helpers_test.cpp`'s
+  >    > > `Test_Decode_TieBreakIsGatedOnUtf8Success` exists to pin a decision that the strong form
+  >    > > ("the first null unit must be at Num-1") silently reverses. A unit test now names that
+  >    > > row so anyone tightening the bound trips over the decision first.
+  >    > >
+  >    > > ⛔ **A Max-window tightening was designed and rejected**: `FString::Reserve` sets ArrayMax
+  >    > > with no relation to Num and nothing shrinks it, so a legitimate `{num=100, max=400}`
+  >    > > would be refused at its REAL slot and the scan would walk past its own answer.
+  >    > >
+  >    > > **LIVE, DumperTest dev, build 3402 — the acceptance test the row asked for:**
+  >    > >
+  >    > > | field | before | after |
+  >    > > |---|---|---|
+  >    > > | `Text_Empty` | **`'ࣳ'` (U+08F3)** | **`(empty)`** — README's own documented value |
+  >    > > | `Text_Ascii` | `DumperTest FText ASCII` | unchanged |
+  >    > > | `Text_Localized` | 統一言語 | unchanged |
+  >    > > | `Text_Even2_OneNull` · `Text_Even2_TwoNull` | 統一 · 一言 | unchanged |
+  >    > > | `Text_Even4_TwoNull` · `Text_Odd3_OneNull` | 統一言語 · 走一步 | unchanged |
+  >    > > | `Text_Even6_NoNull` | 日本語テスト | unchanged |
+  >    > >
+  >    > > All seven controls unchanged, so the guard cost no working read. ⭐ The tell that it is
+  >    > > genuinely empty rather than differently-wrong: the garbage run's JSON carried a
+  >    > > `str_value` key and this one does not.
+  >    > >
+  >    > > **Tests: 265 + 2374 + 22 + 14 + 43 C++ and the full C# suite, 0 failures.**
+  >    > > ⭐ Negative-controlled: making the predicate `return true` fails **exactly one**
+  >    > > assertion — "the measured garbage is rejected" — and no other, so the test exercises the
+  >    > > predicate and the predicate is what rejects the garbage.
+  >    > >
+  >    > > ⚠ The safety property that makes this landable at all: `ReadFTextString` reads `""` as
+  >    > > *"keep scanning"*, so a rejection here can never turn a readable text into an empty one.
+  >    > > The worst it can do is let a scan that was already returning noise continue one slot
+  >    > > further.
   > 2. The package under test was built from a **stale** `DumperTestActor.cpp` (退一步 where the
   >    repo had 走一步), so the odd-length control was not the documented one. It renders correctly
   >    either way, so B28's result stands — but see the identity-record note below; this is exactly

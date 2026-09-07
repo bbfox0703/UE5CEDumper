@@ -75,6 +75,80 @@ inline thread_local bool t_backgroundWorker = false;
 inline thread_local bool t_cancelImmune = false;
 inline void MarkCancelImmune() { t_cancelImmune = true; }
 
+// The cancel flag of the pipe connection THIS thread is serving, or nullptr when the
+// thread is not a connection handler. Bound by Fern::HandleConnection for the life of
+// the connection (see BindConnectionCancel).
+//
+// ⛔ WHY THE UNBOUND CASE FALLS BACK TO g_perCommand INSTEAD OF MEANING "not cancellable".
+// The obvious formulation -- `return (t_connCancel && t_connCancel->load()) || g_shutdown`
+// -- was designed, reviewed and REJECTED 2026-09-07. It makes "unbound" behaviourally
+// identical to "cancel-immune", which inverts this module's default from FAIL-SAFE to
+// FAIL-SILENT: every thread that does not bind silently stops being cancellable, and
+// t_cancelImmune becomes semantically dead (so M4's and B4's distinctions vanish without
+// a line of them being deleted). That is not hypothetical -- the DLL has at least three
+// populations that reach Requested() on threads no connection owns:
+//   * Aura's ParallelIndexRanges workers (Aura.cpp:173) and its cancelWatcher
+//     (Aura.cpp:221) -- and the watcher's ONLY job is to turn a client disconnect into
+//     deadlineHit for the parallel path, which is the default path for every real game
+//     (ScanThreadCount, Aura.cpp:129, goes parallel at >= 8192 objects);
+//   * Fern::RunScan / RunRescan (Fern.cpp:5276 / 5114) and Frieren's UE5_AutoStart;
+//   * the CE remote thread entering the Frieren C-ABI exports.
+// Binding those to &conn->cancel is NOT the fix either: the connection can be erased
+// while such a thread still runs, so the pointer would dangle in exactly the disconnect
+// case the binding exists for.
+//
+// So the fallback is deliberate and load-bearing: a BOUND thread gets per-connection
+// precision, and everything else keeps the pre-2026-09-07 global behaviour unchanged.
+// Narrowing that population is a separate, larger piece of work (todo.md).
+inline thread_local std::atomic<bool>* t_connCancel = nullptr;
+
+/// Bind this thread to its connection's cancel flag. The caller MUST own a shared_ptr to
+/// the connection for the whole bound region -- Fern::HandleConnection does, because the
+/// accept thread hands it the shared_ptr BY VALUE (Fern.cpp:976), so the flag cannot
+/// outlive the pointer. Use the RAII guard below rather than calling these directly.
+inline void BindConnectionCancel(std::atomic<bool>* flag) { t_connCancel = flag; }
+inline void UnbindConnectionCancel() { t_connCancel = nullptr; }
+
+/// The cancellation identity of the CURRENT thread, as a value that can be handed to a
+/// worker thread this one spawns. Both fields matter: a worker inherits neither the
+/// binding nor the immunity of its parent, because thread_locals do not propagate.
+struct CancelContext {
+    std::atomic<bool>* connCancel = nullptr;
+    bool               immune     = false;
+};
+inline CancelContext CaptureCancelContext() { return CancelContext{t_connCancel, t_cancelImmune}; }
+
+/// Adopt a captured context on THIS thread, restoring the previous one on scope exit.
+///
+/// ⛔ ONLY safe when the spawning thread OUTLIVES the worker -- i.e. it joins it. That
+/// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp:176) and for the
+/// ParallelGObjectsScan cancelWatcher, which is why those may adopt a raw
+/// `std::atomic<bool>*`. It does NOT hold for Fern::RunScan / RunRescan, which outlive
+/// the command that started them -- binding those to a connection would be a
+/// use-after-free in exactly the disconnect case the binding exists for. Give those an
+/// owning token before propagating anything into them.
+struct CancelContextScope {
+    CancelContext prev;
+    explicit CancelContextScope(const CancelContext& c)
+        : prev{t_connCancel, t_cancelImmune} {
+        t_connCancel   = c.connCancel;
+        t_cancelImmune = c.immune;
+    }
+    ~CancelContextScope() { t_connCancel = prev.connCancel; t_cancelImmune = prev.immune; }
+    CancelContextScope(const CancelContextScope&) = delete;
+    CancelContextScope& operator=(const CancelContextScope&) = delete;
+};
+
+/// RAII: binds for the enclosing scope, unbinds on every exit path including a throw.
+/// ⚠ Scope it to the WHOLE handler, not just the command loop: the disconnect-teardown
+/// block runs after the loop and must still see its own connection's cancel.
+struct ConnectionCancelScope {
+    explicit ConnectionCancelScope(std::atomic<bool>* flag) { BindConnectionCancel(flag); }
+    ~ConnectionCancelScope() { UnbindConnectionCancel(); }
+    ConnectionCancelScope(const ConnectionCancelScope&) = delete;
+    ConnectionCancelScope& operator=(const ConnectionCancelScope&) = delete;
+};
+
 // Every background worker is also cancel-immune — set both so existing call sites
 // keep their exact behaviour.
 inline void MarkBackgroundWorker() { t_backgroundWorker = true; t_cancelImmune = true; }
@@ -93,6 +167,15 @@ inline bool IsBackgroundWorker() { return t_backgroundWorker; }
 inline bool Requested() {
     if (t_cancelImmune)
         return g_shutdown.load(std::memory_order_relaxed);
+    // Bound to a connection: consult ONLY that connection's flag. This is the whole
+    // point -- a FOREIGN client's death must not truncate this client's scan
+    // ([MULTIPIPE-CANCEL-2026-09-07], measured: 5,157 replies of 77 bytes where 720,793
+    // were due). Note it does NOT also OR in g_perCommand: doing so would leave the
+    // defect exactly as it was.
+    if (t_connCancel)
+        return t_connCancel->load(std::memory_order_relaxed)
+            || g_shutdown.load(std::memory_order_relaxed);
+    // Unbound: unchanged global behaviour, deliberately. See t_connCancel's note.
     return g_perCommand.load(std::memory_order_relaxed)
         || g_shutdown.load(std::memory_order_relaxed);
 }

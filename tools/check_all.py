@@ -141,6 +141,22 @@ GATES = [
      "a dll/src/Proxy*.def omits a real export or fails to pin its real ordinal. "
      "A .def line exports nothing on its own; it needs an implementation in the "
      "matching Lugner_*.cpp/.asm", False),
+
+    ("check_processevent_slots",
+     ["tools/check_processevent_slots.py"],
+     "Grimoire.h's ProcessEvent vtable slot table disagrees with the vendored "
+     "RE-UE4SS templates it was transcribed from. It is DERIVED data -- run "
+     "'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is "
+     "still primary and a per-BUILD difference is not a bug; this only pins the "
+     "fallback table against its own source", False),
+
+    ("check_property_family",
+     ["tools/check_property_family.py"],
+     "somebody assigned a DynOff sizeof(FProperty) family member directly instead of "
+     "going through ApplyPropertyFamily. A split family does NOT crash -- struct reads "
+     "stay correct while TArray element descriptors and every enum name read 8 bytes "
+     "off -- which is why audit #5 G12 found it late and why its own fix missed a third "
+     "writer. Run 'py tools/check_property_family.py --list'", False),
 ]
 
 

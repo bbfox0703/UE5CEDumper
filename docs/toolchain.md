@@ -17,7 +17,7 @@ and you want to know whether you actually care.
 > | `bootstrap.cmd --tiers build` | the narrow case: a CI box, or a machine that only compiles |
 > | `bootstrap.cmd --all` | every tier, including Cheat Engine and the GitHub CLI |
 > | `bootstrap.cmd --dry-run` | print the exact commands it *would* run |
-> | `bootstrap.cmd --install --verify` | install, then prove it with the 13 gates |
+> | `bootstrap.cmd --install --verify` | install, then prove it by running `check_all.py`. ⚠ It says **13 gates** no longer — the count grows (4 → 12 → 13 → 16 so far); read the `N gate(s) run` line the run prints rather than expecting a number. |
 
 -----
 
