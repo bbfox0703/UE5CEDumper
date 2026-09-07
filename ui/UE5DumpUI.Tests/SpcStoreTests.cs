@@ -227,4 +227,93 @@ public class SpcStoreTests : IDisposable
             SpcPredicateKind.Any, SpcPredicateKind.Any), ct);
         Assert.Equal("HP", Assert.Single(res.Rows).PropName);
     }
+
+    // Same as Obj(), but each field carries its OWN offset. Needed because the Strict join
+    // key includes prop_offset, and Obj() hardcodes 0x40 for every field -- which silently
+    // makes that key term untestable.
+    private static SnapshotCapturedObject ObjAt(int idx, string cls, string path,
+        params (string name, string type, int val, int off)[] fields)
+    {
+        var o = new SnapshotCapturedObject
+        {
+            Index = idx, Addr = $"0x{0x7FF600000000 + idx:X}",
+            Name = path[(path.LastIndexOf('.') + 1)..], ClassName = cls,
+            OuterClassName = "World", Path = path,
+        };
+        foreach (var (name, type, val, off) in fields)
+            o.Fields.Add(new SnapshotCapturedField { Name = name, Type = type, Hex = IntHex(val), Offset = off });
+        return o;
+    }
+
+    /// <summary>
+    /// Native-C raw holes survive the SPC join and track their values across snapshots.
+    ///
+    /// This is the SPC-Query arm of the P3 acceptance list
+    /// (native-c-value-scan-spec.md: "capture native_c on two snapshots -> SPC query on a
+    /// &lt;raw@0x..&gt; field joins by offset"). The 2026-09-06 in-game run proved the Class
+    /// Pivot half and recorded, honestly, that it had used the Snapshot panel's *Compare
+    /// snapshots* rather than SPC Query -- so this arm was still owed.
+    ///
+    /// Confirmed against the REAL capture from that run before this test was written
+    /// (snapshots.6A9C1C8410F23000.db, snapshots 2 and 3, 77 s apart): all 8,556
+    /// &lt;raw@0x..&gt; fields join under the Strict key, none has a zero/absent prop_offset,
+    /// and 8 changed -- four of them on DumperTestActor itself, including
+    /// &lt;raw@0x918&gt; 4684 -> 5829, whose 5829 is the exact pivot group key that run
+    /// recorded. That also answers the run's second open note ("DumperTestActor's own raw
+    /// rows did not appear in the changed list ... not chased"): they do.
+    /// </summary>
+    [Fact]
+    public async Task NativeCRawHoles_JoinAcrossSnapshots_AndTrackTheirValues()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const string path = "/Game/Map.Map:PersistentLevel.DumperTestActor_1";
+        // A raw hole that moves, a raw hole that does not, and a reflected control.
+        long s1 = await SeedAsync("t1", "S", new[] { ObjAt(1, "DumperTestActor", path,
+            ("<raw@0x6D0>", "IntProperty", 702184, 0x6D0),
+            ("<raw@0x918>", "IntProperty", 4684,   0x918),
+            ("TickCount",   "IntProperty", 312,    0x1C0)) }, ct);
+        long s2 = await SeedAsync("t2", "S", new[] { ObjAt(1, "DumperTestActor", path,
+            ("<raw@0x6D0>", "IntProperty", 702716, 0x6D0),
+            ("<raw@0x918>", "IntProperty", 4684,   0x918),
+            ("TickCount",   "IntProperty", 388,    0x1C0)) }, ct);
+
+        var res = await _store.SpcQueryAsync(Chain(SpcJoinMode.Strict, new[] { s1, s2 },
+            SpcPredicateKind.Any, SpcPredicateKind.Increased), ct);
+
+        // Both the raw hole and the reflected control rose; the static raw hole did not.
+        Assert.Equal(new[] { "<raw@0x6D0>", "TickCount" },
+                     res.Rows.Select(r => r.PropName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        var raw = res.Rows.Single(r => r.PropName == "<raw@0x6D0>");
+        Assert.Equal(new[] { "702184", "702716" }, raw.Values.ToArray());
+    }
+
+    /// <summary>
+    /// The Strict join key's prop_offset term is LOAD-BEARING: a field with the same class,
+    /// path and name at a DIFFERENT offset must not join to it.
+    ///
+    /// Without this, "joins by offset" would be satisfied only incidentally for raw holes,
+    /// because a &lt;raw@0xNN&gt; name already encodes its own offset -- so a broken offset
+    /// term would be invisible on exactly the rows the P3 acceptance is about.
+    /// </summary>
+    [Fact]
+    public async Task SpcStrictKey_OffsetIsPartOfTheJoin_SameNameDifferentOffsetDoesNotJoin()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const string path = "/Game/Map.Map:PersistentLevel.Actor_1";
+        // ⚠ "Moved" alone would be asserted with Assert.Empty, which also passes when the
+        // seeding silently fails -- i.e. it cannot tell "the offset term bit" from "nothing
+        // was stored". So the object carries a CONTROL field that keeps its offset and MUST
+        // join. One row, and it is the control: that is only true if both halves work.
+        long s1 = await SeedAsync("t1", "S", new[] { ObjAt(1, "Actor", path,
+            ("Value",  "IntProperty", 100, 0x40),
+            ("Anchor", "IntProperty", 7,   0xC0)) }, ct);
+        long s2 = await SeedAsync("t2", "S", new[] { ObjAt(1, "Actor", path,
+            ("Value",  "IntProperty", 200, 0x80),    // same name, MOVED -> must not join
+            ("Anchor", "IntProperty", 9,   0xC0)) }, ct);   // same offset  -> must join
+
+        var res = await _store.SpcQueryAsync(Chain(SpcJoinMode.Strict, new[] { s1, s2 },
+            SpcPredicateKind.Any, SpcPredicateKind.Any), ct);
+
+        Assert.Equal("Anchor", Assert.Single(res.Rows).PropName);
+    }
 }
