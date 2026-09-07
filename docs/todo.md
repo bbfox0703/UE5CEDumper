@@ -1341,7 +1341,36 @@ before being written down.*
   Snapshot SPEED is a SEPARATE issue (§9.5): UI-side single-threaded multi-MB chunk parse (~2.4s/chunk)
   → streaming `Utf8JsonReader`/smaller chunks. *Parent: reverted Phase 1 build 1836 (dev-log 2026-06-28).*
 
-- **Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)** —
+- **Make the per-command cancel PER-CONNECTION (the other half of `[MULTIPIPE-CANCEL-2026-09-07]`)** —
+  Effort: **M** · Risk: **med** (changes cancellation semantics on the pipe path).
+  `c4e270e9` made a truncated bulk reply *detectable* (`truncated: true` on `list_enums`,
+  `walk_instance_batch`, `pe_profile_get`). It did **not** stop the cross-connection cancel:
+  `Fern::MonitorLoop` (`Fern.cpp:861`) still trips the process-wide `Tot::g_perCommand` for **any**
+  broken in-flight connection, so an unrelated client's death still truncates your scan — you can
+  merely see that it happened now. §9.3's original proposal was to cancel only the connection that
+  broke (or only heavy ones); `inFlightHeavy` was specified and never written.
+  ⚠ Two things to settle first, neither obvious: (1) `Tot::Requested()` is read from deep inside
+  Aura/Ubel loops with no connection context, so per-connection cancel needs a thread-local or a
+  cancellation token threaded through — that is the actual work, not the `if`; (2) whether a
+  cancelled reply should also flip `ok` to false — more correct, but the UI and every
+  `tools/verify` rig branch on `ok`, so it risks trading silent truncation for a spurious failure.
+  ⭐ **The rig already exists and reproduces on demand**: `tools/verify/multipipe_cancel_isolation.py`
+  (host at `-DumperTestMaxFPS=1`; 2 FPS silently measures nothing — its docstring explains why).
+  *Parent: multipipe-eval §9.3/§9.6 item 5; measured 2026-09-07 (`6d674989`).*
+
+- **ℹ️ MEASURED AND DELIBERATELY NOT FIXED — `peHash` degenerates when `TimeDateStamp` is 0** —
+  `Genau.cpp:54` builds the per-game key as `TimeDateStamp` + `SizeOfImage`. A deterministic /
+  reproducible link stamps `TimeDateStamp = 0`, and the key then collapses to `SizeOfImage` alone —
+  which is page-granular, so two builds of the same project that differ by under a page would
+  **collide and silently reuse each other's cache entry** (cached UE version, GObjects/GNames
+  pattern hints). Real instance seen: DumperTest58 Development links with `TimeDateStamp=0`
+  (`peHash=000000001424C000`, and its stale sibling `0000000014252000` — only 0x6000 apart).
+  ⛔ **Not worth fixing.** Swept every UE game exe on this machine: **1 of 40** has
+  `TimeDateStamp == 0`, and it is our own 5.8 fixture. Changing `peHash` would invalidate every
+  cached hint and orphan every `Snapshots\` / `Bookmarks\` / `TeleportCoords\` folder keyed by it —
+  a real migration cost to fix a 2%-of-one-machine, same-image-size-required hazard. Recorded so
+  the next person who notices the collapse does not pay for the change either. Re-measure if a
+  future UE default makes deterministic linking common.
   Effort: **M** · Risk: med. Tier 1 (dup/tunable literals) + the Tier 2 `IsUserspacePointer` paired-
   bounds helper SHIPPED (dev-log 2026-07-03). LEFT because each carries genuine per-site multi-meaning
   nuance: object-count/size ceilings — `0x800000` (8M UObject count), `0x100000` (1M, but needs
