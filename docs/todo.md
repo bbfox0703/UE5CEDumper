@@ -1238,13 +1238,60 @@ before being written down.*
   hand-corrected and the generator was not, so re-running it would silently revert the fix. **After
   hand-editing a generated file, back-port or the next `--apply` is a regression.**
 
-- **Multi-pipe Phase 1 — residual verification: only the WATCH item is left** —
+- **Multi-pipe Phase 1 — ⛔ §9.6 item 5 REOPENED 2026-09-07 with a REPRODUCED DEFECT; the watch
+  item is closed** —
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items
   1–5 (dev-log 2026-06-28).
-  > **✅ The lane-drop edge is now verified (Elliot 2026-07-23).** Closing the game mid-snapshot
+  > ~~**✅ The lane-drop edge is now verified (Elliot 2026-07-23).** Closing the game mid-snapshot
   > dropped the bulk lane and the router did exactly what §9.7 specifies:
   > `Pipe lane dropped — tearing down both lanes for a clean reconnect` → `Pipe disconnected`, with the
-  > in-flight snapshot faulting into H1's delete path rather than half-finishing. No wedge, no orphan.
+  > in-flight snapshot faulting into H1's delete path rather than half-finishing. No wedge, no orphan.~~
+  >
+  > ### ⛔ THAT EVIDENCE DOES NOT MATCH THE ITEM — reopened 2026-09-07 `[MULTIPIPE-CANCEL-2026-09-07]`
+  >
+  > §9.6 item 5 asks for *"disconnect only ONE lane — **the other keeps working**; a bulk scan isn't
+  > wrongly cancelled by an interactive disconnect (the §9.3.5 caveat)"*. The Elliot run closed the
+  > whole **game** mid-snapshot, so **both** lanes died together and the router tore both down —
+  > the opposite scenario. A whole-process death cannot show one lane surviving the other's drop,
+  > and it never touched the cancellation clause at all.
+  >
+  > **The clause is not just untested, it is violated.** §9.3's mitigation never shipped —
+  > `inFlightHeavy` appears nowhere in the tree. `Fern::MonitorLoop` (`Fern.cpp:861`) calls
+  > `Tot::RequestPerCommand()` **unconditionally** for any broken in-flight connection, and
+  > `Tot::g_perCommand` (`Tot.h:45`) is one process-wide atomic OR-ed into every `Tot::Requested()`.
+  > The comment defends it with a **timing** argument — *"a fast light command finishes before a
+  > 200ms peek catches it in-flight"* — that had never been measured.
+  >
+  > **Measured** by `tools/verify/multipipe_cancel_isolation.py`, DumperTest Development at 1 FPS,
+  > build 3405, reproduced twice:
+  >
+  > | | |
+  > |---|---|
+  > | baseline `list_enums` | 720,793 bytes (5 samples, spread 0) |
+  > | victim replies after a FOREIGN client's death | 5,264, of which **5,157 short** |
+  > | truncated sizes | **77 / 78 / 79 bytes** |
+  > | blast radius | 0.14 s → 0.71 s, then recovers |
+  >
+  > ⛔ **The severity is not the truncation — it is that all 5,157 truncated replies said
+  > `ok: true`.** A caller gets 77 bytes where 720 KB was due, with a success status, and cannot
+  > tell it from a complete answer. Bounded (~0.6 s, audit #5's `ReevaluatePerCommandCancel` clears
+  > the latch) but silent. Reachable in normal use: `kMaxPipeInstances = 3` and the UI takes 2, so
+  > any `tools/verify/*` rig dying mid-command hits the UI's scans.
+  >
+  > ⚠ **Why it stayed untested for months, and the trap in reproducing it.** No ordinary command on
+  > this fixture occupies its connection for >200 ms (`list_enums` 0.09 s, `list_all_functions`
+  > 0.15 s; `trigger_scan`/`rescan` are async), so the monitor essentially never catches one in
+  > flight. The lever is `-DumperTestMaxFPS` + a game-thread `invoke_function`. ⭐ **2 FPS is not
+  > enough even though the arithmetic says it is** — the invoke does take ~0.50 s there, over the
+  > 200 ms poll, yet the run logged **zero** `client gone mid-command` lines because the kill was
+  > seen by the doomed connection's own read/write path first and logged as an ordinary
+  > `Client disconnected`. The window must span *several* polls. 1 FPS reproduces every time.
+  > The rig therefore treats `observed == 0` as **INCONCLUSIVE**, never a pass — at 2 FPS it
+  > produced a clean, plausible, entirely meaningless green.
+  >
+  > **Owed:** either make the cancel per-connection (what §9.3 actually specified), or — at minimum
+  > — stop a cancelled scan from answering `ok: true`. Also `docs/multipipe-eval.md:247-248` still
+  > lists this item as remaining, so that doc was right and todo.md was wrong.
   ~~Still open: (6) **watch-event delivery** to the interactive lane (System-tab / address watch still
   pushes correctly while the bulk lane is busy). Verify opportunistically.~~
   > ### ✅ (6) CLOSED 2026-09-06 `[MULTIPIPE-WATCH-2026-09-06]` — delivery is completely unaffected by a saturated bulk lane
