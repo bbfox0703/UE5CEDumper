@@ -1554,7 +1554,25 @@ before being written down.*
   Open sub-question: the packed **SerialNumber** offset (currently best-effort `0x0C`) is unpinned.
   *Parent: PackedItem.h + Aura packed mode + set_packed_consts shipped build 1108 (dev-log 2026-06-14).*
 
-- **Guess? "missing" mid-object data — RESOLVED (working as designed; diagnostic kept).** The
+- **✅ DONE 2026-09-07 (`11748702`) — the "RESOLVED" verdict was right for containers and WRONG for
+  static C-arrays** — Guess? was inventing a phantom row over every element but the first of a
+  `UPROPERTY Type Foo[N]`, because the gap pass built occupancy from the RENDERED field size while a
+  static array renders as ONE element (`WalkInstance` never expands `ArrayDim`). Measured on the
+  fixture's `int32 FixedArr[8]`: **7 fake rows before, 0 after**, with 34 legitimate guessed rows
+  still emitted elsewhere and none overlapping any of the 152 reflected fields.
+  ⚠ **Why the original verdict survived review**: its evidence was a TArray + TMap, and for a
+  *dynamic* container `ElementSize` IS the whole inline footprint, so the defect is structurally
+  invisible there. Correct for the case examined, wrong for the case not examined.
+  ⛔ **And a comment asserted it was fine** — when `ArrayDim` was added, the site gained "so its
+  output is unchanged by the new ArrayDim field". It was not unchanged, it was wrong, and that
+  sentence is why nobody looked again. The fix was a *deletion*: `Ubel::ComputeClassHoles` already
+  had the right formula for the Native-C path, so the duplicate local loop is gone.
+  ✅ The bullet's one named deliverable is also done: `docs/tips.md` now has a **"Guess?"** section
+  covering both shapes (container internals and static arrays) plus what a guessed row is actually
+  worth. Guess? had no user-facing documentation at all beyond one tooltip.
+  *Superseded row kept below for the reasoning trail.*
+
+- ~~**Guess? "missing" mid-object data — RESOLVED (working as designed; diagnostic kept).**~~ The
   `WALK:guess` diagnostic (build 1364+, `Ubel.cpp` `WalkInstance` fillGaps block, one line per
   Guess? walk, opt-in-gated) confirmed it **live on Elliot `LSGameWork`**: `0x170=16(ArrayProperty)`
   covers `0x170–0x180` and `0x180=80(MapProperty)` covers `0x180–0x1D0` exactly — the region the user

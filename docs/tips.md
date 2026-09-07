@@ -607,3 +607,31 @@ Old ones are aged out after **30 days**, and only when you write a NEW report �
 touches this feature deletes nothing. **The newest report is never removed, whatever its age**, so one
 you kept deliberately survives. Age rather than "keep the last N" for the same reason the logs use
 age: several reports in one before/after session would otherwise evict an older, more useful one.
+
+-----
+
+## "Guess?" — why some regions get guessed rows and others do not
+
+The Live Walker's **Guess?** toggle fills the space *between* reflected properties with best-guess
+rows (`?0x678_i32`, `Float?`, `Padding`) so a struct's unknown bytes are at least addressable. Two
+things about what it deliberately does NOT do, both of which look like bugs the first time:
+
+**Container internals are not decomposed.** A `TArray`, `TMap` or `TSet` field occupies its whole
+inline allocator footprint — the data pointer, `Num`, `Max`, and a map's hash tables. CE's Structure
+Dissect shows those as loose ints, so the same object side by side looks like Guess? is "missing"
+16-80 bytes. It is not: that region is fully owned by the single Array/Map/Set property, and our
+walker shows the contents as an expandable row instead of flattening the bookkeeping. Confirmed live
+on Elliot's `LSGameWork`, where `0x170` (ArrayProperty, 16 bytes) and `0x180` (MapProperty, 80 bytes)
+cover `0x170-0x1D0` exactly and the gap list has nothing in that span.
+
+**A static C-array is one property, not N.** `UPROPERTY() int32 Foo[8]` is a single reflected field
+whose footprint is `ElementSize * ArrayDim` — 32 bytes, not 4. The walker shows the first element,
+and Guess? claims the whole span. ⚠ Before 2026-09-07 it did not: it claimed only the first element
+and then emitted a phantom guessed row over each remaining one, so an eight-element array appeared as
+one real field followed by seven invented `?0x…_i32` rows. If you are reading an older dump, those
+rows are array elements, not unknown data.
+
+**What a guessed row is worth.** It is a guess, and it is labelled as one — a `?` suffix and a
+generated name. A region can be padding the compiler inserted, an editor-only field compiled out of
+your build, or a genuinely unreflected member. Guess? tells you the bytes are unclaimed; it cannot
+tell you they mean anything.
