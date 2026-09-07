@@ -513,9 +513,20 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // concurrency needed. `docs/test-games.md` records Solarpunk resolving via exactly that
 // heuristic fallback with FProperty::Offset +0x44.
 //
-// Both writers now go through here so the two cannot drift again. Pure and constexpr, so
-// dll_helpers_test can pin the invariant — which matters because no test target compiles
-// Genau.cpp.
+// ⚠ G12 recorded "both writers now go through here". There were THREE, and the third was
+// missed: `Ubel.cpp` WalkInstance's StructProperty probe wrote FSTRUCTPROP_STRUCT directly
+// until 2026-09-07, so the split-family failure above stayed reachable by the one path G12
+// had not counted. Writers are now FIVE and all routed: Genau ×3, Ubel::CorrectSubclassOffsets,
+// and Ubel's WalkInstance StructProperty probe.
+// ⛔ ONE deliberate exception, and it is the only one: `Ubel.cpp`'s ArrayProperty probe assigns
+// FARRAYPROP_INNER on its own, because UE5.3+ puts EArrayPropertyFlags before Inner so that
+// member legitimately diverges from the shared base after calibration. It re-probes per field
+// per walk, so a family write that resets it to the base is corrected on the next array.
+// `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
+// the first time.
+//
+// Pure and constexpr, so dll_helpers_test can pin the invariant — which matters because no
+// test target compiles Genau.cpp.
 struct PropertyFamily {
     int structProp;     // FStructProperty::Struct
     int arrayInner;     // FArrayProperty::Inner

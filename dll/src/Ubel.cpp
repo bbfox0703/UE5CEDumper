@@ -5078,9 +5078,29 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (delta != 0) {
                         Sein::Info("WALK:StructP", "FStructProperty::Struct at FField+0x%X (base=0x%X, delta=%d) for '%s' -> '%s'",
                             tryOffset, DynOff::FSTRUCTPROP_STRUCT, delta, fi.Name.c_str(), sname.c_str());
-                        // Persist correction to DynOff (CorrectSubclassOffsets handles the global
-                        // update, but if it didn't run yet or missed, update here too)
-                        DynOff::FSTRUCTPROP_STRUCT = tryOffset;
+                        // Persist the correction. This writer is NOT redundant with
+                        // CorrectSubclassOffsets: that one probes {0,±4,±8,±0xC} and gives up on a
+                        // class with no StructProperty, while this probes {0,±4,±8,±0x10} — so it
+                        // is the only path that can land a ±0x10 layout.
+                        //
+                        // ⛔ It used to write `DynOff::FSTRUCTPROP_STRUCT = tryOffset;` directly,
+                        // which Grimoire.h forbids in as many words ("Never assign a member of this
+                        // family directly"). Audit #5 G12 unified the writers and recorded that
+                        // "both writers now go through here" — it missed this THIRD one, so the
+                        // exact failure G12 exists to prevent stayed reachable: a split family, in
+                        // which TArray element descriptors and every enum-name read 8 bytes off
+                        // while struct reads look correct. Route it through the helper, under the
+                        // same mutex CorrectSubclassOffsets uses, so the five names move together
+                        // and the write is not a data race against the parallel walkers.
+                        //
+                        // Resetting FARRAYPROP_INNER to the base is intended and matches what
+                        // CorrectSubclassOffsets already does: the ArrayProperty probe above is
+                        // per-field and per-walk, not latched, so it re-corrects on the next array
+                        // it meets.
+                        {
+                            std::lock_guard<std::mutex> lk(s_calibrationMutex);
+                            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset));
+                        }
                     }
                     found = true;
                     break;

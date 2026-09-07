@@ -149,6 +149,14 @@ GATES = [
      "'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is "
      "still primary and a per-BUILD difference is not a bug; this only pins the "
      "fallback table against its own source", False),
+
+    ("check_property_family",
+     ["tools/check_property_family.py"],
+     "somebody assigned a DynOff sizeof(FProperty) family member directly instead of "
+     "going through ApplyPropertyFamily. A split family does NOT crash -- struct reads "
+     "stay correct while TArray element descriptors and every enum name read 8 bytes "
+     "off -- which is why audit #5 G12 found it late and why its own fix missed a third "
+     "writer. Run 'py tools/check_property_family.py --list'", False),
 ]
 
 
