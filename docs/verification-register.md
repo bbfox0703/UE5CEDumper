@@ -3694,9 +3694,36 @@ Four things make it evidence rather than a number that happens to be right:
 * **The host was alive.** `object_count: 25227` — a dead engine reports coherent zeros
   (handover §3).
 
-⛔ **Half 2 — UE 5.8 — NOT YET RUN.** One injected game at a time; 5.4 was killed before 5.8 was
-launched. Until half 2 lands, this row is evidenced on ONE engine version, which cannot distinguish
-"parsed the needle" from "returned a constant that happens to be 504".
+**Half 2 — UE 5.8.** `DumperTest58.exe` Development, pid 41712, same rig. 5.4 was killed first —
+one injected game at a time. `scan-0.log`, verbatim:
+
+```
+[2026-09-07 09:00:45.815] [INFO] [SCAN]     FindAll: PE hash = 000000001424C000
+[2026-09-07 09:00:45.821] [INFO] [SCAN:Ver] DetectVersion: Attempting to detect UE version...
+[2026-09-07 09:00:45.821] [WARN] [SCAN:Ver] DetectVersion: PE VERSIONINFO Product=1.8 File=1.8 — unrecognised
+[2026-09-07 09:00:45.822] [WARN] [SCAN:Ver] DetectVersion: PE resource failed, falling back to memory string scan
+[2026-09-07 09:00:46.466] [INFO] [SCAN:Ver] DetectVersion: Tier 1 (utf16) '++UE5+Release-5.8' -> 508 at 0xF07F18C
+[2026-09-07 09:00:46.477] [INFO] [SCAN]     FindAll: UE Version = 508 (tier=1, detected=yes, lowConfidence=no, publisher=-)
+```
+
+Pipe corroboration: `ue_version 508`, `object_count 35837`, `is_low_confidence false`.
+
+⭐ **The two halves together are the actual finding, and neither alone would do.**
+
+| | Tier 0 says | Tier 1 parses | result |
+|---|---|---|---|
+| 5.4 | `Product=1.2` unrecognised | `'++UE5+Release-5.4'` | **504** |
+| 5.8 | `Product=1.8` unrecognised | `'++UE5+Release-5.8'` | **508** |
+
+Two different fixture versions, two different needles, two different answers. A code path that
+returned a constant, cached a stale value, or fell back to a default would satisfy **one** row and
+fail the other. This is why the fixtures were given deliberately disagreeing dummy versions rather
+than the same one.
+
+ℹ️ Both `FindAll: PE hash` values — `6A9DFA2910F21000` and `000000001424C000` — match the hashes
+computed offline from the repackaged binaries **before either process was launched**, the second
+including its `TimeDateStamp=0` quirk. The offline cache-miss prediction and the live run agree on
+the exact value that decides whether `DetectVersion` runs at all.
 
 ⚠ ~~This makes the row **runnable**, not passed — the acceptance evidence is still a
 `Tier 1 (utf16) '++UE5+Release-5.4' -> 504` line in a real `scan-0.log`, which needs an
