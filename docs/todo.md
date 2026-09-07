@@ -1365,6 +1365,13 @@ before being written down.*
      did not draw. `ParallelIndexRanges` **joins** its pool (`Aura.cpp:190`) and
      `ParallelGObjectsScan` joins the watcher (`Aura.cpp:258`), so the caller's binding strictly
      outlives both.
+     ✅ **VERIFIED END-TO-END ON A REAL GAME 2026-09-07 (`0ee59c97`)** — Octopath Traveler, UE 4.18,
+     406,060 objects, victim `begin_value_scan` (→ `ScanForValue` → `ParallelGObjectsScan`). The
+     game already carried a **build-3380** proxy from an older session, so this is a true
+     before/after on one host, not fixture-vs-game:
+     **before 10 of 125 replies truncated to 238 bytes; after 0 of 115, three consecutive runs**,
+     with `client gone mid-command` logged exactly once in *both* directions — so the AFTER is a
+     real negative, not a missed trigger.
      ⛔ **Still owed, and here the review's use-after-free warning DOES apply:**
      `Fern::RunScan`/`RunRescan` (`Fern.cpp:5276`/`5114`), Frieren's `UE5_AutoStart`, and the CE
      remote thread. Those outlive the command that started them, so binding them to
