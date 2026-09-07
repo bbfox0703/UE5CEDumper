@@ -1617,7 +1617,21 @@ before being written down.*
   container internals aren't decomposed into guessed rows. *Parent: Guess-What leading-gap fix (builds
   1330-1333) + diagnostic (build 1364, this session); confirmed live 2026-06-19.*
 
-- **Native-C Value Scan — P0–P3 ALL SHIPPED on dev; only in-game verify of P3 remains** —
+- **✅ Native-C Value Scan — P0–P3 SHIPPED and FULLY VERIFIED (SPC arm closed 2026-09-07, `2b8aad04`)** —
+  The 2026-09-06 run closed the Class Pivot half and recorded two honest limits; **both are now
+  resolved**, and neither needed a game — that run's capture is still on disk
+  (`snapshots.6A9C1C8410F23000.db`).
+  (1) **SPC Query arm.** Replaying the product's Strict join key over the real pair: **all 8,556**
+  `<raw@0x..>` rows join, **none** with a vacuous `prop_offset`, **8** changed across the 77 s gap.
+  (2) **"DumperTestActor's own raw rows did not appear in the changed list — not chased."** They do
+  — four of them, including `<raw@0x918>` **4684 → 5829**, and 5829 is the exact pivot group key
+  that same run recorded. The absence was an artifact of the *Compare snapshots* view, not the data.
+  ⚠ Pinned by two tests rather than left as a one-off replay; the second one exists because a
+  `<raw@0xNN>` name already encodes its offset, so a broken offset term would be **invisible on
+  exactly the rows P3 is about**.
+  *Superseded row kept below for the trail.*
+
+- ~~**Native-C Value Scan — P0–P3 ALL SHIPPED on dev; only in-game verify of P3 remains**~~ —
   Effort: **0** (verify only) · Risk: low. Full design + status in
   [native-c-value-scan-spec.md](native-c-value-scan-spec.md). Opt-in raw/unmanaged
   (non-`UPROPERTY`) scan for native HP/MP via "Guess What" (`Ubel::GuessGapTypes`), across
