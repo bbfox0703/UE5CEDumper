@@ -8,6 +8,7 @@
 #include <Windows.h>
 #include <cstdint>
 #include <vector>
+#include "Grimoire.h"   // SANITY_MAX_CONTAINER_NUM -- the container-header plausibility ceiling
 
 namespace Macht {
 
@@ -290,7 +291,7 @@ inline bool ReadTArray(uintptr_t addr, TArrayView& out) {
     if (!ReadSafe(addr + 0x08, out.Count)) return false;
     if (!ReadSafe(addr + 0x0C, out.Max)) return false;
     // Sanity checks
-    if (out.Count < 0 || out.Count > 0x100000) { out = {}; return false; }
+    if (out.Count < 0 || out.Count > Grimoire::SANITY_MAX_CONTAINER_NUM) { out = {}; return false; }
     if (out.Max < out.Count) { out = {}; return false; }
     return true;
 }
@@ -335,7 +336,7 @@ inline bool ReadTSparseArray(uintptr_t addr, TSparseArrayView& out) {
     if (!ReadSafe(addr + 0x08, out.MaxIndex)) return false;
     if (!ReadSafe(addr + 0x0C, out.MaxCapacity)) return false;
     // Sanity: MaxIndex should be reasonable
-    if (out.MaxIndex < 0 || out.MaxIndex > 0x100000) { out = {}; return false; }
+    if (out.MaxIndex < 0 || out.MaxIndex > Grimoire::SANITY_MAX_CONTAINER_NUM) { out = {}; return false; }
     if (out.MaxCapacity < out.MaxIndex) { out = {}; return false; }
     // Allocation flags inline data (4 x uint32 at +0x10)
     for (int i = 0; i < 4; ++i)

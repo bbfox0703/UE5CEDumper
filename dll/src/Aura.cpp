@@ -539,7 +539,7 @@ static bool DetectLayout(uintptr_t addr) {
     {
         int32_t num = 0;
         Macht::ReadSafe(addr + 0x14, num);
-        if (num > 0 && num <= 0x800000) {
+        if (num > 0 && num <= Grimoire::SANITY_MAX_UOBJECTS) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x00, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
@@ -572,7 +572,7 @@ static bool DetectLayout(uintptr_t addr) {
         Macht::ReadSafe(addr + 0x08, maxChunks);
         Macht::ReadSafe(addr + 0x0C, numChunks);
         const bool chunksPlausible = (numChunks >= 1 && maxChunks >= 1 && numChunks <= maxChunks);
-        if (num > 0 && num <= 0x800000 && chunksPlausible) {
+        if (num > 0 && num <= Grimoire::SANITY_MAX_UOBJECTS && chunksPlausible) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x10, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
@@ -1983,7 +1983,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
         int32_t propsSize = 0;
         if (!Macht::ReadSafe(cls + DynOff::USTRUCT_PROPSSIZE, propsSize)) continue;
-        if (propsSize <= 0 || propsSize > 0x100000) continue;
+        if (propsSize <= 0 || propsSize > Grimoire::SANITY_MAX_STRUCT_BYTES) continue;
 
         // Log top candidates for diagnosis
         if (c < 5) {
@@ -2070,7 +2070,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
         // Read InternalIndex — should be reasonable
         int32_t idx = 0;
         if (!Macht::ReadSafe(probe + Grimoire::OFF_UOBJECT_INDEX, idx)) continue;
-        if (idx < 0 || idx > 0x800000) continue;
+        if (idx < 0 || idx > Grimoire::SANITY_MAX_UOBJECTS) continue;
 
         // Read FName ComparisonIndex — must resolve to a clean name.
         // NOTE: a plain printable-ASCII check is NOT enough — Serie::GetString
@@ -2107,7 +2107,7 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
         // miss falls through to the low-confidence "nearest" path instead.
         int32_t propsSize = 0;
         if (!Macht::ReadSafe(cls + DynOff::USTRUCT_PROPSSIZE, propsSize)) continue;
-        if (propsSize <= 0 || propsSize > 0x100000) continue;
+        if (propsSize <= 0 || propsSize > Grimoire::SANITY_MAX_STRUCT_BYTES) continue;
         if ((addr - probe) >= static_cast<uintptr_t>(propsSize)) continue;
 
         // This looks like a valid UObject that contains addr!
@@ -2476,14 +2476,14 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
         if (cfe.kind == ContainerKind::Array) {
             Macht::TArrayView arr;
             if (!Macht::ReadTArray(fieldAddr, arr)) continue;
-            if (arr.Max <= 0 || !arr.Data || arr.Max > 0x100000) continue;
+            if (arr.Max <= 0 || !arr.Data || arr.Max > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
             // Use Count (logical) for capture — slack slots hold stale data.
             bufData = arr.Data; capacity = arr.Count;
             leafAnchor = Radar::MakeArrayLeafAnchor(fieldAddr, arr.Data, arr.Count,
                                                     /*leafDepth=*/depth + 1);
         } else {
             if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
-            if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > 0x100000) continue;
+            if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
             bufData = sa.Data; capacity = sa.MaxCapacity;
             leafAnchor = Radar::MakeSparseLeafAnchor(fieldAddr, sa.Data, sa.MaxIndex,
                                                      /*leafDepth=*/depth + 1);
@@ -2686,7 +2686,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
                 // ReadTArray sanity-caps Count at 1M but not Max. A corrupted
                 // Max would project a huge buffer span and dilute results.
                 // Apply the same cap defensively.
-                if (arr.Max > 0x100000) continue;
+                if (arr.Max > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
 
                 // Use Max (allocated capacity) rather than Count so we also
                 // catch addresses landing in the array's slack region — when
@@ -2714,7 +2714,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
                 if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
                 if (sa.MaxCapacity <= 0 || !sa.Data) continue;
                 // Defensive cap — same rationale as Array.Max above.
-                if (sa.MaxCapacity > 0x100000) continue;
+                if (sa.MaxCapacity > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
 
                 // TSparseArray frees slots without overwriting them, so an
                 // address landing on a free-list slot may still hold the
@@ -2816,11 +2816,11 @@ static bool MatchAddrInStructContainers(
         if (cfe.kind == ContainerKind::Array) {
             Macht::TArrayView arr;
             if (!Macht::ReadTArray(fieldAddr, arr)) continue;
-            if (arr.Max <= 0 || !arr.Data || arr.Max > 0x100000) continue;
+            if (arr.Max <= 0 || !arr.Data || arr.Max > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
             bufData = arr.Data; capacity = arr.Max; logicalCount = arr.Count;
         } else {
             if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
-            if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > 0x100000) continue;
+            if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
             bufData = sa.Data; capacity = sa.MaxCapacity;
             logicalCount = sa.MaxIndex - sa.NumFreeIndices;
         }
@@ -3428,7 +3428,7 @@ static bool ReadTMapHeader(uintptr_t mapAddr, TMapHeader& out) {
     out.bitArrayBase = ResolveTMapBitArrayBase(mapAddr);
     // Sanity: ArrayNum bounded; some games hit 6-7 figures of total entries
     // when many UObjects use sparse delegates, but never beyond 1M.
-    if (out.arrayNum < 0 || out.arrayNum > 0x100000) return false;
+    if (out.arrayNum < 0 || out.arrayNum > Grimoire::SANITY_MAX_CONTAINER_NUM) return false;
     return true;
 }
 
@@ -7974,11 +7974,11 @@ ValueScanResult ScanForValue(
                 if (cfe.kind == ContainerKind::Array) {
                     Macht::TArrayView arr;
                     if (!Macht::ReadTArray(fieldAddr, arr)) continue;
-                    if (arr.Count <= 0 || !arr.Data || arr.Max <= 0 || arr.Max > 0x100000) continue;
+                    if (arr.Count <= 0 || !arr.Data || arr.Max <= 0 || arr.Max > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
                     bufData = arr.Data; capacity = arr.Count;
                 } else {
                     if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
-                    if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > 0x100000) continue;
+                    if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > Grimoire::SANITY_MAX_CONTAINER_CAPACITY) continue;
                     bufData = sa.Data; capacity = sa.MaxCapacity;
                 }
                 if (capacity <= 0) continue;

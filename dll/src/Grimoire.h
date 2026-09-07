@@ -52,6 +52,56 @@ inline bool IsUserspacePointer(uintptr_t p) {
     return p >= PTR_USERSPACE_MIN && p <= PTR_USERSPACE_MAX;
 }
 
+// --- Plausibility ceilings for values read out of the game ---
+//
+// Each guards a value just read from ANOTHER process before it is used as a loop bound or
+// an address multiplier. They are SANITY ceilings, not statements about what the engine may
+// legitimately contain: crossing one means "this is not the structure I think it is", and
+// the caller rejects the candidate rather than clamping it.
+//
+// ⛔ THEY ARE ALL 0x100000 TODAY AND THAT IS A COINCIDENCE OF MAGNITUDE, NOT A SHARED
+// MEANING -- which is the whole reason they are separate names. Classified site-by-site
+// 2026-09-07 by tracing each value's PRODUCING read and CONSUMING arithmetic, then put to
+// independent adversarial re-checks.
+//
+// ⭐ THE SPLIT THAT SURVIVED, AND THE ONE THAT DID NOT. Two reviewers looked at the same
+// int32 at +0x08 and reached OPPOSITE conclusions -- one "it is a live element COUNT"
+// (UE's own `TSparseArray::GetMaxIndex() { return Data.Num(); }`, vendor SparseArray.h:460),
+// the other "it is a slot EXTENT including freed entries" (this codebase spells the live
+// count `MaxIndex - NumFreeIndices` in six places, and ReadTMapHeader reads NumFreeIndices
+// yet never subtracts it). Both arguments are sound, which is the point: count-vs-index is
+// NOT a distinction this code sustains, so it gets ONE name. What IS real is the field
+// split -- +0x08 (num/extent) and +0x0C (capacity) are different members, and Max >= Num
+// always, so capacity can want the looser ceiling. That is where the line is drawn.
+//
+// ⚠ 0x100000 also appears STANDALONE elsewhere with unrelated meanings; only the sites
+// named below are these ceilings. Same warning as PTR_USERSPACE_MIN's 0x10000 above.
+
+/// UStruct::PropertiesSize -- a BYTE budget for one struct/class instance.
+/// Aura.cpp x2 (class-field walks), Genau.cpp x1 (class-candidate probe).
+constexpr int32_t SANITY_MAX_STRUCT_BYTES = 0x100000;      // 1 MiB of instance data
+
+/// A container's OCCUPIED extent: the int32 at +0x08 of a TArray header -- TArray::ArrayNum,
+/// TSparseArray::MaxIndex, a TMap's slot count. Dimensionless entries, never bytes.
+/// Macht.h x2, Aura.cpp x1 (ReadTMapHeader), Genau.cpp x1 (SparseDelegates probe).
+constexpr int32_t SANITY_MAX_CONTAINER_NUM = 0x100000;     // 1M entries/slots
+
+/// A container's ALLOCATED capacity: the int32 at +0x0C -- TArray::ArrayMax,
+/// TSparseArray::MaxCapacity. Always >= the num above, hence its own ceiling.
+/// Aura.cpp x8, Genau.cpp x1.
+constexpr int32_t SANITY_MAX_CONTAINER_CAPACITY = 0x100000;
+
+/// A TSparseArray allocator's BITMAP WIDTH in bits -- not entries, not bytes. Grows by
+/// doubling from 0x80, so it tracks the slot count rather than equalling it. Genau.cpp x1.
+constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
+
+/// GObjects population -- the number of UObjects in the whole process. Separate magnitude
+/// AND separate meaning. Measured, not guessed: a real title reached 0x800000 (8,388,608).
+/// ⚠ Aura.cpp:2073 bounds an InternalIndex rather than a count; an index lives in the same
+/// space as the population and must rise with it, so it belongs here -- but do NOT merge this
+/// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
+constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
+
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
 // Most offsets are stable, but Outer shifts when CasePreservingName is active (the
