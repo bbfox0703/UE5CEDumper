@@ -1238,8 +1238,17 @@ before being written down.*
   hand-corrected and the generator was not, so re-running it would silently revert the fix. **After
   hand-editing a generated file, back-port or the next `--apply` is a regression.**
 
-- **Multi-pipe Phase 1 — ⛔ §9.6 item 5 REOPENED 2026-09-07 with a REPRODUCED DEFECT; the watch
-  item is closed** —
+- **✅ Multi-pipe Phase 1 — §9.6 item 5 REOPENED, REPRODUCED, FIXED and RE-VERIFIED 2026-09-07;
+  the watch item was already closed** — `[MULTIPIPE-CANCEL-2026-09-07]`
+  ⭐ **Read the body for the trail, not just this line.** Opened the day it was closed-by-mistake:
+  the evidence on file described the *opposite* experiment. Measuring it reproduced a real defect
+  (a foreign client's death truncated another connection's scan and answered `ok:true`), which is
+  now fixed for pipe handlers (`bea9009c`), for Aura's parallel workers (`257878a3`), flagged when
+  it does happen (`c4e270e9`), and **verified end-to-end on a real game with a true before/after**
+  (`0ee59c97`). The two remaining sub-questions were *answered*, not deferred: `RunScan` must NOT
+  bind to its requester (a scan is a shared product), and the CE partial fix is unsafe. What is
+  genuinely still owed is listed below and is small.
+  <!-- superseded header: "⛔ §9.6 item 5 REOPENED with a REPRODUCED DEFECT" -->
   Effort: **S** · Risk: low. The two-connection lane split shipped + in-game verified for §9.6 items
   1–5 (dev-log 2026-06-28).
   > ~~**✅ The lane-drop edge is now verified (Elliot 2026-07-23).** Closing the game mid-snapshot
@@ -1454,6 +1463,8 @@ before being written down.*
   a real migration cost to fix a 2%-of-one-machine, same-image-size-required hazard. Recorded so
   the next person who notices the collapse does not pay for the change either. Re-measure if a
   future UE default makes deterministic linking common.
+
+- **Magic-number centralization — Tier 2 remainder + Tier 3 (deferred; low priority)** —
   Effort: **M** · Risk: med. Tier 1 (dup/tunable literals) + the Tier 2 `IsUserspacePointer` paired-
   bounds helper SHIPPED (dev-log 2026-07-03). LEFT because each carries genuine per-site multi-meaning
   nuance: object-count/size ceilings — `0x800000` (8M UObject count), `0x100000` (1M, but needs
