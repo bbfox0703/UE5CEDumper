@@ -1525,9 +1525,17 @@ before being written down.*
   Effort: **S** · Risk: low. The "Flatten GAS attributes" Options toggle (build 1698) collapses a
   `GameplayAttributeData` StructProperty one level in **Copy CE XML / Copy CE Field** only. Two
   follow-ups the user explicitly scoped out of that change:
-  (1) **Export CSX** — apply the same flatten to the CE Structure Dissect (`.csx`) export
-  (`CsxExportService.EmitElement`). The `IsGasAttributeStruct` detection + combined-offset math port
-  directly, but CSX is a separate emitter so it was intentionally left out.
+  (1) ~~**Export CSX** — apply the same flatten to the CE Structure Dissect (`.csx`) export
+  (`CsxExportService.EmitElement`).~~ ⛔ **WON'T DO — maintainer's decision 2026-09-07.** CSX simply
+  does not have this feature, does not need it, and **must not even be passed the flag**. The 2026-09-07
+  todo audit reported this as a gap ("the Options toggle is a strict no-op for Export CSX"), which
+  read the *absence* of a feature as a *missing* feature. It is not: `.csx` is CE's Structure Dissect
+  format, a different emitter with a different job, and CSX already flattens every StructProperty by
+  its own rules.
+  ⚠ Nothing misleads the user here either — `str.Tip.LiveWalker.FlattenGas` already scopes itself in
+  its first sentence, "one level in **Copy CE XML / Copy CE Field**", and never mentions CSX. So there
+  is no plumbing to add and no wording to fix. Do not re-open this by grepping for
+  `flattenGasAttributes` and noticing CsxExportService has no parameter — that absence is the design.
   (2) **Other single-field / wrapper structs** — keep flatten GAS-only "for now"; a general
   "flatten any single-/two-scalar-field struct one level" option would need a careful detection rule
   to avoid surprising collapses ("various cases"). *Parent: Flatten GAS attributes build 1698
