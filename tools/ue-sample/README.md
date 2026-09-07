@@ -622,6 +622,29 @@ Stating these so nobody spends a packaging cycle on them:
   `FOptionalProperty` exists (`PropertyOptional.h`), UHT resolves it (`UhtOptionalProperty.cs`), the
   only inner-type rule is `CanBeContainerValue`, and the engine itself ships `TOptional<FBox>` and
   `TOptional<uint32>` UPROPERTYs.
+* ⛔ **UE 5.8 packaging needs `bUseZenStore=False`, or `BuildCookRun` fails AFTER a successful
+  cook.** 5.8 flipped an engine-wide default; measured across the installed engines 2026-09-07:
+
+  | engine | `Engine/Config/BaseGame.ini` |
+  |---|---|
+  | UE 5.4 | key **absent** → Zen off |
+  | UE 5.7 | `bUseZenStore=False` |
+  | UE 5.8 | **`bUseZenStore=True`** |
+
+  With it on, the cook writes a **Zen oplog** and staging reads it back over
+  `http://[::1]:8558`. On this machine ZenServer exits mid-run — its own log says
+  `exiting since sponsor processes are all gone` — while AutomationTool is still polling it, so
+  the run dies in `ReadZenCookedFilesFromZenServer` with `ZenServer is not running`. ⚠ **The cook
+  itself SUCCEEDED** (`UnrealEditor-Cmd ExitCode=0`, `UnrealPak ExitCode=0` ×3); only staging
+  failed, so the error reads like a broken cook when nothing about the cook was wrong.
+  `DumperTest58/Config/DefaultGame.ini` sets it under
+  `[/Script/UnrealEd.ProjectPackagingSettings]` and carries the reason inline. Loose cooked files
+  need no server; with the override, both configs package in ~40–60 s.
+  ⛔ **Do NOT "fix" this by starting a sponsor-less ZenServer** — tried, and it fails *differently*
+  and more confusingly: `LogIoStore: Error: Failed to add sponsor process IDs to launched
+  ZenServer`, because a server started without `--owner-pid` has no sponsor plumbing to register
+  against. ⛔ And do not install the Windows service (`zen.exe service install`) — that is a
+  machine-wide change for a per-project packaging quirk.
 * ⛔ **`<Staged>\Windows\DumperTest.exe` IS NOT THE GAME — inject into the CHILD.** The exe at the
   root of a staged/archived build is UE's **bootstrap stub**: 153 KB, and measured 2026-09-07 it
   imports `CreateProcessW` and carries the literal string
