@@ -965,8 +965,7 @@ int32 ADumperTestActor::Hook_ReleaseTrampolineVM()
 int32 ADumperTestActor::ReserveTrampolineVm()
 {
 	constexpr SIZE_T kGranularity = 64 * 1024;      // Windows allocation granularity
-	constexpr SIZE_T kBlock       = 1024 * 1024;    // 1 MB per reservation
-	constexpr int32  kMaxBlocks   = 4096;           // 4 GB of address space, hard ceiling
+	constexpr int32  kMaxBlocks   = 200000;         // hard ceiling on VAD entries we will create
 
 	// Centre the sweep on this module: the functions MinHook will hook live here, so this is the
 	// window its trampoline allocator will search.
@@ -974,16 +973,50 @@ int32 ADumperTestActor::ReserveTrampolineVm()
 	const uintptr_t Lo   = (Base > 0x7FFFFFFFull) ? (Base - 0x7FFFFFFFull) : kGranularity;
 	const uintptr_t Hi   = Base + 0x7FFFFFFFull;
 
+	// ⛔ WALK THE FREE REGIONS WITH VirtualQuery -- DO NOT STRIDE BLINDLY IN FIXED BLOCKS.
+	// The first version of this reserved 1 MB at a time stepping 1 MB, which LOOKS like full
+	// coverage and is not: VirtualAlloc(MEM_RESERVE) fails for the WHOLE request if any part of
+	// it overlaps an existing allocation, so every 1 MB window that clipped a module or heap
+	// failed outright and left the rest of that megabyte free. Measured 2026-09-07: 3,824 of
+	// 4,096 blocks succeeded -- 93% coverage, which reads like success -- and the 272 failures
+	// left up to ~960 KB free apiece. MinHook needs a few KB. The hook installed on the first
+	// attempt (`hook_active=1`) and the run measured NOTHING.
+	//
+	// Querying instead reserves exactly what is actually free, so nothing is left behind.
 	int32 Reserved = 0;
-	for (uintptr_t Addr = Lo; Addr < Hi && Reserved < kMaxBlocks; Addr += kBlock)
+	uintptr_t Addr = Lo;
+	while (Addr < Hi && Reserved < kMaxBlocks)
 	{
-		void* P = VirtualAlloc(reinterpret_cast<void*>(Addr & ~(kGranularity - 1)),
-		                       kBlock, MEM_RESERVE, PAGE_NOACCESS);
-		if (P)
+		MEMORY_BASIC_INFORMATION Mbi{};
+		if (VirtualQuery(reinterpret_cast<void*>(Addr), &Mbi, sizeof(Mbi)) != sizeof(Mbi))
 		{
-			ReservedVmBlocks.Add(P);
-			++Reserved;
+			break;
 		}
+		const uintptr_t RegionBase = reinterpret_cast<uintptr_t>(Mbi.BaseAddress);
+		const uintptr_t RegionEnd  = RegionBase + Mbi.RegionSize;
+
+		if (Mbi.State == MEM_FREE)
+		{
+			// Align up to allocation granularity, clamp to the window, reserve the whole run.
+			uintptr_t Start = (RegionBase + kGranularity - 1) & ~(kGranularity - 1);
+			if (Start < Lo) { Start = Lo; }
+			const uintptr_t End = (RegionEnd < Hi) ? RegionEnd : Hi;
+			if (End > Start)
+			{
+				const SIZE_T Size = static_cast<SIZE_T>(End - Start) & ~(kGranularity - 1);
+				if (Size >= kGranularity)
+				{
+					void* P = VirtualAlloc(reinterpret_cast<void*>(Start), Size,
+					                       MEM_RESERVE, PAGE_NOACCESS);
+					if (P)
+					{
+						ReservedVmBlocks.Add(P);
+						++Reserved;
+					}
+				}
+			}
+		}
+		Addr = (RegionEnd > Addr) ? RegionEnd : (Addr + kGranularity);
 	}
 	UE_LOG(LogTemp, Warning,
 	       TEXT("[DumperTest] -DumperTestStarveVM: reserved %d block(s) around module base %p. ")
