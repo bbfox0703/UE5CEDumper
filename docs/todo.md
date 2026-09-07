@@ -1341,22 +1341,44 @@ before being written down.*
   Snapshot SPEED is a SEPARATE issue (§9.5): UI-side single-threaded multi-MB chunk parse (~2.4s/chunk)
   → streaming `Utf8JsonReader`/smaller chunks. *Parent: reverted Phase 1 build 1836 (dev-log 2026-06-28).*
 
-- **Make the per-command cancel PER-CONNECTION (the other half of `[MULTIPIPE-CANCEL-2026-09-07]`)** —
-  Effort: **M** · Risk: **med** (changes cancellation semantics on the pipe path).
-  `c4e270e9` made a truncated bulk reply *detectable* (`truncated: true` on `list_enums`,
-  `walk_instance_batch`, `pe_profile_get`). It did **not** stop the cross-connection cancel:
-  `Fern::MonitorLoop` (`Fern.cpp:861`) still trips the process-wide `Tot::g_perCommand` for **any**
-  broken in-flight connection, so an unrelated client's death still truncates your scan — you can
-  merely see that it happened now. §9.3's original proposal was to cancel only the connection that
-  broke (or only heavy ones); `inFlightHeavy` was specified and never written.
-  ⚠ Two things to settle first, neither obvious: (1) `Tot::Requested()` is read from deep inside
-  Aura/Ubel loops with no connection context, so per-connection cancel needs a thread-local or a
-  cancellation token threaded through — that is the actual work, not the `if`; (2) whether a
-  cancelled reply should also flip `ok` to false — more correct, but the UI and every
-  `tools/verify` rig branch on `ok`, so it risks trading silent truncation for a spurious failure.
-  ⭐ **The rig already exists and reproduces on demand**: `tools/verify/multipipe_cancel_isolation.py`
-  (host at `-DumperTestMaxFPS=1`; 2 FPS silently measures nothing — its docstring explains why).
-  *Parent: multipipe-eval §9.3/§9.6 item 5; measured 2026-09-07 (`6d674989`).*
+- **✅ DONE 2026-09-07 for pipe handlers (`bea9009c`) — narrowing the UNBOUND population is what
+  remains** — `[MULTIPIPE-CANCEL-2026-09-07]`
+  The measured defect (`6d674989`) is fixed: 5,157-of-5,264 truncated replies → **0 of ~113 across
+  three consecutive runs**, each with `client gone mid-command = 1` so the monitor genuinely
+  observed the foreign death. `Connection` owns a `cancel` flag, `HandleConnection` binds it to its
+  serving thread (`Tot::ConnectionCancelScope`), `MonitorLoop` sets it on the connection that broke.
+  ⛔ **The obvious design was WRONG and is documented as rejected in `Tot.h` — do not re-propose it.**
+  `return (t_connCancel && t_connCancel->load()) || g_shutdown` makes *unbound* identical to
+  *cancel-immune*, inverting the default from **fail-safe to fail-silent**: every thread that does
+  not bind silently stops being cancellable, and `t_cancelImmune` goes semantically dead (M4 and B4
+  erased without a line of them deleted). So the unbound case deliberately falls back to the global
+  flag, and `MonitorLoop` still trips it.
+  **Still owed, in rough priority order:**
+  1. **Narrow the unbound population.** Three groups still take the global cancel, so a foreign
+     death still aborts them: Aura's `ParallelIndexRanges` workers (`Aura.cpp:173`) and its
+     `cancelWatcher` (`Aura.cpp:221`); `Fern::RunScan`/`RunRescan` (`Fern.cpp:5276`/`5114`) and
+     Frieren's `UE5_AutoStart`; the CE remote thread in the Frieren C-ABI exports.
+     ⚠ This is the hard one, and the naive fix is a bug: binding those threads to `&conn->cancel`
+     is a **use-after-free**, because the connection can be erased while they still run — precisely
+     in the disconnect case the binding exists for. It needs an owning handle (a `shared_ptr` to a
+     small cancel object, not a raw pointer into `Connection`).
+     ⭐ The parallel path is not a corner case: `ScanThreadCount` (`Aura.cpp:129`) goes parallel at
+     ≥8192 objects, i.e. **every real game**, for all seven heavy scans.
+  2. **`ScanReport::cancelled` is still a process-global non-atomic file static.** The cancel is now
+     per-connection but the recorded *verdict* is not, so two connections can overwrite each other's.
+  3. **The CE case is arguably a fix, not a regression.** Today a pipe client's disconnect cancels a
+     CE user's export call (`Aura.cpp:1410` via `UE5_FindObject`/`UE5_FindClass`) — the exact bug B4
+     fixed for the Mimic poller and never for the direct exports. Decide deliberately.
+  ⛔ `Tot::PerCommandStillOwed` / `m_cancelOwners` / `ReevaluatePerCommandCancel` are **NOT**
+  subsumed by per-connection flags and must not be deleted — that predicate is the only expression
+  in the tree of *"does any client still need this work"*.
+  ⚠ Also unresolved: whether a cancelled reply should flip `ok` to false. More correct, but the UI
+  and every `tools/verify` rig branch on `ok`, so it risks trading silent truncation for a spurious
+  failure. `truncated: true` (`c4e270e9`) is the additive half.
+  ⭐ **The rig reproduces on demand**: `tools/verify/multipipe_cancel_isolation.py`, host at
+  `-DumperTestMaxFPS=1`. ⚠ 2 FPS silently measures nothing and 1 FPS is flaky run-to-run — a run
+  with `observed == 0` is INCONCLUSIVE, never a pass; re-run until the monitor fires.
+  *Parent: multipipe-eval §9.3/§9.6 item 5.*
 
 - **ℹ️ MEASURED AND DELIBERATELY NOT FIXED — `peHash` degenerates when `TimeDateStamp` is 0** —
   `Genau.cpp:54` builds the per-game key as `TimeDateStamp` + `SizeOfImage`. A deterministic /
