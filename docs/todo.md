@@ -1649,7 +1649,22 @@ before being written down.*
   clearer "X% captured" progress.
   *Parent: Native-C P3 in-game test (FF7 Rebirth), this session.*
 
-- **DynOff calibrated offsets are non-atomic — tighten the second writer (low-risk hardening)** —
+- **✅ DONE 2026-09-07 (`5d1a6bfe`) — it was not "benign", and neither proposed fix was right** —
+  The write at `Ubel.cpp` WalkInstance was a **third** writer of the `sizeof(FProperty)` family,
+  assigning `FSTRUCTPROP_STRUCT` directly and so **splitting the family** — the exact failure
+  audit #5 G12 introduced `ApplyPropertyFamily` to prevent, still reachable by the one writer G12
+  did not count (its own note says "Both writers now go through here"). Silent and half-right:
+  struct reads stay correct while TArray element descriptors and every enum name read 8 bytes off.
+  ⛔ **Both fixes this row proposed were wrong.** "Drop the redundant write" — it is not redundant,
+  it probes `{0,±4,±8,±0x10}` where `CorrectSubclassOffsets` probes `{0,±4,±8,±0xC}`, so it is the
+  only path that can land a ±0x10 layout. "Make the offsets `std::atomic<int>`" — fixes the
+  technical race and leaves the actual bug, since a lone atomic store still splits the family.
+  Routing it through the helper under the existing `s_calibrationMutex` fixes both.
+  ⭐ Now gated: `tools/check_property_family.py` (16th gate), proven to fail on the reintroduced
+  defect. A prose invariant plus a hand-counted writer list is what failed here twice.
+  *Superseded row kept below for its reasoning trail.*
+
+- ~~**DynOff calibrated offsets are non-atomic — tighten the second writer (low-risk hardening)**~~ —
   Effort: **S** · Risk: low. The race audit of the parallel snapshot flagged a PRE-EXISTING
   technical data race the parallel readers widen: `DynOff::FSTRUCTPROP_STRUCT` (and the sibling
   calibrated `DynOff::` ints) are non-atomic. `Ubel::CorrectSubclassOffsets` serializes its writes
