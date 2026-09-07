@@ -1364,8 +1364,19 @@ before being written down.*
      small cancel object, not a raw pointer into `Connection`).
      ⭐ The parallel path is not a corner case: `ScanThreadCount` (`Aura.cpp:129`) goes parallel at
      ≥8192 objects, i.e. **every real game**, for all seven heavy scans.
-  2. **`ScanReport::cancelled` is still a process-global non-atomic file static.** The cancel is now
-     per-connection but the recorded *verdict* is not, so two connections can overwrite each other's.
+  2. ~~**`ScanReport::cancelled` is still a process-global non-atomic file static.**~~
+     **✅ CHECKED 2026-09-07 — the finding does not apply, and the check found an older bug
+     instead (`55be6f9b`).** The review raised this as fatal, but it was written against design v1
+     (where every non-connection thread became immune). In the shipped version `cancelled` is
+     consumed **locally** — the no-latch branch (`Genau.cpp:2594`) reads it in the same function,
+     immediately after the scan that wrote it — so it is not a persisted cross-connection verdict.
+     The other three reports are written only from `Genau::FindAll` on unbound scan threads.
+     ⭐ What the check *did* find: `FindSparseDelegateStorage` is the one scan reachable from **pipe
+     command** threads (`Aura.cpp:3742`, `Aura.cpp:6284`), so two clients could enter its slow path
+     before the one-shot latch and both write the same file-static `ScanReport` — which owns a
+     `std::vector`. A plain data race, older than the cancel work. Now serialised with a mutex plus
+     a latch re-check. ⛔ Not `std::call_once`: MA1 deliberately does not latch a cancelled scan, and
+     `call_once` would burn the one-shot on it.
   3. **The CE case is arguably a fix, not a regression.** Today a pipe client's disconnect cancels a
      CE user's export call (`Aura.cpp:1410` via `UE5_FindObject`/`UE5_FindClass`) — the exact bug B4
      fixed for the Mimic poller and never for the direct exports. Decide deliberately.
