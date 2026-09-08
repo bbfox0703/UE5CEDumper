@@ -1170,7 +1170,7 @@ Kill rate 62%, in line with this file's own "an agent sweep is ~half wrong befor
 
 | sev | site | what lies |
 |---|---|---|
-| 🟠 MED | `dll/src/Dunste.cpp:217` `InvokeSetCollision` drops `UE5_CallProcessEventEx`'s `int32_t` and returns "the setter was **found**" as if it meant "collision **changed**" | `LOG_INFO("Fly: SetActorEnableCollision(%d) invoked")` + the `return true` all three call sites commit `s_state.collisionOff` from. **`-8` is not hypothetical**: both callers run on threads that called `Tot::MarkBackgroundWorker()` (`Dunste.cpp:482`, `:576`) and `Frieren.cpp:2146` returns `-8` for exactly that when the hook is down |
+| 🟠 MED | `dll/src/Dunste.cpp:217` `InvokeSetCollision` drops `UE5_CallProcessEventEx`'s `int32_t` and returns "the setter was **found**" as if it meant "collision **changed**" | `LOG_INFO("Fly: SetActorEnableCollision(%d) invoked")` + the `return true` all three call sites commit `s_state.collisionOff` from. **`-8` is not hypothetical** — ⚠ **but only via ONE of the two threads; corrected by round 2, see below.** The `WorkerLoop` arm (`Dunste.cpp:482` → the `:530` call) stands: `IsResponsiveFromLiveness(Unknown) == true` by contract (`Stark.h:129-133`), so the worker proceeds with the hook *inactive*, and `Frieren.cpp:2146` then returns `-8` for the marked thread. The `PendingRestoreLoop` arm (`:576` → `:612`) is **REFUTED**: that loop only starts from `StartPendingLocked()` at `Dunste.cpp:729`, inside the `else` of `if (Stark::IsGameThreadResponsive())` — i.e. only when `Stalled` — and `ClassifyGameThreadLiveness` (`Stark.h:112-113`) returns `Stalled` only past `if (!hookActive) return Unknown;`. **`Stalled` ⟹ hook active**, and `-8` (`Frieren.cpp:2146`) is only reached when `IsHookActive()` is **false**, because `:2109` dispatches to `EnqueueInvoke` first. Re-verified by hand at HEAD, not taken from the agent |
 | 🟡 LOW | `dll/src/Aura.cpp:155` — a scan worker chunk that **throws** is swallowed by `catch(...)` which never sets the shared `deadlineHit` atomic | `Aura.cpp:8078` → `Fern.cpp:3224 data["deadline_hit"]` — the ONLY wire field that tells the UI the result set is truncated. A partial value scan renders as a complete one |
 | 🟡 LOW | `dll/src/Ubel.cpp:3362` — `ReadMulticastDelegateArrayElements` drops both InvocationList header `ReadSafe`s | an unreadable element is published as the positive string `"(0 bindings)"` and counted in `readCount`; `Macht::ReadTArray` validates `Count`/`Max` but **never probes `Data`**, so a freed buffer passes the gate |
 | 🟡 LOW | `ui/…/ViewModels/MainWindowViewModel.cs:1731` and `TeleportViewModel.cs:2006` — the CE AA-script clipboard fallback drops `CopyToClipboardAsync`'s `Task<bool>` | StatusText says *"copied as CE XML — paste into Cheat Engine's address list"* when nothing reached the clipboard. `IPlatformService.cs:49` states the contract verbatim (*"Returns true only when the text actually reached the clipboard"*) and **`InvokeParamDialog.cs:921-929` already handles it correctly** — the correct model exists in-tree |
@@ -1263,6 +1263,129 @@ gate #4's `aob-specificity-baseline.tsv` rather than zero-tolerance. Cost at int
 steady state one baseline line per new site. ⚠ Exclude the param-buffer packers (`WriteVecParam`,
 `WriteFloatParam`) — they build a ProcessEvent argument buffer, they are not effects. `[[nodiscard]]`
 has better semantics but is unused repo-wide and needs a build-output decision the gate harness avoids.
+
+## 🔎 Blind-spot sweep ROUND 2 — 2026-09-08, build 3423. 10 confirmed, and the proposed gate is refuted
+
+Round 2 went where round 1's 0/154 list yield said to go: **hand-grep in unvisited regions**, not more
+triage. 28 agents over the CE Lua emission layer (10,308 lines) + the standalone `.lua`/`.CT` (3,691),
+the C# status surface (477 writes / 23 files), the 213 qualified-call sites round 1's scanner could not
+express, the four never-swept sibling modules (2,071 lines), and the two promoted families.
+
+**Raw: 112 defect claims → 18 skepticised → 10 confirmed, 8 refuted.** ⭐ **Again 0 of the confirmed
+came from a candidate row** — `celua-A` states it outright: the rows are `[ENABLE]`/`[DISABLE]`
+literals, while *the defect is the ABSENCE of an untick, which no claim-site list can surface.*
+
+### ✅ Confirmed (10)
+
+| sev | site | what lies |
+|---|---|---|
+| 🟠 MED | `scripts/UE5CEDumper.CT:879` — the **shipped** `.CT`'s inject record unticks with `memrec.Active = false` **immediately inside `[ENABLE]`** | CE's `TMemoryRecord.setActive` (`memoryrecordunit.pas:2573`) opens `if state=fActive then exit;` and only assigns `fActive` **after** `autoassemble` returns, so the untick **no-ops** and the row stays ticked over an injection that never happened. Then `[DISABLE]` runs a real `UE5_Shutdown` against a proxy this script never injected — which is **audit #4 B30**, named in the file's own comment three lines above |
+| 🟡 LOW | `scripts/ue5_freeze_helper.lua:170` — the same immediate untick in **SAMPLE 1**, the block the file sells at `:137` as *"copy this whole thing"* | and its parity claim at `:132-133` (*"the same shape UE5DumpUI's own generated scripts use"*) is **false at HEAD**: `FreezeScriptGenerator.cs` emits `CeLuaHygiene.DeferredUntickLua` at `:93/:106/:243/:256`. A user who copies the sample reproduces `[FREEZESTUCK-2026-08-18]` |
+| 🟡 LOW | `ui/…/Services/InvokeScriptGenerator.cs:134` — `AppendIdleWait` called **without `onUnreadable`** | so `CeLuaHygiene.cs:186` folds "mailbox unreadable" into "busy", and a **dead game process** is reported as *"Another CE script or a previous invoke is still mid-command; try again in a moment."* Straight against the MUST-rule *"never report a mailbox failure by guessing"* |
+| 🟡 LOW ×2 | `LiveWalkerViewModel.cs:4362` and `:4866` | *"Copied: N objects, M XML lines."* / *"CE AA script copied"* over a discarded clipboard write |
+| 🟡 LOW | `Views/PropertyXrefDialog.cs:487` | drops **both** AOBMaker `Task<bool>` results and paints a green success label |
+| 🟡 LOW | `dll/src/Aura.cpp:6386` | reports `"(0 bindings, sparse)"` for a delegate whose `bIsBound` byte **read 1**, when the InvocationList header reads faulted |
+| 🟡 LOW | `dll/src/Ubel.cpp:3051` | `TArray<TLazyObjectPtr>` publishes a **fabricated all-zero FGuid** and counts it in `readCount` when the element reads fault |
+| 🟡 LOW ×2 | `TeleportViewModel.cs:1847` / `:2344` | Stealth *"Reset"* reports a release it never sent when the candidate is null (**the DLL keeps holding**); Time-dilation Apply promises an override *"applies once a pawn exists"* when `SetDilation` stored nothing |
+
+⭐ **One root cause covers three of the CE Lua rows**: `CeLuaHygiene.AppendIdleWait`'s `onUnreadable`
+parameter (`CeLuaHygiene.cs:163`, used at `:186` as `onUnreadable ?? onBusy`) is passed by only **2 of
+its 5** call sites. The toggle-shaped wrapper `AppendIdleWaitOrBail` (`:540-564`) always distinguishes
+correctly, so every generator that goes through it is clean. **The fix is 3 arguments, not 3 rewrites.**
+
+### ⚠ A round-1 claim, corrected — and the correction is re-verified by hand
+
+Round 1's `Dunste.cpp:217` MEDIUM **stands**, but its reachability argument was **half wrong** and the
+row above has been edited in place. `-8` needs `IsHookActive() == false` (`Frieren.cpp:2109` dispatches
+to `EnqueueInvoke` before the `-8` at `:2146`), and `PendingRestoreLoop` only starts when the thread is
+`Stalled`, which **implies hook active** — so the `:576`/`:612` arm cannot reach `-8` at all. The
+`WorkerLoop` arm survives *because* `IsResponsiveFromLiveness(Unknown) == true` by documented contract
+(`Stark.h:129-133`), so the worker proceeds with the hook inactive. ⭐ **The refuting agent was right
+and the round-1 write-up was wrong; this was re-read at HEAD before editing, not taken on trust.**
+
+### ⛔ Refuted (8) — do not re-raise
+
+`Dunste.cpp:530` (a **duplicate** of round 1's own confirmed row — three call sites, all already
+enumerated there) · `Dunste.cpp:612` (above) · `Schlacht.cpp:366` and `Wirbel.cpp:1128` — **refuted a
+second time, independently**, which is the strongest evidence yet that `d48441e7` and the
+*"Do NOT trust K2_SetActorLocation's return here"* comment are both right ·
+`Schlacht.cpp:640` · `Wirbel.cpp:619` · `TeleportScriptGenerator.cs:126` ·
+`LiveWalkerViewModel.cs:5389`.
+
+### ⛔ A test-coverage hole that let two of these survive two audits
+
+`CeMailboxBailoutTests.cs:317-335` builds its corpus from
+`Directory.EnumerateFiles(services, "*ScriptGenerator.cs")` filtered on the literal `"[ENABLE]"`.
+`CeXmlExportService.cs` emits `sb.AppendLine("[ENABLE]")` at `:1334`, `:1537` and `:1709` — it passes
+the **content** filter and is excluded purely by the **filename glob**. The suite's own guard
+`emitters.Count >= 12` still passes, **so the hole is invisible**. Same shape as this file's
+`[PROXYDEPS]` lesson: the assertion counts what it collected, not what exists.
+
+### 📐 Coverage after both rounds (derived, not estimated)
+
+- **dll/src is spent.** 237 of the 293-site shape-A population examined (**81%**); the last two DLL
+  arms (72 qualified/int-kind sites + 2,071 sibling lines) returned **0 between them**; both DLL
+  confirmations are LOW and both are `ReadSafe` siblings. Round 1 got 5 from the DLL, round 2 got 2.
+  **A third DLL sweep is not worth an agent.** Residue, if ever wanted: `Fern.cpp` 26, `Wirbel.cpp` 26,
+  `Frieren.cpp` 18.
+- **Never walked back to their producers by either round:** 536 `LOG_*` sites in `dll/src` (234 carrying
+  a count/outcome token) and **50 outcome-shaped pipe fields in `Fern.cpp`**. The canonical Schlacht
+  defect lied through exactly one of those 50.
+- **The C# dropped-bool population — 104 sites — was never enumerated by either round.** Round 2's C#
+  axis was the *status surface*, a different cut. The three C# findings it did produce were incidental.
+
+### ✅ The sibling-module null is REAL this time, and the distinction matters
+
+Unlike round 1's Grausam null, the 0 here is evidence of clean code, proved three ways: the shape-A
+density in that family is ~1 site per 115 lines (**denser** than the DLL average — the agent was not
+reading empty ground); four of the modules (`Flamme` HintCache, `Linie` fire-counts, `Sense` telemetry,
+`Methode` CE menu glue) have **no claim channel to lie through**; and `Dunste`, the one real effect
+applier, is written *against* this shape on purpose — `:220` logs *"invoked"*, not *"applied"*, and
+`Fern.cpp:6006-6007` discards three `int32_t` returns but publishes `flyStatusJson(st)` built from a
+**re-read** of live state. That is the corrected Schlacht pattern already in place.
+⚠ What reading genuinely **cannot** settle here belongs in the register, not in a sweep: whether
+`Dunste`'s MOVE_Flying re-assert **wins the race** against the engine is observable only on a game.
+
+### ⛔ Gate #17 as proposed in round 1 is REFUTED — do not build it
+
+Scored against the evidence: an allowlist of ~25 **effect-appliers** over `dll/src` catches **0 of
+round 2's 10** (the two DLL rows are `Macht::ReadSafe` — a *reader*; six are C#; two are `memrec.Active`
+placement in `.lua`/`.CT`) and **0 of round 1's 5**. Worse, the allowlist *is* the failure mode this
+repo has already measured: `tools/check_property_family.py`'s own header records that G12 shipped
+*"Both writers now go through here"* when **there were three**, and concludes *"a prose invariant plus
+a hand-counted writer list is what failed; counting them mechanically is the fix."*
+
+**What the evidence supports instead — three small gates, none needing curation:**
+
+1. **17a — CE Lua untick placement.** Population 17, mechanically separable with **zero curation**:
+   flag `memrec.Active = false` lexically inside an `[ENABLE]` block and **not** inside a
+   `createTimer`/`OnTimer`/`OnClose` closure. Catches `CT:879`, `freeze_helper.lua:170` **and the
+   still-unreported `ue5_invoke_helper.lua:45`**; auto-refutes `TeleportScriptGenerator.cs:220/:281`,
+   `BakedScriptGenerator.cs:431` (inside `t.OnTimer`) and `CoordLibraryScriptGenerator.cs:645`
+   (`OnClose`, documented). **No baseline needed** — the correct count outside
+   `scripts/tests/untick_bailout_test.lua` is **0**. Cheapest of the three and the only one that
+   catches a MEDIUM.
+2. **17b — C# dropped `bool`/`Task<bool>` with a nearby success claim.** No allowlist: the return type
+   is in the declaration. Population 104, ≥24 within reach of a claim.
+3. **17c** — the `Fern.cpp` outcome-field cut, if the first two prove maintainable.
+
+### ⬜ ROUND 3 — finish two ENUMERATED families, 59 sites. Not another sweep.
+
+Both first members were **3-for-3**, and both lists already exist:
+
+- **`CopyToClipboardAsync`** — **42** dropped sites in 21 files; **54 of 56 call sites discard the
+  `Task<bool>`**; only `InvokeParamDialog.cs:921` and `PropertySearchViewModel.cs:736` check it.
+  **≥20 of the 42 sit within 22 lines of a success-shaped status write.** 4 confirmed so far.
+  ⚠ Already-visible residue in a file round 2 *opened*: `PropertyXrefDialog.cs:458`, a green
+  *"Copied:"* over a dropped write — **the family is not exhausted**.
+- **AOBMaker bridge `Task<bool>`** — **17** dropped sites (`NavigateHexViewAsync` 9,
+  `NavigateDisassemblerAsync` 4, `CheckAvailabilityAsync` 2, `CreateAAScriptAsync` 1,
+  `CreateMemoryRecordAsync` 1), 8 of them in `PointerPanelViewModel` alone. 2 confirmed.
+- Plus **one targeted read, not a sweep**: `scripts/ue5_invoke_helper.lua:45`, the third immediate
+  `[ENABLE]` untick — in a region round 2 reported 100% swept.
+
+⭐ **A round-3 agent reads 59 sites, not 44,000 lines.** That is the whole argument for doing it, and
+against a third sweep.
 
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
