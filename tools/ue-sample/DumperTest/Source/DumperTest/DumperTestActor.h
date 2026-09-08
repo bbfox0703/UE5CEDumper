@@ -40,6 +40,12 @@
 /// an object pointer rather than through the level's actor list, and (3) give
 /// Solide's force-ObjectProperty-to-null a strong pointer it is allowed to null
 /// (weak/soft/lazy are refused by design).
+/// D3's element type. A `TArray` of THIS produces an `ArrayProperty` whose inner is a
+/// `MulticastInlineDelegateProperty`, which is the one array shape this whole fixture was
+/// missing -- `Ubel::ReadMulticastDelegateArrayElements` had no host, so its unread arm
+/// could only be reached by a synthetic in-process TArray.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDumperTestPingSignature, int32, Ping);
+
 UCLASS()
 class DUMPERTEST_API UDumperTestPayload : public UObject
 {
@@ -606,6 +612,20 @@ public:
 	/// The old-stride failure fingerprint is the repeated {C0000001-D0000001-FFFFFFFF-FFFFFFFF}.
 	UPROPERTY() TArray<TLazyObjectPtr<AActor>> Arr_LazyPtr;
 
+	/// ⭐ D3 — the ONLY `TArray<multicast delegate>` in this fixture, added 2026-09-08.
+	/// `ReadMulticastDelegateArrayElements` used to publish the AFFIRMATIVE "(0 bindings)"
+	/// for an element whose inner `TArray<FScriptDelegate>` header could not be READ, and
+	/// counted it in `readCount` -- an assertion that a delegate provably has no
+	/// subscribers, made over memory nobody could see.
+	///
+	/// Sized to 2 in BeginPlay and left UNBOUND on purpose: the row under test is the
+	/// element HEADER read, not the binding walk, and two entries make an element index
+	/// meaningful. The acceptance is a three-state one -- healthy elements read
+	/// "(0 bindings)", the same elements read "???" once their Data is pointed at unmapped
+	/// memory, and the baseline returns when it is put back. See
+	/// tools/verify/d5_lazyguid_unread.py for the same technique on the lazy-ptr row.
+	UPROPERTY() TArray<FDumperTestPingSignature> Arr_MulticastDelegates;
+
 	/// A9 — three nested levels, filled by A9_BuildDeepContainers. Empty until then, so it costs
 	/// nothing on a normal session. See FDumperTestDeepMid for why flat 500x500 cannot work.
 	UPROPERTY() TArray<FDumperTestDeepMid> Deep_Buckets;
@@ -767,6 +787,19 @@ private:
 	/// to look identical, because the heartbeat was drawn BY the thing it was meant to
 	/// be testing. Not a UPROPERTY: it must not become another scan target.
 	int32 FrameCount = 0;
+
+	/// ⭐ D4 — bound to this actor's own `OnActorHit` in BeginPlay, purely so ONE
+	/// `MulticastSparseDelegateProperty` on this fixture reads bIsBound == 1 with a real
+	/// entry in `FSparseDelegateStorage`. Until 2026-09-08 all 16 sparse delegates here
+	/// read "(sparse, unbound)", so `Aura::WalkSparseDelegateBindings` was never called and
+	/// the state it gets wrong -- located, but its InvocationList unreadable, which used to
+	/// render as the affirmative "(0 bindings, sparse)" -- was unreachable on any host.
+	///
+	/// ⚠ It must never DO anything: an actor that reacts to being hit would change the
+	/// behaviour of every other row that touches this fixture.
+	UFUNCTION()
+	void D4_OnActorHitProbe(AActor* SelfActor, AActor* OtherActor,
+	                        FVector NormalImpulse, const FHitResult& Hit);
 
 	FTimerHandle TickHandle;
 

@@ -262,9 +262,28 @@ ADumperTestActor::ADumperTestActor()
 
 }
 
+/// D4 probe. Deliberately EMPTY: its only job is to exist so `OnActorHit` is a bound
+/// sparse delegate. Reacting to a hit would change every other row that shares this
+/// fixture.
+void ADumperTestActor::D4_OnActorHitProbe(AActor* /*SelfActor*/, AActor* /*OtherActor*/,
+                                          FVector /*NormalImpulse*/, const FHitResult& /*Hit*/)
+{
+}
+
 void ADumperTestActor::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// D4: bind ONE sparse delegate so it reads bIsBound == 1 with a real
+	// FSparseDelegateStorage entry. Without this every MulticastSparseDelegateProperty on
+	// this actor is unbound, Ubel rejects before Aura::WalkSparseDelegateBindings is
+	// called, and the walker's own states cannot be observed on any host.
+	OnActorHit.AddDynamic(this, &ADumperTestActor::D4_OnActorHitProbe);
+
+	// D3: two elements so an element index means something. UNBOUND on purpose — the row
+	// under test is the per-element TArray<FScriptDelegate> HEADER read, which happens
+	// whether or not anything is subscribed.
+	Arr_MulticastDelegates.SetNum(2);
 
 	// Created at runtime rather than as a default subobject so it is a genuine
 	// heap UObject in GObjects, reachable only through the pointer — which is

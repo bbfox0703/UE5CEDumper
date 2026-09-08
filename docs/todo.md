@@ -1605,6 +1605,97 @@ because it is a pipe-contract + UI change rather than a correctness one:
   The pure cores are pinned; the call sites are reviewed, not tested. Live rows for these belong
   in [verification-register.md](verification-register.md), not here.
 
+## ✅ Live verification round 1 — 2026-09-08, DumperTest dev (UE 5.4), DLL 3457
+
+First live pass over the blind-spot sweep's DLL fixes. Engine confirmed really up before
+anything was believed: **25,229 objects**, offsets `validated: true` — not the coherent
+zeros a dead engine reports.
+
+### ✅ D5 `[D5-LAZYGUID-2026-09-08]` — `tools/verify/d5_lazyguid_unread.py`
+
+| state | `Arr_LazyPtr` elements |
+|---|---|
+| baseline | 3 × a real GUID + its resolved `DumperTestHolder` name |
+| `Data` → `0x1000` | 3 × **`???`** |
+| restored | byte-identical to baseline |
+
+Pre-fix the middle row was `{00000000-00000000-00000000-00000000}` ×3 — **indistinguishable
+from a genuinely unset `TLazyObjectPtr`**, which is a legitimate all-zero FGuid. That is why
+the repair had to be the read's own answer and not a display change.
+
+### ✅ D3 `[D3-DELEGATEARR-2026-09-08]` — `tools/verify/d3_delegate_array_unread.py`
+
+| state | `Arr_MulticastDelegates` elements |
+|---|---|
+| baseline | 2 × `(0 bindings)` — READ, and genuinely empty |
+| `Data` → `0x1000` | 2 × **`???`** |
+| restored | identical to baseline |
+
+⭐ **The baseline row is load-bearing here, unlike D5's.** Pre-fix the corrupted case rendered
+the *same* `(0 bindings)` as the healthy one, so a rig checking only the corrupted state
+could not tell a working fix from a broken walk.
+
+### 🟡 D4 — the fix FIRES, and immediately surfaced a real defect underneath it
+
+`OnActorHit` (now bound) reads **`(sparse, bound — invocation list unreadable)`**. That is the
+new string, replacing what would have been `(0 bindings, sparse)` — so the repair does what it
+was written to do: it turned a silent false claim into a visible "I could not read this".
+
+⚠ **But a delegate with one live subscriber should not be unreadable.** The walker found the
+entry in `FSparseDelegateStorage` (`ownerFound && nameFound`, or the guard above would have
+taken a different branch) and then failed to read its `InvocationList` header. Filed below.
+
+### ⛔ THE FIXTURE HAD NO HOST FOR D3 OR D4 UNTIL TODAY
+
+Asked of the RUNNING game, per `tools/ue-sample/README.md` rule 1 — never answer "does
+fixture X exist?" by grepping the mirror:
+
+- **D5** `Arr_LazyPtr` — present, verified above.
+- **D4** — 16 `MulticastSparseDelegateProperty`, **all reading `(sparse, unbound)`**. With
+  `bIsBound == 0` Ubel rejects before `Aura::WalkSparseDelegateBindings` is ever called, so the
+  fixed path was unreachable. A probe over the level found **no bound one anywhere**.
+- **D3** — **absent**. 16 `ArrayProperty` on the actor and not one with a `Multicast*` inner,
+  so `ReadMulticastDelegateArrayElements` had no host at all.
+
+Added to the fixture (both documented in `tools/ue-sample/README.md`, which
+`check_ue_sample_values` gates — it failed the moment the UPROPERTY landed undocumented, which
+is the gate doing its job): `Arr_MulticastDelegates` (2 elements, unbound on purpose — the row
+under test is the element HEADER read) and `OnActorHit` bound to an empty `D4_OnActorHitProbe`
+in `BeginPlay`.
+
+⚠ **Packaging: Development only.** `capture_package_identity.py` then exits 1 **by design** and
+names the reason — `Shipping` and `DebugGame` are now STALE, built before the source edit. Do
+not read a value from those two until they are repackaged.
+
+-----
+
+### ⬜ NEW — D4b: `WalkSparseDelegateBindings` cannot read a bound delegate on UE 5.4
+
+**Surfaced by D4's own fix, which is the point of it.** `OnActorHit` is bound to exactly one
+subscriber and the walker locates it in storage, yet the `InvocationList` header read faults.
+Pre-fix this was invisible — it rendered as `(0 bindings, sparse)`, i.e. *"this delegate
+provably has no subscribers"*, over a delegate that has one.
+
+Where to start: `Aura.cpp` Phase 3 derefs the `TSharedPtr` at `sharedPtrAddr` to get `mcdAddr`
+and then reads `{Data, Num}` at `mcdAddr + 0x00/0x08`. One of those two assumptions is wrong
+for 5.4 — either the TSharedPtr layout (is the object pointer really at +0?) or the
+`FMulticastScriptDelegate` shape. ⭐ The fixture can now falsify either: `OnActorHit` is bound
+on demand, and `read_mem` will show what is actually at those addresses.
+
+### ⬜ NEW — D3b: the delegate-array reader hardcodes a 16-byte stride; the property says 24
+
+`ReadMulticastDelegateArrayElements` opens with `constexpr int32_t elemSize = 16;` (an
+`FMulticastScriptDelegate` modelled as one `TArray` header). The live walk reports
+`array_elem_size: 24` for `Arr_MulticastDelegates` on UE 5.4.
+
+If 24 is right, **element [1] and beyond are read at the wrong offset** — [0] would be correct
+and every later index would drift, which is the exact fingerprint audit A1 found on the lazy
+row (`docs/…` — *"element 0 read correctly while every index ≥1 drifted"*).
+⚠ **Today's rig cannot tell**: both fixture elements are empty, so a right-stride read and a
+wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs elements with
+**different** contents — bind one element and not the other, then check which index reports the
+binding. Not attempted tonight.
+
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens

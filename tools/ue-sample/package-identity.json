@@ -1,17 +1,17 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "44cf1502",
-  "source_sha256": "da7ff8587f5c46d6d8844cdb30dd8311e16a2ba284ed33f55e23ae925d2a9227",
-  "captured_utc": "2026-09-07T05:50:24+00:00",
+  "source_commit": "d525929e",
+  "source_sha256": "0af2129c6100942bf2af57e7202f49248d3756fd703ae3ec209229d9ee7123db",
+  "captured_utc": "2026-09-08T14:49:56+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279270912,
-      "sha256": "6302b9b008aecb6e5955edb345a95f846d392ed05188c6c8710ecbd23987e02d",
+      "size": 279274496,
+      "sha256": "4d768cbdec94524d0d88007fee0e8aecc1653071d6831033416ef402c75df30a",
       "reflected_present": {
-        "DumperTestActor": 5,
+        "DumperTestActor": 6,
         "DumperTestSubsystem": 2,
         "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
@@ -23,7 +23,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-07T05:47:10+00:00"
+      "exe_mtime": "2026-09-08T14:47:48+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
@@ -64,9 +64,12 @@
       "exe_mtime": "2026-09-07T05:49:42+00:00"
     }
   },
-  "problems": [],
+  "problems": [
+    "STALE BINARY: Shipping was built before 'DumperTestActor.cpp' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it",
+    "STALE BINARY: DebugGame was built before 'DumperTestActor.cpp' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it"
+  ],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "da7ff8587f5c46d6d8844cdb30dd8311e16a2ba284ed33f55e23ae925d2a9227"
+    "source_sha256": "0af2129c6100942bf2af57e7202f49248d3756fd703ae3ec209229d9ee7123db"
   }
 }
