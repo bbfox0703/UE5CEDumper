@@ -35,7 +35,8 @@
 #include "../src/Orden.h"       // Multi-value group scan: source-agnostic SDR matcher (MatchGroup)
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
 #include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
-#include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
+#include "../src/Aura.h"
+#include "../src/Dunste.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
@@ -6451,6 +6452,30 @@ GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
 GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_testLiveness; }
 }   // namespace Stark
 
+static void Test_Dunste_ShouldCommitCollision() {
+    // Blind-spot sweep D1. InvokeSetCollision discarded UE5_CallProcessEventEx's int32_t
+    // and returned "the setter was FOUND" -- which all three call sites read as "collision
+    // CHANGED". The repair is a TRI-state, and this rule is the load-bearing half of it:
+    // which outcomes may the caller commit s_state.collisionOff from.
+    using CA = Dunste::CollisionApply;
+
+    EXPECT("D1: an APPLIED invoke commits", Dunste::ShouldCommitCollision(CA::Applied));
+
+    // The audit #4 B8 half, and it must survive: a pawn class with no
+    // SetActorEnableCollision is PERMANENT, so retrying cannot conjure a setter and the
+    // caller must commit to stop re-emitting every tick. Collapsing this into "failure"
+    // would re-introduce the bug B8 fixed.
+    EXPECT("D1: an ABSENT setter still commits (B8 -- retrying cannot conjure one)",
+           Dunste::ShouldCommitCollision(CA::Absent));
+
+    // The D1 half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
+    // -5 game-thread timeout, -3 no usable PE offset): NOTHING reached the game, so
+    // committing records a disable that never happened -- and on the restore path it
+    // wipes the record that keeps a ghosted pawn tracked.
+    EXPECT("D1 *: a REFUSED invoke does NOT commit",
+           !Dunste::ShouldCommitCollision(CA::Refused));
+}
+
 static void Test_Aura_DescribeSparseDelegateState() {
     // Blind-spot sweep D4. A sparse delegate whose bIsBound byte READ 1, whose
     // InvocationList header then faulted, used to render "(0 bindings, sparse)" — the code
@@ -7956,6 +7981,7 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
