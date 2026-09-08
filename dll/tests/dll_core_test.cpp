@@ -721,6 +721,53 @@ int main() {
               emptyKept, mc0.elements.empty() ? "(none)" : mc0.elements[0].value.c_str());
     }
 
+
+    {   blk("D2 -- a scan worker that THROWS must not report the run as COMPLETE");
+        // Blind-spot sweep, 2026-09-08. ParallelIndexRanges' catch(...) is the
+        // terminate-guard (an exception escaping a std::thread callable calls
+        // std::terminate in the host game) and has to stay -- but it swallowed the chunk
+        // while its comment claimed the outcome was "exactly like a deadline hit". It set
+        // no flag, so ScanForValue folded deadlineHit=false and Fern published
+        // data["deadline_hit"]=false: a value scan missing a whole index range rendered as
+        // a complete one, and the UI's truncation notice never fired.
+        ResetCancel();
+
+        // maxThreads=1 is what makes this DETERMINISTIC. ScanThreadCount picks the worker
+        // count from the machine, so a test that let it choose could pass by never running
+        // the throwing chunk at all -- and a case that cannot fail proves nothing. With 1,
+        // chunk 0 runs INLINE on this thread, so the throw is guaranteed.
+        int ran = 0;
+        auto faulted = Aura::ParallelGObjectsScan<int>(
+            1024,
+            [&](int& tr, int32_t b, int32_t e, std::atomic<bool>&) {
+                (void)tr; (void)b; (void)e;
+                ++ran;
+                throw std::runtime_error("simulated worker fault");
+            },
+            /*maxThreads=*/1);
+
+        check("D2: the throwing chunk really ran (else this case proves nothing)", ran == 1,
+              std::to_string(ran).c_str());
+        check("D2: the fault did not escape - the terminate-guard still holds", true);
+        check("D2 * : it is recorded as a worker fault", faulted.workerFaulted);
+        check("D2 * : so the run reports INCOMPLETE, not complete", faulted.incomplete());
+        check("D2: and it is NOT mislabelled as a deadline - the workers' stop signal is "
+              "left alone so siblings keep working", faulted.deadlineHit == false);
+
+        // THE CONTROL. A clean run must still report complete, or "incomplete" would be
+        // satisfied by a scanner that always says so.
+        ResetCancel();
+        int cleanRan = 0;
+        auto clean = Aura::ParallelGObjectsScan<int>(
+            1024,
+            [&](int& tr, int32_t b, int32_t e, std::atomic<bool>&) {
+                (void)tr; (void)b; (void)e; ++cleanRan;
+            },
+            /*maxThreads=*/1);
+        check("D2 control: a clean run ran", cleanRan == 1);
+        check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

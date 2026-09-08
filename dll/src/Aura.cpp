@@ -154,9 +154,12 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
 
     // A worker body must never let an exception escape: an exception leaving a
     // std::thread callable — or an un-joined joinable thread during stack
-    // unwinding — calls std::terminate, which would crash the host game. The
-    // scans are best-effort, so a throwing chunk just stops early; its partial
-    // per-thread results still merge, exactly like a deadline hit.
+    // unwinding — calls std::terminate, which would crash the host game. This
+    // catch is that guard and must stay.
+    // ⛔ It used to claim the outcome was "exactly like a deadline hit". It was not:
+    // this handler sets NO flag and has none in scope, so a dropped chunk merged its
+    // partial results and the run reported COMPLETE. What a dropped chunk MEANS is the
+    // caller's call — ParallelGObjectsScan owns the atomics and records it there.
     auto runChunk = [&body](int tid, int32_t b, int32_t e) {
         try {
             body(tid, b, e);
@@ -207,6 +210,15 @@ struct ParallelScanResult {
     std::vector<PerThreadT> perThread;
     int                     nthreads    = 1;
     bool                    deadlineHit = false;
+    // A chunk THREW: its index sub-range was never walked. Distinct from deadlineHit,
+    // which means "we stopped on purpose" — but identical in what it does to the
+    // ANSWER, which is why every reporting site folds them with incomplete().
+    bool                    workerFaulted = false;
+
+    /// The results do not cover the whole pool, for either reason. Report sites want
+    /// this; the two flags are only told apart in logs and in the one site that
+    /// deliberately masks a deadline.
+    bool incomplete() const { return deadlineHit || workerFaulted; }
 };
 
 // Run a parallel GObjects walk: spawn ScanThreadCount(count) workers over
@@ -229,6 +241,7 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
     std::vector<PerThreadT> perThread(static_cast<size_t>(std::max(1, nthreads)));
     std::atomic<bool> deadlineHit{false};
+    std::atomic<bool> workerFaulted{false};
 
     // Cooperative cancellation. For the PARALLEL path a short-lived watcher
     // flips the shared deadline flag on cancel (client disconnect via Fern's
@@ -260,12 +273,22 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     }
 
     ParallelIndexRanges(count, nthreads, [&](int tid, int32_t beginIdx, int32_t endIdx) {
-        body(perThread[tid], beginIdx, endIdx, deadlineHit);
+        // The REAL handler, here rather than in ParallelIndexRanges because this is where
+        // the atomics are in scope. ⛔ Deliberately NOT deadlineHit.store(true): that
+        // atomic is the workers' STOP signal, so one dead chunk would abandon every
+        // sibling's remaining work as well. Record the fact; the reporting sites fold it.
+        try {
+            body(perThread[tid], beginIdx, endIdx, deadlineHit);
+        } catch (...) {
+            workerFaulted.store(true, std::memory_order_relaxed);   // set BEFORE logging
+            LOG_ERROR("ParallelGObjectsScan: worker tid=%d [%d,%d) faulted — that index "
+                      "range was NOT walked; results are partial", tid, beginIdx, endIdx);
+        }
     });
     scanDone.store(true, std::memory_order_relaxed);
     if (cancelWatcher.joinable()) cancelWatcher.join();
 
-    return { std::move(perThread), nthreads, deadlineHit.load() };
+    return { std::move(perThread), nthreads, deadlineHit.load(), workerFaulted.load() };
 }
 
 // Concatenate each thread's result vector (selected by pointer-to-member) in
@@ -2768,7 +2791,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
         stats->objectsScanned = scanned;
         stats->classesPrimed  = classesWalked;
         stats->durationMs     = static_cast<int64_t>(dt);
-        stats->deadlineHit    = scan.deadlineHit;
+        stats->deadlineHit    = scan.incomplete();
     }
     LOG_INFO("FindInContainers: found %d matches in %lld ms (scanned %d/%d, %d non-empty classes, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
@@ -3017,7 +3040,10 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
         stats->classesPrimed  = classesWalked;
         stats->durationMs     = static_cast<int64_t>(dt);
         // Early-out sets the shared flag too; a real deadline only when nothing matched.
-        stats->deadlineHit    = scan.deadlineHit && matches.empty();
+        // The && matches.empty() is deliberate masking: "we stopped early BUT found what
+        // you asked for" is complete enough. A FAULT is not maskable that way — the
+        // unwalked range could have held matches we will never know about.
+        stats->deadlineHit    = (scan.deadlineHit && matches.empty()) || scan.workerFaulted;
     }
     LOG_INFO("FindInContainersDeep: found %d match(es) in %lld ms (scanned %d/%d, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
@@ -3749,7 +3775,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // Carry the parallel phase's deadline state into the serial sparse pass as a
     // plain bool (the atomic lived inside ParallelGObjectsScan). The sparse pass
     // may set it if IT runs long; the epilogue reports the final value.
-    bool deadlineHit = scan.deadlineHit;
+    // incomplete(), not deadlineHit: the epilogue REPORTS this, and a faulted chunk makes
+    // the answer partial just as surely. (The sparse pass below is gated separately on
+    // scan.deadlineHit — that gate asks "should I keep spending time", which a fault in an
+    // already-finished parallel phase does not answer.)
+    bool deadlineHit = scan.incomplete();
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -5843,7 +5873,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
             x.ubergraphOffsets.clear();  // transient
         }
     }
-    out.stats.deadlineHit = scan.deadlineHit;
+    out.stats.deadlineHit = scan.incomplete();
     out.stats.durationMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - t0).count();
 
@@ -5998,7 +6028,7 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
         out.stats.functionsScanned    += tr.funcsScanned;
         out.stats.functionsWithScript += tr.funcsMatched;  // reused slot: functions matched
     }
-    out.stats.deadlineHit = scan.deadlineHit;
+    out.stats.deadlineHit = scan.incomplete();
     out.stats.durationMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - t0).count();
 
@@ -8119,7 +8149,7 @@ ValueScanResult ScanForValue(
         }
     }
     result.stats.scannedClasses = static_cast<int32_t>(classesWithFields.size());
-    result.stats.deadlineHit    = scan.deadlineHit;
+    result.stats.deadlineHit    = scan.incomplete();
     // Reflect a maxResults cap hit too (mirrors the group scan): the candidate
     // set — and the class histogram built from it — is then a lower bound, so the
     // UI's "counts are partial / truncated" warning must show. The walk self-caps
@@ -9784,6 +9814,12 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
     // the disconnected/closing C# side, so result.scanned is left at the full range.
     if (scan.deadlineHit)
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: cancelled (client gone / shutdown)");
+    // A fault is NOT a cancellation, and saying "cancelled" for it would name a cause that
+    // did not happen. Unlike the cancel case the C# side is still listening, so this chunk
+    // is about to be stored — with a hole in it.
+    if (scan.workerFaulted)
+        Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: a worker FAULTED — this chunk "
+                                    "is missing an index range and the snapshot is partial");
 
     return result;
 }
