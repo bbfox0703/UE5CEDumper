@@ -1494,12 +1494,36 @@ often the same method*, at 51% and 0% defect density. Line count predicted nothi
 gate 17a; the rest LOW), **20 refuted**, one round-1 claim corrected, one gate shipped, one gate
 designed and one gate design refuted.
 
-### ⬜ What is actually left
+### ✅ FIXED 2026-09-08 — sub-shapes (a) and (b) are closed; gates 17a + 17b hold them
 
-1. **Fix the 14 delivery copies** (sub-shape (a)) against the `ReportSymbolRegistration` model — a
-   shared reporter, not 14 edits — then ship gate 17b so the count stays 0.
-2. **Decide on the API split** (the optional stronger form above). Only that reaches sub-shape (b).
-3. The 22-item round-3 tail is *already classified*; it needs fixing, not more verification.
+1. ✅ **All 14 delivery copies** (sub-shape (a)), in three batches: `89887dee` (5) · `cb80ae95` (9),
+   through `Helpers/ClipboardDelivery` — a shared reporter on the `ReportSymbolRegistration` model,
+   not 14 hand-written branches. **Gate 17b `tools/check_clipboard_delivery.py`** now holds the count
+   at 0. Red-before proved for all 14 without hand-waving: stashing batch 3 names 9, and running the
+   gate's scanner over `git show 89887dee^` names 7 — 9 + 7 − 2 overlap = **exactly the 14 the critic
+   predicted, site for site**.
+2. ✅ **The API split, sub-shape (b)** — `7de16071`. `RequestCopyText` is now
+   `Func<string, Task<bool>>`. ⭐ **The defect there was ORDERING, not a dropped bool**: as an
+   `Action<string>` the handler was an async lambda, so `Invoke` returned at its first `await` and the
+   VM's `StatusText = "Copied …"` ran **before the clipboard was touched** — even a handler that knew
+   it failed had nowhere to put the answer. `MainWindowViewModel`'s own comment said it out loud
+   (*"Status text already set by the VM"*). 17 edit points, 7 files, no logic redesign; AXAML bindings
+   untouched because CommunityToolkit strips the `Async` suffix. Also removed 5 `async void`-shaped
+   handlers.
+3. ⬜ **Still open: the round-3 tail** — the ~11 convenience copies that *do* carry a claim
+   (`ClassPivot:1201`, `DumpExplorer:309`, `RelatedObjects:177`, `Snapshot.Group:285`,
+   `SnapshotViewModel:1536`, `SpcQuery(.Group)`, `InstanceFinder:1020`, `FunctionPropsDialog:386`,
+   `PropertyXrefDialog:458`, `TeleportViewModel:1483`). Already classified — they need fixing, not
+   more verification. ⚠ These are **deliberately outside gate 17b's predicate**: they copy an address
+   or a name, and folding them in is what would turn a 0-baseline check into a 26-line waiver list.
+   Their claims should simply stop asserting a copy that was not checked.
+
+⭐ **A gate's own negative control earned its keep three times in one session.** 17a's marker anchor
+missed `<AssemblerScript>[ENABLE]` and hid the one LIVE defect; relaxing it then matched a trailing
+comment and hid another; 17b's first draft read a leading `if (!sentToCe)` head as consumption —
+the exact shape of 5 of its 14 targets — and reported **CHECK OK over a tree that still had them**.
+Every one was green before the control said otherwise. See [working-lessons.md](working-lessons.md)
+§1.2a.
 
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
