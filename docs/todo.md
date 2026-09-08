@@ -1156,6 +1156,114 @@ baseline **is** #3's endpoint `af2ce50`, and #5's predicate is *authored before 
 heading still names them unproven — both superseded by `[SOLIDE-L3L4-2026-08-23]`
 (held=130 where substring predicts 108; 12/12 base and 12/12 **derived** forced, 0/8 decoys).
 
+## 🔎 Blind-spot sweep ROUND 1 — 2026-09-08, build 3423. 5 confirmed, and the instrument was 76% blind
+
+Round 1 of action (1) filed by the Audit #3 re-check above: hunt the shape both #3 and #4 walked past —
+a discarded `bool`/status return (**shape A**), and a count/log/pipe field/UI string computed from the
+ATTEMPT rather than from re-reading the EFFECT (**shape B**). 21 agents: 7 module finders over a
+mechanical candidate list → 2 refute-mandated skeptics per group → a completeness critic.
+
+**Raw: 61 defect claims → 13 skepticised (top 2 per group) → 5 confirmed, 8 refuted.**
+Kill rate 62%, in line with this file's own "an agent sweep is ~half wrong before refutation".
+
+### ✅ Confirmed (all re-read at HEAD; none is a list row — see the instrument section)
+
+| sev | site | what lies |
+|---|---|---|
+| 🟠 MED | `dll/src/Dunste.cpp:217` `InvokeSetCollision` drops `UE5_CallProcessEventEx`'s `int32_t` and returns "the setter was **found**" as if it meant "collision **changed**" | `LOG_INFO("Fly: SetActorEnableCollision(%d) invoked")` + the `return true` all three call sites commit `s_state.collisionOff` from. **`-8` is not hypothetical**: both callers run on threads that called `Tot::MarkBackgroundWorker()` (`Dunste.cpp:482`, `:576`) and `Frieren.cpp:2146` returns `-8` for exactly that when the hook is down |
+| 🟡 LOW | `dll/src/Aura.cpp:155` — a scan worker chunk that **throws** is swallowed by `catch(...)` which never sets the shared `deadlineHit` atomic | `Aura.cpp:8078` → `Fern.cpp:3224 data["deadline_hit"]` — the ONLY wire field that tells the UI the result set is truncated. A partial value scan renders as a complete one |
+| 🟡 LOW | `dll/src/Ubel.cpp:3362` — `ReadMulticastDelegateArrayElements` drops both InvocationList header `ReadSafe`s | an unreadable element is published as the positive string `"(0 bindings)"` and counted in `readCount`; `Macht::ReadTArray` validates `Count`/`Max` but **never probes `Data`**, so a freed buffer passes the gate |
+| 🟡 LOW | `ui/…/ViewModels/MainWindowViewModel.cs:1731` and `TeleportViewModel.cs:2006` — the CE AA-script clipboard fallback drops `CopyToClipboardAsync`'s `Task<bool>` | StatusText says *"copied as CE XML — paste into Cheat Engine's address list"* when nothing reached the clipboard. `IPlatformService.cs:49` states the contract verbatim (*"Returns true only when the text actually reached the clipboard"*) and **`InvokeParamDialog.cs:921-929` already handles it correctly** — the correct model exists in-tree |
+
+⚠ **Two of these are families, not sites.** The clipboard defect has a **third** instance
+(`LiveWalkerViewModel.cs:6209`) and the `Dunste` one a second (`Dunste.cpp:612`, PendingRestoreLoop
+logging *"pawn collision restored"* off the same unchecked invoke) — both sit in the 30-item
+unverified tail, both filed HIGH by their finder, neither yet skepticised. Fix by family.
+
+### ⛔ Refuted (8) — do not re-raise
+
+Both **Schlacht** follow-ups died, which is the useful negative result: `d48441e7`'s fix holds.
+`Schlacht.cpp:366` (`Invoke` result dropped) and `:744` (`(N restored)` from the attempt set) were
+each killed on ≥4 routes — `:744`'s premise was **factually false at HEAD**, because `d48441e7`
+changed `restore` to the *applied* set. Also refuted: `Radar.cpp:1818` (the return **is** bound at
+`:1803`), `Aura.cpp:6386` (`Macht::ReadSafe` writes the failure into the out-param before returning —
+the result IS consumed), `Macht.h:354`, `Fern.cpp:6424` (documented, comment at `:6421-6423`),
+`Frieren.cpp:1209`, `Wirbel.cpp:1128` (the comment at `:1093-1104` **forbids** consuming those
+returns — *"Do NOT trust K2_SetActorLocation's return here"* — and the block ends in a re-read).
+
+### ⛔⛔ The instrument was wrong three times, and the negative control caught it every time
+
+⭐ **This is the transferable part.** The scanner was calibrated against the historical Schlacht defect
+at `d48441e7^` — *"if it cannot see the bug that motivated the sweep, the list is worthless"*. It
+failed that control **three** times, each for a different reason, and the third was found only because
+the completeness critic went looking:
+
+| pass | shape it could not see | C++ sites |
+|---|---|---|
+| 1 | the defect line starts with `for` — leading `if`/`for`/`while` heads were skipped wholesale | 65 |
+| 2 | (heads peeled — control PASSES, and this is where the sweep was launched from) | **137** |
+| 3 | **qualified calls**: the lookbehind `(?<![A-Za-z0-9_>.:])` rejected `Macht::ReadSafe(…)`, `p->f(…)` | **281**, of which **213 (76%) qualified**, 24 int-kind, 32 multi-line |
+
+C# is worse: **17 → 115** (106 qualified). And pass 3 has its **own** blind spot, found by the same
+control: statements inside a **lambda passed as a call argument** are invisible (depth never returns
+to 0) — **66 bodies / 3,598 lines** in `dll/src`, of which `Aura.cpp` alone is 2,873, i.e. the entire
+parallel-scan machinery. Pass 2 (line-based) sees those; pass 3 (statement-based) sees qualified and
+multi-line. **Neither dominates — the UNION is the list.**
+
+⭐ **The lesson, stated plainly: passing ONE negative control validated ONE axis, and was read as
+validating the instrument.** The historical call happened to be *unqualified* and in the same
+translation unit, so it could never have exercised the qualification rule. This is audit #4's own
+lesson 1 (*"a fix verified against the list it was written from is not verified"*) wearing different
+clothes. Reusable scanners: `scratchpad/discard_scan{,2,3}.py` (each keeps its calibration in `main`).
+
+⭐ **The deciding measurement for round 2: 0 of the 5 confirmed findings came from a mechanical-list
+row.** Only 2 of 13 skepticised candidates were list rows and **both were refuted**. List yield
+**0/154**; hand-grep yield **5/5**. More triage of list output buys nothing — the next round must buy
+hand-grep in unvisited regions.
+
+### 📐 What round 1 structurally could not reach (measured by the critic, not estimated)
+
+- **22 of 44 DLL modules had zero candidate rows** = 8,803 lines. Among them, four *siblings of the
+  historical defect* — the same "hold a flag across a class tree" pattern: **`Edel` 439 + `Grausam`
+  307 + `Hemmung` 550 + `Solide` 775 = 2,071 lines**. (`grp_feat` covered Schlacht/Renge/Laufen only,
+  so `Grausam` was named in the prompt as *"read it in full"* and still produced nothing — treat it
+  as un-swept, not as clean.)
+- The **proxy family** `Lugner*` = 1,098 lines, zero rows, and 2 of them do emit log-count lines.
+- **C#: 261 of 272 files untouched**, and **zero C# reporting channels were ever collected** — the
+  channel loop in `discard_scan.py` is `for p in cpp_files`. Uncollected: **531 `StatusText =` writes**
+  (613 counting Message/Summary/Result text), plus 25 `.axaml` files / 10,678 lines never scanned.
+- The **CE Lua emission layer never scanned at all**: 18 generators + `CeXmlExportService` +
+  `CeLuaHygiene` = 10,308 lines with **101 `showMessage(`/`print(` sites**, plus `scripts/*.lua` 2,762
+  lines and `UE5CEDumper.CT` 929 lines.
+
+### ⬜ Round 2 — ranked by the critic, and the ranking follows the 0/154 measurement
+
+1. **CE Lua emission layer + the C# status surface.** Highest value *and* cheapest to adjudicate: a
+   hit is a **CLAUDE.md rule violation with a named test file** (`CeMailboxBailoutTests` /
+   `CeLuaHygieneTests`), not a judgement call — *"a bail-out that applied NOTHING must untick the
+   record"*, *"never report a mailbox failure by guessing"*. Method: diff the other 17 generators
+   against `SeeThroughScriptGenerator.cs`, which is the clean reference (re-reads `OffResult` at `:92`,
+   gates on `state < 0` at `:94`). These land on a **user-visible claim**, i.e. MEDIUM not LOW.
+2. **The 213 qualified-call statements**, split because the halves need different questions:
+   (a) non-`ReadSafe` (~54) → ask shape A directly; (b) `ReadSafe` (165) → the discard **is** the
+   documented idiom (the identical `ReadPtrAt` body appears verbatim in `Edel.cpp:53`, `Solide.cpp:79`,
+   `Solitar.cpp:88`, `Hemmung.cpp:66`), so ask instead *"does the un-set out-param feed a COUNT or a
+   published field?"* — which is exactly the confirmed `Ubel.cpp:3362` shape, with `Ubel.cpp:1933/1935`
+   the same question unanswered.
+3. **The 30-item unverified tail LAST** — but promote the two family duplicates named above now.
+
+### ⬜ Proposed gate #17 — `tools/check_effect_result.py` (design only, not built)
+
+A blanket "bool results must be consumed" rule is **noise**: 209 of 256 C++ bool discards are
+read/query calls (`ReadSafe` 165 alone) and it would open with ~209 waivers. What is maintainable:
+an **allowlist of ~25 effect-appliers** (`InvokeSetHidden`, `InvokeSetCollision`, `TeleportPawnTo`,
+`SetEnabled`, `SetGodMode`, `SetDilation`, `ApplyToInstance`, …) in `tools/effect-appliers.tsv`,
+matched by the union splitter so it sees `Ns::f()`, `p->f()` and multi-line calls, **baselined** like
+gate #4's `aob-specificity-baseline.tsv` rather than zero-tolerance. Cost at introduction: **23 sites**;
+steady state one baseline line per new site. ⚠ Exclude the param-buffer packers (`WriteVecParam`,
+`WriteFloatParam`) — they build a ProcessEvent argument buffer, they are not effects. `[[nodiscard]]`
+has better semantics but is unused repo-wide and needs a build-output decision the gate harness avoids.
+
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
