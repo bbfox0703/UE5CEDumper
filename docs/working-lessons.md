@@ -1524,6 +1524,62 @@ to the OTHER two costs of a live row.
 what made the run meaningful — §3.w's dead-engine trap reports coherent zeros through injection,
 pipe and scan alike.
 
+### 2.18 ⭐ LINE COUNT DOES NOT PREDICT DEFECT DENSITY — "does the caller NEED the return to pick its next step" does
+
+Scoping a sweep by *how much unread code is left* feels rigorous and is close to worthless. The
+2026-09-08 blind-spot sweep measured both predictors against the same population, and they disagree by
+everything.
+
+**The measurement.** The sweep hunted one shape: a call returns whether the work actually happened, the
+call site drops it, and a status/count/log then claims success anyway. Two C# families were swept to
+exhaustion:
+
+| family | call sites | consumed | DEFECT | dropped, no claim |
+|---|---|---:|---:|---:|
+| `IPlatformService.CopyToClipboardAsync` | 57 | **2** | **29 (51%)** | 26 |
+| `IAobMakerBridge` (7 methods) | 55 | **42** | **0** | 13 |
+
+Same layer. Same files. Frequently **the same method** — at `LiveWalkerViewModel.cs:6306` the code
+captures and tests the AOBMaker bool, then drops the clipboard bool eleven lines later and claims
+success on it. Any predictor based on *where* the code lives, how old it is, or how many lines it has
+gives these two the same score.
+
+**What actually separates them.** `IAobMakerBridge`'s callers were written *against a fallback* — every
+`CreateAAScriptAsync` site has a clipboard branch to fall to, so the author **had** to test the bool to
+choose a branch. Testing it was load-bearing, so it was tested: 42/55, zero defects.
+`CopyToClipboardAsync` is the **last link with nothing to fall back to**. Testing it buys the author
+only a more honest message — never a different action — so it was skipped 55 times out of 57.
+
+⭐ **The predictor: a TERMINAL call — no fallback branch — whose contract makes the return the ONLY
+failure signal.** `IPlatformService.cs:30-49` states both halves in writing (*"Returns true only when
+the text actually reached the clipboard"*, *"Never throws for an ordinary clipboard failure ... and
+that is the contract"*), which is also why every `catch (Exception ex)` wrapped around those 57 calls
+is **dead code for a real clipboard failure**. In all of `ui/UE5DumpUI` exactly one interface method
+fits that description, and it holds 29 of the sweep's 29 C# defects.
+
+**How to apply when scoping a sweep.**
+
+1. **Enumerate the INTERFACES first, not the files.** One grep over `Core/I*.cs` produced all 17
+   `bool`/`Task<bool>`-returning methods; checking the call sites of the nine outside the two families
+   took minutes and proved the entire remaining population is **1 site, 0 defects**. That grep replaced
+   a proposed round-4 over "68 Services files / 24,651 lines".
+2. **Rank each by: does a caller have somewhere else to go when it is false?** If yes, the codebase has
+   probably already tested it — for its own reasons, not for correctness. If no, expect it to be
+   dropped nearly everywhere.
+3. **Then check whether anything downstream claims success.** A dropped return with no claim is a
+   nuisance (26 here, all LOW: the user re-clicks). A dropped return *feeding a success message* is the
+   defect (29 here, and the 14 whose payload is a CE script are the ones that can make a user paste
+   stale clipboard content into Cheat Engine and run it).
+
+**The corollary that saved the gate.** The same split is what makes a maintainable check possible:
+"discarded result" alone is 47% false-positive here and would need a 26-line baseline, while "discarded
+result **whose argument is a generated script/XML**" is 14 hits, 14 defects, **0 false positives** —
+because every one of the 26 legitimate drops copies an address or a name, and none copies a script.
+⭐ **Pick a predicate whose LEGITIMATE population is empty, rather than one whose legitimate population
+must be enumerated** — that is the rule both `check_ce_untick_placement.py` (gate 17a) and the rescoped
+17b are built on, and it is what the refuted round-1 allowlist design lacked. See [todo.md](todo.md)
+§ *Blind-spot sweep ROUND 3*.
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log
