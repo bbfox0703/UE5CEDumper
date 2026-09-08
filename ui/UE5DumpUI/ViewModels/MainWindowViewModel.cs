@@ -1285,11 +1285,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Wire Live Funcs -> clipboard (copy function name). VM stays IPlatformService-free.
         LiveFuncs.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"LiveFuncs clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1504,11 +1507,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         InterestingProperties.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"InterestingProperties clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1555,11 +1561,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         DetectStats.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"DetectStats clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1620,11 +1629,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         ValueSearch.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"ValueSearch clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1650,11 +1662,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // copy here. Status text already set by the VM.
         InterestingFunctions.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"InterestingFunctions clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
