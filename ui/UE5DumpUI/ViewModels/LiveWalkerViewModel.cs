@@ -4359,7 +4359,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapseLeafPointers: CollapseLeafPointers);
             }
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                // The status below counts objects and XML lines from what was BUILT, not
+                // from what arrived, so it reads identically over a clipboard that never
+                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                StatusText = "";
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
+                _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
+                          "the clipboard refused the write");
+                return;
+            }
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
@@ -4698,7 +4708,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapseLeafPointers: CollapseLeafPointers);
             }
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                // The status below counts objects and XML lines from what was BUILT, not
+                // from what arrived, so it reads identically over a clipboard that never
+                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                StatusText = "";
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
+                _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
+                          "the clipboard refused the write");
+                return;
+            }
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
@@ -4863,7 +4883,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                await _platform.CopyToClipboardAsync(xml);
+                if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+                {
+                    // This IS the fallback — CE was unreachable, so the clipboard is the
+                    // only delivery channel left. Claiming it worked leaves the user
+                    // pasting an older AA script into CE.
+                    SetError(Helpers.ClipboardDelivery.FailureText("the CE AA script"));
+                    _log.Warn($"CE AA script for {CurrentClassName} could not be delivered — " +
+                              $"AOBMaker unavailable AND the clipboard refused the write — {note}");
+                    return;
+                }
                 StatusText = wasAvailable
                     ? $"⚠ AOBMaker pipe broke (CE closed?) — CE AA script copied to clipboard — {note}"
                     : $"CE AA script copied — {note}";
