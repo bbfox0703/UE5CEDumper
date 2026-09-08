@@ -3047,11 +3047,22 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
         // from 5.3. See DynOff::LAZYPTR_GUID.
         const int guidOff = LazyGuidOffset(elemSize);
-        uint32_t a = 0, b = 0, c = 0, d = 0;
-        Macht::ReadSafe(elemAddr + guidOff + 0,  a);
-        Macht::ReadSafe(elemAddr + guidOff + 4,  b);
-        Macht::ReadSafe(elemAddr + guidOff + 8,  c);
-        Macht::ReadSafe(elemAddr + guidOff + 12, d);
+        // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
+        // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
+        // differently" is not available -- a faulted read and a genuinely-unset pointer
+        // produced the identical {00000000-...} string, and the fabricated one was also
+        // counted in readCount. The read's own answer is the only discriminator.
+        // The four contiguous uint32s are the same bytes in the same order, so the
+        // formatted output is unchanged on the success path.
+        uint32_t guid[4] = {};
+        const bool okGuid = Macht::ReadBytesSafe(elemAddr + guidOff, guid, sizeof(guid));
+        if (!okGuid) {
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        const uint32_t a = guid[0], b = guid[1], c = guid[2], d = guid[3];
 
         char guidStr[48];
         snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
@@ -3359,8 +3370,22 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         // Read inner TArray<FScriptDelegate> header { Data*, Count, Max }
         uintptr_t innerData = 0;
         int32_t   innerCount = 0;
-        Macht::ReadSafe(elemAddr,     innerData);
-        Macht::ReadSafe(elemAddr + 8, innerCount);
+        const bool okData  = Macht::ReadSafe(elemAddr,     innerData);
+        const bool okCount = Macht::ReadSafe(elemAddr + 8, innerCount);
+        if (!okData || !okCount) {
+            // UNREAD is not "(0 bindings)". Both reads fail together when the TArray's
+            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h:287-297)
+            // validates only Count and Max, never probing Data, so a garbage pointer
+            // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
+            // told the UI and the CE exporters that a delegate provably HAS no
+            // subscribers, over memory nobody could read. "???" is this file's unread
+            // sentinel and the shape is ReadInterfaceArrayElements:3159-3164 verbatim --
+            // the other 16-byte-element reader, which already gets this right.
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
         if (innerCount < 0 || innerCount > 4096) innerCount = 0;  // sanity clamp
 
         // Hex: 16-byte TArray header

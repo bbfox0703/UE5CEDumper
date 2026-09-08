@@ -662,6 +662,65 @@ int main() {
         Serie::s_initialized.store(false, std::memory_order_release);
     }
 
+
+    {   blk("D3/D5 -- an UNREADABLE array element must not be published as a VALUE");
+        // Blind-spot sweep, 2026-09-08. Two array readers fabricated a plausible answer
+        // when the element read faulted: the multicast-delegate one published the
+        // affirmative "(0 bindings)" and the TLazyObjectPtr one an all-zero FGuid, both
+        // counted in readCount. Macht::ReadTArray (Macht.h:287-297) validates only Count
+        // and Max and NEVER probes Data, so a freed buffer reaches the element loop with
+        // the header looking perfectly sane -- that is why the fault arm is reachable at
+        // all, and it is what these cases pin.
+        ResetCancel();
+
+        // A fake instance holding one TArray header { Data, Count, Max } at +0x00.
+        struct FakeTArrayField { uintptr_t Data; int32_t Count; int32_t Max; };
+
+        // 0x1000 is never mapped in a Windows user process, so every element read faults
+        // while the HEADER itself reads fine out of our own stack.
+        FakeTArrayField dead{ 0x1000, 3, 4 };
+        const uintptr_t deadAddr = reinterpret_cast<uintptr_t>(&dead);
+
+        auto mc = Ubel::ReadMulticastDelegateArrayElements(deadAddr, 0, 16, 0, 8);
+        check("D3: an unreadable multicast element reports 3 elements", mc.elements.size() == 3,
+              std::to_string(mc.elements.size()).c_str());
+        bool mcHonest = !mc.elements.empty();
+        for (const auto& e : mc.elements) mcHonest = mcHonest && e.value == "???";
+        check("D3 ⭐: it renders as the unread sentinel, NOT \"(0 bindings)\"", mcHonest,
+              mc.elements.empty() ? "(none)" : mc.elements[0].value.c_str());
+
+        auto lz = Ubel::ReadLazyObjectArrayElements(deadAddr, 0, 0x18, 0, 8);
+        bool lzHonest = !lz.elements.empty();
+        for (const auto& e : lz.elements) lzHonest = lzHonest && e.value == "???";
+        check("D5 ⭐: an unreadable TLazyObjectPtr renders \"???\", not a fabricated GUID",
+              lzHonest, lz.elements.empty() ? "(none)" : lz.elements[0].value.c_str());
+
+        // ⭐ THE CONTROL THAT MAKES D5 MEAN ANYTHING. An all-zero FGuid is the LEGITIMATE
+        // value of an UNSET TLazyObjectPtr, so "print zeros differently" was never
+        // available -- the fix has to separate UNREAD from READ-AS-ZERO. Read a REAL
+        // buffer of zeroes and require the zeros back.
+        alignas(16) uint8_t zeros[0x18 * 2] = {};
+        FakeTArrayField live{ reinterpret_cast<uintptr_t>(zeros), 2, 2 };
+        auto lz0 = Ubel::ReadLazyObjectArrayElements(
+            reinterpret_cast<uintptr_t>(&live), 0, 0x18, 0, 8);
+        bool zerosKept = lz0.elements.size() == 2;
+        for (const auto& e : lz0.elements) zerosKept = zerosKept && e.value != "???";
+        check("D5 ⭐ control: a genuinely all-zero FGuid still reads as a VALUE, not \"???\"",
+              zerosKept, lz0.elements.empty() ? "(none)" : lz0.elements[0].value.c_str());
+
+        // And the multicast twin: a readable, genuinely-empty inner TArray must still say
+        // "(0 bindings)" -- otherwise the fix would have replaced one wrong answer with
+        // another.
+        alignas(16) uint8_t emptyInner[16 * 2] = {};
+        FakeTArrayField liveMc{ reinterpret_cast<uintptr_t>(emptyInner), 2, 2 };
+        auto mc0 = Ubel::ReadMulticastDelegateArrayElements(
+            reinterpret_cast<uintptr_t>(&liveMc), 0, 16, 0, 8);
+        bool emptyKept = mc0.elements.size() == 2;
+        for (const auto& e : mc0.elements) emptyKept = emptyKept && e.value == "(0 bindings)";
+        check("D3 ⭐ control: a readable EMPTY delegate still says \"(0 bindings)\"",
+              emptyKept, mc0.elements.empty() ? "(none)" : mc0.elements[0].value.c_str());
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
