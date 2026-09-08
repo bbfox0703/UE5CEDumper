@@ -1387,6 +1387,120 @@ Both first members were **3-for-3**, and both lists already exist:
 ⭐ **A round-3 agent reads 59 sites, not 44,000 lines.** That is the whole argument for doing it, and
 against a third sweep.
 
+## 🔎 Blind-spot sweep ROUND 3 — 2026-09-08. Both families CLOSED, and the sweep is FINISHED
+
+Round 3 did no searching — it classified. 20 agents over the two families rounds 1–2 left enumerated
+but unfinished. **86 sites reviewed → 36 defect claims → 12 skepticised → 8 confirmed, 4 refuted**
+(2 of the 4 refuted purely as **duplicates** of already-confirmed rows, which is the process working).
+
+### ✅ Final counts, re-derived by grep at HEAD — and every earlier count was wrong
+
+| family | sites | CONSUMED | DEFECT | dropped-no-claim |
+|---|---|---|---|---|
+| `IPlatformService.CopyToClipboardAsync` | **57** (62 raw grep − 5 decl/comment) | **2** | **29** | 26 |
+| `IAobMakerBridge` (7 methods) | **55** | **42** | **0** | 13 |
+
+⚠ **Three independent counts, three different answers**: round 2's agent said 56 / 17, this session's
+own scanner said 57 / 53, the closing grep says **57 / 55**. Only the clipboard number survived.
+That is audit #4's B34 lesson landing again — *a rule applied to an enumeration that counted wrong* —
+and it is why round 3's brief ordered agents to re-count from code. They found **10 sites the scanner
+missed** (all `CONSUMED`, so no findings were lost, but the enumeration was wrong by 6/10 in one file).
+
+The 2 consumers among 57 clipboard sites are `PropertySearchViewModel.cs:736` and
+`InvokeParamDialog.cs:921`. **Everything else drops it**, and the contract
+(`Core/IPlatformService.cs:30-49`) says the return is the *only* failure signal — it never throws — so
+every `catch (Exception ex) { _log.Error(...) }` around these calls is **dead code for a real
+clipboard failure**.
+
+### ⭐ Why the two families diverge 51% → 0%, which is the load-bearing finding
+
+It is **not** code quality, and **not** line count. `IAobMakerBridge`'s callers were written *against a
+fallback*: every `CreateAAScriptAsync` site has a clipboard branch to fall to, so the bool **had** to be
+tested to pick the branch — 42/55 consumed, **0 defects**. `CopyToClipboardAsync` is the **last link
+with nothing to fall back to**, so testing it buys the author only an honest message — 55/57 dropped,
+29 defects.
+
+⭐ **The predictor is: a TERMINAL call with no fallback branch, whose documented contract makes the
+return the only failure signal.** In all of C# that description fits exactly one interface method.
+Recorded as a method lesson in [working-lessons.md](working-lessons.md) §2.x.
+
+### The 29 clipboard defects come in three sub-shapes, and only one is dangerous
+
+- **(a) DELIVERY copy — the clipboard IS the deliverable** (a CE script/XML the user is told to paste
+  into Cheat Engine). **14 sites, 14 of them defects, zero dropped-no-claim in this sub-population.**
+  Losing one means the user pastes **stale clipboard content into CE and runs it**.
+  `InstanceFinder:834/1043` · `LiveWalker:4362/4701/4866/6209/6308` ·
+  `MainWindow:1731/1940/1998/3175` · `Teleport:2006/2048/4103`.
+- **(b) CROSS-FILE claim through an `Action<string>` event — architecturally unrecoverable.** 4 sites
+  (`MainWindowViewModel.cs:1289/1508/1559/1654`) whose claim lives in *another file*
+  (`LiveFuncsViewModel.cs:395`, `InterestingPropertiesViewModel.cs:545`, …). The event is
+  `Action<string>`, not `Func<string,Task<bool>>`, and the raiser sets its status **synchronously
+  before the async handler has run** — so no call-site fix and no single-file gate can reach these.
+  Fixing them is an **API change first**.
+- **(c) The convenience copies** — an address, a name, a class name. 26 dropped-no-claim, LOW at worst:
+  the user re-clicks.
+
+⭐ **A fourth in-tree correct model, and the best one**: `PointerPanelViewModel.cs:1114/:1142`
+`ReportSymbolRegistration(success, …)`. Its doc at `:1146-1177` records that **both sites once branched
+the bool only to pick `_log.Info` vs `_log.Warn`, "so the panel looked identical whether CE had
+registered the symbol or not"** — i.e. the maintainer has already fixed one instance of this exact
+family, in this file, and **the fix was a shared reporter helper**, not 14 edits.
+
+### ⛔ Gate 17b as scoped is REFUTED — ship a narrower one
+
+"A discarded `bool`/`Task<bool>` whose success is then claimed" has **no maintainable
+implementation**, measured rather than argued:
+
+1. **Naive discard is 47% false positive** — 55 hits, 29 defects, 26 legitimate. Correct count is 26,
+   i.e. a **baseline**, which `check_ce_untick_placement.py:28-33` refuses by name.
+2. **Adding "…and success is claimed" needs the exact allowlist 17a exists to avoid** — the 29 claims
+   land in **9 distinct sinks** (`StatusText`, `LookupStatusText`, `GroupStatusText`, `DiffStatusText`,
+   `CoordStatus`, `_statusLabel.Text`, `_resultLabel.Text`, `_log.Info`, and a **colour literal**
+   `#4EC9B0`), and a tenth arrives with the next panel. Word-matching is worse: all 26 legitimate sites
+   carry `_log.Error("Failed to copy …")` within 6 lines.
+3. **It structurally cannot see 4 of 29 (14%)** — sub-shape (b), the only ones not fixable at the call
+   site.
+
+**✅ 17b — "no discarded DELIVERY copy".** Match a `CopyToClipboardAsync` whose result is discarded
+**and whose argument is a generated script/XML** (`CheatTableBuilder.WrapAaScriptXml`,
+`CeXmlExportService.Generate*Xml`, or a local named `xml`/`script`). **Measured: 14 hits, 14 defects,
+0 false positives.** The discriminator is real, not lucky — all 26 legitimate sites copy an address, a
+name or a class name, and **none** copies a script. Correct count **0** after the 14 are fixed, and it
+stays 0 by construction. **No baseline**, for the same reason 17a needs none: *pick a predicate whose
+legitimate population is EMPTY, rather than one whose legitimate population must be enumerated.*
+
+⬜ **Optional stronger form — a decision, not a gate proposal**: split the API. Keep
+`Task<bool> CopyToClipboardAsync` for delivery, add an explicitly-named fire-and-forget sibling for the
+26 convenience copies. 17b then becomes *"no discarded `CopyToClipboardAsync` anywhere"* — correct
+count 0, no argument heuristic, and **the sibling's name is its own negative control**. Coverage goes
+48% → 100%. It is an API change first.
+
+### ⛔ THE SWEEP IS FINISHED. Do not run a round 4.
+
+Not a judgement — **one grep**. Every `bool`/`Task<bool>`-returning method on every
+`ui/UE5DumpUI/Core/I*.cs` interface was enumerated: **17 methods** (`IAobMakerBridge` ×6,
+`IPlatformService` ×6, `IProxyDeployService` ×4, `ILogCompressionService` ×1). Two were the families
+just closed (112 sites). Every call site of the other nine was checked: `DeployAsync` (×2),
+`UndeployAsync`, `MoveToRecycleBin`, `IsOurProxyDll`, `TryAcquireSingleInstance` — **all consumed**;
+three have no discarding call site at all. **Outside the two families the entire C# shape-A population
+is 1 site and 0 defects** (`App.axaml.cs:49 ActivateExistingInstance`, which shuts the process down two
+lines later and has nowhere to make a claim). **There is no third family.**
+
+⭐ **Round 2's "68 Services files / 24,651 lines" framing was the wrong predictor and cost nothing only
+because it was checked before being spent.** The two families sit in the *same layer, the same files,
+often the same method*, at 51% and 0% defect density. Line count predicted nothing.
+
+**Sweep totals across all three rounds: 23 confirmed** (1 🟠 MED in a shipped artifact, fixed with
+gate 17a; the rest LOW), **20 refuted**, one round-1 claim corrected, one gate shipped, one gate
+designed and one gate design refuted.
+
+### ⬜ What is actually left
+
+1. **Fix the 14 delivery copies** (sub-shape (a)) against the `ReportSymbolRegistration` model — a
+   shared reporter, not 14 edits — then ship gate 17b so the count stays 0.
+2. **Decide on the API split** (the optional stronger form above). Only that reaches sub-shape (b).
+3. The 22-item round-3 tail is *already classified*; it needs fixing, not more verification.
+
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
