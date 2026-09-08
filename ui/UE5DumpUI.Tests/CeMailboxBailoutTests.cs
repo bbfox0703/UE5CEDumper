@@ -1302,7 +1302,7 @@ public class CeMailboxBailoutTests
         int found = 0;
         for (int i = 0; i < lines.Length; i++)
         {
-            if (!lines[i].Contains("if not waitIdle() then", StringComparison.Ordinal)) continue;
+            if (!lines[i].Contains("if not _idleOk then", StringComparison.Ordinal)) continue;
             found++;
             Assert.True(Within(lines, i + 1, 8, "memrec.Active = false"),
                 $"the busy-mailbox bail on line {i + 1} leaves the CE row ticked with nothing applied");
@@ -1310,6 +1310,45 @@ public class CeMailboxBailoutTests
                 $"the busy-mailbox bail on line {i + 1} is silent — it reads exactly like success");
         }
         Assert.Equal(3, found);
+    }
+
+    /// <summary>
+    /// A DEAD game process must not be reported as a BUSY mailbox.
+    ///
+    /// <para><c>readInteger(mb + 0)</c> returns <c>nil</c> when the target process is gone,
+    /// and <c>nil ~= 0</c> is TRUE in Lua, so the idle loop spins to its deadline and then
+    /// blames a mailbox that no longer exists. <c>AppendIdleWait</c> takes an
+    /// <c>onUnreadable</c> for exactly this; Invoke omitted it, so all four of its guards
+    /// printed "another CE script is still mid-command" over an exited game. Straight
+    /// against CLAUDE.md's CE-Lua rule: <i>never report a mailbox failure by guessing —
+    /// status already says which failure it is</i>. Blind-spot sweep round 2.</para>
+    ///
+    /// <para>⚠ The two <c>TeleportScriptGenerator</c> call sites omit <c>onUnreadable</c>
+    /// too and are NOT defects: their <c>AppendContractCheck</c> is emitted immediately
+    /// before the wait in the same straight-line block and reads <c>nil</c> first. Invoke's
+    /// runs once in <c>[ENABLE]</c> while <c>waitIdle()</c> is called later from
+    /// <c>btnFire.OnClick</c>. Same omission, different reachability.</para>
+    /// </summary>
+    [Fact]
+    public void AnUnreadableMailbox_IsNotReportedAsBusy()
+    {
+        foreach (var row in InvokeShapedScripts())
+        {
+            string enable = EnableBlock((string)row[1]);
+
+            // The nil branch must carry its OWN reason, not fall through to onBusy.
+            int nil = enable.IndexOf("if _idleCmd == nil then", StringComparison.Ordinal);
+            Assert.True(nil >= 0, "the unreadable-mailbox branch is gone");
+            string line = enable[nil..enable.IndexOf('\n', nil)];
+            Assert.Contains("could not be READ", line, StringComparison.Ordinal);
+            Assert.DoesNotContain("is busy", line, StringComparison.Ordinal);
+
+            // And the guards must print whatever reason they were handed, rather than a
+            // hard-coded "busy" -- otherwise the distinction never reaches the user.
+            Assert.DoesNotContain("the DLL mailbox is busy --",
+                enable[enable.IndexOf("if not _idleOk then", StringComparison.Ordinal)..],
+                StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
@@ -1327,7 +1366,7 @@ public class CeMailboxBailoutTests
         int click = enable.IndexOf("btnFire.OnClick = function()", StringComparison.Ordinal);
         Assert.True(click >= 0, "the FIRE handler is gone");
 
-        int guard = enable.IndexOf("if not waitIdle() then", click, StringComparison.Ordinal);
+        int guard = enable.IndexOf("if not _fireOk then", click, StringComparison.Ordinal);
         Assert.True(guard > click, "the FIRE handler writes to the mailbox with no idle wait");
 
         // Ordering again: before the params buffer is touched, not after.
@@ -1355,8 +1394,16 @@ public class CeMailboxBailoutTests
     [Fact]
     public void TheIdleWaitBodyIsTheSharedEmittersVerbatim()
     {
+        // Same arguments InvokeScriptGenerator passes -- including onUnreadable, which it
+        // omitted until 2026-09-08 and which made a DEAD process report as a BUSY mailbox.
+        // Rebuilding the expectation from the real arguments is the point: this test exists
+        // to catch a HAND-ROLLED copy of the loop, not to freeze one particular message.
         var expected = new System.Text.StringBuilder();
-        CeLuaHygiene.AppendIdleWait(expected, "mb", "return false", "    ");
+        CeLuaHygiene.AppendIdleWait(expected, "mb",
+            "return false, 'the DLL mailbox is busy -- another CE script or a previous "
+            + "invoke is still mid-command; try again in a moment'", "    ",
+            "return false, 'the DLL mailbox could not be READ -- the game process has "
+            + "most likely exited (re-inject UE5Dumper.dll if it is still running)'");
 
         foreach (var row in InvokeShapedScripts())
             Assert.Contains(expected.ToString(), (string)row[1], StringComparison.Ordinal);

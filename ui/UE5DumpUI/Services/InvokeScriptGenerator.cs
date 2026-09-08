@@ -131,7 +131,21 @@ public static class InvokeScriptGenerator
         // the bail differs per call site, which is why the helper returns a boolean
         // instead of deciding for its callers.
         Line(sb, "local function waitIdle()");
-        CeLuaHygiene.AppendIdleWait(sb, "mb", "return false", "    ");
+        // Two DIFFERENT failures, and they need different words. onBusy is a real
+        // mailbox still holding a command; onUnreadable is `readInteger(mb) == nil`,
+        // which means the process is GONE. Folding them into one `return false` made
+        // every caller print "another CE script is still mid-command" over a game that
+        // had exited -- and CLAUDE.md's CE-Lua rule names exactly that: "never report a
+        // mailbox failure by guessing: status already says which failure it is".
+        // Invoke needs this where the two Teleport call sites do not: their
+        // AppendContractCheck is emitted immediately before their idle wait and catches
+        // a dead process first, while ours runs once in [ENABLE] and waitIdle() is
+        // called later from btnFire.OnClick.
+        CeLuaHygiene.AppendIdleWait(sb, "mb",
+            "return false, 'the DLL mailbox is busy -- another CE script or a previous "
+            + "invoke is still mid-command; try again in a moment'", "    ",
+            "return false, 'the DLL mailbox could not be READ -- the game process has "
+            + "most likely exited (re-inject UE5Dumper.dll if it is still running)'");
         Line(sb, "    return true");
         Line(sb, "end");
         // The shared wait. Hand-rolled until now, with all three of the defects build
@@ -368,9 +382,12 @@ public static class InvokeScriptGenerator
         // means it must SAY so. A silent return would look exactly like a FIRE that
         // worked. No cleanup timer either: the record's lifetime belongs to the form,
         // and frm.OnClose is what unticks it.
-        Line(sb, "    if not waitIdle() then");
-        Line(sb, "        showMessage('[Invoke] the DLL mailbox is busy -- nothing was sent.\\n" +
-                 "Another CE script or a previous FIRE is still mid-command; press FIRE again in a moment.')");
+        Line(sb, "    local _fireOk, _fireWhy = waitIdle()");
+        Line(sb, "    if not _fireOk then");
+        // "nothing was sent" stays lowercase and verbatim: CeMailboxBailoutTests pins
+        // that exact phrase as this bail's promise to the user.
+        Line(sb, "        showMessage('[Invoke] ' .. _fireWhy .. '\\n\\nnothing was sent -- "
+                 + "the form stays open, press FIRE again once it is resolved.')");
         Line(sb, "        return");
         Line(sb, "    end");
         Line(sb, $"    local PD = mb + {OffParamsData}");
@@ -471,10 +488,10 @@ public static class InvokeScriptGenerator
     /// </summary>
     private static void AppendBusyBail(StringBuilder sb, string what)
     {
-        Line(sb, "if not waitIdle() then");
-        Line(sb, $"    print('ERROR: mailbox busy -- {what} not attempted')");
-        Line(sb, $"    showMessage('[Invoke] the DLL mailbox is busy -- {what} not attempted.\\n" +
-                 "Another CE script or a previous invoke is still mid-command; try again in a moment.')");
+        Line(sb, "local _idleOk, _idleWhy = waitIdle()");
+        Line(sb, "if not _idleOk then");
+        Line(sb, $"    print('ERROR: ' .. _idleWhy .. ' -- {what} not attempted')");
+        Line(sb, $"    showMessage('[Invoke] ' .. _idleWhy .. '\\n\\n{what} was not attempted.')");
         AppendCleanupTimer(sb, 1);
         Line(sb, "    return");
         Line(sb, "end");
