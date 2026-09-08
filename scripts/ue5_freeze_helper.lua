@@ -167,7 +167,11 @@
       pcall(h.stop)
       _ue5_freeze_handles[KEY] = nil
       showMessage('[Freeze] ' .. tostring(err))
-      if memrec then memrec.Active = false end
+      -- DEFERRED, and it has to be: an immediate memrec.Active = false here is a no-op
+      -- (CE's setActive early-exits while autoassemble is still running), which is
+      -- exactly how [FREEZESTUCK-2026-08-18] left a ticked row over a freeze that was
+      -- writing nothing. Byte-identical to CeLuaHygiene.DeferredUntickLua.
+      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
       return
     end
     if n == 0 then

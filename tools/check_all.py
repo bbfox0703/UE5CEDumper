@@ -157,6 +157,15 @@ GATES = [
      "stay correct while TArray element descriptors and every enum name read 8 bytes "
      "off -- which is why audit #5 G12 found it late and why its own fix missed a third "
      "writer. Run 'py tools/check_property_family.py --list'", False),
+
+    ("check_ce_untick_placement",
+     ["tools/check_ce_untick_placement.py"],
+     "a CE Lua bail-out unticks its record with an IMMEDIATE 'memrec.Active = false' "
+     "inside [ENABLE], which CE silently ignores -- setActive early-exits while "
+     "autoassemble is still running, so the row ends up TICKED over a cheat that "
+     "applied nothing. Use the deferred form (CeLuaHygiene.AppendDeferredUntick). "
+     "Run 'py tools/check_ce_untick_placement.py --list' for every site and its "
+     "verdict, or '--selftest' for the negative controls", False),
 ]
 
 

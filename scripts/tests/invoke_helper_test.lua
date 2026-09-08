@@ -509,6 +509,50 @@ local function runAsCeChunk(body, memrec)
   return pcall(chunk, false, memrec)
 end
 
+-- CE's TWO-PHASE ACTIVATION, modelled exactly -- without it these cases cannot tell a
+-- working untick from a no-op one. `setActive` opens `if state = fActive then exit;`
+-- and only assigns `fActive` AFTER autoassemble returns, so an untick INSIDE [ENABLE]
+-- silently does nothing and the row ends up ticked. The sample therefore schedules a
+-- deferred timer, and the rig has to (1) offer createTimer, (2) tick the record true the
+-- way CE does once the chunk returns, and (3) pump. Same model as
+-- untick_bailout_test.lua and freeze_helper_test.lua's makeCeRecord.
+-- [FREEZEUNTICK-2026-08-20] · pinned by tools/check_ce_untick_placement.py
+local TIMERS = {}
+
+function createTimer(_, enabled)
+  local t = { Interval = 0, OnTimer = nil, Enabled = enabled or false }
+  t.destroy = function() t.destroyed = true end
+  TIMERS[#TIMERS + 1] = t
+  return t
+end
+
+--- A memrec whose Active obeys CE's early-exit, so an immediate untick is a NO-OP here
+--- exactly as it is in CE.
+local function makeCeRecord()
+  local st = { fActive = false }
+  return setmetatable({}, {
+    __index = function(_, k) return k == 'Active' and st.fActive or nil end,
+    __newindex = function(_, k, v)
+      if k ~= 'Active' then return end
+      if v == st.fActive then return end          -- (1) setActive's early exit
+      st.fActive = v
+    end,
+  }), st
+end
+
+--- Run [ENABLE] the way CE really does: chunk first, THEN fActive := true, then let any
+--- deferred timer fire.
+local function runEnableLikeCe(body)
+  TIMERS = {}
+  local rec, st = makeCeRecord()
+  local ok, err = runAsCeChunk(body, rec)
+  st.fActive = true                                -- (4) CE ticks the record afterwards
+  for _, t in ipairs(TIMERS) do
+    if t.Enabled and t.OnTimer then t.OnTimer(t) end
+  end
+  return ok, err, st
+end
+
 function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s) end
 
 case('AA31: the Debug Camera [ENABLE] sample unticks the record when the call returns -1')
@@ -517,10 +561,9 @@ do
   DLL = function() I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
   local blocks = extractSampleBlocks(HELPER)
   check(#blocks >= 2, 'the header carries the [ENABLE]/[DISABLE] sample', '#blocks=' .. #blocks)
-  local memrec = { Active = true }
-  local ok, err = runAsCeChunk(blocks[1], memrec)
+  local ok, err, st = runEnableLikeCe(blocks[1])
   check(ok, 'AA31: the [ENABLE] sample runs without raising', err)
-  eq(memrec.Active, false, 'AA31: a -1 result unticked the record')
+  eq(st.fActive, false, 'AA31: a -1 result unticked the record -- AFTER CE ticked it')
 end
 
 case('AA31: the sample unticks when the call RAISES (mailbox gone)')
@@ -528,10 +571,9 @@ do
   resetWorld()
   SYMBOLS['g_invokeMailbox'] = nil          -- findMailbox raises -> setDebugCamera raises
   local blocks = extractSampleBlocks(HELPER)
-  local memrec = { Active = true }
-  local ok = runAsCeChunk(blocks[1], memrec)
+  local ok, _, st = runEnableLikeCe(blocks[1])
   check(ok, 'AA31: the sample catches the raise rather than propagating it')
-  eq(memrec.Active, false, 'AA31: a raised error also unticked the record')
+  eq(st.fActive, false, 'AA31: a raised error also unticked the record')
   SYMBOLS['g_invokeMailbox'] = MB           -- restore for later cases
 end
 
@@ -540,10 +582,9 @@ do
   resetWorld()
   DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end     -- camera ON
   local blocks = extractSampleBlocks(HELPER)
-  local memrec = { Active = true }
-  local ok = runAsCeChunk(blocks[1], memrec)
+  local ok, _, st = runEnableLikeCe(blocks[1])
   check(ok, 'the sample runs')
-  eq(memrec.Active, true, 'AA31: a real success keeps the record ticked')
+  eq(st.fActive, true, 'AA31: a real success keeps the record ticked')
 end
 
 -- ============================================================

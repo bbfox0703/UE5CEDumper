@@ -875,8 +875,13 @@ if syntaxcheck then return end
 -- happen here. Without it CE ticks the record on every bail-out — including the
 -- "already loaded and serving" one — and unticking then runs a real UE5_Shutdown
 -- against a proxy this script never injected (audit #4 B30).
+-- ⚠ It MUST be the deferred form. An immediate `memrec.Active = false` here is a
+-- no-op: CE's setActive early-exits while autoassemble is still running, so the row
+-- ends up ticked anyway and B30 fires regardless. [FREEZEUNTICK-2026-08-20]; pinned
+-- by tools/check_ce_untick_placement.py, and byte-identical to
+-- CeLuaHygiene.DeferredUntickLua.
 if ue5_inject() == false then
-  if memrec then memrec.Active = false end
+  if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
 end
 
 [DISABLE]
