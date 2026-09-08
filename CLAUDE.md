@@ -81,13 +81,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
 # Run tests only
-# ⚠ -Target Test does NOT compile the DLL. It builds only the two test executables
-#   (`--target utf8_helpers_test` / `dll_helpers_test`), which link HEADERS — so a syntax
-#   error in Fern.cpp / Stark.cpp / any other .cpp passes it clean. A green -Target Test
-#   after editing a .cpp measures nothing about that file. Use -Target DLL (or no -Target)
-#   before claiming a C++ change builds. Learned the hard way 2026-08-04: "959 dll green"
-#   was reported over a Fern.cpp that had never been compiled and did not parse.
-# ⚠⚠ It is ALSO NOT READ-ONLY: "only the two test executables" is about the C++ side ONLY —
+# ⚠ -Target Test does NOT compile the whole DLL. It builds 5 test executables, and
+#   **10 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
+#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme into one TU, and
+#   grausam_window_test / sein_retention_test take one each. The other 21 — **Fern.cpp and
+#   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
+#   it clean. A green -Target Test after editing one of THOSE measures nothing about that
+#   file. Use -Target DLL (or no -Target) before claiming a C++ change builds. Learned the
+#   hard way 2026-08-04: "959 dll green" was reported over a Fern.cpp that had never been
+#   compiled and did not parse.
+# ⚠ This paragraph itself said "only the two test executables, which link HEADERS" until
+#   2026-09-08 — true at audit #5 (build 2804), false from the day dll_core_test landed, and
+#   it was quoted to a fix session as a reason not to write a test. Both counts are now
+#   pinned by `check_derived_counts`; do not hand-edit them.
+# ⚠⚠ It is ALSO NOT READ-ONLY: the C++ narrowness above is about the C++ side ONLY —
 #   it republishes dist\ NON-TRIMMED too. See ## Build & Deploy.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
 
