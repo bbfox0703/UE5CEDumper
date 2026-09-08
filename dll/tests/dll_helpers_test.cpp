@@ -6451,6 +6451,43 @@ GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
 GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_testLiveness; }
 }   // namespace Stark
 
+static void Test_Aura_DescribeSparseDelegateState() {
+    // Blind-spot sweep D4. A sparse delegate whose bIsBound byte READ 1, whose
+    // InvocationList header then faulted, used to render "(0 bindings, sparse)" — the code
+    // had positive evidence the delegate WAS bound and printed the opposite. The walker
+    // clamped an unreadable/implausible Num to 0 and the renderer could not tell that from
+    // a genuine zero. bIsBound == 1 is implied here: Ubel only calls this after rejecting
+    // the unbound case.
+    Aura::SparseDelegateResult sr;
+    sr.resolved = sr.ownerFound = sr.nameFound = true;
+
+    sr.listRead = false;                       // the header faulted
+    EXPECT("D4: an unreadable invocation list says so",
+           Aura::DescribeSparseDelegateState(sr, 0)
+               == "(sparse, bound — invocation list unreadable)");
+
+    // ⭐ THE CONTROL. A delegate that IS bound and whose list was READ and is genuinely
+    // empty must still say "(0 bindings, sparse)" — otherwise the fix would have swapped
+    // one wrong answer for another.
+    sr.listRead = true;
+    sr.listNum  = 0;
+    EXPECT("D4 control: a READ, genuinely-empty list still says 0 bindings",
+           Aura::DescribeSparseDelegateState(sr, 0) == "(0 bindings, sparse)");
+
+    // Read a positive Num but resolved none of them: neither "0 bindings" nor a list.
+    sr.listNum = 3;
+    EXPECT("D4: Num read but no binding resolvable is named, not reported as zero",
+           Aura::DescribeSparseDelegateState(sr, 0) == "(3 sparse bindings, none readable)");
+    sr.listNum = 1;
+    EXPECT("D4: singular", Aura::DescribeSparseDelegateState(sr, 0)
+               == "(1 sparse binding, none readable)");
+
+    // Populated: the caller renders it, so the helper must stand aside.
+    sr.listNum = 3;
+    EXPECT("D4: the populated case is left to the caller",
+           Aura::DescribeSparseDelegateState(sr, 2).empty());
+}
+
 static void Test_Stark_ClassifyGameThreadLiveness() {
     using L = Stark::GameThreadLiveness;
     const uint64_t thr = 500, now = 100000;
@@ -7919,6 +7956,7 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Aura_DescribeSparseDelegateState);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent

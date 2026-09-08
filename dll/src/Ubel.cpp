@@ -5832,7 +5832,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             std::string display;
-            if (bindingCount == 0) {
+            // "0 bindings" is now only claimed when the list was actually READ. An
+            // unreadable or implausible header says so instead of asserting emptiness
+            // over a delegate whose bIsBound byte read 1.
+            std::string state = Aura::DescribeSparseDelegateState(sr, fv.arrayElements.size());
+            if (!state.empty()) {
+                display = std::move(state);
+            } else if (bindingCount == 0) {
                 display = "(0 bindings, sparse)";
             } else {
                 display = "(" + std::to_string(bindingCount)

@@ -10,6 +10,14 @@
 #include "Grimoire.h"
 #include "Serie.h"
 
+// A multicast delegate's InvocationList is a per-object subscriber list; even
+// pathological actor/UMG fan-out stays in the low hundreds. A HEADER PLAUSIBILITY ceiling
+// ("is this really a TArray?"), NOT a display cap — maxBindings is the display cap. Named
+// per the 2b9ffac9 convention. File scope because BOTH sparse-delegate readers use it:
+// WalkSparseDelegateBindings and FindReferencesToUObject's sparse pass, which carried the
+// same bare 4096 independently.
+static constexpr int32_t kMaxPlausibleInvocationListNum = 4096;
+
 #include "Ubel.h"
 #include "Genau.h"
 #include "Denken.h"
@@ -3814,11 +3822,24 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                         if (!Macht::ReadSafe(innerSlot + fnamePairSlot, mcdAddr) || !mcdAddr)
                             continue;
 
+                        // The same dropped pair as WalkSparseDelegateBindings, with a
+                        // WORSE failure: `continue` makes the binding silently ABSENT from
+                        // Find Refs, and an absence reads as "nothing points here" — a
+                        // stronger claim than a wrong count. Keep skipping (there is no
+                        // per-entry channel to report on), but stop doing it silently.
                         uintptr_t invData = 0;
                         int32_t   invNum  = 0;
-                        Macht::ReadSafe(mcdAddr + 0x00, invData);
-                        Macht::ReadSafe(mcdAddr + 0x08, invNum);
-                        if (invNum < 0 || invNum > 4096 || !invData) continue;
+                        const bool okInvData = Macht::ReadSafe(mcdAddr + 0x00, invData);
+                        const bool okInvNum  = Macht::ReadSafe(mcdAddr + 0x08, invNum);
+                        if (!okInvData || !okInvNum) {
+                            LOG_WARN("FindReferences: sparse InvocationList header at 0x%llX "
+                                     "faulted — this delegate's bindings are MISSING from the "
+                                     "results, not absent from the game",
+                                     static_cast<unsigned long long>(mcdAddr));
+                            continue;
+                        }
+                        if (invNum < 0 || invNum > kMaxPlausibleInvocationListNum
+                            || !invData) continue;
 
                         for (int32_t bi = 0; bi < invNum; ++bi) {
                             uintptr_t bindAddr = invData +
@@ -6383,9 +6404,32 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // FMulticastScriptDelegate { TArray<FScriptDelegate> InvocationList; }
     uintptr_t invData = 0;
     int32_t   invNum  = 0;
-    Macht::ReadSafe(mcdAddr + 0x00, invData);
-    Macht::ReadSafe(mcdAddr + 0x08, invNum);
-    if (invNum < 0 || invNum > 4096) invNum = 0;
+    const bool okData = Macht::ReadSafe(mcdAddr + 0x00, invData);
+    const bool okNum  = Macht::ReadSafe(mcdAddr + 0x08, invNum);
+    // ⛔ Do NOT restore `if (...) invNum = 0;` here. Clamping an unreadable or implausible
+    // header to zero is what made a delegate whose bIsBound byte READ 1 report
+    // "(0 bindings, sparse)" — the code had positive evidence the delegate WAS bound and
+    // printed the opposite. listRead stays false and the renderer says so instead.
+    if (!okData || !okNum) {
+        LOG_WARN("WalkSparseDelegateBindings: InvocationList header at 0x%llX faulted "
+                 "(data=%d num=%d) — reporting UNREADABLE, not zero bindings",
+                 static_cast<unsigned long long>(mcdAddr), (int)okData, (int)okNum);
+        return result;
+    }
+    if (invNum < 0 || invNum > kMaxPlausibleInvocationListNum) {
+        LOG_WARN("WalkSparseDelegateBindings: implausible InvocationList Num=%d at 0x%llX "
+                 "— reporting UNREADABLE, not zero bindings", invNum,
+                 static_cast<unsigned long long>(mcdAddr));
+        return result;
+    }
+    if (invNum > 0 && !invData) {
+        LOG_WARN("WalkSparseDelegateBindings: Num=%d with null Data at 0x%llX — corrupt "
+                 "header, reporting UNREADABLE", invNum,
+                 static_cast<unsigned long long>(mcdAddr));
+        return result;
+    }
+    result.listRead = true;
+    result.listNum  = invNum;
 
     // FWeakObjectPtr + sizeof(FName). FScriptDelegate is alignof 4, so no padding here --
     // this must NOT reuse fnamePairSlot.

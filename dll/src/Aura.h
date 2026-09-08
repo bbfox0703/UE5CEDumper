@@ -1293,8 +1293,33 @@ struct SparseDelegateResult {
     bool supported  = true;      // false = current UE version not supported
     bool ownerFound = false;     // outer key matched
     bool nameFound  = false;     // inner key matched
+    // The InvocationList header {Data, Num} was actually READ and looked plausible.
+    // `nameFound && !listRead` is the state that used to render as "(0 bindings, sparse)":
+    // the delegate was located and its subscriber list could NOT be read. Reporting that
+    // as zero subscribers is an affirmative claim over memory nobody could see.
+    bool    listRead = false;
+    int32_t listNum  = 0;        // InvocationList.Num() as read. May exceed bindings.size(),
+                                 // which is capped by maxBindings; this one is the truth.
     std::vector<SparseDelegateBinding> bindings;
 };
+
+/// Name the state the walker actually established, for display.
+///
+/// `bIsBound == 1` is IMPLIED: Ubel's sparse handler only reaches here after rejecting
+/// the unbound case, so "bound" is never in question — what varies is whether the
+/// invocation list could be read. Pure and header-inline so `dll_helpers_test` can pin it
+/// without linking Aura.cpp.
+inline std::string DescribeSparseDelegateState(const SparseDelegateResult& sr,
+                                               size_t inlineCount) {
+    if (!sr.listRead)
+        return "(sparse, bound — invocation list unreadable)";
+    if (sr.listNum == 0)
+        return "(0 bindings, sparse)";        // READ, and genuinely empty
+    if (inlineCount == 0)
+        return "(" + std::to_string(sr.listNum) + " sparse binding"
+             + (sr.listNum > 1 ? "s" : "") + ", none readable)";
+    return "";                                // caller renders the populated case
+}
 
 // Walk FSparseDelegateStorage to enumerate bindings for `fieldName` on
 // `ownerObj`. Returns immediately if the AOB resolver hasn't found the
