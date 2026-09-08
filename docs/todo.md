@@ -1525,6 +1525,86 @@ the exact shape of 5 of its 14 targets — and reported **CHECK OK over a tree t
 Every one was green before the control said otherwise. See [working-lessons.md](working-lessons.md)
 §1.2a.
 
+### ✅ FIXED 2026-09-08 — the 5 DLL rows + the CE Lua one; 2 more gates shipped
+
+The sweep's DLL half is closed. Fixes were **derived and adversarially checked before being
+written**, because this repo's own history says a verdict is not authority on the repair
+(AB4: the diagnosis was right and the prescribed fix could never have fired). All five came
+back `sound-with-corrections`; **none was an AB4**, and every correction was in the residual
+risk or the blast radius — the same place the 2026-08-16 MED re-derivation found them.
+
+| row | commit | what it stopped claiming |
+|---|---|---|
+| **D1** `Dunste.cpp` 🟠 MED | `fc83923e` | `InvokeSetCollision` returned *"the setter was FOUND"* and all three call sites read it as *"collision CHANGED"* |
+| **D2** `Aura.cpp` | `e6360903` | a scan worker that THREW let the run report **complete** — `deadline_hit` is the only wire field saying a result set is truncated |
+| **D3+D5** `Ubel.cpp` | `c45c7ce8` | an unreadable delegate array published the affirmative `"(0 bindings)"`; a faulted `FGuid` read published a fabricated all-zero GUID |
+| **D4** `Aura.cpp` | `2a8b257b` | a sparse delegate whose `bIsBound` byte **read 1** reported `"(0 bindings, sparse)"` |
+| CE Lua | `a55ef2b5` | Invoke's idle wait reported a **dead game process** as a **busy mailbox** |
+
+⭐ **D1 was bigger than filed, and the checker is why.** The dropped `int32_t` **re-opens the
+hole audit #4 B8 was written to close**: `SetEnabled(false)` invoked the restore, ignored the
+answer and cleared `collisionOff`/`collisionPawn` unconditionally, so a refused restore left
+the pawn ghosted **and** wiped the record that would have started `PendingRestoreLoop` — the
+failure B8 describes as *"what made the pawn fall through the world"*. It reaches that through
+the **dispatcher** rather than through `IsGameThreadResponsive`, which is why B8 did not cover
+it. And B8 had to survive, so a bool was never the answer: **absent** (permanent — retrying
+cannot conjure a setter, so it commits) and **refused** (transient — it must not) are
+different failures. Hence `CollisionApply` + the pure `ShouldCommitCollision`.
+
+⭐ **D4 found a FOURTH site nobody had filed**: `FindReferencesToUObject`'s sparse pass carried
+the byte-identical dropped pair, and on a fault it `continue`s — so the binding is silently
+**absent** from Find Refs, and an absence reads as *"nothing points here"*, a **stronger** claim
+than a wrong count.
+
+**Two gates shipped** — both on the rule that earns them: *pick a predicate whose LEGITIMATE
+population is EMPTY, rather than one whose legitimate population must be enumerated.*
+`check_ce_untick_placement` (17a) and `check_clipboard_delivery` (17b). `check_all.py` runs 18.
+
+⚠ **Three gate bugs were caught by their own negative controls, each after the check was
+already green** — 17a's marker anchor twice, and 17b reading a leading `if (!sentToCe)` head as
+consumption, which is the shape of 5 of its 14 targets. Recorded in
+[working-lessons.md](working-lessons.md) §1.2a.
+
+### ⬜ FILED, not forgotten — the Fly report publishes the WISH, not the FACT
+
+Found by D1's checker alongside the defect, and deliberately **not** folded into the fix
+because it is a pipe-contract + UI change rather than a correctness one:
+
+- `Fern.cpp` publishes `data["noclip"]` from `s_state.noclip` — **what was asked for**. The
+  fact (`collisionOff`, and now whether the invoke was actually *applied*) reaches **no**
+  channel: not the pipe, not `FLY_OP_GET_STATE`.
+- ⚠ And `collisionOff` **cannot simply be published as the fact**: B8 gives it *"intended, and
+  retrying cannot help"* semantics, so a game whose pawn class has no setter records `true`
+  while the pawn is fully colliding. Publishing it would ship a **new** lie. It needs a
+  tri-state (`COLL_ON` / `COLL_OFF_APPLIED` / `COLL_NOT_APPLIED`).
+- `FlyStatus.Noclip` is **already dead on the C# side**: `ApplyFlyReadout` never reads it, and
+  the `✈ Fly ON (noclip)` badge is built from the local checkbox — **it never asks the DLL at
+  all**.
+- ⭐ The in-tree model is `Solitar.cpp`'s `GetGodMode()`, which resolves `bCanBeDamaged` on the
+  live pawn every call and returns the **observed** bit; and `Fern.cpp`'s fly handler already
+  discards three `int32_t` returns but publishes `flyStatusJson(st)` from a **re-read** — the
+  corrected pattern is next door.
+
+### ⬜ Still open from the sweep
+
+- The **~11 convenience copies that carry a claim** (`ClassPivot:1201`, `DumpExplorer:309`,
+  `RelatedObjects:177`, `Snapshot.Group:285`, `SnapshotViewModel:1536`, `SpcQuery(.Group)`,
+  `InstanceFinder:1020`, `FunctionPropsDialog:386`, `PropertyXrefDialog:458`,
+  `TeleportViewModel:1483`). ⚠ Deliberately outside 17b's predicate — folding them in is what
+  turns a 0-baseline check into a waiver list. Their claims should stop asserting an unchecked
+  copy; that is a different fix from routing them through `ClipboardDelivery`.
+- `TeleportViewModel:1847` / `:2344` (Stealth Reset reports a release it never sent; Time
+  dilation promises an override `SetDilation` stored nothing).
+- ⚠ **D2's deliberate residual**: a worker fault now reports through `deadline_hit`, so the UI
+  says *"DEADLINE HIT, this scan is partial"* for a cause that was not a deadline. The partial
+  claim is true and the log names the real cause; a second wire field would mean a protocol
+  change plus `PartialResultNotice.DeadlineClause` and its 8 emit sites, and that string is
+  pinned by 3 test files.
+- ⚠ **What no test reaches**: D4's three walker early-returns need a live `FSparseDelegateStorage`
+  and the AOB resolver, and every D1 call-site path needs a running game with the PE hook down.
+  The pure cores are pinned; the call sites are reviewed, not tested. Live rows for these belong
+  in [verification-register.md](verification-register.md), not here.
+
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
