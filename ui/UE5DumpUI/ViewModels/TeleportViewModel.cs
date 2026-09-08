@@ -2003,8 +2003,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
 
             // No AOBMaker (or it refused) — fall back to the clipboard as paste-able CE XML.
-            await _platform.CopyToClipboardAsync(
-                UE5DumpUI.Services.CheatTableBuilder.WrapAaScriptXml(desc, script));
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
+                    UE5DumpUI.Services.CheatTableBuilder.WrapAaScriptXml(desc, script)))
+            {
+                StatusText = Helpers.ClipboardDelivery.FailureText($"the CE record for '{desc}'");
+                _log.Warn($"Teleport query-ptr: '{desc}' reached neither CE nor the clipboard");
+                return;
+            }
             StatusText = (alreadyPushed
                 ? $"'{desc}' was already pushed to Cheat Engine this session — copied it as CE " +
                   "memory-record XML instead of adding a second record. "
@@ -2045,8 +2050,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
 
             // No AOBMaker (or it refused) — fall back to the clipboard as paste-able CE XML.
-            await _platform.CopyToClipboardAsync(
-                UE5DumpUI.Services.CheatTableBuilder.WrapAaScriptXml(desc, script));
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
+                    UE5DumpUI.Services.CheatTableBuilder.WrapAaScriptXml(desc, script)))
+            {
+                StatusText = Helpers.ClipboardDelivery.FailureText($"the toggle script for '{desc}'");
+                _log.Warn($"Teleport toggle-script: '{desc}' reached neither CE nor the clipboard");
+                return;
+            }
             StatusText = (available
                 ? $"AOBMaker refused '{desc}' — copied it as CE memory-record XML instead. "
                 : $"AOBMaker not connected — copied '{desc}' as CE memory-record XML to the clipboard. ")
@@ -4100,9 +4110,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            await _platform.CopyToClipboardAsync(
-                CheatTableBuilder.WrapAaScriptXml(
-                    CoordLibraryScriptGenerator.RecordDescription, script));
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
+                    CheatTableBuilder.WrapAaScriptXml(
+                        CoordLibraryScriptGenerator.RecordDescription, script)))
+            {
+                // The claim this replaces also carried _coordAll.Count -- a count taken
+                // from the REQUEST, so it read "N entries" over a clipboard that took none.
+                CoordStatus = Helpers.ClipboardDelivery.FailureText("the coordinate-library record");
+                _log.Warn($"Coordinate library ({_coordAll.Count} entries) reached neither CE " +
+                          "nor the clipboard");
+                return;
+            }
             CoordStatus = (available
                 ? "AOBMaker refused the push — copied the record as CE XML instead. "
                 : "AOBMaker not connected — copied the record as CE XML to the clipboard. ")

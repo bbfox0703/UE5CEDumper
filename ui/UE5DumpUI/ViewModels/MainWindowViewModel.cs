@@ -1740,11 +1740,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
                         sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                    bool copied = false;
                     if (!sentToCe)
                         // Wrap as paste-able CE memory-record XML (a bare AA body can't
                         // be pasted into a record).
-                        await _platform.CopyToClipboardAsync(
+                        copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                             Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                    if (!sentToCe && !copied)
+                    {
+                        StatusText = Helpers.ClipboardDelivery.FailureText("the AA script");
+                        _log.Warn($"InterestingFunctions baked AA Script {className}::{funcName} " +
+                                  "reached neither CE nor the clipboard");
+                        return;
+                    }
                     // Sync VM-level state so InterestingFunctions tab's Notes
                     // column reflects post-send reality.
                     if (_aobMaker != null)
@@ -1949,11 +1957,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
                         sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                    bool copied = false;
                     if (!sentToCe)
                         // Wrap as paste-able CE memory-record XML (a bare AA body can't
                         // be pasted into a record).
-                        await _platform.CopyToClipboardAsync(
+                        copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                             Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                    if (!sentToCe && !copied)
+                    {
+                        StatusText = Helpers.ClipboardDelivery.FailureText("the AA script");
+                        _log.Warn($"Console baked AA Script {className}::{funcName} reached " +
+                                  "neither CE nor the clipboard");
+                        return;
+                    }
                     StatusText = sentToCe
                         ? $"AA Script created in CE: {funcName}"
                         : wasAvailable
@@ -2006,12 +2022,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 bool sentToCe = false;
                 if (_aobMaker != null && wasAvailable)
                     sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                bool copied = false;
                 if (!sentToCe)
                     // Wrap as paste-able CE memory-record XML (a bare AA body can't be
                     // pasted into a record). The script is self-contained (talks to the
                     // mailbox directly) — no ue5_invoke_helper.lua needed.
-                    await _platform.CopyToClipboardAsync(
+                    copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                         Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                if (!sentToCe && !copied)
+                {
+                    StatusText = Helpers.ClipboardDelivery.FailureText("the Debug Camera script");
+                    _log.Warn("Console Debug Camera CE script reached neither CE nor the clipboard");
+                    return;
+                }
                 StatusText = sentToCe
                     ? "Debug Camera AA Script created in CE (tick = ON, untick = OFF)."
                     : wasAvailable
@@ -3183,12 +3206,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     group: Services.CeInjectScriptGenerator.RecordGroup);
             }
 
+            bool copied = false;
             if (!sentToCe)
             {
                 // A bare AA body can't be pasted into a record — wrap as CE
                 // memory-record XML.
-                await _platform.CopyToClipboardAsync(
+                copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                     Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+            }
+            if (!sentToCe && !copied)
+            {
+                StatusText = Helpers.ClipboardDelivery.FailureText("the inject bootstrap");
+                _log.Warn($"CE inject bootstrap (dll={dllPath}) reached neither CE nor the clipboard");
+                return;
             }
 
             StatusText = sentToCe

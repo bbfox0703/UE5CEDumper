@@ -166,6 +166,16 @@ GATES = [
      "applied nothing. Use the deferred form (CeLuaHygiene.AppendDeferredUntick). "
      "Run 'py tools/check_ce_untick_placement.py --list' for every site and its "
      "verdict, or '--selftest' for the negative controls", False),
+
+    ("check_clipboard_delivery",
+     ["tools/check_clipboard_delivery.py"],
+     "a DELIVERY clipboard copy (the payload is a generated CE script / memory-record "
+     "XML) discards CopyToClipboardAsync's result, so the status can claim a paste-able "
+     "script the clipboard never took -- and the user then pastes the PREVIOUS script "
+     "into Cheat Engine and runs it. Route it through Helpers/ClipboardDelivery. "
+     "Convenience copies (an address, a name) are deliberately NOT flagged: that split "
+     "is what keeps this check baseline-free. "
+     "Run 'py tools/check_clipboard_delivery.py --list' or '--selftest'", False),
 ]
 
 

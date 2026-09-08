@@ -6235,8 +6235,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // can't be pasted into a CE record — wrap it, same as the Global-Pointer
             // records). If we thought CE was present (button shouldn't have been
             // clickable then), surface a pipe-broken warning too.
-            await _platform.CopyToClipboardAsync(
-                Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
+                    Services.CheatTableBuilder.WrapAaScriptXml(description, script)))
+            {
+                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                SetError(Helpers.ClipboardDelivery.FailureText("the invoke script"));
+                _log.Warn($"Invoke script for {func.Name} could not be delivered - AOBMaker " +
+                          "did not take it AND the clipboard refused the write");
+                return;
+            }
             if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
             StatusText = wasAvailable
                 ? $"⚠ AOBMaker pipe broke (CE closed?) — invoke script copied as CE XML (paste into CE's address list)"
@@ -6333,9 +6340,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 bool sentToCe = false;
                 if (_aobMaker != null && wasAvailable)
                     sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                bool copied = false;
                 if (!sentToCe)
-                    await _platform.CopyToClipboardAsync(
+                    copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                         Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                if (!sentToCe && !copied)
+                {
+                    SetError(Helpers.ClipboardDelivery.FailureText("the AA script"));
+                    _log.Warn($"Baked AA Script (no args) for {CurrentClassName}::{func.Name} " +
+                              "reached neither CE nor the clipboard");
+                    return;
+                }
                 // Sync the VM-level flag from whatever the bridge ended up at,
                 // so the Notes column reflects post-send reality on the next
                 // repaint.
