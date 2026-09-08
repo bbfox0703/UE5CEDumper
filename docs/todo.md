@@ -1052,6 +1052,110 @@ work — is answered for one of the two named hosts. **Tower of Mask remains unt
   `dist/build_number.txt`. A verification tool quoting a number instead of deriving it is the exact
   failure the house rule exists to prevent, and it was inside the tooling.
 
+## 🔎 Audit #3 RE-CHECK — measured 2026-09-08 (build 3423). Verdict: don't re-run it, sweep its blind spot
+
+**Why this exists.** audit #3 is the only audit on this repo not produced by Opus 5, and its own
+doc never records that. Measured from the git trailers: `abf1ce09` (the findings doc) through
+`e75009b2` (the tracker close) is **24 commits, 22 of them `Co-Authored-By: Claude Fable 5`**,
+including **all 12 named fix commits**; the 2 Opus 4.8 commits in the same window (`f66e6025`,
+`40817bad`) are unrelated fstruct-invoke feature work carrying no finding id. For contrast:
+audit #4 = Opus 5 / 48 agents, audit #5 = Opus 5 / 279 agents (summed from the per-segment counts;
+the doc prints no total), audit #6 = Opus 5 / 100 agents. audit #3 states no agent total —
+5 finders + a 10-cluster re-verification + 3 HIGH-lens skeptics is what its Method paragraph names.
+
+Re-checked by a 12-agent workflow (4 evidence + 2 miss-hunts + 6 refute-mandated skeptics), every
+`file:line` re-read at HEAD because audit-doc line numbers have drifted hard (`Schlacht::SetEnabled`
+437 → 667; `TeleportViewModel` gate-off 2909 → 4397).
+
+### ✅ What held — this is why the answer is NOT "re-run audit #3"
+
+- **23 of 23 shipped fixes are still live at HEAD.** 22 `present`, 1 (`L5`) relaxed `>` → `>=`
+  **deliberately** by `[CADENCEGAP-2026-08-22]`; its underflow guard is intact. Nothing was silently
+  reverted in ~1,250 builds. Three changed shape and stayed correct: `L3`'s prescribed
+  `exactMatch=true` became `Aura::FindInstancesDerivedFrom` (A6) with the substring hazard still
+  closed by `ClassChainMatchesLower`'s per-level full-string compare; `M4`'s inline
+  `MarkBackgroundWorker` moved into the shared `Routine::ReassertLoop`; `L4`'s prune guard was
+  re-expressed `results.size() < cap` → `!rset.truncated`.
+- **All 9 dropped items re-derived → 0 reopens.** `M6`'s family-uniformity premise still holds (the
+  post-audit `Dunste` is *also* absent from both cleanup paths, reinforcing it); `L6`'s Welford
+  `m2 >= 0` proof survives even the `gap == 0` samples the `>=` change re-admitted; `L20`/`L21` are
+  moot (later fixes plumbed the ct and moved to `ObjectTreeFilter`). ⭐ **Fable 5's adversarial
+  judgement was sound — the refutations were right.** The gap is in *coverage*, not in reasoning.
+
+### ⛔ What it missed — 5 confirmed (1 more claim refuted), and they share ONE shape
+
+Each survived a skeptic mandated to refute, checking all five collapse routes (didn't exist at 2168 /
+out of scope / later code / audit #3 did raise it / different mechanism).
+
+| sev | miss | found by |
+|---|---|---|
+| 🔴 | **Schlacht::Tick recorded INTENT, not effect** — `InvokeSetHidden` returns `bool`, both call sites drop it in one line each. See-through was a **no-op on non-Actors** while `hiddenActors`, `hiddenCount`, the pipe's `hidden_count`, the UI status string and `"disabled (N restored)"` all reported success | `d48441e7` 2026-08-22 `[SEETHRUTALLY]` — **6 weeks later** |
+| 🔴 | **`SnapshotStore.OpenAsync` ran DROP-based schema init on every open, no mutual exclusion** — a concurrent first-open DROPs a just-captured snapshot | `3c637c56` 2026-07-22 (8 days later) |
+| 🔴 | **DumpExplorer live match joins on bare class names, no game-identity gate** — another game's `.jsonl` does not fail, it "matches" | `5389fde4` 2026-08-01 |
+| 🟠 | **Solide `Int8Property` written signed, read unsigned** — the drift loop can never converge; rewrites the same byte every 300 ms reporting permanent drift | audit #5 `AF8`, `ec72d7c0` |
+| 🟠 | **PipeClient converts an UNEXPECTED pipe death into a token-less OCE** | audit #5 `AC10`, build 3262 |
+| ⬜ | *refuted:* "Solide `ApplyToInstance` discarded the write result" — the refusal path it needs was added by `ec72d7c0` **5 weeks after** the audit; at 2168 the discarded bool had no reachable failure | — |
+
+⭐ **The shape, and it is not random.** The first three were **inside functions audit #3 itself
+rewrote that day.** `M1`/`M2`/`M3` all reason about the *contents* of `s_state.hiddenActors` and
+`0f6f6e07` rewrote that disable path — nobody asked whether the set's contents were ever **true**.
+`L11` quotes `InvokeSetHidden`'s false return and treats it as the **safe** outcome. `L21` filed an
+INFO-tier helper-reuse nit in `DumpExplorerViewModel` ~60 lines below a bug that gives a confident
+wrong answer on every UE title (every game has an `Object`, an `Actor`, a `Pawn`).
+
+⭐ **And the audit's own cross-cutting root cause rested on a false premise.** `H1` states in
+writing *"Unexpected pipe DEATH is safe because ReadLoop faults pendings with IOException, not
+OCE"* — falsified by the two catch filters 30 lines away in the same method. The shared
+`IsUserCancel(ct)` helper it recommended was **never built**, so the same shape was re-found later
+as `AC10`.
+
+### 📐 The coverage gap is structural, and no later audit touches it
+
+audit #5's own header says #3 and #4 were both scoped *"files changed since baseline X"*; #4's
+baseline **is** #3's endpoint `af2ce50`, and #5's predicate is *authored before 2026-06-01*. So:
+
+- audit #3's window (`88ee170..af2ce50` = **2026-07-03 .. 07-15**, 164 commits, 229 non-doc files,
+  +23,814/-958) has **22,853 lines still alive at HEAD, of which 100% have never been re-swept at
+  line level by any later audit.** Not an estimate — tautological under `git blame`: a line still
+  blamed into that range is a line no post-`af2ce50` commit touched, so #4 covers exactly zero of
+  them by construction. Derive it, never quote it:
+  `git rev-list 88ee170..af2ce50 | sort > S` then per file
+  `git blame --line-porcelain HEAD -- <f> | grep -E '^[0-9a-f]{40} ' | awk '{print $1}' | grep -c -F -x -f S`
+  (cross-validated against a second pass classifying by porcelain `author-time`: identical).
+- ⛔ **HARD CORE: 80 files / 4,648 lines are unchanged since `af2ce50` AND cited by no later audit
+  document at all** — never modified, never re-read, never mentioned. `dll/src/Grausam.cpp` is
+  279/279 lines from that window, byte-identical since, and its only audit-#5 appearances are as a
+  *precedent* for a Stark fix and inside a refutation.
+
+### ⚠ Verification asymmetry — the audit's only HIGH is its least-verified fix
+
+- **13 of 23 have a real headless rig** (all DLL-side, run on DumperTest 2026-08-21..24 with
+  negative controls): `M1`/`M2`/`M3` `[M123-RESTORESET-2026-08-24]`, `M4`, `M5`, `L1`, `L2`,
+  `L3`+`L4`, `L5`, and the rest of the DLL LOW batch.
+- **10 have a unit test ONLY and appear NOWHERE in `verification-register.md`** — grep of the
+  register for these ids is **zero hits**: `H1`, `M7`, `M8`, `M9`, `M10`, `L13`–`L17`, all UI-side.
+  `H1` — a truncated snapshot committed as usable — rests on
+  `Capture_DisconnectMidStream_DoesNotSaveUsablePartial` and has never met a real pipe. This
+  violates the register's own single-owner rule at `:10164`.
+- 7 were never fixed (the `L7`/`L9`/`L11`/`L18`/`L19`/`L20`/`L21` downgrades), re-derived above.
+
+### ⬜ Actionable, in priority order
+
+1. **⏳ IN PROGRESS — pattern sweep for the named blind spot, repo-wide**: a function that declares
+   `bool`/an error code whose call sites drop it, and any count/status/log reported from *intent*
+   rather than from re-reading the effect. Purely static, one screen per site, and **both #3 and #4
+   walked past the Schlacht instance**. This is a *pattern* sweep, not an area audit — re-running
+   audit #3 is the wrong spend given 23/23 and 0 reopens above.
+2. **⬜ Sweep the 4,648-line hard core** (80 files, list derivable with the `git blame` recipe
+   above), `Grausam.cpp` first — the lowest-coverage code in the repo.
+3. **⬜ Give the 10 UI-side fixes register rows**, `H1` first with a real acceptance test.
+
+### ⚠ Two stale register rows found on the way (fix when next editing the register)
+
+`docs/verification-register.md:10451` still marks **Solide `L3`/`L4` ⬜**, and `:9894`'s long-tail
+heading still names them unproven — both superseded by `[SOLIDE-L3L4-2026-08-23]`
+(held=130 where substring predicts 108; 12/12 base and 12/12 **derived** forced, 0/8 decoys).
+
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
 **Why this exists.** Four verification rows were parked on *"go find a commercial game that happens
