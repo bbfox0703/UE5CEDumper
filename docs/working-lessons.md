@@ -65,6 +65,63 @@ the cheap way to tell "looked and found nothing" from "never looked"** (22 → 2
 proved the folder had finally entered the candidate list). Ask for that number before trusting a null
 result.
 
+### 1.2a ⭐ ONE negative control validates ONE AXIS — it does not validate the instrument
+
+§1.2 says run the control. This is the failure that happens **after** you run it and it passes.
+
+**2026-09-08, the audit-#3 blind-spot sweep.** The hunt was for a discarded `bool`/status return
+feeding a success report — the shape of the 2026-08-22 See-through defect (`d48441e7`). Before
+spending agents, the scanner was calibrated the right way: run it against `Schlacht.cpp` at
+`d48441e7^` and require it to flag the historical defect. *If it cannot see the bug that motivated
+the sweep, the list is worthless.* It failed, was fixed, passed — and the sweep was launched on it.
+
+It was still **76% blind**, and the control could never have said so:
+
+| pass | what it could not see | C++ sites found |
+|---|---|---|
+| 1 | the defect line starts with `for` — leading `if`/`for`/`while` heads skipped wholesale | 65 |
+| 2 | **control PASSES here** — and this is what the sweep ran on | 137 |
+| 3 | **qualified calls**: the lookbehind `(?<![A-Za-z0-9_>.:])` rejected `Macht::ReadSafe(…)`, `p->f(…)` | **281**, of which **213 = 76% qualified** |
+
+**Why the control was structurally incapable of catching it:** the historical call
+(`InvokeSetHidden(a, false)`) is **unqualified and in its own translation unit**, so it never
+exercised the qualification rule at all. The control tested statement *shape*. The bug was in
+callee *qualification*. One sample, one axis.
+
+And the corrected pass had its **own** blind spot, found by the same control on the same file:
+statements inside a **lambda passed as a call argument** are invisible to a `;`-splitter, because
+depth never returns to 0 — **66 bodies / 3,598 lines** in `dll/src`, 2,873 of them `Aura.cpp`, i.e.
+the whole parallel-scan machinery. The line-based pass sees those; the statement-based pass sees
+qualified and multi-line calls. **Neither dominates. The union is the list.**
+
+⭐ **The measurement that settles it:** of the sweep's 5 confirmed findings, **0 came from a
+mechanical-list row**. Only 2 of 13 skepticised candidates were list rows and **both were refuted**.
+List yield **0/154**; hand-grep yield **5/5**. A list that passes its calibration can still
+contribute nothing.
+
+**Why this keeps happening:** a passing control produces *confidence*, and confidence is what stops
+you enumerating the other axes. This is [audit #4's lesson 1](audit-2026-08-04-findings.md) —
+*"a fix verified against the list it was written from is not verified"* — one level up: **an
+instrument verified against the one case it was written from is not verified either.**
+
+**How to apply.** Before trusting a scanner/rig that passed its control:
+
+1. **Enumerate the axes the instrument discriminates on** — for a code scanner at minimum: statement
+   shape, callee qualification (`::` / `.` / `->`), single vs multi-line, return type family
+   (`bool` vs `int`/enum/`*Result`), and nesting (lambda bodies, macros, templates).
+2. **Ask which axes the control sample actually exercised.** One historical defect exercises one
+   value per axis. Everything else is untested.
+3. **Cheapest sufficient check: compare TOTAL POPULATION against a second instrument built on a
+   different principle** (line-based vs statement-based here). A 2× gap is not a rounding
+   difference — it is a missing axis. 65 → 137 → 281 was visible in seconds and would have been
+   visible *before* spending the agents.
+4. **Report the yield split.** "Confirmed findings that came from the list" vs "from hand-grep" is
+   the number that tells the next round whether to keep feeding the instrument or abandon it.
+
+Reusable, each keeping its calibration in `main`: `scratchpad/discard_scan.py` (line-based),
+`discard_scan2.py` (+ head peeling), `discard_scan3.py` (statement-based, qualified + multi-line).
+Full write-up with the confirmed findings: [todo.md](todo.md) § *Blind-spot sweep ROUND 1*.
+
 ### 1.3 Green tests do not cover the SEAM
 
 AOBMaker's `PreferNearOriginalCandidates` was a dead no-op (an RVA compared to a VA) under three green
