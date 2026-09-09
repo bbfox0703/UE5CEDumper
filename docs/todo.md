@@ -1696,6 +1696,54 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ D4b extended to a SECOND ENGINE VERSION `[D4B-PADSURVEY-2026-09-09]`
+
+`DelegatePadFromElementSize` had only ever met UE 5.4, and it now gates five readers that run on
+**every** title. Its refusal arm is the honest failure mode — but on a title whose delegate
+ElementSize this repo has never seen, that refusal turns a working read into a blank. So the
+question worth asking separately from "does it read correctly" is the narrower one:
+
+> does the derivation recognise the sizes this engine actually reports?
+
+`tools/verify/d4b_pad_survey.py` answers it with **no fixture at all** — it walks whatever
+`list_classes` offers via `walk_class_batch` and reads `FProperty::ElementSize` off the class
+field tables, so no instance and no bound delegate is needed. ⭐ **It runs on any injected
+title**, which is what makes it the reusable screen for a real game.
+
+| engine | configuration | classes | delegate properties | derived pad | unrecognised sizes |
+|---|---|---|---|---|---|
+| UE 5.4 | Development | — | read test, see `[D4B-DELEGATEPAD]` | **8** (`elem_size` 24) | 0 |
+| UE 5.4 | Shipping | — | read test, see `[D4B-DELEGATEPAD]` | **0** (`elem_size` 16) | 0 |
+| UE 5.8 | Development | 600 | 33 | **8** | 0 |
+| UE 5.8 | Shipping | 600 | 33 | **0** | 0 |
+
+Same 33 properties on both 5.8 flavours (`EmitterCameraLensEffectBase::OnParticleSpawn` and
+friends), differing only by the 8 bytes. `MulticastSparseDelegateProperty` reports ElementSize
+**1** on every one — `sizeof(FSparseDelegate)`, which is exactly why the sparse walker cannot use
+this derivation and needs `LocateInvocationList`'s invariant-based one instead.
+
+⭐ The rig fails on a **split verdict** as well as on an unknown size: the pad is a property of
+the BUILD, not of the class, so two answers within one process would mean one of the two base
+sizes (16 for the multicast container, `8 + SizeofFName()` for the standalone unicast) is wrong
+for that engine. Neither engine produced one.
+
+⚠ **What this does NOT show.** It reads the class field TABLE, so it says nothing about whether
+bindings are read correctly — that is `d4b_delegate_pad.py`'s job and it needs DumperTest's
+purpose-built bound delegates. The two rigs are complementary and neither subsumes the other.
+
+### ⬜ Still open — and now one command away
+
+**No real title has been surveyed.** Every shipped game on this machine is a Shipping build, so
+the 5.4/5.8 Shipping columns are that path — but on the fixture, not on a title with a real
+class graph. Closing it costs one game boot:
+
+```
+py tools/verify/d4b_pad_survey.py --expect-pad 0
+```
+
+A title whose delegate ElementSize is neither 16 nor 24 would surface here as a named list of
+refused properties rather than as blank fields noticed months later.
+
 ## ✅ D1 — the refused-restore call site, live `[D1-COLLREFUSE-2026-09-09]`
 
 The last of the sweep's DLL fixes that no test could reach. `todo.md` recorded the blocker as
@@ -1907,6 +1955,7 @@ read of the log — which is how this was hit at all.
 * **No non-DumperTest title has been re-measured.** Every one is Shipping (pad 0) and the
   Shipping column above is that path, but the claim "no regression on real titles" rests on the
   fixture, not on a re-run of a real game.
+  ⭐ Now one command away — see `[D4B-PADSURVEY-2026-09-09]`.
 * ⚠ **`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` failed ONCE under load**
   (2026-09-09), in a `-Target Test` run that shared the machine with `check_all.py`. It passes
   3/3 in isolation and 4767/4767 in a quiet full run, and **zero C# files changed this**
