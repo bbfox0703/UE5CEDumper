@@ -1759,11 +1759,16 @@ cannot name, on a class graph 460× the fixture's.
 * ⛔ **EVERY deployed proxy on this machine was STALE — 10 titles**, and TQ2's was the reason
   `inject.py` refused: a proxy auto-loads at game start and OWNS THE PIPE, so an inject of the
   current DLL is a no-op and everything measured is the old binary. The injector's stale-module
-  guard is what caught it. Only TQ2's was refreshed (`proxy_refresh.py refresh "Titan Quest II"`,
-  2,898,432 → 2,921,472, old copy backed up with its SHA); **the other nine are still stale** —
-  EVERSPACE 2 / Avowed / DQ7R / EVERSPACE / Lushfoil / Manor Lords / OCTOPATH / Elliot /
-  The Artisan of Glimmith. ⚠ Any future row that boots one of those measures pre-3461 code
-  unless it refreshes first.
+  guard is what caught it.
+  ✅ **ALL TEN REFRESHED 2026-09-09** to dist 3462 — EVERSPACE 2 / Avowed / DQ7R / EVERSPACE /
+  Lushfoil / Manor Lords / OCTOPATH / Elliot / The Artisan of Glimmith / Titan Quest II. The report
+  now reads `10 deployed proxy(ies), 0 stale`, and every replaced copy is in `out/proxy-backups/`
+  with its size and SHA. A future row can boot any of the ten and be measuring current code —
+  **but check anyway**: the next `dist` build makes all ten stale again by definition.
+  ⚠ **Staleness is a SHA comparison, not a size one.** TQ2 was refreshed at 08:52 and read
+  `*** STALE ***` again 25 minutes later at the *same* 2,921,472 bytes — the `-Mode Publish` in
+  between rebuilt the proxies with a new build number embedded. A size check would have called it
+  current, which is why `report()` hashes.
 
 ## ✅ D1 — the refused-restore call site, live `[D1-COLLREFUSE-2026-09-09]`
 
