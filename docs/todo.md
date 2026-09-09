@@ -2110,7 +2110,8 @@ the `TMAPGEOM` banner now names all three.
 
 #### ✅ LIVE REGRESSION ARM 2026-09-09 — `tools/verify/unreadval_live_arm.py`
 
-DumperTest, build 3508, UE 5.4, 25,231 objects, fresh `dist` DLL over the pipe (no UI).
+Run on **BOTH flavours**, `shipping` first per handover §4 rule 5. Build 3508, UE 5.4, fresh
+`dist` DLL over the pipe (no UI): **Shipping** 24,497 objects · **Development** 25,231.
 
 ⛔ **THE RISK THIS ARM EXISTS FOR IS NOT THE FAILURE CASE.** The fix adds a gate to three
 handlers that run on every walk; the failure it guards is rare, but a gate that fired
@@ -2124,7 +2125,19 @@ only that it does not fire on three synthetic fields.
 | `OptionalProperty` | 15 | **15** | 7 | **0** |
 
 **2391 fields over 2105 live instances, not one refusal**, and 1466 of them genuinely read 0 —
-the state the refusal must never be confused with. ⭐ `CharacterMovementComponent.MovementMode`
+the state the refusal must never be confused with. The **Shipping** run agrees:
+**2356 fields over 2074 instances, 0 refusals**, 1445 genuinely 0 (`EnumProperty` 1246/1246,
+`ByteProperty` 1095/1095, `OptionalProperty` 15/15).
+
+⚠ **AND THE TWO RUNS ARE CORROBORATION, NOT TWO INDEPENDENT MEASUREMENTS OF THE OFFSET SHAPE** —
+say which, because that is the whole reason the Shipping-first rule exists. Measured, not assumed:
+the runtime `get_offsets` table is **byte-identical** across the two flavours on this fixture
+(`ffield_class` 8, `ffield_name` 32, `ffield_next` 24, `ffieldclass_name` 0,
+`fproperty_elemsize` 52, `fproperty_flags` 56, `fproperty_offset` 68, `ustruct_childprops` 80,
+`ustruct_propssize` 88, `use_fproperty` true). So on **DumperTest 5.4** the Shipping run confirms
+the Development one rather than probing a different layout; the rule's premise is about REAL
+titles, and this fixture does not exhibit the difference it warns about. A row that needs an
+offset-shape difference still needs a real title. ⭐ `CharacterMovementComponent.MovementMode`
 is itself one of them, publishing `MOVE_Walking` / hex `01` through the exact `ByteProperty`-
 with-UEnum handler that was fixed.
 
@@ -2233,7 +2246,9 @@ the live arm below exists.
 
 #### ✅ LIVE ARM 2026-09-09 — `tools/verify/sliceb_fly_arm.py`, 10/10 on DumperTest
 
-Build 3508, UE 5.4, over the pipe with no UI. ⛔ **The risk the fix carries is not the failure
+Build 3508, UE 5.4, over the pipe with no UI, **10/10 on `shipping` AND on `dev`** — identical
+table on both, including the `1 → 5 → 1` restore. Shipping is the one that counts (handover §4
+rule 5); the `dev` run is the second opinion. ⛔ **The risk the fix carries is not the failure
 case — it is the EARLY RETURN it adds to a path the user hits on every toggle.** A gate that
 fired spuriously would stop Fly working at all.
 

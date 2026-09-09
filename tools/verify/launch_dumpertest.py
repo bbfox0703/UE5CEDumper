@@ -1,13 +1,23 @@
 ﻿"""Launch a DumperTest flavour with the house window/FPS settings, and wait for it.
 
+    py launch_dumpertest.py shipping       # ⭐ THE DEFAULT -- closest analogue to a real game
     py launch_dumpertest.py dev            # Development  (UCheatManager live, full logging)
-    py launch_dumpertest.py shipping       # Shipping     (the closest analogue to a real game)
     py launch_dumpertest.py debug          # DebugGame    (added 2026-08-23)
     py launch_dumpertest.py dev --idle     # ...with -DumperTestIdle (B8's deferred half ONLY)
     py launch_dumpertest.py dev --no-wait  # return as soon as the process exists
 
 Prints the PID and writes it to out/host.pid so the injector and the killer agree
 on one target.
+
+⛔ REACH FOR `shipping` FIRST. Maintainer's standing instruction, 2026-09-09, and it is
+now handover §4 rule 5: **a Development build's offsets are a MINORITY shape in real
+games.** The layouts, reflection data and symbol surface a Development binary hands you
+are not what a shipped title hands you, so a row verified only on `dev` has been verified
+against the case we meet least often. `dev` still earns its place -- it is a check IN THE
+OTHER DIRECTION (UCheatManager live, full logging, the diagnostics Shipping strips) -- but
+it is the SECOND run, not the first, and a row closed on `dev` alone must SAY so.
+⚠ They are not interchangeable in the other direction either: see the `-ExecCmds` trap
+below, which is Shipping-only and cost a wrong measurement.
 
 WHY THE ARGS ARE HERE AND NOT IN EACH CALL SITE. The maintainer asked (2026-08-19)
 that DumperTest run at **1280x720, FPS-capped to 15** so an all-night batch does not
