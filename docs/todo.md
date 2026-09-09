@@ -1803,6 +1803,46 @@ signature cases. Tree unchanged at **46 sites, 0 violations**.
   (`todo.md:1478`, *"THE SWEEP IS FINISHED. Do not run a round 4."*). Unadjudicated is neither
   fixed nor cleared.
 
+## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
+
+Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
+
+```
+at start                                entries=0     fields=0
+after walk_instance (DumperTestActor)   entries=10    fields=194
+after walk_class_batch x600             entries=2048  fields=29251
+after walk_class_batch ALL (3,946)      entries=2048  fields=29251   <- IDENTICAL
+```
+
+Walking 3,346 further classes changed **neither number**. `walk_class_batch` →
+`Aura::WalkClassesBatch` → `Ubel::WalkClassEx`, which consults the separate and deliberately
+**UNBOUNDED** `s_walkClassExCache` (`Ubel.cpp:1200`) and only falls through to `WalkClass` on a
+MISS (`Ubel.cpp:1211-1214`). Six hundred classes are enough to warm it — each walk pulls in super
+chains and struct types — after which **no later class walk reaches `WalkClass` at all**, so the
+2048-entry LRU (`Ubel.cpp:879`, audit #5 U5) stops taking inserts and therefore stops evicting.
+
+⚠ **Both caches' own comments are individually correct; what is undocumented is the interaction.**
+`Ubel.cpp:881-887` explains why the enriched cache is unbounded (it returns `const ClassInfo&`, so
+eviction could dangle a reference) and why the LRU is safe to bound (it returns by value). Neither
+says that the unbounded one is *in front of* the bounded one for the highest-volume caller.
+
+**Two consequences worth deciding on, neither of which is a bug today:**
+
+1. **The LRU's memory bound is not the system's memory bound.** U5 capped `s_walkClassCache` at
+   2048 entries. `s_walkClassExCache` — described in that same comment as "the more widely
+   consulted of the two" — has no cap, so the actual ceiling on cached class metadata is the
+   number of classes the title loads, not 2048. On DumperTest that is ~4k classes / ~29k fields;
+   on a large title it is larger. Nobody has measured it.
+2. **There is no way to invalidate a class's cached layout.** Not a defect for the shipping
+   product — reflected layout genuinely does not change at runtime — but it makes the two SCALAR
+   delegate-refusal arms unreachable by manufacture-and-restore, which is why
+   `[SW6-STRIDEREFUSAL-2026-09-09]` closed on the array arms only. A `--force` on `walk_class`, or
+   a debug-only `invalidate_class_cache` command, would make that whole family of layout
+   experiments reachable.
+
+⛔ **Do not "fix" this by bounding `s_walkClassExCache`** without solving the reference-return
+first — that is exactly the dangling-reference hazard `Ubel.cpp:881-887` was written to prevent.
+
 ## ⬜ The clipboard failure's ACTIONABLE clause cannot fit in the toolbar `[CLIPELLIPSIS-2026-09-09]`
 
 Observed during SW2's live run (`[SW2-CLIPDELIVERY-2026-09-09]`), not inferred: with the clipboard
