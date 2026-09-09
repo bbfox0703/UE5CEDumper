@@ -651,6 +651,62 @@ inline int FNameSlotIn8Aligned() {  // UOBJECT_OUTER, UFIELD_NEXT, a TPair<FName
     return bCasePreservingName      // value offset -- the FName is PADDED by what follows it.
         ? 0x10 : 0x08;
 }
+
+// ⛔ UE 5.3+ MOVED EVERY DELEGATE PAYLOAD, AND ONLY IN A CHECKED BUILD.
+// `TScriptDelegate` / `TMulticastScriptDelegate` gained a base class,
+// `TDelegateAccessHandlerBase<ThreadSafetyMode>` (Delegates/DelegateAccessHandler.h). With
+// DO_CHECK on -- Debug, Development, DebugGame -- that base holds one
+// `FMRSWRecursiveAccessDetector`, whose only member is a `std::atomic<uint64>`, so the payload
+// starts EIGHT BYTES LATE. With DO_CHECK off (Test/Shipping) the base is the empty
+// `FNotThreadSafeNotCheckedDelegateMode` specialization and EBO applies.
+//
+//   Shipping / Test / UE <= 5.2 : FMulticastScriptDelegate { TArray InvocationList  @ +0x00 }
+//   Development / Debug (5.3+)  : FMulticastScriptDelegate { atomic State           @ +0x00,
+//                                                            TArray InvocationList  @ +0x08 }
+//
+// Measured on DumperTest Development (UE 5.4) 2026-09-09 -- the bound `OnActorHit`:
+//   +0x00 0000000000000000   atomic State
+//   +0x08 405CBFF5D5010000   Data = 0x1D5F5BF5C40
+//   +0x10 01000000           Num  = 1        <- the one subscriber, invisible at +0x08
+//   +0x14 04000000           Max  = 4
+// Read at the old offsets that is `Data=0, Num=0xF5BF5C40` -- Num is the LOW HALF OF DATA,
+// which is the fingerprint to recognise this by. 4.27 has no base class at all (checked
+// against the DropIn 4.27.2 PDB), so the pre-5.3 constants were never wrong, just narrow.
+//
+// ⚠ TWO TYPES, ONE SPELLING. A multicast's invocation-list ELEMENTS are
+// `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>` -- that base specialization is empty
+// in EVERY configuration, so list elements are NEVER padded and `8 + SizeofFName()` stays
+// right. A STANDALONE `FScriptDelegate` (what a `DelegateProperty` stores) is
+// `TScriptDelegate<FNotThreadSafeDelegateMode>` and IS padded. Our comments call both
+// "FScriptDelegate"; ask which one before reusing a stride.
+//
+// ⚠ WHY NOTHING RED EVER APPEARED, same shape as bCasePreservingName above: every real title
+// measured in this repo is **Shipping**, and Shipping is the pad-free side. The first host that
+// could show it was our own Development fixture, and only after 2026-09-08 gave it a bound
+// sparse delegate to walk.
+constexpr int32_t kDelegateDetectorPad = 0x08;
+
+/// The pad implied by the ENGINE's own ElementSize for a delegate-family property.
+///
+/// `baseSize` is what the payload measures without the detector: 0x10 for
+/// `FMulticastScriptDelegate` (a bare TArray header, independent of FName width), or
+/// `8 + SizeofFName()` for a standalone `FScriptDelegate`.
+///
+/// ⭐ Authoritative, and it needs no version or configuration test: UE sets ElementSize from
+/// `sizeof(TCppType)` (`UnrealType.h`, `TProperty::SetElementSize`), so the number already
+/// answers "how big is this in THIS build". `FDelegateProperty` is
+/// `TProperty<FScriptDelegate, FProperty>` and `FMulticastInlineDelegateProperty` is
+/// `TProperty_MulticastDelegate<FMulticastScriptDelegate>`.
+///
+/// Returns **-1** when the size matches neither candidate. Callers must then report that they
+/// could not read the field -- picking one would be the very claim-without-evidence this pad
+/// was found by.
+inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize) {
+    if (baseSize <= 0) return -1;
+    if (elementSize == baseSize) return 0;
+    if (elementSize == baseSize + kDelegateDetectorPad) return kDelegateDetectorPad;
+    return -1;
+}
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as

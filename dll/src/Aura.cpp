@@ -10,13 +10,9 @@
 #include "Grimoire.h"
 #include "Serie.h"
 
-// A multicast delegate's InvocationList is a per-object subscriber list; even
-// pathological actor/UMG fan-out stays in the low hundreds. A HEADER PLAUSIBILITY ceiling
-// ("is this really a TArray?"), NOT a display cap — maxBindings is the display cap. Named
-// per the 2b9ffac9 convention. File scope because BOTH sparse-delegate readers use it:
-// WalkSparseDelegateBindings and FindReferencesToUObject's sparse pass, which carried the
-// same bare 4096 independently.
-static constexpr int32_t kMaxPlausibleInvocationListNum = 4096;
+// kMaxPlausibleInvocationListNum moved to Aura.h so IsBoundInvocationListHeader --
+// the predicate dll_helpers_test pins -- shares the one copy. Its rationale went
+// with it.
 
 #include "Ubel.h"
 #include "Genau.h"
@@ -3121,6 +3117,10 @@ struct WeakLikeArrayEntry {
     std::string name;
     std::string innerType;    // Same vocabulary as WeakLikePointerEntry::typeName
     int32_t     elemStride;   // From Ubel::GetArrayInnerElemSize
+    // Where the FWeakObjectPtr sits INSIDE each element. 0 for every Weak/Soft/Lazy type,
+    // and the access-detector pad for TArray<FScriptDelegate> on a checked build — the one
+    // inner type whose payload does not start at the element's own address.
+    int32_t     elemWeakOffset = 0;
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
@@ -3259,13 +3259,31 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 }
             }
             else if (f.innerType == "DelegateProperty") {
-                // TArray<FScriptDelegate> — element layout matches the
-                // multicast bindings list. Stride is FName-size dependent.
-                // sizeof(FName): TArray<FScriptDelegate> elements are alignof 4, no padding.
-                int32_t fnameSize = DynOff::SizeofFName();
-                int32_t stride    = 8 + fnameSize;
-                out.weakLikeArrays.push_back({ absOffset, fullName,
-                                                f.innerType, stride });
+                // TArray<FScriptDelegate>. ⚠ This comment used to say "element layout matches
+                // the multicast bindings list" — it does NOT, and that is the
+                // two-types-one-spelling trap in Grimoire.h. An array's inner
+                // FDelegateProperty stores the STANDALONE
+                // TScriptDelegate<FNotThreadSafeDelegateMode>, which carries the 8-byte access
+                // detector in a checked build; a multicast's invocation list holds the
+                // ...NotChecked... variant, which never does.
+                const int32_t base = 8 + DynOff::SizeofFName();
+                const int32_t pad  = DynOff::DelegatePadFromElementSize(
+                                         Ubel::GetArrayInnerElemSize(f.Address), base);
+                // Falling back to the historical layout rather than skipping: a wrong stride
+                // here cannot manufacture a reference (ResolveWeakAt validates every hit
+                // against GObjects), so both a wrong stride and a skip fail the same way —
+                // by finding nothing. Keeping the scan preserves the Shipping behaviour on a
+                // build whose ElementSize we could not read.
+                if (pad < 0) {
+                    LOG_WARN("ClassReferenceMeta: %s — TArray<FScriptDelegate> inner "
+                             "ElementSize is neither %d nor %d; scanning at the unpadded "
+                             "stride, so bindings may be MISSING from Find Refs",
+                             fullName.c_str(), base,
+                             base + DynOff::kDelegateDetectorPad);
+                }
+                const int32_t elemPad = (pad < 0) ? 0 : pad;
+                out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
+                                               base + elemPad, elemPad });
             }
         }
         // --- Map with pointer-shaped key and/or value ---
@@ -3423,13 +3441,86 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //     +0x00  Object* (FMulticastScriptDelegate*)
 //     +0x08  SharedReferenceCount*
 //
-//   FMulticastScriptDelegate (16B):
-//     +0x00  TArray<FScriptDelegate> InvocationList { Data, Num, Max }
+//   FMulticastScriptDelegate (16B in Shipping/Test and every UE <= 5.2; 24B in a CHECKED
+//   build -- Development/Debug/DebugGame -- from UE 5.3, where TDelegateAccessHandlerBase
+//   contributes an 8-byte FMRSWRecursiveAccessDetector base):
+//     +0x00  [checked builds only] std::atomic<uint64> access-detector State
+//     +pad   TArray<FScriptDelegate> InvocationList { Data, Num, Max }
+//   ⛔ "16B, InvocationList at +0" was stated here as unconditional until 2026-09-09, and it
+//   is the reason a delegate with one live subscriber reported "(0 bindings, sparse)" on the
+//   Development fixture. There is no ElementSize to derive `pad` from on this path
+//   (a MulticastSparseDelegateProperty's is sizeof(FSparseDelegate) == 1), so
+//   LocateInvocationList below derives it from the object's own invariants instead.
+//   DynOff::kDelegateDetectorPad carries the measurement and the two-types-one-spelling ⚠.
 //
-//   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding):
+//   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding).
+//   ⭐ This is the INVOCATION-LIST element type, which is never padded:
 //     +0x00  FWeakObjectPtr Object { int32 Idx, int32 Serial }
 //     +0x08  FName FunctionName
 // ============================================================
+
+// What LocateInvocationList established. `pad` is meaningful only when `found`.
+struct InvocationListView {
+    bool      found = false;
+    int32_t   pad   = 0;
+    uintptr_t data  = 0;
+    int32_t   num   = 0;
+};
+
+/// Find a FMulticastScriptDelegate's InvocationList header when there is no engine
+/// ElementSize to derive the access-detector pad from -- i.e. everywhere we arrive through
+/// FSparseDelegateStorage. Returns `found=false` if neither candidate offset holds a
+/// coherent list; the caller must then report UNREADABLE rather than zero bindings.
+///
+/// ⭐ THIS IS A DERIVATION, NOT A PROBE-AND-HOPE. Both candidates are checked against
+/// invariants that hold no matter which one is correct:
+///
+///   * Num >= 1 is REQUIRED, not merely likely. Reaching here means the delegate's FName was
+///     found in the storage map, and UE erases that entry the instant the delegate empties --
+///     every SparseDelegate.cpp remover does `DelegateMap->Remove(DelegateName)` as soon as
+///     `IsBound()` goes false. A located entry therefore HAS a subscriber.
+///   * Data must be a userspace pointer, and Max >= Num.
+///   * Element 0 must be a real binding: its FName has to resolve to a non-empty string.
+///
+/// Both wrong readings fail on the FIRST test in practice, which is what makes this safe in
+/// both directions. On a checked build the pad=0 candidate reads the zeroed detector as Data
+/// and rejects on the null; on Shipping the pad=8 candidate reads {Num,Max} packed as a
+/// pointer (e.g. 0x0000000400000001) and rejects as non-userspace.
+static InvocationListView LocateInvocationList(uintptr_t mcdAddr) {
+    InvocationListView best{};
+    if (!mcdAddr) return best;
+
+    const int32_t candidates[2] = { 0, DynOff::kDelegateDetectorPad };
+    for (int32_t pad : candidates) {
+        uintptr_t data = 0;
+        int32_t   num = 0, max = 0;
+        if (!Macht::ReadSafe(mcdAddr + pad,        data)) continue;
+        if (!Macht::ReadSafe(mcdAddr + pad + 0x08, num))  continue;
+        if (!Macht::ReadSafe(mcdAddr + pad + 0x0C, max))  continue;
+
+        if (!IsBoundInvocationListHeader(data, num, max)) continue;
+
+        // Element 0 must name a function. A wrong offset lands on the detector, or on
+        // Num/Max read as a pointer, and neither yields a resolvable FName here.
+        int32_t comp = 0;
+        if (!Macht::ReadSafe(data + 0x08, comp)) continue;
+        if (Serie::GetString(comp).empty()) continue;
+
+        if (best.found) {
+            // Never observed; if it ever happens the first (historical) layout wins and the
+            // ambiguity is on the record rather than silently resolved.
+            LOG_WARN("LocateInvocationList: BOTH pad=%d and pad=%d validate at 0x%llX — "
+                     "keeping pad=%d", best.pad, pad,
+                     static_cast<unsigned long long>(mcdAddr), best.pad);
+            break;
+        }
+        best.found = true;
+        best.pad   = pad;
+        best.data  = data;
+        best.num   = num;
+    }
+    return best;
+}
 
 // ResolveTMapBitArrayBase — figure out where the AllocationFlags bits live.
 // Inline if MaxBits <= 128; heap (secondaryPtr) otherwise.
@@ -3657,7 +3748,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 
             for (int32_t e = 0; e < arr.Count; ++e) {
                 uintptr_t resolved = ResolveWeakAt(
-                    arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+                    arr.Data + static_cast<int64_t>(e) * wae.elemStride
+                             + wae.elemWeakOffset);
                 if (resolved != target) continue;
 
                 ReferenceMatch m;
@@ -3852,24 +3944,23 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                         if (!Macht::ReadSafe(innerSlot + fnamePairSlot, mcdAddr) || !mcdAddr)
                             continue;
 
-                        // The same dropped pair as WalkSparseDelegateBindings, with a
-                        // WORSE failure: `continue` makes the binding silently ABSENT from
-                        // Find Refs, and an absence reads as "nothing points here" — a
-                        // stronger claim than a wrong count. Keep skipping (there is no
-                        // per-entry channel to report on), but stop doing it silently.
-                        uintptr_t invData = 0;
-                        int32_t   invNum  = 0;
-                        const bool okInvData = Macht::ReadSafe(mcdAddr + 0x00, invData);
-                        const bool okInvNum  = Macht::ReadSafe(mcdAddr + 0x08, invNum);
-                        if (!okInvData || !okInvNum) {
-                            LOG_WARN("FindReferences: sparse InvocationList header at 0x%llX "
-                                     "faulted — this delegate's bindings are MISSING from the "
+                        // Same derivation as WalkSparseDelegateBindings -- the access-detector
+                        // pad is a build property and there is no ElementSize on this path.
+                        //
+                        // The failure here is WORSE than a wrong count: `continue` makes the
+                        // binding silently ABSENT from Find Refs, and an absence reads as
+                        // "nothing points here". Keep skipping (there is no per-entry channel
+                        // to report on), but stop doing it silently.
+                        const InvocationListView inv = LocateInvocationList(mcdAddr);
+                        if (!inv.found) {
+                            LOG_WARN("FindReferences: no coherent sparse InvocationList at "
+                                     "0x%llX — this delegate's bindings are MISSING from the "
                                      "results, not absent from the game",
                                      static_cast<unsigned long long>(mcdAddr));
                             continue;
                         }
-                        if (invNum < 0 || invNum > kMaxPlausibleInvocationListNum
-                            || !invData) continue;
+                        const uintptr_t invData = inv.data;
+                        const int32_t   invNum  = inv.num;
 
                         for (int32_t bi = 0; bi < invNum; ++bi) {
                             uintptr_t bindAddr = invData +
@@ -3998,7 +4089,8 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
         Macht::TArrayView arr;
         if (!Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
-            uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+            uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride
+                                        + wae.elemWeakOffset);
             if (!r) continue;
             if (emit(r, wae.offset, wae.name, kArrayProp, wae.innerType, e, 0, 0)) return;
         }
@@ -6429,35 +6521,32 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 
     // Phase 3: deref TSharedPtr, walk InvocationList: TArray<FScriptDelegate>.
     uintptr_t mcdAddr = 0;
-    if (!Macht::ReadSafe(sharedPtrAddr, mcdAddr) || !mcdAddr) return result;
+    if (!Macht::ReadSafe(sharedPtrAddr, mcdAddr) || !mcdAddr) {
+        // Used to return SILENTLY, which put this state and a genuine layout failure in the
+        // same unlabelled bucket. The log is how D4b was diagnosed at all.
+        LOG_WARN("WalkSparseDelegateBindings: TSharedPtr at 0x%llX yielded no "
+                 "FMulticastScriptDelegate — reporting UNREADABLE, not zero bindings",
+                 static_cast<unsigned long long>(sharedPtrAddr));
+        return result;
+    }
 
-    // FMulticastScriptDelegate { TArray<FScriptDelegate> InvocationList; }
-    uintptr_t invData = 0;
-    int32_t   invNum  = 0;
-    const bool okData = Macht::ReadSafe(mcdAddr + 0x00, invData);
-    const bool okNum  = Macht::ReadSafe(mcdAddr + 0x08, invNum);
+    // Where InvocationList starts depends on the BUILD, not the UE version: a checked build
+    // puts an 8-byte access detector in front of it (DynOff::kDelegateDetectorPad). This
+    // path has no ElementSize to derive that from, so LocateInvocationList derives it from
+    // the object's own invariants.
     // ⛔ Do NOT restore `if (...) invNum = 0;` here. Clamping an unreadable or implausible
     // header to zero is what made a delegate whose bIsBound byte READ 1 report
     // "(0 bindings, sparse)" — the code had positive evidence the delegate WAS bound and
     // printed the opposite. listRead stays false and the renderer says so instead.
-    if (!okData || !okNum) {
-        LOG_WARN("WalkSparseDelegateBindings: InvocationList header at 0x%llX faulted "
-                 "(data=%d num=%d) — reporting UNREADABLE, not zero bindings",
-                 static_cast<unsigned long long>(mcdAddr), (int)okData, (int)okNum);
+    const InvocationListView inv = LocateInvocationList(mcdAddr);
+    if (!inv.found) {
+        LOG_WARN("WalkSparseDelegateBindings: no coherent InvocationList at 0x%llX at either "
+                 "pad 0 or %d — reporting UNREADABLE, not zero bindings",
+                 static_cast<unsigned long long>(mcdAddr), DynOff::kDelegateDetectorPad);
         return result;
     }
-    if (invNum < 0 || invNum > kMaxPlausibleInvocationListNum) {
-        LOG_WARN("WalkSparseDelegateBindings: implausible InvocationList Num=%d at 0x%llX "
-                 "— reporting UNREADABLE, not zero bindings", invNum,
-                 static_cast<unsigned long long>(mcdAddr));
-        return result;
-    }
-    if (invNum > 0 && !invData) {
-        LOG_WARN("WalkSparseDelegateBindings: Num=%d with null Data at 0x%llX — corrupt "
-                 "header, reporting UNREADABLE", invNum,
-                 static_cast<unsigned long long>(mcdAddr));
-        return result;
-    }
+    const uintptr_t invData = inv.data;
+    const int32_t   invNum  = inv.num;
     result.listRead = true;
     result.listNum  = invNum;
 

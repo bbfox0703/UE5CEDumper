@@ -270,6 +270,11 @@ void ADumperTestActor::D4_OnActorHitProbe(AActor* /*SelfActor*/, AActor* /*Other
 {
 }
 
+/// D4b probe, same contract: it exists to be BOUND, and must never do anything.
+void ADumperTestActor::D4b_OnPingProbe(int32 /*Ping*/)
+{
+}
+
 void ADumperTestActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -280,10 +285,22 @@ void ADumperTestActor::BeginPlay()
 	// called, and the walker's own states cannot be observed on any host.
 	OnActorHit.AddDynamic(this, &ADumperTestActor::D4_OnActorHitProbe);
 
-	// D3: two elements so an element index means something. UNBOUND on purpose — the row
-	// under test is the per-element TArray<FScriptDelegate> HEADER read, which happens
-	// whether or not anything is subscribed.
+	// D3: two elements so an element index means something.
 	Arr_MulticastDelegates.SetNum(2);
+
+	// ⭐ D4b/D3b: bind element [1] and LEAVE [0] EMPTY. This is the whole point of having
+	// two — it makes the element STRIDE observable. sizeof(FMulticastScriptDelegate) is 24
+	// in a checked build (an 8-byte access detector in front of the TArray header) and 16 in
+	// Shipping; a reader stuck on 16 reads element [1] from inside element [0] and reports
+	// both as empty. With [0] empty and [1] bound, the right stride and the wrong stride
+	// finally give different answers. Until 2026-09-09 both were empty and D3b was
+	// unfalsifiable on this fixture.
+	Arr_MulticastDelegates[1].AddDynamic(this, &ADumperTestActor::D4b_OnPingProbe);
+
+	// D4b: the two single-field delegate shapes this fixture never had. Both bound, because
+	// an unbound one reads the same at either offset.
+	Multicast_Inline.AddDynamic(this, &ADumperTestActor::D4b_OnPingProbe);
+	Del_Unicast.BindDynamic(this, &ADumperTestActor::D4b_OnPingProbe);
 
 	// Created at runtime rather than as a default subobject so it is a genuine
 	// heap UObject in GObjects, reachable only through the pointer — which is

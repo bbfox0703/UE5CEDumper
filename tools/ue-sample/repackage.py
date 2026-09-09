@@ -259,8 +259,27 @@ def main():
             dst = os.path.join(PROJECTS_ROOT, "DumperTest", "Source", "DumperTest")
             import shutil
             for n in MIRROR_SOURCES:
-                shutil.copy2(os.path.join(src, n), os.path.join(dst, n))
-            print("         copied %d files repo -> real project" % len(MIRROR_SOURCES))
+                d = os.path.join(dst, n)
+                shutil.copy2(os.path.join(src, n), d)
+                # ⛔ STAMP THE MTIME TO NOW. `copy2` deliberately PRESERVES the mirror
+                # file's mtime, and that silently defeats UnrealHeaderTool: UHT decides
+                # whether to re-run by comparing each header against the module's
+                # `Intermediate/Build/.../UHT/Timestamp`, which any earlier build in the
+                # same session has already pushed forward. Sync a file edited at 08:03
+                # after a build that ran at 08:09 and UHT concludes "no header changed
+                # since I last ran", regenerates nothing, and UBT compiles the module
+                # against the PREVIOUS reflection data.
+                #
+                # ⚠ The failure is the one this repo keeps finding: it reports
+                # `BUILD SUCCESSFUL`. Measured 2026-09-09 -- two new UPROPERTYs and a
+                # UFUNCTION were packaged away, the game booted fine, and the fields were
+                # simply absent from `walk_instance`; the only tell was
+                # `DumperTestActor.generated.h` still carrying the previous day's mtime.
+                # A stale `.generated.h` that DOES still compile is worse again: the cook
+                # succeeds and the fixture quietly answers for the old source.
+                os.utime(d, None)
+            print("         copied %d files repo -> real project (mtimes stamped to now, "
+                  "so UHT cannot mistake them for old)" % len(MIRROR_SOURCES))
         elif not same:
             print("         ⚠ packaging would build the REAL project's source, not the mirror's.\n"
                   "           Pass --sync-mirror if the repo copy is the one you edited.")

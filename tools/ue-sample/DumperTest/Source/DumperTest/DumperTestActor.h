@@ -46,6 +46,15 @@
 /// could only be reached by a synthetic in-process TArray.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDumperTestPingSignature, int32, Ping);
 
+/// D4b's unicast half. A UPROPERTY of THIS type is a `DelegateProperty`, whose storage is a
+/// STANDALONE `FScriptDelegate` -- `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES
+/// carry UE 5.3+'s 8-byte access detector in a checked build. That makes it a different
+/// layout from a multicast's invocation-list elements, which are the never-padded
+/// `...NotChecked...` variant despite both being called "FScriptDelegate" in our comments.
+/// Added 2026-09-09 because the whole fixture had no `DelegateProperty` at all, so Ubel's
+/// single-delegate reader had never been exercised against a padded build.
+DECLARE_DYNAMIC_DELEGATE_OneParam(FDumperTestUnicastSignature, int32, Value);
+
 UCLASS()
 class DUMPERTEST_API UDumperTestPayload : public UObject
 {
@@ -626,6 +635,15 @@ public:
 	/// tools/verify/d5_lazyguid_unread.py for the same technique on the lazy-ptr row.
 	UPROPERTY() TArray<FDumperTestPingSignature> Arr_MulticastDelegates;
 
+	/// ⭐ D4b — the ONLY non-array `MulticastInlineDelegateProperty` here, and the only
+	/// `DelegateProperty`. Added 2026-09-09; before them Ubel's two single-field delegate
+	/// readers had no host on this fixture at all, so neither had ever met a build whose
+	/// delegate payload starts 8 bytes late (UE 5.3+ with DO_CHECK on). BOTH are bound in
+	/// BeginPlay, because an unbound one reads the same "(0 bindings)" / "(unbound)" at
+	/// either offset and would prove nothing.
+	UPROPERTY() FDumperTestPingSignature   Multicast_Inline;
+	UPROPERTY() FDumperTestUnicastSignature Del_Unicast;
+
 	/// A9 — three nested levels, filled by A9_BuildDeepContainers. Empty until then, so it costs
 	/// nothing on a normal session. See FDumperTestDeepMid for why flat 500x500 cannot work.
 	UPROPERTY() TArray<FDumperTestDeepMid> Deep_Buckets;
@@ -800,6 +818,18 @@ private:
 	UFUNCTION()
 	void D4_OnActorHitProbe(AActor* SelfActor, AActor* OtherActor,
 	                        FVector NormalImpulse, const FHitResult& Hit);
+
+	/// ⭐ D4b's handler, shared by `Multicast_Inline`, `Del_Unicast` and — the one that
+	/// matters most — `Arr_MulticastDelegates[1]` ONLY. Binding element [1] and leaving
+	/// element [0] empty is what makes the array's element STRIDE observable: a reader using
+	/// the unpadded 16 lands inside element [0] and reports "(0 bindings)" for both, while
+	/// the correct 24 reports [0] empty and [1] bound. Until 2026-09-09 both elements were
+	/// empty, so a right-stride and a wrong-stride read of zeros were indistinguishable and
+	/// D3b could not be falsified at all.
+	///
+	/// ⚠ Also deliberately EMPTY, for D4_OnActorHitProbe's reason.
+	UFUNCTION()
+	void D4b_OnPingProbe(int32 Ping);
 
 	FTimerHandle TickHandle;
 

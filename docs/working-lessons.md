@@ -1580,6 +1580,78 @@ must be enumerated** — that is the rule both `check_ce_untick_placement.py` (g
 17b are built on, and it is what the refuted round-1 allowlist design lacked. See [todo.md](todo.md)
 § *Blind-spot sweep ROUND 3*.
 
+### 2.19 ⭐ BUILD CONFIGURATION IS A LAYOUT AXIS — and a one-configuration fixture is not a control for it
+
+`D4b`/`D3b`, 2026-09-09. Every delegate read in the DLL assumed
+`FMulticastScriptDelegate` = `{ TArray InvocationList }` at `+0`. That is true in
+Shipping/Test and in every UE ≤ 5.2, and **false in a checked build from UE 5.3**, where
+`TDelegateAccessHandlerBase` contributes an 8-byte access detector in front of the payload.
+Five readers were wrong. Nothing red had appeared in a year.
+
+**Why nothing red had appeared** is the transferable part. All ~12 titles ever measured in this
+repo are **Shipping** builds — the pad-free side. The one host that could have shown it, our own
+DumperTest, is normally launched `dev`, but the affected readers had no fixture to read *at all*
+until 2026-09-08. The population of hosts was large and uniformly on one side of the axis, so
+the sample size was **1**, not 12.
+
+⚠ This is the same shape as `bCasePreservingName` (Grimoire.h): a flag with two branches where
+twelve measurements all landed on one, so the other branch rotted unobserved. **When a layout
+depends on something that is a property of the BUILD rather than of the engine version — the
+`DO_CHECK` family, `WITH_EDITOR`, `USE_CHECKS_IN_SHIPPING`, editor-vs-cooked — a fixture in one
+configuration cannot be its control.** Ours can be packaged in three; the rig now runs against
+two and asserts the same answers from both, with Shipping as the negative control precisely
+because it is the side real titles are on.
+
+**Derive, don't version-gate.** The fix takes the pad from UE's own
+`FProperty::ElementSize`, which UE computes as `sizeof(TCppType)` — so it already answers "in
+THIS build" and needs no version or configuration test. Where no ElementSize exists (the sparse
+path: a `MulticastSparseDelegateProperty`'s is `sizeof(FSparseDelegate) == 1`), the pad is
+derived from an invariant of the data instead — `FSparseDelegateStorage` erases an entry the
+moment it empties, so an entry we *found* must have `Num >= 1`, which makes the two candidate
+offsets distinguishable by test rather than by guess.
+
+⭐ **Three corollaries worth more than the fix:**
+
+* **Read your own WARN before re-deriving anything from source.** The DLL had been logging
+  `implausible InvocationList Num=322437056` for a day. `322437056` is `0x1337FFC0` — the *low
+  half of the Data pointer*. The whole diagnosis is in that one number, and the log was searched
+  only after the source archaeology was already done. A "Num that equals half an adjacent
+  pointer" is the fingerprint of an off-by-one-field read, and it generalises.
+* **An unfalsifiable fixture reads as a pass.** `Arr_MulticastDelegates` had two **empty**
+  elements, so a 16-byte stride and a 24-byte stride produced the identical `(0 bindings)`
+  string. The row could not fail. Binding element **[1]** and leaving **[0]** empty is what
+  turned it into a test — the general rule being that **a fixture whose elements are
+  indistinguishable cannot measure an index or a stride**.
+* **Two types spelled the same way.** A multicast's invocation-list *elements* are
+  `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>` (never padded); a standalone
+  `FScriptDelegate` is `TScriptDelegate<FNotThreadSafeDelegateMode>` (padded). Our comments call
+  both "FScriptDelegate", and one of them asserted the two layouts *match*. Same disease as
+  §"ASK THE QUESTION BY NAME" in Grimoire.h: when two different answers are spelled identically,
+  a reader cannot tell which question a line is answering.
+
+### 2.19a A build tool that silently skips a step still says SUCCESS — check the ARTIFACT's mtime
+
+Found while packaging the fixture above. `tools/ue-sample/repackage.py --sync-mirror` used
+`shutil.copy2`, which **preserves the source file's mtime by design**. UnrealHeaderTool decides
+whether to re-run by comparing each header against `Intermediate/Build/.../UHT/Timestamp` — and
+any earlier build in the same session has already pushed that forward. A header edited at 08:03
+and synced after a build that ran at 08:09 is *older* than the Timestamp, so UHT skipped,
+regenerated nothing, and UBT compiled the module against the **previous** reflection data.
+
+⚠ **It printed `BUILD SUCCESSFUL`.** Two new `UPROPERTY`s and a `UFUNCTION` were packaged away;
+the game booted normally and the fields were simply **absent** from `walk_instance`. The only
+tell was `DumperTestActor.generated.h` still carrying the previous day's timestamp.
+
+Generalise it: **a build step that is skipped and a build step that ran are both reported as
+success — the discriminator is the mtime or hash of the artifact it should have written**, not
+the exit code. This repo already knows the same lesson twice, in
+[§2.5c](#25c-547-mb-is-not-a-verification--hash-dist-against-what-was-just-built) (`dist/` size
+vs hash) and in CLAUDE.md's `msvc_deps_prefix` note (a `.h` edit that stops triggering a
+rebuild). ⚠ And the flag's own warning — *"packaging would build the REAL project's source"* —
+was printed and lost, because the log was read with `| tail`. **When a tool prints a warning
+about a mode you are not in, `tail` is the wrong reader.**
+
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log

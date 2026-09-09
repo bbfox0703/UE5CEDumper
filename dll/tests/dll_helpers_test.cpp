@@ -6513,6 +6513,88 @@ static void Test_Aura_DescribeSparseDelegateState() {
            Aura::DescribeSparseDelegateState(sr, 2).empty());
 }
 
+static void Test_Delegate_AccessDetectorPad() {
+    // D4b / D3b, the defect UNDER D4's fix. UE 5.3+ gave TScriptDelegate and
+    // TMulticastScriptDelegate a TDelegateAccessHandlerBase base class. With DO_CHECK on
+    // (Development/Debug/DebugGame) it holds one std::atomic<uint64>, so every delegate
+    // payload starts 8 bytes late; with DO_CHECK off the base is empty and EBO applies.
+    // Measured on DumperTest Development (UE 5.4) 2026-09-09: the bound OnActorHit reads
+    // {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4} at +0/+8/+0x10/+0x14, and reading Num at
+    // the old +8 returned 0xF5BF5C40 -- the LOW HALF OF DATA.
+    //
+    // ⚠ Every one of the ~12 shipped titles measured in this repo is a Shipping build, i.e.
+    // the pad-free side. Nothing red could ever have appeared there.
+    constexpr int32_t kMcd = 16;              // sizeof(FMulticastScriptDelegate), unpadded
+    const int32_t kSd = 8 + DynOff::SizeofFName();   // sizeof(FScriptDelegate), unpadded
+
+    EXPECT("pad: Shipping FMulticastScriptDelegate (16) -> 0",
+           DynOff::DelegatePadFromElementSize(kMcd, kMcd) == 0);
+    EXPECT("pad: Development FMulticastScriptDelegate (24) -> 8",
+           DynOff::DelegatePadFromElementSize(kMcd + 8, kMcd) == 8);
+    EXPECT("pad: Shipping standalone FScriptDelegate -> 0",
+           DynOff::DelegatePadFromElementSize(kSd, kSd) == 0);
+    EXPECT("pad: Development standalone FScriptDelegate -> 8",
+           DynOff::DelegatePadFromElementSize(kSd + 8, kSd) == 8);
+
+    // ⭐ THE CONTROL THAT MATTERS. Anything else must be REFUSED, not rounded to the nearer
+    // candidate. `ReadMulticastDelegateArrayElements` used to hardcode 16 and ignore the
+    // engine's own ElementSize entirely; the replacement is only an improvement if an
+    // unrecognised size makes the reader say so instead of picking a stride. A wrong stride
+    // does not fail loudly -- it publishes confident "(N bindings)" strings read from the
+    // middle of the previous element.
+    EXPECT("pad: an unrecognised ElementSize is refused, not rounded",
+           DynOff::DelegatePadFromElementSize(20, kMcd) < 0);
+    EXPECT("pad: 4 bytes short is refused", DynOff::DelegatePadFromElementSize(12, kMcd) < 0);
+    EXPECT("pad: double the pad is refused", DynOff::DelegatePadFromElementSize(32, kMcd) < 0);
+    EXPECT("pad: garbage ElementSize is refused",
+           DynOff::DelegatePadFromElementSize(1073742336, kMcd) < 0);
+    EXPECT("pad: a zero baseSize cannot derive anything",
+           DynOff::DelegatePadFromElementSize(16, 0) < 0);
+}
+
+static void Test_Aura_IsBoundInvocationListHeader() {
+    // The predicate that lets the SPARSE path derive the pad it has no ElementSize for: a
+    // MulticastSparseDelegateProperty's ElementSize is sizeof(FSparseDelegate) == 1 and says
+    // nothing about the delegate. Both candidate offsets are tested against invariants that
+    // hold regardless of which is right.
+    const uintptr_t kGood = 0x1D5F5BF5C40;   // the real Data measured on the fixture
+
+    EXPECT("inv: the measured live header {Data, Num=1, Max=4} is coherent",
+           Aura::IsBoundInvocationListHeader(kGood, 1, 4));
+
+    // ⭐ WHY num >= 1 IS A REQUIREMENT AND NOT A NICETY. Reaching this predicate means the
+    // delegate's FName was FOUND in FSparseDelegateStorage, and UE erases that entry the
+    // instant the delegate empties -- every remover in SparseDelegate.cpp calls
+    // DelegateMap->Remove(DelegateName) as soon as IsBound() reads false. A located entry
+    // therefore HAS a subscriber, which is exactly what makes an all-zero reading (the
+    // access detector, read as if it were Data) rejectable.
+    EXPECT("inv: Num=0 is rejected -- a located sparse entry always has a subscriber",
+           !Aura::IsBoundInvocationListHeader(kGood, 0, 4));
+
+    // The checked-build failure, read at the OLD offset: Data lands on the zeroed detector.
+    EXPECT("inv: pad=0 on a checked build reads the zeroed detector as Data -> rejected",
+           !Aura::IsBoundInvocationListHeader(0, 1, 4));
+
+    // The other direction: pad=8 on a SHIPPING build reads {Num,Max} packed as a pointer.
+    // 0x0000000400000001 is ~17 GB and can pass a bare range check, so this one is caught
+    // downstream by the element-0 FName read in LocateInvocationList, not here -- the point
+    // of the assertion is to record WHICH check is load-bearing for that direction.
+    EXPECT("inv: the reversed-direction misread is NOT caught by this predicate alone",
+           Aura::IsBoundInvocationListHeader(0x0000000400000001ULL, 1, 4));
+
+    EXPECT("inv: Max < Num is not a TArray", !Aura::IsBoundInvocationListHeader(kGood, 8, 4));
+    EXPECT("inv: a negative Num is rejected", !Aura::IsBoundInvocationListHeader(kGood, -1, 4));
+    EXPECT("inv: Num past the plausibility ceiling is rejected",
+           !Aura::IsBoundInvocationListHeader(
+               kGood, Aura::kMaxPlausibleInvocationListNum + 1,
+               Aura::kMaxPlausibleInvocationListNum + 1));
+    EXPECT("inv: exactly at the ceiling is still allowed",
+           Aura::IsBoundInvocationListHeader(kGood, Aura::kMaxPlausibleInvocationListNum,
+                                             Aura::kMaxPlausibleInvocationListNum));
+    EXPECT("inv: a kernel-range Data is rejected",
+           !Aura::IsBoundInvocationListHeader(0xFFFF800000000000ULL, 1, 4));
+}
+
 static void Test_Stark_ClassifyGameThreadLiveness() {
     using L = Stark::GameThreadLiveness;
     const uint64_t thr = 500, now = 100000;
@@ -7983,6 +8065,8 @@ int main() {
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
+    RUN(Test_Delegate_AccessDetectorPad);
+    RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent

@@ -3326,14 +3326,40 @@ bool IsMulticastDelegateArrayType(const std::string& innerTypeName) {
 
 ReadArrayResult ReadMulticastDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+    int32_t elemSize, int32_t offset, int32_t limit)
 {
     ReadArrayResult result;
     result.ok = false;
 
-    // Each element: FMulticastScriptDelegate { TArray<FScriptDelegate> } = 16 bytes
-    constexpr int32_t elemSize = 16;
+    // Each element is one FMulticastScriptDelegate. Its payload is a bare
+    // TArray<FScriptDelegate> header -- but in a CHECKED build (Development/Debug/DebugGame,
+    // UE 5.3+) an 8-byte access detector sits in FRONT of it, so the element is 24 bytes and
+    // the header starts at +8. DynOff::kDelegateDetectorPad carries the full story.
+    //
+    // ⛔ `elemSize` USED TO BE THE IGNORED PARAMETER `int32_t /*elemSize*/`, overridden by a
+    // local `constexpr int32_t elemSize = 16`. Both callers already pass the engine's own
+    // ElementSize and it is authoritative -- measured 24 on DumperTest Development (UE 5.4)
+    // while this function insisted on 16. At the wrong stride element [0] still reads
+    // correctly and every index >= 1 drifts, which is the exact fingerprint audit A1 found on
+    // the lazy row; the fixture could not show it only because both its elements are empty,
+    // so a right-stride and a wrong-stride read of zeros produce the same "(0 bindings)".
+    constexpr int32_t kMcdBaseSize = 16;   // TArray<FScriptDelegate> header, FName-independent
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kMcdBaseSize);
+    if (pad < 0) {
+        // Refuse rather than fall back to 16. A wrong stride does not fail loudly -- it
+        // publishes confident "(N bindings)" strings read from the middle of the previous
+        // element. Leaving `elements` empty costs the inline preview; the field still
+        // reports its real count and size.
+        result.error = "unexpected multicast element size " + std::to_string(elemSize);
+        Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: ElementSize=%d is neither %d "
+                           "nor %d (+detector) -- refusing to guess a stride",
+                   elemSize, kMcdBaseSize, kMcdBaseSize + DynOff::kDelegateDetectorPad);
+        return result;
+    }
+    const int32_t stride = kMcdBaseSize + pad;
     int fnameSize = DynOff::SizeofFName();
+    // The invocation list's ELEMENTS are the never-padded unicast type -- see the ⚠ in
+    // Grimoire.h. This one must NOT gain `pad`.
     int32_t innerStride = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -3365,13 +3391,15 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         LiveFieldValue::ArrayElement elem;
         elem.index = i;
 
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride;
+        // The TArray header sits behind the access detector in a checked build.
+        uintptr_t listAddr = elemAddr + pad;
 
         // Read inner TArray<FScriptDelegate> header { Data*, Count, Max }
         uintptr_t innerData = 0;
         int32_t   innerCount = 0;
-        const bool okData  = Macht::ReadSafe(elemAddr,     innerData);
-        const bool okCount = Macht::ReadSafe(elemAddr + 8, innerCount);
+        const bool okData  = Macht::ReadSafe(listAddr,     innerData);
+        const bool okCount = Macht::ReadSafe(listAddr + 8, innerCount);
         if (!okData || !okCount) {
             // UNREAD is not "(0 bindings)". Both reads fail together when the TArray's
             // Data buffer has been freed -- and Macht::ReadTArray (Macht.h:287-297)
@@ -3388,9 +3416,11 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         }
         if (innerCount < 0 || innerCount > 4096) innerCount = 0;  // sanity clamp
 
-        // Hex: 16-byte TArray header
+        // Hex: the 16-byte TArray header we actually interpreted, not the detector in
+        // front of it -- so the hex and the value can never disagree about which bytes
+        // were read. Keeps the width equal to the "????..." unread sentinel above.
         uint8_t headerBuf[16] = {};
-        if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
+        if (Macht::ReadBytesSafe(listAddr, headerBuf, 16)) {
             std::string hex;
             hex.reserve(32);
             for (int b = 0; b < 16; ++b) {
@@ -5393,6 +5423,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
+            // ⚠ A STANDALONE FScriptDelegate is the PADDED unicast type
+            // (`TScriptDelegate<FNotThreadSafeDelegateMode>`), unlike the elements of a
+            // multicast's invocation list. fi.Size is the engine's own sizeof for it.
+            const int32_t dPad =
+                DynOff::DelegatePadFromElementSize(fi.Size, 8 + fnameSize);
+            if (dPad < 0) {
+                fv.typedValue = "(delegate — unexpected ElementSize "
+                              + std::to_string(fi.Size) + ", not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+            fieldAddr += dPad;
+
             int32_t objIdx = 0, serial = 0;
             Macht::ReadSafe(fieldAddr, objIdx);
             Macht::ReadSafe(fieldAddr + 4, serial);
@@ -5869,14 +5912,34 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
             int fnameSize = DynOff::SizeofFName();
+            // The invocation list's ELEMENTS are the never-padded unicast type; only the
+            // FMulticastScriptDelegate CONTAINER carries the access detector. See the ⚠ in
+            // Grimoire.h -- the two are both spelled "FScriptDelegate" in our comments.
             int32_t delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
-            // Read TArray<FScriptDelegate> header
+            // fi.Size is the engine's own sizeof(FMulticastScriptDelegate) -- 16, or 24 in a
+            // checked build where an 8-byte access detector precedes the TArray header.
+            const int32_t mcPad = DynOff::DelegatePadFromElementSize(fi.Size, 16);
+            if (mcPad < 0) {
+                fv.typedValue = "(multicast — unexpected ElementSize "
+                              + std::to_string(fi.Size) + ", not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            // Read TArray<FScriptDelegate> header. ⛔ Both returns are load-bearing: this is
+            // the same shape as D3/D5 -- on a faulted read `data`/`count` stay 0 and the field
+            // would publish the AFFIRMATIVE "(0 bindings)" over memory nobody could see.
             uintptr_t data = 0;
             int32_t count = 0;
-            Macht::ReadSafe(fieldAddr, data);
-            Macht::ReadSafe(fieldAddr + 8, count);
+            const bool okData  = Macht::ReadSafe(fieldAddr + mcPad,     data);
+            const bool okCount = Macht::ReadSafe(fieldAddr + mcPad + 8, count);
+            if (!okData || !okCount) {
+                fv.typedValue = "(multicast — unreadable)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
 
             if (count < 0 || count > 4096) count = 0;  // Sanity clamp (was 256)
 

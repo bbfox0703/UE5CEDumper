@@ -1669,7 +1669,7 @@ not read a value from those two until they are repackaged.
 
 -----
 
-### ⬜ NEW — D4b: `WalkSparseDelegateBindings` cannot read a bound delegate on UE 5.4
+### ✅ D4b — CLOSED 2026-09-09 `[D4B-DELEGATEPAD-2026-09-09]`. Original text below.
 
 **Surfaced by D4's own fix, which is the point of it.** `OnActorHit` is bound to exactly one
 subscriber and the walker locates it in storage, yet the `InvocationList` header read faults.
@@ -1682,7 +1682,7 @@ for 5.4 — either the TSharedPtr layout (is the object pointer really at +0?) o
 `FMulticastScriptDelegate` shape. ⭐ The fixture can now falsify either: `OnActorHit` is bound
 on demand, and `read_mem` will show what is actually at those addresses.
 
-### ⬜ NEW — D3b: the delegate-array reader hardcodes a 16-byte stride; the property says 24
+### ✅ D3b — CLOSED 2026-09-09, SAME ROOT CAUSE `[D4B-DELEGATEPAD-2026-09-09]`. Original text below.
 
 `ReadMulticastDelegateArrayElements` opens with `constexpr int32_t elemSize = 16;` (an
 `FMulticastScriptDelegate` modelled as one `TArray` header). The live walk reports
@@ -1695,6 +1695,149 @@ row (`docs/…` — *"element 0 read correctly while every index ≥1 drifted"*)
 wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs elements with
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
+
+## ✅ D4b + D3b — the access-detector pad `[D4B-DELEGATEPAD-2026-09-09]`
+
+Both rows filed on 2026-09-08 are **one defect**, and it is not a UE-version defect — it is a
+**build-configuration** one, which is why nothing red had ever appeared.
+
+UE 5.3 gave `TScriptDelegate` and `TMulticastScriptDelegate` a base class,
+`TDelegateAccessHandlerBase<ThreadSafetyMode>` (`Delegates/DelegateAccessHandler.h`). With
+`DO_CHECK` on — Debug, Development, DebugGame — that base holds one
+`FMRSWRecursiveAccessDetector`, whose only data member is a `std::atomic<uint64>`, so **every
+delegate payload starts 8 bytes late**. With `DO_CHECK` off (Test/Shipping) the base is the
+empty `FNotThreadSafeNotCheckedDelegateMode` specialization and EBO applies. UE 4.27 has no
+base class at all, so the constants checked against the DropIn 4.27.2 PDB were never wrong —
+just narrow.
+
+| | base | `InvocationList` | `sizeof(FMulticastScriptDelegate)` |
+|---|---|---|---|
+| Shipping / Test, and every UE ≤ 5.2 | 0 (EBO) | `+0x00` | 16 |
+| Development / Debug / DebugGame, 5.3+ | 8 | **`+0x08`** | **24** |
+
+### How it read, and the fingerprint to recognise it by
+
+Raw bytes at the bound `OnActorHit`'s `FMulticastScriptDelegate`, DumperTest Development:
+
+```
++0x00  0000000000000000   std::atomic<uint64> State   (the access detector)
++0x08  405CBFF5D5010000   Data = 0x1D5F5BF5C40
++0x10  01000000           Num  = 1        <- the subscriber, invisible at the old +0x08
++0x14  04000000           Max  = 4
+```
+
+At the old offsets that is `Data = 0`, `Num = 0xF5BF5C40` — **Num is the LOW HALF OF DATA**.
+⭐ The DLL's own `WARN` had been printing it for a day (`implausible InvocationList
+Num=322437056`); decoding `322437056` to `0x1337FFC0` and noticing it was half a heap pointer
+is what cracked it. **Read the log before re-deriving the layout from source.**
+
+### ⚠ Two types, one spelling — the trap that made this hard to reason about
+
+A multicast's invocation-list **elements** are `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>`,
+whose base specialization is empty in *every* configuration, so they are **never** padded and
+`8 + SizeofFName()` stays right. A **standalone** `FScriptDelegate` — what a `DelegateProperty`
+stores — is `TScriptDelegate<FNotThreadSafeDelegateMode>` and **is** padded. Our comments call
+both "FScriptDelegate". `Grimoire.h` now carries this as a ⚠; `Aura.cpp`'s
+`ClassReferenceMeta` comment had it exactly backwards ("element layout matches the multicast
+bindings list") and is corrected.
+
+### What changed
+
+`DynOff::kDelegateDetectorPad` + `DynOff::DelegatePadFromElementSize(elementSize, baseSize)` in
+`Grimoire.h`. **Nothing is version-gated or configuration-gated.** Two derivations, each
+authoritative where it is used:
+
+* **Where an ElementSize is in hand** (3 sites in `Ubel.cpp`) — UE computes it as
+  `sizeof(TCppType)` (`UnrealType.h`, `TProperty::SetElementSize`), so it already answers "how
+  big is this in THIS build". `FDelegateProperty` is `TProperty<FScriptDelegate, FProperty>`;
+  `FMulticastInlineDelegateProperty` is `TProperty_MulticastDelegate<FMulticastScriptDelegate>`.
+  An unrecognised size is **refused**, not rounded to the nearer candidate.
+* **Where there is none** (2 sparse sites in `Aura.cpp` — a `MulticastSparseDelegateProperty`'s
+  ElementSize is `sizeof(FSparseDelegate) == 1` and says nothing) — `LocateInvocationList`
+  derives it from the object's own invariants. ⭐ **This is a derivation, not a probe-and-hope**:
+  reaching it means the delegate's FName was *found* in `FSparseDelegateStorage`, and UE erases
+  that entry the instant the delegate empties (every remover in `SparseDelegate.cpp` calls
+  `DelegateMap->Remove(DelegateName)` as soon as `IsBound()` reads false), so `Num >= 1` is
+  **required**. Both misreadings fail on the first test: on a checked build the pad-0 candidate
+  reads the zeroed detector as `Data` and dies on the null; on Shipping the pad-8 candidate
+  reads `{Num,Max}` packed as a pointer and dies at the element-0 FName read.
+
+Six call sites: `Ubel.cpp` ×3 (`MulticastInline`/`MulticastDelegate`, `DelegateProperty`,
+`ReadMulticastDelegateArrayElements`), `Aura.cpp` ×3 (`WalkSparseDelegateBindings`,
+`FindReferencesToUObject`'s sparse pass, `ClassReferenceMeta`'s `TArray<FScriptDelegate>`).
+
+Two more repairs made in passing, both the sweep's own defect shape:
+
+* `ReadMulticastDelegateArrayElements` took `int32_t /*elemSize*/` — an **ignored parameter**,
+  overridden by a local `constexpr int32_t elemSize = 16`, while both callers were already
+  passing the engine's authoritative answer.
+* the `MulticastInlineDelegateProperty` handler dropped **both** `Macht::ReadSafe` returns, so a
+  faulted read published the affirmative `(0 bindings)` — D3/D5 verbatim, in a reader the
+  2026-09-08 sweep walked past.
+
+`WalkSparseDelegateBindings` also stopped returning **silently** when the `TSharedPtr` yields
+nothing; that state and a real layout failure shared one unlabelled bucket.
+
+### ⭐ Verified on BOTH build configurations — `tools/verify/d4b_delegate_pad.py`
+
+One configuration proves nothing about a configuration-dependent layout, so the same rig ran
+against the same fixture source built twice:
+
+| | `array_elem_size` → pad | `OnActorHit` (sparse) | `Multicast_Inline` | `Del_Unicast` | `Arr_MulticastDelegates` |
+|---|---|---|---|---|---|
+| **Development** | 24 → **8** | `(1 sparse binding) [DumperTestActor_0::D4_OnActorHitProbe]` | `(1 binding)` | resolved | `['(0 bindings)', '(1 binding)']` |
+| **Shipping** | 16 → **0** | identical | identical | identical | identical |
+
+Development is the repair; **Shipping is the negative control** — the side every real title is
+built with, and the one that must not regress. Before the fix Development read
+`(sparse, bound — invocation list unreadable)`.
+
+### ⛔ The fixture could not falsify D3b until today, and that was the point of the gap
+
+`Arr_MulticastDelegates` had **two empty elements**, so a 16-byte stride and a 24-byte stride
+read the same zeros and printed the same `(0 bindings)`. `BeginPlay` now binds element **[1]**
+and leaves **[0]** empty: a reader stuck on 16 reads [1] from inside [0] and reports both empty.
+Also added, because neither reader had *any* host here: `Multicast_Inline` (the only non-array
+`MulticastInlineDelegateProperty`) and `Del_Unicast` (the only `DelegateProperty` — the padded
+standalone type). All three bound; an unbound one reads the same at either offset.
+
+Unit tests: `Test_Delegate_AccessDetectorPad` and `Test_Aura_IsBoundInvocationListHeader` in
+`dll_helpers_test`. Mutation-tested — reverting the refusal to a silent pad-0 and dropping the
+`Num >= 1` requirement produced **exactly** the 5 predicted failures, no more and no fewer.
+
+### ⛔ AND A TOOLING DEFECT FOUND ON THE WAY — `repackage.py --sync-mirror` built stale reflection
+
+`--sync-mirror` used `shutil.copy2`, which **preserves the mirror file's mtime**. UHT decides
+whether to re-run by comparing each header against `Intermediate/Build/.../UHT/Timestamp`, and
+any earlier build in the same session has already pushed that forward. A file edited at 08:03,
+synced after a build that ran at 08:09, is *older* than the Timestamp: UHT skips, regenerates
+nothing, and UBT compiles against the **previous** reflection data.
+
+⚠ It reports `BUILD SUCCESSFUL`. Two new `UPROPERTY`s and a `UFUNCTION` were packaged away, the
+game booted normally, and the fields were simply **absent** from `walk_instance`; the only tell
+was `DumperTestActor.generated.h` still carrying the previous day's mtime. Fixed by stamping
+`os.utime(dst, None)` after each copy. ⚠ Also note `--sync-mirror` is **not** the default and
+its "packaging would build the REAL project's source" warning is easy to lose in a tail-only
+read of the log — which is how this was hit at all.
+
+### ⬜ Still open, deliberately
+
+* **`Arr_MulticastDelegates` element [0]'s own detector bytes are never shown.** The hex now
+  covers the TArray header the reader interpreted, not the 8 bytes in front of it. Fine for
+  reading, but a future "why is this element odd" investigation will want the whole 24.
+* **DebugGame is STALE** — only Development and Shipping were repackaged.
+  `capture_package_identity.py` exits 1 and names it, which is the gate doing its job. DebugGame
+  is a checked build, so it would exercise the same pad 8 as Development.
+* **No non-DumperTest title has been re-measured.** Every one is Shipping (pad 0) and the
+  Shipping column above is that path, but the claim "no regression on real titles" rests on the
+  fixture, not on a re-run of a real game.
+* ⚠ **`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` failed ONCE under load**
+  (2026-09-09), in a `-Target Test` run that shared the machine with `check_all.py`. It passes
+  3/3 in isolation and 4767/4767 in a quiet full run, and **zero C# files changed this**
+  **session** — so it is not a regression from this work. But it is a permanent race repro
+  (see `archive/todo-closed-2026-08-23-build-3337.md:835`) that can still lose the race when
+  the box is busy, which makes it a load-flaky gate rather than a clean one. Not investigated.
+
 
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
 
