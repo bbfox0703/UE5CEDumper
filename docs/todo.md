@@ -1696,6 +1696,78 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ Two of the reconciliation's four, and the gate holes measured `[RECON-TAIL-2026-09-09]`
+
+Taken fastest-first, as asked.
+
+### 1. `PropertyXrefDialog` — a green label over a push that never happened
+
+```csharp
+await bridge.CreateMemoryRecordAsync(...);      // Task<bool>, DISCARDED
+await bridge.NavigateDisassemblerAsync(bareHex); // Task<bool>, DISCARDED
+_statusLabel.Text = $"Pushed {x.FunctionName} → CE disassembler @ {codeAddr}";  // green
+```
+
+⛔ **The `catch` below could never save it**: `AobMakerBridgeService` returns **false** rather
+than throwing when the CE side is gone (`ReconnectAsync` fails → `IsAvailable = false` →
+`return false`). So the sweep's round 3 recorded *"IAobMakerBridge: 0 DEFECT, family closed"*
+while this site was open.
+
+⚠ The two calls are **not interchangeable**, so the message now says which failed: the record is
+what the user right-clicks, the navigation is what they look at. A record with no navigation is a
+usable half (amber); a navigation with no record is not (red).
+
+⭐ **Swept, not spot-fixed**: every `Task<bool>` on `IAobMakerBridge` was checked at every call
+site. The only other discards are `CheckAvailabilityAsync()`, which is called for its side effect
+— the next line reads `IsAvailable`. Those are legitimate and were left alone.
+
+### 2. Gate 17a — a trailing comment decided the verdict, in BOTH directions
+
+The check skipped whole-line comments but never stripped **trailing** ones, so the raw line fed
+every pattern:
+
+* `memrec.Active = false  -- deferred, see createTimer above` was **exempted**, because
+  `SAME_LINE_TIMER` matched the word inside the comment. A real immediate untick, waved through
+  by a sentence about one.
+* `foo()  -- memrec.Active = false` would have been **flagged**, on a line that emits no untick.
+
+`marker_of` already strips trailing comments one function up, for exactly this reason; the body
+did not. Now stripped once and used for every test, while the *reported* snippet stays the raw
+line so a human still sees what is in the file. **16 selftests** (was 13); mutation — restore the
+raw line and exactly the two new cases go red, one per direction. Tree unchanged at 13 sites.
+
+### 3. Gate 17b — the hole was real, and MEASURING it is what kept the fix honest
+
+`DELIVERY_ARG` matched the identifiers the 14 known defects happened to use
+(`xml|script|aaScript|ceXml`), so a future payload named `lua` / `payload` / `snippet` would have
+walked past. *"The correct count is 0 from here on"* was true of those names, not of the shape.
+
+⚠ **Widening a predicate is exactly how this kind of gate becomes an allowlist** — the thing round
+1's design was refuted for. So it was widened FIRST and the tree re-run before anything was
+committed to: the extra names produce **two** new hits, and both are the **declaration** and the
+**definition** of `CopyToClipboardAsync` itself, whose parameter is named `text`. **No real call
+site appears.** The legitimate population is still empty, so the names stay and the two signatures
+are excluded by construction.
+
+⚠ The declaration skip was written the wrong way round first — `statement_of` returns the text
+**before** the call (that is how `CONSUMED` works), so anchoring on the call itself matched
+nothing and both cases still reported a hit. The selftest is what said so. It now anchors at the
+end of the prefix; a real call cannot collide, because `Task<bool> t = _platform.Copy…` has a
+prefix ending in `t = `, not in `>`.
+
+**15 selftests** (was 10). Two mutations, each red on its own two cases and no others: narrowing
+the names back fails the `lua`/`payload` cases; dropping the declaration skip fails the two
+signature cases. Tree unchanged at **46 sites, 0 violations**.
+
+### ⬜ Not done, and why
+
+* **verification-register rows** — next, and a different kind of work: the register has a charter
+  and rows name an acceptance test, so this is writing, not patching.
+* **~166 unadjudicated claims** — the slowest of the four by a wide margin. It is a sweep round,
+  not a fix: 209 filed across three rounds, 43 skepticised, and the sweep then closed itself
+  (`todo.md:1478`, *"THE SWEEP IS FINISHED. Do not run a round 4."*). Unadjudicated is neither
+  fixed nor cleared.
+
 ## ✅ TMap geometry — the fixture that looked impossible `[TMAPGEOM-2026-09-09]`
 
 `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a faulted read the addr stays

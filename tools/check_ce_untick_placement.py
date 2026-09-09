@@ -153,12 +153,24 @@ def scan(stream) -> list[tuple[int, str, str]]:
         if text.strip().startswith("--"):
             continue
 
-        opens_defer = bool(DEFER_OPEN.search(text))
+        # ⛔ AND A TRAILING COMMENT IS PROSE TOO. Every pattern below used the RAW line, so a
+        # comment decided the verdict in BOTH directions:
+        #   * `memrec.Active = false  -- deferred, see createTimer above` was EXEMPTED, because
+        #     SAME_LINE_TIMER matched the word in the comment. A real immediate untick, waved
+        #     through by a sentence about one.
+        #   * `foo()  -- memrec.Active = false` would have been FLAGGED, on a line that emits
+        #     no untick at all.
+        # Found 2026-09-09. `marker_of` already strips trailing comments for exactly this
+        # reason one function up; the body did not. ⚠ The reported snippet stays the RAW line,
+        # so a human reading the failure still sees what is actually in the file.
+        code = TRAILING_COMMENT.sub("", text)
+
+        opens_defer = bool(DEFER_OPEN.search(code))
 
         if defer_depth > 0 or opens_defer:
             # count block openers/closers on this line
-            opens = len(re.findall(r"\b(function|if|for|while|do)\b", text))
-            closes = len(re.findall(r"\bend\b", text))
+            opens = len(re.findall(r"\b(function|if|for|while|do)\b", code))
+            closes = len(re.findall(r"\bend\b", code))
             if opens_defer and defer_depth == 0:
                 defer_depth = 1
                 # the opener line's own `function` is what we just counted as depth 1
@@ -167,11 +179,11 @@ def scan(stream) -> list[tuple[int, str, str]]:
             if defer_depth < 0:
                 defer_depth = 0
 
-        if not UNTICK_SIMPLE.search(text) and not UNTICK.search(text):
+        if not UNTICK_SIMPLE.search(code) and not UNTICK.search(code):
             continue
         if not in_enable:
             continue
-        if SAME_LINE_TIMER.search(text):
+        if SAME_LINE_TIMER.search(code):
             continue                      # the one-line DeferredUntickLua form
         if defer_depth > 0:
             continue                      # inside OnTimer / OnClose
@@ -245,6 +257,19 @@ SELFTEST = [
     ("prose mentioning [ENABLE] mid-sentence does not flip state",
      "[DISABLE]\n-- an immediate untick in [ENABLE] does nothing, see the header\n"
      "if memrec then memrec.Active = false end\n", 0),
+
+    # ⭐ THE TWO A TRAILING COMMENT USED TO DECIDE, one per direction. Added 2026-09-09 after
+    # the gate was measured: it stripped whole-line comments but not trailing ones, so a
+    # sentence could both exempt a real untick and manufacture a fake one.
+    ("a trailing comment saying createTimer does NOT exempt an immediate untick",
+     "[ENABLE]\nif memrec then memrec.Active = false end  -- deferred via createTimer above\n",
+     1),
+    ("an untick that only appears INSIDE a trailing comment is not a site",
+     "[ENABLE]\nlocal h = resolve()   -- later we do memrec.Active = false in OnTimer\n", 0),
+    ("the real one-line deferred form still passes with a comment after it",
+     "[ENABLE]\nif memrec then local _u=createTimer(nil,false) _u.Interval=50 "
+     "_u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end "
+     "-- deferred\n", 0),
 ]
 
 

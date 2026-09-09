@@ -61,7 +61,28 @@ CALL = re.compile(r"CopyToClipboardAsync\s*\(")
 # XML. Names taken from the two builders plus the local identifiers the call sites use.
 DELIVERY_ARG = re.compile(
     r"\bWrapAaScriptXml\b|\bGenerate\w*Xml\b|\bCheatTableBuilder\b|\bCeXmlExportService\b"
-    r"|(?<![A-Za-z0-9_])(xml|script|aaScript|ceXml)(?![A-Za-z0-9_])", re.I)
+    r"|(?<![A-Za-z0-9_])(xml|script|aaScript|ceXml"
+    # ⭐ WIDENED 2026-09-09, and only after MEASURING that the legitimate population stays
+    # empty. The shipped set was the identifiers the 14 known defects happened to use, so a
+    # future call copying a `lua`/`payload`/`snippet` would have walked straight past --
+    # "the correct count is 0 from here on" was true of those names, not of the shape.
+    # ⚠ Widening a predicate is exactly how this kind of gate turns into an allowlist, so it
+    # was tried FIRST and the tree re-run: the extra names produce **two** new hits and both
+    # are the DECLARATION and the DEFINITION of CopyToClipboardAsync itself (its parameter is
+    # named `text`). No real call site appears. Those two are excluded by DECLARATION below
+    # rather than by dropping the names again.
+    r"|lua|luaText|snippet|cheatTable|record|payload|body|text|code|table"
+    r")(?![A-Za-z0-9_])", re.I)
+
+# `Task<bool> CopyToClipboardAsync(string text)` -- the interface method and its override, not
+# a call. A signature has the RETURN TYPE immediately in front of the name; a call
+# never does.
+# ⚠ `statement_of` returns the text BEFORE the call -- that is how CONSUMED works
+# -- so this must anchor at the END of that prefix rather than match the call itself.
+# Written the other way round first, and the selftest said so: both declaration cases
+# still reported a hit. A real call cannot collide: `Task<bool> t = _platform.Copy...`
+# has a prefix ending in `t = `, not in `>`.
+DECLARATION = re.compile(r"\bTask\s*<\s*bool\s*>\s*$")
 
 # The statement CONSUMES the result if any of these appear before the call in it.
 #
@@ -132,6 +153,11 @@ def scan_text(text: str):
     """Yield (offset, statement, arg) for every DELIVERY copy whose result is dropped."""
     for m in CALL.finditer(text):
         stmt, start = statement_of(text, m.start())
+        # The method's own signature is not a call. It only became reachable when the payload
+        # predicate was widened to include `text` (its parameter's name), so it is skipped
+        # here rather than by narrowing the predicate back down.
+        if DECLARATION.search(stmt):
+            continue
         if CONSUMED.search(peel_heads(stmt)):
             continue                     # bound, tested, or returned
         # the argument list, paren-matched so a nested call comes with it
@@ -173,6 +199,18 @@ SELFTEST = [
     ("dropped, multi-line call",
      'await _platform.CopyToClipboardAsync(\n'
      '    Services.CheatTableBuilder.WrapAaScriptXml(description, script));', 1),
+    # ⭐ THE WIDENING, and its control. Added 2026-09-09.
+    ("dropped, payload named lua -- outside the ORIGINAL name set",
+     'var lua = Build();\nawait _platform.CopyToClipboardAsync(lua);', 1),
+    ("dropped, payload named payload",
+     'await _platform.CopyToClipboardAsync(payload);', 1),
+    ("the interface DECLARATION is not a call site",
+     'Task<bool> CopyToClipboardAsync(string text);', 0),
+    ("the implementation's signature is not a call site either",
+     'public Task<bool> CopyToClipboardAsync(string text)\n{\n    return Inner(text);\n}', 0),
+    ("a convenience copy of an ADDRESS is still not a delivery",
+     'await _platform.CopyToClipboardAsync(row.Address);', 0),
+
     ("dropped, local named xml",
      'var xml = Build();\nawait _platform.CopyToClipboardAsync(xml);', 1),
     ("dropped inside if (!sentToCe)",
