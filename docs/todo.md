@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **7 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **8 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -1695,6 +1695,41 @@ row (`docs/…` — *"element 0 read correctly while every index ≥1 drifted"*)
 wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs elements with
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
+
+## ✅ verification-register — the stream's rows, written at last `[RECON-REGISTER-2026-09-09]`
+
+The reconciliation measured that `git log … -- docs/verification-register.md` returned **nothing**
+for the whole work stream, while `todo.md:1605` said the live rows belonged there. Now written.
+
+⭐ **What went in is the RESIDUE, not a victory lap.** The register's charter is *"everything
+shipped but not yet proven against a running game"*, so the things that WERE proven live — D1, D3,
+D4, D4b/D3b, D5, the sixth delegate site, the pad derivation across five engine versions — get no
+row; they have `✅ [TAG]` blocks here instead. One new `### ⬜` batch, nine rows:
+
+| | |
+|---|---|
+| **SW1** | D2 — no fixture exists and the repo says so; nothing in the pipe can make a worker throw |
+| **SW2** | the 14 clipboard delivery sites — gate 17b executes nothing, and 9 shipped with no test changes |
+| **SW3** | CE Lua untick ×3 + Invoke's `onUnreadable` — assertions over generated text no interpreter runs |
+| **SW4** | the CE-side delegate pad — never pasted into Cheat Engine, and only a CHECKED build can test it |
+| **SW5** | `PropertyXrefDialog`'s three push branches |
+| **SW6** | the new refusal arms, reachable only on an engine whose delegate ElementSize is neither candidate |
+| **SW7** | the `(stale)` narrowing's stale ARM — the unbound half is verified, the collected-target half is not |
+| **SW8** | `GetMapPairLayout` — proven, but OFFLINE by construction; listed so nobody re-opens it expecting a boot |
+| **SW9** | UE4 has no READ test — the survey walks class tables and nothing spawns the fixture actor |
+
+⚠ Every row names the observable on **both** sides, because the register's charter says a row whose
+acceptance names only what the screen shows is under-specified. The pinned
+`open_verification_batches` count went 7 → 8 and both copies were updated **from the tree** —
+`check_derived_counts` failed first and named the second copy, inside the register itself.
+
+### ⭐ And four names removed from the long-tail heading — all already closed
+
+`Dump Explorer identity gate` (PASS at :6291), `Solide L2` (`[SOLIDE-L2-2026-08-21]`), `Solide L3`
+and `L4` (`[SOLIDE-L3L4-2026-08-23]`). The sweep found this in round 3 and wrote *"fix when next
+editing the register"* — and then never edited it. ⚠ Each was verified against its own closure
+before removal rather than taken from the report that flagged them; the report said "two stale
+names" and the file had four.
 
 ## ✅ Two of the reconciliation's four, and the gate holes measured `[RECON-TAIL-2026-09-09]`
 

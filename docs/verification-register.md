@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`7` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`8` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -1145,6 +1145,37 @@ out loud, deliberately, because that is the sentence someone will read during tr
 ladder as runtime-only and re-applied on every init, so no cached detection needs invalidating.
 ℹ️ It was nevertheless bumped 5 → 6 on 2026-09-06 — **not for this ladder**, but to reach cached
 values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sentence above stands.
+
+-----
+
+### ⬜ SHIPPED 2026-09-08/09, NEEDS A LIVE CHECK — the blind-spot sweep's residue: D2 · clipboard delivery · CE Lua · the CE-side delegate pad · the refusal arms
+
+*The sweep and its follow-ups closed a lot on a running game — D1, D3, D4, D4b/D3b, D5, the sixth
+delegate site and the pad derivation across five engine versions, each with its own
+`✅ [TAG-2026-09-0N]` block in [todo.md](todo.md). ⭐ **This row is the part that did NOT get
+that**, and it is written here because a 9-agent reconciliation of the stream found the register
+had gained **zero rows** while `todo.md:1605` said the live rows belonged here. Everything below
+is FIXED and mostly gate- or test-pinned; what is owed is the proof.*
+
+⚠ **Read the charter above before closing any of these on a green screen.** Several are UI-side,
+and the whole reason this register exists is that a green panel is equally consistent with the DLL
+being right and with the UI rendering something the DLL never sent.
+
+| # | what is unproven | acceptance — BOTH sides |
+|---|---|---|
+| **SW1** | **D2** — a scan worker that THROWS must not let the run report complete (`e6360903`, `workerFaulted` / `incomplete()`). | ⛔ **No fixture exists and the repo says so.** Nothing in the 99-command pipe surface can make a worker throw, and `dll_core_test` pins only the pure result struct. **DLL side:** a `SCAN`-category log line naming the faulted worker. **UI side:** the partial-result notice must appear. ⚠ Its *deliberate residual* is that a fault reports through `deadline_hit`, so the UI says "DEADLINE HIT" for a cause that was not a deadline — a live run must confirm the claim is at least TRUE (the set really is partial) even while the cause is mislabelled. |
+| **SW2** | **The clipboard delivery family** — 14 delivery sites + the `Action<string>` → `Func<string,Task<bool>>` split + 5 async-void handlers (`89887dee`, `7de16071`, `cb80ae95`). | Pinned only by **gate 17b, a static source check that executes nothing**, and 9 of the 14 shipped with no test changes at all. **UI side:** with the clipboard held open by another process, the status line must say the copy FAILED and tell the user not to paste. **Other side:** `IPlatformService.CopyToClipboardAsync` must actually have returned false — assert it via `RefusingPlatform` in the unit suite AND once for real, because the two can disagree. |
+| **SW3** | **CE Lua untick, 3 sites** (`b344d63d`) + **Invoke's `onUnreadable`** (`a55ef2b5`). | Pinned by **gate 17a** (source text) and by assertions over the GENERATED Lua that no interpreter runs — except site (c), which `invoke_helper_test.lua` does drive. **CE side:** with the game killed mid-invoke, the record must UNTICK and the Lua Engine window must report a dead process, not a busy mailbox. **DLL side:** the mailbox `status` field must say which failure it was; the script must not be guessing. |
+| **SW4** | **The CE-side delegate pad** — `delegate_pad` on the wire → `CeOffset()` at 21 emit sites, and `ue5_dissect.lua` taking the delegate width off the wire (`[D4B-TAIL]`, `[STALE-NONE]`). | Unit-pinned (`CeXmlDelegatePadTests`, 4 cases, mutation-tested; `dissect_test.lua`, 10 checks). ⚠ **Never pasted into Cheat Engine.** **CE side:** on a **checked build** (Development/Debug — the pad is 0 in Shipping, so a Shipping test proves nothing here) a delegate row's group must resolve to the InvocationList, not to address 0. **DLL side:** the same field's `delegate_pad` must read 8 in the pipe payload. |
+| **SW5** | **`PropertyXrefDialog`'s push-result branches** (`c55f2237`). | **CE side:** with Cheat Engine closed, "Push to CE disassembler" must produce the RED "CE refused the push — nothing was added" and the table must genuinely gain no record. **UI side:** the amber half-success branch needs CE to accept the record and refuse the navigation, which is the harder half to stage. Before the fix all three produced the same green label. |
+| **SW6** | **The new REFUSAL arms nothing can reach**: `"(multicast — unexpected ElementSize N, not read)"`, `"(delegate — unexpected ElementSize N, not read)"`, and `ReadMulticastDelegateArrayElements` / `ReadDelegateArrayElements` refusing an unrecognised stride. | ⛔ **Reachable only on an engine whose delegate ElementSize is neither *base* nor *base+8*** — no such engine has been measured (5.4/5.7/5.8 and UE 4.23/4.27 all report one of the two, across 600 classes each). **DLL side:** the `WALK` warning naming the size. **UI side:** the field must render the refusal string rather than a value. ⚠ This arm is a NEW failure mode the fix introduced: pre-fix the reader simply read the field. If it ever fires wrongly it blanks working data. |
+| **SW7** | **The `(stale)` narrowing's stale ARM** (`0b8f89e5`). | The unbound half was verified live (`Arr_Delegates[0]` went `(stale)::None` → `(unbound)` on DumperTest, both configurations). ⚠ **The other half was not**: a delegate bound to an object that is then garbage-collected must still render `(stale)::Func`. **DLL side:** `ResolveWeakObjectPtr` returns 0 while the FName still resolves. **UI side:** the row says `(stale)::` and not `(unbound)`. Needs a fixture that destroys a bound target and forces GC — `Spawn_*` + `ForceGarbageCollection` already exist on `DumperTestActor`. |
+| **SW8** | **`Ubel::GetMapPairLayout`'s refusal** (`[TMAPGEOM-2026-09-09]`). | ✅ Proven, but **OFFLINE by construction** — `dll_core_test` manufactures the partial read with a page edge (`VirtualAlloc`, one page committed of two), because a wholly-unreadable property short-circuits earlier and a live game cannot be made to unmap one page of a property. Listed so nobody re-opens it expecting a game boot. ⚠ What a live run WOULD add: that the refusal does not fire spuriously on a real title's TMaps. |
+| **SW9** | **The UE4 fixture has no READ test** (`[D4B-UE4]`). | The pad survey walks CLASS field tables, so it needs no instance — but nothing spawns `ADelegatePadFixture`, so no UE4 run has ever read a delegate's BINDINGS. **DLL side:** `walk_instance` on a spawned fixture actor. **UI side:** the delegate row names `DPad_OnPingProbe`. `install.py --spawn-from` prints the two-line patch rather than applying it. |
+
+⭐ **SW1 is the row to run first if a way is ever found**, because it is the only one whose defect
+can silently truncate a RESULT SET the user then trusts. SW4 is second: it is the only one whose
+artefact leaves this program entirely and is pasted into another tool.
 
 -----
 
@@ -9891,7 +9922,23 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
   empty, since those point at different halves. Effort **S** once reproducible.
 
 
-### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644 · FreezeOutcome
+### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644 · FreezeOutcome
+
+> ⚠ **FOUR NAMES REMOVED FROM THIS HEADING 2026-09-09, and none of them by deciding they
+> did not matter** — each was already CLOSED, in this same file, with evidence:
+>
+> | removed | closed by |
+> |---|---|
+> | `Dump Explorer identity gate` | *"PASS, on the two DumperTest flavours"* (:6291) |
+> | `Solide L2` | `[SOLIDE-L2-2026-08-21]` (:10468) |
+> | `Solide L3` / `Solide L4` | `[SOLIDE-L3L4-2026-08-23]` (:10090) |
+>
+> The sweep found this in round 3 and wrote *"fix when next editing the register"* — and
+> then the whole stream edited the register **zero times**, which a 9-agent reconciliation
+> later measured (`git log … -- docs/verification-register.md` returned nothing). ⭐ The
+> lesson is the register's own: **a heading is not evidence**, and here the heading
+> outlived four closures sitting a few hundred lines below it. Verified one at a time
+> before removal, not taken from the report that flagged them.
 > ⚠ **`FreezeOutcome` is named here as a SECOND carrier on purpose.** `tools/check_live_verification.py` requires every `(key: X)` in roadmap.md to appear somewhere in this register, and until 2026-09-03 the only line carrying it was the `🟡 AA12 / AA13` heading — whose text reads *"the LYING is fixed and verified; STEP 5 CLOSED"*, i.e. it looks archivable. Archiving it would have turned `main` red with an error about a renamed heading, pointing nowhere near the cause. Two carriers means an archival pass can move either one safely.
 
 *Every ID this heading names is a live check that lives in the bullets below and nowhere else. The
