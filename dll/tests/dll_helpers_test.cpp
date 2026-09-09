@@ -6513,6 +6513,48 @@ static void Test_Aura_DescribeSparseDelegateState() {
            Aura::DescribeSparseDelegateState(sr, 2).empty());
 }
 
+static void Test_Ubel_DescribeScriptDelegate() {
+    // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- a target WAS bound and has since been collected.
+    // An UNTOUCHED FScriptDelegate must not make it. Five sites did, because they tested
+    // `!funcName.empty()` while an untouched slot has FunctionName == NAME_None, and
+    // Ubel::ReadFName resolves index 0 to the STRING "None". Found 2026-09-09 the moment
+    // Arr_Delegates gave ReadDelegateArrayElements its first fixture: element [0] rendered
+    // "(stale)::None" for a slot nothing had ever touched.
+    using Ubel::DescribeScriptDelegate;
+
+    // ⭐ THE ONE THIS EXISTS FOR.
+    EXPECT("stale: an untouched slot is UNBOUND, not stale",
+           DescribeScriptDelegate(false, "", 0, 0, "None") == "(unbound)");
+    EXPECT("stale: an empty FunctionName is the same case",
+           DescribeScriptDelegate(false, "", 0, 0, "") == "(unbound)");
+
+    // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the repair is only an
+    // improvement if it did not simply delete the state it was meant to narrow.
+    EXPECT("stale control: a real name with no live target is still stale",
+           DescribeScriptDelegate(false, "", 5, 7, "OnFire") == "(stale)::OnFire");
+    EXPECT("stale control: an object index with no name is still stale",
+           DescribeScriptDelegate(false, "", 5, 7, "None") == "(stale)");
+
+    // The ordinary bound case, and the reason hasTarget is separate from targetName: a
+    // resolved object whose NAME could not be read is not stale.
+    EXPECT("stale: a live binding names its target",
+           DescribeScriptDelegate(true, "Actor_0", 3, 9, "OnPing") == "Actor_0::OnPing");
+    EXPECT("stale: a live target with an unreadable name renders ?, not stale",
+           DescribeScriptDelegate(true, "", 3, 9, "OnPing") == "?::OnPing");
+
+    // ⚠ A serial with no index is SOMETHING, so it does not qualify as never-touched.
+    EXPECT("stale: serial set without an index is not called unbound",
+           DescribeScriptDelegate(false, "", 0, 7, "None") == "(stale)");
+
+    // The preview builder skips nameless bindings, and must agree on what "named" means.
+    EXPECT("named: a bound binding is named",
+           Ubel::IsNamedDelegateBinding("Actor_0::OnPing"));
+    EXPECT("named: a stale-with-name binding is named",
+           Ubel::IsNamedDelegateBinding("(stale)::OnFire"));
+    EXPECT("named: (unbound) is not", !Ubel::IsNamedDelegateBinding("(unbound)"));
+    EXPECT("named: a nameless (stale) is not", !Ubel::IsNamedDelegateBinding("(stale)"));
+}
+
 static void Test_Delegate_AccessDetectorPad() {
     // D4b / D3b, the defect UNDER D4's fix. UE 5.3+ gave TScriptDelegate and
     // TMulticastScriptDelegate a TDelegateAccessHandlerBase base class. With DO_CHECK on
@@ -8065,6 +8107,7 @@ int main() {
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
+    RUN(Test_Ubel_DescribeScriptDelegate);
     RUN(Test_Delegate_AccessDetectorPad);
     RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);

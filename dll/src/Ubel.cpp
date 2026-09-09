@@ -3354,22 +3354,7 @@ ReadArrayResult ReadDelegateArrayElements(
         // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
         // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
         // touched. The multicast element loop has an explicit unbound branch; this one did not.
-        const bool nameIsNone = funcName.empty() || funcName == "None";
-        const bool neverBound = (objIdx == 0 && serial == 0 && nameIsNone);
-
-        if (neverBound) {
-            elem.value = "(unbound)";
-        } else if (target && !nameIsNone) {
-            elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
-                + "::" + funcName;
-        } else if (!nameIsNone) {
-            // A real function name with no live target: the object really did go away.
-            elem.value = "(stale)::" + funcName;
-        } else if (objIdx > 0) {
-            elem.value = "(stale)";
-        } else {
-            elem.value = "(unbound)";
-        }
+        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName);
 
         result.elements.push_back(std::move(elem));
     }
@@ -3533,11 +3518,13 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 uintptr_t btarget = ResolveWeakObjectPtr(bobjIdx, bserial);
                 std::string bfunc = ReadFName(bindAddr + 8);
 
-                if (btarget && !bfunc.empty()) {
-                    bindings.push_back(GetName(btarget) + "::" + bfunc);
-                } else if (!bfunc.empty()) {
-                    bindings.push_back("(stale)::" + bfunc);
-                }
+                // ⚠ Only NAMED bindings go into the preview, as before -- but "named" is now
+                // the shared test, so an untouched slot (FunctionName == NAME_None, which
+                // reads back as "None") is skipped instead of listed as "(stale)::None".
+                std::string bdesc = DescribeScriptDelegate(
+                    btarget != 0, btarget ? GetName(btarget) : std::string(),
+                    bobjIdx, bserial, bfunc);
+                if (IsNamedDelegateBinding(bdesc)) bindings.push_back(std::move(bdesc));
             }
 
             if (!bindings.empty()) {
@@ -5537,9 +5524,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
             std::string funcName = ReadFName(fieldAddr + 8);
 
-            if (target && !funcName.empty()) {
-                std::string targetName = GetName(target);
-                fv.typedValue = targetName + "::" + funcName;
+            std::string targetName;
+            if (target) {
+                targetName = GetName(target);
                 fv.ptrValue = target;
                 fv.ptrName = targetName;
                 uintptr_t cls = GetClass(target);
@@ -5547,11 +5534,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassName = GetName(cls);
                     fv.ptrClassAddr = cls;
                 }
-            } else if (!funcName.empty()) {
-                fv.typedValue = "(stale)::" + funcName;
-            } else {
-                fv.typedValue = "(unbound)";
             }
+            fv.typedValue = DescribeScriptDelegate(target != 0, targetName,
+                                                   objIdx, serial, funcName);
 
             // Hex: FWeakObjectPtr + FName raw bytes
             int delegateSize = 8 + fnameSize;
@@ -5954,18 +5939,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.ptrName      = b.targetName;
                     elem.ptrClassName = b.targetClassName;
                 }
-                if (b.targetObj && !b.functionName.empty()) {
-                    elem.value = (b.targetName.empty() ? std::string("?") : b.targetName)
-                        + "::" + b.functionName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (!b.functionName.empty()) {
-                    elem.value = "(stale)::" + b.functionName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (b.objectIndex > 0) {
-                    elem.value = "(stale)";
-                } else {
-                    elem.value = "(unbound)";
-                }
+                elem.value = DescribeScriptDelegate(b.targetObj != 0, b.targetName,
+                                                    b.objectIndex, b.serialNumber,
+                                                    b.functionName);
+                if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
+                    previewNames.push_back(elem.value);
                 fv.arrayElements.push_back(std::move(elem));
             }
 
@@ -6104,18 +6082,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (cls) elem.ptrClassName = GetName(cls);
                 }
 
-                if (target && !funcName.empty()) {
-                    elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
-                        + "::" + funcName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (!funcName.empty()) {
-                    elem.value = "(stale)::" + funcName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (objIdx > 0) {
-                    elem.value = "(stale)";
-                } else {
-                    elem.value = "(unbound)";
-                }
+                elem.value = DescribeScriptDelegate(target != 0, elem.ptrName,
+                                                    objIdx, serial, funcName);
+                if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
+                    previewNames.push_back(elem.value);
 
                 fv.arrayElements.push_back(std::move(elem));
             }

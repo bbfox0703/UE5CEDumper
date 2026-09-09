@@ -1696,6 +1696,76 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ `(stale)` — all FIVE sites, one definition `[STALE-NONE-2026-09-09]`
+
+The seventh defect was repaired in one reader; the ask was "fix the other two". ⭐ **There were
+FIVE**, and finding that out first is the point — this sweep's enumerations have already been
+wrong twice ("five readers" missed the CE exporter, then missed a sixth DLL site).
+
+```
+grep -n '"(stale)' dll/src/Ubel.cpp   ->  ReadDelegateArrayElements
+                                          ReadMulticastDelegateArrayElements' preview
+                                          the single-field DelegateProperty handler
+                                          the sparse-binding elements
+                                          the multicast inline element loop
+```
+
+A sixth hit is a **weak pointer**, not a delegate — `(stale)` is correct there and it was left
+alone.
+
+### The defect
+
+`"(stale)"` is an **affirmative claim**: a target *was* bound and has since been collected. An
+untouched `FScriptDelegate` has `Object = {0,0}` and `FunctionName = NAME_None`, and
+`Ubel::ReadFName` resolves index 0 to the **string `"None"`** — which is not empty. So every
+`!funcName.empty()` test called an untouched slot stale.
+
+### The repair — `Ubel::DescribeScriptDelegate`
+
+One pure, header-inline definition; all five sites call it. ⚠ `hasTarget` is a separate argument
+from `targetName` because a resolved object whose name could not be read is **not** stale — it
+renders `?::Func`, which is what the call sites did before and what a naive
+`targetName.empty()` test would have silently changed.
+
+`IsNamedDelegateBinding` keeps the preview builders' "which bindings are worth listing" test on
+the same definition of *named*, instead of a second `!empty()` beside the first.
+
+### Coverage
+
+11 checks in `dll_helpers_test`, and the ⭐ **controls are what make it a narrowing rather than a
+deletion**: a real name with no live target must STILL say `(stale)::OnFire`, and an object index
+with no name must still say `(stale)`.
+
+Mutation-tested — reverting `named` to the pre-fix `!funcName.empty()` fails exactly **3**:
+
+```
+FAIL: stale: an untouched slot is UNBOUND, not stale
+FAIL: stale control: an object index with no name is still stale
+FAIL: stale: serial set without an index is not called unbound
+```
+
+while every bound/stale control stays green. `Ubel.h` restored byte-identically.
+
+### Re-verified live after the refactor — five sites moved, so all four rigs re-ran
+
+| rig | Development | Shipping |
+|---|---|---|
+| `d4b_delegate_pad` | ✅ pad 8, `Arr_Deleg` `['(unbound)', 'DumperTestActor_0::D4b_OnPingProbe']` | ✅ pad 0, identical |
+| `d3_delegate_array_unread` | ✅ three-state, baseline `['(0 bindings)', '(1 binding) [...]']` | — |
+| `d5_lazyguid_unread` | ✅ | — |
+| `d1_collision_refusal` | ✅ both arms still naming different causes | — |
+
+A refactor that touches five rendering sites is exactly the change where "the tests pass" is not
+enough — the live strings are the acceptance, and they are unchanged except where they were
+wrong.
+
+### ⬜ Still open
+
+* **The `"None"` string itself is a Serie-level convention**, not a checked constant. If
+  `ReadFName` ever returned something else for index 0 — a localisation, a different pool
+  reading — the narrowing would silently stop firing and every untouched slot would read stale
+  again. No gate pins it.
+
 ## ✅ The SIXTH D4b site, and two more found with it `[D4B-SITE6-2026-09-09]`
 
 ⛔ **`[D4B-DELEGATEPAD]`'s enumeration said "five readers" and it was wrong twice.** The first

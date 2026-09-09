@@ -1109,6 +1109,43 @@ ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+/// Render ONE FScriptDelegate binding, from the four things any reader can observe.
+///
+/// ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM — it says a target WAS bound and has since been
+/// collected. An UNTOUCHED `FScriptDelegate` must not make it, and five sites did:
+/// `Object = {0, 0}` with `FunctionName = NAME_None`, and `Ubel::ReadFName` resolves index 0
+/// to the **string `"None"`** — which is not empty, so every `!funcName.empty()` test called an
+/// untouched slot stale. Found 2026-09-09, the moment `Arr_Delegates` gave
+/// `ReadDelegateArrayElements` its first fixture and element [0] rendered `(stale)::None`.
+///
+/// ⚠ ONE DEFINITION ON PURPOSE. The same four-branch ladder was written out at five sites
+/// (`ReadDelegateArrayElements`, `ReadMulticastDelegateArrayElements`'s preview, the
+/// `DelegateProperty` handler, the sparse-binding elements and the multicast element loop), and
+/// repairing "two of them" is how this sweep's enumerations have already been wrong twice.
+///
+/// `hasTarget` is kept separate from `targetName` because a resolved object with an unreadable
+/// name is NOT stale — it renders `?::Func`, which is what the call sites did before.
+///
+/// Pure and header-inline so `dll_helpers_test` can pin it without a live object pool.
+inline std::string DescribeScriptDelegate(bool hasTarget, const std::string& targetName,
+                                          int32_t objIdx, int32_t serial,
+                                          const std::string& funcName) {
+    // NAME_None reads back as the STRING "None", not as an empty string.
+    const bool named = !funcName.empty() && funcName != "None";
+    if (!named && objIdx == 0 && serial == 0) return "(unbound)";
+    if (named && hasTarget)
+        return (targetName.empty() ? std::string("?") : targetName) + "::" + funcName;
+    if (named) return "(stale)::" + funcName;
+    return "(stale)";     // a live-looking weak pointer with no function name
+}
+
+/// True when `DescribeScriptDelegate` produced a NAMED binding (`Target::Func` or
+/// `(stale)::Func`) rather than `(unbound)` / `(stale)`. The preview builder skips the
+/// nameless ones, and this keeps that test on the same definition of "named".
+inline bool IsNamedDelegateBinding(const std::string& described) {
+    return described.find("::") != std::string::npos;
+}
+
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
