@@ -270,6 +270,29 @@ public static class TeleportScriptGenerator
         Line(sb, $"    writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdTeleport})  -- CMD_TELEPORT (write LAST)");
         // Same shape as the single-op wait above: momentary row, so flag and break.
         CeLuaHygiene.AppendMailboxWait(sb, "Teleport", MailboxTimeout.FlagAndBreak, indent: "    ");
+        // ⛔ AND RE-READ THE RESULT, which this arm did not until 2026-09-09 while the
+        // single-op arm above (`:165`) always has. STATUS_DONE IS NOT A SUCCESS SIGNAL:
+        // `Mimic.cpp`'s SetError writes the negative code to `result` and THEN sets
+        // `status = STATUS_DONE`, so a failed command satisfies the shared wait exactly like a
+        // successful one — and AppendMailboxWait polls `OffStatus` only. Without this the row
+        // auto-closed the Lua Engine window (this repo's documented clean-success-ONLY signal)
+        // and unticked silently on a command the DLL had rejected.
+        //
+        // ⚠ LATENT RATHER THAN LIVE, and worth saying so: `Wirbel::ClearMarker` returns TP_OK
+        // for every slot in [0, TELEPORT_SLOTS) and this loop is `for slot = 0, 2`, so the op
+        // cannot currently fail; and the one pre-handler error that could fire here,
+        // SetError(-10, "DLL not initialized"), gates every CMD_TELEPORT including the SAVE
+        // that is the only writer of `s_markers` — so whenever it fires there are no markers to
+        // clear and "all markers cleared" is vacuously true. None of that is enforced anywhere.
+        // The claim is being made from the ATTEMPT, and it is three lines to make it from the
+        // EFFECT instead.
+        Line(sb, $"    local code = readInteger(mb + {CeMailboxLayout.OffResult}, true)");
+        Line(sb, "    if not hadError and code ~= 0 then");
+        Line(sb, "      hadError = true");
+        Line(sb, "      showMessage('[Teleport] slot ' .. slot .. ' was NOT cleared (code ' "
+                 + ".. tostring(code) .. ')')");
+        Line(sb, "      break");
+        Line(sb, "    end");
         Line(sb, "  end");
         Line(sb, "end");
         Line(sb, "if not hadError then dbg('[Teleport] all markers cleared') end");

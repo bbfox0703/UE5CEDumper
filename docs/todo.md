@@ -1803,6 +1803,120 @@ signature cases. Tree unchanged at **46 sites, 0 violations**.
   (`todo.md:1478`, *"THE SWEEP IS FINISHED. Do not run a round 4."*). Unadjudicated is neither
   fixed nor cleared.
 
+## 🔎 The ~166 unadjudicated claims, SLICED `[CLAIMS-SLICE-2026-09-09]`
+
+### ⛔ First, what they are NOT: a list
+
+209 claims were filed across three sweep rounds — **61 + 112 + 36** — and **43** were skepticised
+— **13 + 18 + 12**. Only those 43 were written up, as the Confirmed / Refuted tables above. The
+other **166 exist as counts and nothing else**: the finder agents' output was never stored, and
+`docs/evidence/` holds none of it. ⚠ So "adjudicate the 166" cannot mean walking a list, and any
+plan that says it does is describing work that cannot start.
+
+⭐ What IS walkable is the POPULATION they were drawn from, and round 1's own plan
+(`todo.md`, "1. / 2. / 3." under the round-1 section) already split it by the QUESTION each half
+needs. Re-measured at HEAD rather than quoted — the published 213 / 54 / 165 were build 3423:
+
+| slice | population at HEAD | the question | status |
+|---|---|---|---|
+| **A** CE Lua emission layer | 16 generators → **5** candidates + 3 controls | does it report the ATTEMPT, or re-read the EFFECT? | ✅ **1 defect / 8**, fixed |
+| **B** discarded qualified calls, non-`ReadSafe` | **133** (declarations, logging and `std::` excluded) | shape A — is an effect's status return dropped? | ⬜ needs the effect-applier list |
+| **C** discarded `Read*Safe` | **135**, of which **15** reach a published field | does the UN-SET out-param feed a COUNT or a PUBLISHED field? | ⬜ 15 ranked, instrument built |
+| **D** the 30-item "unverified tail" | no list exists | — | ⬜ a re-sweep, not an adjudication |
+
+⚠ **B's 133 is my filter, not a reproduction of the published "~54".** Mine counts bare qualified
+calls with declarations, `Sein::Info/Warn/Debug/Error` and `std::`/`memcpy` excluded; theirs was a
+different cut of a 213-statement set. Neither number is wrong; they are not the same measurement,
+and quoting one as the other is how counts drift in this file.
+
+### ✅ Slice A — adjudicated 2026-09-09: 1 defect in 8, found and fixed
+
+The mechanical survey is what made this cheap. Of 16 `*ScriptGenerator.cs`, only **5** write a
+mailbox command without obviously re-reading `OffResult` afterwards, measured by four marks
+(`AppendMailboxWait` / `AppendIdleWait` / a `readInteger(... OffResult` / a `< 0` gate). Those 5
+plus 3 clean controls went to one adjudicating agent each, against the reference
+(`SeeThroughScriptGenerator.cs:85-100` — wait, re-read `OffResult`, gate on `state < 0`, deferred
+untick) and against CLAUDE.md's two rules verbatim.
+
+**7 of 8 came back CLEAN** — including `CoordLibrary`, whose zero `OffResult` re-reads was the
+strongest mechanical signal in the survey, and which turned out to re-read through a shared
+`call()` helper the survey could not see. The four things that explain the survey's suspicion —
+each of which has killed a real claim in this repo before — are why the marks are not verdicts:
+`CeLuaHygiene` already emits the diagnosis and the untick for some callers; a MOMENTARY action's
+deferred untick is the correct shape and not a missing one; a bail-out BEFORE the command is
+written has no effect to re-read; and a re-read spelled `~= 0` is still a re-read.
+⭐ **The eighth is a real defect, and it is in the file whose OTHER arm is the clean model.**
+`TeleportScriptGenerator.GenerateClearAll` — the "Clear all markers" row — never read
+`OffResult`; the file's sole occurrence is at `:165`, inside the single-op `Generate`. And
+`AppendMailboxWait` cannot cover it: the helper polls `OffStatus` **only**, while `Mimic.cpp`'s
+`SetError` writes the negative code to `result` and THEN sets `status = STATUS_DONE` — so a
+REJECTED command satisfies that wait exactly like a successful one. The row therefore auto-closed
+the Lua Engine window (this repo's documented clean-success-ONLY signal) and unticked silently.
+Fixed, with a red-before-green test (`Teleport_clear_all_reads_the_RESULT_back_not_just_the_status`
+— removing the re-read fails exactly that one test of 76).
+
+⚠ **LATENT, NOT LIVE — and the two refutations disagreed about exactly this.** The
+code-side refutation could not kill it; the user-visible one could, and was right on the facts:
+`Wirbel::ClearMarker` returns `TP_OK` for every slot in `[0, TELEPORT_SLOTS)` and the loop is
+`for slot = 0, 2`, so the op cannot fail today; and `SetError(-10, "DLL not initialized")` gates
+every CMD_TELEPORT including the SAVE that is the only writer of `s_markers`, so whenever it can
+fire there are no markers to clear. Fixed anyway, because **nothing enforces either of those** —
+they are properties of today's `ClearMarker`, not guarantees — and the claim was being made
+from the ATTEMPT while three lines away the same file made it from the EFFECT.
+
+⭐ **AND THE RESULT CALIBRATED ITSELF**, which is the part worth keeping. Going in, the worry
+was the one the sweep's own instrument section records three times — *"if it cannot see the bug
+that motivated the sweep, the list is worthless"* — and there was no live positive left in this
+family to calibrate against, round 1's having been fixed into gate 17b's population. The Teleport
+result answers it: the same adjudicator, given the same prompt, called seven files clean and then
+separated two paths **inside one file**, keeping `Generate` and condemning `GenerateClearAll`.
+An instrument that can do that is not one that says "clean" by default.
+
+### ⬜ Slice C — instrument built, 15 sites ranked
+
+`tools/verify/claims_readsafe_outparam.py`. ⛔ For this population "the bool was discarded" is NOT
+the question — the discard is the documented idiom (the identical `ReadPtrAt` body appears
+verbatim in `Edel.cpp`, `Solide.cpp`, `Solitar.cpp`, `Hemmung.cpp`) and a blanket rule opens with
+~135 waivers. The question round 1 wrote down, and the one the tool ranks by, is:
+
+> does the UN-SET out-param go on to feed a **COUNT**, or a **PUBLISHED field**?
+
+Because that is the shape confirmed here four times in 2026-09: the delegate readers publishing
+`(unbound)` off a faulted `objIdx`; `GetMapPairLayout` guessing an alignment off a 0 struct addr;
+`WalkInstance`'s two inlined copies doing the same silently; and `delegate_pad` set but never
+emitted. Ranked at HEAD: **PUBLISHED 15 · COUNT/SIZE 18 · CONTROL-FLOW 30 · PASSED-ON 35 ·
+no further use 37**.
+
+⚠ **The tool is a RANKER, not a verdict**, and its own output says so. Most of the 15 are
+`rawElemSize` / `rawKeySize` / `rawValSize`, which flow straight into `ValidateArrayElemSize` — a
+real guard that overrides an invalid size for every type `InferScalarSize` knows. The delegate
+family is the one it deliberately does NOT override, and that gap is already closed downstream by
+`DelegatePadFromElementSize` refusing 0 (`[SW6-STRIDEREFUSAL-2026-09-09]`).
+
+#### The three that are NOT that shape — adjudicated by hand, 2026-09-09
+
+| site | out-param | verdict | why |
+|---|---|---|---|
+| `Aura.cpp:6366` | `scriptNum` | ✅ **CLEAN** | the very NEXT statement is `if (!scriptData \|\| scriptNum <= 0 \|\| scriptNum > (1<<22))`, which tests for exactly the 0 a faulted read leaves, and falls back to the x64-disassembly path while honestly setting `out.method = "disasm"`. **This is the exemplar of the correct shape** — the discard is fine precisely because the guard is one line away. |
+| `Ubel.cpp:2233` | `enumPtr` | ✅ **CLEAN** | 0 means "no enum", and every consumer guards on it: `Fern.cpp:1687` emits `enum_addr` only `if (fv.enumAddr != 0 && !fv.enumEntries.empty())`, and `Aura.cpp:5071` treats a 0 as *not yet resolved* and RETRIES the read. A faulted read costs a dropdown, not a false claim. |
+| `Ubel.cpp:4307` | `objPtr` / `ifacePtr` | ⛔ **DEFECT (LOW), fixed** | both reads were discarded and the hex column was then built unconditionally, so an UNREADABLE `InterfaceProperty` rendered `0000000000000000 0000000000000000` — an affirmative claim about memory nobody could read, indistinguishable from a genuinely null interface. |
+
+⭐ The fix for the third mirrors the correct shape **already in the same file**:
+`ReadDelegateArrayElements` builds its hex INSIDE `if (Macht::ReadBytesSafe(...))`. The field now
+publishes hex only when both reads succeeded, and otherwise says
+`"(interface — unreadable at +0xN, not read)"`.
+
+⚠ 1 of 3 is roughly the kill rate this file predicts for an agent sweep, and it held for a
+hand pass too. The two CLEAN verdicts are worth as much as the defect: they are what stops the
+next reader from "fixing" a guard that is already one line below the read.
+
+### ⬜ Slice B — blocked on a decision, not on work
+
+Round 1 already designed the instrument and refused to build the naive one: a blanket "bool
+results must be consumed" rule is noise, so what is needed is an **allowlist of ~25 effect-appliers**
+in `tools/effect-appliers.tsv`, baselined like gate #4 rather than zero-tolerance. That list does
+not exist yet, and writing it is the work — not scanning.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:

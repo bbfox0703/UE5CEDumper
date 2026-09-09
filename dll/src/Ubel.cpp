@@ -4304,10 +4304,20 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         if (fi.TypeName == "InterfaceProperty") {
             uintptr_t objPtr = 0;
             uintptr_t ifacePtr = 0;
-            Macht::ReadSafe(instanceAddr + fi.Offset, objPtr);
-            Macht::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
+            // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this is the same shape as the delegate
+            // readers below: on a faulted read the out-params keep their initialised 0, and 0
+            // is then published as though it had been READ. The hex column would render
+            // "0000000000000000 0000000000000000", which is indistinguishable from a genuinely
+            // null interface -- an affirmative claim about memory nobody could read.
+            // The correct shape is already in this file: ReadDelegateArrayElements builds its
+            // hex INSIDE `if (Macht::ReadBytesSafe(...))` and leaves it empty otherwise.
+            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the sibling
+            // sites in that batch (`Aura.cpp` scriptNum, `Ubel.cpp` enumPtr) were CLEAN because
+            // their next statement guards on exactly the value a faulted read leaves.
+            const bool okObj   = Macht::ReadSafe(instanceAddr + fi.Offset, objPtr);
+            const bool okIface = Macht::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
 
-            if (objPtr) {
+            if (okObj && objPtr) {
                 fv.ptrValue = objPtr;
                 fv.ptrName = GetName(objPtr);
                 uintptr_t cls = GetClass(objPtr);
@@ -4317,11 +4327,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             }
 
-            char buf[48];
-            snprintf(buf, sizeof(buf), "%016llX %016llX",
-                static_cast<unsigned long long>(objPtr),
-                static_cast<unsigned long long>(ifacePtr));
-            fv.hexValue = buf;
+            if (okObj && okIface) {
+                char buf[48];
+                snprintf(buf, sizeof(buf), "%016llX %016llX",
+                    static_cast<unsigned long long>(objPtr),
+                    static_cast<unsigned long long>(ifacePtr));
+                fv.hexValue = buf;
+            } else {
+                // Say which half could not be read rather than printing zeros for it.
+                fv.typedValue = "(interface — unreadable at +0x"
+                              + std::to_string(fi.Offset) + ", not read)";
+            }
             result.fields.push_back(std::move(fv));
             continue;
         }
