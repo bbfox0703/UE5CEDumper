@@ -2898,16 +2898,24 @@ headlessly; then `dist\UE5DumpUI.exe` driven on top of the same live DLL. Both k
 `DumperTest Shipping` already granted at tier `full`, so the half audit #4 never did — *is the UI
 showing what the DLL sent?* — was actually driven, unattended, rather than deferred again.
 
-#### ⛔⛔ THE FINDING — `[BADGEPRIME]` 🟠 MED: connect primes THREE cards and disconnect resets FOURTEEN
+#### ⛔⛔ THE FINDING — `[BADGEPRIME]` 🟠 MED: connect primes THREE badges, disconnect resets TWELVE
 
 `TeleportViewModel.SetConnected(true)` (`:857-872`) starts exactly three things —
-`RefreshMarkersAsync`, `RefreshHeldTimeStateAsync`, `RefreshHeldProtectStateAsync`.
-`SetConnected(false)` (`:874-905`) walks **fourteen** badges back to Unknown: Debug Camera, God
-Mode, Foreground Lock, Move Speed, Time ×2, Gravity, Super Jump, Fly, See-through, Gravity
-Direction, Mouse Cursor, POV, Pose.
+`RefreshMarkersAsync`, `RefreshHeldTimeStateAsync`, `RefreshHeldProtectStateAsync` — which between
+them prime **three** badges: God Mode (via `ApplyProtectState`) and the two time lanes.
+`SetConnected(false)` (`:874-905`) walks **twelve** badges back to Unknown — ten distinct
+`Apply*State(-1)` calls (Debug Camera, Fly, Foreground Lock, God Mode, Gravity Direction, Gravity,
+Mouse Cursor, Move Speed, See-through, Super Jump) plus `ApplyLaneState(…, -1)` twice — and clears
+POV and the pose besides.
 
-**So eleven badges are reset on disconnect and primed by nothing on connect.** They sit at
+**So NINE of the twelve are reset on disconnect and primed by nothing on connect.** They sit at
 `Unknown` until the user presses a button, while the DLL has a definite answer for every one.
+
+⚠ **DERIVED, and it corrects my own first count.** This section first said *"fourteen reset, eleven
+unprimed"* — a hand tally that counted the POV and pose clears as badges. Re-derive rather than
+quote either number:
+`grep -c 'Apply\w*State(\s*-1' TeleportViewModel.cs` inside `SetConnected`, against the badges the
+three prime calls actually reach.
 
 ⭐ **OBSERVED LIVE, WITH A BUILT-IN CONTROL** — UI and pipe read at the same moment, same process:
 
@@ -2932,17 +2940,17 @@ record) — **it survives a UI reconnect as long as the game lives**"*, and for 
 survives a UI reconnect, so the badge must reflect it without the user pressing ↻ (**audit #5 AD4 —
 nothing queried it on connect**, and AutoTick polls only pose + markers)"*.
 
-**AD4 fixed this shape once, for one card.** The other eleven were never done — so after a UI
-restart against a live game, a still-active **Fly**, **Move Speed**, **Gravity** or **See-through**
-hold reads `Unknown`, and the user has no indication the game is still modified. For Fly that means
-a pawn that may still be in `MOVE_Flying` behind a badge that declines to say so.
+**AD4 fixed this shape once, for one card.** The other nine were never done — so after a UI restart
+against a live game, a still-active **Fly**, **Move Speed**, **Gravity** or **See-through** hold
+reads `Unknown`, and the user has no indication the game is still modified. For Fly that means a
+pawn that may still be in `MOVE_Flying` behind a badge that declines to say so.
 
 ⭐ **AND THIS IS THE AUDIT-UNDER-REVIEW'S OWN SHAPE, TWICE OVER.** Audit #4 **B9** is
 *"Wrong-game warning **never runs on connect**, never clears on disconnect"* — same asymmetry, one
 card, fixed. Phase 1 flagged **B17**'s `SetConnected(false)` as a hand-maintained list *"still
 growing by hand"* with *"nothing structural forcing a new card to add its own row"*. **This is the
 mirror image nobody wrote down: the list that must grow on the OTHER side has three entries and
-should have fourteen.** Neither audit #4 nor any later pass caught it, and it took a running UI next
+should have twelve.** Neither audit #4 nor any later pass caught it, and it took a running UI next
 to a running DLL to see — precisely the check the maintainer said was missing.
 
 #### ✅ What the live capture measured that no static pass could
@@ -3007,6 +3015,82 @@ in prose; the two tools need different guards for the same hazard.
     structure so they cannot diverge again (B17's point, from the other side).
 12. ⚠ **Phase 2's axis B must be re-run for the 4 helper-delegating commands** — they were never
     adjudicated, and `get_pointers` (46 keys) is the biggest single un-checked reply in the tree.
+
+### ✅ PHASE 4 DONE 2026-09-10 — five gate predicates MEASURED; two ship now, two later, one REFUSED
+
+⛔ **Design + measurement only. No gate file was created and `check_all.py` is untouched** — the
+fixes are a separate pass, and a gate belongs with the fix it holds.
+
+The rule this repo paid for twice — gate #17 refuted in round 1, gate 17b refuted as first scoped —
+is: **pick a predicate whose LEGITIMATE population is EMPTY, never one whose legitimate population
+must be enumerated.** So every candidate below was measured before being proposed, not after.
+
+| # | predicate | violations today | verdict |
+|---|---|---|---|
+| **A** | every `cmd` the UI sends is dispatched by `Fern` | **0** (99 sent / 99 dispatched) | ✅ **BUILD NOW** |
+| **B** | every request param the UI sends is read by some handler | **0** (60 sent / 100 read) | ✅ **BUILD NOW** |
+| **C** | no `AppendIdleWait*` is guarded by an `enable` condition | **1** — and it is `[R3-SEETHRU]` | ✅ **BUILD WITH THE FIX** |
+| **E** | every badge reset on disconnect is primed on connect | **9** — and they are `[BADGEPRIME]` | 🟡 **BUILD AFTER THE FIX** |
+| **D** | every reply key the DLL publishes has a consumer | **many, and legitimately** | ⛔ **REFUSED — do not build** |
+
+#### ✅ A + B — the two that are green today, and worth having precisely because they are
+
+They pin the **loud** axis so it stays loud. A wrong command name currently fails with
+`unknown command`; a wrong param currently reads a default. Both are clean at HEAD, so a gate here
+never has to be argued with — it simply stops the first regression. ⭐ A is the cheaper and the more
+valuable: there is **no shared constant table across the language boundary**, the C# side hand-types
+`["cmd"] = "walk_instance"`, and nothing but this would catch a rename that lands on one side only.
+
+⚠ **One design note that must survive into the implementation**: `tools/**/*.py` and `scripts/*.lua`
+are **first-class pipe clients**, not tests. Phase 2 measured 11 of 46 false positives coming from
+`get_offsets` keys whose only consumers are the Python rigs. A gate that treats the rigs' contract as
+dead code will fail on day one.
+
+#### ✅ C — the narrow predicate the R3 defect hands us for free
+
+Not *"every idle wait must be unconditional"* — that has a legitimate population
+(`CoordLibraryScriptGenerator.cs:261` guards on `if (dll)`, and `BakedScriptGenerator` on
+`if (verifyReturn)`; both are correct). The predicate that qualifies is the **narrow** one:
+
+> an `AppendIdleWait*` call must not sit inside a branch conditioned on `enable`
+
+**Legitimate population: EMPTY**, by construction — a `[DISABLE]` block writes the mailbox exactly
+as `[ENABLE]` does, so an idle wait that only one of them gets is always wrong. Measured at HEAD:
+**one** violation, `SeeThroughScriptGenerator.cs:78`, which is `[R3-SEETHRU]` itself. ⛔ **Ship it in
+the same commit as that fix** — a gate that lands red is worse than no gate.
+`tools/verify/ce_emitter_guard_scope.py` (phase 1) already does the brace-depth analysis; the gate
+is that tool with an exit code and a negative control.
+
+#### 🟡 E — real, but it must follow `[BADGEPRIME]`, not lead it
+
+> every `Apply*State(-1)` in `SetConnected(false)` has a corresponding prime in `SetConnected(true)`
+
+Nine violations today, and they ARE the finding. ⚠ The better fix may make the gate unnecessary:
+if the reset and prime lists become **one structure** (a table of cards, each with its reset and its
+refresh), they cannot diverge and there is nothing left to check. **Prefer the structure; keep the
+gate only if the structure is rejected.** That is B17's point applied to its own mirror.
+
+#### ⛔ D — REFUSED, with the measurement, so it is not proposed again
+
+*"Every reply key the DLL publishes must have a consumer."* It fails the rule outright:
+
+- phase 2 adjudicated **32 pairs as dead-benign** — build stamps, duplicated values, diagnostics;
+- phase 3's live capture found **5 commands** carrying a key no consumer reads, all of the same kind
+  (`init`'s build stamps, `get_offsets`' raw `ffield_*`/`ustruct_*` detail, `get_diagnostics`'
+  `class_cache`);
+- and **11 of phase 2's 46 false positives were keys consumed only by the Python rigs**, which a
+  naive gate would also call dead.
+
+So its legitimate population is large, heterogeneous, and would have to be enumerated as an
+allowlist — **the exact failure mode that refuted gate #17 and re-scoped 17b**. ⛔ Do not build it.
+The right instrument for that question is not a gate but `pipe_reply_capture.py` run occasionally
+against a live game, whose output is a shortlist for a human.
+
+#### ⬜ Carried into the fix pass (NOT done here)
+
+13. Build gate **A** (command-name parity) and **B** (request-param parity) — green today.
+14. Build gate **C** with the `[R3-SEETHRU]` fix, never before it.
+15. Decide `[BADGEPRIME]`'s shape first (one table vs two lists); gate **E** only if two lists survive.
 
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
