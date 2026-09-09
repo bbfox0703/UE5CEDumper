@@ -70,9 +70,31 @@ internal static class ClipboardDelivery
     /// <remarks>
     /// Says <b>NOT delivered</b> rather than "copy failed": the actionable part is that
     /// the clipboard still holds something else, so pasting now runs the wrong script.
+    /// <para>
+    /// ⛔ THE IMPERATIVE COMES FIRST, AND THAT IS NOT A STYLE CHOICE. This message is
+    /// rendered on two kinds of surface. The panels wrap it (LiveWalkerPanel.axaml:519,
+    /// InstanceFinderPanel.axaml:69 — <c>TextWrapping="Wrap"</c>, no MaxWidth) and show
+    /// all of it. The MainWindow toolbar does not: <c>StatusText</c> and
+    /// <c>ErrorMessage</c> are capped at <c>MaxWidth="360"</c> with
+    /// <c>TextTrimming="CharacterEllipsis"</c> (MainWindow.axaml:41-53), deliberately —
+    /// the comment there records that an uncapped status line pushes the rest of the
+    /// toolbar off-screen.
+    /// </para>
+    /// <para>
+    /// Measured 2026-09-09 (<c>[CLIPELLIPSIS-2026-09-09]</c>): the old wording put
+    /// "so do not paste" at character 135 of 206, and the toolbar truncated at roughly
+    /// character 50 — <c>"ERROR: could not write to the clipboard — the inject ..."</c>.
+    /// The one sentence the whole message exists to deliver was the one a user could not
+    /// see without hovering for the tooltip. Reordering costs nothing and fixes it for
+    /// every truncation width; widening the toolbar would have re-broken what the
+    /// MaxWidth was added for.
+    /// </para>
+    /// ⚠ Keep "do not paste" inside the first ~40 characters. <c>{what}</c> is
+    /// caller-supplied and varies in length, so it must come AFTER the imperative or the
+    /// truncation point moves with it.
     /// </remarks>
     internal static string FailureText(string what) =>
-        $"ERROR: could not write to the clipboard — {what} was NOT delivered. " +
-        "The clipboard still holds whatever was there before, so do not paste. " +
-        "Another application may be holding it open; try again.";
+        $"ERROR: do not paste — the clipboard still holds whatever was there before. " +
+        $"{what} was NOT delivered; another application may be holding the clipboard " +
+        "open. Try again.";
 }

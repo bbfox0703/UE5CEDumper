@@ -5431,7 +5431,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         try
         {
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.FieldAddress));
+            // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
+            // 8 bytes after the field, and parking CE's hex view on the access detector shows
+            // a qword that reads 0. See LiveFieldValue.PayloadAddress.
+            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.PayloadAddress));
         }
         catch (Exception ex)
         {
@@ -5481,7 +5484,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
-        await AddRecordToCeAsync(field.Name, field.FieldAddress, t, "field");
+        // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left
+        // on the access detector points at a qword that reads 0 on every checked build.
+        await AddRecordToCeAsync(field.Name, field.PayloadAddress, t, "field");
     }
 
     /// <summary>

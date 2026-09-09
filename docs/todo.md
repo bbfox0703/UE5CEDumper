@@ -1843,7 +1843,7 @@ says that the unbounded one is *in front of* the bounded one for the highest-vol
 ⛔ **Do not "fix" this by bounding `s_walkClassExCache`** without solving the reference-return
 first — that is exactly the dangling-reference hazard `Ubel.cpp:881-887` was written to prevent.
 
-## ⬜ Two Live Walker CE paths ignore `delegate_pad` `[CEPATHS-UNPADDED-2026-09-09]`
+## ✅ Live Walker's CE paths now carry `delegate_pad` `[CEPATHS-UNPADDED-2026-09-09]`
 
 Found while closing `[SW4-CEPAD-2026-09-09]`, which proved the CLIPBOARD path correct. The other
 two CE-facing buttons on the same grid row do not agree with it.
@@ -1861,23 +1861,36 @@ two CE-facing buttons on the same grid row do not agree with it.
    `AOBMaker: navigated hex view to 1ED06BBD460`. The Live Walker's Address column shows the same
    unpadded value, so this is consistent with what the user sees — but on a checked build it
    parks CE's hex view on the 8-byte access detector rather than on the invocation list.
-2. **`+CE` silently does nothing on a delegate row.** No record in CE, no line in the UI log, no
-   status text. The same button on `WideGuard` one row away works (`created memory record
-   'WideGuard' @ 1ED06BBD3E4`). `AddFieldToCeAsync` guards on `FieldAddress` being non-empty
-   (it is not empty here) and then calls `CeXmlExportService.MapFieldToCeRecordType(field)`
-   **outside** the try/catch in `AddRecordToCeAsync` — so a throw there would be swallowed by
-   the async command with no trace. Not confirmed as the cause; that is the first thing to check.
+2. ~~**`+CE` silently does nothing on a delegate row.**~~ ⛔ **THIS HALF WAS WRONG AND IS
+   RETRACTED.** Re-tested deliberately on 2026-09-09 and the button works:
+   `AOBMaker: created memory record 'Multicast_Inline' @ 22DB4A9D468 (type 3)`. The original
+   observation was a computer-use click that missed the button, not a defect — the row carries
+   an extra `{}` expander that a scalar row does not, and the miss produced exactly what a
+   silent failure would. Reading the code first would have caught it: `MapCeField` has explicit
+   arms for all three delegate types and `MapFieldToCeRecordType` returns `PointerRecordType`
+   for a null, so there is no path that throws or returns early. ⚠ A finding that survives
+   only because nobody re-ran it is worth no more than the run that produced it.
 
-⚠ **Neither is the defect `[D4B-DELEGATEPAD]` fixed**, and the export path that row was about
-is correct. This is the same shape as `[TMAPGEOM-TWIN]`: one behaviour, more than one
-implementation, and the fix landed on the one that was being looked at.
+### ✅ RESOLVED 2026-09-09 — a payload address, distinct from the field address
 
-**What is owed:** decide whether `FieldAddress` should carry the pad for delegates (it would
-change the Address column too, which may be the honest thing — the field's data really does
-start there on a checked build), or whether the two button handlers should apply `CeOffset`
-themselves. And find out why `+CE` is silent, which is a bug regardless of the pad question.
+`FieldAddress` was left UNPADDED on purpose. It is the address of the FIELD, which is what the
+Address column shows and what a reader comparing against an offset table expects; the exporter has
+always drawn the same distinction, emitting `<Description>"Multicast_Inline (980)"` (the field
+offset) with `<Address>+988</Address>` (the payload). Making `FieldAddress` padded would have made
+the grid disagree with every offset table for one CE-facing reason.
 
-## ⬜ The clipboard failure's ACTIONABLE clause cannot fit in the toolbar `[CLIPELLIPSIS-2026-09-09]`
+Instead `LiveFieldValue.PayloadAddress` = `FieldAddress + DelegatePad`, and both CE-facing
+handlers use it. **Verified live** on DumperTest 5.4 Development, where the two differ by 8:
+
+    AOBMaker: navigated hex view to 22DB4A9D468            (was ...460, the access detector)
+    AOBMaker: created memory record 'Multicast_Inline' @ 22DB4A9D468 (type 3)
+
+Pinned by three tests in `CeXmlDelegatePadTests`: the pad is added; the two addresses are the same
+object when there is no pad (a payload address that drifted on an ordinary `IntProperty` would be
+far worse than the defect it fixes); and an unparseable address comes back unchanged rather than
+becoming `0x8`.
+
+## ✅ The clipboard failure now leads with the imperative `[CLIPELLIPSIS-2026-09-09]`
 
 Observed during SW2's live run (`[SW2-CLIPDELIVERY-2026-09-09]`), not inferred: with the clipboard
 held, the toolbar showed
@@ -1910,11 +1923,27 @@ runs the wrong script"*) is the sentence a user does not see unless they hover.
 (`MainWindow.axaml:38-39`) says why the cap is there: a long status line pushes the rest of the
 toolbar off-screen and wraps. That trade-off was made deliberately.
 
-**Options, none chosen yet:** a short toolbar form plus the full text in the tooltip (e.g.
-`ERROR: <what> NOT delivered — do not paste`); or route delivery failures to a surface that wraps;
-or keep the wording but front-load the imperative. This wants a decision, not a patch.
+### ✅ RESOLVED 2026-09-09 — front-load the imperative
 
-## ⬜ TMap geometry has a TWIN, and the fix landed on only one of them `[TMAPGEOM-TWIN-2026-09-09]`
+Chosen because it is the only option that costs nothing. Widening the toolbar re-breaks what the
+`MaxWidth` was added for; routing to a wrapping surface would move where SIX delivery sites report
+for one presentational reason. Reordering fixes it at EVERY truncation width, including ones
+nobody has measured.
+
+    before:  ERROR: could not write to the clipboard — {what} was NOT delivered. The clipboard
+             still holds whatever was there before, so do not paste. …
+    after :  ERROR: do not paste — the clipboard still holds whatever was there before.
+             {what} was NOT delivered; another application may be holding the clipboard open. …
+
+"do not paste" moves from character **135 to character 7**. Nothing is lost — the wrapping panel
+surfaces show the same sentences.
+
+⚠ Pinned by a test that asserts the INDEX, not the presence: presence was already true while
+the defect was live. `FailureText_PutsTheImperativeWhereTruncationCannotEatIt` requires it inside
+the first 40 characters AND ahead of the caller-supplied `{what}`, which varies in length —
+otherwise a longer subject pushes the imperative back out of view.
+
+## ✅ TMap geometry's TWIN — both copies now REFUSE `[TMAPGEOM-TWIN-2026-09-09]`
 
 Found 2026-09-09 while building the SW8 rig, by discovering that the rig's *intended* observable
 was measuring the wrong function.
@@ -1951,11 +1980,28 @@ slightly wrong, which is a different trade-off from a background collector's. Th
 is that **the two twins now disagree on the same input, and nothing says so**: one refuses and
 logs, the other guesses silently. Whichever is right, they should not differ by accident.
 
-**What is owed:** decide the policy deliberately (refuse in both, or guess in both with the
-divergence documented at each site), and — either way — leave a comment at each of the three sites
-naming the other two, so the next sweep cannot fix one and miss the rest. ⛔ There is no live
-fixture for it: the partial-read condition needs a page edge, so it belongs in `dll_core_test`
-beside the existing `TMAPGEOM` block, which must stay LAST in that file.
+### ✅ RESOLVED 2026-09-09 — the twins now agree, and they agree on REFUSING
+
+The alternative was to keep guessing in the walk, on the grounds that a slightly-wrong map beats a
+blank one in a UI. That reasoning does not survive contact with what a wrong stride actually
+renders: not "slightly wrong" values but **confident values read from the middle of the previous
+pair**, with nothing on screen to say so. Publishing nothing and naming the reason is the same
+call `ReadDelegateArrayElements` already makes for an unrecognised stride, so the codebase now has
+one answer to this question instead of two.
+
+**What changed** (`Ubel.cpp`, BOTH copies — FProperty and UProperty):
+* a `mapStructAddrsOk` flag, cleared in either faulted-read branch;
+* the element read is gated on it, so no pair is ever strided at a guessed alignment;
+* the field still publishes its HEADER — name, type, element count — and carries
+  `"(TMap - FStructProperty::Struct unread, pairs not read)"` as its value, so the refusal is
+  visible rather than looking like an empty map.
+
+**Not live-reachable, by construction**: it fires only when the engine's own
+`FStructProperty::Struct` pointer cannot be READ, which needs the page-edge fixture
+`[TMAPGEOM-2026-09-09]` built for `GetMapPairLayout`. What WAS checked live is the absence of a
+regression — on DumperTest 5.4 the struct-valued maps still report their strides
+(`Map_IntToVec3f` 24, `Map_IntToVecLwc` 40) with `map_value_struct_type` resolved, i.e.
+`mapStructAddrsOk` stays true on the normal path.
 
 ## ✅ TMap geometry — the fixture that looked impossible `[TMAPGEOM-2026-09-09]`
 

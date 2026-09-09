@@ -99,4 +99,54 @@ public class CeXmlDelegatePadTests
         Assert.DoesNotContain("<Address>+100</Address>", xml);
         Assert.DoesNotContain("<Address>+200</Address>", xml);
     }
+
+    // ---------------------------------------------------------------------------------
+    // The one-click buttons beside each Live Walker row, which the four tests above did
+    // NOT cover.
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// ⛔ MEASURED, NOT HYPOTHETICAL: [CEPATHS-UNPADDED-2026-09-09]. The exporter had the pad
+    /// right all along — the CE XML for <c>Multicast_Inline (980)</c> carries
+    /// <c>&lt;Address&gt;+988&lt;/Address&gt;</c> — but the row's HEX button logged
+    /// "AOBMaker: navigated hex view to 1ED06BBD460", the access detector, which reads 0. Both
+    /// CE-facing button handlers now go through <c>PayloadAddress</c>.
+    /// </summary>
+    [Fact]
+    public void PayloadAddress_AddsTheDelegatePad()
+    {
+        var f = new LiveFieldValue { TypeName = "MulticastInlineDelegateProperty",
+                                     Offset = 0x980, DelegatePad = 8,
+                                     FieldAddress = "0x1ED06BBD460" };
+        Assert.Equal("0x1ED06BBD468", f.PayloadAddress);
+        // ⚠ And FieldAddress itself stays unpadded — it is the FIELD's address, which is what
+        // the Address column shows and what a reader comparing against an offset table expects.
+        Assert.Equal("0x1ED06BBD460", f.FieldAddress);
+    }
+
+    /// <summary>
+    /// The pad is 0 on Shipping/Test and absent for every non-delegate field, so the two
+    /// addresses must be the same object there — a payload address that drifted by a byte on
+    /// an ordinary IntProperty would be a far worse defect than the one this fixes.
+    /// </summary>
+    [Theory]
+    [InlineData("IntProperty", 0)]
+    [InlineData("MulticastInlineDelegateProperty", 0)]
+    public void PayloadAddress_IsTheFieldAddressWhenThereIsNoPad(string type, int pad)
+    {
+        var f = new LiveFieldValue { TypeName = type, Offset = 0x100, DelegatePad = pad,
+                                     FieldAddress = "0x1ED06BBD460" };
+        Assert.Equal("0x1ED06BBD460", f.PayloadAddress);
+    }
+
+    /// <summary>An unparseable or empty address must not become "0x8" or throw.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("0x[ply_base]")]
+    public void PayloadAddress_SurvivesAnAddressItCannotParse(string addr)
+    {
+        var f = new LiveFieldValue { TypeName = "DelegateProperty", DelegatePad = 8,
+                                     FieldAddress = addr };
+        Assert.Equal(addr, f.PayloadAddress);
+    }
 }

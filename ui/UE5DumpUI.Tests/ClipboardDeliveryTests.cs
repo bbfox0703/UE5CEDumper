@@ -116,4 +116,29 @@ public class ClipboardDeliveryTests
         Assert.Contains("NOT delivered", msg);
         Assert.Contains("do not paste", msg, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void FailureText_PutsTheImperativeWhereTruncationCannotEatIt()
+    {
+        // ⛔ THE REGRESSION THIS PINS, measured on a live run 2026-09-09
+        // ([CLIPELLIPSIS-2026-09-09]): the MainWindow toolbar caps StatusText and
+        // ErrorMessage at MaxWidth=360 with CharacterEllipsis (MainWindow.axaml:41-53) and
+        // truncated this message at roughly character 50 —
+        //   "ERROR: could not write to the clipboard — the inject ..."
+        // while "so do not paste" sat at character 135 of 206. The one sentence the message
+        // exists to deliver was the one the user could not see.
+        //
+        // 40 is well inside any plausible truncation of a 360px-wide 12pt line, and the
+        // assertion is on the INDEX rather than on presence because presence was already
+        // true when the defect was live.
+        var msg = ClipboardDelivery.FailureText("the CE AA script");
+        var idx = msg.IndexOf("do not paste", StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(idx, 0, 40);
+
+        // ⚠ And it must stay ahead of the caller-supplied `what`, which varies in length —
+        // otherwise a longer one pushes the imperative back out of view again.
+        Assert.True(idx < msg.IndexOf("the CE AA script", StringComparison.Ordinal),
+            "the imperative must precede the caller-supplied subject, or the truncation "
+            + "point moves with it");
+    }
 }

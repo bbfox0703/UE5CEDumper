@@ -4762,30 +4762,38 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // If key/value is StructProperty, read UScriptStruct* for navigation
-                        // ⚠ THIS IS THE TWIN OF `GetMapPairLayout`, and the two DISAGREE on a
-                        // faulted read. `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either of these reads fails, because a 0 addr makes
+                        // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
+                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
-                        // pairStride, mis-striding the whole map. This inlined copy -- the one
-                        // `WalkInstance` actually uses, since it never calls GetMapPairLayout --
-                        // keeps the older behaviour and falls through to the size guess.
+                        // pairStride, mis-striding the whole map. `WalkInstance` never calls
+                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
+                        // twins disagreed on the same input, and this one guessed SILENTLY.
                         //
-                        // The divergence is deliberate for now, and the trade-off is genuinely
-                        // different here: refusing would BLANK a map in the UI rather than show
-                        // it slightly wrong. What was wrong is that it happened SILENTLY. It no
-                        // longer does. `[TMAPGEOM-TWIN-2026-09-09]` in docs/todo.md carries the
-                        // decision that is still owed. There are TWO copies of this block --
-                        // FProperty and UProperty -- and both warn.
+                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
+                        // agree on REFUSING. The alternative was to keep guessing here, on the
+                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
+                        // stride does not render "slightly wrong", it renders CONFIDENT values read
+                        // from the middle of the previous pair, and nothing on screen says so.
+                        // Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // The HEADER is kept either way -- name, type and element count still show;
+                        // only the element VALUES are withheld.
+                        //
+                        // ⚠ This fires only when the engine's own FStructProperty::Struct pointer
+                        // cannot be READ -- a faulted read, not a normal state. TWO copies of this
+                        // block exist (FProperty and UProperty) and both behave this way.
+                        bool mapStructAddrsOk = true;
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
                             } else {
+                                mapStructAddrsOk = false;
                                 Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
-                                                   "the KEY -- alignment falls back to a size "
-                                                   "guess, so the pair stride may be wrong "
-                                                   "(GetMapPairLayout would refuse here)",
+                                                   "the KEY -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
                                            fi.Name.c_str());
                             }
                         }
@@ -4795,16 +4803,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
                             } else {
+                                mapStructAddrsOk = false;
                                 Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
-                                                   "the VALUE -- alignment falls back to a size "
-                                                   "guess, so the pair stride may be wrong "
-                                                   "(GetMapPairLayout would refuse here)",
+                                                   "the VALUE -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
                                            fi.Name.c_str());
                             }
                         }
 
                         // Read inline element values if count is manageable
-                        if (fv.mapCount > 0
+                        // ⛔ Only if the struct pointers above actually read -- see the block
+                        // comment there. A guessed alignment mis-strides every pair after the
+                        // first, and nothing on screen would say so.
+                        if (!mapStructAddrsOk) {
+                            fv.typedValue = "(TMap - FStructProperty::Struct unread, pairs not read)";
+                        } else if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
@@ -4936,30 +4949,38 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
 
-                        // ⚠ THIS IS THE TWIN OF `GetMapPairLayout`, and the two DISAGREE on a
-                        // faulted read. `[TMAPGEOM-2026-09-09]` made that function REFUSE the
-                        // whole layout when either of these reads fails, because a 0 addr makes
+                        // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
+                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either read fails, because a 0 addr makes
                         // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
-                        // pairStride, mis-striding the whole map. This inlined copy -- the one
-                        // `WalkInstance` actually uses, since it never calls GetMapPairLayout --
-                        // keeps the older behaviour and falls through to the size guess.
+                        // pairStride, mis-striding the whole map. `WalkInstance` never calls
+                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
+                        // twins disagreed on the same input, and this one guessed SILENTLY.
                         //
-                        // The divergence is deliberate for now, and the trade-off is genuinely
-                        // different here: refusing would BLANK a map in the UI rather than show
-                        // it slightly wrong. What was wrong is that it happened SILENTLY. It no
-                        // longer does. `[TMAPGEOM-TWIN-2026-09-09]` in docs/todo.md carries the
-                        // decision that is still owed. There are TWO copies of this block --
-                        // FProperty and UProperty -- and both warn.
+                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
+                        // agree on REFUSING. The alternative was to keep guessing here, on the
+                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
+                        // stride does not render "slightly wrong", it renders CONFIDENT values read
+                        // from the middle of the previous pair, and nothing on screen says so.
+                        // Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // The HEADER is kept either way -- name, type and element count still show;
+                        // only the element VALUES are withheld.
+                        //
+                        // ⚠ This fires only when the engine's own FStructProperty::Struct pointer
+                        // cannot be READ -- a faulted read, not a normal state. TWO copies of this
+                        // block exist (FProperty and UProperty) and both behave this way.
+                        bool mapStructAddrsOk = true;
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + baseOff, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
                             } else {
+                                mapStructAddrsOk = false;
                                 Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
-                                                   "the KEY -- alignment falls back to a size "
-                                                   "guess, so the pair stride may be wrong "
-                                                   "(GetMapPairLayout would refuse here)",
+                                                   "the KEY -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
                                            fi.Name.c_str());
                             }
                         }
@@ -4969,16 +4990,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
                             } else {
+                                mapStructAddrsOk = false;
                                 Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
-                                                   "the VALUE -- alignment falls back to a size "
-                                                   "guess, so the pair stride may be wrong "
-                                                   "(GetMapPairLayout would refuse here)",
+                                                   "the VALUE -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
                                            fi.Name.c_str());
                             }
                         }
 
                         // Read inline element values
-                        if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
+                        // ⛔ Only if the struct pointers above actually read -- see the block
+                        // comment there. A guessed alignment mis-strides every pair after the
+                        // first, and nothing on screen would say so.
+                        if (!mapStructAddrsOk) {
+                            fv.typedValue = "(TMap - FStructProperty::Struct unread, pairs not read)";
+                        } else if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4. Wrong align => wrong
