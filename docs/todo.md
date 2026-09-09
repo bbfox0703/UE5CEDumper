@@ -2570,6 +2570,181 @@ checked — every phase needs a negative control.
 still live and 0 reopens, and concluded the value was in *coverage*, not in re-reasoning. Nothing
 above contradicts that for #4; the blank and the wire are where the evidence is.
 
+### ✅ PHASE 1 DONE 2026-09-09 — 52/52 re-checked at HEAD; nothing reverted, and two live defects found anyway
+
+25 agents (8 re-check · 13 refute-mandated skeptics · 4 coverage), 0 errors. ⛔ **Fixes deliberately
+NOT applied** — this phase records only, per the plan above.
+
+#### The headline is the same as audit #3's, and it is the reassuring one
+
+| verdict | n |
+|---|---|
+| `present` | 47 |
+| `changed-but-correct` | 3 (B15, B30, B37) |
+| `WEAKENED` | 2 (B21, R1) |
+| **`REVERTED`** | **0** |
+| **`not-found`** | **0** |
+
+**Nothing audit #4 shipped has been silently undone in ~950 builds.** So — as with #3 — the answer
+is *not* "re-run audit #4"; the value is in coverage and in the wire, which is where phases 2–4 go.
+
+⭐ **THREE LEVELS, AND EACH ONE CORRECTED THE LEVEL ABOVE IT.** The first pass called B30 and R3
+fixed; the skeptics refuted both; and my own hand-check then **refuted one of the skeptics** (R1).
+Recording that chain rather than only its output, because the audit-agent calibration in
+working-lessons §2 is built from exactly this.
+
+#### ⛔⛔ FIX 1 — `[B30-REOPEN]` 🔴 the "already serving" bail-out tears down the pipe it just told the user to connect to
+
+**Verified by hand, all six links, not taken from the agent.**
+
+```
+.CT:645-653   SERVING branch  ->  showMessage("No injection needed — just launch
+                                  UE5DumpUI.exe and click Connect.")  then  return false
+.CT:883-885   [ENABLE]        ->  on false, the DEFERRED untick timer fires memrec.Active = false
+              CE semantics    ->  that RUNS [DISABLE]. The repo says so itself, twice:
+                                  ue5_freeze_helper.lua:977 "Setting `memrec.Active = false` runs
+                                  the record's [DISABLE] block synchronously", and
+                                  CeInjectScriptGenerator.cs:232 "[ENABLE]'s early bail-outs untick
+                                  the record, which makes CE run this block"
+.CT:887-891   [DISABLE]       ->  ue5_shutdown()
+.CT:811-812   its ONLY guard  ->  pcall(getAddress, "UE5_StopPipeServer")
+ProxyVersion/Dinput8/Dxgi/Winmm.def  ->  ALL FOUR export UE5_StopPipeServer
+```
+
+⛔ **So in the one case B30 was filed about, the guard PASSES and the shutdown runs.** The guard's
+own comment says it is there for *"nothing was ever injected"*; it does not cover **"something is
+loaded that we did not inject"**, which is the whole finding. Net effect: the user ticks the CE
+inject row while a proxy is serving, is told to go and connect — and ~50 ms later the pipe is torn
+down under them (`Frieren.cpp` `UE5_Shutdown`: `Tot::RequestShutdown`, `Mimic::StopThread`, four
+worker joins, `Schlacht`/`Grausam` off, `Stark::Shutdown`, `s_pipeServer.Stop()`).
+
+⛔ **It ships in BOTH artifacts** — the checked-in `scripts/UE5CEDumper.CT` and the script the UI
+generates (`CeInjectScriptGenerator.cs:159` the same `pre == INIT_READY or pre == INIT_SKIPPED`
+branch, `:162` the same message, `:165` the same deferred untick).
+
+⚠⚠ **AND THE DEFERRAL IS OURS.** The `.CT` comment at :874-881 argues the untick must be deferred
+because an immediate `memrec.Active = false` is a CE no-op — `[FREEZEUNTICK-2026-08-20]`, now pinned
+by `tools/check_ce_untick_placement.py` (gate 17a, shipped **2026-09-08**). That reasoning is right
+about CE and **inverted about B30**: the fix unticks *to prevent* a later user-untick from running
+`UE5_Shutdown`, but the untick **is** the thing that runs it. Before the deferral the destructive
+path needed a user untick; after it, it fires by itself. ⛔ This is not an argument for removing the
+deferral — the freeze row needs it — it is that the SERVING branch must not reach an untick at all,
+or `ue5_shutdown` must learn the difference between *our* DLL and *a* DLL.
+
+⚠ **What is NOT claimed**: this has not been reproduced on a running game. It is a code-path
+argument with every link read at HEAD, and it belongs in phase 3's live arm.
+
+#### ⛔ FIX 2 — `[R3-SEETHRU]` 🟠 See-through's `[DISABLE]` writes the mailbox with NO idle wait
+
+`SeeThroughScriptGenerator.cs` shares one `EmitBlock` between `[ENABLE]` and `[DISABLE]` (:28-29).
+`AppendIdleWaitOrBail` sits at **:78, textually inside the `if (enable)` braces** (`{` :70, `else`
+:81) — the comment above it is **outdented to the outer level**, which is what makes it read as
+unconditional. The `cmd` store at :88 is emitted for **both** blocks. So unticking See-through
+writes operands, clears status and stores `cmd` while another mailbox command may still be in
+flight — the exact AA10 hazard, and the comment two lines above says so: *"operands land in the same
+mailbox, so writing them corrupts the command in flight just as surely"*.
+
+⭐ **Measured structurally, not by eye** — every `AppendIdleWait*` / `AppendContractCheck` call in
+all 14 generators, classified by brace depth:
+
+```
+SeeThroughScriptGenerator.cs:78   AppendIdleWaitOrBail   GUARDED by: if (enable)   <== the only one
+BakedScriptGenerator.cs:258       AppendContractCheck    GUARDED by: if (verifyReturn)   (legitimate)
+CoordLibraryScriptGenerator.cs:227/261                   GUARDED by: if (dll)            (legitimate)
+   ...the other 22 call sites: unconditional
+```
+
+⭐ **The file refutes itself**: its own `AppendContractCheck` at :63 is unconditional, and
+`Movement`/`TimeDilation` carry the **byte-identical comment** while passing
+`enable ? UntickAndReturn : SilentReturn` to an **unconditional** call — proving the intended shape.
+SeeThrough is a copy that lost one level of indentation.
+
+#### 🟡 FIX 3 — `[B33-SPELLING]` two emit sites resolve only the bare `g_invokeMailbox`
+
+B33's rule is *"resolve both spellings everywhere you look the mailbox up"*. At HEAD, 17 of 19 sites
+obey. The two that do not are both the "already loaded" pre-check that **B30 added**:
+
+```
+ui/UE5DumpUI/Services/CeAutorunScriptGenerator.cs:116   pcall(getAddress, 'g_invokeMailbox')
+ui/UE5DumpUI/Services/CeInjectScriptGenerator.cs:153    pcall(getAddress, 'g_invokeMailbox')
+```
+
+The `.CT`'s counterpart of the same pre-check uses `ue5_findMailbox()`, which tries both — so the
+three routes have drifted apart. ⭐ **And it COUPLES WITH FIX 1**: on a miss, `pre` stays nil, the
+SERVING branch is skipped, and the script calls `UE5_AutoStart` on an already-serving DLL instead.
+Whichever way the spelling lands, one of the two defects fires. Fix them together.
+
+#### 🟡 FIX 4 — `[B21-DOCROW]` the summary row strikes three holes; one shipped
+
+B21 was three independent import-parser holes. Only **AllowThousands** shipped (and it is properly
+pinned — `CoordCsvCodecTests.CoordPrecision_RejectsAnyCommaInANumber`). The quote-state hole is
+untouched at HEAD: `CoordCsvCodec.SplitLines` (:352-358) flips `inQuotes` on **any** `"`, while
+`SplitCsvLine` (:399) enters quote mode **only at field start**, so one unpaired mid-field quote
+still swallows every following record to EOF, with no unterminated-quote diagnostic.
+
+⛔ **The defect to fix here is the DOCUMENT**: `audit-2026-08-04-findings.md:180` strikes all three
+as *"FIXED build 2621"*. ⚠ The **dev-log entry is honest** — it describes only the AllowThousands
+decision — so the over-claim is in the tracker, and a future reader greps the tracker. Either
+re-scope the row to hole 1 or reopen holes 2/3 as work; **do not let a hole-1 green close it.**
+
+#### ⚠ THREE LATENT ENUMERATION HAZARDS — not defects today, recorded so they are not re-derived
+
+- **B10** — the audit's safety precondition (*"node-based map, no erase/clear anywhere in dll/src"*)
+  is **no longer true**: audit #5 U5 added `s_walkClassCache.erase(victim)` at `Ubel.cpp:914`. The
+  property still holds because eviction went on the **by-value** cache only, and `Ubel.cpp:881-887`
+  says exactly that. ⛔ But the argument now rests on a per-cache distinction, and **any future
+  eviction on `s_walkClassExCache` turns every `const ClassInfo&` call site into a use-after-free.**
+- **B15** — `CeLuaHygieneTests.EveryGeneratedScript()` is a **hand-maintained list of 8** generator
+  families; `ls *ScriptGenerator*.cs` has **14**. Six (Freeze, PointerQuery, CoordLibrary, Baked,
+  StandaloneTrainer, Invoke) are never fed to it, and `CeMailboxBailoutTests.MailboxScripts()` omits
+  Teleport. ⭐ The world is currently clean (`grep -rn "then break end"` → one comment), so this is
+  exposure, not a defect. ⚠ **It is also why R3 above survived**: no test feeds a toggle generator's
+  `[DISABLE]` block through an idle-wait assertion.
+- **B17** — the pose fields are behind one `ClearPoseDisplay()` helper, but the enclosing
+  `SetConnected(false)` is still a hand-maintained list of ~14 per-card resets, and it is **still
+  growing by hand** (entries tagged `(B26)` and `(L13)` were added after B17).
+
+#### ⚠ AND ONE AGENT CLAIM I REFUTED — R1's `WEAKENED` is WRONG
+
+The skeptic reported the Frieren roster *"no longer covers the world"*, naming `Voll` and
+`VersionNeedleScan` as modules that slipped through. Checked by hand, both are wrong:
+
+- `Voll` **is** in the roster — `naming-convention.md:366`, marked 🟢.
+- `VersionNeedleScan.h:11-14` says in its own header *"Kept in English and NOT given a Frieren roster
+  name: CLAUDE.md's module-naming rule exempts algorithm helpers that live inside an existing
+  namespace, the precedent being `GraphPath.h` under `Aura::`. This lives under `Genau::`."* — and
+  `:47` confirms `namespace Genau {`.
+
+A sweep of every `dll/src/*.cpp` against the roster returns exactly one absentee, `Lugner_Dinput8`,
+which is a proxy flavour of the rostered `Lugner`. **R1 is `present`.** ⚠ The agent's residual point
+is fair and is NOT a defect: nothing *gates* roster membership (`check_derived_counts` pins two
+numbers in that file, not list membership) — a candidate for phase 4, not a fix.
+
+#### 📐 The verification half — the 25 findings with no register row
+
+| | n | ids |
+|---|---|---|
+| **no unit test at all** | **12** | B9 B11 B17 B20 B22 B24 B40 B43 B44 B48 R1 R7 |
+| test exists but does **not reach the fixed path** | **7** | B15 B23 B27 B32 B33 B37 B46 |
+| an acceptance side that **does not exist** | **9** | B20 B21 B24 B40 B44 B46 B48 R1 R7 |
+| half: manual-only / log-derivable / neither | 12 / 8 / 5 | |
+
+⛔ **B22 is the sharpest**: no test *could* cover it — neither `Laufen.cpp` nor `Hemmung.cpp` reaches
+any test target, the trap CLAUDE.md's `-Target Test` warning documents. Its acceptance is a WALK-log
+line plus a UI status string, and it is genuinely log-derivable — it just never had a row.
+
+⭐ **Every one of the 25 now has a concrete two-sided acceptance written by the coverage pass** (the
+register's charter requires both sides). ⛔ **Nine of them could not be given a producer-side
+observable at all**, and the coverage agents were told to say *"none — and that is itself the
+finding"* rather than invent one. Those nine are UI-local fixes whose effect never reaches a log or
+the pipe: **that absence is the same family as phase 2's dead reply keys**, and the two should be
+adjudicated together rather than separately.
+
+#### ⬜ Carried into the fix pass (NOT done here)
+
+1. `[B30-REOPEN]` 🔴 · 2. `[R3-SEETHRU]` 🟠 · 3. `[B33-SPELLING]` 🟡 (with 1) · 4. `[B21-DOCROW]` 🟡
+5. 25 register rows to write · 6. the three latent enumerations, if a gate is cheap (phase 4)
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
