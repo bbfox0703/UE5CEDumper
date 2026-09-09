@@ -1843,6 +1843,40 @@ says that the unbounded one is *in front of* the bounded one for the highest-vol
 ⛔ **Do not "fix" this by bounding `s_walkClassExCache`** without solving the reference-return
 first — that is exactly the dangling-reference hazard `Ubel.cpp:881-887` was written to prevent.
 
+## ⬜ Two Live Walker CE paths ignore `delegate_pad` `[CEPATHS-UNPADDED-2026-09-09]`
+
+Found while closing `[SW4-CEPAD-2026-09-09]`, which proved the CLIPBOARD path correct. The other
+two CE-facing buttons on the same grid row do not agree with it.
+
+**Measured on DumperTest 5.4 Development**, `Multicast_Inline` at offset `0x980`, actor
+`0x1ED06BBCAE0`, `delegate_pad=8`:
+
+| path | address used | what it points at |
+|---|---|---|
+| `Copy CE XML` (`CeOffset`) | `+988` → `0x1ED06BBD468` | `InvocationList::Data` — reads `0x1ED33872F80` ✅ |
+| `HEX` button (navigate hex view) | `0x1ED06BBD460` | the access detector — reads **0** ❌ |
+| `+CE` button (add record) | — | **nothing happens at all** ❌ |
+
+1. **`HEX` uses the UNPADDED `FieldAddress`.** The UI log line is
+   `AOBMaker: navigated hex view to 1ED06BBD460`. The Live Walker's Address column shows the same
+   unpadded value, so this is consistent with what the user sees — but on a checked build it
+   parks CE's hex view on the 8-byte access detector rather than on the invocation list.
+2. **`+CE` silently does nothing on a delegate row.** No record in CE, no line in the UI log, no
+   status text. The same button on `WideGuard` one row away works (`created memory record
+   'WideGuard' @ 1ED06BBD3E4`). `AddFieldToCeAsync` guards on `FieldAddress` being non-empty
+   (it is not empty here) and then calls `CeXmlExportService.MapFieldToCeRecordType(field)`
+   **outside** the try/catch in `AddRecordToCeAsync` — so a throw there would be swallowed by
+   the async command with no trace. Not confirmed as the cause; that is the first thing to check.
+
+⚠ **Neither is the defect `[D4B-DELEGATEPAD]` fixed**, and the export path that row was about
+is correct. This is the same shape as `[TMAPGEOM-TWIN]`: one behaviour, more than one
+implementation, and the fix landed on the one that was being looked at.
+
+**What is owed:** decide whether `FieldAddress` should carry the pad for delegates (it would
+change the Address column too, which may be the honest thing — the field's data really does
+start there on a checked build), or whether the two button handlers should apply `CeOffset`
+themselves. And find out why `+CE` is silent, which is a bug regardless of the pad question.
+
 ## ⬜ The clipboard failure's ACTIONABLE clause cannot fit in the toolbar `[CLIPELLIPSIS-2026-09-09]`
 
 Observed during SW2's live run (`[SW2-CLIPDELIVERY-2026-09-09]`), not inferred: with the clipboard
