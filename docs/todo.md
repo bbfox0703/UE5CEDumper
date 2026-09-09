@@ -1855,6 +1855,60 @@ the Lua Engine window (this repo's documented clean-success-ONLY signal) and unt
 Fixed, with a red-before-green test (`Teleport_clear_all_reads_the_RESULT_back_not_just_the_status`
 — removing the re-read fails exactly that one test of 76).
 
+#### ✅ VERIFIED LIVE 2026-09-09 — `[TG1-CLEARALL-RESULT-2026-09-09]`
+
+Build 3496, AOT-trimmed `dist` (54.8 MB), DumperTest Development, UE 5.4, 25,231 objects, real
+Cheat Engine attached, the row pushed by the **shipped** path (`Add action records to CE` →
+`AOBMaker Connected` → "Added 27/27"). Rig: `tools/verify/tg1_clearall_result_gate.py`.
+
+⭐ **THE MANUFACTURE MAKES THE DLL REJECT IT FOR ITS OWN REASON.** The emitted loop writes the
+slot itself (`writeQword(mb + 0x18, slot)`) and `HandleTeleport` reads it back **after** it has
+seen `cmd != 0` — there is no atomic snapshot. So a tight `WriteProcessMemory` loop puts **99**
+in that word inside the sub-millisecond window, and `Wirbel::ClearMarker`'s shipped bounds check
+(`slot < 0 || slot >= TELEPORT_SLOTS`) returns `TP_ERR_EMPTY_MARKER` (-6). Nothing is faked: not
+the result word, not the status, not the error string. It won on the first tick (282,956 writes
+at ~159 µs each). ⛔ Not through the pipe's `write_mem` — a JSON round-trip is ~0.2 ms, the same
+order as the window itself.
+
+| observable | clean control | manufactured |
+|---|---|---|
+| DLL `pipe-0.log` | `op=6 slot=0 -> rc=0`, `slot=1 -> rc=0`, `slot=2 -> rc=0` | **`op=6 slot=99 -> rc=-6`, and that ONE line only** |
+| CE dialog | none | **`[Teleport] slot 0 was NOT cleared (code -6)`** |
+| Lua Engine window | **auto-CLOSED** | **STAYED OPEN** |
+| the record | unticked | unticked (correct — momentary, deferred untick) |
+
+⭐⭐ **THE MAILBOX IS THE WITNESS THAT STATES THE BUG.** Read live at the moment of failure:
+
+    cmd=0  status=1  result=-6  op=6  slot=99
+    errorMsg='Teleport: op=6 slot=99 failed code=-6'
+
+**`status=1` is `STATUS_DONE` while `result=-6`.** That is exactly the publication order the fix
+exists for — `SetError` writes the code to `result` and THEN sets `status`, and
+`AppendMailboxWait` polls `OffStatus` **only**. The pre-fix row was satisfied by this state and
+called it success. It is no longer a code-reading argument; it is a measurement.
+
+⭐ **ONE LINE, NOT THREE, IS THE PROOF THE `break` FIRED** — the loop is `for slot = 0, 2`, so a
+gate that merely warned would have left `slot=1` and `slot=2` lines behind it. And the dialog says
+**slot 0** (what the Lua asked for) while the DLL says **slot=99** (what it read): that divergence
+is what proves the clobber landed and that CE is not echoing our write back at us.
+
+⛔ **THE AUTO-CLOSE ARM NEEDED ITS OWN CALIBRATION, AND ALMOST WENT UNMEASURED.** At `DEBUG == 0`
+the row prints nothing, so CE never opens the Lua Engine window on its own — and
+`getLuaEngine().Close()` on a window that was never shown is a no-op. "The window stayed open"
+would then have been vacuous. So the window was opened by hand first and the pair run BOTH ways:
+clean → gone from the window list; manufactured → still there. The close is armed; it is the
+error path that makes it unreachable.
+
+⭐ **RESTORATION IS PROVEN BY THE PATH, NOT BY A READ-BACK.** `restore` writes 8 zero bytes and
+reads them back (`slot word read-back: 0 OK`, the `mutate_guard.py` discipline), but the real
+proof is the third tick: `slot=0/1/2 -> rc=0` again with the window auto-closing again. Nothing
+persistent was ever armed — `+0x18` is a per-command INPUT word every later command rewrites, and
+the bounds check runs BEFORE `s_markers[slot]` is indexed, so 99 is refused, never dereferenced.
+
+⚠ **WHAT THIS DOES NOT CLAIM.** The manufacture proves the GATE works when the DLL rejects the op.
+It does not make the defect reachable in normal use — the paragraph below still stands, and that
+is why this is filed as a latent defect fixed, not as a live bug found.
+
 ⚠ **LATENT, NOT LIVE — and the two refutations disagreed about exactly this.** The
 code-side refutation could not kill it; the user-visible one could, and was right on the facts:
 `Wirbel::ClearMarker` returns `TP_OK` for every slot in `[0, TELEPORT_SLOTS)` and the loop is
