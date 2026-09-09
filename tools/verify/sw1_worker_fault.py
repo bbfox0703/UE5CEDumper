@@ -52,47 +52,42 @@ or a capped result):
     `Custom decryption function SET` and `CLEARED (identity)` lines this rig itself writes.
 
 =============================================================================================
-WHAT THIS RIG ACTUALLY MEASURED, 2026-09-09, EVERSPACE 2 (1,137,983 objects, save loaded)
+WHAT THIS RIG MEASURED — 2026-09-09
 =============================================================================================
 
-⭐ PROVEN — the row's stated property holds. With `--serial`, the armed access violation reached
-the worker's `catch (...)`, `workerFaulted` was set, and `incomplete()` propagated:
+⭐ CLOSED, with a genuinely PARTIAL result. EVERSPACE 2 at the main menu (79,675 objects),
+`parallel=true`, armed 0.2 s into a 656 ms scan and held 150 ms:
 
-    control :  total=16777  scanned_objects=1137983  duration_ms=2186  deadline_hit=False
-    armed   :  total=0      scanned_objects=0        duration_ms=0     deadline_hit=True
-    offsets-0.log: [ERROR] [OARR] ParallelGObjectsScan: worker tid=0 [0,1154906) faulted
-                   — that index range was NOT walked; results are partial
+    control :  total=4115  scanned_objects=79675  duration_ms=656  deadline_hit=False
+    armed   :  total=1649  scanned_objects=71213  duration_ms=253  deadline_hit=True
+    offsets-0.log: worker tid=5  [24950,29940) faulted — that index range was NOT walked...
+                   worker tid=13 [64870,69860) faulted — ...
 
-That log line had never been emitted before in this repo's history, and `deadline_hit` flipped
-false → true against an otherwise-identical control. **The run did not report a complete
-result**, which is the property D2 is about.
+`total` is 1649: **greater than zero and smaller than the control's 4115**. Some workers faulted
+and others finished, which is what makes the set PARTIAL rather than empty — the distinction the
+register said the all-workers variant could never show. `scanned_objects` dropped by 8,462, and
+`deadline_hit` flipped false → true.
 
-⛔ NOT PROVEN, and measured to be otherwise: that the result is PARTIAL. It is EMPTY. `--serial`
-means ONE chunk covering the whole array, so the unwind discards the entire walk — `total` and
-`scanned_objects` both come back 0. The register warned that the all-workers variant "yields
-deadline_hit over an EMPTY set"; this shows the SERIAL form does too, for the same structural
-reason, even when the arm lands mid-scan. The rig FAILS on that arm rather than claiming a
-partial result it did not see.
+⛔ AND THE ARMED SCAN MUST BE THE PROCESS'S FIRST, which is what `--control-from` is for.
+Measured, in this order:
+  * a FIRST parallel scan in a fresh process: 656 ms, and arming inside it faults workers;
+  * a SECOND scan in the same process: 303 ms — twice as fast — and four separate armed runs
+    across it produced 4 SET/CLEARED pairs and NOT ONE fault, even when armed across the ENTIRE
+    scan (0.0 s in, 900 ms hold against a 458 ms run).
+So a first scan establishes something a later scan then reuses instead of re-walking. ⚠ That is
+an OBSERVATION, not a mechanism: `Aura.h:1741` refers to "ScanForValue's index builder", which
+fits, but a `--serial` second scan on DumperTest DID fault, so the two forms do not behave the
+same way and nothing here identifies why. Do not write the index down as the cause.
 
-⭐ THE LOG LINE QUOTED ABOVE HAS SINCE BEEN CORRECTED. It used to end "results are partial" — a
-claim about the whole scan that one worker cannot make, and one this very run showed to be false
-(total=0). It now reads "...that index range was NOT walked. Anything this run reports is missing
-at least that range, and is EMPTY if this was the only chunk", verified live on DumperTest.
+⚠ THE SERIAL FORM CANNOT PRODUCE A PARTIAL RESULT AT ALL, and that is structural rather than a
+timing failure. `parallel=false` is ONE chunk covering the whole array, so the unwind discards the
+entire walk: on ES2 with a save loaded it returned `total=0 scanned_objects=0 deadline_hit=True`
+even with the arm landing mid-scan. `--serial` is kept because measuring that is what proves the
+parallel form is the one that shows PARTIAL.
 
-⛔ AND THE PARALLEL FORM COULD NOT BE MADE TO FAULT. Armed across the ENTIRE run (0.0 s in,
-900 ms hold against a 458 ms scan) the response was byte-identical to the control and no fault
-line appeared; across four armed runs in one ES2 process the log holds 4 SET/CLEARED pairs and
-1 fault line — only the FIRST faulted.
-
-⚠ THE FIRST EXPLANATION FOR THAT WAS WRONG, and is recorded here so it is not repeated. It
-looked like the scan index being built once and reused (`Aura.h:1741` refers to "ScanForValue's
-index builder"), so later runs would never call `GetByIndex`. **Contrary evidence, measured
-2026-09-09 on DumperTest:** in a FRESH process the control scan ran first and the SECOND scan —
-armed from t=0 — still faulted (`worker tid=0 [0,25231)`, response `total=0 scanned_objects=0
-deadline_hit=True`). A second scan in the same process does reach `DecryptObjectPtr`, so the
-index hypothesis does not hold. The likelier reading is plain TIMING: the ES2 arms after the
-first landed outside the actual walk. Neither is proven; what IS settled is that "the index is
-cached so later runs cannot fault" is false.
+⭐ The log line quoted above was CORRECTED as part of this work. It used to end "results are
+partial" — a claim about the whole scan that one worker cannot make, and one the serial run showed
+to be false (total=0).
 """
 from __future__ import annotations
 
@@ -281,6 +276,12 @@ def main() -> int:
                     help="parallel=false: ONE chunk, so a fault unwinds the whole walk and "
                          "yields an EMPTY result. Kept because measuring that is what proves "
                          "the parallel form is the one that shows PARTIAL.")
+    ap.add_argument("--control-from", default=None, metavar="TOTAL,SCANNED,DURMS",
+                    help="⭐ Use a control measured in a PREVIOUS process instead of running "
+                         "one now. The point is to make the ARMED scan the FIRST scan this "
+                         "process has ever done: a control run walks the whole array first, "
+                         "and whether that changes what a later scan touches is exactly the "
+                         "open question. Same title, same save, same scan shape.")
     ap.add_argument("--min-duration-ms", type=int, default=1200,
                     help="refuse if the control is faster than this -- there would be no "
                          "reliable MID-SCAN window and an arm before the first object gives "
@@ -326,16 +327,23 @@ def main() -> int:
     fails: list[str] = []
 
     # ---- CONTROL -------------------------------------------------------------------
-    with PipeClient().connect() as c:
-        t = time.time()
-        ctl = c.request("begin_value_scan", **SCAN)
-        wall = time.time() - t
-    if not ctl.get("ok", True):
-        raise SystemExit("control scan failed: %s" % ctl)
-    c_total, c_scanned = ctl.get("total"), ctl.get("scanned_objects")
-    c_dur, c_dl = ctl.get("duration_ms"), ctl.get("deadline_hit")
-    print("control    : total=%s scanned_objects=%s duration_ms=%s deadline_hit=%s (wall %.1fs)"
-          % (c_total, c_scanned, c_dur, c_dl, wall))
+    if a.control_from:
+        c_total, c_scanned, c_dur = [int(x) for x in a.control_from.split(",")]
+        c_dl = False
+        print("control    : total=%s scanned_objects=%s duration_ms=%s  (SUPPLIED -- measured "
+              "in a previous process so that the armed scan below is this process's FIRST)"
+              % (c_total, c_scanned, c_dur))
+    else:
+        with PipeClient().connect() as c:
+            t = time.time()
+            ctl = c.request("begin_value_scan", **SCAN)
+            wall = time.time() - t
+        if not ctl.get("ok", True):
+            raise SystemExit("control scan failed: %s" % ctl)
+        c_total, c_scanned = ctl.get("total"), ctl.get("scanned_objects")
+        c_dur, c_dl = ctl.get("duration_ms"), ctl.get("deadline_hit")
+        print("control    : total=%s scanned_objects=%s duration_ms=%s deadline_hit=%s "
+              "(wall %.1fs)" % (c_total, c_scanned, c_dur, c_dl, wall))
 
     # ⛔ TRAP 1 -- design the confounds OUT rather than explain them away.
     if c_dl:
