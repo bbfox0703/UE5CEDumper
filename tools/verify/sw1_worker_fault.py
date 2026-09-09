@@ -71,18 +71,28 @@ result**, which is the property D2 is about.
 means ONE chunk covering the whole array, so the unwind discards the entire walk — `total` and
 `scanned_objects` both come back 0. The register warned that the all-workers variant "yields
 deadline_hit over an EMPTY set"; this shows the SERIAL form does too, for the same structural
-reason, even when the arm lands mid-scan. ⚠ Note the log line asserts "results are partial"
-while the caller returns nothing at all. The rig FAILS on that arm rather than claiming a
+reason, even when the arm lands mid-scan. The rig FAILS on that arm rather than claiming a
 partial result it did not see.
 
-⛔ AND THE PARALLEL FORM COULD NOT BE MADE TO FAULT AT ALL. Armed across the ENTIRE run (0.0 s
-in, 900 ms hold against a 458 ms scan) the response was byte-identical to the control and no
-fault line appeared. The telling number is the ratio: across four armed runs in one process the
-log holds **4 SET/CLEARED pairs and 1 fault line** — only the FIRST faulted. That is consistent
-with the scan index being built once and reused (`Aura.h:1741` refers to "ScanForValue's index
-builder"), so later runs never call `GetByIndex` and never reach `DecryptObjectPtr`.
-⚠ CONSISTENT WITH, NOT PROVEN. Settling it needs one armed run per FRESH process, or a way to
-invalidate that index. Do not record the cache as a fact on this evidence.
+⭐ THE LOG LINE QUOTED ABOVE HAS SINCE BEEN CORRECTED. It used to end "results are partial" — a
+claim about the whole scan that one worker cannot make, and one this very run showed to be false
+(total=0). It now reads "...that index range was NOT walked. Anything this run reports is missing
+at least that range, and is EMPTY if this was the only chunk", verified live on DumperTest.
+
+⛔ AND THE PARALLEL FORM COULD NOT BE MADE TO FAULT. Armed across the ENTIRE run (0.0 s in,
+900 ms hold against a 458 ms scan) the response was byte-identical to the control and no fault
+line appeared; across four armed runs in one ES2 process the log holds 4 SET/CLEARED pairs and
+1 fault line — only the FIRST faulted.
+
+⚠ THE FIRST EXPLANATION FOR THAT WAS WRONG, and is recorded here so it is not repeated. It
+looked like the scan index being built once and reused (`Aura.h:1741` refers to "ScanForValue's
+index builder"), so later runs would never call `GetByIndex`. **Contrary evidence, measured
+2026-09-09 on DumperTest:** in a FRESH process the control scan ran first and the SECOND scan —
+armed from t=0 — still faulted (`worker tid=0 [0,25231)`, response `total=0 scanned_objects=0
+deadline_hit=True`). A second scan in the same process does reach `DecryptObjectPtr`, so the
+index hypothesis does not hold. The likelier reading is plain TIMING: the ES2 arms after the
+first landed outside the actual walk. Neither is proven; what IS settled is that "the index is
+cached so later runs cannot fault" is false.
 """
 from __future__ import annotations
 

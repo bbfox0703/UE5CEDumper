@@ -4518,6 +4518,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(delResult.elements);
                         Sein::Debug("WALK:ArrayP", "Delegate elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!delResult.ok && !delResult.error.empty()) {
+                        // ⛔ THIS `error` USED TO BE DROPPED ON THE FLOOR. The reader refuses an
+                        // unrecognised stride rather than publishing elements read at a stride
+                        // nobody validated -- but the refusal reached the UI as NOTHING: an
+                        // ArrayProperty never sets typedValue, so the field rendered as a bare
+                        // header and the user saw a delegate array that simply had no elements,
+                        // which is indistinguishable from an empty one. The scalar arms have
+                        // always rendered their refusal; these two were silent.
+                        // Measured 2026-09-09 by sw6_stride_refusal.py, which could assert the
+                        // WALK warning but had nothing to assert on the wire's value side.
+                        fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
 
@@ -4530,6 +4541,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(mcastResult.elements);
                         Sein::Debug("WALK:ArrayP", "Multicast elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!mcastResult.ok && !mcastResult.error.empty()) {
+                        // Same silent-refusal defect as the unicast arm just above.
+                        fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
                     }
                 }
 
@@ -4748,11 +4762,31 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // If key/value is StructProperty, read UScriptStruct* for navigation
+                        // ⚠ THIS IS THE TWIN OF `GetMapPairLayout`, and the two DISAGREE on a
+                        // faulted read. `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either of these reads fails, because a 0 addr makes
+                        // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
+                        // pairStride, mis-striding the whole map. This inlined copy -- the one
+                        // `WalkInstance` actually uses, since it never calls GetMapPairLayout --
+                        // keeps the older behaviour and falls through to the size guess.
+                        //
+                        // The divergence is deliberate for now, and the trade-off is genuinely
+                        // different here: refusing would BLANK a map in the UI rather than show
+                        // it slightly wrong. What was wrong is that it happened SILENTLY. It no
+                        // longer does. `[TMAPGEOM-TWIN-2026-09-09]` in docs/todo.md carries the
+                        // decision that is still owed. There are TWO copies of this block --
+                        // FProperty and UProperty -- and both warn.
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
+                            } else {
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the KEY -- alignment falls back to a size "
+                                                   "guess, so the pair stride may be wrong "
+                                                   "(GetMapPairLayout would refuse here)",
+                                           fi.Name.c_str());
                             }
                         }
                         if (valueTypeName == "StructProperty") {
@@ -4760,6 +4794,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, vStruct) && vStruct) {
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
+                            } else {
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the VALUE -- alignment falls back to a size "
+                                                   "guess, so the pair stride may be wrong "
+                                                   "(GetMapPairLayout would refuse here)",
+                                           fi.Name.c_str());
                             }
                         }
 
@@ -4896,11 +4936,31 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
 
+                        // ⚠ THIS IS THE TWIN OF `GetMapPairLayout`, and the two DISAGREE on a
+                        // faulted read. `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either of these reads fails, because a 0 addr makes
+                        // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
+                        // pairStride, mis-striding the whole map. This inlined copy -- the one
+                        // `WalkInstance` actually uses, since it never calls GetMapPairLayout --
+                        // keeps the older behaviour and falls through to the size guess.
+                        //
+                        // The divergence is deliberate for now, and the trade-off is genuinely
+                        // different here: refusing would BLANK a map in the UI rather than show
+                        // it slightly wrong. What was wrong is that it happened SILENTLY. It no
+                        // longer does. `[TMAPGEOM-TWIN-2026-09-09]` in docs/todo.md carries the
+                        // decision that is still owed. There are TWO copies of this block --
+                        // FProperty and UProperty -- and both warn.
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + baseOff, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
+                            } else {
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the KEY -- alignment falls back to a size "
+                                                   "guess, so the pair stride may be wrong "
+                                                   "(GetMapPairLayout would refuse here)",
+                                           fi.Name.c_str());
                             }
                         }
                         if (valueTypeName == "StructProperty") {
@@ -4908,6 +4968,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Macht::ReadSafe(valueProp + baseOff, vStruct) && vStruct) {
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
+                            } else {
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the VALUE -- alignment falls back to a size "
+                                                   "guess, so the pair stride may be wrong "
+                                                   "(GetMapPairLayout would refuse here)",
+                                           fi.Name.c_str());
                             }
                         }
 
@@ -5499,6 +5565,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             const int32_t dPad =
                 DynOff::DelegatePadFromElementSize(fi.Size, 8 + fnameSize);
             if (dPad < 0) {
+                // ⛔ THIS SITE USED TO LOG NOTHING. All four delegate-stride refusals report the
+                // same decision, but only the two ARRAY ones warned -- so this row's stated
+                // acceptance ("DLL side: the WALK warning naming the size") was unsatisfiable on
+                // the scalar arms, and a refusal here left no trace in any log at all. Found
+                // 2026-09-09 while building sw6_stride_refusal.py.
+                Sein::Warn("WALK", "DelegateProperty '%s': ElementSize=%d is neither %d nor %d "
+                                   "(+detector) -- refusing to read the delegate",
+                           fi.Name.c_str(), fi.Size, 8 + fnameSize,
+                           8 + fnameSize + DynOff::kDelegateDetectorPad);
                 fv.typedValue = "(delegate — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));
@@ -5995,6 +6070,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // checked build where an 8-byte access detector precedes the TArray header.
             const int32_t mcPad = DynOff::DelegatePadFromElementSize(fi.Size, 16);
             if (mcPad < 0) {
+                // Same silent-refusal gap as the DelegateProperty arm above: all four stride
+                // refusals now warn, so "the WALK warning naming the size" is satisfiable on
+                // every arm rather than on the two array ones only.
+                Sein::Warn("WALK", "MulticastDelegateProperty '%s': ElementSize=%d is neither "
+                                   "16 nor %d (+detector) -- refusing to read the delegate",
+                           fi.Name.c_str(), fi.Size, 16 + DynOff::kDelegateDetectorPad);
                 fv.typedValue = "(multicast — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));

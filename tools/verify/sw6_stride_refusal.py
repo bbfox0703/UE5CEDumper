@@ -43,26 +43,29 @@ builds and the UI prints verbatim — a render echo. The array arms change the S
 payload: `array_elem_size` becomes the poked value and the `elements` key disappears where two
 elements stood. That is a structural observable, not an echo of a string.
 
-⛔ AND THE ROW'S OWN ACCEPTANCE TEXT IS WRONG FOR THOSE ARMS. It asks for "the `WALK` warning
-naming the size" on the DLL side, but the two SCALAR sites emit **no log line at all** — they only
-assign `typedValue`. Only the two ARRAY sites warn. The row is amended accordingly.
-
-⚠ THE TWO ARMS ARE ASYMMETRIC, which is the point the register already made and this rig measures:
-`Ubel.cpp:4515-4522` moves the reader's `elements` only on success and **discards `delResult.error`
-entirely**, and an ArrayProperty never sets `typedValue` — so a refused array reaches the UI as a
-bare header carrying the POKED byte count and simply no `elements` key. The refusal is loud in the
-log and silent on the wire's value side. That asymmetry IS the finding; do not paper over it.
+⭐ THIS RIG FOUND AN ASYMMETRY THAT HAS SINCE BEEN FIXED, and both halves are worth keeping in
+mind because the register's acceptance text was written against the broken shape:
+  * the two ARRAY sites warned but were SILENT on the wire's value side — `Ubel.cpp:4515-4522`
+    moved the reader's `elements` only on success and DISCARDED `delResult.error`, and an
+    ArrayProperty never sets `typedValue`, so a refused array reached the UI as a bare header
+    with no elements: indistinguishable from an empty array;
+  * the two SCALAR sites rendered their string but emitted NO LOG LINE AT ALL, so "DLL side: the
+    WALK warning naming the size" was unsatisfiable there.
+Neither arm could satisfy the row's two-sided acceptance on its own. Both were fixed on
+2026-09-09 after this rig measured it: the array refusal now lands in `typedValue`, and all four
+sites warn. The assertions below check BOTH sides on the array arm, which is what closes the row.
 
 ⚠ BLAST RADIUS, and why the window is kept short. The Inner FProperty is per-CLASS, so the poked
 size is what the ENGINE would use too (`FScriptArrayHelper`, `CopyCompleteValue`). Nothing may
 spawn a `DumperTestActor`, reload the level, or re-bind those delegates while the poke is live.
 The rig writes, walks once, and restores in a `finally`.
 
-ACCEPTANCE (both sides, per the charter):
+ACCEPTANCE (both sides, per the charter — and both now come from the SAME arm):
   * DLL/log side  — a `WALK` warning naming the poked size, from the reader under test, written
     INSIDE the poke window (timestamp-scoped);
-  * wire/UI side  — `array_elem_size` reads back as the poked value AND the `elements` key
-    disappears, where the baseline had two elements.
+  * wire/UI side  — `array_elem_size` reads back as the poked value, the `elements` key
+    disappears where the baseline had two elements, AND `value` carries a refusal string naming
+    the size, which is what the UI renders.
 """
 from __future__ import annotations
 
@@ -329,6 +332,19 @@ def main() -> int:
             if poked_size != a.poke:
                 fails.append("%s: the wire still reports elem_size=%r after the poke"
                              % (name, poked_size))
+            # ⭐ ADDED 2026-09-09 AFTER THE FIX. Ubel.cpp used to DISCARD the array reader's
+            # `error`, so a refused array reached the UI as a bare header -- indistinguishable
+            # from an empty array. It now lands in `typedValue`, which is what the UI renders,
+            # so this arm is two-sided like the scalar ones.
+            poked_val = f2.get("value")
+            print("  value      : %r" % poked_val)
+            if not poked_val or "not read" not in poked_val:
+                fails.append("%s: the wire carries no refusal string (value=%r). The reader "
+                             "refused but said so only in the log, so a user sees a delegate "
+                             "array that merely looks empty." % (name, poked_val))
+            elif str(a.poke) not in poked_val:
+                fails.append("%s: the refusal string does not name the size %d: %r"
+                             % (name, a.poke, poked_val))
             if poked_elems:
                 fails.append("%s: elements are STILL present (%r) -- the reader did not refuse; "
                              "it read the array at a stride nobody validated, which is exactly "
@@ -367,14 +383,16 @@ def main() -> int:
           "while keeping the header. %d arm(s) measured; the write is reversible."
           % (a.poke, len(results)))
     if scalars_done:
-        print("           -- and the SCALAR arms %s rendered their refusal string into the "
-              "field's `value`, which is the half the UI-side acceptance needs (the array arms "
-              "are SILENT on the wire's value side: Ubel.cpp:4515 discards the reader's "
-              "`error`)." % ", ".join(scalars_done))
+        print("           -- and the SCALAR arms %s rendered their refusal string too."
+              % ", ".join(scalars_done))
     else:
-        print("⚠ The two SCALAR arms were NOT run (pass --scalar). They are the only two that "
-              "render a refusal STRING; the array arms only log. Conversely the scalar sites "
-              "emit no log line at all, so no single arm satisfies both sides of this row.")
+        print("   The two SCALAR arms were not run (pass --scalar; they are blocked by the "
+              "class cache -- see the docstring).")
+    print("⭐ Both sides now come from the SAME arm. Until 2026-09-09 they could not: "
+          "Ubel.cpp discarded the array reader's `error`, so a refused array reached the UI as "
+          "a bare header and only the log knew; and the two SCALAR sites emitted no log line at "
+          "all, so the row's stated DLL-side acceptance was unsatisfiable there. Both were "
+          "fixed after this rig measured the asymmetry.")
     return 0
 
 

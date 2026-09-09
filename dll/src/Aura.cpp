@@ -277,8 +277,18 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
             body(perThread[tid], beginIdx, endIdx, deadlineHit);
         } catch (...) {
             workerFaulted.store(true, std::memory_order_relaxed);   // set BEFORE logging
-            LOG_ERROR("ParallelGObjectsScan: worker tid=%d [%d,%d) faulted — that index "
-                      "range was NOT walked; results are partial", tid, beginIdx, endIdx);
+            // ⚠ SAY ONLY WHAT THIS WORKER KNOWS. This line used to end "results are partial",
+            // which is a claim about the WHOLE scan that a single worker cannot make -- and
+            // measured 2026-09-09 (sw1_worker_fault.py on EVERSPACE 2) it was wrong in the
+            // commonest case: with `parallel=false` there is ONE chunk covering the entire
+            // array, so the unwind discards everything and the caller returns an EMPTY set,
+            // total=0 scanned_objects=0, while the log insisted the results were "partial".
+            // Whether anything survives depends on how many OTHER chunks completed, which is
+            // known at the join, not here. `workerFaulted` -> `incomplete()` is what callers
+            // act on; this line is for the human reading the log afterwards.
+            LOG_ERROR("ParallelGObjectsScan: worker tid=%d [%d,%d) faulted — that index range "
+                      "was NOT walked. Anything this run reports is missing at least that "
+                      "range, and is EMPTY if this was the only chunk", tid, beginIdx, endIdx);
         }
     });
     scanDone.store(true, std::memory_order_relaxed);
