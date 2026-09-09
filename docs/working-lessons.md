@@ -354,6 +354,38 @@ cost **two** contradictory readings before it. The filing made it three.
   was wrong — the value is written fresh every scan by the C# mirror. Stopping at "already
   documented, never mind" would have preserved that error.
 
+### 1.w2 A mechanical scanner surfaces REFUTED rows as FRESH HITS — by construction
+
+2026-09-09, closing slice B of the claims sweep. A scorer over "discarded effect-applier results"
+returned 7 sites; 3 read as defects and were fixed and committed. One of them,
+`Wirbel.cpp:618`, is on round 2's **`Refuted (8) — do not re-raise`** list — filed there as
+`:619`, because the row named the `rewrote++` and today's hit names the `WriteBytes` above it.
+
+⛔ **THIS IS NOT AN ACCIDENT OF THAT SCANNER, IT IS THE GENERAL CASE.** A refutation lives in
+**prose**; the code it refutes is left exactly as it was, because the whole point of refuting is
+that nothing needed changing. So the pattern still matches, forever, and every future scan
+re-reports it. A scanner cannot tell "nobody has looked at this" from "three people looked and
+said no".
+
+* ⭐ **The guard is a VERDICTS table inside the scanner**, keyed by (file, symbol), printing the
+  prior ruling next to every hit and flagging an unknown as `*** NEW -- ADJUDICATE ***`.
+  `tools/verify/claims_effect_applier.py` carries one. ⚠ Keep the rows for sites that no longer
+  MATCH: a fixed site leaves the population by construction, and if a regression re-drops the
+  return you want it back with its history attached, not as a fresh unknown.
+* ⚠ **Key it by SYMBOL, never by line.** The row said `:619` and the hit said `:618` — 75 builds
+  apart, in a function nobody had touched. Any refuted list written as `file:line` is already
+  decaying; grep the FUNCTION when checking one.
+* ⭐ **Re-derive the refutation rather than obeying or ignoring it.** No reason had been recorded
+  for this row, so it was reconstructed: `ReadBytesSafe(c.root, buf, 0x400)` succeeds one
+  instruction above the loop and every write target is inside that window, so the write can only
+  fail if the region is freed between the two — far narrower than it looked. That is what turned
+  "I re-raised a refuted row" into a usable verdict (**kept as hygiene, not counted as a defect**)
+  instead of either quietly reverting or quietly keeping the inflated count.
+* ⚠ **Correct the count, not just the code.** The tempting move is to keep the fix and say nothing;
+  the honest one is to keep the fix, reclassify it, and restate the total. A slice that reports
+  "3 defects" when one of them was already refuted has re-inflated the very number the sweep's
+  three rounds spent their effort deflating.
+
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
 Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with
