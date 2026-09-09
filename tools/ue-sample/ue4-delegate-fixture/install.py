@@ -56,11 +56,44 @@ def module_dir(project: str) -> Path:
     return mods[0]
 
 
+PCH_NOTE = ('// Added at INSTALL time, not stored in the repo copy: UE 4.15 and earlier\n'
+            '// require every .cpp in a module to include the module PCH FIRST, and the\n'
+            '// module name differs per project. Harmless on newer engines.\n')
+
+
+def pch_mode(mod: Path):
+    """(module-header name, is-IWYU, should-prepend).
+
+    ⛔ TWO OPPOSITE RULES, AND `Build.cs` SAYS WHICH ONE APPLIES -- the engine version does not.
+    Module-wide PCH (no `PCHUsage`, UE 4.15's template) wants the MODULE header first; IWYU
+    (`UseExplicitOrSharedPCHs`, the 4.18/4.23/4.27 templates) wants the file's OWN header first.
+    ⚠ Measured 2026-09-09: prepending unconditionally fixed 4.15 and BROKE 4.18.
+    """
+    pch = mod.name + ".h"
+    build_cs = mod / (mod.name + ".Build.cs")
+    iwyu = (build_cs.is_file()
+            and "UseExplicitOrSharedPCHs" in build_cs.read_text(encoding="utf-8",
+                                                                errors="replace"))
+    return pch, iwyu, (mod / pch).is_file() and not iwyu
+
+
+def wanted(name: str, pch: str, has_pch: bool) -> str:
+    """Exactly what the installed file should contain -- one definition, so --verify cannot
+    drift from what --install writes."""
+    text = (HERE / name).read_text(encoding="utf-8")
+    if name.endswith(".cpp") and has_pch:
+        text = PCH_NOTE + ('#include "%s"\n' % pch) + text
+    return text
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True, help="folder name under %s" % PROJECTS)
     ap.add_argument("--remove", action="store_true", help="delete the fixture files again")
     ap.add_argument("--list", action="store_true", help="report what is installed, change nothing")
+    ap.add_argument("--verify", action="store_true",
+                    help="compare the INSTALLED copy against what this script would write now, "
+                         "and exit non-zero on any difference")
     ap.add_argument("--spawn-from", metavar="STEM",
                     help="patch <STEM>.cpp's BeginPlay to spawn the fixture, so a LIVE INSTANCE "
                          "exists for the binding-read rig (the survey does not need one)")
@@ -68,6 +101,26 @@ def main() -> int:
 
     mod = module_dir(a.project)
     print("module     : %s" % mod)
+
+    if a.verify:
+        # ⚠ The installed copy is DERIVED, so this compares against the derivation rather than
+        # against a stored second copy -- mirroring the derived form would be one more thing to
+        # keep in step, which is the failure this repo keeps finding.
+        pch, iwyu, has_pch = pch_mode(mod)
+        bad = 0
+        for n in FILES:
+            p = mod / n
+            if not p.is_file():
+                print("  %-26s ABSENT" % n)
+                bad += 1
+                continue
+            got = p.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+            want = wanted(n, pch, has_pch).replace("\r\n", "\n")
+            print("  %-26s %s" % (n, "matches" if got == want else "*** DIFFERS ***"))
+            bad += got != want
+        print("\n%s" % ("in step with the repo copy" if not bad
+                        else "%d file(s) differ -- re-run without --verify to reinstall" % bad))
+        return 1 if bad else 0
 
     if a.list:
         for n in FILES:
@@ -100,20 +153,11 @@ def main() -> int:
     # ⚠ Measured 2026-09-09: prepending unconditionally fixed 4.15 and BROKE 4.18. The engine
     # version is the wrong discriminator anyway -- 4.18 supports both and the template picks one.
     # Read Build.cs instead, which is where the answer actually lives.
-    pch = mod.name + ".h"
-    build_cs = mod / (mod.name + ".Build.cs")
-    iwyu = (build_cs.is_file()
-            and "UseExplicitOrSharedPCHs" in build_cs.read_text(encoding="utf-8", errors="replace"))
-    has_pch = (mod / pch).is_file() and not iwyu
+    pch, iwyu, has_pch = pch_mode(mod)
 
     for n in FILES:
         dst = mod / n
-        text = (HERE / n).read_text(encoding="utf-8")
-        if n.endswith(".cpp") and has_pch:
-            text = ('// Added at INSTALL time, not stored in the repo copy: UE 4.15 and earlier\n'
-                    '// require every .cpp in a module to include the module PCH FIRST, and the\n'
-                    '// module name differs per project. Harmless on newer engines.\n'
-                    '#include "%s"\n%s' % (pch, text))
+        text = wanted(n, pch, has_pch)
         dst.write_text(text, encoding="utf-8", newline="\n")
         os.utime(dst, None)          # ⛔ see the module docstring -- this is load-bearing
         print("  installed %s (%d B, mtime stamped to now%s)"
