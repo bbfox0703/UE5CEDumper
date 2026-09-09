@@ -1696,6 +1696,82 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ D1 — the refused-restore call site, live `[D1-COLLREFUSE-2026-09-09]`
+
+The last of the sweep's DLL fixes that no test could reach. `todo.md` recorded the blocker as
+*"every D1 call-site path needs a running game with the PE hook down"* — the pure core
+(`ShouldCommitCollision`) was pinned, the call sites were **reviewed, not executed**.
+
+### ⛔ Why the obvious rig would have proved nothing
+
+The restore site short-circuits:
+
+```cpp
+const bool responsive = Stark::IsGameThreadResponsive();
+const bool restored   = responsive && ShouldCommitCollision(InvokeSetCollision(pawn, true));
+```
+
+Freeze the game and `responsive` goes false, so `InvokeSetCollision` is **never called** and the
+record survives for B8's 2026-07 reason rather than D1's 2026-09 one. A rig that froze the game,
+saw the record kept and called it a pass would have re-measured the wrong repair.
+
+### ⭐ The window that separates them — two different clocks
+
+`Stark::kStallThresholdMs` is **500** (time since the hook last fired); `kMinInvokeTimeoutMs` is
+**100** (how long one dispatch waits). Freeze the UE game thread and issue the restore *inside*
+that gap and both conditions hold at once: the thread still counts as responsive because it
+fired a few ms ago, while the dispatch times out and returns non-zero. That is D1's condition
+exactly — **responsive, and refused anyway**. `set_invoke_timeout {timeout_ms: 100}` and
+`suspend.py suspend-tid` are the whole apparatus; no purpose-built DLL was needed, unlike the
+route PEHOOK 3b documents.
+
+### The result — `tools/verify/d1_collision_refusal.py`, DumperTest dev (UE 5.4)
+
+| arm | frozen | cause the DLL named | record | restore |
+|---|---|---|---|---|
+| **1 — D1** (issue immediately) | 265 ms | `(the dispatcher REFUSED the restore)` | kept | landed on its own |
+| **2 — control** (issue after 1 s frozen) | 1161 ms | `(game thread unresponsive)` | kept | landed on its own |
+
+⭐ **The rig runs both and requires them to DIFFER.** With only arm 1 it would pass just as
+happily while matching any "keeping the record" line, on either path — the discriminator would
+itself be unmeasured. And the ⭐⭐ acceptance is behavioural, not textual: after the thread
+resumes, `PendingRestoreLoop` re-enables collision **with no further command**. That can only
+happen because the record survived; pre-fix there was nothing left to poll for and the pawn
+stayed ghosted for the session.
+
+### ⚠ The control caught a defect in the control
+
+The first draft slept *after* issuing the restore. `IsGameThreadResponsive()` is evaluated the
+moment the command is handled, so the extra second changed nothing being measured: arm 2 froze
+for **1459 ms and still reported the dispatcher refusal**. A control that cannot fail is not a
+control — and this one only revealed itself because arm 1 and arm 2 were required to disagree.
+
+### ⛔ AND A HOUSE-RULE VIOLATION THIS ROW WALKED INTO — two games at once
+
+The first three attempts measured nothing because **`taskkill /IM DumperTest.exe` matches the
+Development image only**. Shipping is `DumperTest-Win64-Shipping.exe` and survived every "kill",
+so a freshly launched Development fixture could not create `\\.\pipe\UE5DumpBfx` — and every
+command went to the *Shipping* process still holding it. The tells: `offsets-0.log` at 122 bytes
+for a session that should write thousands of lines, and `find_instances` returning the **exact
+addresses** seen in the earlier Shipping run.
+
+`launch_dumpertest.py` now **refuses to launch** when any fixture image is alive (`--allow-second`
+to override), listing what it found. The image names are enumerated in `FIXTURE_IMAGES` there,
+because the exe name is not derivable from the flavour: only Development is plain
+`DumperTest.exe`.
+
+### ⬜ Still open
+
+* **D2 is the one sweep fix still unverified live.** It needs a scan worker to actually THROW,
+  which nothing in the pipe surface can induce — no fault-injection hook exists. Its pure core is
+  pinned by tests and its deliberate residual (a worker fault reports through `deadline_hit`) is
+  recorded above. A live row would need either a fault-injection build or a real OOM.
+* The `arm()` helper leaves Fly enabled between arms only briefly, but it does **not** assert the
+  pawn is physically colliding again — only that the DLL says it re-enabled it. Reading the
+  pawn's collision flag back would close the last gap between "the setter was invoked" and "the
+  collision changed", which is the very distinction D1 is about.
+
+
 ## ✅ D4b + D3b — the access-detector pad `[D4B-DELEGATEPAD-2026-09-09]`
 
 Both rows filed on 2026-09-08 are **one defect**, and it is not a UE-version defect — it is a
