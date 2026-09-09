@@ -1724,15 +1724,18 @@ observable), and the inherited sparse delegates.
 module load, so `d4b_pad_survey.py` reads its ElementSizes without the actor ever being spawned.
 Only the binding-read rig needs an instance.
 
-### Result — UE 4.23, `UE423_Flying`, packaged Development, injected
+### Result — UE 4.23 and 4.27, packaged Development, injected
 
-```
-use_fproperty : false          <- the path under test
-validated     : true
-600 classes walked | 264 delegate properties | all pad 0 | 0 unrecognised sizes
-```
+| engine | `use_fproperty` | classes | delegate properties | derived pad | unrecognised |
+|---|---|---|---|---|---|
+| **4.23** `UE423_Flying` | **false** — ⭐ the path under test | 600 | **264** | 0 | 0 |
+| **4.27** `UE427_3rdPerson` | true | 600 | **235** | 0 | 0 |
 
-And the fixture's own rows, read off the class table on that path:
+Both `validated: true`. Together with the UE5 runs that makes **five engine versions across both
+property systems**: 4.23 (UProperty), 4.27, 5.4, 5.7 and 5.8 (FProperty), and on 5.4/5.8 both
+build configurations.
+
+And the fixture's own rows, identical on both engines:
 
 | property | type | ElementSize | implies |
 |---|---|---|---|
@@ -1747,13 +1750,23 @@ So the derivation recognises everything UE4 reports, on the `UProperty` path, wi
 
 | engine | state |
 |---|---|
-| **4.23** | ✅ builds **and packages**. Needed VS2017 (installed 2026-09-09) **and** write access to `UE_4.23`. ⚠ `--pin-compiler 14.16.27023`, NOT 14.29.30133 — 4.23's UBT maps toolset→VS version and rejects a VS2022 toolset outright. |
-| **4.27** | 🟡 compiles (exit 0) and **cooks by hand** (exit 0), but `BuildCookRun` dies: UAT writes its cook log to `<engine>\Engine\Programs\AutomationTool\Saved\Cook-*.txt`, which is not writable. Same axis as 4.23's old blocker. ⚠ `uebp_LogFolder` does **not** redirect it — tried. |
-| **4.15** | ⛔ blocked one step earlier on the same axis: `UnauthorizedAccessException` on `<engine>\Engine\Intermediate\Build\LastBuiltTargets.txt`. |
+| **4.23** | ✅ builds **and packages**, and surveyed. Needed VS2017 **and** write access to `UE_4.23`. ⚠ `--pin-compiler 14.16.27023`, NOT 14.29.30133 — 4.23's UBT maps toolset→VS version and rejects a VS2022 toolset outright. |
+| **4.27** | ✅ builds, packages and surveyed, once `UE_4.27` was opened the same way. Its blocker was UAT writing its cook log to `<engine>\Engine\Programs\AutomationTool\Saved\Cook-*.txt`. ⚠ `uebp_LogFolder` does **not** redirect that — tried. |
+| **4.15** | ⛔ **still blocked, but NOT on permissions any more** — those are now open and it compiles 41 s of real work before failing. The wall is the toolchain: `Windows Kits\10\include\10.0.26100.0\ucrt\wchar.h(316): error C3861: '_mm_loadu_si64'`. That is a SYSTEM header, so it breaks every `.cpp`, not the fixture. UBT picks SDK **26100** and VS2017's last toolset (**14.16.27023**, which is all VS2017 ships) predates that intrinsic. Older SDKs ARE installed — 8.1, 10.0.10240, 19041, 22621 — but neither `--pin-compiler` nor its absence changes the choice, and 4.15's UBT cannot read the modern `BuildConfiguration.xml` schema at all (`XmlConfigLoader: Reading config XML failed`), so the pin is inert there. Needs UBT pointed at an older Windows SDK. |
+| **4.18** | ⛔ permissions opened, but **no C++ project exists** to host a `UPROPERTY`, and being VS2017-era it would very likely meet 4.15's SDK wall anyway. |
+| **4.11** | ⛔ needs VS2015. Out of scope by decision. |
 
 ⚠ 4.11 and 4.18 are installed but have **no C++ project**, so there is nothing to host a
 `UPROPERTY` fixture. (The other projects under `D:\Unreal Projects` are Blueprint-only; these five
 UE4 ones all have a `Source/` module — verified, not assumed.)
+
+### ⛔ AND UE 4.15 NEEDS THE MODULE PCH FIRST
+
+`install.py` prepends `#include "<Module>.h"` to the copied `.cpp` when the module has such a
+header. UE 4.15 and earlier use the module-wide PCH model and UBT refuses outright — *"All source
+files in module X must include the same precompiled header first"* — and the module's name is
+per-project, which is exactly why the STORED pair cannot carry the include and the INSTALLED copy
+must. Harmless on newer engines.
 
 ### ⛔ AND A UE4 TRAP THAT READS AS A BROKEN TOOLCHAIN
 
@@ -1769,8 +1782,11 @@ thing missing.
 
 ### ⬜ Open
 
-* **4.27 and 4.15 need the same permission grant 4.23 got.** Both are one `icacls`-shaped step
-  from a package; neither is a toolchain limit.
+* **4.15 needs UBT pointed at an older Windows SDK** — 8.1 or 10.0.10240 are installed. This is
+  the one remaining UE4 blocker and it is a genuine toolchain gap, not a permission or a fixture
+  problem: VS2017 ships no toolset new enough for the 26100 UCRT headers.
+* **4.18 has no C++ project.** One would have to be created before its (now open) permissions buy
+  anything.
 * **No UE4 READ test.** The survey covers the class table; `d4b_delegate_pad.py` needs a live
   instance and nothing spawns `ADelegatePadFixture`. `install.py --spawn-from` prints the
   two-line patch rather than applying it — a blind regex edit of someone else's project template

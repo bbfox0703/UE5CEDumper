@@ -90,11 +90,32 @@ def main() -> int:
         print("removed %d file(s). Rebuild to drop the class from the module." % gone)
         return 0
 
+    # ⛔ OLD ENGINES REQUIRE THE MODULE PCH FIRST, and the module's name is per-project -- which
+    # is exactly why the stored pair cannot carry the include and the INSTALLED copy must.
+    # UE 4.15 (and earlier) use the module-wide PCH model and UBT refuses the build outright:
+    #   "All source files in module \"X\" must include the same precompiled header first."
+    # It is harmless on every newer engine -- a template module header is `#pragma once` plus
+    # CoreMinimal -- so it is added whenever one exists rather than gated on a version the
+    # installer would have to be told.
+    pch = mod.name + ".h"
+    has_pch = (mod / pch).is_file()
+
     for n in FILES:
         dst = mod / n
-        shutil.copy2(HERE / n, dst)
+        text = (HERE / n).read_text(encoding="utf-8")
+        if n.endswith(".cpp") and has_pch:
+            text = ('// Added at INSTALL time, not stored in the repo copy: UE 4.15 and earlier\n'
+                    '// require every .cpp in a module to include the module PCH FIRST, and the\n'
+                    '// module name differs per project. Harmless on newer engines.\n'
+                    '#include "%s"\n%s' % (pch, text))
+        dst.write_text(text, encoding="utf-8", newline="\n")
         os.utime(dst, None)          # ⛔ see the module docstring -- this is load-bearing
-        print("  installed %s (%d B, mtime stamped to now)" % (n, dst.stat().st_size))
+        print("  installed %s (%d B, mtime stamped to now%s)"
+              % (n, dst.stat().st_size,
+                 ", module PCH prepended" if n.endswith(".cpp") and has_pch else ""))
+    if not has_pch:
+        print("  ⚠ no %s in the module -- if UBT refuses with \"must include the same\n"
+              "    precompiled header first\", that is why." % pch)
 
     if a.spawn_from:
         host = mod / (a.spawn_from + ".cpp")
