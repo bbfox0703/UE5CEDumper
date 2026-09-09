@@ -2888,6 +2888,126 @@ over a pawn still in `MOVE_Flying` is confusing, and that is a UI copy fix at mo
 10. ⚠ **Before ANY of these is fixed, grep the two "Refuted — do not re-raise" lists** — this phase
     re-raised a twice-refuted row and cost a full skeptic pass to put back down.
 
+### ✅ PHASE 3 DONE 2026-09-10 — the live two-sided arm, on SHIPPING. And the UI half got done after all
+
+DumperTest **Shipping** (pid 46524, UE 5.4, **24,497 objects**), DLL 3508 from `dist/`, injected
+headlessly; then `dist\UE5DumpUI.exe` driven on top of the same live DLL. Both killed at the end;
+`tasklist` verified clear. ⛔ **Fixes deliberately NOT applied.**
+
+⭐ **The UI half was NOT blocked.** `list_granted_applications` showed `UE5DumpUI` and
+`DumperTest Shipping` already granted at tier `full`, so the half audit #4 never did — *is the UI
+showing what the DLL sent?* — was actually driven, unattended, rather than deferred again.
+
+#### ⛔⛔ THE FINDING — `[BADGEPRIME]` 🟠 MED: connect primes THREE cards and disconnect resets FOURTEEN
+
+`TeleportViewModel.SetConnected(true)` (`:857-872`) starts exactly three things —
+`RefreshMarkersAsync`, `RefreshHeldTimeStateAsync`, `RefreshHeldProtectStateAsync`.
+`SetConnected(false)` (`:874-905`) walks **fourteen** badges back to Unknown: Debug Camera, God
+Mode, Foreground Lock, Move Speed, Time ×2, Gravity, Super Jump, Fly, See-through, Gravity
+Direction, Mouse Cursor, POV, Pose.
+
+**So eleven badges are reset on disconnect and primed by nothing on connect.** They sit at
+`Unknown` until the user presses a button, while the DLL has a definite answer for every one.
+
+⭐ **OBSERVED LIVE, WITH A BUILT-IN CONTROL** — UI and pipe read at the same moment, same process:
+
+| card | the UI showed | the pipe answered |
+|---|---|---|
+| Keep Foreground | **State: Unknown** | `get_foreground_lock` → `state: 0` |
+| Move Speed | **State: Unknown** | `get_movement_params` → `code: 0, has_cmc: true, cmc_addr: 0x1D8775730D0` |
+| Debug Camera | **State: Unknown** | `get_debug_camera_state` → `state: 0` |
+| Gravity | **State: Unknown** | (same family) |
+| Super Jump | **State: Unknown** | (same family) |
+| Fly | **State: Unknown** | `fly_get_state` → `active: false, has_cmc: true, current_mode: 1, mode_resolved: true` |
+| **God Mode** | **State: OFF** ✅ | `get_god_mode` → `state: 0` |
+| **Time Dilation** | **State: OFF** ✅ | `get_time_state` → `code: 0` |
+
+⭐⭐ **The two that render correctly are EXACTLY the two that are primed.** That is not a coincidence
+to be argued about — it is the control that says the instrument (me reading badges off a screenshot)
+works, and that the other six are a real gap rather than a misreading.
+
+⛔ **WHY IT IS A DEFECT AND NOT MERELY COSMETIC, IN THE REPO'S OWN WORDS.** `SetConnected`'s comment
+at `:860-870` states the model: *"Reflect any dilation the DLL is already holding (prior session / CE
+record) — **it survives a UI reconnect as long as the game lives**"*, and for God Mode: *"`want`
+survives a UI reconnect, so the badge must reflect it without the user pressing ↻ (**audit #5 AD4 —
+nothing queried it on connect**, and AutoTick polls only pose + markers)"*.
+
+**AD4 fixed this shape once, for one card.** The other eleven were never done — so after a UI
+restart against a live game, a still-active **Fly**, **Move Speed**, **Gravity** or **See-through**
+hold reads `Unknown`, and the user has no indication the game is still modified. For Fly that means
+a pawn that may still be in `MOVE_Flying` behind a badge that declines to say so.
+
+⭐ **AND THIS IS THE AUDIT-UNDER-REVIEW'S OWN SHAPE, TWICE OVER.** Audit #4 **B9** is
+*"Wrong-game warning **never runs on connect**, never clears on disconnect"* — same asymmetry, one
+card, fixed. Phase 1 flagged **B17**'s `SetConnected(false)` as a hand-maintained list *"still
+growing by hand"* with *"nothing structural forcing a new card to add its own row"*. **This is the
+mirror image nobody wrote down: the list that must grow on the OTHER side has three entries and
+should have fourteen.** Neither audit #4 nor any later pass caught it, and it took a running UI next
+to a running DLL to see — precisely the check the maintainer said was missing.
+
+#### ✅ What the live capture measured that no static pass could
+
+`tools/verify/pipe_reply_capture.py` (new) sent **56 of 99** commands and captured the real reply
+key set. ⛔ **43 commands are on a documented SKIP list and were never sent** — every one that
+writes game memory, arms a hold, moves the pawn, starts a worker or persists a setting, each with
+its reason inline. That list is part of the result: *"we measured 56 of 99"* must never be read as
+*"we measured the wire"*.
+
+- ⭐ **The static pass had a real blind spot, now sized**: **4 commands publish their ENTIRE reply
+  through a helper** — `fly_get_state`, `get_pointers`, `seethrough_get_state`, `walk_instance` —
+  so `pipe_command_contract.py` saw **zero** keys for them and **phase 2's axis B never adjudicated
+  them**. `get_pointers` alone carries **46** keys.
+- **5 commands carry a key no consumer reads**, confirmed against live data:
+  `fly_get_state` → `cmc_addr`, `mode_resolved` · `get_movement_params` → `cmc_addr` ·
+  `get_diagnostics` → `class_cache`, `approx_bytes` · `get_offsets` → the `ffield_*` / `ustruct_*` /
+  `fproperty_*` family · `init` → `build_git/hash/info/time`. All are diagnostics or raw offset
+  detail — consistent with phase 2's *dead-benign*, and now measured rather than inferred.
+- **The reverse axis converged but did not reach zero: 170 → 134 → 97** hits as the capture got
+  richer (top-level keys → nested keys → type-rich instances). The residue is bounded by the 43
+  unsent commands and by branches this fixture did not provoke, **so it is a shortlist, not a
+  finding list**, and it is left as such.
+
+#### ⛔⛔ AND A CONSEQUENCE OF THE SHIPPING-FIRST RULE, MEASURED — `delegate_pad` CANNOT be seen on Shipping
+
+`tools/verify/d4b_delegate_pad.py` re-run on this Shipping fixture: **PASS**, all four delegate
+shapes read correctly — and its first line is the point:
+
+```
+elem_size : 16  ->  access-detector pad = 0  (Shipping/Test, or UE <= 5.2 build)
+```
+
+The access detector only exists in non-Shipping builds, so the pad is **0**, and `Fern.cpp:1509`
+emits the key only `if (fv.delegatePad > 0)`. ⛔ **On a Shipping fixture the field is absent by
+design, and no Shipping run can ever verify it.** `[SW7]`'s wire fix and the whole `[D4B-...]`
+family therefore **require** the `dev` arm — this is a concrete case where the Shipping-first rule's
+own *"Development is a check in the other direction"* caveat is **load-bearing, not optional**, and
+it should be cited whenever a delegate-pad row is scoped.
+
+⭐ Separately worth keeping: **D4b/D3b now has a Shipping measurement** (it was closed on
+Development on 2026-09-09), and the four shapes — sparse, multicast-inline, scalar, array — all read
+correctly with the array's bound element reported at `[1]`, not swallowed by `[0]`.
+
+#### ⚠ §1.w3 FIRED A SECOND TIME, IN A SECOND TOOL, WITHIN HOURS
+
+The capture's first orphan check asked *"does this key appear anywhere in the tree?"* and reported
+`mode_resolved` and `cmc_addr` as **consumed**. Their only occurrence in the whole repo was a
+**docstring line in `tools/verify/pipe_wire_parity.py`, written earlier the same night, naming them
+as examples of unread keys.** The report of the orphan erased the orphan — exactly §1.w3, in a tool
+written *after* that lesson was recorded.
+
+⭐ **The fix generalises better than a tag list**: the predicate is now **consumption SHAPE**, not
+presence — a literal index, a `.get("k")`, or the PascalCase property — so prose, comments and
+docstrings no longer count. That is both the self-reference fix and a stricter question. ⚠ §1.w3's
+tag-based guard in `audit_coverage.py` stays, because a coverage report legitimately lists filenames
+in prose; the two tools need different guards for the same hazard.
+
+#### ⬜ Carried into the fix pass (NOT done here)
+
+11. `[BADGEPRIME]` 🟠 — prime the eleven unprimed badges on connect, or make the two lists one
+    structure so they cannot diverge again (B17's point, from the other side).
+12. ⚠ **Phase 2's axis B must be re-run for the 4 helper-delegating commands** — they were never
+    adjudicated, and `get_pointers` (46 keys) is the biggest single un-checked reply in the tree.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
