@@ -16,8 +16,8 @@ mirror is the *complete* source and the real project is synced FROM it
 |---|---|---|---|---|---|
 | `UE415_Flyinh` | 4.15 | `UE415_Flyinh` (pre-existing) | module-wide | installed | ⛔ Windows SDK |
 | `UE418_3rdPerson` | 4.18 | `UE418_3rdPerson` — ⭐ **added by us** | IWYU | installed | ⛔ Windows SDK |
-| `UE423_Flying` | 4.23 | `UE423_Flying` (pre-existing) | IWYU | installed | ✅ packaged + surveyed |
-| `UE427_3rdPerson` | 4.27 | `UE427_3rdPerson` (pre-existing) | IWYU | installed | ✅ packaged + surveyed |
+| `UE423_Flying` | 4.23 | `UE423_Flying` (pre-existing) | IWYU | installed | ✅ Development **and Shipping** |
+| `UE427_3rdPerson` | 4.27 | `UE427_3rdPerson` (pre-existing) | IWYU | installed | ✅ Development **and Shipping** |
 
 *"builds?"* is measured, not inherited — see `docs/todo.md` `[D4B-UE4-2026-09-09]` for the runs and
 for why 4.15/4.18 stop where they do (a Windows SDK selection with no override, not the fixture
@@ -45,9 +45,11 @@ and not permissions).
 py tools/ue-sample/ue4-delegate-fixture/install.py --project <Project>
 
 # 3. build, package, and CHECK THE CLASS ARRIVED -- an exit code is not evidence
-py tools/ue-sample/repackage.py --engine <ver> --project <Project> --configs Development
+py tools/ue-sample/repackage.py --engine <ver> --project <Project> --configs Development,Shipping
 py tools/verify/d4b_pad_survey.py --expect-pad 0
 ```
+
+⭐ **Package Shipping too, and prefer it**: every real title measured in this repo is a Shipping build, so a Development-only result has the population backwards.
 
 ⚠ 4.23 additionally needs `--pin-compiler 14.16.27023` — its UBT maps toolset → VS version and
 rejects a VS2022 toolset outright. And both 4.23 and 4.27 need `AutomationTool.exe` called

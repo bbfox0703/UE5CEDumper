@@ -1873,14 +1873,36 @@ Only the binding-read rig needs an instance.
 
 ### Result — UE 4.23 and 4.27, packaged Development, injected
 
-| engine | `use_fproperty` | classes | delegate properties | derived pad | unrecognised |
-|---|---|---|---|---|---|
-| **4.23** `UE423_Flying` | **false** — ⭐ the path under test | 600 | **264** | 0 | 0 |
-| **4.27** `UE427_3rdPerson` | true | 600 | **235** | 0 | 0 |
+| engine | config | `use_fproperty` | classes | delegate properties | pad | unrecognised |
+|---|---|---|---|---|---|---|
+| **4.23** `UE423_Flying` | Development | **false** — ⭐ the path under test | 600 | 264 | 0 | 0 |
+| **4.23** | **Shipping** | **false** | 600 | **272** | 0 | 0 |
+| **4.27** `UE427_3rdPerson` | Development | true | 600 | 235 | 0 | 0 |
+| **4.27** | **Shipping** | true | 600 | **235** | 0 | 0 |
 
-Both `validated: true`. Together with the UE5 runs that makes **five engine versions across both
-property systems**: 4.23 (UProperty), 4.27, 5.4, 5.7 and 5.8 (FProperty), and on 5.4/5.8 both
-build configurations.
+All four `validated: true`. Together with the UE5 runs that is **five engine versions across both
+property systems** — 4.23 (UProperty), 4.27, 5.4, 5.7, 5.8 (FProperty) — and both build
+configurations on 4.23, 4.27, 5.4 and 5.8.
+
+### ⚠ Shipping was added because the first UE4 pass had the population backwards
+
+The 4.23/4.27 runs were **Development only**, which is the wrong way round for this repo: every
+real title measured here is a **Shipping** build, and Shipping additionally strips logging and
+editor-only reflection. ⭐ On UE4 the PAD cannot differ — no access detector exists before UE 5.3
+— so what the Shipping pass actually sanity-checks is the *other* axis: that a stripped build
+still reports delegate ElementSizes the derivation recognises, and still carries the fixture at
+all. It does, on both:
+
+```
+DelegatePadFixture present: True
+  Multicast_Inline        ('MulticastInlineDelegateProperty', 16)
+  Del_Unicast             ('DelegateProperty', 16)
+  Arr_MulticastDelegates  ('ArrayProperty', 16)
+```
+
+⚠ **264 → 272 on 4.23 is not a discrepancy to explain away.** The survey walks the FIRST 600
+classes `list_classes` offers, and which classes are loaded differs between configurations. It is
+a different sample of the same population, not the same sample measured twice.
 
 And the fixture's own rows, identical on both engines:
 
