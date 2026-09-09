@@ -1803,6 +1803,49 @@ signature cases. Tree unchanged at **46 sites, 0 violations**.
   (`todo.md:1478`, *"THE SWEEP IS FINISHED. Do not run a round 4."*). Unadjudicated is neither
   fixed nor cleared.
 
+## ⬜ TMap geometry has a TWIN, and the fix landed on only one of them `[TMAPGEOM-TWIN-2026-09-09]`
+
+Found 2026-09-09 while building the SW8 rig, by discovering that the rig's *intended* observable
+was measuring the wrong function.
+
+`Ubel::GetMapPairLayout` is **not** what the instance walk uses. `WalkInstance` carries its own
+**inlined copy** of the same map geometry (`Ubel.cpp:~4730`, and a second at `~4887`) and never
+calls it. The four real callers are all recursive collectors in `Aura.cpp` —
+`CollectContainersRecursive`, `CollectRefMetaRecursive`, `CollectSchemaLeaves`, `ScanForValue`.
+⚠ So `map_stride` on the wire is **not evidence about `GetMapPairLayout`**, and a rig that
+asserts on it measures the twin. (`sw8_map_geometry.py` drives `CollectSchemaLeaves` instead,
+and its docstring carries this as TRAP 1.)
+
+**The twin still has the shape `[TMAPGEOM-2026-09-09]` removed from the original:**
+
+```cpp
+if (keyTypeName == "StructProperty") {
+    uintptr_t kStruct = 0;
+    if (Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, kStruct) && kStruct) {
+        fv.mapKeyStructAddr = kStruct;      // faulted read -> stays 0, and we CONTINUE
+    }
+}
+...
+int32_t keyAlign = ResolveElementAlignment(keyTypeName, fv.mapKeySize, fv.mapKeyStructAddr);
+```
+
+`ResolveElementAlignment(..., 0)` → `GetStructAlignment(0)` → **0 = "unknown"** → the caller falls
+back to `ComputeMapValueOffset`'s size guess. `GetStructAlignment`'s own header says what that
+costs: *"`TMap<int32, FVector>` put the value at +8 when FVector is 4-aligned and really sits at
++4 — wrong for element 0, and wrong again in the stride."*
+
+⚠ **State this precisely — it is NOT "the walk path is broken".** The fallback is the behaviour
+that shipped for years, and refusing there would BLANK a map in the UI rather than show it
+slightly wrong, which is a different trade-off from a background collector's. The actual defect
+is that **the two twins now disagree on the same input, and nothing says so**: one refuses and
+logs, the other guesses silently. Whichever is right, they should not differ by accident.
+
+**What is owed:** decide the policy deliberately (refuse in both, or guess in both with the
+divergence documented at each site), and — either way — leave a comment at each of the three sites
+naming the other two, so the next sweep cannot fix one and miss the rest. ⛔ There is no live
+fixture for it: the partial-read condition needs a page edge, so it belongs in `dll_core_test`
+beside the existing `TMAPGEOM` block, which must stay LAST in that file.
+
 ## ✅ TMap geometry — the fixture that looked impossible `[TMAPGEOM-2026-09-09]`
 
 `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a faulted read the addr stays
