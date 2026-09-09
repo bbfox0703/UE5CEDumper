@@ -2108,6 +2108,50 @@ would fail its own controls.
 `Serie::InitUE4` with its own chunks. Nothing needing the real pool may follow any of the three;
 the `TMAPGEOM` banner now names all three.
 
+#### ✅ LIVE REGRESSION ARM 2026-09-09 — `tools/verify/unreadval_live_arm.py`
+
+DumperTest, build 3508, UE 5.4, 25,231 objects, fresh `dist` DLL over the pipe (no UI).
+
+⛔ **THE RISK THIS ARM EXISTS FOR IS NOT THE FAILURE CASE.** The fix adds a gate to three
+handlers that run on every walk; the failure it guards is rare, but a gate that fired
+**spuriously** would blank every enum in the game. The manufactured `UNREADVAL` controls prove
+only that it does not fire on three synthetic fields.
+
+| family | fields seen | published a value | genuinely 0 | refusals |
+|---|---|---|---|---|
+| `EnumProperty` | 1263 | **1263** | 779 | **0** |
+| `ByteProperty` | 1113 | **1113** | 680 | **0** |
+| `OptionalProperty` | 15 | **15** | 7 | **0** |
+
+**2391 fields over 2105 live instances, not one refusal**, and 1466 of them genuinely read 0 —
+the state the refusal must never be confused with. ⭐ `CharacterMovementComponent.MovementMode`
+is itself one of them, publishing `MOVE_Walking` / hex `01` through the exact `ByteProperty`-
+with-UEnum handler that was fixed.
+
+⭐ **THE SAMPLE IS TARGETED *AND* BROAD, because targeting alone is a lottery.** The first run
+strided the object pool and reported **zero** `OptionalProperty` — the only two classes that
+declare one are `DumperTestActor` (**2** instances in 25,231 objects) and
+`WorldPartitionRuntimeCellData`. ⛔ **The anti-vacuity guard failed that run**, which is the only
+reason it was noticed instead of published as "no refusals anywhere". The rig now asks
+`search_properties` which classes declare each family, pulls their instances, and strides the
+pool on top.
+
+⚠ **AND ONE DETOUR WORTH KEEPING.** The tally first reported **17 fields with neither value nor
+hex**, which reads exactly like a walker declining silently. It is not: when the walked object IS
+a `UClass`/`UScriptStruct`, `WalkInstance` (`Ubel.cpp:4031`) takes a **definition branch** that
+emits field METADATA and deliberately reads no values — its own comment says the offsets describe
+*instances* of the struct, not the metaobject. It returns before any type handler runs. The tell
+was the ratio: **77 of 96 fields on one such object were valueless across FOURTEEN type
+families**, of which this fix touched three. The rig now excludes `is_definition` walks and
+reports them separately (924 of them). ⭐ It also explains why a live game cannot reach the
+refusal: the only objects whose high-offset reads fault are metaobjects, and those never get
+past the definition branch.
+
+⚠ **WHAT THIS DOES NOT CLAIM.** The refusal path itself is untouched by this arm — that is
+`dll_core_test`'s `UNREADVAL` block, and it has to be. Nor does it say anything about how the UI
+renders a refusal.
+
+
 ### ✅ Slice B — ADJUDICATED 2026-09-09: 7 sites, 2 defects fixed, and the gate stays refused
 
 ⛔ **THE PARAGRAPH THAT USED TO BE HERE WAS WRONG, AND THIS FILE CONTAINED THE REFUTATION.** It
@@ -2181,13 +2225,73 @@ after the DLL started telling the truth. `ApplyFlyAsync` keyed its `✈ Fly ON` 
 found`; `resetclaim` (unconditional `"Fly OFF."`) → **1 FAIL**, `Assert.Contains: Sub-string not
 found`. Each mutant reds exactly its own test.
 
-⛔ **THE DLL HALF HAS NO TEST, AND THAT IS SAID RATHER THAN PAPERED OVER.** `Dunste.cpp` and
-`Wirbel.cpp` are among the **21 of 31** `dll/src/*.cpp` that reach NO test target — the trap
-CLAUDE.md's `-Target Test` warning documents — so a green `-Target Test` measures nothing about
-them. They are verified by `-Target DLL` (SUCCESS) plus code reading, and the third arm of each
-fix is reachable only from a failing `VirtualProtect`, which needs a live pawn freed mid-call.
-⚠ **The C# tests do NOT cover it either** — they pin what the UI does when the DLL reports the
-failure, not that the DLL reports it.
+⛔ **THE DLL HALF REACHES NO TEST TARGET.** `Dunste.cpp` and `Wirbel.cpp` are among the
+**21 of 31** `dll/src/*.cpp` that reach NO test target — the trap CLAUDE.md's `-Target Test`
+warning documents — so a green `-Target Test` measures nothing about them, and the C# tests only
+pin what the UI does *when the DLL reports* a failure, not that it reports one. That gap is why
+the live arm below exists.
+
+#### ✅ LIVE ARM 2026-09-09 — `tools/verify/sliceb_fly_arm.py`, 10/10 on DumperTest
+
+Build 3508, UE 5.4, over the pipe with no UI. ⛔ **The risk the fix carries is not the failure
+case — it is the EARLY RETURN it adds to a path the user hits on every toggle.** A gate that
+fired spuriously would stop Fly working at all.
+
+⭐ **THREE WITNESSES, COMPUTED BY DIFFERENT CODE, AND THEY AGREE AT EVERY STEP**: `state` (the
+value the fix decides), `active` (the bookkeeping the fix rolls back on failure), and
+`current_mode` — `MovementMode` **read back from the CMC**, which is the effect itself and the
+only one that is not our own bookkeeping.
+
+| step | state | active | current_mode |
+|---|---|---|---|
+| baseline | — | false | 1 (`MOVE_Walking`) |
+| enable | **1** | true | **5 (`MOVE_Flying`)** |
+| disable | **0** | false | **1 — restored to the baseline** |
+| enable / disable again | 1 / 0 | true / false | 5 / 1 |
+
+The second cycle is not padding: the disable path sets `baseCaptured = false`, so a gate that
+fires only on the SECOND enable is invisible to a single toggle.
+
+⛔ **AND THE FAILURE ARM IS UNREACHABLE FROM OUTSIDE THE PROCESS — MEASURED, NOT ASSUMED.**
+`tools/verify/sliceb_fly_fail_probe.py` is shipped as the evidence for that negative claim.
+`Macht::WriteBytes` fails only when `VirtualProtect` is refused, i.e. the page is
+MEM_FREE/MEM_RESERVE, and there are exactly two ways to arrange it:
+
+1. **Decommit the page holding `cmc + modeOff`** — dead by measurement: `cmc = 0x2A3948CF010`,
+   `modeOff = 513`, so `cmc + 0x10` and `cmc + modeOff` are on the **same page**, and
+   `ResolveCtx` reads `cmc + 0x10` via `Ubel::GetClass`. Every page trick returns
+   `FR_ERR_REFLECT` first — a different arm, and a false green if mistaken for this one.
+2. **Point `modeOff` itself at unmapped memory** by patching `FPROPERTY_OFFSET` on the
+   MovementMode FField. `ResolveCtx` resolves `modeOff` by REFLECTION and never reads the
+   instance there, so it would still return `FR_OK` and the write would fail first. Tried, and
+   blocked:
+
+        patched to 4194304 (read-back 4194304)
+        walk_instance sees offset=513 value='MOVE_Walking'      <- the CACHED layout
+        fly_set enable -> state=1, active=true, current_mode=5  <- the write still landed
+        RESTORED: offset reads 513  OK
+
+⭐⭐ **THAT NULL RESULT REPRODUCES `[CLASSCACHE-FRONTED-2026-09-09]` FROM A SECOND, UNRELATED
+EXPERIMENT.** `FindField` → `WalkClass` is memoised in a 2048-entry LRU that nothing invalidates,
+so a patched FField is invisible to both `Dunste` and the walker. That note predicted this would
+block "that whole family of layout experiments" and named only the two scalar delegate-refusal
+arms; it now also blocks the Fly write arm **and** a live `ByteProperty`-refusal arm. The
+`--force` / debug-only `invalidate_class_cache` it proposes would unblock all four at once —
+which turns that open row from a tidiness item into the thing standing between four verification
+arms and a measurement.
+
+⚠ **THE SANITY GUARD IS WHAT KEPT THIS SAFE.** The first attempt read **675** at `FField+0x4C`
+and refused to write: `Grimoire.h`'s `FPROPERTY_OFFSET = 0x4C` is a **compile-time default**, and
+Genau derives the real one per title (`get_offsets` → **68**). Without the guard that would have
+been a wild 4-byte write into a live game object.
+
+⭐ **RESTORATION PROVEN BY THE PATH, not only by the read-back**: after the mutation was reverted,
+both `sliceb_fly_arm.py clean` (10/10) and `unreadval_live_arm.py` (2391 fields, 0 refusals) were
+re-run green on the same process.
+
+⚠ **STILL NOT CLAIMED**: that the DLL returns `FR_ERR_WRITE` when the write fails. That arm has
+no route from outside the process, and saying so is the honest end of this row rather than a
+green tick over an untested branch.
 
 ⚠ **NOT FIXED, and deliberately**: `SetEnabled(false)` when `ResolveCtx` fails still returns 0
 without restoring anything. That is not a dropped status — there is no pawn to write to — but it
@@ -2299,7 +2403,13 @@ says that the unbounded one is *in front of* the bounded one for the highest-vol
    consulted of the two" — has no cap, so the actual ceiling on cached class metadata is the
    number of classes the title loads, not 2048. On DumperTest that is ~4k classes / ~29k fields;
    on a large title it is larger. Nobody has measured it.
-2. **There is no way to invalidate a class's cached layout.** Not a defect for the shipping
+2. **There is no way to invalidate a class's cached layout.** ⭐ **CONFIRMED A SECOND TIME,
+   2026-09-09**, by an experiment with nothing to do with delegates: patching `FPROPERTY_OFFSET`
+   on `CharacterMovementComponent.MovementMode` was invisible to both `Dunste` and the walker,
+   because `FindField` → `WalkClass` had already cached the class
+   (`tools/verify/sliceb_fly_fail_probe.py`). The count of arms this blocks is now **four**, not
+   two — add `[SLICEB-FLY-2026-09-09]`'s `FR_ERR_WRITE` arm and a live `ByteProperty` refusal
+   arm for `[UNREADVAL-2026-09-09]`. Not a defect for the shipping
    product — reflected layout genuinely does not change at runtime — but it makes the two SCALAR
    delegate-refusal arms unreachable by manufacture-and-restore, which is why
    `[SW6-STRIDEREFUSAL-2026-09-09]` closed on the array arms only. A `--force` on `walk_class`, or
