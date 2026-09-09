@@ -1696,6 +1696,89 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ UE4 — the UProperty path, finally exercised `[D4B-UE4-2026-09-09]`
+
+`[D4B-DELEGATEPAD]` now gates five DLL readers plus the CE exporter on
+`DelegatePadFromElementSize`, and it had only ever met UE 5.4 / 5.7 / 5.8. Two things about UE4
+were untested, and CLAUDE.md names UE4 a **priority target**:
+
+* ⭐ **`DynOff::bUseFProperty == false`** (UE < 4.25) — the walker reads `UProperty` objects out
+  of GObjects instead of the `FField` chain and reports ElementSize from a different place.
+  Nothing had ever asked what that path reports for a delegate, and the derivation **refuses**
+  a size it does not recognise, which would blank the field.
+* UE4 has **no access detector at all** — `TScriptDelegate` / `TMulticastScriptDelegate` gained
+  their `TDelegateAccessHandlerBase` base in UE 5.3, and 4.15, 4.23 and 4.27 were each checked:
+  none has it. ⚠ So a UE4 run tests **RECOGNITION, not the pad** — pad 0 in every UE4 build
+  configuration. Do not read a pad-0 result here as evidence about the checked-build side.
+
+### The fixture — `tools/ue-sample/ue4-delegate-fixture/`
+
+A portable `ADelegatePadFixture` (`.h`/`.cpp` + `install.py`) rather than a port of DumperTest's
+property zoo, which **cannot** be ported: `TOptional` UPROPERTY (`FOptionalProperty` post-dates
+5.0), Utf8Str/AnsiStr (5.5) and much else do not exist in UE4. The four shapes the changed
+readers actually handle do: a bound `MulticastInlineDelegateProperty`, a bound `DelegateProperty`,
+a `TArray<multicast>` with **[1] bound and [0] empty** (the only way an element STRIDE is
+observable), and the inherited sparse delegates.
+
+⭐ **The survey needs only the CLASS.** A `UCLASS` in a game module is registered in GObjects at
+module load, so `d4b_pad_survey.py` reads its ElementSizes without the actor ever being spawned.
+Only the binding-read rig needs an instance.
+
+### Result — UE 4.23, `UE423_Flying`, packaged Development, injected
+
+```
+use_fproperty : false          <- the path under test
+validated     : true
+600 classes walked | 264 delegate properties | all pad 0 | 0 unrecognised sizes
+```
+
+And the fixture's own rows, read off the class table on that path:
+
+| property | type | ElementSize | implies |
+|---|---|---|---|
+| `Multicast_Inline` | `MulticastInlineDelegateProperty` | 16 | pad 0 |
+| `Del_Unicast` | `DelegateProperty` | 16 | pad 0 |
+| `Arr_MulticastDelegates` | `ArrayProperty` | 16 (TArray header) | — |
+| 16 inherited `On*` | `MulticastSparseDelegateProperty` | 1 | `sizeof(FSparseDelegate)` ✓ |
+
+So the derivation recognises everything UE4 reports, on the `UProperty` path, with 264 witnesses.
+
+### ⛔ Three UE4 blockers, all measured, two still open
+
+| engine | state |
+|---|---|
+| **4.23** | ✅ builds **and packages**. Needed VS2017 (installed 2026-09-09) **and** write access to `UE_4.23`. ⚠ `--pin-compiler 14.16.27023`, NOT 14.29.30133 — 4.23's UBT maps toolset→VS version and rejects a VS2022 toolset outright. |
+| **4.27** | 🟡 compiles (exit 0) and **cooks by hand** (exit 0), but `BuildCookRun` dies: UAT writes its cook log to `<engine>\Engine\Programs\AutomationTool\Saved\Cook-*.txt`, which is not writable. Same axis as 4.23's old blocker. ⚠ `uebp_LogFolder` does **not** redirect it — tried. |
+| **4.15** | ⛔ blocked one step earlier on the same axis: `UnauthorizedAccessException` on `<engine>\Engine\Intermediate\Build\LastBuiltTargets.txt`. |
+
+⚠ 4.11 and 4.18 are installed but have **no C++ project**, so there is nothing to host a
+`UPROPERTY` fixture. (The other projects under `D:\Unreal Projects` are Blueprint-only; these five
+UE4 ones all have a `Source/` module — verified, not assumed.)
+
+### ⛔ AND A UE4 TRAP THAT READS AS A BROKEN TOOLCHAIN
+
+Both 4.23 and 4.27 ship `Build\InstalledBuild.txt` but **not**
+`Binaries\DotNET\AutomationToolLauncher.exe`. `RunUAT.bat` line 12 sets
+`UATExecutable=AutomationToolLauncher.exe` and line 24 jumps straight to `:RunPrecompiled` on an
+installed build — so it executes a file that is not there. cmd answers **ERRORLEVEL 9009** and
+RunUAT prints only `BUILD FAILED`, 0.1 s in, naming nothing. The fallback that would fix it
+(line 47, "if the launcher is missing use AutomationTool.exe") lives in the **non-installed**
+branch and is therefore unreachable exactly where it is needed. `AutomationTool.exe` is present
+and works (`-help`, exit 0); `repackage.py` now calls it directly when the launcher is the only
+thing missing.
+
+### ⬜ Open
+
+* **4.27 and 4.15 need the same permission grant 4.23 got.** Both are one `icacls`-shaped step
+  from a package; neither is a toolchain limit.
+* **No UE4 READ test.** The survey covers the class table; `d4b_delegate_pad.py` needs a live
+  instance and nothing spawns `ADelegatePadFixture`. `install.py --spawn-from` prints the
+  two-line patch rather than applying it — a blind regex edit of someone else's project template
+  is the wrong trade.
+* **`walk_class` (singular) returned 0 fields for a class `walk_class_batch` walks fine** (76
+  fields, same address). Noticed while verifying the fixture landed; not chased, and the survey
+  uses the batch form.
+
 ## ✅ The reconciliation's actionable half, fixed `[D4B-TAIL-2026-09-09]`
 
 A 9-agent reconciliation of this whole work stream (four readers over four independent sources,

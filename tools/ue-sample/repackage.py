@@ -23,11 +23,31 @@ pack for, and VS 2026 additionally runs a one-way upgrade on the .sln first. See
     UE 5.8  DumperTest58Editor  up to date, 4.81 s, exit 0
     UE 4.27 UE427_3rdPersonEditor  MSVC 14.51.36231 + SDK 10.0.26100.0, 11 actions, 37 s, exit 0
 
-    UE 4.15 / 4.18   NO -- UBT probes HKLM\\...\\VisualStudio\\SxS\\VS7 for "12.0"/"14.0"/"15.0"
-                     only (UEBuildWindows.cs:838) and BOTH the VS7 and VC7 keys are absent here.
-                     Installing VS2017 creates "15.0" and would unlock them.
-    UE 4.23          same, and additionally its older UBT writes into the engine install under
-                     Program Files, which is not writable.
+⭐ RE-MEASURED 2026-09-09, after VS2017 was installed and UE_4.23's permissions were opened.
+The two blockers above were real and BOTH are now cleared for 4.23:
+
+    UE 4.23  UE423_FlyingEditor   VS2017 14.16.27023, 9 actions, 51.8 s, exit 0
+             ...and a full Development package, exit 0, 83.6 s.
+             ⚠ --pin-compiler 14.16.27023, NOT 14.29.30133. 4.23's UBT maps toolset -> VS
+             version and rejects a VS2022 toolset with "Visual Studio 2017 (14.29.30133) must
+             be installed"; 14.16.27023 IS what VS2017 Community ships.
+    UE 4.27  UE427_3rdPersonEditor  compiles (exit 0) and COOKS BY HAND (exit 0), but
+             BuildCookRun still fails: UAT writes its cook log to
+             <engine>\\Engine\\Programs\\AutomationTool\\Saved\\Cook-*.txt and that path is not
+             writable. Same class as 4.23's old blocker; opening UE_4.27 the way UE_4.23 was
+             opened is what unblocks it. ⚠ `uebp_LogFolder` does NOT redirect it -- tried.
+    UE 4.15  UE415_Flyinh  still blocked, and on the SAME permission axis, one step earlier:
+             UnauthorizedAccessException on
+             <engine>\\Engine\\Intermediate\\Build\\LastBuiltTargets.txt.
+    UE 4.11 / 4.18   installed, but NO C++ project exists for them under D:\\Unreal Projects.
+
+⛔ AND A THIRD UE4 BLOCKER THAT LOOKS LIKE A TOOLCHAIN FAULT AND IS NOT. Both 4.23 and 4.27
+ship `Build\\InstalledBuild.txt` but NOT `Binaries\\DotNET\\AutomationToolLauncher.exe`, and
+RunUAT.bat line 12 sets `UATExecutable=AutomationToolLauncher.exe` before jumping straight to
+:RunPrecompiled on an installed build. cmd answers ERRORLEVEL **9009** and RunUAT prints only
+"BUILD FAILED", 0.1 s in. The fallback that would fix it (line 47) lives in the non-installed
+branch and is unreachable. `AutomationTool.exe` is present and works; this script calls it
+directly when the launcher is the only thing missing.
 
 ⚠ A FAILED OLD-ENGINE BUILD IS NOT AUTOMATICALLY A TOOLCHAIN ANSWER. 4.15 and 4.23 first died on
 `System.UnauthorizedAccessException` and never reached compiler detection at all; 4.27 is *also*
@@ -227,6 +247,30 @@ def main():
     uproject = os.path.join(proj_dir, args.project + ".uproject")
     build_bat = os.path.join(eng, "Engine", "Build", "BatchFiles", "Build.bat")
     runuat = os.path.join(eng, "Engine", "Build", "BatchFiles", "RunUAT.bat")
+
+    # ⛔ UE4 LAUNCHER INSTALLS CANNOT RUN THEIR OWN RunUAT.bat, and the error names nothing
+    # useful. Measured 2026-09-09 on UE 4.27 and 4.23: both ship `Build\InstalledBuild.txt`,
+    # so RunUAT.bat jumps straight to :RunPrecompiled and executes
+    # `%UATExecutable%` -- which line 12 set to **AutomationToolLauncher.exe**, a file neither
+    # install contains. cmd answers with ERRORLEVEL 9009 ("not recognized as an internal or
+    # external command") and RunUAT prints only "BUILD FAILED", 0.1 s in.
+    #
+    # ⚠ The fallback that would fix it (`if not exist ...Launcher.exe set
+    # UATExecutable=AutomationTool.exe`, line 47) lives in the NON-installed branch, which an
+    # installed build never reaches. So it is unreachable exactly where it is needed.
+    #
+    # AutomationTool.exe itself is present and works -- verified by running it with -help, exit
+    # 0 -- and it is what RunUAT ultimately executes anyway. Call it directly when the launcher
+    # is the only thing missing. UE5 installs ship a DotNET/AutomationTool DIRECTORY instead and
+    # are untouched by this.
+    _dotnet = os.path.join(eng, "Engine", "Binaries", "DotNET")
+    _at, _atl = (os.path.join(_dotnet, "AutomationTool.exe"),
+                 os.path.join(_dotnet, "AutomationToolLauncher.exe"))
+    if os.path.isfile(_at) and not os.path.isfile(_atl):
+        print("[uat] RunUAT.bat cannot start here -- AutomationToolLauncher.exe is missing from\n"
+              "      this install while InstalledBuild.txt is present, which makes RunUAT's own\n"
+              "      fallback unreachable. Calling AutomationTool.exe directly instead.")
+        runuat = _at
     archive = args.archive or os.path.join(DEFAULT_ARCHIVE, args.project)
 
     for label, p in (("engine", eng), ("project", proj_dir), ("uproject", uproject),
