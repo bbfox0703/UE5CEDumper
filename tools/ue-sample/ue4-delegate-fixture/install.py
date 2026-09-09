@@ -90,15 +90,21 @@ def main() -> int:
         print("removed %d file(s). Rebuild to drop the class from the module." % gone)
         return 0
 
-    # ⛔ OLD ENGINES REQUIRE THE MODULE PCH FIRST, and the module's name is per-project -- which
-    # is exactly why the stored pair cannot carry the include and the INSTALLED copy must.
-    # UE 4.15 (and earlier) use the module-wide PCH model and UBT refuses the build outright:
-    #   "All source files in module \"X\" must include the same precompiled header first."
-    # It is harmless on every newer engine -- a template module header is `#pragma once` plus
-    # CoreMinimal -- so it is added whenever one exists rather than gated on a version the
-    # installer would have to be told.
+    # ⛔ TWO OPPOSITE RULES, AND THE MODULE ITSELF SAYS WHICH ONE APPLIES.
+    #   * module-wide PCH (no PCHUsage in Build.cs -- UE 4.15's template, and the default on old
+    #     engines): every .cpp must include the MODULE header first, or UBT refuses outright --
+    #     "All source files in module \"X\" must include the same precompiled header first."
+    #   * IWYU (`PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs`, 4.16+ and every template from
+    #     4.18 on): the file's OWN header must be first -- "Expected DelegatePadFixture.h to be
+    #     first header included."
+    # ⚠ Measured 2026-09-09: prepending unconditionally fixed 4.15 and BROKE 4.18. The engine
+    # version is the wrong discriminator anyway -- 4.18 supports both and the template picks one.
+    # Read Build.cs instead, which is where the answer actually lives.
     pch = mod.name + ".h"
-    has_pch = (mod / pch).is_file()
+    build_cs = mod / (mod.name + ".Build.cs")
+    iwyu = (build_cs.is_file()
+            and "UseExplicitOrSharedPCHs" in build_cs.read_text(encoding="utf-8", errors="replace"))
+    has_pch = (mod / pch).is_file() and not iwyu
 
     for n in FILES:
         dst = mod / n
@@ -113,9 +119,9 @@ def main() -> int:
         print("  installed %s (%d B, mtime stamped to now%s)"
               % (n, dst.stat().st_size,
                  ", module PCH prepended" if n.endswith(".cpp") and has_pch else ""))
-    if not has_pch:
-        print("  ⚠ no %s in the module -- if UBT refuses with \"must include the same\n"
-              "    precompiled header first\", that is why." % pch)
+    print("  PCH mode   : %s" % ("IWYU (own header first) -- no module PCH prepended" if iwyu
+                                  else "module-wide PCH -- %s prepended" % pch if has_pch
+                                  else "module-wide PCH, but no %s found ⚠" % pch))
 
     if a.spawn_from:
         host = mod / (a.spawn_from + ".cpp")

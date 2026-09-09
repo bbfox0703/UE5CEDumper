@@ -1752,21 +1752,67 @@ So the derivation recognises everything UE4 reports, on the `UProperty` path, wi
 |---|---|
 | **4.23** | ✅ builds **and packages**, and surveyed. Needed VS2017 **and** write access to `UE_4.23`. ⚠ `--pin-compiler 14.16.27023`, NOT 14.29.30133 — 4.23's UBT maps toolset→VS version and rejects a VS2022 toolset outright. |
 | **4.27** | ✅ builds, packages and surveyed, once `UE_4.27` was opened the same way. Its blocker was UAT writing its cook log to `<engine>\Engine\Programs\AutomationTool\Saved\Cook-*.txt`. ⚠ `uebp_LogFolder` does **not** redirect that — tried. |
-| **4.15** | ⛔ **still blocked, but NOT on permissions any more** — those are now open and it compiles 41 s of real work before failing. The wall is the toolchain: `Windows Kits\10\include\10.0.26100.0\ucrt\wchar.h(316): error C3861: '_mm_loadu_si64'`. That is a SYSTEM header, so it breaks every `.cpp`, not the fixture. UBT picks SDK **26100** and VS2017's last toolset (**14.16.27023**, which is all VS2017 ships) predates that intrinsic. Older SDKs ARE installed — 8.1, 10.0.10240, 19041, 22621 — but neither `--pin-compiler` nor its absence changes the choice, and 4.15's UBT cannot read the modern `BuildConfiguration.xml` schema at all (`XmlConfigLoader: Reading config XML failed`), so the pin is inert there. Needs UBT pointed at an older Windows SDK. |
-| **4.18** | ⛔ permissions opened, but **no C++ project exists** to host a `UPROPERTY`, and being VS2017-era it would very likely meet 4.15's SDK wall anyway. |
-| **4.11** | ⛔ needs VS2015. Out of scope by decision. |
+| **4.15** / **4.18** | ⛔ **NOT a permission problem any more, and NOT a fixture problem — the wall is measured and it has no knob.** Both now compile 30-45 s of real work before dying in a SYSTEM header: `Windows Kits\10\include\10.0.26100.0\ucrt\wchar.h(316): error C3861: '_mm_loadu_si64'`. That breaks every `.cpp` in the module, mine included and mine last. See the ⛔ block below. |
+| **4.11** | ⛔ needs VS2015-era support the maintainer ruled out of scope. ⚠ For the record, VS2015's `cl.exe` IS present (`Microsoft Visual Studio 14.0\VC\bin\amd64`), so the obstacle is not the compiler. |
 
 ⚠ 4.11 and 4.18 are installed but have **no C++ project**, so there is nothing to host a
 `UPROPERTY` fixture. (The other projects under `D:\Unreal Projects` are Blueprint-only; these five
 UE4 ones all have a `Source/` module — verified, not assumed.)
 
-### ⛔ AND UE 4.15 NEEDS THE MODULE PCH FIRST
+### ⛔ 4.15 AND 4.18 CANNOT BUILD HERE, AND THE REASON HAS NO OVERRIDE
 
-`install.py` prepends `#include "<Module>.h"` to the copied `.cpp` when the module has such a
-header. UE 4.15 and earlier use the module-wide PCH model and UBT refuses outright — *"All source
-files in module X must include the same precompiled header first"* — and the module's name is
-per-project, which is exactly why the STORED pair cannot carry the include and the INSTALLED copy
-must. Harmless on newer engines.
+Worth writing down in full, because "old engine, probably the compiler" is the wrong diagnosis and
+would send the next session installing things.
+
+`UE_4.15` and `UE_4.18` are now writable, `UE418_3rdPerson` was given a C++ module (it was
+Blueprint-only, so it could not host a `UPROPERTY` at all), and the fixture installs. Both then
+fail identically:
+
+```
+Windows Kits\10\include\10.0.26100.0\ucrt\wchar.h(316): error C3861: '_mm_loadu_si64'
+```
+
+`wchar.h` is a SYSTEM header pulled in by CoreMinimal, so this breaks every translation unit in
+the module — the fixture is the last thing implicated, not the first. The 26100 UCRT uses an
+intrinsic that neither VS2015 nor VS2017's final toolset (**14.16.27023**, all VS2017 ships)
+defines.
+
+⭐ **AND THERE IS NO SUPPORTED WAY TO POINT THEM AT AN OLDER SDK.** Measured, not assumed:
+
+* Older SDKs **are** installed — 8.1, 10.0.10240, 19041, 22621.
+* `--pin-compiler` is inert: 4.15's UBT cannot even parse the modern `BuildConfiguration.xml`
+  (`XmlConfigLoader: Reading config XML failed`), and the toolset is not the discriminator anyway.
+* Forcing **VS2015** with `-2015` changes the compiler and **not** the SDK — both engines fail
+  with the identical line. So the compiler is not what selects it.
+* `UEBuildWindows.cs` (4.18) exposes `WindowsPlatform.Compiler`, `StaticAnalyzer`,
+  `bStrictConformanceMode` and `ObjSrcMapFile` as `[XmlConfigFile]` — and **no SDK version knob**.
+* `VCEnvironment.FindWindowsSDKExtensionLatestVersion` simply enumerates the directories under
+  `Windows Kits\10\include\` and keeps the **maximum**. Nothing filters it.
+
+So the only lever is removing or hiding `10.0.26100.0` from that directory — which every UE5 build
+on this machine depends on. ⛔ Not a trade worth making for a third data point in a regime 4.23
+already covers.
+
+⚠ `UE418_3rdPerson` keeps its new `Source/` module and its `.uproject` change (the maintainer's
+call: *"改 .uproject 沒差, 那只是 sample"*). It is correct and will build the day the SDK situation
+changes; `UE418_3rdPerson.uproject.pre-cpp.bak` is the exact undo.
+
+### ⛔ AND THE MODULE-PCH RULE HAS TWO OPPOSITE HALVES
+
+Two rules, opposite to each other, and **the engine version is the wrong discriminator** —
+4.18 supports both and the template picks one:
+
+* **module-wide PCH** (no `PCHUsage` in `Build.cs` — UE 4.15's template): every `.cpp` must include
+  the MODULE header first, or UBT refuses with *"All source files in module X must include the
+  same precompiled header first"*.
+* **IWYU** (`PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs` — 4.18, 4.23 and 4.27's templates):
+  the file's OWN header must be first — *"Expected DelegatePadFixture.h to be first header
+  included."*
+
+⚠ Prepending unconditionally fixed 4.15 and **broke 4.18**. `install.py` now reads `Build.cs`,
+which is where the answer actually lives, and prepends only in the module-PCH case. The module's
+name is per-project, which is why the STORED pair cannot carry the include and the INSTALLED copy
+must.
 
 ### ⛔ AND A UE4 TRAP THAT READS AS A BROKEN TOOLCHAIN
 
@@ -1782,11 +1828,8 @@ thing missing.
 
 ### ⬜ Open
 
-* **4.15 needs UBT pointed at an older Windows SDK** — 8.1 or 10.0.10240 are installed. This is
-  the one remaining UE4 blocker and it is a genuine toolchain gap, not a permission or a fixture
-  problem: VS2017 ships no toolset new enough for the 26100 UCRT headers.
-* **4.18 has no C++ project.** One would have to be created before its (now open) permissions buy
-  anything.
+* **4.15 / 4.18 stay blocked** on the Windows SDK, with no override — see the ⛔ block above. The
+  4.18 scaffolding is done and waiting.
 * **No UE4 READ test.** The survey covers the class table; `d4b_delegate_pad.py` needs a live
   instance and nothing spawns `ADelegatePadFixture`. `install.py --spawn-from` prints the
   two-line patch rather than applying it — a blind regex edit of someone else's project template
