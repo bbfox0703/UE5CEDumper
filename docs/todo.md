@@ -1820,7 +1820,7 @@ needs. Re-measured at HEAD rather than quoted — the published 213 / 54 / 165 w
 | slice | population at HEAD | the question | status |
 |---|---|---|---|
 | **A** CE Lua emission layer | 16 generators → **5** candidates + 3 controls | does it report the ATTEMPT, or re-read the EFFECT? | ✅ **1 defect / 8**, fixed |
-| **B** discarded qualified calls, non-`ReadSafe` | **133** (declarations, logging and `std::` excluded) | shape A — is an effect's status return dropped? | ⬜ needs the effect-applier list |
+| **B** discarded qualified calls, non-`ReadSafe` | **133** (declarations, logging and `std::` excluded) | shape A — is an effect's status return dropped? | ✅ **scored, 7 walked**, 3 defects fixed; the GATE stays refused |
 | **C** discarded `Read*Safe` | **135**, of which **15** reach a published field | does the UN-SET out-param feed a COUNT or a PUBLISHED field? | ✅ **all 15 adjudicated**, 3 defects fixed |
 | **D** the 30-item "unverified tail" | no list exists | — | ⬜ a re-sweep, not an adjudication |
 
@@ -2108,12 +2108,92 @@ would fail its own controls.
 `Serie::InitUE4` with its own chunks. Nothing needing the real pool may follow any of the three;
 the `TMAPGEOM` banner now names all three.
 
-### ⬜ Slice B — blocked on a decision, not on work
+### ✅ Slice B — ADJUDICATED 2026-09-09: 7 sites, 3 defects fixed, and the gate stays refused
 
-Round 1 already designed the instrument and refused to build the naive one: a blanket "bool
-results must be consumed" rule is noise, so what is needed is an **allowlist of ~25 effect-appliers**
-in `tools/effect-appliers.tsv`, baselined like gate #4 rather than zero-tolerance. That list does
-not exist yet, and writing it is the work — not scanning.
+⛔ **THE PARAGRAPH THAT USED TO BE HERE WAS WRONG, AND THIS FILE CONTAINED THE REFUTATION.** It
+said the work was writing an **allowlist of ~25 effect-appliers** into `tools/effect-appliers.tsv`
+and baselining a gate on it. But `#### ⛔ Gate #17 as proposed in round 1 is REFUTED — do not
+build it` is *four hundred lines above*, and `tools/check_clipboard_delivery.py`'s own header
+repeats the verdict in shipped code: *"the round-1 proposal here was an allowlist of ~25 'effect
+appliers'; it scored 0 of 10 findings"*. Slice B was written off round 1's plan without
+reconciling it against round 2's ruling on that plan. ⚠ **Two sections of one file disagreeing is
+the same failure mode as a stale count** — and the reason it survived a day is that the slice
+table's "status" column said *needs the list*, which reads like work rather than like a decision
+already taken.
+
+⭐ **SO IT WAS SCORED RATHER THAN ARGUED.** The allowlist was built ONCE, from the module
+**headers** (every public entry point whose return says whether an effect landed; readers and the
+ProcessEvent param-buffer packers excluded by name, exactly as round 1 specified) — **33 names** —
+and run. `tools/verify/claims_effect_applier.py` is that score, kept so the next person to propose
+the allowlist re-runs it instead of re-arguing it.
+
+| | round 1 predicted | measured at HEAD |
+|---|---|---|
+| discarded call sites | 23 | **7** |
+| defects | — | **3** |
+| waivers a gate opens with | "one baseline line per new site" | **4 — 57% false positive** |
+
+⛔ **AND THE FOUR CLEAN ONES ARE THE ARGUMENT, not the leftovers.** Three of them are in ONE
+handler — `Fern.cpp`'s `fly_set` — which drops `SetSpeed` / `SetPreset` / `SetNoclip` and is
+correct anyway, because the next thing it does is `Dunste::GetStatus(st)` and it answers from
+`st`. That is this repo's rule (*report the EFFECT, not the ATTEMPT*) followed exactly, and a
+checker keyed on "the status was discarded" **flags the handler that follows it best**. Seven
+sites do not buy a curated TSV, a baseline file and a gate; they buy an afternoon of reading.
+
+| site | verdict | why |
+|---|---|---|
+| `Fern.cpp:1232` `Schlacht::SetEnabled(false)` | ✅ **CLEAN** | last-client teardown — there is no client left to make a claim to, and the comment already calls it a no-op when see-through was never enabled |
+| `Fern.cpp:6021` `Dunste::SetSpeed` | ✅ **CLEAN** | cannot fail (clamps, returns `FR_OK`), and the response re-reads `GetStatus` |
+| `Fern.cpp:6023` `Dunste::SetPreset` | ✅ **CLEAN** | **can** fail (`FR_ERR_REFLECT`), but the response publishes `st.preset` — so a rejected preset shows the OLD one. The effect, not the attempt |
+| `Fern.cpp:6025` `Dunste::SetNoclip` | ✅ **CLEAN** | same; `st.noclip` is re-read |
+| `Dunste.cpp:726` enable | ⛔ **DEFECT, fixed** | see below |
+| `Dunste.cpp:750` disable restore | ⛔ **DEFECT, fixed** | see below |
+| `Wirbel.cpp:618` deep-force | ⛔ **DEFECT (LOW), fixed** | `rewrote++` ran whether or not the write landed |
+
+#### ⛔ The two Fly defects — `[SLICEB-FLY-2026-09-09]`
+
+`Dunste::SetEnabled` writes **one byte** (`UCharacterMovementComponent::MovementMode`) and that
+write **is** the effect; `active` / `baseCaptured` / `capturedPawn` are bookkeeping. Both call
+sites dropped `Macht::WriteBytes`' result, which returns false when `VirtualProtect` refuses a
+freed or unmapped page (a pawn destroyed between `ResolveCtx` and the write) or the memcpy faults.
+
+- **Enable** returned 1, logged `Fly: ENABLED` and started the worker over a pawn that never left
+  its old MovementMode. Now rolls the bookkeeping back and returns `FR_ERR_WRITE` **before**
+  `StartWorkerLocked()`, so nothing is armed.
+- **Disable is the worse half**: it cleared `active`, stopped the worker and logged
+  `Fly: DISABLED` while the pawn stayed in `MOVE_Flying` — the feature reporting OFF over a pawn
+  still flying, with nothing tracking it. That is the `[FREEZESTUCK-2026-08-18]` shape. Now warns
+  with the address and returns `FR_ERR_WRITE`; the completion log says which of the two happened.
+
+⭐ **`FR_ERR_WRITE = -10, // raw write failed` WAS ALREADY IN THE ENUM WITH NO PRODUCER**, which is
+what a dropped status usually looks like from outside. ⭐⭐ **And the exemplar is in the same
+file**: the worker's drift correction writes the same byte as
+`if (Macht::WriteBytes(...)) ++s_state.driftCount;`, and the collision restore forty lines below
+the disable path handles its own failure with a warning, a kept record and a polling retry.
+
+⚠ **FOLLOWING THE FIX OUT TO THE USER FOUND TWO MORE, IN C#** — and they would have gone on lying
+after the DLL started telling the truth. `ApplyFlyAsync` keyed its `✈ Fly ON` on **`st.HasCmc`**
+(*"a CharacterMovement was RESOLVED"*), and `ResetFlyAsync` said `"Fly OFF."` **unconditionally**.
+`FlyStatus.State` has carried the code across the wire the whole time. Both now report the effect.
+
+**RED-BEFORE-GREEN on the C# half, each mutation restored in a `finally`** (4781 tests, was 4778):
+`applyclaim` (key `Fly ON` off `HasCmc` again) → **1 FAIL**, `Assert.DoesNotContain: Sub-string
+found`; `resetclaim` (unconditional `"Fly OFF."`) → **1 FAIL**, `Assert.Contains: Sub-string not
+found`. Each mutant reds exactly its own test.
+
+⛔ **THE DLL HALF HAS NO TEST, AND THAT IS SAID RATHER THAN PAPERED OVER.** `Dunste.cpp` and
+`Wirbel.cpp` are among the **21 of 31** `dll/src/*.cpp` that reach NO test target — the trap
+CLAUDE.md's `-Target Test` warning documents — so a green `-Target Test` measures nothing about
+them. They are verified by `-Target DLL` (SUCCESS) plus code reading, and the third arm of each
+fix is reachable only from a failing `VirtualProtect`, which needs a live pawn freed mid-call.
+⚠ **The C# tests do NOT cover it either** — they pin what the UI does when the DLL reports the
+failure, not that the DLL reports it.
+
+⚠ **NOT FIXED, and deliberately**: `SetEnabled(false)` when `ResolveCtx` fails still returns 0
+without restoring anything. That is not a dropped status — there is no pawn to write to — but it
+does mean "Fly OFF." is said over a mode that was never restored because the pawn is gone. Left
+because the alternative is claiming a failure we cannot distinguish from a legitimately absent
+pawn, which is the defect this slice exists to remove, pointed the other way.
 
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 

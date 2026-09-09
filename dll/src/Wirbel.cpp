@@ -615,8 +615,14 @@ int DeepForceWorldPos(const Chain& c, const double oldPos[3], const double targe
         ReadVec3Buf(buf + o, c.relLocSize, v);
         double dx = v[0]-oldPos[0], dy = v[1]-oldPos[1], dz = v[2]-oldPos[2];
         if (dx*dx + dy*dy + dz*dz <= kEps2) {
-            Macht::WriteBytes(c.root + static_cast<uintptr_t>(o), rawTarget, vsz);
-            rewrote++;
+            // ⛔ COUNT WHAT LANDED, NOT WHAT WAS ATTEMPTED. `rewrote` used to increment
+            // whether or not the write succeeded, and it is the function's whole output: it
+            // is returned, and it selects between "deep-force rewrote N vector(s)" and the
+            // "visual may not move" WARNING below. A run where every write was refused
+            // therefore logged a confident N and SUPPRESSED the one warning an operator has.
+            // Adjudicated 2026-09-09 as slice B of the unadjudicated sweep claims.
+            if (Macht::WriteBytes(c.root + static_cast<uintptr_t>(o), rawTarget, vsz))
+                rewrote++;
         }
     }
     if (rewrote)

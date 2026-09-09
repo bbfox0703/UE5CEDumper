@@ -722,8 +722,27 @@ int32_t SetEnabled(bool enable) {
             s_state.tick = 0;
             s_state.driftCount = 0;
             uint8_t fly = Grimoire::MOVE_FLYING;
-            if (c.modeOff >= 0)
-                Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &fly, 1);
+            // ⛔ THIS WRITE *IS* THE EFFECT, and its result used to be dropped. Everything
+            // above it -- active, baseCaptured, capturedPawn -- is BOOKKEEPING; the pawn only
+            // flies because this byte changed. Macht::WriteBytes returns false when
+            // VirtualProtect refuses (a freed or unmapped page: a pawn destroyed between
+            // ResolveCtx and here) or the memcpy faults, and dropping that made SetEnabled
+            // return 1, log "Fly: ENABLED" and start the worker over a pawn that never left
+            // its old MovementMode -- a claim made from the ATTEMPT.
+            // ⭐ FR_ERR_WRITE ("raw write failed") was ALREADY in the FlyResult enum with no
+            // producer, which is what a dropped status usually looks like from the outside.
+            // ⭐ AND THE EXEMPLAR IS IN THIS FILE: the worker's drift correction writes the
+            // same byte as `if (Macht::WriteBytes(...)) ++s_state.driftCount;`. Adjudicated
+            // 2026-09-09 as slice B of the unadjudicated sweep claims.
+            if (c.modeOff >= 0
+                && !Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &fly, 1)) {
+                s_state.active       = false;
+                s_state.baseCaptured = false;
+                s_state.capturedPawn = 0;
+                LOG_WARN("Fly: NOT enabled -- the MovementMode write failed at 0x%llX",
+                         (unsigned long long)(c.cmc + static_cast<uintptr_t>(c.modeOff)));
+                return FR_ERR_WRITE;   // returns before StartWorkerLocked(): nothing is armed
+            }
             LOG_INFO("Fly: ENABLED (baseMode=%u, speed=%.0f, preset=%d)",
                      s_state.baseMode, s_state.speed, s_state.preset);
         }
@@ -740,6 +759,7 @@ int32_t SetEnabled(bool enable) {
     // the restore below. The old order (decide → restore → join) let an in-flight tick
     // turn collision back off after we had just turned it on. (B8, Schlacht M1 shape.)
     uintptr_t restoreCollPawn = 0;
+    bool modeRestoreFailed = false;
     {
         std::lock_guard<std::mutex> lk(s_mutex);
         if (s_state.active) {
@@ -747,7 +767,20 @@ int32_t SetEnabled(bool enable) {
             if (ResolveCtx(c, false) == FR_OK) {
                 if (c.modeOff >= 0 && s_state.baseCaptured) {
                     uint8_t base = s_state.baseMode;
-                    Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &base, 1);
+                    // ⛔ THE RESTORE IS THE EFFECT TOO, and this is the WORSE half of the
+                    // pair: a dropped result here cleared `active`, stopped the worker and
+                    // logged "Fly: DISABLED" while the pawn stayed in MOVE_Flying -- the
+                    // feature reported OFF over a pawn still flying, with nothing tracking it.
+                    // That is the [FREEZESTUCK-2026-08-18] shape, and the collision restore
+                    // forty lines below already treats its own failure exactly this carefully.
+                    if (!Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff),
+                                           &base, 1)) {
+                        modeRestoreFailed = true;
+                        LOG_WARN("Fly: the MovementMode restore write FAILED at 0x%llX -- the "
+                                 "worker is stopped but the pawn may still be in MOVE_Flying",
+                                 (unsigned long long)(c.cmc
+                                     + static_cast<uintptr_t>(c.modeOff)));
+                    }
                 }
                 double zero[3] = {0, 0, 0};
                 if (c.velAddr) WriteVec3At(c.velAddr, c.velSize, zero);
@@ -796,6 +829,13 @@ int32_t SetEnabled(bool enable) {
             StartPendingLocked();
             return 0;
         }
+    }
+    if (modeRestoreFailed) {
+        // The worker IS stopped and input IS released, so this is not a failure to disable --
+        // it is a disable whose RESTORE did not land, and the two must not read alike. The
+        // code reaches the UI as FlyStatus.State, which the wire has always carried.
+        LOG_WARN("Fly: DISABLED, but the captured MovementMode was NOT restored");
+        return FR_ERR_WRITE;
     }
     LOG_INFO("Fly: DISABLED");
     return 0;

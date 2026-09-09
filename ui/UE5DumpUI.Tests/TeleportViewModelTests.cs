@@ -897,6 +897,73 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.FlyState);
     }
 
+    // ⛔ [SLICEB-2026-09-09] -- BOTH fly status lines were claims from the ATTEMPT.
+    //
+    // The DLL's SetEnabled writes one byte (UCharacterMovementComponent::MovementMode) and
+    // that write IS the effect; everything else is bookkeeping. Macht::WriteBytes returns
+    // false when VirtualProtect refuses a freed page or the memcpy faults, and both call
+    // sites dropped it -- so the enable path returned 1 and logged "Fly: ENABLED" over a
+    // pawn that never left its old mode, and the disable path cleared `active` and logged
+    // "Fly: DISABLED" over a pawn still in MOVE_Flying with nothing tracking it.
+    //
+    // ⭐ THE UI HALF IS SEPARATELY WRONG, which is why these are two tests and not one:
+    // ApplyFly keyed its "Fly ON" on st.HasCmc -- "a CharacterMovement was RESOLVED" -- and
+    // ResetFly said "Fly OFF." unconditionally. Both would have gone on lying even after the
+    // DLL started telling the truth. FlyStatus.State has carried the code all along.
+
+    [Fact]
+    public async Task Fly_enable_that_the_DLL_REFUSED_is_not_reported_as_ON()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        // The CMC resolved (HasCmc), and the MovementMode write still failed: FR_ERR_WRITE,
+        // Active false, and the pawn left in mode 1 (MOVE_Walking).
+        fake.NextFlyStatus = new FlyStatus
+        { HasCmc = true, Active = false, CurrentMode = 1, State = -10 };
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.Equal("OFF", vm.FlyState);
+        Assert.DoesNotContain("Fly ON", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("did NOT engage", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("-10", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_disable_whose_MovementMode_restore_FAILED_says_so()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        // The worker stopped (Active false) but the restore write was refused, so the pawn
+        // is still in mode 5 == MOVE_Flying. "Fly OFF." here is the [FREEZESTUCK] shape.
+        fake.NextFlyStatus = new FlyStatus
+        { HasCmc = true, Active = false, CurrentMode = 5, State = -10 };
+        await vm.ResetFlyCommand.ExecuteAsync(null);
+
+        Assert.Contains("NOT restored", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("still be flying", vm.StatusText, StringComparison.Ordinal);
+        // ⭐ THE CONTROL IS IN Fly_toggle_enables_then_disables ABOVE: State = 0 must keep
+        //    saying plainly "Fly OFF.", or this "fix" has simply made every disable shout.
+    }
+
+    [Fact]
+    public async Task Fly_disable_that_SUCCEEDED_still_says_plainly_Fly_OFF()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        fake.NextFlyStatus = new FlyStatus
+        { HasCmc = true, Active = false, CurrentMode = 1, State = 0 };
+        await vm.ResetFlyCommand.ExecuteAsync(null);
+
+        Assert.Equal("Fly OFF.", vm.StatusText);
+        Assert.Equal("OFF", vm.FlyState);
+    }
+
     [Fact]
     public void Fly_preset_change_pushes_config_without_enable()
     {

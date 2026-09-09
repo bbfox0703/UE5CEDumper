@@ -2587,9 +2587,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             var st = await _dump.FlySetAsync(enable: true, speed: FlySpeed, preset: FlyPresetIndex, noclip: FlyNoclip);
             ApplyFlyReadout(st);
-            StatusText = st.HasCmc
-                ? $"✈ Fly ON ({(FlyNoclip ? "noclip" : "collision")}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
-                : "Fly could not engage (no CharacterMovement on this pawn).";
+            // ⛔ REPORT THE EFFECT, NOT THE ATTEMPT. HasCmc says a CharacterMovement was
+            // RESOLVED — it says nothing about whether the MovementMode write landed, and
+            // that write is the only reason the pawn flies. The DLL now leaves Active false
+            // and returns FR_ERR_WRITE when it did not; FlyStatus.State has always carried
+            // the code. Slice B of the unadjudicated sweep claims, 2026-09-09.
+            StatusText = !st.HasCmc
+                ? "Fly could not engage (no CharacterMovement on this pawn)."
+                : st.Active
+                    ? $"✈ Fly ON ({(FlyNoclip ? "noclip" : "collision")}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
+                    : $"Fly did NOT engage (code {st.State}) — the pawn is still in MovementMode {st.CurrentMode}.";
         }
         catch (Exception ex)
         {
@@ -2611,7 +2618,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             var st = await _dump.FlySetAsync(enable: false, speed: null, preset: null, noclip: null);
             ApplyFlyReadout(st);
-            StatusText = "Fly OFF.";
+            // ⛔ The same rule on the way back down, and this is the worse half: the DLL
+            // returns FR_ERR_WRITE when the worker stopped but the captured MovementMode was
+            // NOT restored — the feature reads OFF over a pawn that is still flying, which is
+            // the [FREEZESTUCK-2026-08-18] shape. "Fly OFF." was said unconditionally.
+            StatusText = st.State < 0
+                ? $"Fly stopped, but the MovementMode was NOT restored (code {st.State}) — the pawn may still be flying (MovementMode {st.CurrentMode})."
+                : "Fly OFF.";
         }
         catch (Exception ex)
         {
