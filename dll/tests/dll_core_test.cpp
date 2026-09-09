@@ -768,6 +768,99 @@ int main() {
         check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
     }
 
+    // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
+    //
+    // ⛔ MUST STAY LAST IN THIS FUNCTION. It calls Serie::InitUE4, and Serie's pool state
+    // (s_poolAddr / s_isUE4Mode / s_initialized) lives in file-statics that no header
+    // exposes -- so it CANNOT be restored. Anything appended after this block would run
+    // against a fake UE4 name pool and could pass or fail for that reason.
+    //
+    // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
+    // faulted read the addr stays 0, `ResolveElementAlignment` is then asked to align a
+    // struct it cannot see, and whatever it guesses flows into pairAlign -> pairStride --
+    // while the comment two lines under that block says out loud that "the stride must be a
+    // multiple of it, or every element after index 0 lands at a wrong address". The sweep
+    // filed this site as "the same question unanswered" and never answered it.
+    //
+    // ⭐ WHY THIS NEEDS A PAGE BOUNDARY AND NOT A DEAD POINTER. The other fault fixtures in
+    // this file point a Data pointer at 0x1000, so the whole target is unreadable. That does
+    // NOT reach this arm: a wholly-unreadable property makes GetFieldTypeName return
+    // "Unknown" and the function returns false long before the struct read -- the same
+    // outcome as the fix, for a different reason. The repair only matters for a PARTIAL
+    // failure: the property readable at +0x08 and +0x3C, unreadable at +0x78. That is
+    // manufactured here by committing ONE page of a two-page reservation and laying the
+    // property across the edge.
+    {
+        blk("TMAPGEOM - a faulted FStructProperty::Struct refuses, it does not guess a stride");
+
+        // 1. A fake UE4 name pool, so GetFieldTypeName can answer "StructProperty".
+        //    Chunks[0] -> chunk -> entry, string at entry + 0x10.
+        static uint8_t entryBlob[0x40] = {};
+        memcpy(entryBlob + 0x10, "StructProperty", sizeof("StructProperty"));
+        static uintptr_t chunk[4] = {};
+        chunk[1] = reinterpret_cast<uintptr_t>(entryBlob);   // comparison index 1
+        static uintptr_t chunks[2] = { reinterpret_cast<uintptr_t>(chunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(chunks), 0x10);
+        check("TMAPGEOM setup: the fake pool resolves index 1",
+              Serie::GetString(1) == "StructProperty", Serie::GetString(1).c_str());
+
+        // 2. A fake FFieldClass whose Name is that index.
+        static uint8_t fclass[0x20] = {};
+        *reinterpret_cast<int32_t*>(fclass + DynOff::FFIELDCLASS_NAME) = 1;
+
+        // 3. Two pages RESERVED, one COMMITTED. A read that crosses the edge faults.
+        uint8_t* page = static_cast<uint8_t*>(
+            VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("TMAPGEOM setup: reserved two pages", page != nullptr);
+        if (!page) { printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+                     return g_fail == 0 ? 0 : 1; }
+        VirtualAlloc(page, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+
+        auto makeProp = [&](uint8_t* at) {
+            memset(at, 0, 0x40);
+            *reinterpret_cast<uintptr_t*>(at + DynOff::FFIELD_CLASS) =
+                reinterpret_cast<uintptr_t>(fclass);
+            // ELEMSIZE is what ResolveInnerSize uses FIRST, so it returns before ever
+            // touching FSTRUCTPROP_STRUCT -- which is why the ONLY faulting read in the
+            // straddled case is the one under test.
+            *reinterpret_cast<int32_t*>(at + DynOff::FPROPERTY_ELEMSIZE) = 12;
+            return reinterpret_cast<uintptr_t>(at);
+        };
+
+        auto makeMap = [&](std::vector<uint8_t>& blob, uintptr_t prop) {
+            *reinterpret_cast<uintptr_t*>(blob.data() + DynOff::FARRAYPROP_INNER)     = prop;
+            *reinterpret_cast<uintptr_t*>(blob.data() + DynOff::FARRAYPROP_INNER + 8) = prop;
+            return reinterpret_cast<uintptr_t>(blob.data());
+        };
+
+        // ⭐ THE CONTROL FIRST. The same fake, wholly inside the committed page, MUST lay
+        // out -- otherwise a refusal below would prove only that the fake is broken.
+        std::vector<uint8_t> mapOk(0x100, 0);
+        Ubel::MapPairLayout okLayout{};
+        const bool okRes = Ubel::GetMapPairLayout(makeMap(mapOk, makeProp(page + 0x100)),
+                                                  okLayout);
+        check("TMAPGEOM control: a READABLE struct property lays out", okRes);
+        check("TMAPGEOM control: and it produced a stride", okLayout.pairStride > 0,
+              std::to_string(okLayout.pairStride).c_str());
+
+        // Now the same property laid across the page edge: +0x08 and +0x3C are the last
+        // readable bytes, +0x78 is in the uncommitted page.
+        uint8_t* edge = page + 0x1000 - 0x40;
+        std::vector<uint8_t> mapBad(0x100, 0);
+        Ubel::MapPairLayout badLayout{};
+        const bool badRes = Ubel::GetMapPairLayout(makeMap(mapBad, makeProp(edge)), badLayout);
+
+        check("TMAPGEOM ⭐: a faulted FStructProperty::Struct REFUSES the layout",
+              badRes == false);
+        check("TMAPGEOM ⭐: and no stride was published from an unread struct pointer",
+              badLayout.pairStride == 0,
+              std::to_string(badLayout.pairStride).c_str());
+        check("TMAPGEOM: the struct addr really did stay unread",
+              badLayout.valueStructAddr == 0);
+
+        VirtualFree(page, 0, MEM_RELEASE);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

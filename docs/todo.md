@@ -1696,6 +1696,72 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ TMap geometry — the fixture that looked impossible `[TMAPGEOM-2026-09-09]`
+
+`GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a faulted read the addr stays
+0, `ResolveElementAlignment` is asked to align a struct it cannot see, and whatever it guesses
+flows into `pairAlign` → `pairStride` — while the comment two lines below says out loud that *"the
+stride must be a multiple of it, or every element after index 0 lands at a wrong address"*. The
+sweep filed this site as *"the same question unanswered"* in round 2 and never answered it. It was
+repaired 2026-09-09 and recorded as **not live-verifiable**. It is now verified.
+
+### ⛔ WHY THE OBVIOUS FIXTURE PROVES NOTHING — and why the row was nearly closed wrongly
+
+Every other fault fixture here points a pointer at `0x1000`, so the whole target is unreadable.
+**That does not reach this arm.** A wholly-unreadable property makes `GetFieldTypeName` return
+`"Unknown"`, the `keyTn == "StructProperty"` test fails, and the function returns false *before*
+the struct read — the same outcome as the fix, for a different reason. A rig built that way would
+have gone green while measuring nothing.
+
+The repair only matters for a **partial** failure: the property readable at `+0x08` (FFieldClass)
+and `+0x3C` (ElementSize), unreadable at `+0x78` (Struct). Nothing in a live game hands you that,
+and the pipe has no way to unmap a page inside the target.
+
+### ⭐ Manufactured with a page edge, in our own process
+
+`dll_core_test` compiles `Ubel.cpp` and `Macht::ReadSafe` reads **this** process — so the fixture
+is built where `VirtualAlloc` is available:
+
+* **two pages RESERVED, one COMMITTED**, and the synthetic `FStructProperty` laid at
+  `page + 0x1000 - 0x40`. `+0x08` and `+0x3C` are then the last readable bytes (ElementSize ends
+  exactly at the page edge) and `+0x78` lands in the uncommitted page;
+* a fake **UE4 name pool** (`Serie::InitUE4`, chunks → chunk → entry → string at `+0x10`) so
+  `GetFieldTypeName` answers `"StructProperty"` — without it the walk never enters the branch;
+* `ElementSize = 12`, because `ResolveInnerSize` tries ElementSize **first** and returns before
+  ever touching `FSTRUCTPROP_STRUCT` — which is what makes the struct read the *only* faulting
+  read in the straddled case.
+
+⚠ **The block must stay LAST in `dll_core_test`.** `Serie`'s pool state lives in file-statics no
+header exposes, so `InitUE4` cannot be undone; anything appended after it would run against a fake
+UE4 name pool.
+
+### ⭐⭐ The control, and the number the mutation produced
+
+The **same fake, wholly inside the committed page**, must lay out and produce a stride. Without
+that control a refusal would only prove the fake was broken.
+
+Mutation — disable the refusal and the fixture's two ⭐ checks go red:
+
+```
+FAIL  TMAPGEOM ⭐: a faulted FStructProperty::Struct REFUSES the layout
+FAIL  TMAPGEOM ⭐: and no stride was published from an unread struct pointer   got: 36
+```
+
+**`got: 36`** is the defect stated as a number: a pair stride fabricated from a struct pointer
+nobody could read, published as fact. `Ubel.cpp` restored byte-identically and rebuilt green
+(62 checks in `dll_core_test`, was 55).
+
+### ⬜ Still open
+
+* **This is an OFFLINE fixture, not a live one**, and deliberately: the partial-read condition
+  cannot be produced inside a game from the pipe surface. It drives the real `GetMapPairLayout`
+  against real `Macht::ReadSafe`, so it is not a double — but it is not a running UE title either.
+* **The refusal is now `return false` for the whole probe loop**, not `continue` to the next
+  candidate offset. That is deliberate — `GetFieldTypeName` already agreed this is the right
+  property, so the fault is real rather than a wrong guess — but it does mean a build where the
+  struct offset itself is misprobed now yields no layout instead of a wrong one. No title has
+  shown that.
+
 ## ✅ `(stale)` — all FIVE sites, one definition `[STALE-NONE-2026-09-09]`
 
 The seventh defect was repaired in one reader; the ask was "fix the other two". ⭐ **There were
@@ -1835,10 +1901,9 @@ twice, and never re-run. All four rigs now ran against the same current DLL:
 
 ### ⬜ Still open
 
-* **`Ubel::TMap` geometry** — the dropped `FStructProperty::Struct` reads that fed
-  `ResolveElementAlignment` → `pairAlign` → `pairStride` are now checked and refuse rather than
-  derive a stride from an unread pointer. ⚠ **Not live-verified**: it needs a `TMap` whose
-  key/value struct pointer faults, and no fixture produces that.
+* ~~**`Ubel::TMap` geometry** — not verifiable~~ ✅ **CLOSED** by
+  `[TMAPGEOM-2026-09-09]` above: the partial-read condition WAS manufacturable, with a page
+  edge in our own process rather than inside a game.
 * The `(stale)` branch **elsewhere**. Only `ReadDelegateArrayElements` was repaired; the
   single-field `DelegateProperty` handler and the multicast element loop have their own
   `funcName.empty()` tests and were not re-examined for the `"None"` case.
