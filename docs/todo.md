@@ -1731,18 +1731,39 @@ for that engine. Neither engine produced one.
 bindings are read correctly — that is `d4b_delegate_pad.py`'s job and it needs DumperTest's
 purpose-built bound delegates. The two rigs are complementary and neither subsumes the other.
 
-### ⬜ Still open — and now one command away
+### ✅ …and on a REAL title — Titan Quest II `[D4B-PADSURVEY-TQ2-2026-09-09]`
 
-**No real title has been surveyed.** Every shipped game on this machine is a Shipping build, so
-the 5.4/5.8 Shipping columns are that path — but on the fixture, not on a title with a real
-class graph. Closing it costs one game boot:
+The row above listed "no real title has been surveyed" as its residual. Closed the same day.
 
-```
-py tools/verify/d4b_pad_survey.py --expect-pad 0
-```
+**Titan Quest II** (Steam appid 1154030), launched with `steam.exe -applaunch`, engine confirmed
+really up before anything was believed: **279,587 objects**. A menu is enough — the survey reads
+the class field TABLE, so it needs no world, no pawn and no bound delegate.
 
-A title whose delegate ElementSize is neither 16 nor 24 would surface here as a named list of
-refused properties rather than as blank fields noticed months later.
+> `600 classes walked · 46 delegate properties · all pad 0 · 0 unrecognised sizes`
+> e.g. `SkeletalMeshComponent::OnConstraintBroken` / `OnPlasticDeformation` / `OnAnimInitialized`
+
+So the readers changed by `[D4B-DELEGATEPAD]` meet nothing on a shipped title that the derivation
+cannot name, on a class graph 460× the fixture's.
+
+### ⛔ TWO THINGS THIS RUN CORRECTED OR LEFT OPEN — read before quoting it
+
+* ⚠ **The case-preserving branch is STILL unexercised.** TQ2 was chosen *because*
+  `Ubel.cpp:1735`'s comment names it as the "UE 5.7 + CasePreservingName" example, which would
+  have driven the unicast base to `8 + 12 = 20`. It does **not**: `get_offsets` on this build
+  reports `case_preserving: false`, so the base was 16 and that arm never ran. ⭐ The rig prints
+  the flag it used rather than assuming — worth keeping, because a `.get(key, False)` over a key
+  that does not exist would have *silently claimed* non-CPN, which is this sweep's own defect
+  shape. The key exists and the answer is genuinely false. Either the Ubel comment is stale or it
+  is about a different measurement; not chased. `Grimoire.h` already records that
+  `bCasePreservingName` has **12 titles measured false** and no title measured true.
+* ⛔ **EVERY deployed proxy on this machine was STALE — 10 titles**, and TQ2's was the reason
+  `inject.py` refused: a proxy auto-loads at game start and OWNS THE PIPE, so an inject of the
+  current DLL is a no-op and everything measured is the old binary. The injector's stale-module
+  guard is what caught it. Only TQ2's was refreshed (`proxy_refresh.py refresh "Titan Quest II"`,
+  2,898,432 → 2,921,472, old copy backed up with its SHA); **the other nine are still stale** —
+  EVERSPACE 2 / Avowed / DQ7R / EVERSPACE / Lushfoil / Manor Lords / OCTOPATH / Elliot /
+  The Artisan of Glimmith. ⚠ Any future row that boots one of those measures pre-3461 code
+  unless it refreshes first.
 
 ## ✅ D1 — the refused-restore call site, live `[D1-COLLREFUSE-2026-09-09]`
 
