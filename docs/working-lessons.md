@@ -448,6 +448,49 @@ out of the repo (the report is the deliverable).
 ⚠ **And the check that catches it**: a coverage number must be **re-derived after the write-up
 lands**, not only before. If the two disagree, one of them is measuring the write-up.
 
+### 1.w4 A DISCARDED RETURN IS A STRUCTURE, NOT A DEFECT — and §1.w2 applies to AGENTS too
+
+2026-09-10, `[A4-ASSESS-2026-09-09]` phase 2. A four-agent hunt for *"the DLL knows it and tells no
+channel"* returned **17 findings, 8 of them HIGH**. A refute-mandated pass killed **14**.
+
+⛔ **AND I HAD HAND-VERIFIED FOUR OF THE FOURTEEN BEFORE THE SKEPTICS RAN.** Every structural claim I
+checked was TRUE: `Dunste.cpp:830` really does `return 0` and really does skip the
+`modeRestoreFailed` check below it; `Schlacht.cpp:366` really is `Invoke(actor, fi, buf); return
+true;` with two siblings in the same file that DO check their result; `Solide.cpp:265` really returns
+success without restoring. I read the code, confirmed the mechanism, and concluded the defect.
+**All four verdicts were wrong.**
+
+⭐ **THE DISCRIMINATOR, and it is not subtle once named**: a discarded return is a defect only if the
+CONSEQUENCE survives too. Each of those four died on the consequence, never on the structure:
+
+- `Dunste.cpp:830` — the collision branch is **PENDING, not failed**: `StartPendingLocked()` is
+  called and the record deliberately kept, so `return 0` means *"fly is off and the restore is in
+  hand"*, which is true. `Dunste.cpp:604-612` records that this is the **COMMON** path, because the
+  click that disables Fly is what backgrounds the game. Escalating would false-alarm on nearly every
+  Noclip disable, about a state that self-heals on the user's very next action.
+- `Schlacht.cpp:366` — `Invoke() == 0` means *ProcessEvent dispatched without faulting*, **not** that
+  `bHidden` moved. The repo answers the real question with the published actor **addresses**
+  (`Fern.cpp:6062-6069`, consumed by four rigs) so a verifier re-reads each bit. Gating `applied` on
+  the return code would reproduce audit #4's own root cause — the report and the reality computed by
+  the same code path.
+- `Solide.cpp:265` — the irreversibility of an object-null hold is static, documented in
+  `Solide.h:181-184`, and **confirmed by the user before the act**.
+
+⚠ **So "I read the code myself" is NOT the check.** Reading the code verifies the MECHANISM. What
+decides a defect is *what does the user end up believing, and is it false* — and that needs the
+consumer, the sibling channels, and the module's stated design, not just the site.
+
+⛔⛔ **AND ONE OF THE 17 WAS ON THIS REPO'S OWN "Refuted (8) — do not re-raise" LIST, TWICE** —
+`docs/todo.md:1183` and `:1302`, both naming `Schlacht.cpp:366`, each killed on ≥4 routes. §1.w2 was
+written about a **mechanical scanner** doing exactly this. **It generalises to LLM agents, for the
+same structural reason: the refutation lives in prose and the code is left deliberately unchanged, so
+anything that reads code and not history re-derives the same plausible finding forever.**
+
+⭐ **The fix is one sentence, and it was measured in the same session.** Phase 1's brief told agents
+to grep the docs for the finding id before concluding — phase 1 re-raised **nothing** refuted. Phase
+2's no-channel brief omitted that line and re-raised a twice-refuted row, costing a 17-agent pass to
+put back down. **Put "grep the refuted lists first" in every hunting brief.**
+
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
 Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with

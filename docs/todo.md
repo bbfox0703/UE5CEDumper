@@ -2745,6 +2745,149 @@ adjudicated together rather than separately.
 1. `[B30-REOPEN]` 🔴 · 2. `[R3-SEETHRU]` 🟠 · 3. `[B33-SPELLING]` 🟡 (with 1) · 4. `[B21-DOCROW]` 🟡
 5. 25 register rows to write · 6. the three latent enumerations, if a gate is cheap (phase 4)
 
+### ✅ PHASE 2 DONE 2026-09-10 — the wire's two comparable axes are CLEAN; the defects are in fields that were never created
+
+29 agents over two workflows (8 adjudicate · 4 no-channel hunt · 17 refute-mandated skeptics), 0
+errors. ⛔ **Fixes deliberately NOT applied.**
+
+#### ⭐ The good news first, because it is a real measurement and it answers half the question
+
+| axis | population | result |
+|---|---|---|
+| **command names** | 99 constants / 99 dispatched / 99 sent | **0 either direction** |
+| **A — request params, PER COMMAND** | 101 C# send sites | **0** keys the UI sends that its handler never reads |
+| **B — reply keys, PER COMMAND** | **78** (command, key) candidates | **46** read elsewhere · **32** dead-benign · **0 costly** |
+
+⛔ **So "資料送出，另一邊根本不收" does NOT hold for the reply-key axis.** Every key the DLL
+publishes is either consumed or harmless. ⭐ And the reason the coarse axes are clean is worth
+stating: **a wrong command name fails LOUDLY** (`unknown command`), so it cannot survive — the
+silent failures had to be somewhere else, and they were.
+
+⚠ **My extraction's false-positive rate was 59% (46 of 78)** and the misses are instructive: 21 of
+the 46 are `teleport_get_pose` keys read in a `ParsePose` helper far from the send site, and 11 are
+`get_offsets` keys whose only consumers are the **Python rigs in `tools/verify/`** — which are
+first-class pipe clients, not tests. Any future gate on this axis must treat `tools/**` and
+`scripts/*.lua` as consumers or it will report the rigs' contract as dead.
+
+#### ⛔ The reverse axis was NOT measured, and the instrument is why — said rather than reported
+
+"Keys the UI reads that the command never publishes" produced **93 sites** with huge key lists. That
+is an artifact: the extraction uses a ±line window, and `DumpService.cs` is one ~3,500-line file, so
+the window swallows neighbouring methods. **Those 93 are not a population and were not adjudicated.**
+The right instrument is a live capture — send each command, keep the actual reply, diff against what
+the UI's model consumes — which is **phase 3**, not a regex.
+
+#### 🔎 Axis C — "the DLL knows it and tells no channel". 17 raised, 14 REFUTED, 3 survive
+
+⭐⭐ **The 14 refutations are the more valuable half of this phase**, and two of them cost me
+personally: I hand-verified the *code structure* of four findings and confirmed every structural
+claim — and was still wrong about all four, because **a discarded return is not a defect until the
+consequence survives too.** Written up as working-lessons §1.w4.
+
+**Refuted, with the route that killed each:**
+
+| # | subject | route |
+|---|---|---|
+| 0 | teleport post-move observation "discarded" | published-elsewhere — it is the same read `teleport_get_pose` returns |
+| **3** | **Fly disable `return 0` on a failed collision restore** | **deliberate-and-documented** |
+| 2, 14 | live CMC velocity / MovementMode not published | published-elsewhere — both are on the wire already |
+| 4, 11 | god-mode observed bit | published-elsewhere / user-can-see-it-anyway |
+| 5 | object-null hold "never restored" | published-elsewhere — irreversibility is static and confirmed *before* the act |
+| 6 | see-through trace refusals collapsed | published-elsewhere — the game-thread state is its own field |
+| **7** | **`Schlacht.cpp:366` `Invoke(...); return true;`** | **deliberate-and-documented — and see below** |
+| 8, 15 | cursor input mode / foreground lock | deliberate-and-documented |
+| 10, 16 | fly `driftCount` / time-dilation siblings | not-actually-known — the counter is not the fact claimed |
+| 13 | god-bits truncation | unreachable |
+
+⛔⛔ **AND #7 IS ON THIS FILE'S OWN "Refuted (8) — do not re-raise" LIST. TWICE.**
+`docs/todo.md:1183-1186` and `:1302-1310` both name `Schlacht.cpp:366`, each after ≥4 collapse
+routes. **This is §1.w2 happening again — and it extends the lesson: it is not only *mechanical*
+scanners that resurface refuted rows. An LLM agent reading the same code reaches the same
+plausible-looking conclusion, and it will keep doing so, because the refutation lives in prose and
+the code is unchanged by design.** The brief for the no-channel hunt did not tell agents to grep the
+refuted list first; the phase-1 brief did, and phase 1 raised no refuted row. **That difference is
+the whole lesson.**
+
+⭐ The strongest single refutation, worth keeping: the repo answers *"was the hide applied?"* with
+the published **actor addresses** (`Fern.cpp:6062-6069`, consumed by four rigs), not with a dispatch
+code — because `Invoke() == 0` means "ProcessEvent dispatched without faulting", **not** that
+`bHidden` moved. Gating on the return code would reproduce audit #4's own root cause: the report and
+the reality computed by the same code path.
+
+#### ⬜ SURVIVOR 1 — `[POSEATTACH]` 🟠 MED: the spec REQUIRES a flag that was never created
+
+`docs/teleport-spec.md:218-220`, verbatim: *"If the invoke fails (game-thread idle), return the raw
+values anyway with `source = raw` **and a warning flag** — better an approximate display than an
+error."*
+
+The fallback shipped; **the flag never did.** `Wirbel.cpp:421` sets `*outSource = 0` once and never
+revises it; `:425` computes `bool attached` right there; `:443-444` the sole outlet is a `LOG_WARN`
+naming the degradation. So two very different reads arrive as the identical `source = "raw"`:
+
+- a healthy unattached pawn — world-space, correct;
+- an **attached** pawn (vehicle / mount / moving platform) whose `K2_GetActorLocation` failed —
+  **parent-relative numbers presented as world coordinates**.
+
+⛔ **And the UI's own model documents the wrong inverse**: `TeleportModels.cs:24-26` says `"raw"` =
+*"direct property read"* and `"invoke"` = *"used for attached/vehicle pawns"* — i.e. the UI reads
+`raw` as **meaning** not-attached. The damage is not only on screen: `SaveMarker` stores the current
+map name, so `RecallMarker`'s map guard passes, and those parent-relative numbers are later driven
+into the pawn as a **world-space destination**, and exported into BugItGo strings and CE trainer
+coords.
+
+⚠ MED not HIGH: it needs an attached *possessed* pawn (a minority configuration) **and** an invoke
+failure, and `UE5_CallProcessEventEx` has a direct-call fallback that often succeeds anyway.
+
+#### ⬜ SURVIVOR 2 — `[TPREL-ZEROPOSE]` 🟡 LOW: a failed re-read publishes a landing at the origin
+
+`Wirbel.cpp:1788` calls `GetPoseImpl(outNewPose, nullptr, 0, nullptr)` — *"best-effort re-read of the
+landing"* — and discards the return; `:1792` returns `TP_OK` regardless. `GetPoseImpl` leaves `out`
+untouched on both failure paths (`:419`, `:446-448`), and all three transports zero-init and gate on
+`code == 0`, so a failed re-read is published as a landing at exactly **(0,0,0,0,0,0)**,
+indistinguishable from a real arrival at the world origin. The panel then prints *"Teleported N uu
+horizontally → (0.0, 0.0, 0.0)"* and overwrites the live X/Y/Z the user can copy or save.
+
+⚠ Contract contradicted rather than merely unimplemented: `Wirbel.h:223-225` and
+`teleport-spec.md:1026-1027` both promise the re-read landing. ⚠ LOW because the blast radius is the
+display, it self-corrects on the next pose refresh, and the trigger needs the pawn or world to
+vanish inside one locked call.
+
+#### ⬜ SURVIVOR 3 — `[SOLIDE-REFUSAL]` 🟡 LOW: a re-arm refused everywhere replies `held:0, code:0`
+
+`Solide.cpp:352` recomputes `job.lastRefusal` every 300 ms tick, and `:453` returns it **only when
+`newlyAdded`**. Neither `GetState` (`:493-508`, 8 fields) nor `get_forced_fields`
+(`Fern.cpp:5958-5975`) carries it. So re-arming an already-armed `class::field` that resolves
+instances and is **refused on every one** replies `{held: 0, code: 0}`, and
+`PropertySearchViewModel.cs:494-496` prints the positively false *"no live instance of {Class} or any
+subclass exists right now … will apply as soon as one spawns."* ⚠ LOW: most refusal triggers are
+pre-empted UI-side.
+
+#### ⚠ One narrow residual recorded, NOT filed — and why it is not the defect it looks like
+
+`Dunste.cpp:830`'s `return 0` **does** skip the `modeRestoreFailed → FR_ERR_WRITE` check at `:833`,
+so a disable where **both** restores failed reports success. `git blame` makes the shape vivid: the
+early return is `8099a4b7` (2026-08-04, **audit #4 B8's own fix**) and the check below it is
+`dbed64e4` (**2026-09-09, our slice B fix**) — yesterday's fix appended after an existing early
+return, unreachable on that path.
+
+⛔ **It is still not a reportable defect, for two measured reasons.** (1) The collision branch is
+**PENDING, not failed**: `StartPendingLocked()` is called and the record is deliberately kept, so
+`return 0` means *"fly is off and the restore is in hand"*, which is true — and `Dunste.cpp:604-612`
+records that this is the **COMMON** path, because the click that disables Fly is what backgrounds
+the game. Escalating would false-alarm on nearly every Noclip disable. (2) The mode fact is **not
+off-channel**: `current_mode` is on the same reply (`Fern.cpp:6014`) and `ApplyFlyReadout` renders it
+into **`FlyCurrentText`** — a *different* property from the `StatusText` that says "Fly OFF." — so
+both strings are on screen and the user sees `MovementMode = 5`.
+
+⚠ What is left is **wording**, not plumbing: "Ready (MovementMode = 5). Toggle Fly ON to take off."
+over a pawn still in `MOVE_Flying` is confusing, and that is a UI copy fix at most.
+
+#### ⬜ Carried into the fix pass (NOT done here)
+
+7. `[POSEATTACH]` 🟠 · 8. `[TPREL-ZEROPOSE]` 🟡 · 9. `[SOLIDE-REFUSAL]` 🟡
+10. ⚠ **Before ANY of these is fixed, grep the two "Refuted — do not re-raise" lists** — this phase
+    re-raised a twice-refuted row and cost a full skeptic pass to put back down.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
