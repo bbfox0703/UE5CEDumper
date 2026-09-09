@@ -460,16 +460,49 @@ public class LiveFuncsViewModelTests
     }
 
     [Fact]
-    public void CopyFuncName_RaisesRequestCopyText()
+    public async Task CopyFuncName_RaisesRequestCopyText_AndClaimsOnlyOnSuccess()
     {
         var (vm, _) = MakeVm();
         string? copied = null;
-        vm.RequestCopyText += t => copied = t;
+        vm.RequestCopyText += t => { copied = t; return Task.FromResult(true); };
 
-        vm.CopyFuncNameCommand.Execute(
+        await vm.CopyFuncNameCommand.ExecuteAsync(
             new PeProfileEntry { ClassName = "A", FuncName = "OpenShop" });
 
         Assert.Equal("OpenShop", copied);
+        Assert.Contains("Copied function name: OpenShop", vm.StatusText);
+    }
+
+    /// <summary>
+    /// The reason RequestCopyText is Func&lt;string,Task&lt;bool&gt;&gt; and not
+    /// Action&lt;string&gt;. As an Action the handler was an async lambda, so Invoke
+    /// returned at its first await and the VM set "Copied ..." BEFORE the clipboard was
+    /// even touched -- unreachable by any assertion, because the answer arrived after the
+    /// claim. Blind-spot sweep round 3, sub-shape (b).
+    /// </summary>
+    [Fact]
+    public async Task CopyFuncName_WhenTheClipboardRefuses_DoesNotClaimSuccess()
+    {
+        var (vm, _) = MakeVm();
+        vm.RequestCopyText += _ => Task.FromResult(false);
+
+        await vm.CopyFuncNameCommand.ExecuteAsync(
+            new PeProfileEntry { ClassName = "A", FuncName = "OpenShop" });
+
+        Assert.DoesNotContain("Copied function name", vm.StatusText);
+        Assert.Contains("Could not copy", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyFuncName_WithNoSubscriber_DoesNotClaimSuccess()
+    {
+        // Nobody wired the event: nothing reached the clipboard, so nothing may be claimed.
+        var (vm, _) = MakeVm();
+
+        await vm.CopyFuncNameCommand.ExecuteAsync(
+            new PeProfileEntry { ClassName = "A", FuncName = "OpenShop" });
+
+        Assert.DoesNotContain("Copied function name", vm.StatusText);
     }
 
     [Fact]

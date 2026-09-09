@@ -754,6 +754,47 @@ do
 end
 
 -- ============================================================
+-- D4b -- a delegate row's WIDTH depends on the BUILD, not on the property
+-- ============================================================
+-- UE 5.3 gave TScriptDelegate / TMulticastScriptDelegate a TDelegateAccessHandlerBase base
+-- whose DO_CHECK specialization holds one std::atomic<uint64>, so sizeof is 8 bytes larger in
+-- Debug/Development/DebugGame than in Shipping/Test. This file baked
+--   MulticastInlineDelegateProperty = { size = 16 }
+-- and getTypeInfo returned it unconditionally, so on a checked build the row read the detector
+-- plus half the TArray header. The engine's own ElementSize is already on the wire as f.size;
+-- prefer it, exactly as the EnumProperty branch beside it already does.
+do
+  local gti = dissect._getTypeInfo
+  check(gti ~= nil, 'D4b: getTypeInfo is reachable from the test')
+
+  local _, n16 = gti('MulticastInlineDelegateProperty', 16)
+  eq(n16, 16, 'D4b: Shipping multicast keeps 16')
+  local _, n24 = gti('MulticastInlineDelegateProperty', 24)
+  eq(n24, 24, 'D4b: checked-build multicast takes the reported 24')
+
+  local _, u8 = gti('DelegateProperty', 8)
+  eq(u8, 8, 'D4b: Shipping unicast keeps 8')
+  local _, u16 = gti('DelegateProperty', 16)
+  eq(u16, 16, 'D4b: checked-build unicast takes the reported 16')
+
+  -- ⭐ THE CONTROLS. The wire value is preferred only when it is one of the TWO widths the
+  -- layout can actually have; anything else falls back to the baked size rather than widening
+  -- a CE row by whatever number came off a garbage ElementSize.
+  local _, bad = gti('MulticastInlineDelegateProperty', 1073742336)
+  eq(bad, 16, 'D4b control: a garbage ElementSize falls back, it does not widen the row')
+  local _, zero = gti('MulticastInlineDelegateProperty', 0)
+  eq(zero, 16, 'D4b control: a missing size falls back')
+  local _, odd = gti('MulticastInlineDelegateProperty', 20)
+  eq(odd, 16, 'D4b control: a width the layout cannot have falls back')
+
+  -- Untouched neighbours: the branch must not leak into other types.
+  local _, f = gti('FloatProperty', 24)
+  eq(f, 4, 'D4b control: a non-delegate ignores the reported size as before')
+  local _, sp = gti('MulticastSparseDelegateProperty', 1)
+  eq(sp, 16, 'D4b: sparse is deliberately NOT re-sized here -- see the ⛔ note in TYPE_MAP')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)

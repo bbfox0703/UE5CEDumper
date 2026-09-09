@@ -1930,10 +1930,30 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out) {
         // Resolve key / value UScriptStruct* FIRST — the alignments below need them.
         // (Also used by the deep container scan, so a TMap<K, FStruct> (or
         // <FStruct, V>) can be descended into.)
+        // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this is the site the blind-spot sweep filed as
+        // "the same question unanswered" (docs/todo.md, round 2) and then never answered.
+        // On a faulted read the addr stays 0, ResolveElementAlignment two lines below is asked
+        // to align a struct it cannot see, and the alignment it guesses flows into pairAlign ->
+        // pairStride. The comment right under this block states the consequence out loud:
+        // "the stride must be a multiple of it, or every element after index 0 lands at a wrong
+        // address." A silent 0 therefore mis-strides the WHOLE TMap -- the same shape as D3b,
+        // reached through alignment instead of through a hardcoded size.
+        bool structAddrsOk = true;
         if (keyTn == "StructProperty")
-            Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, out.keyStructAddr);
+            structAddrsOk &= Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT,
+                                             out.keyStructAddr);
         if (valTn == "StructProperty")
-            Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, out.valueStructAddr);
+            structAddrsOk &= Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT,
+                                             out.valueStructAddr);
+        if (!structAddrsOk) {
+            // Refuse the geometry rather than publish one derived from an unread struct
+            // pointer. The caller treats false as "this TMap could not be laid out", which is
+            // true, instead of walking it at a stride nobody computed.
+            Sein::Warn("WALK", "TMap geometry: FStructProperty::Struct faulted (key=%s val=%s) "
+                               "-- refusing to derive a pair stride from an unread struct",
+                       keyTn.c_str(), valTn.c_str());
+            return false;
+        }
 
         int32_t keyAlign  = ResolveElementAlignment(keyTn, keySize, out.keyStructAddr);
         int32_t valAlign  = ResolveElementAlignment(valTn, valSize, out.valueStructAddr);
@@ -3047,11 +3067,22 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
         // from 5.3. See DynOff::LAZYPTR_GUID.
         const int guidOff = LazyGuidOffset(elemSize);
-        uint32_t a = 0, b = 0, c = 0, d = 0;
-        Macht::ReadSafe(elemAddr + guidOff + 0,  a);
-        Macht::ReadSafe(elemAddr + guidOff + 4,  b);
-        Macht::ReadSafe(elemAddr + guidOff + 8,  c);
-        Macht::ReadSafe(elemAddr + guidOff + 12, d);
+        // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
+        // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
+        // differently" is not available -- a faulted read and a genuinely-unset pointer
+        // produced the identical {00000000-...} string, and the fabricated one was also
+        // counted in readCount. The read's own answer is the only discriminator.
+        // The four contiguous uint32s are the same bytes in the same order, so the
+        // formatted output is unchanged on the success path.
+        uint32_t guid[4] = {};
+        const bool okGuid = Macht::ReadBytesSafe(elemAddr + guidOff, guid, sizeof(guid));
+        if (!okGuid) {
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        const uint32_t a = guid[0], b = guid[1], c = guid[2], d = guid[3];
 
         char guidStr[48];
         snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
@@ -3214,14 +3245,36 @@ bool IsDelegateArrayType(const std::string& innerTypeName) {
 // ============================================================
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+    int32_t elemSize, int32_t offset, int32_t limit)
 {
     ReadArrayResult result;
     result.ok = false;
 
-    // FScriptDelegate stride depends on FName width (CasePreservingName)
+    // ⛔ THE SIXTH D4b SITE, and [D4B-DELEGATEPAD]'s own enumeration said "five readers".
+    // A TArray<FScriptDelegate>'s elements are the STANDALONE unicast type,
+    // `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES carry UE 5.3+'s 8-byte access
+    // detector on a checked build -- unlike a multicast's invocation-list elements, which are
+    // the `...NotChecked...` variant and never do. Our comments call both "FScriptDelegate";
+    // Grimoire.h carries the ⚠ about it, and this function is what that ⚠ was written for.
+    //
+    // ⚠ It also had the two OTHER defects this file was swept for, in the same six lines:
+    // `int32_t /*elemSize*/` was an IGNORED PARAMETER while the caller passed the engine's own
+    // answer, and the local `8 + fnameSize` is the unpadded size -- so on a checked build
+    // element [0] read correctly and every index >= 1 drifted 8 bytes further, which is audit
+    // A1's fingerprint exactly.
     int fnameSize = DynOff::SizeofFName();
-    int32_t elemSize = 8 + fnameSize;
+    const int32_t kSdBase = 8 + fnameSize;      // FWeakObjectPtr + FName, no detector
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kSdBase);
+    if (pad < 0) {
+        // Refuse rather than fall back. A wrong stride does not fail loudly -- it publishes
+        // confident "Target::Function" strings read from the middle of the previous element.
+        result.error = "unexpected FScriptDelegate element size " + std::to_string(elemSize);
+        Sein::Warn("WALK", "ReadDelegateArrayElements: ElementSize=%d is neither %d nor %d "
+                           "(+detector) -- refusing to guess a stride", elemSize, kSdBase,
+                   kSdBase + DynOff::kDelegateDetectorPad);
+        return result;
+    }
+    const int32_t stride = kSdBase + pad;
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -3252,13 +3305,15 @@ ReadArrayResult ReadDelegateArrayElements(
         LiveFieldValue::ArrayElement elem;
         elem.index = i;
 
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        // The payload starts behind the access detector on a checked build.
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride + pad;
 
-        // Hex of the full FScriptDelegate bytes
-        std::vector<uint8_t> rawBuf(elemSize, 0);
-        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), elemSize)) {
+        // Hex of the FScriptDelegate payload we actually interpret -- not the detector in
+        // front of it, so the hex and the value can never disagree about which bytes were read.
+        std::vector<uint8_t> rawBuf(kSdBase, 0);
+        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), kSdBase)) {
             std::string hex;
-            hex.reserve(elemSize * 2);
+            hex.reserve(kSdBase * 2);
             for (auto b : rawBuf) {
                 char hx[3];
                 snprintf(hx, sizeof(hx), "%02X", b);
@@ -3267,10 +3322,18 @@ ReadArrayResult ReadDelegateArrayElements(
             elem.hex = std::move(hex);
         }
 
-        // Resolve target via FWeakObjectPtr
+        // Resolve target via FWeakObjectPtr. ⛔ BOTH RETURNS ARE LOAD-BEARING: on a faulted
+        // read objIdx/serial stay 0, the weak pointer resolves to null, and the element is
+        // published as the affirmative "(unbound)" -- D3/D5 verbatim, and the third copy of
+        // that pair in this file.
         int32_t objIdx = 0, serial = 0;
-        Macht::ReadSafe(elemAddr, objIdx);
-        Macht::ReadSafe(elemAddr + 4, serial);
+        const bool okIdx    = Macht::ReadSafe(elemAddr,     objIdx);
+        const bool okSerial = Macht::ReadSafe(elemAddr + 4, serial);
+        if (!okIdx || !okSerial) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
         uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
 
         std::string funcName = ReadFName(elemAddr + 8);
@@ -3283,16 +3346,15 @@ ReadArrayResult ReadDelegateArrayElements(
         }
 
         // Display: "TargetName::FunctionName"
-        if (target && !funcName.empty()) {
-            elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
-                + "::" + funcName;
-        } else if (!funcName.empty()) {
-            elem.value = "(stale)::" + funcName;
-        } else if (objIdx > 0) {
-            elem.value = "(stale)";
-        } else {
-            elem.value = "(unbound)";
-        }
+        //
+        // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- it says a target WAS bound and has since been
+        // collected. An element that was never bound must not make it. Found 2026-09-09 the
+        // moment `Arr_Delegates` gave this reader its first fixture: an untouched
+        // `FScriptDelegate` has `Object = {0, 0}` and `FunctionName = NAME_None`, and
+        // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
+        // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
+        // touched. The multicast element loop has an explicit unbound branch; this one did not.
+        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName);
 
         result.elements.push_back(std::move(elem));
     }
@@ -3315,14 +3377,40 @@ bool IsMulticastDelegateArrayType(const std::string& innerTypeName) {
 
 ReadArrayResult ReadMulticastDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+    int32_t elemSize, int32_t offset, int32_t limit)
 {
     ReadArrayResult result;
     result.ok = false;
 
-    // Each element: FMulticastScriptDelegate { TArray<FScriptDelegate> } = 16 bytes
-    constexpr int32_t elemSize = 16;
+    // Each element is one FMulticastScriptDelegate. Its payload is a bare
+    // TArray<FScriptDelegate> header -- but in a CHECKED build (Development/Debug/DebugGame,
+    // UE 5.3+) an 8-byte access detector sits in FRONT of it, so the element is 24 bytes and
+    // the header starts at +8. DynOff::kDelegateDetectorPad carries the full story.
+    //
+    // ⛔ `elemSize` USED TO BE THE IGNORED PARAMETER `int32_t /*elemSize*/`, overridden by a
+    // local `constexpr int32_t elemSize = 16`. Both callers already pass the engine's own
+    // ElementSize and it is authoritative -- measured 24 on DumperTest Development (UE 5.4)
+    // while this function insisted on 16. At the wrong stride element [0] still reads
+    // correctly and every index >= 1 drifts, which is the exact fingerprint audit A1 found on
+    // the lazy row; the fixture could not show it only because both its elements are empty,
+    // so a right-stride and a wrong-stride read of zeros produce the same "(0 bindings)".
+    constexpr int32_t kMcdBaseSize = 16;   // TArray<FScriptDelegate> header, FName-independent
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kMcdBaseSize);
+    if (pad < 0) {
+        // Refuse rather than fall back to 16. A wrong stride does not fail loudly -- it
+        // publishes confident "(N bindings)" strings read from the middle of the previous
+        // element. Leaving `elements` empty costs the inline preview; the field still
+        // reports its real count and size.
+        result.error = "unexpected multicast element size " + std::to_string(elemSize);
+        Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: ElementSize=%d is neither %d "
+                           "nor %d (+detector) -- refusing to guess a stride",
+                   elemSize, kMcdBaseSize, kMcdBaseSize + DynOff::kDelegateDetectorPad);
+        return result;
+    }
+    const int32_t stride = kMcdBaseSize + pad;
     int fnameSize = DynOff::SizeofFName();
+    // The invocation list's ELEMENTS are the never-padded unicast type -- see the ⚠ in
+    // Grimoire.h. This one must NOT gain `pad`.
     int32_t innerStride = 8 + fnameSize;
 
     Macht::TArrayView arr;
@@ -3354,18 +3442,53 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         LiveFieldValue::ArrayElement elem;
         elem.index = i;
 
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride;
+        // The TArray header sits behind the access detector in a checked build.
+        uintptr_t listAddr = elemAddr + pad;
 
         // Read inner TArray<FScriptDelegate> header { Data*, Count, Max }
         uintptr_t innerData = 0;
         int32_t   innerCount = 0;
-        Macht::ReadSafe(elemAddr,     innerData);
-        Macht::ReadSafe(elemAddr + 8, innerCount);
-        if (innerCount < 0 || innerCount > 4096) innerCount = 0;  // sanity clamp
+        const bool okData  = Macht::ReadSafe(listAddr,     innerData);
+        const bool okCount = Macht::ReadSafe(listAddr + 8, innerCount);
+        if (!okData || !okCount) {
+            // UNREAD is not "(0 bindings)". Both reads fail together when the TArray's
+            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h:287-297)
+            // validates only Count and Max, never probing Data, so a garbage pointer
+            // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
+            // told the UI and the CE exporters that a delegate provably HAS no
+            // subscribers, over memory nobody could read. "???" is this file's unread
+            // sentinel and the shape is ReadInterfaceArrayElements:3159-3164 verbatim --
+            // the other 16-byte-element reader, which already gets this right.
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        // ⛔ THIS USED TO BE `if (innerCount < 0 || innerCount > 4096) innerCount = 0;`, and
+        // that is D4's defect spelled a second time. An implausible Num does not mean "no
+        // subscribers"; it means THIS IS NOT THE STRUCTURE I THINK IT IS, and clamping it to
+        // zero republishes that as the affirmative "(0 bindings)". The identical clamp
+        // (`invNum = 0`) was deleted from Aura on 2026-09-08 for lying, with a ⛔ comment
+        // saying never to restore it — while these two copies in Ubel survived the sweep.
+        // ⚠ And D4b's own fingerprint went straight through here: reading Num at the wrong
+        // offset produced 322437056, which is > the ceiling, so this line would have
+        // swallowed the symptom and printed "(0 bindings)" over a bound delegate.
+        if (innerCount < 0 || innerCount > Aura::kMaxPlausibleInvocationListNum) {
+            Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: implausible inner Num=%d "
+                               "at 0x%llX — reporting UNREADABLE, not zero bindings",
+                       innerCount, static_cast<unsigned long long>(listAddr));
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
 
-        // Hex: 16-byte TArray header
+        // Hex: the 16-byte TArray header we actually interpreted, not the detector in
+        // front of it -- so the hex and the value can never disagree about which bytes
+        // were read. Keeps the width equal to the "????..." unread sentinel above.
         uint8_t headerBuf[16] = {};
-        if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
+        if (Macht::ReadBytesSafe(listAddr, headerBuf, 16)) {
             std::string hex;
             hex.reserve(32);
             for (int b = 0; b < 16; ++b) {
@@ -3395,11 +3518,13 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 uintptr_t btarget = ResolveWeakObjectPtr(bobjIdx, bserial);
                 std::string bfunc = ReadFName(bindAddr + 8);
 
-                if (btarget && !bfunc.empty()) {
-                    bindings.push_back(GetName(btarget) + "::" + bfunc);
-                } else if (!bfunc.empty()) {
-                    bindings.push_back("(stale)::" + bfunc);
-                }
+                // ⚠ Only NAMED bindings go into the preview, as before -- but "named" is now
+                // the shared test, so an untouched slot (FunctionName == NAME_None, which
+                // reads back as "None") is skipped instead of listed as "(stale)::None".
+                std::string bdesc = DescribeScriptDelegate(
+                    btarget != 0, btarget ? GetName(btarget) : std::string(),
+                    bobjIdx, bserial, bfunc);
+                if (IsNamedDelegateBinding(bdesc)) bindings.push_back(std::move(bdesc));
             }
 
             if (!bindings.empty()) {
@@ -4179,10 +4304,20 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         if (fi.TypeName == "InterfaceProperty") {
             uintptr_t objPtr = 0;
             uintptr_t ifacePtr = 0;
-            Macht::ReadSafe(instanceAddr + fi.Offset, objPtr);
-            Macht::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
+            // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this is the same shape as the delegate
+            // readers below: on a faulted read the out-params keep their initialised 0, and 0
+            // is then published as though it had been READ. The hex column would render
+            // "0000000000000000 0000000000000000", which is indistinguishable from a genuinely
+            // null interface -- an affirmative claim about memory nobody could read.
+            // The correct shape is already in this file: ReadDelegateArrayElements builds its
+            // hex INSIDE `if (Macht::ReadBytesSafe(...))` and leaves it empty otherwise.
+            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the sibling
+            // sites in that batch (`Aura.cpp` scriptNum, `Ubel.cpp` enumPtr) were CLEAN because
+            // their next statement guards on exactly the value a faulted read leaves.
+            const bool okObj   = Macht::ReadSafe(instanceAddr + fi.Offset, objPtr);
+            const bool okIface = Macht::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
 
-            if (objPtr) {
+            if (okObj && objPtr) {
                 fv.ptrValue = objPtr;
                 fv.ptrName = GetName(objPtr);
                 uintptr_t cls = GetClass(objPtr);
@@ -4192,11 +4327,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             }
 
-            char buf[48];
-            snprintf(buf, sizeof(buf), "%016llX %016llX",
-                static_cast<unsigned long long>(objPtr),
-                static_cast<unsigned long long>(ifacePtr));
-            fv.hexValue = buf;
+            if (okObj && okIface) {
+                char buf[48];
+                snprintf(buf, sizeof(buf), "%016llX %016llX",
+                    static_cast<unsigned long long>(objPtr),
+                    static_cast<unsigned long long>(ifacePtr));
+                fv.hexValue = buf;
+            } else {
+                // Say which half could not be read rather than printing zeros for it.
+                // The "%X vs %d" lesson this line was born from now lives ONCE, on
+                // DescribeUnreadableField in Ubel.h — three more handlers below share it.
+                fv.typedValue = DescribeUnreadableField("interface", fi.Offset);
+            }
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -4393,6 +4535,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(delResult.elements);
                         Sein::Debug("WALK:ArrayP", "Delegate elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!delResult.ok && !delResult.error.empty()) {
+                        // ⛔ THIS `error` USED TO BE DROPPED ON THE FLOOR. The reader refuses an
+                        // unrecognised stride rather than publishing elements read at a stride
+                        // nobody validated -- but the refusal reached the UI as NOTHING: an
+                        // ArrayProperty never sets typedValue, so the field rendered as a bare
+                        // header and the user saw a delegate array that simply had no elements,
+                        // which is indistinguishable from an empty one. The scalar arms have
+                        // always rendered their refusal; these two were silent.
+                        // Measured 2026-09-09 by sw6_stride_refusal.py, which could assert the
+                        // WALK warning but had nothing to assert on the wire's value side.
+                        fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
 
@@ -4405,6 +4558,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(mcastResult.elements);
                         Sein::Debug("WALK:ArrayP", "Multicast elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!mcastResult.ok && !mcastResult.error.empty()) {
+                        // Same silent-refusal defect as the unicast arm just above.
+                        fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
                     }
                 }
 
@@ -4623,11 +4779,39 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // If key/value is StructProperty, read UScriptStruct* for navigation
+                        // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
+                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either read fails, because a 0 addr makes
+                        // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
+                        // pairStride, mis-striding the whole map. `WalkInstance` never calls
+                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
+                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        //
+                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
+                        // agree on REFUSING. The alternative was to keep guessing here, on the
+                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
+                        // stride does not render "slightly wrong", it renders CONFIDENT values read
+                        // from the middle of the previous pair, and nothing on screen says so.
+                        // Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // The HEADER is kept either way -- name, type and element count still show;
+                        // only the element VALUES are withheld.
+                        //
+                        // ⚠ This fires only when the engine's own FStructProperty::Struct pointer
+                        // cannot be READ -- a faulted read, not a normal state. TWO copies of this
+                        // block exist (FProperty and UProperty) and both behave this way.
+                        bool mapStructAddrsOk = true;
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
+                            } else {
+                                mapStructAddrsOk = false;
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the KEY -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
+                                           fi.Name.c_str());
                             }
                         }
                         if (valueTypeName == "StructProperty") {
@@ -4635,11 +4819,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, vStruct) && vStruct) {
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
+                            } else {
+                                mapStructAddrsOk = false;
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the VALUE -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
+                                           fi.Name.c_str());
                             }
                         }
 
                         // Read inline element values if count is manageable
-                        if (fv.mapCount > 0
+                        // ⛔ Only if the struct pointers above actually read -- see the block
+                        // comment there. A guessed alignment mis-strides every pair after the
+                        // first, and nothing on screen would say so.
+                        if (!mapStructAddrsOk) {
+                            fv.typedValue = "(TMap - FStructProperty::Struct unread, pairs not read)";
+                        } else if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
@@ -4771,11 +4966,39 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
 
+                        // ⛔ BOTH READS ARE LOAD-BEARING. This block is the TWIN of
+                        // `GetMapPairLayout`: `[TMAPGEOM-2026-09-09]` made that function REFUSE the
+                        // whole layout when either read fails, because a 0 addr makes
+                        // `ResolveElementAlignment` guess and the guess flows into pairAlign ->
+                        // pairStride, mis-striding the whole map. `WalkInstance` never calls
+                        // GetMapPairLayout -- it uses this inlined copy -- so for one day the two
+                        // twins disagreed on the same input, and this one guessed SILENTLY.
+                        //
+                        // ⭐ RESOLVED `[TMAPGEOM-TWIN-2026-09-09]`: the twins now agree, and they
+                        // agree on REFUSING. The alternative was to keep guessing here, on the
+                        // grounds that a slightly-wrong map beats a blank one in a UI -- but a wrong
+                        // stride does not render "slightly wrong", it renders CONFIDENT values read
+                        // from the middle of the previous pair, and nothing on screen says so.
+                        // Publishing nothing and naming the reason is the same call
+                        // `ReadDelegateArrayElements` already makes for an unrecognised stride.
+                        // The HEADER is kept either way -- name, type and element count still show;
+                        // only the element VALUES are withheld.
+                        //
+                        // ⚠ This fires only when the engine's own FStructProperty::Struct pointer
+                        // cannot be READ -- a faulted read, not a normal state. TWO copies of this
+                        // block exist (FProperty and UProperty) and both behave this way.
+                        bool mapStructAddrsOk = true;
                         if (keyTypeName == "StructProperty") {
                             uintptr_t kStruct = 0;
                             if (Macht::ReadSafe(keyProp + baseOff, kStruct) && kStruct) {
                                 fv.mapKeyStructAddr = kStruct;
                                 fv.mapKeyStructType = GetName(kStruct);
+                            } else {
+                                mapStructAddrsOk = false;
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the KEY -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
+                                           fi.Name.c_str());
                             }
                         }
                         if (valueTypeName == "StructProperty") {
@@ -4783,11 +5006,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Macht::ReadSafe(valueProp + baseOff, vStruct) && vStruct) {
                                 fv.mapValueStructAddr = vStruct;
                                 fv.mapValueStructType = GetName(vStruct);
+                            } else {
+                                mapStructAddrsOk = false;
+                                Sein::Warn("WALK", "TMap '%s': FStructProperty::Struct unread on "
+                                                   "the VALUE -- refusing to read the pairs rather "
+                                                   "than stride them at a guessed alignment",
+                                           fi.Name.c_str());
                             }
                         }
 
                         // Read inline element values
-                        if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
+                        // ⛔ Only if the struct pointers above actually read -- see the block
+                        // comment there. A guessed alignment mis-strides every pair after the
+                        // first, and nothing on screen would say so.
+                        if (!mapStructAddrsOk) {
+                            fv.typedValue = "(TMap - FStructProperty::Struct unread, pairs not read)";
+                        } else if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4. Wrong align => wrong
@@ -5240,29 +5474,55 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (enumSize != 1 && enumSize != 2 && enumSize != 4 && enumSize != 8)
                 enumSize = 1;
 
-            // Read raw value based on validated size
+            // Read raw value based on validated size.
+            // ⛔ THE RETURN IS LOAD-BEARING, and 0 is the WORST possible default here. On a
+            // faulted read rawVal stays 0, and 0 is not "unknown" to anything downstream:
+            // `ResolveEnumValue(enumPtr, 0)` answers with the NAME of enumerator 0 — for a BP
+            // enum usually "None" or the first entry — and the hex below rendered "00". Both are
+            // affirmative claims about memory nobody could read, and both are indistinguishable
+            // from a field that genuinely holds 0. Exactly the InterfaceProperty defect above,
+            // and `BoolProperty` three blocks up has always had it right (it builds hex and
+            // typedValue INSIDE `if (Macht::ReadSafe(...))`). Adjudicated 2026-09-09 as slice C
+            // of the unadjudicated sweep claims.
             int64_t rawVal = 0;
-            if (enumSize == 1) { uint8_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 2) { int16_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 4) { int32_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 8) { int64_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            bool okVal = false;
+            if (enumSize == 1) { uint8_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 2) { int16_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 4) { int32_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 8) { int64_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
 
-            fv.enumValue = rawVal;
             fv.size = enumSize;
+            // ⭐ REFUSE THE VALUE, KEEP THE METADATA. The UEnum* was read from the FIELD
+            // (fi.Address), not from the instance, so the CE DropDownList metadata is still
+            // sound when the instance byte is not — `enum_addr` / `enum_entries` cross the wire
+            // on their own gate. `enum_name` / `enum_value` are gated on enumName, so leaving it
+            // empty is what stops the un-set 0 being published as a value.
             if (enumPtr) {
-                fv.enumName = ResolveEnumValue(enumPtr, rawVal);
                 fv.enumAddr = enumPtr;
                 fv.enumEntries = GetEnumEntries(enumPtr);
             }
+            if (!okVal) {
+                fv.typedValue = DescribeUnreadableField("enum", fi.Offset);
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            fv.enumValue = rawVal;
+            if (enumPtr) fv.enumName = ResolveEnumValue(enumPtr, rawVal);
             fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
 
-            // Populate hex
+            // Populate hex — INSIDE the read's own success test, the shape
+            // `ReadDelegateArrayElements` and `BoolProperty` both use. It reads the SAME
+            // enumSize bytes at the SAME address the value read just cleared, so `okVal` already
+            // implies it: the gate is here so the two cannot drift apart, not because a case is
+            // known where they disagree. Cheap, and the alternative is the defect above.
             uint8_t buf[8] = {};
-            Macht::ReadBytesSafe(instanceAddr + fi.Offset, buf, enumSize);
-            std::string hex;
-            hex.reserve(enumSize * 2);
-            for (int i = 0; i < enumSize; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
-            fv.hexValue = hex;
+            if (Macht::ReadBytesSafe(instanceAddr + fi.Offset, buf, enumSize)) {
+                std::string hex;
+                hex.reserve(enumSize * 2);
+                for (int i = 0; i < enumSize; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
+                fv.hexValue = hex;
+            }
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -5276,12 +5536,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 uintptr_t enumClass = GetClass(enumPtr);
                 std::string enumClassName = enumClass ? GetName(enumClass) : "";
                 if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum") {
+                    // Same gate, same reason, as the EnumProperty handler above: a faulted read
+                    // leaves rawVal at 0, which this block then published as the NAME of
+                    // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
+                    // the FField and survives; only the value is refused.
                     uint8_t rawVal = 0;
-                    Macht::ReadSafe(instanceAddr + fi.Offset, rawVal);
-                    fv.enumValue = rawVal;
-                    fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+                    const bool okVal = Macht::ReadSafe(instanceAddr + fi.Offset, rawVal);
                     fv.enumAddr = enumPtr;
                     fv.enumEntries = GetEnumEntries(enumPtr);
+                    if (!okVal) {
+                        fv.typedValue = DescribeUnreadableField("byte enum", fi.Offset);
+                        result.fields.push_back(std::move(fv));
+                        continue;
+                    }
+                    fv.enumValue = rawVal;
+                    fv.enumName = ResolveEnumValue(enumPtr, rawVal);
                     fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
                     char hx[3];
                     snprintf(hx, sizeof(hx), "%02X", rawVal);
@@ -5368,15 +5637,49 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
+            // ⚠ A STANDALONE FScriptDelegate is the PADDED unicast type
+            // (`TScriptDelegate<FNotThreadSafeDelegateMode>`), unlike the elements of a
+            // multicast's invocation list. fi.Size is the engine's own sizeof for it.
+            const int32_t dPad =
+                DynOff::DelegatePadFromElementSize(fi.Size, 8 + fnameSize);
+            if (dPad < 0) {
+                // ⛔ THIS SITE USED TO LOG NOTHING. All four delegate-stride refusals report the
+                // same decision, but only the two ARRAY ones warned -- so this row's stated
+                // acceptance ("DLL side: the WALK warning naming the size") was unsatisfiable on
+                // the scalar arms, and a refusal here left no trace in any log at all. Found
+                // 2026-09-09 while building sw6_stride_refusal.py.
+                Sein::Warn("WALK", "DelegateProperty '%s': ElementSize=%d is neither %d nor %d "
+                                   "(+detector) -- refusing to read the delegate",
+                           fi.Name.c_str(), fi.Size, 8 + fnameSize,
+                           8 + fnameSize + DynOff::kDelegateDetectorPad);
+                fv.typedValue = "(delegate — unexpected ElementSize "
+                              + std::to_string(fi.Size) + ", not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+            fv.delegatePad = dPad;    // exporters must add this before reading the leaf
+            fieldAddr += dPad;
+
+            // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this pair sat four lines below the dPad
+            // line above — added by the very commit (2c1d54ff) that repaired this exact shape
+            // 480 lines further down. On a faulted read objIdx/serial stay 0, the weak pointer
+            // resolves to null, funcName comes back empty, and the field publishes the
+            // AFFIRMATIVE "(unbound)" — a claim that this delegate provably has no target,
+            // made over memory nobody could read. Same defect as D3/D5.
             int32_t objIdx = 0, serial = 0;
-            Macht::ReadSafe(fieldAddr, objIdx);
-            Macht::ReadSafe(fieldAddr + 4, serial);
+            const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
+            const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
+            if (!okIdx || !okSerial) {
+                fv.typedValue = "(delegate — unreadable)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
             uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
             std::string funcName = ReadFName(fieldAddr + 8);
 
-            if (target && !funcName.empty()) {
-                std::string targetName = GetName(target);
-                fv.typedValue = targetName + "::" + funcName;
+            std::string targetName;
+            if (target) {
+                targetName = GetName(target);
                 fv.ptrValue = target;
                 fv.ptrName = targetName;
                 uintptr_t cls = GetClass(target);
@@ -5384,11 +5687,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassName = GetName(cls);
                     fv.ptrClassAddr = cls;
                 }
-            } else if (!funcName.empty()) {
-                fv.typedValue = "(stale)::" + funcName;
-            } else {
-                fv.typedValue = "(unbound)";
             }
+            fv.typedValue = DescribeScriptDelegate(target != 0, targetName,
+                                                   objIdx, serial, funcName);
 
             // Hex: FWeakObjectPtr + FName raw bytes
             int delegateSize = 8 + fnameSize;
@@ -5452,10 +5753,23 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             const bool isTextInner  = (innerTn == "TextProperty");
 
             bool isSet = false;
+            // ⛔ EVERY DISCRIMINATOR READ BELOW IS LOAD-BEARING, and the two directions are both
+            // wrong. `(unset)` is an AFFIRMATIVE claim that this TOptional provably holds no
+            // value — the same claim `(unbound)` made for delegates in D3/D5 — and on a faulted
+            // read the object/weak/text/flag arms all fall into it. The FString and FName arms
+            // fail the OTHER way: their sentinels are -1 and 0xFFFFFFFF, so a faulted read's 0
+            // reads as SET, and the field then publishes `""` or `(set)` for memory nobody
+            // could read. The hex block at the end of this handler has always gated on its own
+            // ReadBytesSafe, so before this fix the value column and the hex column disagreed —
+            // which is the tell, and the same one the InterfaceProperty handler above had.
+            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the ranker
+            // that found this flagged the isObjectLike read ONLY, because the other five feed a
+            // bare `isSet = (...)` its tiers score as no use at all.
+            bool okProbe = true;
 
             if (isObjectLike) {
                 uintptr_t ptr = 0;
-                Macht::ReadSafe(fieldAddr, ptr);
+                okProbe = Macht::ReadSafe(fieldAddr, ptr);
                 if (ptr) {
                     isSet = true;
                     fv.ptrValue = ptr;
@@ -5469,8 +5783,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             } else if (isWeakLike) {
                 // Embedded FWeakObjectPtr at field+0; unset sentinel is { 0, 0 }.
                 int32_t objIdx = 0, serial = 0;
-                Macht::ReadSafe(fieldAddr,     objIdx);
-                Macht::ReadSafe(fieldAddr + 4, serial);
+                const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
+                const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
+                okProbe = okIdx && okSerial;
                 isSet = (objIdx != 0 || serial != 0);
                 uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
                 if (resolved) {
@@ -5484,7 +5799,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isStrInner) {
                 int32_t arrayMax = 0;
-                Macht::ReadSafe(fieldAddr + 12, arrayMax);
+                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means
+                // SET. Without okProbe this arm published `""` — "set, but empty".
+                okProbe = Macht::ReadSafe(fieldAddr + 12, arrayMax);
                 isSet = (arrayMax != -1);
                 if (isSet) {
                     std::string s = ReadFString(fieldAddr, 0);
@@ -5492,7 +5809,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isNameInner) {
                 uint32_t compIdx = 0;
-                Macht::ReadSafe(fieldAddr, compIdx);
+                // ⚠ Same dangerous direction as isStrInner: sentinel 0xFFFFFFFF, so 0 = SET.
+                okProbe = Macht::ReadSafe(fieldAddr, compIdx);
                 isSet = (compIdx != 0xFFFFFFFFu);
                 if (isSet) {
                     std::string n = ReadFName(fieldAddr);
@@ -5500,7 +5818,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isTextInner) {
                 uintptr_t textData = 0;
-                Macht::ReadSafe(fieldAddr, textData);
+                okProbe = Macht::ReadSafe(fieldAddr, textData);
                 isSet = (textData != 0);
                 // FText display (audit #5 U11): decode via ReadFTextString, which follows
                 // the ITextData* at FText+0 and scans it for the display FString — the SAME
@@ -5516,7 +5834,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Scalar/struct (no intrusive specialization): trailing
                 // bIsSet at field + innerSize.
                 uint8_t bIsSet = 0;
-                Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
+                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
                 isSet = (bIsSet != 0);
             }
 
@@ -5641,7 +5959,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Build display string.
-            if (!isSet) {
+            // ⛔ THE REFUSAL COMES FIRST, BEFORE BOTH "(unset)" AND "(set)". Whichever way
+            // the sentinel test happened to fall, a discriminator we could not read decides
+            // nothing -- see the block comment on okProbe above.
+            if (!okProbe) {
+                fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
+            } else if (!isSet) {
                 fv.typedValue = "(unset)";
             } else if (isObjectLike || isWeakLike) {
                 if (!fv.ptrName.empty()) {
@@ -5791,23 +6114,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.ptrName      = b.targetName;
                     elem.ptrClassName = b.targetClassName;
                 }
-                if (b.targetObj && !b.functionName.empty()) {
-                    elem.value = (b.targetName.empty() ? std::string("?") : b.targetName)
-                        + "::" + b.functionName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (!b.functionName.empty()) {
-                    elem.value = "(stale)::" + b.functionName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (b.objectIndex > 0) {
-                    elem.value = "(stale)";
-                } else {
-                    elem.value = "(unbound)";
-                }
+                elem.value = DescribeScriptDelegate(b.targetObj != 0, b.targetName,
+                                                    b.objectIndex, b.serialNumber,
+                                                    b.functionName);
+                if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
+                    previewNames.push_back(elem.value);
                 fv.arrayElements.push_back(std::move(elem));
             }
 
             std::string display;
-            if (bindingCount == 0) {
+            // "0 bindings" is now only claimed when the list was actually READ. An
+            // unreadable or implausible header says so instead of asserting emptiness
+            // over a delegate whose bIsBound byte read 1.
+            std::string state = Aura::DescribeSparseDelegateState(sr, fv.arrayElements.size());
+            if (!state.empty()) {
+                display = std::move(state);
+            } else if (bindingCount == 0) {
                 display = "(0 bindings, sparse)";
             } else {
                 display = "(" + std::to_string(bindingCount)
@@ -5838,16 +6160,56 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
             int fnameSize = DynOff::SizeofFName();
+            // The invocation list's ELEMENTS are the never-padded unicast type; only the
+            // FMulticastScriptDelegate CONTAINER carries the access detector. See the ⚠ in
+            // Grimoire.h -- the two are both spelled "FScriptDelegate" in our comments.
             int32_t delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
-            // Read TArray<FScriptDelegate> header
+            // fi.Size is the engine's own sizeof(FMulticastScriptDelegate) -- 16, or 24 in a
+            // checked build where an 8-byte access detector precedes the TArray header.
+            const int32_t mcPad = DynOff::DelegatePadFromElementSize(fi.Size, 16);
+            if (mcPad < 0) {
+                // Same silent-refusal gap as the DelegateProperty arm above: all four stride
+                // refusals now warn, so "the WALK warning naming the size" is satisfiable on
+                // every arm rather than on the two array ones only.
+                Sein::Warn("WALK", "MulticastDelegateProperty '%s': ElementSize=%d is neither "
+                                   "16 nor %d (+detector) -- refusing to read the delegate",
+                           fi.Name.c_str(), fi.Size, 16 + DynOff::kDelegateDetectorPad);
+                fv.typedValue = "(multicast — unexpected ElementSize "
+                              + std::to_string(fi.Size) + ", not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            fv.delegatePad = mcPad;   // exporters must add this before any Offsets=[0]
+
+            // Read TArray<FScriptDelegate> header. ⛔ Both returns are load-bearing: this is
+            // the same shape as D3/D5 -- on a faulted read `data`/`count` stay 0 and the field
+            // would publish the AFFIRMATIVE "(0 bindings)" over memory nobody could see.
             uintptr_t data = 0;
             int32_t count = 0;
-            Macht::ReadSafe(fieldAddr, data);
-            Macht::ReadSafe(fieldAddr + 8, count);
+            const bool okData  = Macht::ReadSafe(fieldAddr + mcPad,     data);
+            const bool okCount = Macht::ReadSafe(fieldAddr + mcPad + 8, count);
+            if (!okData || !okCount) {
+                fv.typedValue = "(multicast — unreadable)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
 
-            if (count < 0 || count > 4096) count = 0;  // Sanity clamp (was 256)
+            // ⛔ The second copy of D4's defect — see the long note in
+            // ReadMulticastDelegateArrayElements. `count = 0` here would render the
+            // affirmative "(0 bindings)" for a header that is not a TArray at all.
+            if (count < 0 || count > Aura::kMaxPlausibleInvocationListNum) {
+                Sein::Warn("WALK", "MulticastInlineDelegateProperty '%s': implausible "
+                                   "InvocationList Num=%d at 0x%llX — reporting UNREADABLE, "
+                                   "not zero bindings",
+                           fi.Name.c_str(), count,
+                           static_cast<unsigned long long>(fieldAddr + mcPad));
+                fv.typedValue = "(multicast — implausible InvocationList Num, not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
 
             // Expose as implicit DelegateProperty array — drives drill-down,
             // CE XML / CSX export, and IsContainerNavigable in the UI.
@@ -5879,9 +6241,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.hex = std::move(hex);
                 }
 
+                // The third copy of the dropped pair, and the one that reaches a LIST: an
+                // unread binding here falls through to the final `else` and is published as
+                // "(unbound)" — an entry the invocation list says EXISTS, rendered as though
+                // it provably points nowhere.
                 int32_t objIdx = 0, serial = 0;
-                Macht::ReadSafe(elemAddr,     objIdx);
-                Macht::ReadSafe(elemAddr + 4, serial);
+                const bool okIdx    = Macht::ReadSafe(elemAddr,     objIdx);
+                const bool okSerial = Macht::ReadSafe(elemAddr + 4, serial);
+                if (!okIdx || !okSerial) {
+                    elem.value = "???";
+                    fv.arrayElements.push_back(std::move(elem));
+                    continue;
+                }
                 uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
                 std::string funcName = ReadFName(elemAddr + 8);
 
@@ -5892,18 +6263,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (cls) elem.ptrClassName = GetName(cls);
                 }
 
-                if (target && !funcName.empty()) {
-                    elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
-                        + "::" + funcName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (!funcName.empty()) {
-                    elem.value = "(stale)::" + funcName;
-                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
-                } else if (objIdx > 0) {
-                    elem.value = "(stale)";
-                } else {
-                    elem.value = "(unbound)";
-                }
+                elem.value = DescribeScriptDelegate(target != 0, elem.ptrName,
+                                                    objIdx, serial, funcName);
+                if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
+                    previewNames.push_back(elem.value);
 
                 fv.arrayElements.push_back(std::move(elem));
             }

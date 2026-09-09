@@ -30,6 +30,7 @@ Usage:
   py tools/check_derived_counts.py --list     # show every derived value + who claims it
 Exit 0 = clean, 1 = a doc disagrees with the tree.
 """
+import glob
 import os
 import re
 import sys
@@ -167,6 +168,28 @@ CHECKS = [
         derive_cmd="ls dll/src/*.cpp | wc -l",
         claims=[
             ("CLAUDE.md", r"\*\*(\d+) \.cpp \+ \d+ \.h\*\* DLL files"),
+            # The denominator of the "how much of the DLL do the tests actually compile"
+            # claim, so the fraction cannot go half-stale.
+            ("CLAUDE.md", r"\*\*\d+ of the (\d+)\*\* dll/src \.cpp files"),
+        ],
+    ),
+    dict(
+        key="dll_cpp_under_test",
+        label="DLL .cpp files compiled by a test target",
+        # ⚠ REGISTERED 2026-09-08 BECAUSE THE UNPINNED VERSION WENT STALE AND WAS BELIEVED.
+        # CLAUDE.md said the C++ suite was "two test executables which link HEADERS" -- true
+        # at audit #5 (build 2804), false from the day dll_core_test landed, and quoted to a
+        # fix session ~1,600 builds later as a reason not to write a test. The warning it
+        # sits in is still RIGHT (20 .cpp, Fern and Stark included, reach no test target);
+        # only its enumeration had rotted, which is the exact failure this whole gate exists
+        # for: a reader cannot tell a stale number from a live one.
+        derive=lambda r: len({
+            m for f in glob.glob(os.path.join(r, "dll", "tests", "*.cpp"))
+            for m in re.findall(r"\.\./src/([A-Za-z_]+\.cpp)", read(f))
+        }),
+        derive_cmd="unique ../src/*.cpp includes across dll/tests/*.cpp",
+        claims=[
+            ("CLAUDE.md", r"\*\*(\d+) of the \d+\*\* dll/src \.cpp files"),
         ],
     ),
     dict(

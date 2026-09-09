@@ -35,7 +35,8 @@
 #include "../src/Orden.h"       // Multi-value group scan: source-agnostic SDR matcher (MatchGroup)
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
 #include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
-#include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
+#include "../src/Aura.h"
+#include "../src/Dunste.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
@@ -6451,6 +6452,227 @@ GameThreadLiveness g_testLiveness = GameThreadLiveness::Responsive;
 GameThreadLiveness GetGameThreadLiveness(int32_t /*thresholdMs*/) { return g_testLiveness; }
 }   // namespace Stark
 
+static void Test_Dunste_ShouldCommitCollision() {
+    // Blind-spot sweep D1. InvokeSetCollision discarded UE5_CallProcessEventEx's int32_t
+    // and returned "the setter was FOUND" -- which all three call sites read as "collision
+    // CHANGED". The repair is a TRI-state, and this rule is the load-bearing half of it:
+    // which outcomes may the caller commit s_state.collisionOff from.
+    using CA = Dunste::CollisionApply;
+
+    EXPECT("D1: an APPLIED invoke commits", Dunste::ShouldCommitCollision(CA::Applied));
+
+    // The audit #4 B8 half, and it must survive: a pawn class with no
+    // SetActorEnableCollision is PERMANENT, so retrying cannot conjure a setter and the
+    // caller must commit to stop re-emitting every tick. Collapsing this into "failure"
+    // would re-introduce the bug B8 fixed.
+    EXPECT("D1: an ABSENT setter still commits (B8 -- retrying cannot conjure one)",
+           Dunste::ShouldCommitCollision(CA::Absent));
+
+    // The D1 half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
+    // -5 game-thread timeout, -3 no usable PE offset): NOTHING reached the game, so
+    // committing records a disable that never happened -- and on the restore path it
+    // wipes the record that keeps a ghosted pawn tracked.
+    EXPECT("D1 *: a REFUSED invoke does NOT commit",
+           !Dunste::ShouldCommitCollision(CA::Refused));
+}
+
+static void Test_Aura_DescribeSparseDelegateState() {
+    // Blind-spot sweep D4. A sparse delegate whose bIsBound byte READ 1, whose
+    // InvocationList header then faulted, used to render "(0 bindings, sparse)" — the code
+    // had positive evidence the delegate WAS bound and printed the opposite. The walker
+    // clamped an unreadable/implausible Num to 0 and the renderer could not tell that from
+    // a genuine zero. bIsBound == 1 is implied here: Ubel only calls this after rejecting
+    // the unbound case.
+    Aura::SparseDelegateResult sr;
+    sr.resolved = sr.ownerFound = sr.nameFound = true;
+
+    sr.listRead = false;                       // the header faulted
+    EXPECT("D4: an unreadable invocation list says so",
+           Aura::DescribeSparseDelegateState(sr, 0)
+               == "(sparse, bound — invocation list unreadable)");
+
+    // ⭐ THE CONTROL. A delegate that IS bound and whose list was READ and is genuinely
+    // empty must still say "(0 bindings, sparse)" — otherwise the fix would have swapped
+    // one wrong answer for another.
+    sr.listRead = true;
+    sr.listNum  = 0;
+    EXPECT("D4 control: a READ, genuinely-empty list still says 0 bindings",
+           Aura::DescribeSparseDelegateState(sr, 0) == "(0 bindings, sparse)");
+
+    // Read a positive Num but resolved none of them: neither "0 bindings" nor a list.
+    sr.listNum = 3;
+    EXPECT("D4: Num read but no binding resolvable is named, not reported as zero",
+           Aura::DescribeSparseDelegateState(sr, 0) == "(3 sparse bindings, none readable)");
+    sr.listNum = 1;
+    EXPECT("D4: singular", Aura::DescribeSparseDelegateState(sr, 0)
+               == "(1 sparse binding, none readable)");
+
+    // Populated: the caller renders it, so the helper must stand aside.
+    sr.listNum = 3;
+    EXPECT("D4: the populated case is left to the caller",
+           Aura::DescribeSparseDelegateState(sr, 2).empty());
+}
+
+static void Test_Ubel_DescribeUnreadableField() {
+    // ⛔ THE OFFSET MUST BE HEX, AND THIS TEST IS THE ONLY THING THAT SAYS SO. The
+    // InterfaceProperty refusal first shipped as `"+0x" + std::to_string(fi.Offset)`:
+    // DECIMAL digits behind a hex prefix, so a field at 0xFF8 was announced as "+0x4088".
+    // The refusal exists to stop the walker making an unbacked claim about an ADDRESS --
+    // stating the wrong one inside it is the same class of defect it was written to remove.
+    // It was caught only because the page-edge fixture asserts the message names the offset
+    // the field is actually at; a test that grepped for "unreadable" would have gone green.
+    // Centralised here, and pinned here, so four call sites cannot drift apart.
+    using Ubel::DescribeUnreadableField;
+
+    // ⭐ THE ONE THIS EXISTS FOR: 0xFF8 == 4088 decimal, and the two must not be confused.
+    EXPECT("unreadable: the offset is rendered in HEX, not decimal",
+           DescribeUnreadableField("interface", 0xFF8)
+               == "(interface — unreadable at +0xFF8, not read)");
+    EXPECT("unreadable: ...and 4088 decimal is exactly what a %d would have printed",
+           DescribeUnreadableField("interface", 0xFF8).find("4088") == std::string::npos);
+
+    // The kind is named, because three handlers share this string and a user reading a row
+    // needs to know which one refused.
+    EXPECT("unreadable: the kind is carried through",
+           DescribeUnreadableField("enum", 0x10) == "(enum — unreadable at +0x10, not read)");
+    EXPECT("unreadable: byte enum",
+           DescribeUnreadableField("byte enum", 0x1000)
+               == "(byte enum — unreadable at +0x1000, not read)");
+
+    // Offset 0 is a real field offset, not a missing one -- it must still be stated.
+    EXPECT("unreadable: offset 0 is printed, not elided",
+           DescribeUnreadableField("optional", 0)
+               == "(optional — unreadable at +0x0, not read)");
+
+    // ⚠ Every caller tests for this substring; keep them agreeing on it.
+    EXPECT("unreadable: the word every caller greps for is present",
+           DescribeUnreadableField("optional", 0x24).find("unreadable") != std::string::npos);
+}
+
+static void Test_Ubel_DescribeScriptDelegate() {
+    // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- a target WAS bound and has since been collected.
+    // An UNTOUCHED FScriptDelegate must not make it. Five sites did, because they tested
+    // `!funcName.empty()` while an untouched slot has FunctionName == NAME_None, and
+    // Ubel::ReadFName resolves index 0 to the STRING "None". Found 2026-09-09 the moment
+    // Arr_Delegates gave ReadDelegateArrayElements its first fixture: element [0] rendered
+    // "(stale)::None" for a slot nothing had ever touched.
+    using Ubel::DescribeScriptDelegate;
+
+    // ⭐ THE ONE THIS EXISTS FOR.
+    EXPECT("stale: an untouched slot is UNBOUND, not stale",
+           DescribeScriptDelegate(false, "", 0, 0, "None") == "(unbound)");
+    EXPECT("stale: an empty FunctionName is the same case",
+           DescribeScriptDelegate(false, "", 0, 0, "") == "(unbound)");
+
+    // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the repair is only an
+    // improvement if it did not simply delete the state it was meant to narrow.
+    EXPECT("stale control: a real name with no live target is still stale",
+           DescribeScriptDelegate(false, "", 5, 7, "OnFire") == "(stale)::OnFire");
+    EXPECT("stale control: an object index with no name is still stale",
+           DescribeScriptDelegate(false, "", 5, 7, "None") == "(stale)");
+
+    // The ordinary bound case, and the reason hasTarget is separate from targetName: a
+    // resolved object whose NAME could not be read is not stale.
+    EXPECT("stale: a live binding names its target",
+           DescribeScriptDelegate(true, "Actor_0", 3, 9, "OnPing") == "Actor_0::OnPing");
+    EXPECT("stale: a live target with an unreadable name renders ?, not stale",
+           DescribeScriptDelegate(true, "", 3, 9, "OnPing") == "?::OnPing");
+
+    // ⚠ A serial with no index is SOMETHING, so it does not qualify as never-touched.
+    EXPECT("stale: serial set without an index is not called unbound",
+           DescribeScriptDelegate(false, "", 0, 7, "None") == "(stale)");
+
+    // The preview builder skips nameless bindings, and must agree on what "named" means.
+    EXPECT("named: a bound binding is named",
+           Ubel::IsNamedDelegateBinding("Actor_0::OnPing"));
+    EXPECT("named: a stale-with-name binding is named",
+           Ubel::IsNamedDelegateBinding("(stale)::OnFire"));
+    EXPECT("named: (unbound) is not", !Ubel::IsNamedDelegateBinding("(unbound)"));
+    EXPECT("named: a nameless (stale) is not", !Ubel::IsNamedDelegateBinding("(stale)"));
+}
+
+static void Test_Delegate_AccessDetectorPad() {
+    // D4b / D3b, the defect UNDER D4's fix. UE 5.3+ gave TScriptDelegate and
+    // TMulticastScriptDelegate a TDelegateAccessHandlerBase base class. With DO_CHECK on
+    // (Development/Debug/DebugGame) it holds one std::atomic<uint64>, so every delegate
+    // payload starts 8 bytes late; with DO_CHECK off the base is empty and EBO applies.
+    // Measured on DumperTest Development (UE 5.4) 2026-09-09: the bound OnActorHit reads
+    // {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4} at +0/+8/+0x10/+0x14, and reading Num at
+    // the old +8 returned 0xF5BF5C40 -- the LOW HALF OF DATA.
+    //
+    // ⚠ Every one of the ~12 shipped titles measured in this repo is a Shipping build, i.e.
+    // the pad-free side. Nothing red could ever have appeared there.
+    constexpr int32_t kMcd = 16;              // sizeof(FMulticastScriptDelegate), unpadded
+    const int32_t kSd = 8 + DynOff::SizeofFName();   // sizeof(FScriptDelegate), unpadded
+
+    EXPECT("pad: Shipping FMulticastScriptDelegate (16) -> 0",
+           DynOff::DelegatePadFromElementSize(kMcd, kMcd) == 0);
+    EXPECT("pad: Development FMulticastScriptDelegate (24) -> 8",
+           DynOff::DelegatePadFromElementSize(kMcd + 8, kMcd) == 8);
+    EXPECT("pad: Shipping standalone FScriptDelegate -> 0",
+           DynOff::DelegatePadFromElementSize(kSd, kSd) == 0);
+    EXPECT("pad: Development standalone FScriptDelegate -> 8",
+           DynOff::DelegatePadFromElementSize(kSd + 8, kSd) == 8);
+
+    // ⭐ THE CONTROL THAT MATTERS. Anything else must be REFUSED, not rounded to the nearer
+    // candidate. `ReadMulticastDelegateArrayElements` used to hardcode 16 and ignore the
+    // engine's own ElementSize entirely; the replacement is only an improvement if an
+    // unrecognised size makes the reader say so instead of picking a stride. A wrong stride
+    // does not fail loudly -- it publishes confident "(N bindings)" strings read from the
+    // middle of the previous element.
+    EXPECT("pad: an unrecognised ElementSize is refused, not rounded",
+           DynOff::DelegatePadFromElementSize(20, kMcd) < 0);
+    EXPECT("pad: 4 bytes short is refused", DynOff::DelegatePadFromElementSize(12, kMcd) < 0);
+    EXPECT("pad: double the pad is refused", DynOff::DelegatePadFromElementSize(32, kMcd) < 0);
+    EXPECT("pad: garbage ElementSize is refused",
+           DynOff::DelegatePadFromElementSize(1073742336, kMcd) < 0);
+    EXPECT("pad: a zero baseSize cannot derive anything",
+           DynOff::DelegatePadFromElementSize(16, 0) < 0);
+}
+
+static void Test_Aura_IsBoundInvocationListHeader() {
+    // The predicate that lets the SPARSE path derive the pad it has no ElementSize for: a
+    // MulticastSparseDelegateProperty's ElementSize is sizeof(FSparseDelegate) == 1 and says
+    // nothing about the delegate. Both candidate offsets are tested against invariants that
+    // hold regardless of which is right.
+    const uintptr_t kGood = 0x1D5F5BF5C40;   // the real Data measured on the fixture
+
+    EXPECT("inv: the measured live header {Data, Num=1, Max=4} is coherent",
+           Aura::IsBoundInvocationListHeader(kGood, 1, 4));
+
+    // ⭐ WHY num >= 1 IS A REQUIREMENT AND NOT A NICETY. Reaching this predicate means the
+    // delegate's FName was FOUND in FSparseDelegateStorage, and UE erases that entry the
+    // instant the delegate empties -- every remover in SparseDelegate.cpp calls
+    // DelegateMap->Remove(DelegateName) as soon as IsBound() reads false. A located entry
+    // therefore HAS a subscriber, which is exactly what makes an all-zero reading (the
+    // access detector, read as if it were Data) rejectable.
+    EXPECT("inv: Num=0 is rejected -- a located sparse entry always has a subscriber",
+           !Aura::IsBoundInvocationListHeader(kGood, 0, 4));
+
+    // The checked-build failure, read at the OLD offset: Data lands on the zeroed detector.
+    EXPECT("inv: pad=0 on a checked build reads the zeroed detector as Data -> rejected",
+           !Aura::IsBoundInvocationListHeader(0, 1, 4));
+
+    // The other direction: pad=8 on a SHIPPING build reads {Num,Max} packed as a pointer.
+    // 0x0000000400000001 is ~17 GB and can pass a bare range check, so this one is caught
+    // downstream by the element-0 FName read in LocateInvocationList, not here -- the point
+    // of the assertion is to record WHICH check is load-bearing for that direction.
+    EXPECT("inv: the reversed-direction misread is NOT caught by this predicate alone",
+           Aura::IsBoundInvocationListHeader(0x0000000400000001ULL, 1, 4));
+
+    EXPECT("inv: Max < Num is not a TArray", !Aura::IsBoundInvocationListHeader(kGood, 8, 4));
+    EXPECT("inv: a negative Num is rejected", !Aura::IsBoundInvocationListHeader(kGood, -1, 4));
+    EXPECT("inv: Num past the plausibility ceiling is rejected",
+           !Aura::IsBoundInvocationListHeader(
+               kGood, Aura::kMaxPlausibleInvocationListNum + 1,
+               Aura::kMaxPlausibleInvocationListNum + 1));
+    EXPECT("inv: exactly at the ceiling is still allowed",
+           Aura::IsBoundInvocationListHeader(kGood, Aura::kMaxPlausibleInvocationListNum,
+                                             Aura::kMaxPlausibleInvocationListNum));
+    EXPECT("inv: a kernel-range Data is rejected",
+           !Aura::IsBoundInvocationListHeader(0xFFFF800000000000ULL, 1, 4));
+}
+
 static void Test_Stark_ClassifyGameThreadLiveness() {
     using L = Stark::GameThreadLiveness;
     const uint64_t thr = 500, now = 100000;
@@ -7919,6 +8141,12 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Dunste_ShouldCommitCollision);
+    RUN(Test_Aura_DescribeSparseDelegateState);
+    RUN(Test_Ubel_DescribeUnreadableField);   // [UNREADVAL-2026-09-09] hex, not decimal
+    RUN(Test_Ubel_DescribeScriptDelegate);
+    RUN(Test_Delegate_AccessDetectorPad);
+    RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
     RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent

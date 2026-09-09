@@ -1,17 +1,17 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "44cf1502",
-  "source_sha256": "da7ff8587f5c46d6d8844cdb30dd8311e16a2ba284ed33f55e23ae925d2a9227",
-  "captured_utc": "2026-09-07T05:50:24+00:00",
+  "source_commit": "a07390ba",
+  "source_sha256": "d9d047b230b8c5efafa0558c9213b6fee5a1aac54642105d011fb2e69bbbd0de",
+  "captured_utc": "2026-09-09T04:18:35+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279270912,
-      "sha256": "6302b9b008aecb6e5955edb345a95f846d392ed05188c6c8710ecbd23987e02d",
+      "size": 279275008,
+      "sha256": "423246b1321e7d0f16e465475a4b40f076434a1a53e0e1c1d098d5f1be3b7d7b",
       "reflected_present": {
-        "DumperTestActor": 5,
+        "DumperTestActor": 7,
         "DumperTestSubsystem": 2,
         "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
@@ -23,14 +23,14 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-07T05:47:10+00:00"
+      "exe_mtime": "2026-09-09T04:15:45+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132342784,
-      "sha256": "9a3bb978bf15d9ce99e9e190d942302c33474e2713cac257edb1c64c42e0bb38",
+      "size": 132344320,
+      "sha256": "46e8d37b17b03497b76b4a9105d383c45d9329acb663925192a71020f085bf58",
       "reflected_present": {
-        "DumperTestActor": 2,
+        "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
         "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
@@ -42,7 +42,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-07T05:48:31+00:00"
+      "exe_mtime": "2026-09-09T04:17:53+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
@@ -64,9 +64,11 @@
       "exe_mtime": "2026-09-07T05:49:42+00:00"
     }
   },
-  "problems": [],
+  "problems": [
+    "STALE BINARY: DebugGame was built before 'DumperTest.rc' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it"
+  ],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "da7ff8587f5c46d6d8844cdb30dd8311e16a2ba284ed33f55e23ae925d2a9227"
+    "source_sha256": "d9d047b230b8c5efafa0558c9213b6fee5a1aac54642105d011fb2e69bbbd0de"
   }
 }

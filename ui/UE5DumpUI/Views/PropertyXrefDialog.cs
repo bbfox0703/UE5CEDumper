@@ -468,7 +468,27 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     {
         if (_grid.SelectedItem is not PropertyXrefMatch x || string.IsNullOrEmpty(x.FunctionAddress)) return;
         var bridge = SharedAobMaker;
-        if (bridge == null || !bridge.IsAvailable) return;
+        if (bridge == null || !bridge.IsAvailable)
+        {
+            // ⛔ THIS USED TO BE A BARE `return` — a click that did nothing, said nothing, and
+            // left the previous status line standing. The button is normally disabled in this
+            // state (:387 gates it on the same cached flag), so the guard reads defensive; but
+            // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
+            // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
+            // Engine with the dialog up and the button stays enabled over a stale true, and the
+            // click vanished silently.
+            //
+            // Found 2026-09-09 while scouting SW5, whose acceptance ("with Cheat Engine closed,
+            // Push to CE disassembler must produce the RED ...") was therefore unreachable as
+            // written. Reporting it makes the failure visible to a user AND makes that row
+            // testable. Same colour and shape as the refusal branch below, different wording
+            // because nothing was attempted: there is no push for CE to have refused.
+            _statusLabel.Text = "Cheat Engine is not reachable — nothing was pushed. The "
+                              + "connection was open when this dialog was opened; reopen it "
+                              + "after restarting Cheat Engine with the AOBMaker plugin.";
+            _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+            return;
+        }
         _btnDisasm.IsEnabled = false;
         try
         {
@@ -482,10 +502,41 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
             }
             var bareHex = codeAddr.Replace("0x", "").Replace("0X", "");
             // ByteArray (8) + showAsHex so the user can right-click → "find what executes".
-            await bridge.CreateMemoryRecordAsync(x.FunctionName + " (code)", bareHex, 8, false, true);
-            await bridge.NavigateDisassemblerAsync(bareHex);
-            _statusLabel.Text = $"Pushed {x.FunctionName} → CE disassembler @ {codeAddr}";
-            _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+            //
+            // ⛔ BOTH RESULTS ARE LOAD-BEARING. These return Task<bool> and the bridge returns
+            // **false** rather than throwing when the CE side is gone or refuses
+            // (AobMakerBridgeService: ReconnectAsync fails -> IsAvailable = false -> return
+            // false), so the catch below never fires and the green "Pushed ..." label was
+            // printed over a push that never happened. Found 2026-09-09 -- the blind-spot
+            // sweep's round 3 had recorded "IAobMakerBridge: 0 DEFECT, family closed" while
+            // this site was open.
+            //
+            // ⚠ The two calls are NOT interchangeable, and the message says which failed: the
+            // record is what the user right-clicks, the navigation is what they look at. A
+            // record with no navigation is a usable half; a navigation with no record is not.
+            var recorded = await bridge.CreateMemoryRecordAsync(
+                x.FunctionName + " (code)", bareHex, 8, false, true);
+            var navigated = await bridge.NavigateDisassemblerAsync(bareHex);
+
+            if (recorded && navigated)
+            {
+                _statusLabel.Text = $"Pushed {x.FunctionName} → CE disassembler @ {codeAddr}";
+                _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+            }
+            else if (recorded)
+            {
+                _statusLabel.Text = $"Added {x.FunctionName} to the CE table @ {codeAddr}, but "
+                                  + "could not open the disassembler there — find the record in "
+                                  + "Cheat Engine and browse to it manually.";
+                _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#E0A050"));
+            }
+            else
+            {
+                _statusLabel.Text = $"CE refused the push for {x.FunctionName} — nothing was "
+                                  + "added to the table. Is Cheat Engine still open with the "
+                                  + "AOBMaker plugin loaded?";
+                _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+            }
         }
         catch (Exception ex)
         {

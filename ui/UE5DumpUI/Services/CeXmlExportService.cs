@@ -1048,6 +1048,7 @@ public static class CeXmlExportService
                     ArrayDataAddr = f.ArrayDataAddr,
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
+                    DelegatePad = f.DelegatePad,
                     SoftArrayFNameSize = f.SoftArrayFNameSize,
                     SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
                     SoftArrayPathOffset = f.SoftArrayPathOffset,
@@ -1104,6 +1105,24 @@ public static class CeXmlExportService
     /// - ArrayProperty (scalar): Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
     ///   Element children: Address=+{N*elemSize} (Data pointer already dereferenced by parent)
     /// </summary>
+    /// <summary>The offset CE must read the field at.
+    ///
+    /// ⛔ A delegate field's payload does NOT start at the field's own offset on every build.
+    /// UE 5.3 gave <c>TScriptDelegate</c>/<c>TMulticastScriptDelegate</c> a
+    /// <c>TDelegateAccessHandlerBase</c> base whose <c>DO_CHECK</c> specialization holds one
+    /// <c>std::atomic&lt;uint64&gt;</c>, so in a CHECKED build (Debug/Development/DebugGame) the
+    /// payload starts 8 bytes late; in Shipping/Test the base is empty and EBO applies. Emitting
+    /// <c>Offsets=[0]</c> at the raw offset therefore dereferenced the zeroed DETECTOR and the
+    /// pasted CE record pointed at address 0. Found 2026-09-09 under [D4B-DELEGATEPAD], after
+    /// the DLL-side readers had already been repaired and shipped — the enumeration of "five
+    /// readers" was DLL-only and this exporter was not in it.
+    ///
+    /// ⚠ <see cref="LiveFieldValue.DelegatePad"/> is 0 for every non-delegate field, so this is
+    /// the identity everywhere else. It is DERIVED BY THE DLL from the engine's own
+    /// <c>FProperty::ElementSize</c> and sent as <c>delegate_pad</c>; do not re-derive the rule
+    /// here, or there are two implementations to keep right.</summary>
+    private static int CeOffset(LiveFieldValue field) => field.Offset + field.DelegatePad;
+
     public static string GenerateHierarchicalXml(
         string rootAddress,
         string rootName,
@@ -2261,15 +2280,18 @@ public static class CeXmlExportService
                     // the optional slot so the user can poke at the value.
                     EmitLeaf(sb, indent, DecorateDesc(field.Name, field.Offset, LeafTypeLabel(field)),
                         new CeFieldInfo("8 Bytes", ShowAsHex: true),
-                        $"+{field.Offset:X}", null);
+                        $"+{CeOffset(field):X}", null);
                 }
                 continue;
             }
 
             // ArrayProperty: emit as group with element children (Phase C).
-            // Multicast delegates are exposed as implicit DelegateProperty arrays
-            // (the field's first 8 bytes are the InvocationList::Data pointer,
-            // matching TArray addressing — Offsets=[0] derefs it correctly).
+            // Multicast delegates are exposed as implicit DelegateProperty arrays.
+            // ⚠ "the field's first 8 bytes are the InvocationList::Data pointer" stood here
+            // unconditionally until 2026-09-09 and is true only on the Shipping half: a
+            // checked build (UE 5.3+, DO_CHECK on) puts an 8-byte access detector first.
+            // The projection above has already folded DelegatePad into field.Offset, so
+            // Offsets=[0] lands on Data in BOTH builds.
             if (field.ArrayCount >= 0
                 && (field.TypeName == "ArrayProperty"
                     || field.TypeName == "MulticastInlineDelegateProperty"
@@ -2313,7 +2335,7 @@ public static class CeXmlExportService
             // and UTF-8 byte (CodePage), are selected by the Unicode/CodePage flags.
             if (IsStringProperty(field.TypeName))
             {
-                EmitStringLeaf(sb, indent, ScalarDesc(), $"+{field.Offset:X}",
+                EmitStringLeaf(sb, indent, ScalarDesc(), $"+{CeOffset(field):X}",
                     offsets: [0], unicode: field.TypeName == "StrProperty",
                     codepage: field.TypeName == "Utf8StrProperty");
                 continue;
@@ -2326,14 +2348,14 @@ public static class CeXmlExportService
                 var baseDesc = ScalarDesc();
                 var ddLink = TryGetEnumDropDown(field, baseDesc);
                 EmitLeaf(sb, indent, ddLink.desc ?? baseDesc, ceField,
-                    $"+{field.Offset:X}", null,
+                    $"+{CeOffset(field):X}", null,
                     dropDownContent: ddLink.content,
                     dropDownListLink: ddLink.link);
             }
             else if (field.IsNavigable)
             {
                 EmitNavigableField(sb, indent, field,
-                    $"+{field.Offset:X}", null);
+                    $"+{CeOffset(field):X}", null);
             }
         }
         _emitDepth--;
@@ -2419,7 +2441,7 @@ public static class CeXmlExportService
             EmitLeaf(sb, indent,
                 DecorateDesc(field.Name, field.Offset, field.PtrClassName) + " (shared)",
                 new CeFieldInfo("8 Bytes", ShowAsHex: true),
-                $"+{field.Offset:X}", null);
+                $"+{CeOffset(field):X}", null);
             return;
         }
 
@@ -2442,7 +2464,7 @@ public static class CeXmlExportService
             EmitLeaf(sb, indent,
                 DecorateDesc(field.Name, field.Offset, field.PtrClassName) + reason,
                 new CeFieldInfo("8 Bytes", ShowAsHex: true),
-                $"+{field.Offset:X}", null);
+                $"+{CeOffset(field):X}", null);
             return;
         }
 
@@ -2468,7 +2490,7 @@ public static class CeXmlExportService
 
         // Address=+{fieldOffset}, Offsets=[0] — CE dereferences the pointer
         // and treats children's +{N} as offsets from the resolved target.
-        EmitGroupOpen(sb, indent, description, $"+{field.Offset:X}", new[] { 0 },
+        EmitGroupOpen(sb, indent, description, $"+{CeOffset(field):X}", new[] { 0 },
             showAsHex: true);
 
         // Push self onto the path before recursing; pop on exit (try/finally
@@ -2694,7 +2716,7 @@ public static class CeXmlExportService
         if (field.ArrayInnerType == "StructProperty"
             && field.ArrayCount > 0 && field.ArrayElemSize > 0)
         {
-            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
             var elemIndent = indent + "  ";
 
             if (field.ArrayElements is { Count: > 0 })
@@ -2759,7 +2781,7 @@ public static class CeXmlExportService
         if (ceElem == null || field.ArrayCount <= 0
             || field.ArrayElements == null || field.ArrayElements.Count == 0)
         {
-            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            EmitGroupPlaceholder(sb, indent, desc, $"+{CeOffset(field):X}", null);
             return;
         }
 
@@ -2841,18 +2863,18 @@ public static class CeXmlExportService
         // DropDownList/DropDownListLink is emitted on this parent group node.
         if (dropDownContent != null)
         {
-            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 },
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 },
                 dropDownContent: dropDownContent);
         }
         else if (dropDownLinkTarget != null)
         {
             // Shared enum: parent links to first occurrence's parent
-            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 },
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 },
                 dropDownListLink: dropDownLinkTarget);
         }
         else
         {
-            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         }
         var childIndent = indent + "  ";
 
@@ -2922,7 +2944,7 @@ public static class CeXmlExportService
         LiveFieldValue field, string desc)
     {
         // Array group: Address=+{fieldOffset}, Offsets=[0] derefs TArray.Data.
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var elemIndent = indent + "  ";
 
         var elems = field.ArrayElements!;
@@ -3048,7 +3070,7 @@ public static class CeXmlExportService
     private static void EmitSoftObjectArrayProperty(StringBuilder sb, string indent,
         LiveFieldValue field, string desc)
     {
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var elemIndent = indent + "  ";
 
         // Build a shared DropDownList for the AssetPath/PackageName FName from
@@ -3141,7 +3163,7 @@ public static class CeXmlExportService
     private static void EmitStructArrayProperty(StringBuilder sb, string indent,
         LiveFieldValue field, string desc)
     {
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var elemIndent = indent + "  ";
 
         ulong arrDataBase = ParseHexAddr(field.ArrayDataAddr);
@@ -3277,7 +3299,7 @@ public static class CeXmlExportService
             || field.MapElements == null || field.MapElements.Count == 0
             || field.MapKeySize <= 0 || field.MapValueSize <= 0)
         {
-            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            EmitGroupPlaceholder(sb, indent, desc, $"+{CeOffset(field):X}", null);
             return;
         }
 
@@ -3319,7 +3341,7 @@ public static class CeXmlExportService
         }
 
         // Map group: Address=+{fieldOffset}, Offsets=[0] (deref TSparseArray.Data)
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 }, dropDownContent: valueDropDown);
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 }, dropDownContent: valueDropDown);
         var elemIndent = indent + "  ";
 
         foreach (var elem in field.MapElements)
@@ -3451,7 +3473,7 @@ public static class CeXmlExportService
             || field.SetElements == null || field.SetElements.Count == 0
             || field.SetElemSize <= 0)
         {
-            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            EmitGroupPlaceholder(sb, indent, desc, $"+{CeOffset(field):X}", null);
             return;
         }
 
@@ -3462,7 +3484,7 @@ public static class CeXmlExportService
                           && !string.IsNullOrEmpty(field.SetElemStructAddr);
 
         // Set group: Address=+{fieldOffset}, Offsets=[0] (deref TSparseArray.Data)
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var childIndent = indent + "  ";
 
         foreach (var elem in field.SetElements)
@@ -3522,12 +3544,12 @@ public static class CeXmlExportService
         if (field.DataTableRowData == null || field.DataTableRowData.Count == 0
             || field.DataTableStride <= 0 || field.DataTableFNameSize <= 0)
         {
-            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            EmitGroupPlaceholder(sb, indent, desc, $"+{CeOffset(field):X}", null);
             return;
         }
 
         // Level 1: RowMap group — deref TSparseArray.Data
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var rowIndent = indent + "  ";
 
         foreach (var row in field.DataTableRowData)
@@ -4108,13 +4130,19 @@ public static class CeXmlExportService
             // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase J: FScriptDelegate — first 8 bytes is FWeakObjectPtr (target).
-            // Element stride uses ArrayElemSize so consecutive elements stay aligned
+            // Phase J: FScriptDelegate — FWeakObjectPtr (target) at the payload's first
+            // 8 bytes. Element stride uses ArrayElemSize so consecutive elements stay aligned
             // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
+            // ⚠ "first 8 bytes" is relative to the PAYLOAD, not to the field: a checked build
+            // (UE 5.3+, DO_CHECK on) puts an 8-byte access detector in front. The exporter's
+            // field projection folds LiveFieldValue.DelegatePad into Offset for exactly this,
+            // so nothing here needs to know -- but do not re-bake the assumption elsewhere.
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Phase K: FMulticastScriptDelegate — first 8 bytes is the inner
-            // TArray<FScriptDelegate>::Data pointer; element stride is 16.
+            // Phase K: FMulticastScriptDelegate — the inner TArray<FScriptDelegate>::Data
+            // pointer at the payload's first 8 bytes (same ⚠ about the detector), and the
+            // element stride comes off the wire as ArrayElemSize, NOT from a baked 16: it is
+            // 16 in Shipping/Test and 24 in a checked build.
             "MulticastDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "MulticastInlineDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 

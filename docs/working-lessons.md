@@ -65,6 +65,63 @@ the cheap way to tell "looked and found nothing" from "never looked"** (22 → 2
 proved the folder had finally entered the candidate list). Ask for that number before trusting a null
 result.
 
+### 1.2a ⭐ ONE negative control validates ONE AXIS — it does not validate the instrument
+
+§1.2 says run the control. This is the failure that happens **after** you run it and it passes.
+
+**2026-09-08, the audit-#3 blind-spot sweep.** The hunt was for a discarded `bool`/status return
+feeding a success report — the shape of the 2026-08-22 See-through defect (`d48441e7`). Before
+spending agents, the scanner was calibrated the right way: run it against `Schlacht.cpp` at
+`d48441e7^` and require it to flag the historical defect. *If it cannot see the bug that motivated
+the sweep, the list is worthless.* It failed, was fixed, passed — and the sweep was launched on it.
+
+It was still **76% blind**, and the control could never have said so:
+
+| pass | what it could not see | C++ sites found |
+|---|---|---|
+| 1 | the defect line starts with `for` — leading `if`/`for`/`while` heads skipped wholesale | 65 |
+| 2 | **control PASSES here** — and this is what the sweep ran on | 137 |
+| 3 | **qualified calls**: the lookbehind `(?<![A-Za-z0-9_>.:])` rejected `Macht::ReadSafe(…)`, `p->f(…)` | **281**, of which **213 = 76% qualified** |
+
+**Why the control was structurally incapable of catching it:** the historical call
+(`InvokeSetHidden(a, false)`) is **unqualified and in its own translation unit**, so it never
+exercised the qualification rule at all. The control tested statement *shape*. The bug was in
+callee *qualification*. One sample, one axis.
+
+And the corrected pass had its **own** blind spot, found by the same control on the same file:
+statements inside a **lambda passed as a call argument** are invisible to a `;`-splitter, because
+depth never returns to 0 — **66 bodies / 3,598 lines** in `dll/src`, 2,873 of them `Aura.cpp`, i.e.
+the whole parallel-scan machinery. The line-based pass sees those; the statement-based pass sees
+qualified and multi-line calls. **Neither dominates. The union is the list.**
+
+⭐ **The measurement that settles it:** of the sweep's 5 confirmed findings, **0 came from a
+mechanical-list row**. Only 2 of 13 skepticised candidates were list rows and **both were refuted**.
+List yield **0/154**; hand-grep yield **5/5**. A list that passes its calibration can still
+contribute nothing.
+
+**Why this keeps happening:** a passing control produces *confidence*, and confidence is what stops
+you enumerating the other axes. This is [audit #4's lesson 1](audit-2026-08-04-findings.md) —
+*"a fix verified against the list it was written from is not verified"* — one level up: **an
+instrument verified against the one case it was written from is not verified either.**
+
+**How to apply.** Before trusting a scanner/rig that passed its control:
+
+1. **Enumerate the axes the instrument discriminates on** — for a code scanner at minimum: statement
+   shape, callee qualification (`::` / `.` / `->`), single vs multi-line, return type family
+   (`bool` vs `int`/enum/`*Result`), and nesting (lambda bodies, macros, templates).
+2. **Ask which axes the control sample actually exercised.** One historical defect exercises one
+   value per axis. Everything else is untested.
+3. **Cheapest sufficient check: compare TOTAL POPULATION against a second instrument built on a
+   different principle** (line-based vs statement-based here). A 2× gap is not a rounding
+   difference — it is a missing axis. 65 → 137 → 281 was visible in seconds and would have been
+   visible *before* spending the agents.
+4. **Report the yield split.** "Confirmed findings that came from the list" vs "from hand-grep" is
+   the number that tells the next round whether to keep feeding the instrument or abandon it.
+
+Reusable, each keeping its calibration in `main`: `scratchpad/discard_scan.py` (line-based),
+`discard_scan2.py` (+ head peeling), `discard_scan3.py` (statement-based, qualified + multi-line).
+Full write-up with the confirmed findings: [todo.md](todo.md) § *Blind-spot sweep ROUND 1*.
+
 ### 1.3 Green tests do not cover the SEAM
 
 AOBMaker's `PreferNearOriginalCandidates` was a dead no-op (an RVA compared to a VA) under three green
@@ -296,6 +353,73 @@ cost **two** contradictory readings before it. The filing made it three.
   the actual writer showed the older note's own explanation ("the cache's 504 is from an older run")
   was wrong — the value is written fresh every scan by the C# mirror. Stopping at "already
   documented, never mind" would have preserved that error.
+
+### 1.v A live-game sample needs BOTH halves: targeted proves presence, broad proves reach
+
+2026-09-09, the regression arm for `[UNREADVAL]`. The claim under test was *"the new gate never
+fires on readable memory"* — an ABSENCE claim, so the sample decides everything.
+
+* ⛔ **A broad stride sample can miss a family entirely.** Striding 25,231 objects returned
+  **zero** `OptionalProperty`, because the only two classes declaring one had **two** live
+  instances between them. "0 refusals" was true and meant nothing. ⭐ **The anti-vacuity guard —
+  fail the run when a family is absent — is what caught it**, and it was written before the first
+  run, which is the only reason it could.
+* ⛔ **Targeting alone is the opposite error.** Asking the class tree who declares the family and
+  walking only those instances proves the handler works *for the classes the search named*. It
+  cannot support "not one field in the title", which is what an absence claim asserts.
+* ⭐ **So do both and say which does what**: the targeted pull is the anti-vacuity evidence, the
+  broad stride is the reach. They are different arguments, not a bigger sample.
+
+### 1.v2 A valueless field on a METAOBJECT is a branch, not a defect — read the RATIO
+
+Same run. The tally reported **17 fields with neither a value nor hex**, which is exactly what a
+walker declining silently looks like — the shape `[SW6-STRIDEREFUSAL]` was about, and a tempting
+second finding.
+
+It was a different code path. `walk_instance` on a `UClass`/`UScriptStruct` takes a **definition
+branch** that publishes field METADATA and deliberately reads no values, returning before any
+type handler runs. ⭐ **The discriminator was the RATIO, not the count**: 77 of 96 fields on one
+such object were valueless across **fourteen** type families, of which the fix had touched three.
+A defect in three handlers cannot produce silence in fourteen.
+
+* ⚠ **Filter metaobjects out of any value-level tally**, and report them separately rather than
+  dropping them — `is_definition` is on the wire for exactly this. A tally that silently excludes
+  them and one that silently includes them are both wrong, in opposite directions.
+* ⭐ **When a fix's symptom appears in families the fix never touched, suspect the harness before
+  the fix.** That test is cheap, it is decisive, and it is the same question §2.4 asks about a
+  premise.
+
+### 1.w2 A mechanical scanner surfaces REFUTED rows as FRESH HITS — by construction
+
+2026-09-09, closing slice B of the claims sweep. A scorer over "discarded effect-applier results"
+returned 7 sites; 3 read as defects and were fixed and committed. One of them,
+`Wirbel.cpp:618`, is on round 2's **`Refuted (8) — do not re-raise`** list — filed there as
+`:619`, because the row named the `rewrote++` and today's hit names the `WriteBytes` above it.
+
+⛔ **THIS IS NOT AN ACCIDENT OF THAT SCANNER, IT IS THE GENERAL CASE.** A refutation lives in
+**prose**; the code it refutes is left exactly as it was, because the whole point of refuting is
+that nothing needed changing. So the pattern still matches, forever, and every future scan
+re-reports it. A scanner cannot tell "nobody has looked at this" from "three people looked and
+said no".
+
+* ⭐ **The guard is a VERDICTS table inside the scanner**, keyed by (file, symbol), printing the
+  prior ruling next to every hit and flagging an unknown as `*** NEW -- ADJUDICATE ***`.
+  `tools/verify/claims_effect_applier.py` carries one. ⚠ Keep the rows for sites that no longer
+  MATCH: a fixed site leaves the population by construction, and if a regression re-drops the
+  return you want it back with its history attached, not as a fresh unknown.
+* ⚠ **Key it by SYMBOL, never by line.** The row said `:619` and the hit said `:618` — 75 builds
+  apart, in a function nobody had touched. Any refuted list written as `file:line` is already
+  decaying; grep the FUNCTION when checking one.
+* ⭐ **Re-derive the refutation rather than obeying or ignoring it.** No reason had been recorded
+  for this row, so it was reconstructed: `ReadBytesSafe(c.root, buf, 0x400)` succeeds one
+  instruction above the loop and every write target is inside that window, so the write can only
+  fail if the region is freed between the two — far narrower than it looked. That is what turned
+  "I re-raised a refuted row" into a usable verdict (**kept as hygiene, not counted as a defect**)
+  instead of either quietly reverting or quietly keeping the inflated count.
+* ⚠ **Correct the count, not just the code.** The tempting move is to keep the fix and say nothing;
+  the honest one is to keep the fix, reclassify it, and restate the total. A slice that reports
+  "3 defects" when one of them was already refuted has re-inflated the very number the sweep's
+  three rounds spent their effort deflating.
 
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
@@ -1466,6 +1590,134 @@ to the OTHER two costs of a live row.
 ⚠ **What the substitution does NOT excuse**: check the host actually booted. `24,479 objects` is
 what made the run meaningful — §3.w's dead-engine trap reports coherent zeros through injection,
 pipe and scan alike.
+
+### 2.18 ⭐ LINE COUNT DOES NOT PREDICT DEFECT DENSITY — "does the caller NEED the return to pick its next step" does
+
+Scoping a sweep by *how much unread code is left* feels rigorous and is close to worthless. The
+2026-09-08 blind-spot sweep measured both predictors against the same population, and they disagree by
+everything.
+
+**The measurement.** The sweep hunted one shape: a call returns whether the work actually happened, the
+call site drops it, and a status/count/log then claims success anyway. Two C# families were swept to
+exhaustion:
+
+| family | call sites | consumed | DEFECT | dropped, no claim |
+|---|---|---:|---:|---:|
+| `IPlatformService.CopyToClipboardAsync` | 57 | **2** | **29 (51%)** | 26 |
+| `IAobMakerBridge` (7 methods) | 55 | **42** | **0** | 13 |
+
+Same layer. Same files. Frequently **the same method** — at `LiveWalkerViewModel.cs:6306` the code
+captures and tests the AOBMaker bool, then drops the clipboard bool eleven lines later and claims
+success on it. Any predictor based on *where* the code lives, how old it is, or how many lines it has
+gives these two the same score.
+
+**What actually separates them.** `IAobMakerBridge`'s callers were written *against a fallback* — every
+`CreateAAScriptAsync` site has a clipboard branch to fall to, so the author **had** to test the bool to
+choose a branch. Testing it was load-bearing, so it was tested: 42/55, zero defects.
+`CopyToClipboardAsync` is the **last link with nothing to fall back to**. Testing it buys the author
+only a more honest message — never a different action — so it was skipped 55 times out of 57.
+
+⭐ **The predictor: a TERMINAL call — no fallback branch — whose contract makes the return the ONLY
+failure signal.** `IPlatformService.cs:30-49` states both halves in writing (*"Returns true only when
+the text actually reached the clipboard"*, *"Never throws for an ordinary clipboard failure ... and
+that is the contract"*), which is also why every `catch (Exception ex)` wrapped around those 57 calls
+is **dead code for a real clipboard failure**. In all of `ui/UE5DumpUI` exactly one interface method
+fits that description, and it holds 29 of the sweep's 29 C# defects.
+
+**How to apply when scoping a sweep.**
+
+1. **Enumerate the INTERFACES first, not the files.** One grep over `Core/I*.cs` produced all 17
+   `bool`/`Task<bool>`-returning methods; checking the call sites of the nine outside the two families
+   took minutes and proved the entire remaining population is **1 site, 0 defects**. That grep replaced
+   a proposed round-4 over "68 Services files / 24,651 lines".
+2. **Rank each by: does a caller have somewhere else to go when it is false?** If yes, the codebase has
+   probably already tested it — for its own reasons, not for correctness. If no, expect it to be
+   dropped nearly everywhere.
+3. **Then check whether anything downstream claims success.** A dropped return with no claim is a
+   nuisance (26 here, all LOW: the user re-clicks). A dropped return *feeding a success message* is the
+   defect (29 here, and the 14 whose payload is a CE script are the ones that can make a user paste
+   stale clipboard content into Cheat Engine and run it).
+
+**The corollary that saved the gate.** The same split is what makes a maintainable check possible:
+"discarded result" alone is 47% false-positive here and would need a 26-line baseline, while "discarded
+result **whose argument is a generated script/XML**" is 14 hits, 14 defects, **0 false positives** —
+because every one of the 26 legitimate drops copies an address or a name, and none copies a script.
+⭐ **Pick a predicate whose LEGITIMATE population is empty, rather than one whose legitimate population
+must be enumerated** — that is the rule both `check_ce_untick_placement.py` (gate 17a) and the rescoped
+17b are built on, and it is what the refuted round-1 allowlist design lacked. See [todo.md](todo.md)
+§ *Blind-spot sweep ROUND 3*.
+
+### 2.19 ⭐ BUILD CONFIGURATION IS A LAYOUT AXIS — and a one-configuration fixture is not a control for it
+
+`D4b`/`D3b`, 2026-09-09. Every delegate read in the DLL assumed
+`FMulticastScriptDelegate` = `{ TArray InvocationList }` at `+0`. That is true in
+Shipping/Test and in every UE ≤ 5.2, and **false in a checked build from UE 5.3**, where
+`TDelegateAccessHandlerBase` contributes an 8-byte access detector in front of the payload.
+Five readers were wrong. Nothing red had appeared in a year.
+
+**Why nothing red had appeared** is the transferable part. All ~12 titles ever measured in this
+repo are **Shipping** builds — the pad-free side. The one host that could have shown it, our own
+DumperTest, is normally launched `dev`, but the affected readers had no fixture to read *at all*
+until 2026-09-08. The population of hosts was large and uniformly on one side of the axis, so
+the sample size was **1**, not 12.
+
+⚠ This is the same shape as `bCasePreservingName` (Grimoire.h): a flag with two branches where
+twelve measurements all landed on one, so the other branch rotted unobserved. **When a layout
+depends on something that is a property of the BUILD rather than of the engine version — the
+`DO_CHECK` family, `WITH_EDITOR`, `USE_CHECKS_IN_SHIPPING`, editor-vs-cooked — a fixture in one
+configuration cannot be its control.** Ours can be packaged in three; the rig now runs against
+two and asserts the same answers from both, with Shipping as the negative control precisely
+because it is the side real titles are on.
+
+**Derive, don't version-gate.** The fix takes the pad from UE's own
+`FProperty::ElementSize`, which UE computes as `sizeof(TCppType)` — so it already answers "in
+THIS build" and needs no version or configuration test. Where no ElementSize exists (the sparse
+path: a `MulticastSparseDelegateProperty`'s is `sizeof(FSparseDelegate) == 1`), the pad is
+derived from an invariant of the data instead — `FSparseDelegateStorage` erases an entry the
+moment it empties, so an entry we *found* must have `Num >= 1`, which makes the two candidate
+offsets distinguishable by test rather than by guess.
+
+⭐ **Three corollaries worth more than the fix:**
+
+* **Read your own WARN before re-deriving anything from source.** The DLL had been logging
+  `implausible InvocationList Num=322437056` for a day. `322437056` is `0x1337FFC0` — the *low
+  half of the Data pointer*. The whole diagnosis is in that one number, and the log was searched
+  only after the source archaeology was already done. A "Num that equals half an adjacent
+  pointer" is the fingerprint of an off-by-one-field read, and it generalises.
+* **An unfalsifiable fixture reads as a pass.** `Arr_MulticastDelegates` had two **empty**
+  elements, so a 16-byte stride and a 24-byte stride produced the identical `(0 bindings)`
+  string. The row could not fail. Binding element **[1]** and leaving **[0]** empty is what
+  turned it into a test — the general rule being that **a fixture whose elements are
+  indistinguishable cannot measure an index or a stride**.
+* **Two types spelled the same way.** A multicast's invocation-list *elements* are
+  `TScriptDelegate<FNotThreadSafeNotCheckedDelegateMode>` (never padded); a standalone
+  `FScriptDelegate` is `TScriptDelegate<FNotThreadSafeDelegateMode>` (padded). Our comments call
+  both "FScriptDelegate", and one of them asserted the two layouts *match*. Same disease as
+  §"ASK THE QUESTION BY NAME" in Grimoire.h: when two different answers are spelled identically,
+  a reader cannot tell which question a line is answering.
+
+### 2.19a A build tool that silently skips a step still says SUCCESS — check the ARTIFACT's mtime
+
+Found while packaging the fixture above. `tools/ue-sample/repackage.py --sync-mirror` used
+`shutil.copy2`, which **preserves the source file's mtime by design**. UnrealHeaderTool decides
+whether to re-run by comparing each header against `Intermediate/Build/.../UHT/Timestamp` — and
+any earlier build in the same session has already pushed that forward. A header edited at 08:03
+and synced after a build that ran at 08:09 is *older* than the Timestamp, so UHT skipped,
+regenerated nothing, and UBT compiled the module against the **previous** reflection data.
+
+⚠ **It printed `BUILD SUCCESSFUL`.** Two new `UPROPERTY`s and a `UFUNCTION` were packaged away;
+the game booted normally and the fields were simply **absent** from `walk_instance`. The only
+tell was `DumperTestActor.generated.h` still carrying the previous day's timestamp.
+
+Generalise it: **a build step that is skipped and a build step that ran are both reported as
+success — the discriminator is the mtime or hash of the artifact it should have written**, not
+the exit code. This repo already knows the same lesson twice, in
+[§2.5c](#25c-547-mb-is-not-a-verification--hash-dist-against-what-was-just-built) (`dist/` size
+vs hash) and in CLAUDE.md's `msvc_deps_prefix` note (a `.h` edit that stops triggering a
+rebuild). ⚠ And the flag's own warning — *"packaging would build the REAL project's source"* —
+was printed and lost, because the log was read with `| tail`. **When a tool prints a warning
+about a mode you are not in, `tail` is the wrong reader.**
+
 
 ## 3. Traps in our own stack
 

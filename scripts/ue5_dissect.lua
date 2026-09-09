@@ -160,8 +160,17 @@ local TYPE_MAP = {
     WeakObjectProperty    = { vt = vtQword,   size = 8 },
 
     -- Delegates
+    -- ⚠ These sizes are FALLBACKS ONLY -- getTypeInfo prefers the engine's own ElementSize
+    -- off the wire for this family, because UE 5.3+ adds an 8-byte access detector in front
+    -- of a delegate payload in a CHECKED build (Debug/Development/DebugGame) and none in
+    -- Shipping/Test. A baked 16 reads the detector plus half the TArray header there.
     DelegateProperty                  = { vt = vtQword,   size = 8 },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
+    -- ⛔ KNOWN WRONG, and NOT what this 2026-09-09 change is about: an FSparseDelegate is
+    -- ONE byte (bIsBound), not 16, so this row has always overrun into the next fields.
+    -- Left as-is deliberately -- correcting it changes the rendered width of every sparse
+    -- delegate on every title, which is a display change needing CE in front of a human,
+    -- not a side effect of a layout fix. Filed, not fixed.
     MulticastSparseDelegateProperty   = { vt = vtPointer, size = 16 },
 }
 
@@ -169,6 +178,19 @@ local TYPE_MAP = {
 local function getTypeInfo(typeName, fieldSize)
     local entry = TYPE_MAP[typeName]
     if entry then
+        -- ⭐ Delegates: prefer the engine's own ElementSize, exactly as EnumProperty does
+        -- below and for the same reason -- the baked number is right for only one build.
+        -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
+        -- (UE 5.3+ TDelegateAccessHandlerBase contributes an 8-byte access detector); the
+        -- standalone FScriptDelegate behind a DelegateProperty moves the same way. Guarded to
+        -- the two plausible widths so a garbage ElementSize cannot widen a row arbitrarily.
+        if (typeName == "DelegateProperty"
+            or typeName == "MulticastInlineDelegateProperty"
+            or typeName == "MulticastDelegateProperty")
+           and (fieldSize == entry.size or fieldSize == entry.size + 8) then
+            return entry.vt, fieldSize
+        end
+
         -- For EnumProperty, prefer the actual field size
         if typeName == "EnumProperty" and fieldSize > 0 then
             if     fieldSize == 1 then return vtByte,   1
@@ -775,6 +797,16 @@ function dissect.clearAll()
     ST.structCache = {}
     log("All structures cleared")
 end
+
+-- ----------------------------------------------------------------
+-- Exposed for tests only. getTypeInfo decides a row's CE type AND WIDTH, and its delegate
+-- branch is the one thing in this file that depends on the BUILD rather than on the property
+-- -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
+-- (UE 5.3+ adds an 8-byte access detector). Nothing reachable through the public API returns
+-- that width on its own, so pinning it means reaching the function. Same reason
+-- DescribeSparseDelegateState is header-inline on the C++ side.
+-- ----------------------------------------------------------------
+dissect._getTypeInfo = getTypeInfo
 
 -- ----------------------------------------------------------------
 -- Module return

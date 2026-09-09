@@ -376,6 +376,46 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             LOG_INFO("UE5Dumper DLL loaded | build: %s | process: %s [PID=%lu]",
                      BuildStamp::VersionString(), procPathU8.c_str(), GetCurrentProcessId());
 
+            // ⭐ WHICH ARTEFACT IS THIS, AND WHERE IS IT MAPPED. The line above names the HOST
+            // process; until 2026-09-09 nothing named US. A reader could only INFER the answer,
+            // and only sometimes: "proxy DLL mode" says a proxy without saying which one, and
+            // "[PROXY] Loaded real version.dll" names the SYSTEM library we forwarded to rather
+            // than ourselves — and it only appears after a successful forward, never for a
+            // direct injection.
+            //
+            // ⛔ TWO INCIDENTS IN ONE SESSION made the case. (1) A rig took the RVA of an export
+            // from `dist/UE5Dumper.dll` and added it to the base of a deployed `dxgi.dll` proxy
+            // — a different binary with a different layout — and Titan Quest II died with
+            // EXCEPTION_ACCESS_VIOLATION inside dxgi. (2) On EVERSPACE 2 the same rig found
+            // `dxgi.dll` first and it was C:\WINDOWS\SYSTEM32\dxgi.dll, because every D3D title
+            // loads that. Both are one log line away from being obvious.
+            //
+            // The identity is already computed for the wire — `Fern`'s `load_mode` derives
+            // "proxy:version.dll" / "injected" from this same handle — so this only says out
+            // loud, at load time, what the init response has always been able to say on request.
+            // Base is included because it is the other half an external tool needs: base + the
+            // RVA read from THIS path is the only sound way to locate one of our exports.
+            {
+                wchar_t selfPathW[MAX_PATH] = {};
+                if (g_hDllModule && GetModuleFileNameW(g_hDllModule, selfPathW, MAX_PATH)) {
+                    std::wstring selfPath(selfPathW);
+                    auto ss = selfPath.find_last_of(L"\\/");
+                    std::wstring selfFile = (ss != std::wstring::npos)
+                        ? selfPath.substr(ss + 1) : selfPath;
+                    LOG_INFO("Module identity: %s | base=0x%llX | path: %s",
+                             Utf8Helpers::EncodeUtf16(selfFile.c_str(), selfFile.size()).c_str(),
+                             static_cast<unsigned long long>(
+                                 reinterpret_cast<uintptr_t>(g_hDllModule)),
+                             Utf8Helpers::EncodeUtf16(selfPath.c_str(), selfPath.size()).c_str());
+                } else {
+                    // Not fatal, but say so: an ABSENT identity line must not read like a
+                    // module that simply had nothing interesting to report.
+                    LOG_WARN("Module identity: UNKNOWN — GetModuleFileNameW failed on "
+                             "g_hDllModule=%p (err=%lu)",
+                             static_cast<void*>(g_hDllModule), GetLastError());
+                }
+            }
+
             // Initialize per-process mirror log subfolder
             Sein::InitProcessMirror(fileName);
 

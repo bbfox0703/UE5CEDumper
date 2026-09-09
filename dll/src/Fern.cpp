@@ -1480,6 +1480,35 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         }
     }
 
+    // UE 5.3+ access-detector pad. Emitted only when NON-ZERO, so a Shipping title's wire is
+    // unchanged and an older UI simply never sees the key. ⛔ An exporter that ignores it emits
+    // `Offsets=[0]` at the detector instead of at InvocationList::Data — a CE record pointing at
+    // address 0 on any checked build. Sent rather than re-derived downstream: see the note on
+    // LiveFieldValue::delegatePad.
+    //
+    // ⛔⛔ THIS BLOCK USED TO SIT INSIDE `if (fv.arrayCount >= 0)` -> `if (!arrayInnerType...)`.
+    // `fv.delegatePad` is set at exactly two sites, and only ONE of them survives that gate:
+    //   * `Ubel.cpp:6004` (MulticastInline) — reports an invocation list, so `arrayCount >= 0`
+    //     and `array_inner_type` is set. It emitted fine, and was never affected.
+    //   * `Ubel.cpp:5507` (scalar `DelegateProperty`) — has NO invocation list, so `arrayCount`
+    //     stays -1 ("not an array", Ubel.h:418) and the emission could never run. It set the
+    //     value on every checked build and the value never left the process.
+    // So the loss was exactly one field KIND, not the whole key. Measured on the wire
+    // 2026-09-09 (DumperTest 5.4 Development): `Multicast_Inline` carries `count:1` +
+    // `array_elem_size:16` + `delegate_pad:8`, while `Del_Unicast` carries no `count` at all.
+    // Found by `sw7_stale_arm.py`, whose scalar arm read `pad=0 (from the wire)` against the
+    // array's derived 8 — the two cannot differ, both being standalone FScriptDelegate.
+    // ⚠ `CeXmlDelegatePadTests` was GREEN throughout: it constructs `LiveFieldValue` in C# with
+    // `DelegatePad` already set, so it never crosses DLL -> wire -> C#. The consequence was
+    // live for that one kind — `CeXmlExportService.CeOffset` added 0 for a scalar
+    // DelegateProperty, which is precisely the "record pointing at address 0" above.
+    // ⛔ Do NOT also set this for an ARRAY of delegates (or a sparse one): the pad is
+    // per-ELEMENT, inside the array data, while a CE offset built from it is added to the FIELD
+    // offset (the TArray header). Array consumers derive it from `array_elem_size`, as the
+    // readers do; a sparse delegate's storage is not at the field offset at all.
+    if (fv.delegatePad > 0)
+        fj["delegate_pad"] = fv.delegatePad;
+
     // ArrayProperty: element count + inner type info + inline elements
     if (fv.arrayCount >= 0) {
         fj["count"] = fv.arrayCount;

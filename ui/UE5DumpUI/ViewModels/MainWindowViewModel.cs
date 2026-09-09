@@ -1285,11 +1285,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Wire Live Funcs -> clipboard (copy function name). VM stays IPlatformService-free.
         LiveFuncs.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"LiveFuncs clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1504,11 +1507,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         InterestingProperties.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"InterestingProperties clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1555,11 +1561,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         DetectStats.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"DetectStats clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1620,11 +1629,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
         ValueSearch.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"ValueSearch clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1650,11 +1662,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // copy here. Status text already set by the VM.
         InterestingFunctions.RequestCopyText += async (text) =>
         {
-            if (string.IsNullOrEmpty(text)) return;
-            try { await _platform.CopyToClipboardAsync(text); }
+            if (string.IsNullOrEmpty(text)) return false;
+            // The bool is the point: the VM waits for it and only then decides what to
+            // claim. Returning false in the catch keeps a swallowed fault honest too.
+            try { return await _platform.CopyToClipboardAsync(text); }
             catch (Exception ex)
             {
                 _log.Error($"InterestingFunctions clipboard copy failed: {ex.Message}", ex);
+                return false;
             }
         };
 
@@ -1725,11 +1740,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
                         sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                    bool copied = false;
                     if (!sentToCe)
                         // Wrap as paste-able CE memory-record XML (a bare AA body can't
                         // be pasted into a record).
-                        await _platform.CopyToClipboardAsync(
+                        copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                             Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                    if (!sentToCe && !copied)
+                    {
+                        StatusText = Helpers.ClipboardDelivery.FailureText("the AA script");
+                        _log.Warn($"InterestingFunctions baked AA Script {className}::{funcName} " +
+                                  "reached neither CE nor the clipboard");
+                        return;
+                    }
                     // Sync VM-level state so InterestingFunctions tab's Notes
                     // column reflects post-send reality.
                     if (_aobMaker != null)
@@ -1934,11 +1957,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     bool sentToCe = false;
                     if (_aobMaker != null && wasAvailable)
                         sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                    bool copied = false;
                     if (!sentToCe)
                         // Wrap as paste-able CE memory-record XML (a bare AA body can't
                         // be pasted into a record).
-                        await _platform.CopyToClipboardAsync(
+                        copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                             Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                    if (!sentToCe && !copied)
+                    {
+                        StatusText = Helpers.ClipboardDelivery.FailureText("the AA script");
+                        _log.Warn($"Console baked AA Script {className}::{funcName} reached " +
+                                  "neither CE nor the clipboard");
+                        return;
+                    }
                     StatusText = sentToCe
                         ? $"AA Script created in CE: {funcName}"
                         : wasAvailable
@@ -1991,12 +2022,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 bool sentToCe = false;
                 if (_aobMaker != null && wasAvailable)
                     sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                bool copied = false;
                 if (!sentToCe)
                     // Wrap as paste-able CE memory-record XML (a bare AA body can't be
                     // pasted into a record). The script is self-contained (talks to the
                     // mailbox directly) — no ue5_invoke_helper.lua needed.
-                    await _platform.CopyToClipboardAsync(
+                    copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                         Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                if (!sentToCe && !copied)
+                {
+                    StatusText = Helpers.ClipboardDelivery.FailureText("the Debug Camera script");
+                    _log.Warn("Console Debug Camera CE script reached neither CE nor the clipboard");
+                    return;
+                }
                 StatusText = sentToCe
                     ? "Debug Camera AA Script created in CE (tick = ON, untick = OFF)."
                     : wasAvailable
@@ -3168,12 +3206,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     group: Services.CeInjectScriptGenerator.RecordGroup);
             }
 
+            bool copied = false;
             if (!sentToCe)
             {
                 // A bare AA body can't be pasted into a record — wrap as CE
                 // memory-record XML.
-                await _platform.CopyToClipboardAsync(
+                copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                     Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+            }
+            if (!sentToCe && !copied)
+            {
+                StatusText = Helpers.ClipboardDelivery.FailureText("the inject bootstrap");
+                _log.Warn($"CE inject bootstrap (dll={dllPath}) reached neither CE nor the clipboard");
+                return;
             }
 
             StatusText = sentToCe

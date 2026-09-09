@@ -78,7 +78,25 @@ public partial class DetectStatsViewModel : ViewModelBase
     // Cross-tab handoffs (same event pattern the other finder panels use).
     public event Action<string>? LocateInGWorld;          // payload = class name
     public event Action<string>? NavigateToInstanceFinder; // payload = class name
-    public event Action<string>? RequestCopyText;          // payload = text
+    /// <summary>
+    /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
+    /// arrived, so the raiser can decide what to claim.
+    ///
+    /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
+    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
+    /// is strictly worse than the call-site cases the same sweep found -- there the result
+    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
+    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
+    /// by the VM."</para>
+    ///
+    /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
+    /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
+    /// subscriber would silently decide the answer for everyone.</para>
+    /// </summary>
+    public event Func<string, Task<bool>>? RequestCopyText;
 
     public DetectStatsViewModel(IDumpService dump, ILoggingService log,
                                 ISnapshotStore? snapshotStore = null)
@@ -382,10 +400,13 @@ public partial class DetectStatsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CopyPropertyName(DetectedStat? row)
+    private async Task CopyPropertyNameAsync(DetectedStat? row)
     {
         if (row == null || string.IsNullOrEmpty(row.PropName)) return;
-        RequestCopyText?.Invoke(row.PropName);
-        StatusText = $"Copied property name: {row.PropName}";
+        var handler = RequestCopyText;
+        bool copied = handler is not null && await handler(row.PropName);
+        StatusText = copied
+            ? $"Copied property name: {row.PropName}"
+            : $"Could not copy '{row.PropName}' -- the clipboard refused the write.";
     }
 }

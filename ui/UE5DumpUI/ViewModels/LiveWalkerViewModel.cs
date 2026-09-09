@@ -4359,7 +4359,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapseLeafPointers: CollapseLeafPointers);
             }
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                // The status below counts objects and XML lines from what was BUILT, not
+                // from what arrived, so it reads identically over a clipboard that never
+                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                StatusText = "";
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
+                _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
+                          "the clipboard refused the write");
+                return;
+            }
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
@@ -4698,7 +4708,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     collapseLeafPointers: CollapseLeafPointers);
             }
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                // The status below counts objects and XML lines from what was BUILT, not
+                // from what arrived, so it reads identically over a clipboard that never
+                // took the write. Blind-spot sweep round 3, sub-shape (a).
+                StatusText = "";
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
+                _log.Warn($"CE XML for {CurrentClassName} was built ({xml.Length} chars) but " +
+                          "the clipboard refused the write");
+                return;
+            }
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
@@ -4863,7 +4883,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                await _platform.CopyToClipboardAsync(xml);
+                if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+                {
+                    // This IS the fallback — CE was unreachable, so the clipboard is the
+                    // only delivery channel left. Claiming it worked leaves the user
+                    // pasting an older AA script into CE.
+                    SetError(Helpers.ClipboardDelivery.FailureText("the CE AA script"));
+                    _log.Warn($"CE AA script for {CurrentClassName} could not be delivered — " +
+                              $"AOBMaker unavailable AND the clipboard refused the write — {note}");
+                    return;
+                }
                 StatusText = wasAvailable
                     ? $"⚠ AOBMaker pipe broke (CE closed?) — CE AA script copied to clipboard — {note}"
                     : $"CE AA script copied — {note}";
@@ -5402,7 +5431,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         try
         {
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.FieldAddress));
+            // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
+            // 8 bytes after the field, and parking CE's hex view on the access detector shows
+            // a qword that reads 0. See LiveFieldValue.PayloadAddress.
+            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.PayloadAddress));
         }
         catch (Exception ex)
         {
@@ -5452,7 +5484,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
-        await AddRecordToCeAsync(field.Name, field.FieldAddress, t, "field");
+        // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left
+        // on the access detector points at a qword that reads 0 on every checked build.
+        await AddRecordToCeAsync(field.Name, field.PayloadAddress, t, "field");
     }
 
     /// <summary>
@@ -6206,8 +6240,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // can't be pasted into a CE record — wrap it, same as the Global-Pointer
             // records). If we thought CE was present (button shouldn't have been
             // clickable then), surface a pipe-broken warning too.
-            await _platform.CopyToClipboardAsync(
-                Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
+                    Services.CheatTableBuilder.WrapAaScriptXml(description, script)))
+            {
+                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                SetError(Helpers.ClipboardDelivery.FailureText("the invoke script"));
+                _log.Warn($"Invoke script for {func.Name} could not be delivered - AOBMaker " +
+                          "did not take it AND the clipboard refused the write");
+                return;
+            }
             if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
             StatusText = wasAvailable
                 ? $"⚠ AOBMaker pipe broke (CE closed?) — invoke script copied as CE XML (paste into CE's address list)"
@@ -6304,9 +6345,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 bool sentToCe = false;
                 if (_aobMaker != null && wasAvailable)
                     sentToCe = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                bool copied = false;
                 if (!sentToCe)
-                    await _platform.CopyToClipboardAsync(
+                    copied = await Helpers.ClipboardDelivery.TryAsync(_platform,
                         Services.CheatTableBuilder.WrapAaScriptXml(description, script));
+                if (!sentToCe && !copied)
+                {
+                    SetError(Helpers.ClipboardDelivery.FailureText("the AA script"));
+                    _log.Warn($"Baked AA Script (no args) for {CurrentClassName}::{func.Name} " +
+                              "reached neither CE nor the clipboard");
+                    return;
+                }
                 // Sync the VM-level flag from whatever the bridge ended up at,
                 // so the Notes column reflects post-send reality on the next
                 // repaint.

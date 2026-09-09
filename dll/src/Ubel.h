@@ -435,6 +435,17 @@ struct LiveFieldValue {
     int32_t     softArrayFNameSize = 0;          // sizeof(FName): 8 (normal) or 12 (CasePreservingName)
     bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
     int32_t     softArrayPathOffset = 0;         // FSoftObjectPath offset in the element (0x10 or 0x08)
+    // ⛔ EXPORTERS MUST ADD THIS to a delegate field's own offset before emitting a deref.
+    // UE 5.3+ puts an 8-byte access detector in front of every delegate payload in a CHECKED
+    // build (Debug/Development/DebugGame); it is 0 in Shipping/Test and in every UE <= 5.2.
+    // So `Offsets=[0]` applied at the field's raw offset derefs the DETECTOR, not
+    // InvocationList::Data -- a CE record pointing at address 0. The full story and the
+    // derivation are in Grimoire.h (kDelegateDetectorPad / DelegatePadFromElementSize).
+    // ⚠ Sent from here rather than re-derived in C#/Lua ON PURPOSE: the DLL already computed
+    // it from the engine's own ElementSize, and a second implementation of the same rule in
+    // another language is a second thing to get wrong (measured: the first pad survey
+    // re-implemented it in Python and therefore verified the copy, not the shipped rule).
+    int32_t     delegatePad = 0;
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
@@ -1097,6 +1108,70 @@ bool IsInterfaceArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+/// Render ONE FScriptDelegate binding, from the four things any reader can observe.
+///
+/// ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM — it says a target WAS bound and has since been
+/// collected. An UNTOUCHED `FScriptDelegate` must not make it, and five sites did:
+/// `Object = {0, 0}` with `FunctionName = NAME_None`, and `Ubel::ReadFName` resolves index 0
+/// to the **string `"None"`** — which is not empty, so every `!funcName.empty()` test called an
+/// untouched slot stale. Found 2026-09-09, the moment `Arr_Delegates` gave
+/// `ReadDelegateArrayElements` its first fixture and element [0] rendered `(stale)::None`.
+///
+/// ⚠ ONE DEFINITION ON PURPOSE. The same four-branch ladder was written out at five sites
+/// (`ReadDelegateArrayElements`, `ReadMulticastDelegateArrayElements`'s preview, the
+/// `DelegateProperty` handler, the sparse-binding elements and the multicast element loop), and
+/// repairing "two of them" is how this sweep's enumerations have already been wrong twice.
+///
+/// `hasTarget` is kept separate from `targetName` because a resolved object with an unreadable
+/// name is NOT stale — it renders `?::Func`, which is what the call sites did before.
+///
+/// Pure and header-inline so `dll_helpers_test` can pin it without a live object pool.
+inline std::string DescribeScriptDelegate(bool hasTarget, const std::string& targetName,
+                                          int32_t objIdx, int32_t serial,
+                                          const std::string& funcName) {
+    // NAME_None reads back as the STRING "None", not as an empty string.
+    const bool named = !funcName.empty() && funcName != "None";
+    if (!named && objIdx == 0 && serial == 0) return "(unbound)";
+    if (named && hasTarget)
+        return (targetName.empty() ? std::string("?") : targetName) + "::" + funcName;
+    if (named) return "(stale)::" + funcName;
+    return "(stale)";     // a live-looking weak pointer with no function name
+}
+
+/// True when `DescribeScriptDelegate` produced a NAMED binding (`Target::Func` or
+/// `(stale)::Func`) rather than `(unbound)` / `(stale)`. The preview builder skips the
+/// nameless ones, and this keeps that test on the same definition of "named".
+inline bool IsNamedDelegateBinding(const std::string& described) {
+    return described.find("::") != std::string::npos;
+}
+
+/// Render what a field publishes when the walker could NOT read the memory its value would have
+/// come from. `what` names the kind ("interface", "enum", "optional"); `offset` is the field's
+/// own offset in the instance.
+///
+/// ⛔ THE REFUSAL EXISTS BECAUSE THE ALTERNATIVE IS AN AFFIRMATIVE CLAIM. On a faulted
+/// `Macht::ReadSafe` the out-param keeps its initialised 0, and 0 is not "unknown" to anything
+/// downstream — it is `0000000000000000` in the hex column, `(unset)` on a TOptional, and the
+/// NAME of enumerator 0 on an enum. Each of those says something about memory nobody could read.
+/// The shape has been confirmed here five times in 2026-09 (the D3/D5 delegate readers,
+/// `GetMapPairLayout`, `WalkInstance`'s two inlined map copies, `delegate_pad`, and
+/// `InterfaceProperty`), and `BoolProperty` three blocks above the enum handlers has always had
+/// it right: it builds hex and typedValue INSIDE `if (Macht::ReadSafe(...))`.
+///
+/// ⚠ snprintf("%X"), NOT std::to_string — and this is why the formatting is centralised rather
+/// than repeated. The InterfaceProperty refusal first shipped as
+/// `"+0x" + std::to_string(fi.Offset)`: DECIMAL digits behind a hex prefix, so offset 0xFF8
+/// rendered as "+0x4088". A refusal written to stop an unbacked claim about an address, which
+/// then states the wrong address, is the same class of defect it was written to remove. Caught
+/// only because the fixture asserts the message names the offset the field is actually at.
+///
+/// Pure and header-inline so `dll_helpers_test` can pin it without a live object pool.
+inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
+    char offHex[24];
+    snprintf(offHex, sizeof(offHex), "%X", offset);
+    return std::string("(") + what + " — unreadable at +0x" + offHex + ", not read)";
+}
 
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).

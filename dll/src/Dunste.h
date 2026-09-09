@@ -47,6 +47,30 @@ enum FlyResult : int32_t {
     FR_ERR_WRITE    = -10,  // raw write failed
 };
 
+// What actually happened to ONE SetActorEnableCollision request.
+//
+// ⛔ `Absent` and `Refused` are NOT the same failure and must never be collapsed back into
+// a bool. That collapse is the D1 defect: `InvokeSetCollision` returned "the setter was
+// FOUND" and every caller read it as "collision CHANGED".
+//   Absent  — the pawn's class has no SetActorEnableCollision (cooked out of a stripped
+//             Shipping build). PERMANENT: retrying cannot conjure a setter, so the caller
+//             COMMITS and stops re-emitting. That is audit #4 B8 and it must survive.
+//   Refused — the dispatcher did not run it: -8 (an off-game-thread worker while the PE
+//             hook is down, Frieren.cpp), -5 (the game thread did not drain in time),
+//             -3 (no usable PE offset), -2/-4. TRANSIENT: the caller must NOT commit, and
+//             must retry.
+enum class CollisionApply : int32_t {
+    Applied = 0,   // the dispatcher ran it and returned 0
+    Absent  = 1,   // no setter on this pawn class
+    Refused = 2,   // the dispatcher refused or failed
+};
+
+/// May the caller commit its collision record from this outcome? Pure, so
+/// `dll_helpers_test` can pin the B8 rule without linking Dunste.cpp.
+inline bool ShouldCommitCollision(CollisionApply a) {
+    return a != CollisionApply::Refused;      // Applied AND Absent both commit (B8)
+}
+
 // Keyboard preset — which physical keys drive movement (forward/back, strafe
 // L/R, up/down). Turning is view-relative (the mouse), so the yaw keys are no
 // longer used. Wire value shared with the pipe/mailbox.

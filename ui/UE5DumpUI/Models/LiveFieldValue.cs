@@ -209,6 +209,15 @@ public sealed partial class LiveFieldValue : ObservableObject
     public string ArrayStructClassAddr { get; init; } = "";
 
     /// <summary>For ArrayProperty (Phase G soft arrays): sizeof(FName) in bytes (8 normal, 12 with CasePreservingName). 0 = not a soft array.</summary>
+    /// <summary>UE 5.3+ access-detector pad in front of a delegate payload: 8 on a CHECKED
+    /// build (Debug/Development/DebugGame), 0 on Shipping/Test and every UE &lt;= 5.2.
+    /// ⛔ Exporters MUST add this to <see cref="Offset"/> before emitting a deref or a leaf
+    /// for a delegate field — otherwise <c>Offsets=[0]</c> derefs the detector rather than
+    /// <c>InvocationList::Data</c> and the CE record points at address 0.
+    /// Derived by the DLL from the engine's own ElementSize and sent on the wire; do NOT
+    /// re-derive it here.</summary>
+    public int DelegatePad { get; init; }
+
     public int SoftArrayFNameSize { get; init; }
 
     /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>
@@ -492,6 +501,44 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>Absolute memory address of this field (instance base + offset). Set by ViewModel.</summary>
     [ObservableProperty] private string _fieldAddress = "";
+
+    /// <summary>
+    /// Where this field's PAYLOAD starts — <see cref="FieldAddress"/> plus
+    /// <see cref="DelegatePad"/>. Identical to <c>FieldAddress</c> for everything except a
+    /// delegate on a checked build.
+    /// </summary>
+    /// <remarks>
+    /// ⛔ THE TWO ARE NOT INTERCHANGEABLE, and conflating them is a real defect this repo
+    /// shipped. UE 5.3+ puts an 8-byte <c>FMRSWRecursiveAccessDetector</c> in front of every
+    /// delegate payload when <c>DO_CHECK</c> is on, so on a Development build the field
+    /// STARTS at <c>FieldAddress</c> but its <c>InvocationList</c> starts 8 bytes later.
+    /// <para>
+    /// <c>CeXmlExportService.CeOffset</c> has always got this right — the exported record for
+    /// <c>Multicast_Inline (980)</c> carries <c>&lt;Address&gt;+988&lt;/Address&gt;</c>, i.e.
+    /// the description names the FIELD offset while the address names the PAYLOAD. The two
+    /// one-click buttons beside each row did not: measured 2026-09-09
+    /// (<c>[CEPATHS-UNPADDED-2026-09-09]</c>), the HEX button logged
+    /// <c>"AOBMaker: navigated hex view to 1ED06BBD460"</c> — the access detector, which reads
+    /// 0 — where the exported record resolved to <c>0x1ED33872F80</c>, the real invocation
+    /// list.
+    /// </para>
+    /// ⚠ <see cref="FieldAddress"/> stays UNPADDED and is what the Address column shows,
+    /// deliberately: it is the address of the FIELD, which is what a reader comparing against
+    /// an offset table expects. This property is for the CE-facing paths, which want the bytes.
+    /// </remarks>
+    public string PayloadAddress
+    {
+        get
+        {
+            if (DelegatePad <= 0 || string.IsNullOrEmpty(FieldAddress)) return FieldAddress;
+            var s = FieldAddress.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                ? FieldAddress[2..] : FieldAddress;
+            return ulong.TryParse(s, System.Globalization.NumberStyles.HexNumber,
+                                  System.Globalization.CultureInfo.InvariantCulture, out var a)
+                ? "0x" + (a + (ulong)DelegatePad).ToString("X")
+                : FieldAddress;   // unparseable — better the field address than nothing
+        }
+    }
 
     /// <summary>Whether this field matches the current search query (set by ViewModel).</summary>
     [ObservableProperty] private bool _isSearchMatch ;

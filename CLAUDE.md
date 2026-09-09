@@ -81,13 +81,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
 # Run tests only
-# ⚠ -Target Test does NOT compile the DLL. It builds only the two test executables
-#   (`--target utf8_helpers_test` / `dll_helpers_test`), which link HEADERS — so a syntax
-#   error in Fern.cpp / Stark.cpp / any other .cpp passes it clean. A green -Target Test
-#   after editing a .cpp measures nothing about that file. Use -Target DLL (or no -Target)
-#   before claiming a C++ change builds. Learned the hard way 2026-08-04: "959 dll green"
-#   was reported over a Fern.cpp that had never been compiled and did not parse.
-# ⚠⚠ It is ALSO NOT READ-ONLY: "only the two test executables" is about the C++ side ONLY —
+# ⚠ -Target Test does NOT compile the whole DLL. It builds 5 test executables, and
+#   **10 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
+#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme into one TU, and
+#   grausam_window_test / sein_retention_test take one each. The other 21 — **Fern.cpp and
+#   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
+#   it clean. A green -Target Test after editing one of THOSE measures nothing about that
+#   file. Use -Target DLL (or no -Target) before claiming a C++ change builds. Learned the
+#   hard way 2026-08-04: "959 dll green" was reported over a Fern.cpp that had never been
+#   compiled and did not parse.
+# ⚠ This paragraph itself said "only the two test executables, which link HEADERS" until
+#   2026-09-08 — true at audit #5 (build 2804), false from the day dll_core_test landed, and
+#   it was quoted to a fix session as a reason not to write a test. Both counts are now
+#   pinned by `check_derived_counts`; do not hand-edit them.
+# ⚠⚠ It is ALSO NOT READ-ONLY: the C++ narrowness above is about the C++ side ONLY —
 #   it republishes dist\ NON-TRIMMED too. See ## Build & Deploy.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
 
@@ -253,7 +260,7 @@ line, trim a row, do not grow.
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
-| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 39 .h** DLL files, **186** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 39 .h** DLL files, **188** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**59** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
 | [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here — read before an audit, a verification claim, or an Avalonia/CE/SQLite change.** Verification method, audit-agent calibration, traps in our stack, UE/CE facts, §6 settled decisions. Write new lessons here. |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |

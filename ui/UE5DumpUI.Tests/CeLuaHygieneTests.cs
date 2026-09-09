@@ -473,6 +473,29 @@ public class CeLuaHygieneTests
     }
 
     [Fact]
+    public void Teleport_clear_all_reads_the_RESULT_back_not_just_the_status()
+    {
+        // ⛔ THE GAP THIS PINS, adjudicated 2026-09-09 as slice A of the unadjudicated sweep
+        // claims. The test above gates the success line on `hadError` — but `hadError` is set
+        // only by the shared wait's TIMEOUT/busy paths, and a command that FAILED does not time
+        // out. `Mimic.cpp`'s SetError writes the negative code to `result` and THEN sets
+        // `status = STATUS_DONE`, while `CeLuaHygiene.AppendMailboxWait` polls `OffStatus`
+        // only — so a rejected CMD_TELEPORT satisfied that wait exactly like a successful one,
+        // and this row auto-closed the Lua Engine window and unticked as if it had worked.
+        //
+        // The single-op arm of this same generator has always re-read the result; only
+        // ClearAll did not. Asserting the READ, not the message, because the message was
+        // already correct while the defect was live.
+        var s = TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.ClearAll);
+
+        Assert.Contains("local code = readInteger(mb + " + CeMailboxLayout.OffResult + ", true)", s);
+        Assert.Contains("if not hadError and code ~= 0 then", s);
+        // ⚠ And the failure must be REPORTED, not merely flagged: a silent hadError would
+        // suppress the success line and the close, leaving the user with no idea why.
+        Assert.Contains("was NOT cleared", s);
+    }
+
+    [Fact]
     public void Every_generator_carries_the_project_url()
     {
         const string url = "https://github.com/bbfox0703/UE5CEDumper";

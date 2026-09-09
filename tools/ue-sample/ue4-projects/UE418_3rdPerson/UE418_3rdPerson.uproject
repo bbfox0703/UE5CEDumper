@@ -1,0 +1,13 @@
+{
+    "FileVersion": 3,
+    "EngineAssociation": "4.18",
+    "Category": "",
+    "Description": "",
+    "Modules": [
+        {
+            "Name": "UE418_3rdPerson",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ]
+}

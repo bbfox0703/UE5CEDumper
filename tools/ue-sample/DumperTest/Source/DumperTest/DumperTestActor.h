@@ -40,6 +40,21 @@
 /// an object pointer rather than through the level's actor list, and (3) give
 /// Solide's force-ObjectProperty-to-null a strong pointer it is allowed to null
 /// (weak/soft/lazy are refused by design).
+/// D3's element type. A `TArray` of THIS produces an `ArrayProperty` whose inner is a
+/// `MulticastInlineDelegateProperty`, which is the one array shape this whole fixture was
+/// missing -- `Ubel::ReadMulticastDelegateArrayElements` had no host, so its unread arm
+/// could only be reached by a synthetic in-process TArray.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDumperTestPingSignature, int32, Ping);
+
+/// D4b's unicast half. A UPROPERTY of THIS type is a `DelegateProperty`, whose storage is a
+/// STANDALONE `FScriptDelegate` -- `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES
+/// carry UE 5.3+'s 8-byte access detector in a checked build. That makes it a different
+/// layout from a multicast's invocation-list elements, which are the never-padded
+/// `...NotChecked...` variant despite both being called "FScriptDelegate" in our comments.
+/// Added 2026-09-09 because the whole fixture had no `DelegateProperty` at all, so Ubel's
+/// single-delegate reader had never been exercised against a padded build.
+DECLARE_DYNAMIC_DELEGATE_OneParam(FDumperTestUnicastSignature, int32, Value);
+
 UCLASS()
 class DUMPERTEST_API UDumperTestPayload : public UObject
 {
@@ -606,6 +621,42 @@ public:
 	/// The old-stride failure fingerprint is the repeated {C0000001-D0000001-FFFFFFFF-FFFFFFFF}.
 	UPROPERTY() TArray<TLazyObjectPtr<AActor>> Arr_LazyPtr;
 
+	/// ⭐ D3 — the ONLY `TArray<multicast delegate>` in this fixture, added 2026-09-08.
+	/// `ReadMulticastDelegateArrayElements` used to publish the AFFIRMATIVE "(0 bindings)"
+	/// for an element whose inner `TArray<FScriptDelegate>` header could not be READ, and
+	/// counted it in `readCount` -- an assertion that a delegate provably has no
+	/// subscribers, made over memory nobody could see.
+	///
+	/// Sized to 2 in BeginPlay and left UNBOUND on purpose: the row under test is the
+	/// element HEADER read, not the binding walk, and two entries make an element index
+	/// meaningful. The acceptance is a three-state one -- healthy elements read
+	/// "(0 bindings)", the same elements read "???" once their Data is pointed at unmapped
+	/// memory, and the baseline returns when it is put back. See
+	/// tools/verify/d5_lazyguid_unread.py for the same technique on the lazy-ptr row.
+	UPROPERTY() TArray<FDumperTestPingSignature> Arr_MulticastDelegates;
+
+	/// ⭐ The ONLY `TArray<FScriptDelegate>` here, added 2026-09-09 for the SIXTH D4b site.
+	/// `Ubel::ReadDelegateArrayElements` had no host at all: it ignored the ElementSize its
+	/// callers passed, computed `8 + sizeof(FName)` locally, and dropped both
+	/// `Macht::ReadSafe` returns. ⚠ An array's inner FDelegateProperty stores the STANDALONE
+	/// `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES carry UE 5.3+'s access
+	/// detector -- unlike a multicast's invocation-list elements. So on a checked build the
+	/// element stride is 24, not 16, and [0] read correctly while every later index drifted.
+	///
+	/// Element [1] is bound and [0] left empty, for the reason `Arr_MulticastDelegates`
+	/// documents: with both elements identical a right stride and a wrong one print the same
+	/// string, and the row cannot fail.
+	UPROPERTY() TArray<FDumperTestUnicastSignature> Arr_Delegates;
+
+	/// ⭐ D4b — the ONLY non-array `MulticastInlineDelegateProperty` here, and the only
+	/// `DelegateProperty`. Added 2026-09-09; before them Ubel's two single-field delegate
+	/// readers had no host on this fixture at all, so neither had ever met a build whose
+	/// delegate payload starts 8 bytes late (UE 5.3+ with DO_CHECK on). BOTH are bound in
+	/// BeginPlay, because an unbound one reads the same "(0 bindings)" / "(unbound)" at
+	/// either offset and would prove nothing.
+	UPROPERTY() FDumperTestPingSignature   Multicast_Inline;
+	UPROPERTY() FDumperTestUnicastSignature Del_Unicast;
+
 	/// A9 — three nested levels, filled by A9_BuildDeepContainers. Empty until then, so it costs
 	/// nothing on a normal session. See FDumperTestDeepMid for why flat 500x500 cannot work.
 	UPROPERTY() TArray<FDumperTestDeepMid> Deep_Buckets;
@@ -767,6 +818,31 @@ private:
 	/// to look identical, because the heartbeat was drawn BY the thing it was meant to
 	/// be testing. Not a UPROPERTY: it must not become another scan target.
 	int32 FrameCount = 0;
+
+	/// ⭐ D4 — bound to this actor's own `OnActorHit` in BeginPlay, purely so ONE
+	/// `MulticastSparseDelegateProperty` on this fixture reads bIsBound == 1 with a real
+	/// entry in `FSparseDelegateStorage`. Until 2026-09-08 all 16 sparse delegates here
+	/// read "(sparse, unbound)", so `Aura::WalkSparseDelegateBindings` was never called and
+	/// the state it gets wrong -- located, but its InvocationList unreadable, which used to
+	/// render as the affirmative "(0 bindings, sparse)" -- was unreachable on any host.
+	///
+	/// ⚠ It must never DO anything: an actor that reacts to being hit would change the
+	/// behaviour of every other row that touches this fixture.
+	UFUNCTION()
+	void D4_OnActorHitProbe(AActor* SelfActor, AActor* OtherActor,
+	                        FVector NormalImpulse, const FHitResult& Hit);
+
+	/// ⭐ D4b's handler, shared by `Multicast_Inline`, `Del_Unicast` and — the one that
+	/// matters most — `Arr_MulticastDelegates[1]` ONLY. Binding element [1] and leaving
+	/// element [0] empty is what makes the array's element STRIDE observable: a reader using
+	/// the unpadded 16 lands inside element [0] and reports "(0 bindings)" for both, while
+	/// the correct 24 reports [0] empty and [1] bound. Until 2026-09-09 both elements were
+	/// empty, so a right-stride and a wrong-stride read of zeros were indistinguishable and
+	/// D3b could not be falsified at all.
+	///
+	/// ⚠ Also deliberately EMPTY, for D4_OnActorHitProbe's reason.
+	UFUNCTION()
+	void D4b_OnPingProbe(int32 Ping);
 
 	FTimerHandle TickHandle;
 

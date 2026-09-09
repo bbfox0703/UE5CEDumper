@@ -10,6 +10,10 @@
 #include "Grimoire.h"
 #include "Serie.h"
 
+// kMaxPlausibleInvocationListNum moved to Aura.h so IsBoundInvocationListHeader --
+// the predicate dll_helpers_test pins -- shares the one copy. Its rationale went
+// with it.
+
 #include "Ubel.h"
 #include "Genau.h"
 #include "Denken.h"
@@ -146,9 +150,12 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
 
     // A worker body must never let an exception escape: an exception leaving a
     // std::thread callable — or an un-joined joinable thread during stack
-    // unwinding — calls std::terminate, which would crash the host game. The
-    // scans are best-effort, so a throwing chunk just stops early; its partial
-    // per-thread results still merge, exactly like a deadline hit.
+    // unwinding — calls std::terminate, which would crash the host game. This
+    // catch is that guard and must stay.
+    // ⛔ It used to claim the outcome was "exactly like a deadline hit". It was not:
+    // this handler sets NO flag and has none in scope, so a dropped chunk merged its
+    // partial results and the run reported COMPLETE. What a dropped chunk MEANS is the
+    // caller's call — ParallelGObjectsScan owns the atomics and records it there.
     auto runChunk = [&body](int tid, int32_t b, int32_t e) {
         try {
             body(tid, b, e);
@@ -199,6 +206,15 @@ struct ParallelScanResult {
     std::vector<PerThreadT> perThread;
     int                     nthreads    = 1;
     bool                    deadlineHit = false;
+    // A chunk THREW: its index sub-range was never walked. Distinct from deadlineHit,
+    // which means "we stopped on purpose" — but identical in what it does to the
+    // ANSWER, which is why every reporting site folds them with incomplete().
+    bool                    workerFaulted = false;
+
+    /// The results do not cover the whole pool, for either reason. Report sites want
+    /// this; the two flags are only told apart in logs and in the one site that
+    /// deliberately masks a deadline.
+    bool incomplete() const { return deadlineHit || workerFaulted; }
 };
 
 // Run a parallel GObjects walk: spawn ScanThreadCount(count) workers over
@@ -221,6 +237,7 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
     std::vector<PerThreadT> perThread(static_cast<size_t>(std::max(1, nthreads)));
     std::atomic<bool> deadlineHit{false};
+    std::atomic<bool> workerFaulted{false};
 
     // Cooperative cancellation. For the PARALLEL path a short-lived watcher
     // flips the shared deadline flag on cancel (client disconnect via Fern's
@@ -252,12 +269,32 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     }
 
     ParallelIndexRanges(count, nthreads, [&](int tid, int32_t beginIdx, int32_t endIdx) {
-        body(perThread[tid], beginIdx, endIdx, deadlineHit);
+        // The REAL handler, here rather than in ParallelIndexRanges because this is where
+        // the atomics are in scope. ⛔ Deliberately NOT deadlineHit.store(true): that
+        // atomic is the workers' STOP signal, so one dead chunk would abandon every
+        // sibling's remaining work as well. Record the fact; the reporting sites fold it.
+        try {
+            body(perThread[tid], beginIdx, endIdx, deadlineHit);
+        } catch (...) {
+            workerFaulted.store(true, std::memory_order_relaxed);   // set BEFORE logging
+            // ⚠ SAY ONLY WHAT THIS WORKER KNOWS. This line used to end "results are partial",
+            // which is a claim about the WHOLE scan that a single worker cannot make -- and
+            // measured 2026-09-09 (sw1_worker_fault.py on EVERSPACE 2) it was wrong in the
+            // commonest case: with `parallel=false` there is ONE chunk covering the entire
+            // array, so the unwind discards everything and the caller returns an EMPTY set,
+            // total=0 scanned_objects=0, while the log insisted the results were "partial".
+            // Whether anything survives depends on how many OTHER chunks completed, which is
+            // known at the join, not here. `workerFaulted` -> `incomplete()` is what callers
+            // act on; this line is for the human reading the log afterwards.
+            LOG_ERROR("ParallelGObjectsScan: worker tid=%d [%d,%d) faulted — that index range "
+                      "was NOT walked. Anything this run reports is missing at least that "
+                      "range, and is EMPTY if this was the only chunk", tid, beginIdx, endIdx);
+        }
     });
     scanDone.store(true, std::memory_order_relaxed);
     if (cancelWatcher.joinable()) cancelWatcher.join();
 
-    return { std::move(perThread), nthreads, deadlineHit.load() };
+    return { std::move(perThread), nthreads, deadlineHit.load(), workerFaulted.load() };
 }
 
 // Concatenate each thread's result vector (selected by pointer-to-member) in
@@ -2760,7 +2797,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
         stats->objectsScanned = scanned;
         stats->classesPrimed  = classesWalked;
         stats->durationMs     = static_cast<int64_t>(dt);
-        stats->deadlineHit    = scan.deadlineHit;
+        stats->deadlineHit    = scan.incomplete();
     }
     LOG_INFO("FindInContainers: found %d matches in %lld ms (scanned %d/%d, %d non-empty classes, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
@@ -3009,7 +3046,10 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
         stats->classesPrimed  = classesWalked;
         stats->durationMs     = static_cast<int64_t>(dt);
         // Early-out sets the shared flag too; a real deadline only when nothing matched.
-        stats->deadlineHit    = scan.deadlineHit && matches.empty();
+        // The && matches.empty() is deliberate masking: "we stopped early BUT found what
+        // you asked for" is complete enough. A FAULT is not maskable that way — the
+        // unwalked range could have held matches we will never know about.
+        stats->deadlineHit    = (scan.deadlineHit && matches.empty()) || scan.workerFaulted;
     }
     LOG_INFO("FindInContainersDeep: found %d match(es) in %lld ms (scanned %d/%d, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
@@ -3087,6 +3127,10 @@ struct WeakLikeArrayEntry {
     std::string name;
     std::string innerType;    // Same vocabulary as WeakLikePointerEntry::typeName
     int32_t     elemStride;   // From Ubel::GetArrayInnerElemSize
+    // Where the FWeakObjectPtr sits INSIDE each element. 0 for every Weak/Soft/Lazy type,
+    // and the access-detector pad for TArray<FScriptDelegate> on a checked build — the one
+    // inner type whose payload does not start at the element's own address.
+    int32_t     elemWeakOffset = 0;
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
@@ -3225,13 +3269,31 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 }
             }
             else if (f.innerType == "DelegateProperty") {
-                // TArray<FScriptDelegate> — element layout matches the
-                // multicast bindings list. Stride is FName-size dependent.
-                // sizeof(FName): TArray<FScriptDelegate> elements are alignof 4, no padding.
-                int32_t fnameSize = DynOff::SizeofFName();
-                int32_t stride    = 8 + fnameSize;
-                out.weakLikeArrays.push_back({ absOffset, fullName,
-                                                f.innerType, stride });
+                // TArray<FScriptDelegate>. ⚠ This comment used to say "element layout matches
+                // the multicast bindings list" — it does NOT, and that is the
+                // two-types-one-spelling trap in Grimoire.h. An array's inner
+                // FDelegateProperty stores the STANDALONE
+                // TScriptDelegate<FNotThreadSafeDelegateMode>, which carries the 8-byte access
+                // detector in a checked build; a multicast's invocation list holds the
+                // ...NotChecked... variant, which never does.
+                const int32_t base = 8 + DynOff::SizeofFName();
+                const int32_t pad  = DynOff::DelegatePadFromElementSize(
+                                         Ubel::GetArrayInnerElemSize(f.Address), base);
+                // Falling back to the historical layout rather than skipping: a wrong stride
+                // here cannot manufacture a reference (ResolveWeakAt validates every hit
+                // against GObjects), so both a wrong stride and a skip fail the same way —
+                // by finding nothing. Keeping the scan preserves the Shipping behaviour on a
+                // build whose ElementSize we could not read.
+                if (pad < 0) {
+                    LOG_WARN("ClassReferenceMeta: %s — TArray<FScriptDelegate> inner "
+                             "ElementSize is neither %d nor %d; scanning at the unpadded "
+                             "stride, so bindings may be MISSING from Find Refs",
+                             fullName.c_str(), base,
+                             base + DynOff::kDelegateDetectorPad);
+                }
+                const int32_t elemPad = (pad < 0) ? 0 : pad;
+                out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
+                                               base + elemPad, elemPad });
             }
         }
         // --- Map with pointer-shaped key and/or value ---
@@ -3389,13 +3451,86 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
 //     +0x00  Object* (FMulticastScriptDelegate*)
 //     +0x08  SharedReferenceCount*
 //
-//   FMulticastScriptDelegate (16B):
-//     +0x00  TArray<FScriptDelegate> InvocationList { Data, Num, Max }
+//   FMulticastScriptDelegate (16B in Shipping/Test and every UE <= 5.2; 24B in a CHECKED
+//   build -- Development/Debug/DebugGame -- from UE 5.3, where TDelegateAccessHandlerBase
+//   contributes an 8-byte FMRSWRecursiveAccessDetector base):
+//     +0x00  [checked builds only] std::atomic<uint64> access-detector State
+//     +pad   TArray<FScriptDelegate> InvocationList { Data, Num, Max }
+//   ⛔ "16B, InvocationList at +0" was stated here as unconditional until 2026-09-09, and it
+//   is the reason a delegate with one live subscriber reported "(0 bindings, sparse)" on the
+//   Development fixture. There is no ElementSize to derive `pad` from on this path
+//   (a MulticastSparseDelegateProperty's is sizeof(FSparseDelegate) == 1), so
+//   LocateInvocationList below derives it from the object's own invariants instead.
+//   DynOff::kDelegateDetectorPad carries the measurement and the two-types-one-spelling ⚠.
 //
-//   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding):
+//   FScriptDelegate (16B, or 20B for case-preserving FName -- alignof 4, so no padding).
+//   ⭐ This is the INVOCATION-LIST element type, which is never padded:
 //     +0x00  FWeakObjectPtr Object { int32 Idx, int32 Serial }
 //     +0x08  FName FunctionName
 // ============================================================
+
+// What LocateInvocationList established. `pad` is meaningful only when `found`.
+struct InvocationListView {
+    bool      found = false;
+    int32_t   pad   = 0;
+    uintptr_t data  = 0;
+    int32_t   num   = 0;
+};
+
+/// Find a FMulticastScriptDelegate's InvocationList header when there is no engine
+/// ElementSize to derive the access-detector pad from -- i.e. everywhere we arrive through
+/// FSparseDelegateStorage. Returns `found=false` if neither candidate offset holds a
+/// coherent list; the caller must then report UNREADABLE rather than zero bindings.
+///
+/// ⭐ THIS IS A DERIVATION, NOT A PROBE-AND-HOPE. Both candidates are checked against
+/// invariants that hold no matter which one is correct:
+///
+///   * Num >= 1 is REQUIRED, not merely likely. Reaching here means the delegate's FName was
+///     found in the storage map, and UE erases that entry the instant the delegate empties --
+///     every SparseDelegate.cpp remover does `DelegateMap->Remove(DelegateName)` as soon as
+///     `IsBound()` goes false. A located entry therefore HAS a subscriber.
+///   * Data must be a userspace pointer, and Max >= Num.
+///   * Element 0 must be a real binding: its FName has to resolve to a non-empty string.
+///
+/// Both wrong readings fail on the FIRST test in practice, which is what makes this safe in
+/// both directions. On a checked build the pad=0 candidate reads the zeroed detector as Data
+/// and rejects on the null; on Shipping the pad=8 candidate reads {Num,Max} packed as a
+/// pointer (e.g. 0x0000000400000001) and rejects as non-userspace.
+static InvocationListView LocateInvocationList(uintptr_t mcdAddr) {
+    InvocationListView best{};
+    if (!mcdAddr) return best;
+
+    const int32_t candidates[2] = { 0, DynOff::kDelegateDetectorPad };
+    for (int32_t pad : candidates) {
+        uintptr_t data = 0;
+        int32_t   num = 0, max = 0;
+        if (!Macht::ReadSafe(mcdAddr + pad,        data)) continue;
+        if (!Macht::ReadSafe(mcdAddr + pad + 0x08, num))  continue;
+        if (!Macht::ReadSafe(mcdAddr + pad + 0x0C, max))  continue;
+
+        if (!IsBoundInvocationListHeader(data, num, max)) continue;
+
+        // Element 0 must name a function. A wrong offset lands on the detector, or on
+        // Num/Max read as a pointer, and neither yields a resolvable FName here.
+        int32_t comp = 0;
+        if (!Macht::ReadSafe(data + 0x08, comp)) continue;
+        if (Serie::GetString(comp).empty()) continue;
+
+        if (best.found) {
+            // Never observed; if it ever happens the first (historical) layout wins and the
+            // ambiguity is on the record rather than silently resolved.
+            LOG_WARN("LocateInvocationList: BOTH pad=%d and pad=%d validate at 0x%llX — "
+                     "keeping pad=%d", best.pad, pad,
+                     static_cast<unsigned long long>(mcdAddr), best.pad);
+            break;
+        }
+        best.found = true;
+        best.pad   = pad;
+        best.data  = data;
+        best.num   = num;
+    }
+    return best;
+}
 
 // ResolveTMapBitArrayBase — figure out where the AllocationFlags bits live.
 // Inline if MaxBits <= 128; heap (secondaryPtr) otherwise.
@@ -3623,7 +3758,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 
             for (int32_t e = 0; e < arr.Count; ++e) {
                 uintptr_t resolved = ResolveWeakAt(
-                    arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+                    arr.Data + static_cast<int64_t>(e) * wae.elemStride
+                             + wae.elemWeakOffset);
                 if (resolved != target) continue;
 
                 ReferenceMatch m;
@@ -3741,7 +3877,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // Carry the parallel phase's deadline state into the serial sparse pass as a
     // plain bool (the atomic lived inside ParallelGObjectsScan). The sparse pass
     // may set it if IT runs long; the epilogue reports the final value.
-    bool deadlineHit = scan.deadlineHit;
+    // incomplete(), not deadlineHit: the epilogue REPORTS this, and a faulted chunk makes
+    // the answer partial just as surely. (The sparse pass below is gated separately on
+    // scan.deadlineHit — that gate asks "should I keep spending time", which a fault in an
+    // already-finished parallel phase does not answer.)
+    bool deadlineHit = scan.incomplete();
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -3814,11 +3954,23 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                         if (!Macht::ReadSafe(innerSlot + fnamePairSlot, mcdAddr) || !mcdAddr)
                             continue;
 
-                        uintptr_t invData = 0;
-                        int32_t   invNum  = 0;
-                        Macht::ReadSafe(mcdAddr + 0x00, invData);
-                        Macht::ReadSafe(mcdAddr + 0x08, invNum);
-                        if (invNum < 0 || invNum > 4096 || !invData) continue;
+                        // Same derivation as WalkSparseDelegateBindings -- the access-detector
+                        // pad is a build property and there is no ElementSize on this path.
+                        //
+                        // The failure here is WORSE than a wrong count: `continue` makes the
+                        // binding silently ABSENT from Find Refs, and an absence reads as
+                        // "nothing points here". Keep skipping (there is no per-entry channel
+                        // to report on), but stop doing it silently.
+                        const InvocationListView inv = LocateInvocationList(mcdAddr);
+                        if (!inv.found) {
+                            LOG_WARN("FindReferences: no coherent sparse InvocationList at "
+                                     "0x%llX — this delegate's bindings are MISSING from the "
+                                     "results, not absent from the game",
+                                     static_cast<unsigned long long>(mcdAddr));
+                            continue;
+                        }
+                        const uintptr_t invData = inv.data;
+                        const int32_t   invNum  = inv.num;
 
                         for (int32_t bi = 0; bi < invNum; ++bi) {
                             uintptr_t bindAddr = invData +
@@ -3947,7 +4099,8 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
         Macht::TArrayView arr;
         if (!Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
-            uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+            uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride
+                                        + wae.elemWeakOffset);
             if (!r) continue;
             if (emit(r, wae.offset, wae.name, kArrayProp, wae.innerType, e, 0, 0)) return;
         }
@@ -5822,7 +5975,7 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
             x.ubergraphOffsets.clear();  // transient
         }
     }
-    out.stats.deadlineHit = scan.deadlineHit;
+    out.stats.deadlineHit = scan.incomplete();
     out.stats.durationMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - t0).count();
 
@@ -5977,7 +6130,7 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
         out.stats.functionsScanned    += tr.funcsScanned;
         out.stats.functionsWithScript += tr.funcsMatched;  // reused slot: functions matched
     }
-    out.stats.deadlineHit = scan.deadlineHit;
+    out.stats.deadlineHit = scan.incomplete();
     out.stats.durationMs  = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - t0).count();
 
@@ -6378,14 +6531,34 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 
     // Phase 3: deref TSharedPtr, walk InvocationList: TArray<FScriptDelegate>.
     uintptr_t mcdAddr = 0;
-    if (!Macht::ReadSafe(sharedPtrAddr, mcdAddr) || !mcdAddr) return result;
+    if (!Macht::ReadSafe(sharedPtrAddr, mcdAddr) || !mcdAddr) {
+        // Used to return SILENTLY, which put this state and a genuine layout failure in the
+        // same unlabelled bucket. The log is how D4b was diagnosed at all.
+        LOG_WARN("WalkSparseDelegateBindings: TSharedPtr at 0x%llX yielded no "
+                 "FMulticastScriptDelegate — reporting UNREADABLE, not zero bindings",
+                 static_cast<unsigned long long>(sharedPtrAddr));
+        return result;
+    }
 
-    // FMulticastScriptDelegate { TArray<FScriptDelegate> InvocationList; }
-    uintptr_t invData = 0;
-    int32_t   invNum  = 0;
-    Macht::ReadSafe(mcdAddr + 0x00, invData);
-    Macht::ReadSafe(mcdAddr + 0x08, invNum);
-    if (invNum < 0 || invNum > 4096) invNum = 0;
+    // Where InvocationList starts depends on the BUILD, not the UE version: a checked build
+    // puts an 8-byte access detector in front of it (DynOff::kDelegateDetectorPad). This
+    // path has no ElementSize to derive that from, so LocateInvocationList derives it from
+    // the object's own invariants.
+    // ⛔ Do NOT restore `if (...) invNum = 0;` here. Clamping an unreadable or implausible
+    // header to zero is what made a delegate whose bIsBound byte READ 1 report
+    // "(0 bindings, sparse)" — the code had positive evidence the delegate WAS bound and
+    // printed the opposite. listRead stays false and the renderer says so instead.
+    const InvocationListView inv = LocateInvocationList(mcdAddr);
+    if (!inv.found) {
+        LOG_WARN("WalkSparseDelegateBindings: no coherent InvocationList at 0x%llX at either "
+                 "pad 0 or %d — reporting UNREADABLE, not zero bindings",
+                 static_cast<unsigned long long>(mcdAddr), DynOff::kDelegateDetectorPad);
+        return result;
+    }
+    const uintptr_t invData = inv.data;
+    const int32_t   invNum  = inv.num;
+    result.listRead = true;
+    result.listNum  = invNum;
 
     // FWeakObjectPtr + sizeof(FName). FScriptDelegate is alignof 4, so no padding here --
     // this must NOT reuse fnamePairSlot.
@@ -8075,7 +8248,7 @@ ValueScanResult ScanForValue(
         }
     }
     result.stats.scannedClasses = static_cast<int32_t>(classesWithFields.size());
-    result.stats.deadlineHit    = scan.deadlineHit;
+    result.stats.deadlineHit    = scan.incomplete();
     // Reflect a maxResults cap hit too (mirrors the group scan): the candidate
     // set — and the class histogram built from it — is then a lower bound, so the
     // UI's "counts are partial / truncated" warning must show. The walk self-caps
@@ -9740,6 +9913,12 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
     // the disconnected/closing C# side, so result.scanned is left at the full range.
     if (scan.deadlineHit)
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: cancelled (client gone / shutdown)");
+    // A fault is NOT a cancellation, and saying "cancelled" for it would name a cause that
+    // did not happen. Unlike the cancel case the C# side is still listening, so this chunk
+    // is about to be stored — with a hole in it.
+    if (scan.workerFaulted)
+        Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: a worker FAULTED — this chunk "
+                                    "is missing an index range and the snapshot is partial");
 
     return result;
 }

@@ -831,7 +831,14 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength);
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                StatusText = "";
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
+                _log.Warn($"CE XML export produced {xml.Length} chars but the clipboard " +
+                          $"refused the write for instance {SelectedInstance.Name}");
+                return;
+            }
             StatusText = "";
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");
         }
@@ -1040,7 +1047,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
             var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 
-            await _platform.CopyToClipboardAsync(xml);
+            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            {
+                SetError(Helpers.ClipboardDelivery.FailureText("the CE AA script"));
+                _log.Warn($"CE AA script for {instance.ClassName} was generated but the " +
+                          "clipboard refused the write");
+                return;
+            }
             _log.Info($"CE AA script copied to clipboard for {instance.ClassName}");
         }
         catch (Exception ex)

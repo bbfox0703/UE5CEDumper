@@ -42,7 +42,10 @@
     -- leave a ticked box claiming a cheat that is not on) and report. (audit #5 AA31)
     local ok, state = pcall(setDebugCamera, 1)
     if not ok or state ~= 1 then
-      if memrec then memrec.Active = false end
+      -- DEFERRED: an immediate memrec.Active = false inside [ENABLE] is a no-op, so the
+      -- row would stay ticked over a camera that never turned on. Byte-identical to
+      -- CeLuaHygiene.DeferredUntickLua. [FREEZEUNTICK-2026-08-20]
+      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
       local why = ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
       return

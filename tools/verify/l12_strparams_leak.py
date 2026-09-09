@@ -118,14 +118,32 @@ def main(argv=None):
         print("[3] sending %d invokes, each leaking ~%.0f KB if unfixed (~%.0f MB total)"
               % (a.n, per_kb, a.n * per_kb / 1024.0))
 
+        # ⛔ `instance_addr`, NOT `addr`. Fern reads `instance_addr` / `class_name`
+        # (Fern.cpp:5392,5390) and refuses at :5420 when neither is present -- ~83 lines
+        # BEFORE the str_params marshalling loop at :5503 that this rig exists to test.
+        # This call said `addr=` until 2026-09-09, so every one of its requests was
+        # rejected at the instance guard and the leak path was NEVER ENTERED. The shared
+        # helper two phases above (`ad4_contested.invoke`) had it right all along, which
+        # is why the CONTROL worked and only the measurement was hollow.
         errs = 0
+        wrong_err = 0
         for i in range(a.n):
             try:
-                r = c.request("invoke_function", addr=act["addr"],
+                r = c.request("invoke_function", instance_addr=act["addr"],
                               func_name="Spawn_CountHolders", parms_size=64,
                               str_params=[good, bad])
                 if not r.get("ok", True):
-                    errs += 1
+                    msg = str(r.get("error", ""))
+                    # A throw from inside the marshalling loop comes back through the
+                    # dispatch envelope as "Internal error: <what>" (Fern.cpp:6422-6424).
+                    # Anything else -- above all the instance-resolution refusal -- means
+                    # the loop was never reached.
+                    if msg.startswith("Internal error"):
+                        errs += 1
+                    else:
+                        wrong_err += 1
+                        if wrong_err == 1:
+                            print("     ⛔ first NON-marshalling error: %s" % msg[:160])
             except Exception:
                 errs += 1
             if (i + 1) % 500 == 0:
@@ -137,12 +155,22 @@ def main(argv=None):
         print("[4] after %d malformed invokes: %.1f MB  (delta %+.1f MB); %d error replies"
               % (a.n, end, grew, errs))
 
-        # ANTI-VACUITY: if nothing errored, the malformed element never threw and the
-        # whole run exercised the SUCCESS path -- which leaks nothing either way.
+        # ANTI-VACUITY. ⛔ THIS USED TO COUNT **ANY** ERROR REPLY, and that is precisely
+        # how it stayed green over a rig that measured nothing: with the wrong parameter
+        # name every request was refused at the instance guard, so `errs == a.n` and the
+        # check was satisfied BY THE VERY ERROR THAT PROVED THE RUN WAS VACUOUS. A guard
+        # firing on the wrong condition is worse than no guard. It now counts only the
+        # "Internal error" replies -- a throw from inside the marshalling loop -- and
+        # refuses outright if any request failed for a different reason.
+        if wrong_err:
+            fails.append("4: %d of %d requests failed BEFORE the str_params loop (first one "
+                         "printed above). The marshalling code this rig tests was never "
+                         "reached, so the flat memory reading means nothing."
+                         % (wrong_err, a.n))
         if errs < a.n * 0.9:
-            fails.append("4: only %d of %d requests errored -- the malformed element did not "
-                         "throw, so the leak path was never entered and this run is vacuous"
-                         % (errs, a.n))
+            fails.append("4: only %d of %d requests threw inside the marshalling loop -- the "
+                         "malformed element did not throw, so the leak path was never entered "
+                         "and this run is vacuous" % (errs, a.n))
         if grew > a.grow_mb:
             fails.append("4: private bytes grew %.1f MB (> %.1f) -- the mid-loop throw is "
                          "still leaking strAllocs" % (grew, a.grow_mb))

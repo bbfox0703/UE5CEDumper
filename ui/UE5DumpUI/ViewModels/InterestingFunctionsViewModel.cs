@@ -189,7 +189,25 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// hands the string to the platform clipboard service. Keeps this VM
     /// free of an IPlatformService dependency so the test stubs stay tiny.
     /// </summary>
-    public event Action<string>? RequestCopyText;
+    /// <summary>
+    /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
+    /// arrived, so the raiser can decide what to claim.
+    ///
+    /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
+    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
+    /// is strictly worse than the call-site cases the same sweep found -- there the result
+    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
+    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
+    /// by the VM."</para>
+    ///
+    /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
+    /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
+    /// subscriber would silently decide the answer for everyone.</para>
+    /// </summary>
+    public event Func<string, Task<bool>>? RequestCopyText;
 
     /// <summary>Client-side class-noise filter: hides ticked classes (UI widgets,
     /// sound, system components) from <see cref="Results"/>. Lives over the full
@@ -754,12 +772,15 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// one place. Bare name (not Class::Func) keeps it pasteable into
     /// CE script editors and grep workflows directly.</summary>
     [RelayCommand]
-    private void CopyFunctionName(ScoredFunctionRow? row)
+    private async Task CopyFunctionNameAsync(ScoredFunctionRow? row)
     {
         if (row == null) return;
         if (string.IsNullOrEmpty(row.FuncName)) return;
-        RequestCopyText?.Invoke(row.FuncName);
-        StatusText = $"Copied function name: {row.FuncName}";
+        var handler = RequestCopyText;
+        bool copied = handler is not null && await handler(row.FuncName);
+        StatusText = copied
+            ? $"Copied function name: {row.FuncName}"
+            : $"Could not copy '{row.FuncName}' -- the clipboard refused the write.";
     }
 
     // ------------------------------------------------------------------

@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "Grimoire.h"   // IsUserspacePointer + DynOff::kDelegateDetectorPad, for the header-inline
+                        // invocation-list predicate below. Header-only inline state, no cycle.
 #include "Ubel.h"   // For ::ClassInfo (defined at global scope in Ubel.h, despite the filename) used by WalkClassesBatch
 #include "Radar.h"
 #include "Orden.h"  // For Radar::Candidate / DataType / ScanType used by ScanForValue / RefineCandidates
@@ -1293,8 +1295,62 @@ struct SparseDelegateResult {
     bool supported  = true;      // false = current UE version not supported
     bool ownerFound = false;     // outer key matched
     bool nameFound  = false;     // inner key matched
+    // The InvocationList header {Data, Num} was actually READ and looked plausible.
+    // `nameFound && !listRead` is the state that used to render as "(0 bindings, sparse)":
+    // the delegate was located and its subscriber list could NOT be read. Reporting that
+    // as zero subscribers is an affirmative claim over memory nobody could see.
+    bool    listRead = false;
+    int32_t listNum  = 0;        // InvocationList.Num() as read. May exceed bindings.size(),
+                                 // which is capped by maxBindings; this one is the truth.
     std::vector<SparseDelegateBinding> bindings;
 };
+
+// A multicast delegate's InvocationList is a per-object subscriber list; even
+// pathological actor/UMG fan-out stays in the low hundreds. A HEADER PLAUSIBILITY ceiling
+// ("is this really a TArray?"), NOT a display cap — maxBindings is the display cap. Named
+// per the 2b9ffac9 convention. Both sparse-delegate readers use it —
+// WalkSparseDelegateBindings and FindReferencesToUObject's sparse pass, which carried the
+// same bare 4096 independently — and it moved here from Aura.cpp so the predicate below,
+// which the tests pin, can share the one copy.
+inline constexpr int32_t kMaxPlausibleInvocationListNum = 4096;
+
+/// Is `{data, num, max}` a coherent `TArray<FScriptDelegate>` header for a delegate we
+/// already know is BOUND?
+///
+/// ⭐ `num >= 1` is a REQUIREMENT, not a nicety, and it is the whole reason this can pick
+/// between two candidate offsets. `FSparseDelegateStorage` erases a delegate's entry the
+/// instant its last subscriber goes — every remover in UE's `SparseDelegate.cpp` calls
+/// `DelegateMap->Remove(DelegateName)` as soon as `IsBound()` reads false — so an entry we
+/// FOUND in that map necessarily has at least one binding. That turns "which offset holds
+/// the list" from a guess into a test.
+///
+/// ⛔ Do NOT reuse this for a `MulticastInlineDelegateProperty` read. There, zero bindings is
+/// an ordinary and TRUE state, and rejecting it would recreate the defect this came from.
+///
+/// Pure and header-inline so `dll_helpers_test` can pin it without linking Aura.cpp.
+inline bool IsBoundInvocationListHeader(uintptr_t data, int32_t num, int32_t max) {
+    if (num < 1 || num > kMaxPlausibleInvocationListNum) return false;
+    if (max < num) return false;
+    return Grimoire::IsUserspacePointer(data);
+}
+
+/// Name the state the walker actually established, for display.
+///
+/// `bIsBound == 1` is IMPLIED: Ubel's sparse handler only reaches here after rejecting
+/// the unbound case, so "bound" is never in question — what varies is whether the
+/// invocation list could be read. Pure and header-inline so `dll_helpers_test` can pin it
+/// without linking Aura.cpp.
+inline std::string DescribeSparseDelegateState(const SparseDelegateResult& sr,
+                                               size_t inlineCount) {
+    if (!sr.listRead)
+        return "(sparse, bound — invocation list unreadable)";
+    if (sr.listNum == 0)
+        return "(0 bindings, sparse)";        // READ, and genuinely empty
+    if (inlineCount == 0)
+        return "(" + std::to_string(sr.listNum) + " sparse binding"
+             + (sr.listNum > 1 ? "s" : "") + ", none readable)";
+    return "";                                // caller renders the populated case
+}
 
 // Walk FSparseDelegateStorage to enumerate bindings for `fieldName` on
 // `ownerObj`. Returns immediately if the AOB resolver hasn't found the

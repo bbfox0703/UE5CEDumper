@@ -62,6 +62,11 @@ namespace {
 using namespace Dunste;  // FlyResult / Preset codes
 
 // ---- desired state (guarded by s_mutex) ----
+// Ticks to skip before re-attempting a REFUSED collision invoke. The worker ticks at
+// ~60 Hz and a refusal is deterministic while the PE hook is down, so retrying every tick
+// only re-walks the pawn's class chain to be refused again. ~1 s at 60 Hz.
+constexpr int kCollRefusedBackoffTicks = 60;
+
 struct FlyState {
     bool      active       = false;
     bool      noclip       = false;  // fly through walls: velocity-drive + the actor's
@@ -198,9 +203,15 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
 // = disable the actor's collision so the CMC's flying sweep passes through walls,
 // while the (unchanged) velocity-drive moves the WHOLE character with a proper
 // transform refresh — unlike a per-tick teleport, which only moved the root and
-// jittered / desynced the mesh across games. Returns true if the setter was found.
-bool InvokeSetCollision(uintptr_t pawn, bool enable) {
-    if (!pawn) return false;
+// jittered / desynced the mesh across games.
+//
+// Returns what ACTUALLY happened. It used to return "the setter was found" — a bool the
+// callers all read as "collision changed" — while discarding the dispatcher's int32_t
+// entirely, so a refusal committed the record and logged "invoked" (D1).
+CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
+    // A null pawn is TRANSIENT — it re-resolves on the next tick — so it is Refused,
+    // not Absent. Committing here would record a disable that never happened.
+    if (!pawn) return CollisionApply::Refused;
     FunctionInfo fi;
     if (!FindFuncByName(Ubel::GetClass(pawn), "SetActorEnableCollision", fi)) {
         // The setter is cooked out (heavily-stripped Shipping builds, e.g. TQ2) →
@@ -208,17 +219,27 @@ bool InvokeSetCollision(uintptr_t pawn, bool enable) {
         // pass through walls. Surface it so a "noclip 無效" report is explained.
         LOG_WARN("Fly: SetActorEnableCollision NOT FOUND on pawn class — Noclip can't "
                  "disable collision on this game (flight still works, walls still block)");
-        return false;
+        return CollisionApply::Absent;
     }
     std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(fi.parmsSize), size_t{1}), 0);
     for (const auto& p : fi.params)
         if (IEq(p.name, "bNewActorEnableCollision") && p.offset >= 0 && p.offset < (int)buf.size())
             buf[p.offset] = enable ? 1 : 0;
-    UE5_CallProcessEventEx(pawn, fi.address,
-                           reinterpret_cast<uintptr_t>(buf.data()),
-                           static_cast<uint32_t>(buf.size()));
-    LOG_INFO("Fly: SetActorEnableCollision(%d) invoked", enable ? 1 : 0);
-    return true;
+    const int32_t rc = UE5_CallProcessEventEx(pawn, fi.address,
+                                              reinterpret_cast<uintptr_t>(buf.data()),
+                                              static_cast<uint32_t>(buf.size()));
+    if (rc != 0) {
+        // The dispatcher REFUSED or failed — nothing reached the game. Reachable on the
+        // worker thread: it is Tot::MarkBackgroundWorker'd, so with the PE hook down
+        // Frieren returns -8 every time, while IsGameThreadResponsive() answers TRUE
+        // because Unknown maps to responsive by documented contract (Stark.h).
+        LOG_WARN("Fly: SetActorEnableCollision(%d) NOT applied — dispatcher rc=%d "
+                 "(-8 off-game-thread refusal / -5 game-thread timeout / -3 no usable PE "
+                 "offset); collision unchanged, will retry", enable ? 1 : 0, rc);
+        return CollisionApply::Refused;
+    }
+    LOG_INFO("Fly: SetActorEnableCollision(%d) applied (rc=0)", enable ? 1 : 0);
+    return CollisionApply::Applied;
 }
 
 // ---- resolution chain (local pawn → CMC → PC; same shape as Laufen) ----
@@ -484,6 +505,8 @@ void WorkerLoop() {
     const double dtSec = Grimoire::FLY_TICK_MS / 1000.0;
     bool warnedThrow = false;
     bool warnedCollDefer = false;   // rate-limit the "game thread not responding" line (B8)
+    bool warnedCollRefused = false; // rate-limit the "dispatcher refused" line (D1)
+    int  collRetrySkip = 0;         // ticks left to skip after a REFUSED invoke (D1)
     while (!s_workerStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(Grimoire::FLY_TICK_MS));
         if (s_workerStop.load()) break;
@@ -521,17 +544,36 @@ void WorkerLoop() {
                                  "retrying every tick until it does",
                                  wantOff ? "disable" : "restore");
                     }
+                } else if (collRetrySkip > 0) {
+                    --collRetrySkip;                 // backing off from a refusal
                 } else {
-                    // Either the setter ran, or it is absent on this pawn class — and no
-                    // amount of retrying fixes absent (InvokeSetCollision says so once).
-                    // Commit in both cases so the tick stops re-emitting; the ONLY
-                    // non-committing path is the deferred one above, which is exactly the
-                    // one that must retry.
-                    InvokeSetCollision(collPawn, !wantOff);
-                    warnedCollDefer = false;
-                    std::lock_guard<std::mutex> lk(s_mutex);
-                    s_state.collisionOff  = wantOff;
-                    s_state.collisionPawn = wantOff ? collPawn : 0;
+                    const CollisionApply r = InvokeSetCollision(collPawn, !wantOff);
+                    if (!ShouldCommitCollision(r)) {
+                        // REFUSED — the dispatcher never ran it, so this is the same
+                        // "must retry" class as the deferred branch above and the record
+                        // must NOT move. Back off: while the PE hook is down the refusal
+                        // is DETERMINISTIC, and re-walking the pawn's class chain every
+                        // tick to be refused again buys nothing.
+                        collRetrySkip = kCollRefusedBackoffTicks;
+                        if (!warnedCollRefused) {
+                            warnedCollRefused = true;
+                            LOG_WARN("Fly: collision %s REFUSED by the dispatcher — "
+                                     "retrying every %d ticks (the record is left alone; "
+                                     "the pawn is unchanged)",
+                                     wantOff ? "disable" : "restore",
+                                     kCollRefusedBackoffTicks);
+                        }
+                    } else {
+                        // Applied, or Absent — and no amount of retrying fixes absent
+                        // (InvokeSetCollision says so once). Commit in both so the tick
+                        // stops re-emitting. That is audit #4 B8, deliberately preserved.
+                        warnedCollDefer = false;
+                        warnedCollRefused = false;
+                        collRetrySkip = 0;
+                        std::lock_guard<std::mutex> lk(s_mutex);
+                        s_state.collisionOff  = wantOff;
+                        s_state.collisionPawn = wantOff ? collPawn : 0;
+                    }
                 }
             }
         } catch (const std::exception& e) {
@@ -609,7 +651,20 @@ void PendingRestoreLoop() {
                 return;
             }
 
-            InvokeSetCollision(pawn, true);
+            if (!ShouldCommitCollision(InvokeSetCollision(pawn, true))) {
+                // The thread ANSWERS but the invoke was refused, so nothing was restored.
+                // Clearing the record here is the exact ghosted-pawn shape B8 fixed — keep
+                // it and keep polling. Bounded by the same deadline the unresponsive branch
+                // uses, or a thread that stays responsive while every invoke is refused
+                // would poll forever.
+                if (waited >= Grimoire::PENDING_RESTORE_MAX_MS) {
+                    LOG_WARN("Fly: gave up after %d s — the game thread answers but every "
+                             "collision restore is REFUSED; the pawn's collision stays OFF",
+                             Grimoire::PENDING_RESTORE_MAX_MS / 1000);
+                    done = true;
+                }
+                return;
+            }
             {
                 std::lock_guard<std::mutex> lk(s_mutex);
                 s_state.collisionOff  = false;
@@ -667,8 +722,27 @@ int32_t SetEnabled(bool enable) {
             s_state.tick = 0;
             s_state.driftCount = 0;
             uint8_t fly = Grimoire::MOVE_FLYING;
-            if (c.modeOff >= 0)
-                Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &fly, 1);
+            // ⛔ THIS WRITE *IS* THE EFFECT, and its result used to be dropped. Everything
+            // above it -- active, baseCaptured, capturedPawn -- is BOOKKEEPING; the pawn only
+            // flies because this byte changed. Macht::WriteBytes returns false when
+            // VirtualProtect refuses (a freed or unmapped page: a pawn destroyed between
+            // ResolveCtx and here) or the memcpy faults, and dropping that made SetEnabled
+            // return 1, log "Fly: ENABLED" and start the worker over a pawn that never left
+            // its old MovementMode -- a claim made from the ATTEMPT.
+            // ⭐ FR_ERR_WRITE ("raw write failed") was ALREADY in the FlyResult enum with no
+            // producer, which is what a dropped status usually looks like from the outside.
+            // ⭐ AND THE EXEMPLAR IS IN THIS FILE: the worker's drift correction writes the
+            // same byte as `if (Macht::WriteBytes(...)) ++s_state.driftCount;`. Adjudicated
+            // 2026-09-09 as slice B of the unadjudicated sweep claims.
+            if (c.modeOff >= 0
+                && !Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &fly, 1)) {
+                s_state.active       = false;
+                s_state.baseCaptured = false;
+                s_state.capturedPawn = 0;
+                LOG_WARN("Fly: NOT enabled -- the MovementMode write failed at 0x%llX",
+                         (unsigned long long)(c.cmc + static_cast<uintptr_t>(c.modeOff)));
+                return FR_ERR_WRITE;   // returns before StartWorkerLocked(): nothing is armed
+            }
             LOG_INFO("Fly: ENABLED (baseMode=%u, speed=%.0f, preset=%d)",
                      s_state.baseMode, s_state.speed, s_state.preset);
         }
@@ -685,6 +759,7 @@ int32_t SetEnabled(bool enable) {
     // the restore below. The old order (decide → restore → join) let an in-flight tick
     // turn collision back off after we had just turned it on. (B8, Schlacht M1 shape.)
     uintptr_t restoreCollPawn = 0;
+    bool modeRestoreFailed = false;
     {
         std::lock_guard<std::mutex> lk(s_mutex);
         if (s_state.active) {
@@ -692,7 +767,20 @@ int32_t SetEnabled(bool enable) {
             if (ResolveCtx(c, false) == FR_OK) {
                 if (c.modeOff >= 0 && s_state.baseCaptured) {
                     uint8_t base = s_state.baseMode;
-                    Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff), &base, 1);
+                    // ⛔ THE RESTORE IS THE EFFECT TOO, and this is the WORSE half of the
+                    // pair: a dropped result here cleared `active`, stopped the worker and
+                    // logged "Fly: DISABLED" while the pawn stayed in MOVE_Flying -- the
+                    // feature reported OFF over a pawn still flying, with nothing tracking it.
+                    // That is the [FREEZESTUCK-2026-08-18] shape, and the collision restore
+                    // forty lines below already treats its own failure exactly this carefully.
+                    if (!Macht::WriteBytes(c.cmc + static_cast<uintptr_t>(c.modeOff),
+                                           &base, 1)) {
+                        modeRestoreFailed = true;
+                        LOG_WARN("Fly: the MovementMode restore write FAILED at 0x%llX -- the "
+                                 "worker is stopped but the pawn may still be in MOVE_Flying",
+                                 (unsigned long long)(c.cmc
+                                     + static_cast<uintptr_t>(c.modeOff)));
+                    }
                 }
                 double zero[3] = {0, 0, 0};
                 if (c.velAddr) WriteVec3At(c.velAddr, c.velSize, zero);
@@ -712,23 +800,42 @@ int32_t SetEnabled(bool enable) {
             restoreCollPawn = s_state.collisionPawn;
     }
     if (restoreCollPawn) {
-        if (Stark::IsGameThreadResponsive()) {
-            InvokeSetCollision(restoreCollPawn, true);   // re-enable collision
+        // Both halves are kept separately so the message below can name the CAUSE.
+        // Reporting a refusal as "game thread unresponsive" would be the same class
+        // of defect D1 exists to fix.
+        const bool responsive = Stark::IsGameThreadResponsive();
+        const bool restored   = responsive
+            && ShouldCommitCollision(InvokeSetCollision(restoreCollPawn, true));
+        if (restored) {
             std::lock_guard<std::mutex> lk(s_mutex);
             s_state.collisionOff  = false;
             s_state.collisionPawn = 0;
         } else {
+            // ⛔ A REFUSED restore falls into the SAME branch as an unresponsive thread,
+            // and that is the whole point of D1. This site used to invoke, ignore the
+            // answer and clear the record unconditionally — so a refusal left the pawn
+            // ghosted with NOTHING tracking it, which is precisely the failure audit #4 B8
+            // describes as "what made the pawn fall through the world".
             // The pawn is non-colliding and we cannot fix that right now. Wiping the
             // record here is what made the pawn fall through the world: nothing tracked
             // it, and re-enabling Fly without Noclip never restored it either. KEEP the
             // record and poll for the game thread — the restore then lands the instant
             // the user clicks back into the game. (B8; Schlacht's PendingRestoreLoop is
             // the shipped precedent for exactly this.)
-            LOG_WARN("Fly: DISABLED but the pawn's collision is still OFF (game thread "
-                     "unresponsive) — waiting for it to resume to restore it");
+            LOG_WARN("Fly: DISABLED but the pawn's collision is still OFF (%s) - keeping "
+                     "the record and polling to restore it",
+                     responsive ? "the dispatcher REFUSED the restore"
+                                : "game thread unresponsive");
             StartPendingLocked();
             return 0;
         }
+    }
+    if (modeRestoreFailed) {
+        // The worker IS stopped and input IS released, so this is not a failure to disable --
+        // it is a disable whose RESTORE did not land, and the two must not read alike. The
+        // code reaches the UI as FlyStatus.State, which the wire has always carried.
+        LOG_WARN("Fly: DISABLED, but the captured MovementMode was NOT restored");
+        return FR_ERR_WRITE;
     }
     LOG_INFO("Fly: DISABLED");
     return 0;

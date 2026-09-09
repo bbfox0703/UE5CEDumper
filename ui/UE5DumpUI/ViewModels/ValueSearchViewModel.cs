@@ -801,7 +801,25 @@ public partial class ValueSearchViewModel : ViewModelBase
     // Walker matches the row by offset; the display name supplies the "[N]"
     // element suffix for container hits.
     public event Action<string, int, string>? NavigateToInstance;
-    public event Action<string>? RequestCopyText;
+    /// <summary>
+    /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
+    /// arrived, so the raiser can decide what to claim.
+    ///
+    /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
+    /// <c>Action&lt;string&gt;</c>.</b> As an <c>Action</c> the handler was an async
+    /// lambda, i.e. effectively <c>async void</c>: <c>Invoke</c> returned at the first
+    /// <c>await</c>, so the caller's <c>StatusText = "Copied ..."</c> ran BEFORE the copy
+    /// was even attempted, and the bool the handler eventually got had nowhere to go. That
+    /// is strictly worse than the call-site cases the same sweep found -- there the result
+    /// at least existed at the moment of the claim (blind-spot sweep round 3, sub-shape
+    /// (b)). MainWindowViewModel's own comment said it out loud: "Status text already set
+    /// by the VM."</para>
+    ///
+    /// <para>⚠ A multicast <c>Func</c> returns only the LAST handler's value. Each of
+    /// these events is wired exactly once, in <c>MainWindowViewModel</c>; a second
+    /// subscriber would silently decide the answer for everyone.</para>
+    /// </summary>
+    public event Func<string, Task<bool>>? RequestCopyText;
 
     /// <summary>Raised to open the chosen candidate's owning class in the
     /// Instance Finder tab — pre-fills the class name and auto-runs the
@@ -1190,11 +1208,15 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CopyAddress(ValueCandidate? candidate)
+    private async Task CopyAddressAsync(ValueCandidate? candidate)
     {
         if (candidate == null) return;
         if (string.IsNullOrEmpty(candidate.Addr)) return;
-        RequestCopyText?.Invoke(candidate.Addr);
+        // Deliberately no status claim, so there is nothing here that can be wrong:
+        // this is a convenience copy of an address and the user re-clicks. Awaited only
+        // so the copy is no longer fire-and-forget.
+        var handler = RequestCopyText;
+        if (handler is not null) await handler(candidate.Addr);
     }
 
     /// <summary>Hand this hit's (class, field) to the Class Pivot tab — the
@@ -1668,10 +1690,14 @@ public partial class ValueSearchViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void CopyGroupSlotAddress(GroupSlotMatch? slot)
+    private async Task CopyGroupSlotAddressAsync(GroupSlotMatch? slot)
     {
         if (slot == null || string.IsNullOrEmpty(slot.Addr)) return;
-        RequestCopyText?.Invoke(slot.Addr);
+        // Deliberately no status claim, so there is nothing here that can be wrong:
+        // this is a convenience copy of an address and the user re-clicks. Awaited only
+        // so the copy is no longer fire-and-forget.
+        var handler = RequestCopyText;
+        if (handler is not null) await handler(slot.Addr);
     }
 
     [RelayCommand]
