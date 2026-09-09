@@ -12,7 +12,7 @@ re-proposed the same allowlist as *"the work — not scanning"*. Rather than pic
 reading, the list was built ONCE and scored. This file is that score, kept so the next
 person to propose the allowlist can re-run it instead of re-arguing it.
 
-WHAT THE SCORE SAYS, at build 3497:
+WHAT THE SCORE SAYS, at build 3508:
 
   * 33 appliers, derived from the module HEADERS (every public entry point whose return says
     whether an EFFECT landed), readers and param-buffer packers excluded by name exactly as
@@ -20,11 +20,17 @@ WHAT THE SCORE SAYS, at build 3497:
   * **7 discarded call sites**, not the 23 round 1 predicted — a list a human walks in an
     afternoon. Buying a curated TSV plus a baseline file plus a gate, for seven sites, is the
     trade round 2 already refused.
-  * Adjudicated by hand 2026-09-09: **3 DEFECT, 4 CLEAN**. A gate would therefore open with
-    four waivers — 57% false positive — which is the same shape that killed the design.
+  * Adjudicated by hand 2026-09-09: **2 DEFECT, 1 hygiene, 4 CLEAN**. A gate would therefore
+    open with four waivers — 57% false positive — the same shape that killed the design.
 
-⚠ RE-RUN IT TODAY AND IT PRINTS **4**, NOT 7. That is the script working: the three defects
-were fixed, so their returns are now consumed and they left the population by construction.
+⛔ ONE OF THE THREE WAS A RE-RAISE, AND THAT IS THE OTHER LESSON THIS FILE CARRIES. The
+`Wirbel.cpp` hit is on round 2's `Refuted (8) -- do not re-raise` list (as `:619`; line numbers
+move). A mechanical scorer surfaces refuted rows as fresh hits by construction, because the
+refutation lives in prose while the code still matches the pattern -- so the VERDICTS table below
+is not bookkeeping, it is the only thing standing between this script and re-opening settled rows.
+
+⚠ RE-RUN IT TODAY AND IT PRINTS **4**, NOT 7. That is the script working: the three sites
+were repaired, so their returns are now consumed and they left the population by construction.
 The four that remain are the four waivers a gate would have opened with — which is the whole
 argument, standing on its own without needing the original seven.
 
@@ -81,13 +87,15 @@ CONSUMED = re.compile(r"=|\breturn\b|\bif\s*\(|\bwhile\s*\(|&&|\|\||!|\?|\bfor\s
 # The hand verdicts, so re-running this re-states them instead of re-opening them. A site
 # that drops off the list has moved; a site that appears without a verdict is NEW.
 VERDICTS = {
-    # The three DEFECT rows are kept although they no longer MATCH: their returns are
+    # The two repaired files are kept although they no longer MATCH: their returns are
     # consumed now, so they have left the population. Listed so a regression that re-drops
     # one comes back with its history attached instead of as a fresh unknown.
     ("dll/src/Dunste.cpp", "WriteBytes"):
         "FIXED 2026-09-09 -- both MovementMode writes now report their result",
     ("dll/src/Wirbel.cpp", "WriteBytes"):
-        "FIXED 2026-09-09 -- `rewrote` counts what LANDED, not what was attempted",
+        "HYGIENE 2026-09-09 -- `rewrote` counts what LANDED. ⚠ Round 2 REFUTED this exact "
+        "line (as :619) and the refutation is sound on reachability: ReadBytesSafe covers the "
+        "same 0x400 window one instruction above. Kept, but NOT counted as a defect",
     ("dll/src/Fern.cpp", "SetEnabled"):
         "CLEAN -- last-client teardown; no client left to claim anything to",
     ("dll/src/Fern.cpp", "SetSpeed"):

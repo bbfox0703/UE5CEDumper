@@ -1822,7 +1822,7 @@ needs. Re-measured at HEAD rather than quoted — the published 213 / 54 / 165 w
 | **A** CE Lua emission layer | 16 generators → **5** candidates + 3 controls | does it report the ATTEMPT, or re-read the EFFECT? | ✅ **1 defect / 8**, fixed |
 | **B** discarded qualified calls, non-`ReadSafe` | **133** (declarations, logging and `std::` excluded) | shape A — is an effect's status return dropped? | ✅ **scored, 7 walked**, 3 defects fixed; the GATE stays refused |
 | **C** discarded `Read*Safe` | **135**, of which **15** reach a published field | does the UN-SET out-param feed a COUNT or a PUBLISHED field? | ✅ **all 15 adjudicated**, 3 defects fixed |
-| **D** the 30-item "unverified tail" | no list exists | — | ⬜ a re-sweep, not an adjudication |
+| **D** the 30-item "unverified tail" | no list exists | — | ✅ **closed by decision** — a round 4 the sweep forbade |
 
 ⚠ **B's 133 is my filter, not a reproduction of the published "~54".** Mine counts bare qualified
 calls with declarations, `Sein::Info/Warn/Debug/Error` and `std::`/`memcpy` excluded; theirs was a
@@ -2108,7 +2108,7 @@ would fail its own controls.
 `Serie::InitUE4` with its own chunks. Nothing needing the real pool may follow any of the three;
 the `TMAPGEOM` banner now names all three.
 
-### ✅ Slice B — ADJUDICATED 2026-09-09: 7 sites, 3 defects fixed, and the gate stays refused
+### ✅ Slice B — ADJUDICATED 2026-09-09: 7 sites, 2 defects fixed, and the gate stays refused
 
 ⛔ **THE PARAGRAPH THAT USED TO BE HERE WAS WRONG, AND THIS FILE CONTAINED THE REFUTATION.** It
 said the work was writing an **allowlist of ~25 effect-appliers** into `tools/effect-appliers.tsv`
@@ -2130,7 +2130,7 @@ the allowlist re-runs it instead of re-arguing it.
 | | round 1 predicted | measured at HEAD |
 |---|---|---|
 | discarded call sites | 23 | **7** |
-| defects | — | **3** |
+| defects | — | **2** (+1 hygiene, see the Wirbel correction below) |
 | waivers a gate opens with | "one baseline line per new site" | **4 — 57% false positive** |
 
 ⛔ **AND THE FOUR CLEAN ONES ARE THE ARGUMENT, not the leftovers.** Three of them are in ONE
@@ -2148,7 +2148,7 @@ sites do not buy a curated TSV, a baseline file and a gate; they buy an afternoo
 | `Fern.cpp:6025` `Dunste::SetNoclip` | ✅ **CLEAN** | same; `st.noclip` is re-read |
 | `Dunste.cpp:726` enable | ⛔ **DEFECT, fixed** | see below |
 | `Dunste.cpp:750` disable restore | ⛔ **DEFECT, fixed** | see below |
-| `Wirbel.cpp:618` deep-force | ⛔ **DEFECT (LOW), fixed** | `rewrote++` ran whether or not the write landed |
+| `Wirbel.cpp:618` deep-force | ⚠ **HYGIENE, not a defect — see below** | `rewrote++` ran whether or not the write landed, but round 2 **refuted this exact line** |
 
 #### ⛔ The two Fly defects — `[SLICEB-FLY-2026-09-09]`
 
@@ -2194,6 +2194,80 @@ without restoring anything. That is not a dropped status — there is no pawn to
 does mean "Fly OFF." is said over a mode that was never restored because the pawn is gone. Left
 because the alternative is claiming a failure we cannot distinguish from a legitimately absent
 pawn, which is the defect this slice exists to remove, pointed the other way.
+
+#### ⚠ CORRECTION, same day — `Wirbel.cpp:618` was REFUTED in round 2, and I re-raised it
+
+⛔ **Round 2's `Refuted (8) — do not re-raise` list contains `Wirbel.cpp:619`**, and at build 3423
+line 618 was the `Macht::WriteBytes` and 619 the `rewrote++` — *the same two lines*. The scorer
+surfaced it as a fresh hit and it was fixed and committed as a DEFECT before the refuted list was
+checked. Found while walking slice D, which is the section that carries that list.
+
+⭐ **AND THE REFUTATION IS SOUND ON REACHABILITY, which is the part worth writing down.** No reason
+was recorded for this row, so it was re-derived: **`ReadBytesSafe(c.root, buf, 0x400)` succeeds one
+instruction above the loop, and every write target is inside that same window.** So the page is
+mapped and readable at that moment, and `Macht::WriteBytes` can only fail if the region is freed
+BETWEEN the read and the loop — the actor destroyed mid-teleport. That is a far narrower race than
+the Dunste pair, where `ResolveCtx` and the write are separated by a mutex acquisition and a
+resolve.
+
+**The one-line change is KEPT, reclassified**, because it is strictly more correct at zero cost and
+because the consequence is not only the count: `rewrote` selects between
+`"deep-force rewrote %d world-transform vector(s)"` and the `else` branch's **`visual may not
+move` WARNING**, so an all-refused run printed a confident N and suppressed the only signal an
+operator debugging that title has. ⚠ But it is filed as **hygiene, not a finding**: Slice B's
+confirmed count is **2**, and the round-2 verdict stands as written.
+
+⚠ **THE PROCESS LESSON, and it is mine**: a mechanical scorer surfaces refuted rows as fresh hits,
+because a refutation lives in prose and the code still matches the pattern. `claims_effect_applier.py`
+now carries a `VERDICTS` table for exactly this reason — but it was written AFTER the fix, so it
+could not have caught this one. **Check the refuted lists before fixing what a scanner hands you**,
+and remember that line numbers move: the row said `:619` and today's hit says `:618`.
+
+### ✅ Slice D — CLOSED BY DECISION 2026-09-09, not by adjudication
+
+The row said *"the 30-item unverified tail · no list exists · a re-sweep, not an adjudication"*.
+Both halves of that are true, and together they settle it: **the work Slice D names is a round 4,
+and the sweep closed itself against exactly that** — `todo.md:1478`, *"THE SWEEP IS FINISHED. Do
+not run a round 4."*
+
+⭐ **THE TWO MEMBERS THE TAIL WAS EVER NAMED BY ARE BOTH RESOLVED**, and they were promoted out of
+it on purpose — round 1's plan says *"the 30-item unverified tail LAST — but promote the two family
+duplicates named above now"*:
+
+| the named member | state at HEAD |
+|---|---|
+| `LiveWalkerViewModel.cs:6209` — the third clipboard instance | ✅ **CLOSED.** It is one of round 3's 14 **(a) DELIVERY** sites, all fixed, and `check_clipboard_delivery` now enforces the class: *"46 clipboard call site(s), every DELIVERY copy checks its result."* |
+| `Dunste.cpp:612` — `PendingRestoreLoop` logging *"pawn collision restored"* | ⛔ **REFUTED** by round 2, on a route re-read by hand: that loop starts only from `StartPendingLocked()` inside the `else` of `if (Stark::IsGameThreadResponsive())`, i.e. only when `Stalled`, and `Stalled` ⟹ hook active, while `-8` is reached only when `IsHookActive()` is false |
+
+⛔ **AND THE REMAINING ~28 CANNOT BE WALKED, for the reason the slice header already gives**: the
+finder agents' output was never stored and `docs/evidence/` holds none of it, so "the tail" is a
+COUNT, not a list. Re-deriving it means re-running the finders — a fourth sweep.
+
+⭐ **THE EXPECTED YIELD OF THAT IS MEASURED, NOT GUESSED, AND IT IS THE STRONGEST ARGUMENT HERE.**
+All three rounds recorded the same result independently: **0 of the confirmed findings came from a
+candidate-list row** — round 1 (*"none is a list row"*, list yield 0/154), round 2 (*"Again 0 of the
+confirmed came from a candidate row"*), round 3. What produced findings every time was **reading a
+specific function**, which is what slices A, B and C did — and between them they turned up 6
+defects from 30 sites read by hand.
+
+⚠ **WHAT WOULD RE-OPEN IT**, stated so this is a decision and not an abandonment: a new claim whose
+site is NAMED, or a new module landing in `dll/src` that no round covered. `[SLICEB-FLY-2026-09-09]`
+is itself an example — `Dunste` is a gameplay module that arrived after round 1's module list was
+drawn, and reading it directly found two defects that no tail row would have named.
+
+## ✅ `[CLAIMS-SLICE-2026-09-09]` — the four slices are closed
+
+| slice | outcome |
+|---|---|
+| **A** CE Lua emission layer | 8 read → **1 defect**, fixed and live-verified (`[TG1-CLEARALL-RESULT-2026-09-09]`) |
+| **B** discarded effect-appliers | 7 read → **2 defects** + 1 hygiene, fixed; the proposed gate re-scored and still refused |
+| **C** discarded `Read*Safe` | 15 read → **3 defects**, fixed, two manufactured fixtures (`[IFACEREAD]`, `[UNREADVAL]`) |
+| **D** the 30-item tail | **closed by decision** — a round 4 the sweep forbade, with a measured yield of 0 |
+
+**30 sites read by hand → 6 defects and 1 hygiene fix**, against three agent sweeps that filed 209
+claims and confirmed 23. ⚠ That comparison is not a claim that reading beats sweeping — the sweeps
+are what produced the POPULATIONS these slices walked. It is the narrower claim the rounds
+themselves kept making: **the candidate ROWS were worthless and the populations were not.**
 
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
