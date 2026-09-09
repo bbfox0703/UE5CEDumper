@@ -1493,6 +1493,13 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)
                 fj["array_struct_class_addr"] = Renge::AddrToStr(fv.arrayInnerStructAddr);
+            // UE 5.3+ access-detector pad. Emitted only when NON-ZERO, so a Shipping title's
+            // wire is unchanged and an older UI simply never sees the key. ⛔ An exporter that
+            // ignores it emits `Offsets=[0]` at the detector instead of at
+            // InvocationList::Data — a CE record pointing at address 0 on any checked build.
+            // Sent rather than re-derived downstream: see the note on LiveFieldValue::delegatePad.
+            if (fv.delegatePad > 0)
+                fj["delegate_pad"] = fv.delegatePad;
             // Phase G layout metadata for soft arrays — lets exporters lay out
             // per-element FName leaves at FSoftObjectPath sub-offsets.
             if (fv.softArrayFNameSize > 0) {

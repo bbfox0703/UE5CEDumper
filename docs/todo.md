@@ -1696,6 +1696,88 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ The reconciliation's actionable half, fixed `[D4B-TAIL-2026-09-09]`
+
+A 9-agent reconciliation of this whole work stream (four readers over four independent sources,
+then four adversarial lenses) answered "is everything in scope verified?" with **no** — six items
+live-verified out of roughly fifty — and, more usefully, found **defects of this stream's own
+shapes surviving inside the blocks the stream had just edited**. Verified by hand before fixing;
+these are the ones that were real.
+
+### ⛔ Three in the DLL, all in code `2c1d54ff` had touched hours earlier
+
+| site | what it still did |
+|---|---|
+| `Ubel.cpp` `DelegateProperty` handler | both `Macht::ReadSafe` returns dropped — **four lines below the `dPad` line that same commit added**. A faulted read left objIdx/serial at 0 and published the affirmative `"(unbound)"`. D3/D5 verbatim. |
+| `Ubel.cpp` `ReadMulticastDelegateArrayElements` | `if (innerCount > 4096) innerCount = 0;` → `"(0 bindings)"`. **This is D4's defect spelled again**: the identical `invNum = 0` clamp was deleted from `Aura.cpp` on 2026-09-08 *with a ⛔ comment saying never restore it*, while two copies survived in Ubel. ⚠ D4b's own fingerprint went straight through it — Num read at the wrong offset was **322437056**, over the ceiling, so this line would have swallowed the symptom. |
+| `Ubel.cpp` MulticastInline element loop | third copy of the dropped pair, and the one that reaches a LIST: an unread binding fell to the final `else` and rendered `"(unbound)"` for an entry the invocation list says EXISTS. |
+
+Both bare `4096`s are gone — they now use `Aura::kMaxPlausibleInvocationListNum`, the constant
+this stream had already moved to `Aura.h` for exactly this reason.
+
+### ⛔⛔ And one OUTSIDE the DLL — the artefact the user actually pastes into Cheat Engine
+
+**`[D4B-DELEGATEPAD]`'s enumeration said "five readers assumed the unpadded layout" and was
+DLL-only.** `CeXmlExportService` emitted `Offsets=[0]` at a delegate field's *raw* offset, whose
+first 8 bytes on a checked build are the zeroed access detector — so the pasted CE record pointed
+at **address 0**. Its comment asserted *"the field's first 8 bytes are the InvocationList::Data
+pointer"* unconditionally; that was true only on the Shipping half. `scripts/ue5_dissect.lua`
+baked `size = 16` the same way.
+
+The pad now travels on the wire as `delegate_pad` — `LiveFieldValue::delegatePad` (DLL) →
+`Fern.cpp` (emitted only when non-zero, so a Shipping wire is unchanged and an older UI never
+sees the key) → `DumpService` → `LiveFieldValue.DelegatePad` (C#) → a single `CeOffset(field)`
+helper used at all 21 address-emit sites. ⭐ **Sent, not re-derived**: the DLL already computed it
+from the engine's own ElementSize, and a second implementation of the rule in C# or Lua is a
+second thing to get wrong — which is precisely what the reconciliation caught in
+`d4b_pad_survey.py`, a Python re-implementation that therefore verified the copy rather than the
+shipped rule.
+
+⚠ **The first attempt at this fix was wrong and the tests are what said so.** The pad was applied
+at the exporter's field *projection*, which turned out to serve nested structs only — the
+`GenerateInstanceXml` path never passes through it, so the emitted address stayed `+2C0`. Worse,
+had both been changed the pad would have been added **twice**, because the projected record
+copies `DelegatePad` forward. Red-before-green is the only reason that surfaced.
+
+`ue5_dissect.lua` now prefers the engine's ElementSize for the delegate family — guarded to the
+two widths the layout can actually have, so a garbage ElementSize falls back to the baked size
+instead of widening a CE row arbitrarily — exactly as its own `EnumProperty` branch already did.
+
+### ⛔ And a rig this stream broke the same day
+
+`d3_delegate_array_unread.py` asserted `all(v == "(0 bindings)")` for its baseline. D4b's fixture
+work then **bound element [1]** (to make the stride observable) without touching the rig, so a
+passing verification was silently turned into a failing one. **No gate reads these rigs**; a rig
+is only run when someone remembers the row. Now asserts the shape the fixture guarantees —
+`[0]` empty, `[1]` naming its probe — which also makes it a D3b check rather than only a D3 one.
+
+### Coverage
+
+`CeXmlDelegatePadTests` (4 cases) and a D4b block in `dissect_test.lua` (10 checks). Both
+mutation-tested:
+
+* reverting `CeOffset` to `field.Offset` fails **3** — and the **Shipping control stays green**,
+  which is the point: the old code was right on the side every real title is built with, so a fix
+  that moved the offset unconditionally would have broken every real export;
+* removing the Lua delegate branch fails exactly the **2** checked-build checks, controls green.
+
+Sources restored byte-identically after each. 18 gates green — `check_derived_counts` caught the
+new C# test file and both docs were corrected **from the tree**, 187 → 188.
+
+### ⬜ Found while fixing, deliberately NOT fixed
+
+* **A scalar `DelegateProperty` produces NO CE entry at all** — the multicast path emits, the
+  single-cast one is silently absent from the exported table. Found while writing the tests
+  (the unicast assertion could never pass because nothing is emitted); it is a missing feature,
+  not a wrong value, and unrelated to the pad.
+* **`ue5_dissect.lua` gives `MulticastSparseDelegateProperty` `size = 16`, and an
+  `FSparseDelegate` is ONE byte** (`bIsBound`), so that row has always overrun into the following
+  fields. Pre-existing and independent of the pad; correcting it changes the rendered width of
+  every sparse delegate on every title, which needs CE in front of a human rather than being a
+  side effect of a layout fix. Marked ⛔ in the table.
+* **None of this is live-verified.** The DLL arms need a faulted read or an implausible Num, and
+  the CE half needs a table pasted into Cheat Engine on a *checked* build. Offline only.
+
 ## ✅ D4b extended to a SECOND ENGINE VERSION `[D4B-PADSURVEY-2026-09-09]`
 
 `DelegatePadFromElementSize` had only ever met UE 5.4, and it now gates five readers that run on

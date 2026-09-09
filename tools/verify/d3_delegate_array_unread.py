@@ -20,7 +20,10 @@ healthy process every element reads fine, so the fault arm cannot be observed by
 The WRITE is its own negative control — the walk must change, and must come back.
 
 WHAT A PASS LOOKS LIKE
-  1. baseline   2 elements, both "(0 bindings)"   <- READ, and genuinely empty
+  1. baseline   [0] "(0 bindings)", [1] bound   <- READ. [1] is bound on purpose (2026-09-09):
+                                                   with both elements empty, a 16-byte and a
+                                                   24-byte stride print the SAME string, so
+                                                   D3b was unfalsifiable here.
   2. corrupted  2 elements, both "???"            <- the fix. Pre-fix: "(0 bindings)",
                                                      i.e. identical to (1) — which is the
                                                      whole point: the two states were
@@ -42,6 +45,9 @@ ROOT = HERE.parent.parent
 CLIENT = HERE / "pipe_client.py"
 
 FIELD = "Arr_MulticastDelegates"
+# BeginPlay binds element [1] to this and leaves [0] empty -- see d4b_delegate_pad.py for why
+# two DIFFERENT elements are what makes the stride observable at all.
+PROBE = "D4b_OnPingProbe"
 DEAD_PTR = 0x1000          # never mapped in a Windows user process
 
 
@@ -98,7 +104,16 @@ def main() -> int:
 
     base_vals = values(base)
     print("baseline   : %s" % base_vals)
-    ok_base = bool(base_vals) and all(v == "(0 bindings)" for v in base_vals)
+    # ⛔ THIS ASSERTION WAS STALE FROM 2026-09-09 UNTIL IT WAS FIXED. It read
+    # `all(v == "(0 bindings)")`, which was right when both fixture elements were empty --
+    # and D4b's own work then bound element [1] (to make the element STRIDE observable, see
+    # d4b_delegate_pad.py) without touching this rig. The rig would have FAILED on its
+    # baseline, i.e. a fixture change silently broke a passing verification and nothing
+    # caught it: no gate reads these rigs, and a rig is only run when someone remembers the
+    # row. Assert the SHAPE the fixture actually guarantees instead of a frozen literal.
+    ok_base = (len(base_vals) == 2
+               and base_vals[0] == "(0 bindings)"
+               and PROBE in base_vals[1])
 
     dead = DEAD_PTR.to_bytes(8, "little").hex().upper()
     corrupted_vals = []
@@ -120,7 +135,11 @@ def main() -> int:
 
     fails = []
     if not ok_base:
-        fails.append("baseline is not the expected 2 x '(0 bindings)' — got %r" % (base_vals,))
+        fails.append("baseline is not the expected [empty, bound-to-%s] pair — got %r. "
+                     "The fixture binds Arr_MulticastDelegates[1] and leaves [0] empty; if "
+                     "[1] reads empty too, the element STRIDE is wrong (D3b), and if the "
+                     "field is missing the package is stale."
+                     % (PROBE, base_vals))
     if not ok_corrupt:
         fails.append("an unreadable element did NOT render '???' — got %r" % (corrupted_vals,))
     if not ok_after:

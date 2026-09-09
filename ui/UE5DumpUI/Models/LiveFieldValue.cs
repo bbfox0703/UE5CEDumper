@@ -209,6 +209,15 @@ public sealed partial class LiveFieldValue : ObservableObject
     public string ArrayStructClassAddr { get; init; } = "";
 
     /// <summary>For ArrayProperty (Phase G soft arrays): sizeof(FName) in bytes (8 normal, 12 with CasePreservingName). 0 = not a soft array.</summary>
+    /// <summary>UE 5.3+ access-detector pad in front of a delegate payload: 8 on a CHECKED
+    /// build (Debug/Development/DebugGame), 0 on Shipping/Test and every UE &lt;= 5.2.
+    /// ⛔ Exporters MUST add this to <see cref="Offset"/> before emitting a deref or a leaf
+    /// for a delegate field — otherwise <c>Offsets=[0]</c> derefs the detector rather than
+    /// <c>InvocationList::Data</c> and the CE record points at address 0.
+    /// Derived by the DLL from the engine's own ElementSize and sent on the wire; do NOT
+    /// re-derive it here.</summary>
+    public int DelegatePad { get; init; }
+
     public int SoftArrayFNameSize { get; init; }
 
     /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>

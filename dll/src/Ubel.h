@@ -435,6 +435,17 @@ struct LiveFieldValue {
     int32_t     softArrayFNameSize = 0;          // sizeof(FName): 8 (normal) or 12 (CasePreservingName)
     bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
     int32_t     softArrayPathOffset = 0;         // FSoftObjectPath offset in the element (0x10 or 0x08)
+    // ⛔ EXPORTERS MUST ADD THIS to a delegate field's own offset before emitting a deref.
+    // UE 5.3+ puts an 8-byte access detector in front of every delegate payload in a CHECKED
+    // build (Debug/Development/DebugGame); it is 0 in Shipping/Test and in every UE <= 5.2.
+    // So `Offsets=[0]` applied at the field's raw offset derefs the DETECTOR, not
+    // InvocationList::Data -- a CE record pointing at address 0. The full story and the
+    // derivation are in Grimoire.h (kDelegateDetectorPad / DelegatePadFromElementSize).
+    // ⚠ Sent from here rather than re-derived in C#/Lua ON PURPOSE: the DLL already computed
+    // it from the engine's own ElementSize, and a second implementation of the same rule in
+    // another language is a second thing to get wrong (measured: the first pad survey
+    // re-implemented it in Python and therefore verified the copy, not the shipped rule).
+    int32_t     delegatePad = 0;
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList

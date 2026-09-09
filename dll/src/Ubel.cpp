@@ -3414,7 +3414,24 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             result.elements.push_back(std::move(elem));
             continue;
         }
-        if (innerCount < 0 || innerCount > 4096) innerCount = 0;  // sanity clamp
+        // ⛔ THIS USED TO BE `if (innerCount < 0 || innerCount > 4096) innerCount = 0;`, and
+        // that is D4's defect spelled a second time. An implausible Num does not mean "no
+        // subscribers"; it means THIS IS NOT THE STRUCTURE I THINK IT IS, and clamping it to
+        // zero republishes that as the affirmative "(0 bindings)". The identical clamp
+        // (`invNum = 0`) was deleted from Aura on 2026-09-08 for lying, with a ⛔ comment
+        // saying never to restore it — while these two copies in Ubel survived the sweep.
+        // ⚠ And D4b's own fingerprint went straight through here: reading Num at the wrong
+        // offset produced 322437056, which is > the ceiling, so this line would have
+        // swallowed the symptom and printed "(0 bindings)" over a bound delegate.
+        if (innerCount < 0 || innerCount > Aura::kMaxPlausibleInvocationListNum) {
+            Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: implausible inner Num=%d "
+                               "at 0x%llX — reporting UNREADABLE, not zero bindings",
+                       innerCount, static_cast<unsigned long long>(listAddr));
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
 
         // Hex: the 16-byte TArray header we actually interpreted, not the detector in
         // front of it -- so the hex and the value can never disagree about which bytes
@@ -5434,11 +5451,23 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 result.fields.push_back(std::move(fv));
                 continue;
             }
+            fv.delegatePad = dPad;    // exporters must add this before reading the leaf
             fieldAddr += dPad;
 
+            // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this pair sat four lines below the dPad
+            // line above — added by the very commit (2c1d54ff) that repaired this exact shape
+            // 480 lines further down. On a faulted read objIdx/serial stay 0, the weak pointer
+            // resolves to null, funcName comes back empty, and the field publishes the
+            // AFFIRMATIVE "(unbound)" — a claim that this delegate provably has no target,
+            // made over memory nobody could read. Same defect as D3/D5.
             int32_t objIdx = 0, serial = 0;
-            Macht::ReadSafe(fieldAddr, objIdx);
-            Macht::ReadSafe(fieldAddr + 4, serial);
+            const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
+            const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
+            if (!okIdx || !okSerial) {
+                fv.typedValue = "(delegate — unreadable)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
             uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
             std::string funcName = ReadFName(fieldAddr + 8);
 
@@ -5928,6 +5957,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 continue;
             }
 
+            fv.delegatePad = mcPad;   // exporters must add this before any Offsets=[0]
+
             // Read TArray<FScriptDelegate> header. ⛔ Both returns are load-bearing: this is
             // the same shape as D3/D5 -- on a faulted read `data`/`count` stay 0 and the field
             // would publish the AFFIRMATIVE "(0 bindings)" over memory nobody could see.
@@ -5941,7 +5972,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 continue;
             }
 
-            if (count < 0 || count > 4096) count = 0;  // Sanity clamp (was 256)
+            // ⛔ The second copy of D4's defect — see the long note in
+            // ReadMulticastDelegateArrayElements. `count = 0` here would render the
+            // affirmative "(0 bindings)" for a header that is not a TArray at all.
+            if (count < 0 || count > Aura::kMaxPlausibleInvocationListNum) {
+                Sein::Warn("WALK", "MulticastInlineDelegateProperty '%s': implausible "
+                                   "InvocationList Num=%d at 0x%llX — reporting UNREADABLE, "
+                                   "not zero bindings",
+                           fi.Name.c_str(), count,
+                           static_cast<unsigned long long>(fieldAddr + mcPad));
+                fv.typedValue = "(multicast — implausible InvocationList Num, not read)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
 
             // Expose as implicit DelegateProperty array — drives drill-down,
             // CE XML / CSX export, and IsContainerNavigable in the UI.
@@ -5973,9 +6016,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.hex = std::move(hex);
                 }
 
+                // The third copy of the dropped pair, and the one that reaches a LIST: an
+                // unread binding here falls through to the final `else` and is published as
+                // "(unbound)" — an entry the invocation list says EXISTS, rendered as though
+                // it provably points nowhere.
                 int32_t objIdx = 0, serial = 0;
-                Macht::ReadSafe(elemAddr,     objIdx);
-                Macht::ReadSafe(elemAddr + 4, serial);
+                const bool okIdx    = Macht::ReadSafe(elemAddr,     objIdx);
+                const bool okSerial = Macht::ReadSafe(elemAddr + 4, serial);
+                if (!okIdx || !okSerial) {
+                    elem.value = "???";
+                    fv.arrayElements.push_back(std::move(elem));
+                    continue;
+                }
                 uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
                 std::string funcName = ReadFName(elemAddr + 8);
 
