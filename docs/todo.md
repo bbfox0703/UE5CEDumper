@@ -3092,6 +3092,54 @@ against a live game, whose output is a shortlist for a human.
 14. Build gate **C** with the `[R3-SEETHRU]` fix, never before it.
 15. Decide `[BADGEPRIME]`'s shape first (one table vs two lists); gate **E** only if two lists survive.
 
+### ⬜ THE FIX LIST — all four phases closed 2026-09-10, nothing repaired yet, by instruction
+
+The maintainer asked for one phase at a time, each recording what needs fixing before the next
+starts, with the repairs done together afterwards. All four are closed. **This is the single list
+the fix pass works from**; each row links to the phase section that measured it.
+
+⛔ **BEFORE FIXING ANY ROW, GREP THE TWO "Refuted — do not re-raise" LISTS.** Phase 2 re-raised
+`Schlacht.cpp:366`, which is on that list **twice**, and it cost a 17-agent skeptic pass to put back
+down. Phase 1's brief carried that instruction and re-raised nothing. → working-lessons §1.w4.
+
+| # | row | sev | phase | what it is |
+|---|---|---|---|---|
+| 1 | `[B30-REOPEN]` | 🔴 | 1 | the CE "already serving" bail-out unticks the record, which **runs `[DISABLE]` → `UE5_Shutdown`** against the serving proxy ~50 ms after telling the user to connect to it. Both the `.CT` and the UI-generated script. |
+| 2 | `[R3-SEETHRU]` | 🟠 | 1 | `SeeThroughScriptGenerator.cs:78` — the idle wait sits inside `if (enable)`, so `[DISABLE]` writes the mailbox unguarded. The only enable-guarded one in 14 generators. |
+| 3 | `[BADGEPRIME]` | 🟠 | 3 | connect primes 3 badges, disconnect resets 12 — **nine** cards read `Unknown` while the DLL holds the answer. Observed live on Shipping, with the two primed cards as the control. |
+| 4 | `[POSEATTACH]` | 🟠 | 2 | `teleport-spec.md:218-220` **requires** a warning flag on the attached-pawn fallback; it was never created, so parent-relative coordinates are shown, saved and later replayed as world-space. |
+| 5 | `[B33-SPELLING]` | 🟡 | 1 | two emit sites resolve only the bare `g_invokeMailbox`; **fix with row 1** — they are the same pre-check and either way one of the two defects fires. |
+| 6 | `[B21-DOCROW]` | 🟡 | 1 | the tracker strikes three parser holes as fixed; one shipped. Re-scope the row or reopen holes 2/3 — **a document fix, not a code fix.** |
+| 7 | `[TPREL-ZEROPOSE]` | 🟡 | 2 | a failed post-move re-read publishes a landing at exactly `(0,0,0,0,0,0)`. |
+| 8 | `[SOLIDE-REFUSAL]` | 🟡 | 2 | a re-arm refused on every instance replies `held:0, code:0`, and the UI says "no live instance … exists right now". |
+| 9 | register rows | — | 1 | **25** audit #4 findings have none. 12 have no unit test at all; 7 have a test that does not reach the fixed path; 9 have an acceptance side that does not exist. Each now has a two-sided acceptance written for it. |
+| 10 | gates **A** + **B** | — | 4 | command-name and request-param parity — **0 violations today**, so they can ship on their own. |
+| 11 | gate **C** | — | 4 | the narrow enable-guard predicate — **ship in the same commit as row 2**, never before. |
+| 12 | gate **E** | — | 4 | badge prime/reset symmetry — only if row 3's fix keeps two lists instead of one table. |
+| 13 | phase 2 re-run | — | 3 | axis B never adjudicated the **4 commands whose whole reply comes from a helper**; `get_pointers` (46 keys) is the largest unchecked reply in the tree. |
+
+⚠ **Three latent enumeration hazards** are recorded in phase 1 and are **not** on this list, because
+none is a defect today: `B10` (the enriched class cache's safety now rests on a per-cache
+distinction), `B15` (`EveryGeneratedScript()` is a hand list of 8 of 14 generators — and is *why*
+row 2 survived), `B17` (the `SetConnected(false)` list, whose mirror is row 3).
+
+#### 📐 What the four phases actually answered
+
+- **"Is there an unaudited blank like June's?"** — Yes, and bigger: **30,579 lines** of audit #4's
+  window alive at HEAD, **31 production files / 3,409 lines** named by no later audit document. And
+  a larger one nobody had named: **50.8% of surviving production code has never been inside any area
+  audit's scope**, the biggest block being 2026-06-01 .. 07-03.
+- **"Was the verification unsound?"** — Partly, and the register already recorded it: 22 of 49
+  findings never got a row, 6 of 16 closures were **log-reading only**, and three log-reading false
+  greens are on file.
+- **"Did anyone check the UI↔DLL wire?"** — Nobody had. Now measured: the **comparable axes are
+  clean** (99/99 commands, 0 unread params, 0 costly unread reply keys), and the defects are where
+  no key comparison could reach — **fields never created** (`[POSEATTACH]`) and **a consumer that
+  never asks** (`[BADGEPRIME]`).
+- **"Were the fixes silently reverted?"** — No. **52/52 still live, 0 reverted**, across ~950
+  builds. As with audit #3, the answer is *don't re-run the audit* — the value was in coverage and
+  in the wire.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
