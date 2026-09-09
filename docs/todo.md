@@ -1803,6 +1803,43 @@ signature cases. Tree unchanged at **46 sites, 0 violations**.
   (`todo.md:1478`, *"THE SWEEP IS FINISHED. Do not run a round 4."*). Unadjudicated is neither
   fixed nor cleared.
 
+## ⬜ The clipboard failure's ACTIONABLE clause cannot fit in the toolbar `[CLIPELLIPSIS-2026-09-09]`
+
+Observed during SW2's live run (`[SW2-CLIPDELIVERY-2026-09-09]`), not inferred: with the clipboard
+held, the toolbar showed
+
+    ERROR: could not write to the clipboard — the inject ...
+
+and stopped there. The full message is **206 characters** and `so do not paste` — the only part
+that tells the user what to *do* — begins at **index 135**.
+
+**Measured, both ends:**
+
+| where | markup | effect |
+|---|---|---|
+| `MainWindow.axaml:41-46` `StatusText` | `MaxWidth="360"` + `TextTrimming="CharacterEllipsis"` | ellipsed; full text only in `ToolTip.Tip` |
+| `MainWindow.axaml:47-53` `ErrorMessage` | same | same |
+| `LiveWalkerPanel.axaml:519-522` `ErrorMessage` | `TextWrapping="Wrap"`, no MaxWidth | **full message visible** |
+| `InstanceFinderPanel.axaml:69-73` `ErrorMessage` | `TextWrapping="Wrap"`, no MaxWidth | **full message visible** |
+
+So the 7 `SetError` delivery sites are fine — they render in the panels, which wrap. The gap is
+the **MainWindow toolbar**, which is where the `StatusText` delivery sites report, including the
+`InjectCeBootstrapAsync` site SW2 exercised.
+
+⚠ **Scope it honestly.** The message is not lost — `ToolTip.Tip` carries it, and that is how SW2
+read it. Nothing is broken in the delivery logic; the register row closed on it. What this is: the
+one sentence the whole `FailureText` wording exists to deliver (`ClipboardDelivery.cs`' own
+`<remarks>` says the actionable part is *"the clipboard still holds something else, so pasting now
+runs the wrong script"*) is the sentence a user does not see unless they hover.
+
+⛔ **Do NOT "fix" this by removing the MaxWidth.** The comment right above it
+(`MainWindow.axaml:38-39`) says why the cap is there: a long status line pushes the rest of the
+toolbar off-screen and wraps. That trade-off was made deliberately.
+
+**Options, none chosen yet:** a short toolbar form plus the full text in the tooltip (e.g.
+`ERROR: <what> NOT delivered — do not paste`); or route delivery failures to a surface that wraps;
+or keep the wording but front-load the imperative. This wants a decision, not a patch.
+
 ## ⬜ TMap geometry has a TWIN, and the fix landed on only one of them `[TMAPGEOM-TWIN-2026-09-09]`
 
 Found 2026-09-09 while building the SW8 rig, by discovering that the rig's *intended* observable
