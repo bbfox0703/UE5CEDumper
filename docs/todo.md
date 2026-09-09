@@ -1910,6 +1910,57 @@ publishes hex only when both reads succeeded, and otherwise says
 hand pass too. The two CLEAN verdicts are worth as much as the defect: they are what stops the
 next reader from "fixing" a guard that is already one line below the read.
 
+#### ✅ VERIFIED 2026-09-09 — `[IFACEREAD-2026-09-09]`, and the live arm alone could NOT have done it
+
+⛔ **The live arm is real evidence and it is NOT sufficient — say both.** Run on DumperTest
+(build 3487, `dist` sha `C70AAE75`), 33 declared `InterfaceProperty` fields, walking a live
+`GeometryCollectionComponent`: `CustomRenderer` published
+`hex='0000000000000000 0000000000000000'` and carried no refusal string. That shows the fix did
+not break the readable path — and **nothing more**. `CustomRenderer` is a *genuinely null*
+interface, so its zeros are correct; readable-null and unreadable are the two states the defect
+CONFUSES, and a live game hands you only the first. Reporting that run as "PASS" without this
+paragraph would have been the claim-from-the-attempt the whole slice exists to catch.
+
+⭐ **So the deciding arm is manufactured**, `dll/tests/dll_core_test.cpp` `IFACEREAD`, built the
+way TMAPGEOM was and for the same reason: a wholly-dead pointer never reaches this branch
+(`WalkInstance`'s `IsAddrReadable` gate bails first), so only a **partial** fault exercises it.
+Two pages reserved, one committed, the instance at the base, and a fake UE4 pool + FField chain so
+`GetFieldTypeName` answers `InterfaceProperty` — then four cases at four offsets, one class blob
+each (`s_walkClassCache` is keyed by class address and nothing erases it):
+
+| offset | state | must publish |
+|---|---|---|
+| `+0x100` | bound, both halves readable | `1122334455667788 99AABBCCDDEEFF00`, no refusal |
+| `+0x200` | **readable NULL** — the live case | `0000000000000000 0000000000000000`, no refusal |
+| `+0xFF8` | ⭐ **half** — ObjectPointer reads, InterfacePointer faults | no hex, refusal naming `+0xFF8` |
+| `+0x1000` | wholly unreadable | no hex, refusal naming `+0x1000` |
+
+**RED-BEFORE-GREEN, both fixes, each mutation restored in a `finally`** (79 checks green at HEAD):
+
+- *mutant `gate`* — hex built unconditionally, i.e. the pre-fix shape → **5 FAIL**, and they print
+  the defect verbatim: the half case `got: 1122334455667788 0000000000000000` (a REAL pointer
+  followed by eight bytes it never read) and the discriminator
+  `got: 0000000000000000 0000000000000000 vs 0000000000000000 0000000000000000`.
+- *mutant `offset`* — `%X` back to `%d` → **2 FAIL**, `got: +0x4088` / `got: +0x4096`.
+
+⭐⭐ **The one check that states the defect** is `readable-NULL and UNREADABLE are no longer the
+same output`. Every other assertion here can be satisfied by some partial fix — this one cannot,
+because it asserts the two states are *tellable apart*, which is the entire user-visible claim and
+exactly what the live run could not decide. ⛔ Its companion is the **anti-vacuity** guard: every
+⭐ assertion is of the form "hexValue is EMPTY", which a walk that produced NO FIELDS satisfies for
+free — so the extractor asserts `r.fields.size() == 1` before returning, on every case.
+
+⚠ **AND THE FIXTURE FOUND A SECOND DEFECT — IN THE FIX.** The refusal first shipped as
+`"+0x" + std::to_string(fi.Offset)`, i.e. **decimal digits behind a hex prefix**: offset `0xFF8`
+rendered as `+0x4088`. The refusal exists to stop the walker making an unbacked claim about an
+address, so stating the wrong address *in the refusal* is the same class of defect it was written
+to remove. Found only because the assertion names the offset the field is actually at — a test
+that had merely grepped for "unreadable" would have gone green over it. Now `snprintf("%X")`.
+
+⚠ `IFACEREAD` calls `Serie::InitUE4` and therefore joins TMAPGEOM in this file's **pool-faking
+tail**; it installs its OWN chunks so it depends on nothing TMAPGEOM leaves behind, but nothing
+that needs the real pool may be appended after either. The banner on TMAPGEOM now says so.
+
 ### ⬜ Slice B — blocked on a decision, not on work
 
 Round 1 already designed the instrument and refused to build the naive one: a blanket "bool

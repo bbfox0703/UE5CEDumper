@@ -770,10 +770,13 @@ int main() {
 
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
-    // ⛔ MUST STAY LAST IN THIS FUNCTION. It calls Serie::InitUE4, and Serie's pool state
+    // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD below it and
+    // NOTHING ELSE after either. It calls Serie::InitUE4, and Serie's pool state
     // (s_poolAddr / s_isUE4Mode / s_initialized) lives in file-statics that no header
     // exposes -- so it CANNOT be restored. Anything appended after this block would run
-    // against a fake UE4 name pool and could pass or fail for that reason.
+    // against a fake UE4 name pool and could pass or fail for that reason. IFACEREAD is
+    // the one legal exception: it installs its OWN pool first and depends on nothing this
+    // block leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
     // faulted read the addr stays 0, `ResolveElementAlignment` is then asked to align a
@@ -859,6 +862,158 @@ int main() {
               badLayout.valueStructAddr == 0);
 
         VirtualFree(page, 0, MEM_RELEASE);
+    }
+
+    // -- IFACEREAD-2026-09-09 -- an UNREADABLE FScriptInterface must REFUSE -----------
+    //
+    // ⛔ ALSO AFTER Serie::InitUE4, for the reason the TMAPGEOM header gives: it needs a
+    // fake UE4 name pool to make GetFieldTypeName answer "InterfaceProperty". It re-inits
+    // the pool with its OWN chunks, so it does not depend on TMAPGEOM's leftovers — but
+    // nothing that needs the real (uninitialised) pool may be appended after it either.
+    //
+    // THE DEFECT (slice C of the unadjudicated sweep claims, Ubel.cpp InterfaceProperty).
+    // Both FScriptInterface reads were discarded and the hex column was then built
+    // unconditionally, so an UNREADABLE interface rendered
+    // "0000000000000000 0000000000000000" — an affirmative claim about memory nobody
+    // could read, byte-identical to a genuinely NULL interface.
+    //
+    // ⭐ WHY THE LIVE ARM COULD NOT SETTLE IT, WHICH IS WHY THIS FIXTURE EXISTS. The
+    // regression half ran on DumperTest and found GeometryCollectionComponent
+    // .CustomRenderer — a real, genuinely null interface — printing exactly those zeros.
+    // That shows the fix did not break the readable path, and NOTHING more: readable-null
+    // and unreadable are the two states the defect confuses, and a live game hands you
+    // only the first. Separating them takes a manufactured fault.
+    //
+    // ⭐ AND IT MUST BE A PARTIAL ONE. A wholly-unmapped instance never reaches this
+    // branch — WalkInstance's IsAddrReadable gate bails first — so a dead-pointer fake
+    // would go green for the wrong reason, the same trap TMAPGEOM documents. The arm is
+    // built its way: one committed page of a two-page reservation, with the 16-byte
+    // FScriptInterface laid ACROSS the edge, so ObjectPointer reads and InterfacePointer
+    // faults. That is the case the old code got wrong in its worst form — a REAL pointer
+    // followed by eight zero bytes it had never read.
+    {
+        blk("IFACEREAD - a faulted FScriptInterface refuses, it does not publish zeros");
+
+        // 1. The fake pool: index 1 = the TYPE name, index 2 = the FIELD name.
+        static uint8_t ifTypeEntry[0x40] = {};
+        static uint8_t ifNameEntry[0x40] = {};
+        memcpy(ifTypeEntry + 0x10, "InterfaceProperty", sizeof("InterfaceProperty"));
+        memcpy(ifNameEntry + 0x10, "Iface", sizeof("Iface"));
+        static uintptr_t ifChunk[4] = {};
+        ifChunk[1] = reinterpret_cast<uintptr_t>(ifTypeEntry);
+        ifChunk[2] = reinterpret_cast<uintptr_t>(ifNameEntry);
+        static uintptr_t ifChunks[2] = { reinterpret_cast<uintptr_t>(ifChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ifChunks), 0x10);
+        check("IFACEREAD setup: the pool resolves the type name",
+              Serie::GetString(1) == "InterfaceProperty", Serie::GetString(1).c_str());
+        check("IFACEREAD setup: the pool resolves the field name",
+              Serie::GetString(2) == "Iface", Serie::GetString(2).c_str());
+
+        // 2. An FFieldClass whose Name is that type index.
+        static uint8_t ifFieldClass[0x20] = {};
+        *reinterpret_cast<int32_t*>(ifFieldClass + DynOff::FFIELDCLASS_NAME) = 1;
+
+        // 3. Two pages reserved, one committed. The instance sits at the base so the
+        //    UObject-header readability gate passes and ONLY the field read can fault.
+        uint8_t* ipage = static_cast<uint8_t*>(
+            VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("IFACEREAD setup: reserved two pages", ipage != nullptr);
+        if (!ipage) { printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+                      return g_fail == 0 ? 0 : 1; }
+        VirtualAlloc(ipage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+        const uintptr_t inst = reinterpret_cast<uintptr_t>(ipage);
+
+        // 4. ONE CLASS BLOB PER CASE — not tidiness. s_walkClassCache is keyed by the
+        //    class address and nothing erases it, so a shared blob would serve case 1's
+        //    memoised field list to cases 2 and 3 (the A10 defect this file demonstrates
+        //    further up, hit by accident while writing the SANEPROPS block).
+        static uint8_t ifProp[4][0x80] = {};
+        static uint8_t ifCls[4][0x100] = {};
+        auto makeClass = [&](int i, int32_t fieldOffset) {
+            *reinterpret_cast<uintptr_t*>(ifProp[i] + DynOff::FFIELD_CLASS) =
+                reinterpret_cast<uintptr_t>(ifFieldClass);
+            *reinterpret_cast<int32_t*>(ifProp[i] + DynOff::FFIELD_NAME)         = 2;
+            *reinterpret_cast<int32_t*>(ifProp[i] + DynOff::FPROPERTY_OFFSET)    = fieldOffset;
+            *reinterpret_cast<int32_t*>(ifProp[i] + DynOff::FPROPERTY_ELEMSIZE)  = 16;
+            *reinterpret_cast<int32_t*>(ifProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            *reinterpret_cast<int32_t*>(ifCls[i] + DynOff::USTRUCT_PROPSSIZE)    = 0x2000;
+            *reinterpret_cast<uintptr_t*>(ifCls[i] + DynOff::USTRUCT_CHILDPROPS) =
+                reinterpret_cast<uintptr_t>(ifProp[i]);
+            return reinterpret_cast<uintptr_t>(ifCls[i]);
+        };
+        // ⛔ THE ANTI-VACUITY GUARD, and it is not decoration. Every ⭐ assertion below is
+        // of the form "hexValue is EMPTY" -- which a walk that produced NO FIELDS AT ALL
+        // satisfies for free. A seed that silently failed to take would then read as a
+        // green refusal. So the extractor asserts the field arrived before returning it,
+        // and every case pays that check.
+        auto ifaceField = [&](const char* who,
+                              const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+            check((std::string("IFACEREAD control: ") + who
+                   + " -- the fake class produced exactly one field").c_str(),
+                  r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+            for (const auto& f : r.fields)
+                if (f.typeName == "InterfaceProperty") return f;
+            return Ubel::LiveFieldValue{};
+        };
+
+        // ⭐ THE CONTROL FIRST, so a refusal below cannot be satisfied by a broken fake.
+        *reinterpret_cast<uintptr_t*>(ipage + 0x100) = 0x1122334455667788ull;
+        *reinterpret_cast<uintptr_t*>(ipage + 0x108) = 0x99AABBCCDDEEFF00ull;
+        const auto okF = ifaceField("bound",
+            Ubel::WalkInstance(inst, makeClass(0, 0x100), 64, 2, false));
+        check("IFACEREAD control: the fake class produced the interface field",
+              okF.name == "Iface", okF.name.c_str());
+        check("IFACEREAD control: a READABLE interface still publishes both halves",
+              okF.hexValue == "1122334455667788 99AABBCCDDEEFF00", okF.hexValue.c_str());
+        check("IFACEREAD control: and carries no refusal string",
+              okF.typedValue.find("unreadable") == std::string::npos,
+              okF.typedValue.c_str());
+
+        // ⭐ THE READABLE-NULL CONTROL -- the state the LIVE arm actually found, and the
+        // one the whole defect is about. GeometryCollectionComponent.CustomRenderer on
+        // DumperTest is a genuinely null interface, so it printed sixteen zero bytes; the
+        // pre-fix walker printed the SAME sixteen zero bytes for memory it could not read.
+        // A fix that suppressed the hex on both would "pass" every refusal check above
+        // while destroying real information, so this case must keep its zeros.
+        const auto nullF = ifaceField("readable-null",
+            Ubel::WalkInstance(inst, makeClass(3, 0x200), 64, 2, false));
+        check("IFACEREAD control: a readable NULL interface still reports its zeros",
+              nullF.hexValue == "0000000000000000 0000000000000000", nullF.hexValue.c_str());
+        check("IFACEREAD control: ...and is NOT slandered as unreadable",
+              nullF.typedValue.find("unreadable") == std::string::npos,
+              nullF.typedValue.c_str());
+
+        // ⭐ THE PARTIAL FAULT. ObjectPointer is the page's last 8 bytes; InterfacePointer
+        // is in the uncommitted page. Old behaviour: "1122334455667788 0000000000000000".
+        *reinterpret_cast<uintptr_t*>(ipage + 0xFF8) = 0x1122334455667788ull;
+        const auto edgeF = ifaceField("half-unread",
+            Ubel::WalkInstance(inst, makeClass(1, 0x0FF8), 64, 2, false));
+        check("IFACEREAD ⭐: a HALF-readable FScriptInterface publishes NO hex",
+              edgeF.hexValue.empty(), edgeF.hexValue.c_str());
+        check("IFACEREAD ⭐: and says so, naming the offset in the base it prints",
+              edgeF.typedValue.find("unreadable at +0xFF8") != std::string::npos,
+              edgeF.typedValue.c_str());
+
+        // The wholly-unreadable field, one page further out. Same refusal.
+        const auto deadF = ifaceField("both-unread",
+            Ubel::WalkInstance(inst, makeClass(2, 0x1000), 64, 2, false));
+        check("IFACEREAD: a wholly unreadable FScriptInterface refuses too",
+              deadF.hexValue.empty(), deadF.hexValue.c_str());
+        check("IFACEREAD: ...and names ITS offset, not the previous case's",
+              deadF.typedValue.find("unreadable at +0x1000") != std::string::npos,
+              deadF.typedValue.c_str());
+
+        // ⭐⭐ THE DISCRIMINATOR, and the single check that states the defect itself.
+        // Pre-fix, these two rendered BYTE-IDENTICALLY: a genuinely null interface and
+        // memory nobody could read both came out "0000000000000000 0000000000000000".
+        // Every other check here can be satisfied by some partial fix; this one cannot,
+        // because it asserts the two states are now TELLABLE APART -- which is the entire
+        // user-visible claim, and precisely what the live DumperTest run could not decide.
+        check("IFACEREAD ⭐⭐: readable-NULL and UNREADABLE are no longer the same output",
+              nullF.hexValue != deadF.hexValue,
+              (nullF.hexValue + " vs " + deadF.hexValue).c_str());
+
+        VirtualFree(ipage, 0, MEM_RELEASE);
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

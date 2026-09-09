@@ -4335,8 +4335,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.hexValue = buf;
             } else {
                 // Say which half could not be read rather than printing zeros for it.
-                fv.typedValue = "(interface — unreadable at +0x"
-                              + std::to_string(fi.Offset) + ", not read)";
+                // ⚠ snprintf("%X"), NOT std::to_string: this first shipped as
+                // `"+0x" + std::to_string(fi.Offset)`, which renders offset 4088 as
+                // "+0xFF8"'s DECIMAL digits behind a hex prefix — "+0x4088". The refusal
+                // exists to stop the walker making an unbacked claim about an address;
+                // stating the wrong address in it is the same class of defect. Caught
+                // while building the page-edge fixture below, whose whole assertion is
+                // that the message names the offset the field is actually at.
+                char offHex[24];
+                snprintf(offHex, sizeof(offHex), "%X", fi.Offset);
+                fv.typedValue = std::string("(interface — unreadable at +0x")
+                              + offHex + ", not read)";
             }
             result.fields.push_back(std::move(fv));
             continue;
