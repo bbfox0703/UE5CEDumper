@@ -2388,6 +2388,188 @@ claims and confirmed 23. ⚠ That comparison is not a claim that reading beats s
 are what produced the POPULATIONS these slices walked. It is the narrower claim the rounds
 themselves kept making: **the candidate ROWS were worthless and the populations were not.**
 
+## 🔎 Audit #4 ASSESSMENT — measured 2026-09-09 `[A4-ASSESS-2026-09-09]`
+
+**Why this exists.** The maintainer re-read the audit #3 re-check and asked the same question of the
+**next** audit: *does audit #4 have an unaudited blank like #3's, and is any of its verification
+soft?* — with a named suspicion: **much of it should have been driven by hand, and instead it was
+closed by reading logs**, so nobody looked at whether the UI↔DLL wire actually works, whether either
+side fails to notify when it should, or whether a field is **sent and never received**.
+
+⛔ **SCOPE — this section is an ASSESSMENT, not findings.** Nothing below is a defect claim. Every
+number is derived at HEAD by a script kept in this session's scratchpad and reproduced by the
+commands quoted inline. **Derive, never quote.**
+
+The target is unambiguous: audit #5 (`audit-2026-08-13-early-code-findings.md`) is the large
+old-code audit, so the one before it is **audit #4** (`audit-2026-08-04-findings.md`, build 2554).
+⚠ Its predecessor is dated **2026-07-14**, not June.
+
+### ⛔ 1. The blank is REAL and it is BIGGER than audit #3's
+
+Audit #4's window is `af2ce50..7cc3d5e2` (build 2168 → 2554, 2026-07-15 .. 08-03, **225 commits**).
+Same `git blame` recipe as the audit #3 re-check — a line still blamed into a range is a line no
+later commit touched, so any audit whose baseline is at or after that range covers **zero** of them
+by construction.
+
+| | lines alive at HEAD | files |
+|---|---|---|
+| whole window | **30,579** | 167 |
+| production (`dll/src` + `ui/UE5DumpUI`) | **14,418** | 92 |
+| tests / tools / scripts / axaml | 16,161 | 75 |
+
+(audit #3's comparable number was 22,853.)
+
+⛔ **31 PRODUCTION FILES / 3,409 LINES ARE NAMED BY NO LATER AUDIT DOCUMENT AT ALL** — not audit #5,
+not #6, not the dxgi audit, not the MED re-derivation, not this file's sweeps. Largest first:
+
+```
+489  ui/UE5DumpUI/Services/CoordCsvCodec.cs      204  ui/UE5DumpUI/Services/DiagnosticsProbe.cs
+352  ui/UE5DumpUI/Services/CoordLuaParser.cs     196  dll/src/Sense.cpp        <- a whole DLL module
+331  ui/UE5DumpUI/Views/TeleportPanel.axaml      180  ui/UE5DumpUI/Services/CeAutorunScriptGenerator.cs
+208  ui/UE5DumpUI/Models/CoordinateLibraryFile.cs 177 ui/UE5DumpUI/Views/OrphanCleanupConfirmDialog.cs
+154  Services/CeInjectScriptGenerator.cs         151  Models/OrphanScanTypes.cs
+123  Models/OrphanProxy.cs                        99  Models/DiagnosticsResult.cs
+ 94  dll/src/Sense.h                              84  Helpers/LiveWalkerNavShortcuts.cs
+ 81  Services/PointerQueryScriptGenerator.cs      74  Core/IProxyDeployService.cs
+ 74  ViewModels/DumpExplorerViewModel.cs          70  Services/JsonNum.cs
+ 68  Services/SnapshotStore.cs                    57  Services/PipeTransportStats.cs
+ (+ 11 more under 40 lines)
+```
+
+⚠ **"named at all" is a GENEROUS proxy in both directions** — being mentioned in an audit doc is not
+being audited, so 3,409 is a **lower bound** on the blank.
+
+**Why nothing covered it**: audit #5's predicate is *authored before 2026-06-01* and this window is
+07-15 onward — **disjoint by construction**, exactly the relation the audit #3 re-check found between
+#3 and #4. #6 is the vendor UE 5.8.2 pass. The 2026-09-08 blind-spot sweep was a **pattern** sweep on
+one shape (a dropped `bool`), not a line-level re-read.
+
+#### ⭐⭐ And the same measurement, run over the WHOLE tree, found something larger than the question asked
+
+Every surviving production line at HEAD, bucketed by which audit's scope could have contained it:
+
+| band | lines | share | who scoped it |
+|---|---|---|---|
+| before 2026-06-01 | 48,785 | 30.4% | audit #5 |
+| **2026-06-01 .. 07-03** | **50,346** | **31.3%** | ⛔ **NOBODY** |
+| 2026-07-03 .. 07-15 | 16,500 | 10.3% | audit #3 (never re-swept) |
+| 2026-07-15 .. 08-03 | 13,633 | 8.5% | audit #4 (never re-swept) |
+| after 2026-08-03 | 31,407 | 19.5% | ⛔ no area audit — one pattern sweep only |
+| **total** | **160,671** | | |
+
+⛔ **50.8% of surviving production code has never been inside any area audit's scope**, and the
+single biggest block is a band **nobody has ever named**: 2026-06-01 .. 07-03. Audit #5 stops at
+06-01; audit #3's baseline is post-b1872 (07-03). The only pass that could have touched any of it is
+the 4-agent build-974 pass of 2026-06-10 — which audit #5's own header dismisses as *"one tenth of
+audit #4's 48-agent adversarial effort"*, and which by construction could not see code written after
+that date.
+
+### ⛔ 2. The verification softness is real, and the register already recorded it happening
+
+- The audit doc says it in its own words: *"**What is NOT done: the verification.** … **None of it
+  has been run on a real game.**"*
+- **49 numbered bug findings** in the summary tables. **22 of them are not mentioned anywhere in
+  `verification-register.md`** — 45%:
+  `B27 B3 B9 B30 B11 B12 B15 B17 B20 B21 B22 B23 B24 B32 B33 B37 B39 B40 B43 B44 B46 B48`.
+  This is the same violation of the register's single-owner rule the audit #3 re-check found (10
+  UI-side fixes with a unit test only).
+- The register's audit #4 section holds **22 bullets: 16 ✅ · 5 ⬜ · 1 🟡**. Of the 16 closed:
+  **5 by a scripted rig · 3 by manual operation · 6 by READING LOGS ONLY · 2 state no evidence kind.**
+
+⭐ **And the register itself already documents three log-reading false greens** — the maintainer's
+suspicion is not a hypothesis, it is on file:
+
+1. **B47's earlier ✅ was credited to a hand-injected session where the guard was not even compiled
+   in**, and had to be re-earned on a real proxy run.
+2. **B28 "was NOT tested"** — the rows inspected were `StrProperty`, not FText.
+3. One ✅ **was credited to the WRONG SESSION** (register `:8955`).
+
+…plus **B14+R5 needing three attempts**, whose lesson the audit wrote down itself: *a fix verified
+against the LIST it was written from is not verified.*
+
+### 🟡 3. The UI↔DLL wire — the loud axis is CLEAN, the silent axes are UNMEASURED
+
+⭐ **Say the good news first, because it is real.** The coarse axis measures perfect in both
+directions:
+
+```
+99 CMD_* constants declared · Fern dispatches on 99 · the C# UI sends 99
+  sent by the UI, handled by no DLL branch : 0
+  handled by the DLL, never sent by the UI : 0
+  request-parameter keys sent by the UI that no DLL request.value() reads : 0
+```
+
+That is expected: a wrong **command name** fails LOUDLY (`unknown command`), so it cannot survive.
+
+⛔ **What has no mechanism at all is the silent half.** The CE Lua ↔ DLL mailbox is version-gated
+**and** hash-gated (`tools/check_mailbox_contract.py`). The **named pipe — the primary channel, 99
+commands, 358 reply keys — is gated by nothing**, and there is no shared constant table across the
+language boundary; the C# side hand-types the strings:
+
+```csharp
+var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
+```
+
+A wrong key there does not throw. It yields a default, or a null, and the reply says `ok: true`.
+
+⛔⛔ **This shape has landed THREE TIMES IN THE LAST TWO DAYS**, which is what turns it from a
+tidiness concern into the highest-value target here:
+
+1. **`[SW7]`** — a scalar `DelegateProperty`'s `delegate_pad` was computed correctly and **never
+   serialised**, so every CE path built chains without it.
+2. **the `l12` rig** — sent `addr=` where `Fern` reads `instance_addr`: **2,000 requests measured
+   nothing and reported cleanly.**
+3. **`FlyStatus.Noclip`** — the DLL publishes it, `ApplyFlyReadout` **never reads it**, and the
+   `✈ Fly ON (noclip)` badge is built from the local checkbox.
+
+⭐ **And this assessment found two more of exactly that shape, previously unrecorded:**
+
+```
+Fern.cpp:6013   data["mode_resolved"] = st.modeResolved;
+Fern.cpp:6016   data["cmc_addr"]      = Renge::AddrToStr(st.cmcAddr);
+```
+
+`grep -rn 'mode_resolved\|cmc_addr' ui/ tools/ scripts/ dll/tests/` returns **zero** — nothing in the
+tree reads either, and `FlyStatus` has no corresponding member. ⚠ They may be deliberate diagnostics;
+that is an adjudication, not a verdict. **21 DLL-published reply keys** currently have no in-tree
+reader (the `ffield_*` / `ustruct_*` / `fproperty_offset` family among them) and each needs a
+hand-read, exactly like the ~166 claims did.
+
+⛔ **And the third class the maintainer named — "should have notified and did not" — is reachable by
+NO static probe and by NO log read.** A DLL state change with no push, or a reply the UI parses and
+never re-renders, is only visible with the UI running against a live game. That is precisely the half
+audit #4 never did.
+
+### ⚠ 4. What this assessment did NOT measure — read before planning off it
+
+- **Whether audit #4's 52 fixes are still live at HEAD.** The audit #3 re-check's headline was
+  23/23; the equivalent number for #4 does not exist yet. That is phase 1 below.
+- The 21 dead reply keys are **candidates**, not findings — none is adjudicated.
+- ⚠ **The key-parity numbers above are GLOBAL, not per-command, so they UNDERSTATE the risk.** A key
+  that is valid for command X and a silent no-op for command Y matches in a global comparison. The
+  `l12` failure lived in exactly that layer.
+
+### ⬜ The plan — four phases, run ONE AT A TIME, fixes deferred to the end
+
+Ordered by evidence-value per unit cost. ⛔ **Fixes are NOT applied inside a phase** — each phase
+records what it found and the next one starts; the repairs are a separate pass with their own
+adversarial check, because this repo's history says a verdict is not authority on the repair (AB4).
+
+| # | phase | shape |
+|---|---|---|
+| **1** | audit #4's 52 fixes re-checked at HEAD + the 22 findings with no register row | static, fan-out |
+| **2** | the pipe wire, three axes: per-command key pairing · dead reply keys · reads-that-never-arrive | static, produces populations |
+| **3** | ⭐ the **two-sided LIVE arm** — UI *and* DLL on DumperTest **Shipping**, comparing what the DLL sent against what the UI displayed. The only way to reach "should have notified and did not" | live + rig |
+| **4** | a `check_pipe_contract.py` gate — **only** on a predicate whose legitimate population is measurably EMPTY (the 17b lesson) | gate design |
+
+⚠ **The rule audit #4 earned applies to this plan too**: *a fix verified against the list it was
+written from is not verified.* A wire sweep checked only against the keys a grep produced is not
+checked — every phase needs a negative control.
+
+⛔ **Not recommended: re-running audit #4 as an area audit.** The #3 re-check measured 23/23 fixes
+still live and 0 reopens, and concluded the value was in *coverage*, not in re-reasoning. Nothing
+above contradicts that for #4; the blank and the wire are where the evidence is.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:

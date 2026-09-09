@@ -421,6 +421,33 @@ said no".
   "3 defects" when one of them was already refuted has re-inflated the very number the sweep's
   three rounds spent their effort deflating.
 
+### 1.w3 A COVERAGE report names the files it found — and then the next run counts them as covered
+
+2026-09-09, `[A4-ASSESS-2026-09-09]`. `tools/verify/audit_coverage.py blank` answers *"which files
+carry lines from this audit's window that **no later audit document ever names**?"* The corpus it
+matches against includes `docs/todo.md`, because that is where this repo's sweeps live.
+
+The section reporting the answer was written **into `docs/todo.md`**, and it lists all 31 filenames.
+The very next run of the same command reported **22 files / 1,178 lines** where the run that
+produced the section had reported **31 / 3,409**. Nothing changed in the code. **The report of the
+blank is what erased the blank.**
+
+⛔ **THE GENERAL SHAPE, and it is not specific to coverage tools.** Any check whose predicate is
+*"X is not mentioned anywhere in corpus C"* will start passing the moment its own output is filed
+into C — and the direction of the failure is the dangerous one: **the gap silently shrinks**, so the
+tool reports progress that never happened. It is the same family as the anti-vacuity guard (an
+assertion of the form *"X is ABSENT"* is satisfied for free by an empty run), but it arrives later
+and looks like success rather than like nothing.
+
+⭐ **The fix that generalises**: exclude the reporting artefact from the corpus **by tag, in the tool,
+with the measurement in the comment** — `SELF_REFERENTIAL_TAGS` in `audit_coverage.py` carries both
+numbers so the next reader can see what the guard is worth. Not by pointing the tool at an older
+commit (fragile, and it silently stops seeing genuinely new coverage), and not by keeping the report
+out of the repo (the report is the deliverable).
+
+⚠ **And the check that catches it**: a coverage number must be **re-derived after the write-up
+lands**, not only before. If the two disagree, one of them is measuring the write-up.
+
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
 Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with
