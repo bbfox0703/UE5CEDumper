@@ -770,13 +770,13 @@ int main() {
 
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
-    // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD below it and
-    // NOTHING ELSE after either. It calls Serie::InitUE4, and Serie's pool state
-    // (s_poolAddr / s_isUE4Mode / s_initialized) lives in file-statics that no header
-    // exposes -- so it CANNOT be restored. Anything appended after this block would run
-    // against a fake UE4 name pool and could pass or fail for that reason. IFACEREAD is
-    // the one legal exception: it installs its OWN pool first and depends on nothing this
-    // block leaves behind.
+    // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
+    // UNREADVAL below it and NOTHING ELSE after any of the three. It calls Serie::InitUE4,
+    // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
+    // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
+    // after this block would run against a fake UE4 name pool and could pass or fail for
+    // that reason. IFACEREAD and UNREADVAL are the legal exceptions: each installs its OWN
+    // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
     // faulted read the addr stays 0, `ResolveElementAlignment` is then asked to align a
@@ -1014,6 +1014,210 @@ int main() {
               (nullF.hexValue + " vs " + deadF.hexValue).c_str());
 
         VirtualFree(ipage, 0, MEM_RELEASE);
+    }
+
+    // -- UNREADVAL-2026-09-09 -- the OTHER handlers that publish 0 as a VALUE ----------
+    //
+    // ⛔ ALSO IN THE POOL-FAKING TAIL, and for the third time the same reason: these three
+    // handlers are selected by `fi.TypeName`, so the walker must be able to answer
+    // "EnumProperty" / "ByteProperty" / "OptionalProperty" out of a fake pool. Own chunks,
+    // like IFACEREAD; nothing needing the real pool may follow.
+    //
+    // THE DEFECT, and it is IFACEREAD's exactly, in three more places. Slice C of the
+    // unadjudicated sweep claims ranked `Ubel.cpp` OptionalProperty's isObjectLike read as
+    // PUBLISHED-tier; reading it found the same discarded-read shape in the two enum
+    // handlers beside it. On a faulted read the out-param keeps its initialised 0, and 0
+    // is never "unknown" downstream:
+    //   * EnumProperty  -> hexValue "00" and typedValue "0" (or, with a UEnum, the NAME of
+    //                      enumerator 0) for a byte nobody could read;
+    //   * ByteProperty  -> the same, one handler down;
+    //   * TOptional     -> "(unset)", an AFFIRMATIVE claim that the option provably holds
+    //                      no value -- the identical claim "(unbound)" made for delegates
+    //                      in D3/D5. And its FString/FName arms fail the OTHER way: their
+    //                      sentinels are -1 / 0xFFFFFFFF, so a faulted 0 reads as SET.
+    // `BoolProperty`, three blocks above the enum handlers, has always had it right.
+    //
+    // ⭐ THE DISCRIMINATOR IS AGAIN WHAT MATTERS. Every refusal check below can be passed
+    // by a fix that simply blanks the field; what cannot is "a byte that genuinely holds 0
+    // still reports 0, and is no longer the same output as a byte we could not read". Each
+    // family therefore gets a readable-ZERO case as well as a readable-nonzero one.
+    {
+        blk("UNREADVAL - a faulted enum / byte-enum / TOptional refuses, it does not publish 0");
+
+        // 1. The pool. 1..6 are the type names, the field name, and the UEnum's class name.
+        static uint8_t uvEntry[7][0x40] = {};
+        const char* uvNames[7] = { "", "EnumProperty", "Val", "ByteProperty",
+                                   "OptionalProperty", "Enum", "ObjectProperty" };
+        static uintptr_t uvChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(uvEntry[i] + 0x10, uvNames[i], strlen(uvNames[i]) + 1);
+            uvChunk[i] = reinterpret_cast<uintptr_t>(uvEntry[i]);
+        }
+        static uintptr_t uvChunks[2] = { reinterpret_cast<uintptr_t>(uvChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(uvChunks), 0x10);
+        check("UNREADVAL setup: the pool resolves EnumProperty",
+              Serie::GetString(1) == "EnumProperty", Serie::GetString(1).c_str());
+        check("UNREADVAL setup: the pool resolves OptionalProperty",
+              Serie::GetString(4) == "OptionalProperty", Serie::GetString(4).c_str());
+
+        // 2. One FFieldClass per type name.
+        static uint8_t uvFC[7][0x20] = {};
+        auto fieldClassFor = [&](int nameIdx) {
+            *reinterpret_cast<int32_t*>(uvFC[nameIdx] + DynOff::FFIELDCLASS_NAME) = nameIdx;
+            return reinterpret_cast<uintptr_t>(uvFC[nameIdx]);
+        };
+
+        // 3. A UEnum the ByteProperty handler will ACCEPT: its UClass must be named "Enum".
+        //    Without this the handler falls through to the generic scalar path and the
+        //    ByteProperty cases below would measure nothing -- an anti-vacuity concern in
+        //    its own right, which is why the control asserts it resolved.
+        static uint8_t uvEnumCls[0x40] = {};
+        static uint8_t uvEnumObj[0x40] = {};
+        *reinterpret_cast<int32_t*>(uvEnumCls + Grimoire::OFF_UOBJECT_NAME) = 5;   // "Enum"
+        *reinterpret_cast<uintptr_t*>(uvEnumObj + Grimoire::OFF_UOBJECT_CLASS) =
+            reinterpret_cast<uintptr_t>(uvEnumCls);
+
+        // 4. The inner ObjectProperty a TOptional wraps (ProbeInnerProperty finds it at
+        //    FARRAYPROP_INNER -- TOptional and TArray are both FProperty + FProperty*).
+        static uint8_t uvInner[0x100] = {};
+        *reinterpret_cast<uintptr_t*>(uvInner + DynOff::FFIELD_CLASS) = fieldClassFor(6);
+        *reinterpret_cast<int32_t*>(uvInner + DynOff::FFIELD_NAME) = 2;
+
+        // 5. Two pages reserved, one committed -- the IFACEREAD manufacture. A wholly dead
+        //    instance bails at WalkInstance's readability gate for a DIFFERENT reason, so
+        //    only a partial fault reaches these handlers.
+        uint8_t* upage = static_cast<uint8_t*>(
+            VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("UNREADVAL setup: reserved two pages", upage != nullptr);
+        if (!upage) { printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+                      return g_fail == 0 ? 0 : 1; }
+        VirtualAlloc(upage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+        const uintptr_t uinst = reinterpret_cast<uintptr_t>(upage);
+
+        // 6. ONE CLASS BLOB PER CASE. s_walkClassCache is keyed by class address and
+        //    nothing erases it; a shared blob serves case 1's memoised fields to case 2.
+        static uint8_t uvProp[9][0x100] = {};
+        static uint8_t uvCls[9][0x100] = {};
+        int uvNext = 0;
+        auto makeCase = [&](int typeIdx, int32_t fieldOffset, int32_t elemSize,
+                            uintptr_t enumPtr, uintptr_t innerPtr) {
+            const int i = uvNext++;
+            *reinterpret_cast<uintptr_t*>(uvProp[i] + DynOff::FFIELD_CLASS) =
+                fieldClassFor(typeIdx);
+            *reinterpret_cast<int32_t*>(uvProp[i] + DynOff::FFIELD_NAME)        = 2;
+            *reinterpret_cast<int32_t*>(uvProp[i] + DynOff::FPROPERTY_OFFSET)   = fieldOffset;
+            *reinterpret_cast<int32_t*>(uvProp[i] + DynOff::FPROPERTY_ELEMSIZE) = elemSize;
+            *reinterpret_cast<int32_t*>(uvProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            if (enumPtr) {
+                *reinterpret_cast<uintptr_t*>(uvProp[i] + DynOff::FENUMPROP_ENUM) = enumPtr;
+                *reinterpret_cast<uintptr_t*>(uvProp[i] + DynOff::FBYTEPROP_ENUM) = enumPtr;
+            }
+            if (innerPtr)
+                *reinterpret_cast<uintptr_t*>(uvProp[i] + DynOff::FARRAYPROP_INNER) = innerPtr;
+            *reinterpret_cast<int32_t*>(uvCls[i] + DynOff::USTRUCT_PROPSSIZE)    = 0x2000;
+            *reinterpret_cast<uintptr_t*>(uvCls[i] + DynOff::USTRUCT_CHILDPROPS) =
+                reinterpret_cast<uintptr_t>(uvProp[i]);
+            return reinterpret_cast<uintptr_t>(uvCls[i]);
+        };
+        // ⛔ THE ANTI-VACUITY GUARD, same as IFACEREAD's and needed for the same reason:
+        //    every ⭐ assertion is "hexValue is EMPTY" or "typedValue says unreadable", and
+        //    a walk that produced NO FIELDS satisfies the first for free.
+        auto oneField = [&](const char* who, const char* wantType,
+                            const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+            check((std::string("UNREADVAL control: ") + who
+                   + " -- the fake class produced exactly one field").c_str(),
+                  r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+            for (const auto& f : r.fields)
+                if (f.typeName == wantType) return f;
+            return Ubel::LiveFieldValue{};
+        };
+
+        // ---- EnumProperty ------------------------------------------------------------
+        upage[0x100] = 0x07;
+        const auto enSeven = oneField("enum readable", "EnumProperty",
+            Ubel::WalkInstance(uinst, makeCase(1, 0x100, 1, 0, 0), 64, 2, false));
+        check("UNREADVAL control: a READABLE enum byte still publishes its value",
+              enSeven.typedValue == "7", enSeven.typedValue.c_str());
+        check("UNREADVAL control: ...and its hex",
+              enSeven.hexValue == "07", enSeven.hexValue.c_str());
+
+        // The readable ZERO -- what the refusal must not look like.
+        const auto enZero = oneField("enum readable-zero", "EnumProperty",
+            Ubel::WalkInstance(uinst, makeCase(1, 0x200, 1, 0, 0), 64, 2, false));
+        check("UNREADVAL control: a byte that genuinely holds 0 still reports 0",
+              enZero.typedValue == "0" && enZero.hexValue == "00",
+              (enZero.typedValue + " / " + enZero.hexValue).c_str());
+
+        const auto enDead = oneField("enum unreadable", "EnumProperty",
+            Ubel::WalkInstance(uinst, makeCase(1, 0x1000, 1, 0, 0), 64, 2, false));
+        check("UNREADVAL ⭐: an UNREADABLE enum byte publishes NO hex",
+              enDead.hexValue.empty(), enDead.hexValue.c_str());
+        check("UNREADVAL ⭐: ...and says so, naming its own offset",
+              enDead.typedValue.find("unreadable at +0x1000") != std::string::npos,
+              enDead.typedValue.c_str());
+        check("UNREADVAL ⭐⭐: a real 0 and an unreadable byte are no longer the same value",
+              enZero.typedValue != enDead.typedValue,
+              (enZero.typedValue + " vs " + enDead.typedValue).c_str());
+
+        // ---- ByteProperty with a UEnum -----------------------------------------------
+        const uintptr_t uvEnum = reinterpret_cast<uintptr_t>(uvEnumObj);
+        upage[0x300] = 0x05;
+        const auto byFive = oneField("byte-enum readable", "ByteProperty",
+            Ubel::WalkInstance(uinst, makeCase(3, 0x300, 1, uvEnum, 0), 64, 2, false));
+        // ⛔ NOT DECORATION: if the fake UEnum failed to validate, the handler falls
+        //    through to the generic scalar path and every ByteProperty check below would
+        //    be measuring that path instead. enumAddr is set ONLY inside the enum arm.
+        check("UNREADVAL control: the fake UEnum validated, so the enum arm really ran",
+              byFive.enumAddr == uvEnum, byFive.typedValue.c_str());
+        check("UNREADVAL control: a READABLE byte-enum publishes its value and hex",
+              byFive.typedValue == "5" && byFive.hexValue == "05",
+              (byFive.typedValue + " / " + byFive.hexValue).c_str());
+
+        const auto byZero = oneField("byte-enum readable-zero", "ByteProperty",
+            Ubel::WalkInstance(uinst, makeCase(3, 0x400, 1, uvEnum, 0), 64, 2, false));
+        check("UNREADVAL control: a byte-enum that genuinely holds 0 still reports 0",
+              byZero.typedValue == "0" && byZero.hexValue == "00",
+              (byZero.typedValue + " / " + byZero.hexValue).c_str());
+
+        const auto byDead = oneField("byte-enum unreadable", "ByteProperty",
+            Ubel::WalkInstance(uinst, makeCase(3, 0x1000, 1, uvEnum, 0), 64, 2, false));
+        check("UNREADVAL ⭐: an UNREADABLE byte-enum publishes NO hex",
+              byDead.hexValue.empty(), byDead.hexValue.c_str());
+        check("UNREADVAL ⭐: ...and says so",
+              byDead.typedValue.find("unreadable at +0x1000") != std::string::npos,
+              byDead.typedValue.c_str());
+        check("UNREADVAL ⭐: ...while KEEPING the UEnum metadata, which came from the FField",
+              byDead.enumAddr == uvEnum, "enumAddr lost");
+        check("UNREADVAL ⭐⭐: a real 0 and an unreadable byte-enum differ",
+              byZero.typedValue != byDead.typedValue,
+              (byZero.typedValue + " vs " + byDead.typedValue).c_str());
+
+        // ---- TOptional<UObject*> -----------------------------------------------------
+        const uintptr_t uvInnerAddr = reinterpret_cast<uintptr_t>(uvInner);
+        *reinterpret_cast<uintptr_t*>(upage + 0x500) = reinterpret_cast<uintptr_t>(uvEnumObj);
+        const auto opSet = oneField("optional set", "OptionalProperty",
+            Ubel::WalkInstance(uinst, makeCase(4, 0x500, 8, 0, uvInnerAddr), 64, 2, false));
+        check("UNREADVAL control: a SET TOptional does not read as unset",
+              opSet.typedValue != "(unset)"
+              && opSet.typedValue.find("unreadable") == std::string::npos,
+              opSet.typedValue.c_str());
+
+        // ⭐ The readable NULL -- "(unset)" is CORRECT here, and must stay.
+        const auto opNull = oneField("optional readable-null", "OptionalProperty",
+            Ubel::WalkInstance(uinst, makeCase(4, 0x600, 8, 0, uvInnerAddr), 64, 2, false));
+        check("UNREADVAL control: a readable NULL TOptional is still (unset)",
+              opNull.typedValue == "(unset)", opNull.typedValue.c_str());
+
+        const auto opDead = oneField("optional unreadable", "OptionalProperty",
+            Ubel::WalkInstance(uinst, makeCase(4, 0x1000, 8, 0, uvInnerAddr), 64, 2, false));
+        check("UNREADVAL ⭐: an UNREADABLE TOptional refuses instead of claiming (unset)",
+              opDead.typedValue.find("unreadable at +0x1000") != std::string::npos,
+              opDead.typedValue.c_str());
+        check("UNREADVAL ⭐⭐: readable-null and unreadable are no longer the same claim",
+              opNull.typedValue != opDead.typedValue,
+              (opNull.typedValue + " vs " + opDead.typedValue).c_str());
+
+        VirtualFree(upage, 0, MEM_RELEASE);
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

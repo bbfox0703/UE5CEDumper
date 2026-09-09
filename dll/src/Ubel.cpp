@@ -4335,17 +4335,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.hexValue = buf;
             } else {
                 // Say which half could not be read rather than printing zeros for it.
-                // ⚠ snprintf("%X"), NOT std::to_string: this first shipped as
-                // `"+0x" + std::to_string(fi.Offset)`, which renders offset 4088 as
-                // "+0xFF8"'s DECIMAL digits behind a hex prefix — "+0x4088". The refusal
-                // exists to stop the walker making an unbacked claim about an address;
-                // stating the wrong address in it is the same class of defect. Caught
-                // while building the page-edge fixture below, whose whole assertion is
-                // that the message names the offset the field is actually at.
-                char offHex[24];
-                snprintf(offHex, sizeof(offHex), "%X", fi.Offset);
-                fv.typedValue = std::string("(interface — unreadable at +0x")
-                              + offHex + ", not read)";
+                // The "%X vs %d" lesson this line was born from now lives ONCE, on
+                // DescribeUnreadableField in Ubel.h — three more handlers below share it.
+                fv.typedValue = DescribeUnreadableField("interface", fi.Offset);
             }
             result.fields.push_back(std::move(fv));
             continue;
@@ -5482,29 +5474,55 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (enumSize != 1 && enumSize != 2 && enumSize != 4 && enumSize != 8)
                 enumSize = 1;
 
-            // Read raw value based on validated size
+            // Read raw value based on validated size.
+            // ⛔ THE RETURN IS LOAD-BEARING, and 0 is the WORST possible default here. On a
+            // faulted read rawVal stays 0, and 0 is not "unknown" to anything downstream:
+            // `ResolveEnumValue(enumPtr, 0)` answers with the NAME of enumerator 0 — for a BP
+            // enum usually "None" or the first entry — and the hex below rendered "00". Both are
+            // affirmative claims about memory nobody could read, and both are indistinguishable
+            // from a field that genuinely holds 0. Exactly the InterfaceProperty defect above,
+            // and `BoolProperty` three blocks up has always had it right (it builds hex and
+            // typedValue INSIDE `if (Macht::ReadSafe(...))`). Adjudicated 2026-09-09 as slice C
+            // of the unadjudicated sweep claims.
             int64_t rawVal = 0;
-            if (enumSize == 1) { uint8_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 2) { int16_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 4) { int32_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (enumSize == 8) { int64_t v = 0; Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            bool okVal = false;
+            if (enumSize == 1) { uint8_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 2) { int16_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 4) { int32_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 8) { int64_t v = 0; okVal = Macht::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
 
-            fv.enumValue = rawVal;
             fv.size = enumSize;
+            // ⭐ REFUSE THE VALUE, KEEP THE METADATA. The UEnum* was read from the FIELD
+            // (fi.Address), not from the instance, so the CE DropDownList metadata is still
+            // sound when the instance byte is not — `enum_addr` / `enum_entries` cross the wire
+            // on their own gate. `enum_name` / `enum_value` are gated on enumName, so leaving it
+            // empty is what stops the un-set 0 being published as a value.
             if (enumPtr) {
-                fv.enumName = ResolveEnumValue(enumPtr, rawVal);
                 fv.enumAddr = enumPtr;
                 fv.enumEntries = GetEnumEntries(enumPtr);
             }
+            if (!okVal) {
+                fv.typedValue = DescribeUnreadableField("enum", fi.Offset);
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            fv.enumValue = rawVal;
+            if (enumPtr) fv.enumName = ResolveEnumValue(enumPtr, rawVal);
             fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
 
-            // Populate hex
+            // Populate hex — INSIDE the read's own success test, the shape
+            // `ReadDelegateArrayElements` and `BoolProperty` both use. It reads the SAME
+            // enumSize bytes at the SAME address the value read just cleared, so `okVal` already
+            // implies it: the gate is here so the two cannot drift apart, not because a case is
+            // known where they disagree. Cheap, and the alternative is the defect above.
             uint8_t buf[8] = {};
-            Macht::ReadBytesSafe(instanceAddr + fi.Offset, buf, enumSize);
-            std::string hex;
-            hex.reserve(enumSize * 2);
-            for (int i = 0; i < enumSize; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
-            fv.hexValue = hex;
+            if (Macht::ReadBytesSafe(instanceAddr + fi.Offset, buf, enumSize)) {
+                std::string hex;
+                hex.reserve(enumSize * 2);
+                for (int i = 0; i < enumSize; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
+                fv.hexValue = hex;
+            }
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -5518,12 +5536,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 uintptr_t enumClass = GetClass(enumPtr);
                 std::string enumClassName = enumClass ? GetName(enumClass) : "";
                 if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum") {
+                    // Same gate, same reason, as the EnumProperty handler above: a faulted read
+                    // leaves rawVal at 0, which this block then published as the NAME of
+                    // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
+                    // the FField and survives; only the value is refused.
                     uint8_t rawVal = 0;
-                    Macht::ReadSafe(instanceAddr + fi.Offset, rawVal);
-                    fv.enumValue = rawVal;
-                    fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+                    const bool okVal = Macht::ReadSafe(instanceAddr + fi.Offset, rawVal);
                     fv.enumAddr = enumPtr;
                     fv.enumEntries = GetEnumEntries(enumPtr);
+                    if (!okVal) {
+                        fv.typedValue = DescribeUnreadableField("byte enum", fi.Offset);
+                        result.fields.push_back(std::move(fv));
+                        continue;
+                    }
+                    fv.enumValue = rawVal;
+                    fv.enumName = ResolveEnumValue(enumPtr, rawVal);
                     fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
                     char hx[3];
                     snprintf(hx, sizeof(hx), "%02X", rawVal);
@@ -5726,10 +5753,23 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             const bool isTextInner  = (innerTn == "TextProperty");
 
             bool isSet = false;
+            // ⛔ EVERY DISCRIMINATOR READ BELOW IS LOAD-BEARING, and the two directions are both
+            // wrong. `(unset)` is an AFFIRMATIVE claim that this TOptional provably holds no
+            // value — the same claim `(unbound)` made for delegates in D3/D5 — and on a faulted
+            // read the object/weak/text/flag arms all fall into it. The FString and FName arms
+            // fail the OTHER way: their sentinels are -1 and 0xFFFFFFFF, so a faulted read's 0
+            // reads as SET, and the field then publishes `""` or `(set)` for memory nobody
+            // could read. The hex block at the end of this handler has always gated on its own
+            // ReadBytesSafe, so before this fix the value column and the hex column disagreed —
+            // which is the tell, and the same one the InterfaceProperty handler above had.
+            // Adjudicated 2026-09-09 as slice C of the unadjudicated sweep claims; the ranker
+            // that found this flagged the isObjectLike read ONLY, because the other five feed a
+            // bare `isSet = (...)` its tiers score as no use at all.
+            bool okProbe = true;
 
             if (isObjectLike) {
                 uintptr_t ptr = 0;
-                Macht::ReadSafe(fieldAddr, ptr);
+                okProbe = Macht::ReadSafe(fieldAddr, ptr);
                 if (ptr) {
                     isSet = true;
                     fv.ptrValue = ptr;
@@ -5743,8 +5783,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             } else if (isWeakLike) {
                 // Embedded FWeakObjectPtr at field+0; unset sentinel is { 0, 0 }.
                 int32_t objIdx = 0, serial = 0;
-                Macht::ReadSafe(fieldAddr,     objIdx);
-                Macht::ReadSafe(fieldAddr + 4, serial);
+                const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
+                const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
+                okProbe = okIdx && okSerial;
                 isSet = (objIdx != 0 || serial != 0);
                 uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
                 if (resolved) {
@@ -5758,7 +5799,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isStrInner) {
                 int32_t arrayMax = 0;
-                Macht::ReadSafe(fieldAddr + 12, arrayMax);
+                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means
+                // SET. Without okProbe this arm published `""` — "set, but empty".
+                okProbe = Macht::ReadSafe(fieldAddr + 12, arrayMax);
                 isSet = (arrayMax != -1);
                 if (isSet) {
                     std::string s = ReadFString(fieldAddr, 0);
@@ -5766,7 +5809,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isNameInner) {
                 uint32_t compIdx = 0;
-                Macht::ReadSafe(fieldAddr, compIdx);
+                // ⚠ Same dangerous direction as isStrInner: sentinel 0xFFFFFFFF, so 0 = SET.
+                okProbe = Macht::ReadSafe(fieldAddr, compIdx);
                 isSet = (compIdx != 0xFFFFFFFFu);
                 if (isSet) {
                     std::string n = ReadFName(fieldAddr);
@@ -5774,7 +5818,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             } else if (isTextInner) {
                 uintptr_t textData = 0;
-                Macht::ReadSafe(fieldAddr, textData);
+                okProbe = Macht::ReadSafe(fieldAddr, textData);
                 isSet = (textData != 0);
                 // FText display (audit #5 U11): decode via ReadFTextString, which follows
                 // the ITextData* at FText+0 and scans it for the display FString — the SAME
@@ -5790,7 +5834,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Scalar/struct (no intrusive specialization): trailing
                 // bIsSet at field + innerSize.
                 uint8_t bIsSet = 0;
-                Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
+                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
                 isSet = (bIsSet != 0);
             }
 
@@ -5915,7 +5959,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
 
             // Build display string.
-            if (!isSet) {
+            // ⛔ THE REFUSAL COMES FIRST, BEFORE BOTH "(unset)" AND "(set)". Whichever way
+            // the sentinel test happened to fall, a discriminator we could not read decides
+            // nothing -- see the block comment on okProbe above.
+            if (!okProbe) {
+                fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
+            } else if (!isSet) {
                 fv.typedValue = "(unset)";
             } else if (isObjectLike || isWeakLike) {
                 if (!fv.ptrName.empty()) {

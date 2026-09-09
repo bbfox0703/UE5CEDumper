@@ -1821,7 +1821,7 @@ needs. Re-measured at HEAD rather than quoted — the published 213 / 54 / 165 w
 |---|---|---|---|
 | **A** CE Lua emission layer | 16 generators → **5** candidates + 3 controls | does it report the ATTEMPT, or re-read the EFFECT? | ✅ **1 defect / 8**, fixed |
 | **B** discarded qualified calls, non-`ReadSafe` | **133** (declarations, logging and `std::` excluded) | shape A — is an effect's status return dropped? | ⬜ needs the effect-applier list |
-| **C** discarded `Read*Safe` | **135**, of which **15** reach a published field | does the UN-SET out-param feed a COUNT or a PUBLISHED field? | ⬜ 15 ranked, instrument built |
+| **C** discarded `Read*Safe` | **135**, of which **15** reach a published field | does the UN-SET out-param feed a COUNT or a PUBLISHED field? | ✅ **all 15 adjudicated**, 3 defects fixed |
 | **D** the 30-item "unverified tail" | no list exists | — | ⬜ a re-sweep, not an adjudication |
 
 ⚠ **B's 133 is my filter, not a reproduction of the published "~54".** Mine counts bare qualified
@@ -1926,7 +1926,7 @@ result answers it: the same adjudicator, given the same prompt, called seven fil
 separated two paths **inside one file**, keeping `Generate` and condemning `GenerateClearAll`.
 An instrument that can do that is not one that says "clean" by default.
 
-### ⬜ Slice C — instrument built, 15 sites ranked
+### ✅ Slice C — ADJUDICATED 2026-09-09: 15 of 15, 12 CLEAN, 3 defects fixed
 
 `tools/verify/claims_readsafe_outparam.py`. ⛔ For this population "the bool was discarded" is NOT
 the question — the discard is the documented idiom (the identical `ReadPtrAt` body appears
@@ -2014,6 +2014,99 @@ that had merely grepped for "unreadable" would have gone green over it. Now `snp
 ⚠ `IFACEREAD` calls `Serie::InitUE4` and therefore joins TMAPGEOM in this file's **pool-faking
 tail**; it installs its OWN chunks so it depends on nothing TMAPGEOM leaves behind, but nothing
 that needs the real pool may be appended after either. The banner on TMAPGEOM now says so.
+
+#### ✅ The remaining 12, adjudicated 2026-09-09 — `[UNREADVAL-2026-09-09]`
+
+Re-ranked at HEAD first: **133** discarded `Read*Safe` statements, **14** PUBLISHED (was 15 —
+`Ubel.cpp:4307` left the population when the InterfaceProperty fix consumed its two returns).
+Twelve had not been walked. **10 CLEAN, 2 DEFECT**, and reading the two defects found the same
+shape at four more reads the ranker never scored.
+
+**The eight size sites are ONE verdict, not eight** — `Ubel.cpp:4396`/`4607` (array inner),
+`4781`/`4782`/`4969`/`4970` (map key+value), `5155`/`5236` (set element). Every one feeds
+`ValidateArrayElemSize`, and a faulted read's 0 goes exactly two ways there: for a type
+`InferScalarSize` knows it is **overridden** by the authoritative constant, and for one it does not
+(StructProperty, Delegate, Soft…) it returns **0, the "don't know" sentinel** — which every
+consumer already gates on. Traced end to end rather than asserted: the array readers gate
+`fv.arrayElemSize > 0` (phases B/D/E/F); `Fern.cpp:1519` will not emit `array_elem_size` at 0;
+`ReadSoftObjectArrayElements` warns and derives a fallback for anything under 0x18;
+`ReadDelegateArrayElements` **refuses** (`[SW6-STRIDEREFUSAL-2026-09-09]`);
+`CeXmlExportService.cs:3300`/`:3474` return early on `<= 0`; and `LiveWalkerViewModel.cs:1557`
+says out loud *"element data could not be read"*. ✅ **CLEAN** — 0 is honest here, not a claim.
+
+⚠ One asymmetry noted and deliberately left: `Fern` gates `array_elem_size` on `> 0` but emits
+`map_key_size` / `map_value_size` / `set_elem_size` unconditionally, so a 0 does cross the wire
+for maps and sets. It is not a defect — every consumer gates — and changing it would drop a field
+older UI builds read. Recorded so the next reader does not have to re-derive it.
+
+| site | out-param | verdict | why |
+|---|---|---|---|
+| `Ubel.cpp:5515` | `enumPtr` | ✅ **CLEAN** | `if (enumPtr)` is the very next statement — the `Aura.cpp:6366` exemplar shape |
+| `Ubel.cpp:6839` | `rowStructAddr` | ✅ **CLEAN** | `if (!rowStructAddr) { result.error = "RowStruct not found or null"; return; }` four lines below, and the message does not claim WHICH |
+| `Ubel.cpp:5522` | `rawVal` | ⛔ **DEFECT (LOW), fixed** | ByteProperty-with-UEnum published `hexValue = "00"` and the **NAME of enumerator 0** for a byte nobody could read |
+| `Ubel.cpp:5732` | `ptr` | ⛔ **DEFECT (LOW), fixed** | TOptional published `"(unset)"` — an affirmative claim that the option provably holds no value |
+
+⭐⭐ **AND THE RANKER SAW ONE READ OF TEN.** `Ubel.cpp:5732` is one of **six** discriminator reads
+in that TOptional block; the other five feed a bare `isSet = (...)`, which none of the tool's tiers
+score, so they came back `unused?`. The `EnumProperty` handler 200 lines above has **four more** of
+the identical shape, and the tool never saw them either — its `LASTARG` regex takes the call's last
+argument, and those are written `{ uint8_t v = 0; Macht::ReadSafe(addr, v); rawVal = v; }`.
+⚠ **This is the ranker working as documented, not failing**: its header says it reports *where the
+question is worth asking*. It pointed at the right function; a human read the function. A tool that
+had "covered" the file would have closed nine live reads as clean.
+
+⛔ **THE TWO DIRECTIONS, because the TOptional block gets BOTH wrong.** Four arms
+(object / weak / text / trailing-flag) fall to `isSet = false` on a fault and publish `"(unset)"`.
+The **FString and FName arms fail the other way**: their unset sentinels are `-1` and `0xFFFFFFFF`,
+so a faulted read's 0 reads as **SET**, and the field then publishes `""` ("set but empty") or
+`"(set)"`. Both are claims about memory nobody could read. The refusal is therefore evaluated
+**before** `isSet` is consulted at all — whichever way the sentinel test happened to fall.
+
+⭐ **THE TELL WAS INSIDE EACH HANDLER.** All three build their hex column inside
+`if (Macht::ReadBytesSafe(...))` while building the VALUE unconditionally — so the two columns
+already disagreed. And `BoolProperty`, three blocks above the enum handlers in the same loop, has
+always had it right. The fix makes the value side match what the hex side always did.
+
+**THE FIX**, and it is one definition rather than four: `Ubel::DescribeUnreadableField(what,
+offset)` in `Ubel.h`, header-inline and pure so `dll_helpers_test` pins it. The InterfaceProperty
+site now routes through it too, which is what puts the `%X`-not-`%d` lesson somewhere it cannot be
+re-learned per site. The enum handlers **keep** `enumAddr` / `enumEntries` — the `UEnum*` was read
+from the FField, not from the instance, so the CE DropDownList metadata is still sound; only the
+value is refused, and `enum_name` / `enum_value` are already gated on `enumName`.
+
+**RED-BEFORE-GREEN — 6 mutations, each restored in a `finally` and byte-compared** (108 checks
+green at HEAD, was 79; `dll_helpers_test` 2428, was 2424):
+
+| mutant | result |
+|---|---|
+| `enum` — drop the EnumProperty refusal | **2 FAIL**, `got: 0` and `got: 0 vs 0` |
+| `byteenum` — drop the ByteProperty refusal | **3 FAIL**, incl. `got: 00` |
+| `optional` — drop the TOptional refusal | **2 FAIL**, `got: (unset) vs (unset)` |
+| `enumhex` — drop the enum hex gate alone | ⚠ **GREEN** |
+| `enumboth` — drop BOTH, i.e. the pre-fix shape | **3 FAIL**, `got: 00` + `got: 0 vs 0` |
+| `offsetfmt` — `%X` → `%d` in the shared formatter | **4 FAIL in `dll_helpers_test` + 5 in `dll_core_test`**, across all four families |
+
+⚠ **`enumhex` GOING GREEN IS A RESULT, AND IT IS REPORTED RATHER THAN TIDIED AWAY.** The enum hex
+gate is unreachable on its own, because the refusal `continue`s before it. It is not dead code —
+under the `enum` mutant it is precisely what keeps the hex column empty — but it is a *second*
+gate, and only `enumboth` reproduces the shipped defect. Stating that is the difference between
+"6 mutations, all red" and what actually happened.
+
+⭐ `offsetfmt` is the cross-check that the single definition is genuinely single: **one** edit,
+one line, goes red in the helper test AND in all four page-edge families (`IFACEREAD` +
+`UNREADVAL`'s three), printing `+0x4088` / `+0x4096` — the decimal digits behind a hex prefix that
+started this.
+
+⚠ **WHAT THIS DOES NOT CLAIM.** No live arm. A partial fault is manufactured, and — as `IFACEREAD`
+established — it has to be: a wholly-unmapped instance bails at `WalkInstance`'s readability gate
+for a different reason, so a live game can only ever hand you the readable-null side of the very
+ambiguity being fixed. The `UNREADVAL` fixture therefore carries a readable-**nonzero** and a
+readable-**zero** control for each of the three families, so a "fix" that simply blanked the field
+would fail its own controls.
+
+⚠ `UNREADVAL` joins `TMAPGEOM` and `IFACEREAD` in this file's **pool-faking tail** — it calls
+`Serie::InitUE4` with its own chunks. Nothing needing the real pool may follow any of the three;
+the `TMAPGEOM` banner now names all three.
 
 ### ⬜ Slice B — blocked on a decision, not on work
 

@@ -1146,6 +1146,33 @@ inline bool IsNamedDelegateBinding(const std::string& described) {
     return described.find("::") != std::string::npos;
 }
 
+/// Render what a field publishes when the walker could NOT read the memory its value would have
+/// come from. `what` names the kind ("interface", "enum", "optional"); `offset` is the field's
+/// own offset in the instance.
+///
+/// ⛔ THE REFUSAL EXISTS BECAUSE THE ALTERNATIVE IS AN AFFIRMATIVE CLAIM. On a faulted
+/// `Macht::ReadSafe` the out-param keeps its initialised 0, and 0 is not "unknown" to anything
+/// downstream — it is `0000000000000000` in the hex column, `(unset)` on a TOptional, and the
+/// NAME of enumerator 0 on an enum. Each of those says something about memory nobody could read.
+/// The shape has been confirmed here five times in 2026-09 (the D3/D5 delegate readers,
+/// `GetMapPairLayout`, `WalkInstance`'s two inlined map copies, `delegate_pad`, and
+/// `InterfaceProperty`), and `BoolProperty` three blocks above the enum handlers has always had
+/// it right: it builds hex and typedValue INSIDE `if (Macht::ReadSafe(...))`.
+///
+/// ⚠ snprintf("%X"), NOT std::to_string — and this is why the formatting is centralised rather
+/// than repeated. The InterfaceProperty refusal first shipped as
+/// `"+0x" + std::to_string(fi.Offset)`: DECIMAL digits behind a hex prefix, so offset 0xFF8
+/// rendered as "+0x4088". A refusal written to stop an unbacked claim about an address, which
+/// then states the wrong address, is the same class of defect it was written to remove. Caught
+/// only because the fixture asserts the message names the offset the field is actually at.
+///
+/// Pure and header-inline so `dll_helpers_test` can pin it without a live object pool.
+inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
+    char offHex[24];
+    snprintf(offHex, sizeof(offHex), "%X", offset);
+    return std::string("(") + what + " — unreadable at +0x" + offHex + ", not read)";
+}
+
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);

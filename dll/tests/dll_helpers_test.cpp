@@ -6513,6 +6513,42 @@ static void Test_Aura_DescribeSparseDelegateState() {
            Aura::DescribeSparseDelegateState(sr, 2).empty());
 }
 
+static void Test_Ubel_DescribeUnreadableField() {
+    // ⛔ THE OFFSET MUST BE HEX, AND THIS TEST IS THE ONLY THING THAT SAYS SO. The
+    // InterfaceProperty refusal first shipped as `"+0x" + std::to_string(fi.Offset)`:
+    // DECIMAL digits behind a hex prefix, so a field at 0xFF8 was announced as "+0x4088".
+    // The refusal exists to stop the walker making an unbacked claim about an ADDRESS --
+    // stating the wrong one inside it is the same class of defect it was written to remove.
+    // It was caught only because the page-edge fixture asserts the message names the offset
+    // the field is actually at; a test that grepped for "unreadable" would have gone green.
+    // Centralised here, and pinned here, so four call sites cannot drift apart.
+    using Ubel::DescribeUnreadableField;
+
+    // ⭐ THE ONE THIS EXISTS FOR: 0xFF8 == 4088 decimal, and the two must not be confused.
+    EXPECT("unreadable: the offset is rendered in HEX, not decimal",
+           DescribeUnreadableField("interface", 0xFF8)
+               == "(interface — unreadable at +0xFF8, not read)");
+    EXPECT("unreadable: ...and 4088 decimal is exactly what a %d would have printed",
+           DescribeUnreadableField("interface", 0xFF8).find("4088") == std::string::npos);
+
+    // The kind is named, because three handlers share this string and a user reading a row
+    // needs to know which one refused.
+    EXPECT("unreadable: the kind is carried through",
+           DescribeUnreadableField("enum", 0x10) == "(enum — unreadable at +0x10, not read)");
+    EXPECT("unreadable: byte enum",
+           DescribeUnreadableField("byte enum", 0x1000)
+               == "(byte enum — unreadable at +0x1000, not read)");
+
+    // Offset 0 is a real field offset, not a missing one -- it must still be stated.
+    EXPECT("unreadable: offset 0 is printed, not elided",
+           DescribeUnreadableField("optional", 0)
+               == "(optional — unreadable at +0x0, not read)");
+
+    // ⚠ Every caller tests for this substring; keep them agreeing on it.
+    EXPECT("unreadable: the word every caller greps for is present",
+           DescribeUnreadableField("optional", 0x24).find("unreadable") != std::string::npos);
+}
+
 static void Test_Ubel_DescribeScriptDelegate() {
     // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- a target WAS bound and has since been collected.
     // An UNTOUCHED FScriptDelegate must not make it. Five sites did, because they tested
@@ -8107,6 +8143,7 @@ int main() {
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
+    RUN(Test_Ubel_DescribeUnreadableField);   // [UNREADVAL-2026-09-09] hex, not decimal
     RUN(Test_Ubel_DescribeScriptDelegate);
     RUN(Test_Delegate_AccessDetectorPad);
     RUN(Test_Aura_IsBoundInvocationListHeader);
