@@ -25,6 +25,243 @@ builds ≤696 in
 
 -----
 
+## 2026-09-09 (builds 3462 → 3508) — a delegate layout that only holds in Shipping, nine register rows driven to a verdict, and 166 claims sliced down to 30 hand-reads
+
+43 commits. Two engine versions of UE4 exercised for the first time, a wire field that never left
+the process, six more defects out of a population three agent sweeps had produced but not
+adjudicated — and one correction of my own claim, which had been refuted the day before.
+
+### `[D4B-DELEGATEPAD-2026-09-09]` — the delegate readers assumed a layout only a Shipping build has
+
+`FScriptDelegate` / `FMulticastScriptDelegate` carry an **access detector** in non-Shipping builds,
+so every delegate read was off by a pad the code never accounted for. The fingerprint is nasty
+because it is *not* a crash: on a Development build the reads land on neighbouring bytes and
+publish plausible-looking bindings. `D3b` turned out to be the same root cause.
+
+⭐ **Surveyed rather than patched to the fixture.** The pad derivation was re-run on a **second
+engine version**, then on a **real title** — Titan Quest II, **279,587 objects**
+(`[D4B-PADSURVEY-TQ2-2026-09-09]`). ⛔ Two things that run corrected are written down in the row;
+read them before quoting the numbers.
+
+**A sixth site, and then a seventh defect underneath it.** `Ubel::ReadDelegateArrayElements`
+carried **all three** of this sweep's shapes at once, and the fixture built to prove the sixth
+immediately surfaced a seventh (`[D4B-SITE6-2026-09-09]`). Everything was re-run against HEAD's
+binary afterwards, which also un-staled three rows.
+
+**`(stale)` — five sites, one definition.** `Ubel::DescribeScriptDelegate` now owns the string that
+five call sites had each spelled for themselves (`[STALE-NONE-2026-09-09]`).
+
+### `[D4B-UE4-2026-09-09]` — the UProperty path, finally exercised
+
+A portable delegate fixture (`tools/ue-sample/ue4-delegate-fixture/`) packaged and injected on
+**UE 4.23 and 4.27**. ⚠ It was re-run in **Shipping** because the first UE4 pass had the population
+backwards — the same mistake that later became a house rule this same day. ⛔ **4.15 and 4.18
+cannot build on this machine and the reason has no override**: it is the Windows SDK, not
+permissions. Three UE4 blockers are recorded, all measured, two still open.
+
+### `[D4B-TAIL-2026-09-09]` / `[RECON-REGISTER-2026-09-09]` — the reconciliation
+
+`git log -- docs/verification-register.md` returned **nothing** for this entire work stream while
+todo.md said the live rows belonged there. Nine `SW` rows written; four already-closed names
+removed from the long-tail heading (the sweep had found two and written *"fix when next editing the
+register"*, then never edited it — the file had four). Every row names the observable on **both**
+sides, per the register's own charter.
+
+⛔ **Then all nine were driven to a verdict in one stream, and none was blocked** — against my own
+written prediction that several were unreachable. **Five of my own claims were wrong.** SW1 (a
+faulted worker yields a *partial* result — 1,649 of 4,115, not zero), SW2 (a failed clipboard
+delivery, proven from both sides *and* from outside the process), SW3 (`onUnreadable` in real Cheat
+Engine — a dead process, then the busy-mailbox half), SW4 (CE resolves a delegate record to the
+InvocationList, not to address 0), SW5 (the AMBER and RED push branches produced for the first
+time), SW6 (both ARRAY refusal arms, manufactured at ElementSize 32), SW8 (`GetMapPairLayout` does
+**not** refuse on a real title — TQ2, 1,685 map leaves), SW9 (a delegate BINDING read on 4.27 and
+4.23, off an actor the engine spawned).
+
+### ⛔ `[SW7]` found a defect nothing else could have: a wire field that never left the process
+
+A scalar `DelegateProperty`'s `delegate_pad` was computed correctly and then **never serialised**,
+so the UI and every CE path built chains without it. Fixed on the wire (`486c70a5`), and Live
+Walker's CE paths now carry it (`[CEPATHS-UNPADDED-2026-09-09]`) — as a **payload** address,
+distinct from the field address.
+
+⚠ **And the rig itself was the bug once**: `l12` sent `addr=` where `Fern` reads `instance_addr`,
+so 2,000 requests measured **nothing** and reported cleanly (`7186f1c8`). That is the same
+send/receive shape as SW7, on our own side of the pipe.
+
+### Five more defects the rigs found while measuring something else (`e16d2052`)
+
+Two verified live, three code-level. All one shape: **a failure that happened correctly and said
+nothing, or said the wrong thing.** [A] the delegate-array refusal reached the UI as *nothing* —
+an `ArrayProperty` never sets `typedValue`, so a refused array was indistinguishable from an empty
+one. [B] the two scalar stride refusals emitted no log line at all. [C] `Aura`'s worker-fault line
+claimed *"results are partial"* — a claim about the whole scan one worker cannot make, and false in
+the commonest case (`parallel=false`: one chunk, `total=0`, `scanned_objects=0`). [D]
+`[TMAPGEOM-TWIN]` — both inlined copies of the map geometry guessed silently where
+`GetMapPairLayout` refuses; behaviour deliberately unchanged, the silence was the defect.
+
+`[TMAPGEOM-2026-09-09]` itself is the fixture that looked impossible: a faulted `Struct` read,
+manufactured at a **page edge** in our own process, with the control and the number the mutation
+produced both recorded.
+
+### `[CLAIMS-SLICE-2026-09-09]` — the ~166 unadjudicated claims, sliced and closed
+
+⛔ **First, what they are not: a list.** Three agent sweeps filed **209 claims and confirmed 23**;
+what remained was a *population*, not a queue. Sliced four ways and adjudicated by hand:
+
+| slice | outcome |
+|---|---|
+| **A** CE Lua emission layer | 8 read → **1 defect**, fixed and live-verified (`[TG1-CLEARALL-RESULT]`, in real CE) |
+| **B** discarded effect-appliers | 7 read → **2 defects** + 1 hygiene; the proposed gate re-scored and still refused |
+| **C** discarded `Read*Safe` | 15 read → **3 defects**, two manufactured fixtures (`[IFACEREAD]`, `[UNREADVAL]`) |
+| **D** the 30-item tail | **closed by decision** — a round 4 the sweep forbade, measured yield 0 |
+
+**30 sites read by hand → 6 defects and 1 hygiene fix.** ⚠ That is not a claim that reading beats
+sweeping: the sweeps produced the populations these slices walked. The narrower claim the rounds
+themselves kept making is that **the candidate rows were worthless and the populations were not.**
+
+- **Slice C** — three walker handlers (`EnumProperty`, `ByteProperty`-with-`UEnum`,
+  `OptionalProperty`) published an un-set 0 dressed as a value; now one shared refusal formatter,
+  `Ubel::DescribeUnreadableField`. `[IFACEREAD]`'s manufactured fixture **found a defect in the
+  fix** before it shipped.
+- **Slice B** — both `MovementMode` writes in `Dunste::SetEnabled` dropped `Macht::WriteBytes`'
+  result, so ENABLE logged *"Fly: ENABLED"* over a pawn that never left its old mode and DISABLE
+  logged *"Fly: DISABLED"* over a pawn still in `MOVE_Flying` with nothing tracking it. Both UI
+  status lines were the same lie in C#.
+- ⚠ **CORRECTION, same day**: `Wirbel.cpp:618` was **refuted in round 2** and I re-raised it as a
+  defect without checking the refuted list. The refutation was re-derived and found sound; the
+  change was kept as **hygiene**, slice B's count corrected 3 → 2, and the process lesson written
+  as working-lessons §1.w2.
+
+**Live arms on DumperTest, on Shipping *and* Development**: `unreadval_live_arm.py` walked **2,391
+fields across 2,105 live instances with not one refusal**, 1,466 of them genuinely reading 0 — the
+state the refusal must never be confused with. `sliceb_fly_arm.py` is 10/10 across two full
+enable/disable cycles with three independently-computed witnesses.
+
+⛔ **And one measured null result, shipped as evidence.** The `FR_ERR_WRITE` arm is **unreachable
+from outside the process** — `sliceb_fly_fail_probe.py` is the probe that says so. ⭐⭐ It also
+reproduces `[CLASSCACHE-FRONTED-2026-09-09]` from a second, unrelated experiment: `FindField` →
+`WalkClass` is memoised in a 2048-entry LRU that nothing invalidates, so a patched `FField` is
+invisible to both `Dunste` and the walker. That open row now blocks **four** verification arms, not
+two. ⚠ The probe's own sanity guard is what kept it safe: `FField+0x4C` read **675**, not 513 —
+`Grimoire.h`'s `FPROPERTY_OFFSET` is a *compile-time default* and Genau derives the real one per
+title (68 here). Without the guard that was a wild 4-byte write into a live game object.
+
+### 📐 Rules and lessons this day added
+
+- ⭐ **SHIPPING is the DumperTest fixture; Development is the second opinion** — a Development
+  build's offsets are a *minority shape in real games*, so a row closed on `dev` alone is a
+  narrower claim and must say so. `docs/handover-2026-08-22.md` §4 rule 5, and
+  `launch_dumpertest.py`'s docstring. Both live arms above were re-run on Shipping for this.
+- working-lessons **§1.w2** (a mechanical scanner surfaces *refuted* rows as fresh hits — check the
+  refuted list before raising), **§1.v** (targeted **and** broad sampling: the first UNREADVAL run
+  strided the pool and found **zero** `OptionalProperty`, because two of 25,231 objects declare
+  one), **§1.v2** (a valueless field on a metaobject is a *branch*, not a regression — read the
+  ratio; 77 of 96 fields across fourteen type families, of which the fix touched three).
+
+-----
+
+## 2026-09-08 (builds 3423 → 3457) — audit #3 re-checked and deliberately NOT re-run, a sweep that finished by grep, and 29 copies that claimed a write which did nothing
+
+20 commits. The question was whether audit #3 — the only audit on this repo not produced by Opus 5,
+and its own doc never records that — should be re-run. **The answer is no, and the measurement is
+why.**
+
+### 🔎 audit #3 re-check — 23 of 23 fixes still live, 0 reopens, and 5 confirmed misses
+
+Re-checked by a 12-agent workflow (4 evidence + 2 miss-hunts + 6 **refute-mandated** skeptics),
+every `file:line` re-read at HEAD because audit-doc line numbers have drifted hard.
+
+- **23 of 23 shipped fixes are still live**, across ~1,250 builds. **All 9 dropped items re-derived
+  → 0 reopens.** ⭐ Fable 5's adversarial judgement was **sound** — the refutations were right. The
+  gap is in *coverage*, not in reasoning.
+- **5 confirmed misses** (1 further claim refuted), and they share one shape: three of them were
+  **inside functions audit #3 itself rewrote that day**. The 🔴 headline — `Schlacht::Tick` recorded
+  **intent, not effect**; See-through was a no-op on non-Actors while `hiddenCount`, the pipe's
+  `hidden_count` and the UI status string all reported success — was found **six weeks later** by
+  `[SEETHRUTALLY]`.
+- ⭐ **The audit's own cross-cutting root cause rested on a false premise** (`H1` asserted in writing
+  that an unexpected pipe death is safe, falsified by two catch filters 30 lines away), and the
+  shared helper it recommended was **never built** — so the same shape was re-found later as `AC10`.
+
+### 📐 The structural coverage gap, and no later audit touches it
+
+audit #3's window (`88ee170..af2ce50`, 2026-07-03..07-15) has **22,853 lines still alive at HEAD,
+of which 100% have never been re-swept at line level by any later audit** — tautological under
+`git blame`, since audit #4's baseline *is* audit #3's endpoint. ⛔ **Hard core: 80 files / 4,648
+lines unchanged since `af2ce50` and cited by no later audit document at all.** `dll/src/Grausam.cpp`
+is 279/279 lines from that window, byte-identical since, and appears in audit #5 only as a
+*precedent* and inside a refutation. The derivation recipe is in todo.md — derive it, never quote it.
+
+⚠ **Verification asymmetry**: 13 of 23 fixes have a real headless rig; **10 have a unit test only
+and appear nowhere in `verification-register.md`** — all UI-side, `H1` included, which violates the
+register's own single-owner rule.
+
+### 🔎 Blind-spot sweep, three rounds — 23 confirmed, 20 refuted, and it ended by grep
+
+A **pattern** sweep for the named blind spot, not an area audit: a function returning `bool`/an
+error code whose call sites drop it, and any count/status/log reported from *intent* rather than
+from re-reading the effect.
+
+- ⛔ **The instrument was 76% blind in round 1, and the negative control caught it every time** — it
+  was wrong three times. Round 2's *"68 Services files / 24,651 lines"* framing was the **wrong
+  predictor**, and cost nothing only because it was checked before being spent.
+- ⭐ **The load-bearing finding is why two families in the same layer diverge 51% → 0%.**
+  `IAobMakerBridge` callers were written *against a fallback*, so the bool **had** to be tested to
+  pick a branch — 42/55 consumed, **0 defects**. `CopyToClipboardAsync` is the **last link with
+  nothing to fall back to**, so testing it buys the author only an honest message — **55 of 57
+  dropped, 29 defects.** Line count predicted nothing.
+- ⛔ **The sweep is finished, and that is one grep, not a judgement**: all 17 `bool`-returning
+  methods on every `Core/I*.cs` interface were enumerated and every call site of the other nine
+  checked. Outside the two families the entire C# population is **1 site, 0 defects**. There is no
+  third family. **Do not run a round 4.**
+- ⚠ Three independent counts gave three different answers (56/17, 57/53, **57/55**); only the
+  clipboard number survived. That is audit #4's B34 lesson landing again.
+
+### ✅ Fixed: 14 delivery copies, 5 DLL rows, and the CE Lua idle wait
+
+**C# side** — all 14 *delivery* copies routed through a shared `Helpers/ClipboardDelivery`, in three
+batches; `RequestCopyText` became `Func<string,Task<bool>>` so four cross-file claims stop lying.
+
+**DLL side** — fixes were **derived and adversarially checked before being written**, because this
+repo's history says a verdict is not authority on the repair. All five came back
+`sound-with-corrections`; none was an AB4.
+
+| row | what it stopped claiming |
+|---|---|
+| **D1** `Dunste.cpp` 🟠 | `InvokeSetCollision` returned *"the setter was FOUND"*; three call sites read it as *"collision CHANGED"* |
+| **D2** `Aura.cpp` | a scan worker that **threw** let the run report **complete** |
+| **D3+D5** `Ubel.cpp` | an unreadable delegate array published the affirmative `"(0 bindings)"`; a faulted `FGuid` published a fabricated all-zero GUID |
+| **D4** `Aura.cpp` | a sparse delegate whose `bIsBound` byte **read 1** reported `"(0 bindings, sparse)"` |
+| CE Lua | Invoke's idle wait reported a **dead game process** as a **busy mailbox** |
+
+⭐ **D1 was bigger than filed**: the dropped `int32_t` re-opened the hole audit #4 **B8** was written
+to close — a refused restore left the pawn ghosted *and* wiped the record that would have started
+`PendingRestoreLoop`. It reaches that through the **dispatcher**, which is why B8 did not cover it;
+hence a tri-state `CollisionApply` rather than a bool. ⭐ **D4 found a fourth site nobody had
+filed** — `FindReferencesToUObject`'s sparse pass `continue`s on a fault, so the binding is silently
+**absent** from Find Refs, and an absence is a *stronger* wrong claim than a wrong count.
+
+**Two gates shipped**, both on the rule that earns them — *pick a predicate whose legitimate
+population is EMPTY*: `check_ce_untick_placement` (17a) and `check_clipboard_delivery` (17b).
+⛔ Gate #17 **as proposed in round 1 was refuted**; 17b as first scoped was refuted too and shipped
+narrower. ⚠ **Three gate bugs were caught by their own negative controls, each after the check was
+already green** (working-lessons §1.2a).
+
+### ⬜ Filed, not fixed — the Fly report publishes the WISH, not the FACT
+
+Found by D1's checker and deliberately left out of the fix, because it is a pipe-contract + UI
+change: `Fern.cpp` publishes `data["noclip"]` from **what was asked for**, and the fact reaches no
+channel at all. ⚠ `collisionOff` cannot simply be published as the fact — B8 gives it *"intended,
+and retrying cannot help"* semantics, so publishing it would ship a **new** lie; it needs a
+tri-state. ⭐ `FlyStatus.Noclip` is **already dead on the C# side**: `ApplyFlyReadout` never reads
+it and the `✈ Fly ON (noclip)` badge is built from the local checkbox — **it never asks the DLL.**
+
+Live verification round 1 ran the same evening on DumperTest (UE 5.4, DLL 3457): **25,229 objects**,
+offsets `validated: true` — checked before anything was believed, because a dead engine reports
+coherent zeros. D5 and D3 confirmed; D4's fix fires and surfaced a real defect underneath it.
+
+-----
+
 ## 2026-09-07 (build 3423) — a cancel that crossed connections, a Guess? that invented rows, and a queue that lied
 
 38 commits. Four shipped defects, two verification rows closed on real hosts, one fixture that had
