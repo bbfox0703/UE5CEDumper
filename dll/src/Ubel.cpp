@@ -1930,10 +1930,30 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out) {
         // Resolve key / value UScriptStruct* FIRST — the alignments below need them.
         // (Also used by the deep container scan, so a TMap<K, FStruct> (or
         // <FStruct, V>) can be descended into.)
+        // ⛔ BOTH RETURNS ARE LOAD-BEARING, and this is the site the blind-spot sweep filed as
+        // "the same question unanswered" (docs/todo.md, round 2) and then never answered.
+        // On a faulted read the addr stays 0, ResolveElementAlignment two lines below is asked
+        // to align a struct it cannot see, and the alignment it guesses flows into pairAlign ->
+        // pairStride. The comment right under this block states the consequence out loud:
+        // "the stride must be a multiple of it, or every element after index 0 lands at a wrong
+        // address." A silent 0 therefore mis-strides the WHOLE TMap -- the same shape as D3b,
+        // reached through alignment instead of through a hardcoded size.
+        bool structAddrsOk = true;
         if (keyTn == "StructProperty")
-            Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, out.keyStructAddr);
+            structAddrsOk &= Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT,
+                                             out.keyStructAddr);
         if (valTn == "StructProperty")
-            Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, out.valueStructAddr);
+            structAddrsOk &= Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT,
+                                             out.valueStructAddr);
+        if (!structAddrsOk) {
+            // Refuse the geometry rather than publish one derived from an unread struct
+            // pointer. The caller treats false as "this TMap could not be laid out", which is
+            // true, instead of walking it at a stride nobody computed.
+            Sein::Warn("WALK", "TMap geometry: FStructProperty::Struct faulted (key=%s val=%s) "
+                               "-- refusing to derive a pair stride from an unread struct",
+                       keyTn.c_str(), valTn.c_str());
+            return false;
+        }
 
         int32_t keyAlign  = ResolveElementAlignment(keyTn, keySize, out.keyStructAddr);
         int32_t valAlign  = ResolveElementAlignment(valTn, valSize, out.valueStructAddr);
@@ -3225,14 +3245,36 @@ bool IsDelegateArrayType(const std::string& innerTypeName) {
 // ============================================================
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+    int32_t elemSize, int32_t offset, int32_t limit)
 {
     ReadArrayResult result;
     result.ok = false;
 
-    // FScriptDelegate stride depends on FName width (CasePreservingName)
+    // ⛔ THE SIXTH D4b SITE, and [D4B-DELEGATEPAD]'s own enumeration said "five readers".
+    // A TArray<FScriptDelegate>'s elements are the STANDALONE unicast type,
+    // `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES carry UE 5.3+'s 8-byte access
+    // detector on a checked build -- unlike a multicast's invocation-list elements, which are
+    // the `...NotChecked...` variant and never do. Our comments call both "FScriptDelegate";
+    // Grimoire.h carries the ⚠ about it, and this function is what that ⚠ was written for.
+    //
+    // ⚠ It also had the two OTHER defects this file was swept for, in the same six lines:
+    // `int32_t /*elemSize*/` was an IGNORED PARAMETER while the caller passed the engine's own
+    // answer, and the local `8 + fnameSize` is the unpadded size -- so on a checked build
+    // element [0] read correctly and every index >= 1 drifted 8 bytes further, which is audit
+    // A1's fingerprint exactly.
     int fnameSize = DynOff::SizeofFName();
-    int32_t elemSize = 8 + fnameSize;
+    const int32_t kSdBase = 8 + fnameSize;      // FWeakObjectPtr + FName, no detector
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, kSdBase);
+    if (pad < 0) {
+        // Refuse rather than fall back. A wrong stride does not fail loudly -- it publishes
+        // confident "Target::Function" strings read from the middle of the previous element.
+        result.error = "unexpected FScriptDelegate element size " + std::to_string(elemSize);
+        Sein::Warn("WALK", "ReadDelegateArrayElements: ElementSize=%d is neither %d nor %d "
+                           "(+detector) -- refusing to guess a stride", elemSize, kSdBase,
+                   kSdBase + DynOff::kDelegateDetectorPad);
+        return result;
+    }
+    const int32_t stride = kSdBase + pad;
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -3263,13 +3305,15 @@ ReadArrayResult ReadDelegateArrayElements(
         LiveFieldValue::ArrayElement elem;
         elem.index = i;
 
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        // The payload starts behind the access detector on a checked build.
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride + pad;
 
-        // Hex of the full FScriptDelegate bytes
-        std::vector<uint8_t> rawBuf(elemSize, 0);
-        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), elemSize)) {
+        // Hex of the FScriptDelegate payload we actually interpret -- not the detector in
+        // front of it, so the hex and the value can never disagree about which bytes were read.
+        std::vector<uint8_t> rawBuf(kSdBase, 0);
+        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), kSdBase)) {
             std::string hex;
-            hex.reserve(elemSize * 2);
+            hex.reserve(kSdBase * 2);
             for (auto b : rawBuf) {
                 char hx[3];
                 snprintf(hx, sizeof(hx), "%02X", b);
@@ -3278,10 +3322,18 @@ ReadArrayResult ReadDelegateArrayElements(
             elem.hex = std::move(hex);
         }
 
-        // Resolve target via FWeakObjectPtr
+        // Resolve target via FWeakObjectPtr. ⛔ BOTH RETURNS ARE LOAD-BEARING: on a faulted
+        // read objIdx/serial stay 0, the weak pointer resolves to null, and the element is
+        // published as the affirmative "(unbound)" -- D3/D5 verbatim, and the third copy of
+        // that pair in this file.
         int32_t objIdx = 0, serial = 0;
-        Macht::ReadSafe(elemAddr, objIdx);
-        Macht::ReadSafe(elemAddr + 4, serial);
+        const bool okIdx    = Macht::ReadSafe(elemAddr,     objIdx);
+        const bool okSerial = Macht::ReadSafe(elemAddr + 4, serial);
+        if (!okIdx || !okSerial) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
         uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
 
         std::string funcName = ReadFName(elemAddr + 8);
@@ -3294,10 +3346,24 @@ ReadArrayResult ReadDelegateArrayElements(
         }
 
         // Display: "TargetName::FunctionName"
-        if (target && !funcName.empty()) {
+        //
+        // ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM -- it says a target WAS bound and has since been
+        // collected. An element that was never bound must not make it. Found 2026-09-09 the
+        // moment `Arr_Delegates` gave this reader its first fixture: an untouched
+        // `FScriptDelegate` has `Object = {0, 0}` and `FunctionName = NAME_None`, and
+        // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
+        // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
+        // touched. The multicast element loop has an explicit unbound branch; this one did not.
+        const bool nameIsNone = funcName.empty() || funcName == "None";
+        const bool neverBound = (objIdx == 0 && serial == 0 && nameIsNone);
+
+        if (neverBound) {
+            elem.value = "(unbound)";
+        } else if (target && !nameIsNone) {
             elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
                 + "::" + funcName;
-        } else if (!funcName.empty()) {
+        } else if (!nameIsNone) {
+            // A real function name with no live target: the object really did go away.
             elem.value = "(stale)::" + funcName;
         } else if (objIdx > 0) {
             elem.value = "(stale)";

@@ -297,6 +297,11 @@ void ADumperTestActor::BeginPlay()
 	// unfalsifiable on this fixture.
 	Arr_MulticastDelegates[1].AddDynamic(this, &ADumperTestActor::D4b_OnPingProbe);
 
+	// The SIXTH D4b site's host: a TArray of SINGLE-CAST delegates, whose elements are the
+	// padded standalone type. Same [0]-empty / [1]-bound shape, for the same reason.
+	Arr_Delegates.SetNum(2);
+	Arr_Delegates[1].BindDynamic(this, &ADumperTestActor::D4b_OnPingProbe);
+
 	// D4b: the two single-field delegate shapes this fixture never had. Both bound, because
 	// an unbound one reads the same at either offset.
 	Multicast_Inline.AddDynamic(this, &ADumperTestActor::D4b_OnPingProbe);

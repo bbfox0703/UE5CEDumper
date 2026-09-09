@@ -635,6 +635,19 @@ public:
 	/// tools/verify/d5_lazyguid_unread.py for the same technique on the lazy-ptr row.
 	UPROPERTY() TArray<FDumperTestPingSignature> Arr_MulticastDelegates;
 
+	/// ⭐ The ONLY `TArray<FScriptDelegate>` here, added 2026-09-09 for the SIXTH D4b site.
+	/// `Ubel::ReadDelegateArrayElements` had no host at all: it ignored the ElementSize its
+	/// callers passed, computed `8 + sizeof(FName)` locally, and dropped both
+	/// `Macht::ReadSafe` returns. ⚠ An array's inner FDelegateProperty stores the STANDALONE
+	/// `TScriptDelegate<FNotThreadSafeDelegateMode>`, which DOES carry UE 5.3+'s access
+	/// detector -- unlike a multicast's invocation-list elements. So on a checked build the
+	/// element stride is 24, not 16, and [0] read correctly while every later index drifted.
+	///
+	/// Element [1] is bound and [0] left empty, for the reason `Arr_MulticastDelegates`
+	/// documents: with both elements identical a right stride and a wrong one print the same
+	/// string, and the row cannot fail.
+	UPROPERTY() TArray<FDumperTestUnicastSignature> Arr_Delegates;
+
 	/// ⭐ D4b — the ONLY non-array `MulticastInlineDelegateProperty` here, and the only
 	/// `DelegateProperty`. Added 2026-09-09; before them Ubel's two single-field delegate
 	/// readers had no host on this fixture at all, so neither had ever met a build whose

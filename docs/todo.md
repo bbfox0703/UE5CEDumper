@@ -1696,6 +1696,83 @@ wrong-stride read of zeros produce the same `(0 bindings)`. Falsifying it needs 
 **different** contents — bind one element and not the other, then check which index reports the
 binding. Not attempted tonight.
 
+## ✅ The SIXTH D4b site, and two more found with it `[D4B-SITE6-2026-09-09]`
+
+⛔ **`[D4B-DELEGATEPAD]`'s enumeration said "five readers" and it was wrong twice.** The first
+correction was the CE exporter (`[D4B-TAIL]`, DLL-only enumeration). This is the second, and it is
+inside the DLL, in a file the sweep had already edited three times.
+
+### `Ubel::ReadDelegateArrayElements` carried ALL THREE of this sweep's shapes at once
+
+`TArray<FScriptDelegate>` — and an array's inner `FDelegateProperty` stores the **standalone**
+`TScriptDelegate<FNotThreadSafeDelegateMode>`, which **is** padded on a checked build, unlike a
+multicast's invocation-list elements. `Grimoire.h`'s ⚠ about two types spelled the same way was
+written for exactly this function, and the function was not checked against it.
+
+| shape | what it did |
+|---|---|
+| ignored parameter | `int32_t /*elemSize*/` — while **both callers already passed `fv.arrayElemSize`**, the engine's own answer. Identical to the defect fixed in `ReadMulticastDelegateArrayElements` hours earlier. |
+| baked stride | computed `8 + sizeof(FName)` locally = the **unpadded** size, so on a checked build element [0] read correctly and every index ≥ 1 drifted 8 bytes further — audit A1's fingerprint. |
+| dropped pair | both `Macht::ReadSafe` returns discarded → a faulted read published the affirmative `"(unbound)"`. The third copy of that pair in this file. |
+
+### ⭐ And the fixture immediately surfaced a SEVENTH
+
+With `Arr_Delegates` in place, element [0] rendered **`(stale)::None`** — an affirmative claim that
+a target *was* bound and has since been collected, over a slot nothing had ever touched. An
+untouched `FScriptDelegate` has `Object = {0,0}` and `FunctionName = NAME_None`, and `ReadFName`
+resolves index 0 to the **string `"None"`** — which is not empty, so the `!funcName.empty()` arm
+claimed staleness. The multicast element loop has an explicit unbound branch; this one did not.
+
+### The fixture — `Arr_Delegates`
+
+`ReadDelegateArrayElements` had **no host at all** on any fixture. `TArray<FDumperTestUnicastSignature>`
+with **[1] bound and [0] empty**, for the reason `Arr_MulticastDelegates` documents: with both
+elements identical, a right stride and a wrong one print the same string and the row cannot fail.
+
+### Verified live, on both configurations and with a real red-before
+
+| | `Arr_Delegates` elem_size | `[0]` | `[1]` |
+|---|---|---|---|
+| **Development** | **24** | `(unbound)` | `DumperTestActor_0::D4b_OnPingProbe` |
+| **Shipping** (control) | **16** | `(unbound)` | identical |
+
+⭐ **The red-before is a live mutation, not an argument.** Reverting the stride to the pre-fix
+unpadded value, rebuilding and re-running on Development gives
+
+```
+Arr_Deleg  : elem_size=24  ['(unbound)', '(unbound)']
+  - Arr_Delegates[1] does not name D4b_OnPingProbe -- got '(unbound)'.
+```
+
+The binding vanishes because [1] is read from inside [0]. `Ubel.cpp` restored byte-identically and
+rebuilt afterwards, and the fixed binary re-run green.
+
+⚠ The `(stale)::None` repair got the same treatment for free: it was *observed* wrong on the live
+fixture first (`['(stale)::None', ...]`) and green after — red-before on the real thing rather than
+on a double.
+
+### ✅ Everything re-run against HEAD's binary, which also un-stales three rows
+
+The reconciliation flagged that D3's live evidence was taken on a build the sweep then rewrote
+twice, and never re-run. All four rigs now ran against the same current DLL:
+
+| rig | result |
+|---|---|
+| `d4b_delegate_pad` | ✅ PASS on Development (pad 8) **and** Shipping (pad 0), 5 shapes each |
+| `d5_lazyguid_unread` | ✅ PASS |
+| `d3_delegate_array_unread` | ✅ PASS — its **first run since the reader was rewritten**, and its baseline now reads `['(0 bindings)', '(1 binding) [...]']` at `elem_size=24`, so it is a D3b check as well as a D3 one |
+| `d1_collision_refusal` | ✅ PASS, both arms still reporting DIFFERENT causes (261 ms → dispatcher refused; 1151 ms → thread unresponsive) |
+
+### ⬜ Still open
+
+* **`Ubel::TMap` geometry** — the dropped `FStructProperty::Struct` reads that fed
+  `ResolveElementAlignment` → `pairAlign` → `pairStride` are now checked and refuse rather than
+  derive a stride from an unread pointer. ⚠ **Not live-verified**: it needs a `TMap` whose
+  key/value struct pointer faults, and no fixture produces that.
+* The `(stale)` branch **elsewhere**. Only `ReadDelegateArrayElements` was repaired; the
+  single-field `DelegateProperty` handler and the multicast element loop have their own
+  `funcName.empty()` tests and were not re-examined for the `"None"` case.
+
 ## ✅ UE4 — the UProperty path, finally exercised `[D4B-UE4-2026-09-09]`
 
 `[D4B-DELEGATEPAD]` now gates five DLL readers plus the CE exporter on

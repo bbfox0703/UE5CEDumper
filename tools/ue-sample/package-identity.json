@@ -1,15 +1,15 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "95227dec",
-  "source_sha256": "2af2129731cb472870f2c7188bbe192dff2b717f4f60ed7261d7dd7567785d33",
-  "captured_utc": "2026-09-09T00:14:14+00:00",
+  "source_commit": "a07390ba",
+  "source_sha256": "d9d047b230b8c5efafa0558c9213b6fee5a1aac54642105d011fb2e69bbbd0de",
+  "captured_utc": "2026-09-09T04:18:35+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279277056,
-      "sha256": "e74ea63919218a04d54226a0acacd31c11398acf55f10d59d385093c1c1a45d4",
+      "size": 279275008,
+      "sha256": "423246b1321e7d0f16e465475a4b40f076434a1a53e0e1c1d098d5f1be3b7d7b",
       "reflected_present": {
         "DumperTestActor": 7,
         "DumperTestSubsystem": 2,
@@ -23,12 +23,12 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-09T00:12:15+00:00"
+      "exe_mtime": "2026-09-09T04:15:45+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
       "size": 132344320,
-      "sha256": "80030e1c15b66fbcf8b98d110db462d9d1e5bfbeb098d6b9ce0e408bcdd64779",
+      "sha256": "46e8d37b17b03497b76b4a9105d383c45d9329acb663925192a71020f085bf58",
       "reflected_present": {
         "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
@@ -42,7 +42,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-09T00:13:28+00:00"
+      "exe_mtime": "2026-09-09T04:17:53+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
@@ -65,10 +65,10 @@
     }
   },
   "problems": [
-    "STALE BINARY: DebugGame was built before 'DumperTestTypes.h' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it"
+    "STALE BINARY: DebugGame was built before 'DumperTest.rc' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it"
   ],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "2af2129731cb472870f2c7188bbe192dff2b717f4f60ed7261d7dd7567785d33"
+    "source_sha256": "d9d047b230b8c5efafa0558c9213b6fee5a1aac54642105d011fb2e69bbbd0de"
   }
 }

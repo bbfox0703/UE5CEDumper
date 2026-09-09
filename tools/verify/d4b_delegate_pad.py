@@ -89,7 +89,7 @@ def main() -> int:
         raise SystemExit("walk_instance failed: %s" % w)
     fields = {f.get("name"): f for f in w.get("fields", [])}
 
-    missing = [n for n in ("OnActorHit", "Arr_MulticastDelegates",
+    missing = [n for n in ("OnActorHit", "Arr_MulticastDelegates", "Arr_Delegates",
                            "Multicast_Inline", "Del_Unicast") if n not in fields]
     if missing:
         raise SystemExit("fixture is STALE -- missing %s. Repackage: "
@@ -145,6 +145,30 @@ def main() -> int:
             fails.append("element [1] does not name %s -- got %r. A wrong element stride "
                          "reads [1] from inside [0], which is exactly this symptom."
                          % (PROBE, vals[1]))
+
+    # --- 5. the SIXTH site: TArray<FScriptDelegate> (ReadDelegateArrayElements) ---
+    # ⛔ [D4B-DELEGATEPAD]'s enumeration said "five readers" and missed this one. Its elements
+    # are the STANDALONE unicast type, which IS padded -- unlike a multicast's invocation-list
+    # elements. It also ignored the ElementSize its callers passed and dropped both ReadSafe
+    # returns, so it carried all three of this sweep's shapes at once. Same [0]-empty /
+    # [1]-bound discriminator: a reader stuck on the unpadded stride reads [1] from inside [0].
+    sd = fields["Arr_Delegates"]
+    sd_elem = sd.get("array_elem_size")
+    sd_vals = [e.get("v", "") for e in sd.get("elements", [])]
+    print("Arr_Deleg  : elem_size=%s  %r" % (sd_elem, sd_vals))
+    if not isinstance(sd_elem, int) or sd_elem - (16 if pad == 0 else 24) != 0:
+        fails.append("TArray<FScriptDelegate> ElementSize %r does not match the %d implied by "
+                     "the multicast side -- the two must agree, both are `8 + sizeof(FName)` "
+                     "plus the same detector" % (sd_elem, 16 if pad == 0 else 24))
+    if len(sd_vals) != 2:
+        fails.append("expected 2 Arr_Delegates elements, got %d" % len(sd_vals))
+    else:
+        if sd_vals[0] != "(unbound)":
+            fails.append("Arr_Delegates[0] should be genuinely unbound -- got %r" % sd_vals[0])
+        if PROBE not in sd_vals[1]:
+            fails.append("Arr_Delegates[1] does not name %s -- got %r. A reader on the unpadded "
+                         "stride reads [1] from inside [0], which is exactly this symptom."
+                         % (PROBE, sd_vals[1]))
 
     print()
     if fails:
