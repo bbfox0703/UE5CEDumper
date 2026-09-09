@@ -354,6 +354,41 @@ cost **two** contradictory readings before it. The filing made it three.
   was wrong — the value is written fresh every scan by the C# mirror. Stopping at "already
   documented, never mind" would have preserved that error.
 
+### 1.v A live-game sample needs BOTH halves: targeted proves presence, broad proves reach
+
+2026-09-09, the regression arm for `[UNREADVAL]`. The claim under test was *"the new gate never
+fires on readable memory"* — an ABSENCE claim, so the sample decides everything.
+
+* ⛔ **A broad stride sample can miss a family entirely.** Striding 25,231 objects returned
+  **zero** `OptionalProperty`, because the only two classes declaring one had **two** live
+  instances between them. "0 refusals" was true and meant nothing. ⭐ **The anti-vacuity guard —
+  fail the run when a family is absent — is what caught it**, and it was written before the first
+  run, which is the only reason it could.
+* ⛔ **Targeting alone is the opposite error.** Asking the class tree who declares the family and
+  walking only those instances proves the handler works *for the classes the search named*. It
+  cannot support "not one field in the title", which is what an absence claim asserts.
+* ⭐ **So do both and say which does what**: the targeted pull is the anti-vacuity evidence, the
+  broad stride is the reach. They are different arguments, not a bigger sample.
+
+### 1.v2 A valueless field on a METAOBJECT is a branch, not a defect — read the RATIO
+
+Same run. The tally reported **17 fields with neither a value nor hex**, which is exactly what a
+walker declining silently looks like — the shape `[SW6-STRIDEREFUSAL]` was about, and a tempting
+second finding.
+
+It was a different code path. `walk_instance` on a `UClass`/`UScriptStruct` takes a **definition
+branch** that publishes field METADATA and deliberately reads no values, returning before any
+type handler runs. ⭐ **The discriminator was the RATIO, not the count**: 77 of 96 fields on one
+such object were valueless across **fourteen** type families, of which the fix had touched three.
+A defect in three handlers cannot produce silence in fourteen.
+
+* ⚠ **Filter metaobjects out of any value-level tally**, and report them separately rather than
+  dropping them — `is_definition` is on the wire for exactly this. A tally that silently excludes
+  them and one that silently includes them are both wrong, in opposite directions.
+* ⭐ **When a fix's symptom appears in families the fix never touched, suspect the harness before
+  the fix.** That test is cheap, it is decisive, and it is the same question §2.4 asks about a
+  premise.
+
 ### 1.w2 A mechanical scanner surfaces REFUTED rows as FRESH HITS — by construction
 
 2026-09-09, closing slice B of the claims sweep. A scorer over "discarded effect-applier results"
