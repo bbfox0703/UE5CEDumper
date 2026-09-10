@@ -1256,7 +1256,7 @@ to grow. Build the gates first and Track B shrinks.
 
 | # | shape (from the June sweep's confirmed rows) | mechanical search | status |
 |---|---|---|---|
-| **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | 🔄 **240 rows under adjudication 2026-09-10** — control green |
+| **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | ✅ **SWEPT 2026-09-10** — 240/240 ruled, **7 confirmed, all LOW**, 1 refuted; see `[PATTERN-P1-2026-09-10]` below |
 | **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ⬜ **`[W1-GATE-JSONDEFAULT]`** — already planned |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ⬜ **new gate, and the highest-value one** — this is W2's headline defect |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
@@ -1273,6 +1273,126 @@ a pattern matcher will reach instances a reader's attention did not, and the Jun
 best-labelled corpus we have for validating each matcher (every confirmed row is a known positive —
 **a matcher that does not re-find its own June instances is broken**, which is the red-before-green
 control for this work).
+
+---
+
+#### ✅ P1 SWEPT 2026-09-10 `[PATTERN-P1-2026-09-10]` — 240/240 ruled, 7 confirmed (ALL LOW), 1 refuted
+
+`tools/verify/pattern_p1.py` enumerated the shape tree-wide (225 log calls whose message carries a
+degradation fact + 15 result-struct members no transport names). 6 adjudicators ruled **every
+row**, 5 refuters took the candidates. 11 agents, ~1.95M tokens. **Nothing fixed.**
+
+| batch | rows | ALREADY-RECORDED | PUBLISHED-ELSEWHERE | LOG-ONLY-BY-DESIGN | NOT-A-DEGRADATION | DEFECT-CANDIDATE |
+|---|---:|---:|---:|---:|---:|---:|
+| DETECT-GENAU | 54 | 9 | 23 | 3 | 15 | 4 |
+| DETECT-INIT | 25 | 6 | 13 | 2 | 4 | 0 |
+| WALK | 33 | 1 | 12 | 13 | 4 | 3 |
+| SCAN + P1a | 41 | 4 | 15 | 10 | 11 | 1 |
+| GAMEPLAY | 34 | 6 | 19 | 5 | 1 | 3 |
+| INFRA | 53 | 0 | 7 | 30 | 9 | 7 |
+| **total** | **240** | **26** | **89** | **63** | **44** | **18** |
+
+⭐ **Coverage is complete and reconciled, not assumed**: every batch returned exactly its expected
+number of rulings (the workflow logged any mismatch; there was none), and the 18
+`DEFECT-CANDIDATE` rulings map onto the 8 filed findings with nothing left unfiled — checked by hand
+(Genau :567/:751/:2304 → P1G-1; Flamme's seven rows → P1X-1; and so on).
+
+⭐ **The known-positive control held end to end, through the agents and not only through the tool**:
+`Aura.cpp:1235` and `Aura.cpp:9920` were both present in their batches and both ruled
+`ALREADY-RECORDED` (`[W4-STRIDE-TENTATIVE]`, `[W1-SNAP-FAULT]`) by the adjudicators themselves.
+
+---
+
+#### ⭐⭐ The result: P1's tree-wide residue is ALL LOW — the pattern sweep BOUNDED the shape
+
+**196 of 240 rows (82%) are fine** — published by another route, log-only by genuine constraint, or
+not a degradation at all — and **the seven survivors are all LOW**. Every P1 instance of MED or
+HIGH severity in this tree had already been found by the June area sweep.
+
+That is the two-track design working as intended, and it is worth stating as a method result: **the
+area sweep finds the severe instances, because a reader follows consequences; the pattern sweep
+proves the shape is bounded, because a matcher cannot skip a row.** Neither substitutes for the
+other. What P1 bought is not seven more defects — it is the right to say *there is no eighth serious
+one hiding in a log line*.
+
+⚠ **And the adjudicators did not simply follow the brief's steer.** The SCAN brief called Radar's
+*"skipping TArray with Num=%d"* (`Aura.cpp:7770/7817`) a **strong candidate**. It was ruled
+`NOT-A-DEGRADATION`, correctly: the guard fires only on `Num < 0` or `Num > 10,000,000`, which the
+in-code comment classifies as freed memory or an `OptionalProperty` misread as a `TArray` — there is
+no real value inside such a header to lose. **My steer was wrong and the agent overruled it with the
+code**, which is the behaviour the brief asked for.
+
+---
+
+#### The fix list — 7 rows, all LOW, none repaired
+
+1. ⬜ **`[P1-GENAU-ABORT]`** `Genau.cpp:567` (+ `:751`, `:2304`). Three sweeps poll
+   `Tot::Requested()` and each spends its abort on a log line, then returns a result that reads as
+   "nothing found" — `DataScanGObjectsCandidates` (void), `FindGObjectsStaticStruct` and
+   `FindGNamesByStringRef` (both return 0). `bScanCancelled` never sees them, so `UE5_Init`'s latch
+   guard (`Frieren.cpp:583`) can **latch a partial init after a per-command cancel** — and GNames
+   cannot be rescanned afterwards. ⚠ Fix shape: record the abort **at the bail** as an out-flag and
+   OR it into `bScanCancelled`; never re-derive it from `Tot::Requested()` later.
+2. ⬜ **`[P1-ENUMNAMES]`** `Genau.cpp:5476`. When `DetectUEnumNames` fails it latches
+   `bUEnumNamesFailed` for the process, and **no exit publishes it**. `list_enums` then answers `ok`
+   with every UEnum's entries empty, and the USMAP and CE exports ship without enum names — none of
+   them saying why. ⛔ **Partly harmful as filed**: publishing the permanent-fail latch unconditionally
+   is wrong, because `ForEach`'s void abort (`Aura.cpp:1467`) lets a *cancelled* detection latch FAILED.
+3. ⬜ **`[P1-UPROP-DELEGATE]`** `Ubel.cpp:4697`. The UProperty-mode (UE4 < 4.25) delegate-array arms
+   still **drop the readers' refusal `error`** — commit `e16d2052` fixed exactly this on the FProperty
+   arm, and that arm's comment calls the old behaviour a defect in so many words. ⭐ **P3 at the
+   code-path level**: a fix that reached one of two twins. ✅ **The only fully SAFE fix in the batch**:
+   copy the two shipped, verified `else if (!r.ok && !r.error.empty())` branches into the UProperty
+   arm.
+4. ⬜ **`[P1-WALK-UNREADABLE]`** `Ubel.cpp:3981`. `WalkInstance` knows the object is gone
+   (`IsAddrReadable` false, logged *"not readable (freed?)"*) and returns an `InstanceWalkResult`
+   carrying **only `addr`** — no `stale`, no error. Live Walker shows a silently blank grid.
+   ⚠ Fix shape: a **distinct** `unreadable` key in both lean and full replies, **not** folded into
+   `stale` (which means something narrower).
+5. ⬜ **`[P1-SPARSEDELEGATE-REFS]`** `Aura.cpp:3966`. Find References silently drops sparse-delegate
+   bindings whose InvocationList cannot be located and reports a complete, clean sweep
+   (`deadline_hit=false`) — so when that binding was the only reference, Live Walker says *"No
+   references found — likely held by a non-reflected pointer"*, blaming the game for our gap. An
+   aggregate channel already exists (`ContainerScanStats`).
+6. ⬜ **`[P1-SEETHRU-NOPRODUCER]`** `Schlacht.cpp:361` (+ `:443`). On a build missing
+   `SetActorHiddenInGame`, `LineTraceSingle` or `KismetSystemLibrary`, or when a hit cannot be
+   resolved to an actor, See-through does **nothing at all** — and Tick still ends `STR_OK` with
+   `hasTarget = true`, so the card reads **"Active — nothing blocking the view"**. The header already
+   defines `STR_ERR_REFLECTION` for exactly this case. ⛔ Partly harmful as sketched; the right shape
+   is to refuse at enable (`-3` from `SetEnabled`), which reaches all three exits through the return
+   code.
+7. ⬜ **`[P1-SEETHRU-GIVEUP]`** `Schlacht.cpp:626`. After the 5-minute restore give-up
+   (`PENDING_RESTORE_MAX_MS`) the card still promises *"Click back into the game and they
+   reappear"* — `hidden_count > 0` with `active = false` means both "restore pending" and "restore
+   abandoned", and the pipe cannot tell them apart. The log names the real remedy; the card does not.
+
+`implied_fix_safe`: **5 of 7** unsafe or incomplete; one fully safe (#3), one mostly safe (#7).
+⭐ **The one fully safe fix is the one that copies an already-shipped, already-verified fix** — which
+is itself a useful rule for the fix pass.
+
+#### ⛔ REFUTED — do not re-raise
+
+- **P1X-1** *"a failed override save is dropped and the reply still says `persisted: true`"*. The
+  shape is real — `Fern.cpp:1832`/`:1878` publish `data["persisted"] = persist`, which is the
+  *request* flag echoed back, unrevisited since `2c6b7e54` — but the failure trigger is asserted, not
+  demonstrated, and `Flamme.h` documents both savers as *"Never throws"*. Route 5 + P1-b.
+
+#### Widenings to rows already recorded
+
+- **`[W5-OFFSETS-UNMEASURED]` has a latent stale-TRUE.** The two early returns in
+  `ValidateAndFixOffsets` (`:3459`, `:3859`) rely on `bOffsetsValidated`'s *initial* false and never
+  store false, and `UE5_Shutdown` never resets `bOffsetsValidated`, `bOffsetsProbeRan` or
+  `g_offsetsFallbackReason`. A second `UE5_Init` (CE Disable → Enable) taking an early return after a
+  validated run would report **`validated = true` alongside a non-empty `fallback_reason`, over
+  default offsets**. Practically unreachable today; ⬜ store false explicitly in the same fix.
+- **`[W4-STRIDE-TENTATIVE]`'s fix must reset at entry.** `DetectLayout`'s early returns (`:1061`,
+  `:1077`) fire before `s_layoutMode` / `s_itemObjOffset` / `s_itemSize` are touched, so on a re-init
+  (heap-fallback loop `Frieren.cpp:299`, restore `:349`, `apply_rescan` `Fern.cpp:5215`)
+  `item_layout_mode` can describe a **previous** candidate.
+- **Two stale comments**, wording only: `Genau.cpp:4277-4283` (G7) still says `apply_rescan`
+  "flips NO→YES", impossible since the G3 gate (`Fern.cpp:5231-5250`); and `Ubel.cpp:6080` labels
+  `supported=false` *"UE < 5.0 unsupported"* when its only producer is now a key-shape probe that
+  fires on any version.
 
 ---
 
