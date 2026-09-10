@@ -113,9 +113,14 @@ public static class CeAutorunScriptGenerator
         Line(sb, "  local alreadyLoaded = okGet and probe and probe ~= 0");
         Line(sb, "  if alreadyLoaded then");
         Line(sb, $"    local READY, SKIPPED = {CeMailboxLayout.InitReady}, {CeMailboxLayout.InitSkipped}");
-        Line(sb, "    local okSym, mbNow = pcall(getAddress, 'g_invokeMailbox')");
+        // BOTH spellings — see the twin in CeInjectScriptGenerator. These two sites
+        // were the last holdouts of the B33 rule; a single-spelling miss leaves `pre`
+        // nil, so a serving DLL is misread as "parked" and UE5_AutoStart is fired at
+        // a pipe that is already up.
+        Line(sb, "    local mbNow = getAddressSafe('g_invokeMailbox')");
+        Line(sb, "    if not mbNow or mbNow == 0 then mbNow = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "    local pre = nil");
-        Line(sb, "    if okSym and mbNow and mbNow ~= 0 then");
+        Line(sb, "    if mbNow and mbNow ~= 0 then");
         Line(sb, $"      local okRead, v = pcall(readInteger, mbNow + {CeMailboxLayout.OffInitState})");
         Line(sb, "      pre = okRead and v or nil");
         Line(sb, "    end");
@@ -170,6 +175,18 @@ public static class CeAutorunScriptGenerator
         Line(sb, "end");
     }
 
+    // ⛔⛔ DO NOT SET `UE5_StartedByThisRecord` ANYWHERE IN THIS GENERATOR, and do not
+    // "align" it with CeInjectScriptGenerator. That flag is a CE Lua GLOBAL, so it is
+    // shared by every chunk in the session — and this script is an autorun, not a
+    // memory record. If autorun injected and set it, the pushed inject record's
+    // enable would then find the DLL SERVING, untick itself, and its disable block
+    // would read a flag set by somebody else and tear the pipe down. That is exactly
+    // [B30-REOPEN-2026-09-10] reintroduced through the back door. The flag means
+    // "the inject RECORD's own enable brought this up", and only that enable may set it.
+    //
+    // ⚠ This function is also NOT the B30 shape: it is reached from the CE menu, i.e.
+    // the user explicitly asked to shut down, rather than from an untick that CE fired
+    // on their behalf. Consent is the difference, so it keeps the plain symbol probe.
     private static void EmitShutdown(StringBuilder sb)
     {
         Line(sb, "-- Stop the pipe server and tear the DLL down. executeCodeEx is fine here");

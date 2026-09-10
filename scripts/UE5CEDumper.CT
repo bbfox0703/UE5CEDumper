@@ -796,6 +796,12 @@ function ue5_inject()
     ue5_log("Launch UE5DumpUI.exe and click Connect.")
     ue5_log("DLL log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
     ue5_log("=========================================")
+    -- ⛔ OWNERSHIP, and it is the ONLY thing that makes the disable safe. Set on the
+    -- two paths where THIS record brought the pipe up -- a fresh inject, or a revive
+    -- of a parked DLL via UE5_AutoStart, both of which reach here. It is deliberately
+    -- a GLOBAL: locals do not cross the enable/disable chunk boundary.
+    -- Read the guard in ue5_shutdown() for why a symbol probe could not do this job.
+    UE5_StartedByThisRecord = true
     return true
 end
 
@@ -804,6 +810,30 @@ end
 -- ============================================================
 
 function ue5_shutdown()
+    -- ⛔⛔ DID *WE* START IT? THIS GUARD, NOT THE SYMBOL PROBE BELOW, IS WHAT KEEPS
+    -- THE DISABLE FROM TEARING DOWN SOMEBODY ELSE'S PIPE.
+    --
+    -- The probe below answers "is a DLL loaded", and the ORIGINAL B30 fix mistook
+    -- that for "did we load it". In the one case B30 was filed about — a proxy
+    -- (version/dinput8/dxgi/winmm) already loaded and serving — the probe SUCCEEDS,
+    -- because all four proxy .def files export UE5_StopPipeServer. So the quiet
+    -- no-op was skipped and UE5_Shutdown ran against a pipe this record never
+    -- started, ~50 ms after telling the user to go and connect to it.
+    --
+    -- ⚠ And the untick is what fires it: `memrec.Active = false` RUNS the disable
+    -- block (ue5_freeze_helper.lua:977 says so in as many words), so the enable
+    -- branch that unticks "so the disable can never run UE5_Shutdown" was calling
+    -- the very thing it meant to prevent. Deferring the untick made it automatic
+    -- rather than needing the user. Measured and written up as [B30-REOPEN-2026-09-10].
+    --
+    -- The untick itself is KEPT — an un-owned record should not stay ticked — and
+    -- it is now harmless, because this guard is what decides whether anything is
+    -- torn down.
+    if not UE5_StartedByThisRecord then
+        ue5_log("This record did not start the pipe server — leaving it alone.")
+        return
+    end
+
     -- Nothing loaded? Say nothing and do nothing. [ENABLE]'s bail-outs untick the
     -- record, which makes CE run this block even though this script never injected
     -- anything — and a bare getAddress would THROW here, aborting the chunk before
@@ -826,6 +856,10 @@ function ue5_shutdown()
             ue5_log("UE5 Dumper stopped.")
         end
     end
+    -- Ownership ends with the teardown: re-ticking goes through ue5_inject() again
+    -- (which finds the DLL parked and revives it) and re-claims it there. Without
+    -- this, a second disable with nothing left to stop would still pass the guard.
+    UE5_StartedByThisRecord = false
     -- Always close the log, on every path.
     if _logHandle then
         _logHandle:close()

@@ -141,8 +141,8 @@ public static class CeInjectScriptGenerator
         // tests (and CE) slice the script on that marker, so it would truncate the
         // block here.
         Line(sb, "--   * SERVING (READY/SKIPPED): a proxy DLL deployed it, or another instance");
-        Line(sb, "--     owns the pipe. Not ours. Untick, so the disable block cannot tear down");
-        Line(sb, "--     a pipe this record never started.");
+        Line(sb, "--     owns the pipe. Not ours. Untick -- and note that the untick is NOT what");
+        Line(sb, "--     protects it: the disable block refuses on UE5_StartedByThisRecord.");
         Line(sb, "--   * PARKED (anything else): this record was ticked, unticked -- which runs");
         Line(sb, "--     UE5_Shutdown and leaves initState at IDLE -- and is now being re-ticked.");
         Line(sb, "--     Revive it in place: the DLL is still mapped, so re-injecting is wrong.");
@@ -150,9 +150,18 @@ public static class CeInjectScriptGenerator
         Line(sb, "local alreadyLoaded = okGet and probe and probe ~= 0");
         Line(sb, "if alreadyLoaded then");
         Line(sb, $"  local INIT_READY, INIT_SKIPPED = {CeMailboxLayout.InitReady}, {CeMailboxLayout.InitSkipped}");
-        Line(sb, "  local okSym, mbNow = pcall(getAddress, 'g_invokeMailbox')");
+        // BOTH spellings. CE may present an export as the bare name or only as
+        // "<module>.<name>", and which one resolves is not predictable from here.
+        // This site and CeAutorunScriptGenerator's twin were the last two holdouts
+        // of the B33 rule that eight other emitters already follow; the .CT's own
+        // copy of this pre-check has used ue5_findMailbox() (both spellings) all
+        // along, so the three routes had drifted apart. A miss here is silent and
+        // it is NOT harmless: `pre` stays nil, a serving DLL is misread as "parked",
+        // and UE5_AutoStart is fired at a pipe that is already up.
+        Line(sb, "  local mbNow = getAddressSafe('g_invokeMailbox')");
+        Line(sb, "  if not mbNow or mbNow == 0 then mbNow = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "  local pre = nil");
-        Line(sb, "  if okSym and mbNow and mbNow ~= 0 then");
+        Line(sb, "  if mbNow and mbNow ~= 0 then");
         Line(sb, $"    local okRead, v = pcall(readInteger, mbNow + {CeMailboxLayout.OffInitState})");
         Line(sb, "    pre = okRead and v or nil");
         Line(sb, "  end");
@@ -215,6 +224,11 @@ public static class CeInjectScriptGenerator
         Line(sb, "  dbg(string.format('[UE5CEDumper] ready in %.1f sec', waited / 1000))");
         Line(sb, "end");
         Line(sb, "dbg('[UE5CEDumper] pipe: \\\\\\\\.\\\\pipe\\\\UE5DumpBfx -- launch UE5DumpUI.exe and click Connect')");
+        // ⛔ OWNERSHIP. Only reached when THIS record brought the pipe up -- a fresh
+        // inject, or a revive of a parked DLL. Every bail-out above returns first, so
+        // the "already loaded and serving" path never gets here. A GLOBAL on purpose:
+        // locals do not cross the enable/disable chunk boundary.
+        Line(sb, "UE5_StartedByThisRecord = true");
         CeLuaHygiene.AppendCloseOnSuccess(sb);
         Line(sb, "{$asm}");
     }
@@ -229,12 +243,35 @@ public static class CeInjectScriptGenerator
         Line(sb, "-- here (unlike during start-up): by now the game is running normally,");
         Line(sb, "-- so CreateRemoteThread works.");
         Line(sb);
+        // ⛔⛔ DID *WE* START IT? This guard, not the symbol probe below, is what stops
+        // the disable tearing down somebody else's pipe.
+        //
+        // The probe below answers "is a DLL loaded", and the original B30 fix mistook
+        // that for "did we load it". In the exact case B30 was filed about — a proxy
+        // already loaded and serving — the probe SUCCEEDS, because all four proxy .def
+        // files export UE5_StopPipeServer. So the quiet no-op was skipped and
+        // UE5_Shutdown ran against a pipe this record never started, ~50 ms after the
+        // enable block told the user to go and connect to it.
+        //
+        // ⚠ And the untick is what fired it: memrec.Active = false RUNS this block, so
+        // the enable branch that unticks "so the disable can never run UE5_Shutdown"
+        // was invoking the very thing it meant to prevent; deferring the untick made it
+        // automatic rather than needing the user. [B30-REOPEN-2026-09-10].
+        Line(sb, "-- Only tear down what THIS record started. An enable-path bail-out unticks");
+        Line(sb, "-- the record, which RUNS this block -- and a proxy that was already serving");
+        Line(sb, "-- exports UE5_StopPipeServer too, so the probe below cannot tell the two");
+        Line(sb, "-- apart. This flag can.");
+        Line(sb, "if not UE5_StartedByThisRecord then");
+        Line(sb, "  dbg('[UE5CEDumper] this record did not start the pipe server -- leaving it alone')");
+        CeLuaHygiene.AppendCloseOnSuccess(sb, indent: "  ");
+        Line(sb, "  return");
+        Line(sb, "end");
+        Line(sb);
         // [ENABLE]'s early bail-outs set memrec.Active = false, which makes CE run
         // THIS block against a DLL that was never loaded. That is a no-op, not a
         // failure — don't shout about it.
-        Line(sb, "-- [ENABLE]'s early bail-outs untick the record, which makes CE run this");
-        Line(sb, "-- block even though nothing was ever injected. Detect that and stay quiet:");
-        Line(sb, "-- 'nothing to shut down' is not a failure.");
+        Line(sb, "-- Nothing loaded at all? Also a no-op, and a bare getAddress would THROW");
+        Line(sb, "-- here, aborting the chunk. 'nothing to shut down' is not a failure.");
         Line(sb, "local okProbe, probe = pcall(getAddress, 'UE5_StopPipeServer')");
         Line(sb, "if not (okProbe and probe and probe ~= 0) then");
         Line(sb, "  dbg('[UE5CEDumper] nothing loaded -- nothing to shut down')");
@@ -252,6 +289,10 @@ public static class CeInjectScriptGenerator
         // teardown into the process concurrently with the first.
         Line(sb, "local b = callDLL('UE5_Shutdown')");
         Line(sb, "dbg('[UE5CEDumper] shutdown: ' .. tostring(b))");
+        // Ownership ends with the teardown. Re-ticking finds the DLL parked, revives it
+        // through UE5_AutoStart, and re-claims the flag on the success path above.
+        // Without this a second disable would still pass the guard with nothing to stop.
+        Line(sb, "UE5_StartedByThisRecord = false");
         // The DLL stays mapped: FreeLibrary on an injected DLL mid-game isn't worth
         // the risk. Re-ticking is a real restart now, not a shrug: UE5_Shutdown parks
         // initState at IDLE, [ENABLE] reads that as "parked" and calls UE5_AutoStart,
