@@ -3265,6 +3265,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 StatusText = $"TP facing: {TeleportCodes.Describe(p.Code)}";
                 return;
             }
+            // ⛔ DO NOT PAINT A LANDING NOBODY MEASURED. When the post-move re-read
+            // fails the DLL now says so instead of publishing (0,0,0); calling ApplyPose
+            // there would overwrite the live X/Y/Z with zeros the user can copy into the
+            // coords box or save as a marker. The move itself succeeded.
+            // [TPREL-ZEROPOSE-2026-09-10]
+            if (p.LandingUnknown)
+            {
+                StatusText = string.Format(CultureInfo.InvariantCulture,
+                    "Teleported {0:0.#} uu {1} — but the landing could not be read back, "
+                    + "so the coordinates below are unchanged. Press Refresh to re-read.",
+                    RelativeDistance, RelativeHorizontal ? "horizontally" : "in 3D");
+                return;
+            }
             ApplyPose(p);
             StatusText = string.Format(CultureInfo.InvariantCulture,
                 "Teleported {0:0.#} uu {1} → ({2:0.0}, {3:0.0}, {4:0.0}).",

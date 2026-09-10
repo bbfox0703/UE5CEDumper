@@ -1781,7 +1781,7 @@ int32_t BugItGo(uint8_t* tierOut) {
 }
 
 int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
-                         uint8_t* tierOut) {
+                         uint8_t* tierOut, bool* outLandingKnown) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     Chain c;
     int32_t rc = ResolveChain(c);
@@ -1805,7 +1805,18 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     rc = TeleportPawnTo(c, dest, nullptr, /*preferTeleportTo=*/false, tierOut);
     if (rc != TP_OK) return rc;
     StopMovement(c);
-    GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read of the landing
+    // ⛔ THE RE-READ CAN FAIL, AND SILENCE MADE THAT LOOK LIKE ARRIVING AT THE ORIGIN.
+    // GetPoseImpl leaves `out` untouched on every failure path, and all three transports
+    // zero-initialise the Pose and publish it whenever code == 0 -- so a failed re-read
+    // was emitted as a landing at exactly (0,0,0,0,0,0), indistinguishable from really
+    // standing at the world origin, and the panel overwrote its live X/Y/Z with those
+    // zeros for the user to copy or save. The move itself SUCCEEDED, so this is not an
+    // error code -- the caller is told the landing is unknown and publishes nothing
+    // rather than a number nobody measured. [TPREL-ZEROPOSE-2026-09-10]
+    if (outLandingKnown)
+        *outLandingKnown = (GetPoseImpl(outNewPose, nullptr, 0, nullptr) == TP_OK);
+    else
+        GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read
     LOG_INFO("Teleport: relative %.1f uu (%s) fwd=(%.3f, %.3f, %.3f) -> (%.1f, %.1f, %.1f)",
              distance, horizontalOnly ? "horizontal" : "3D",
              fwd[0], fwd[1], fwd[2], dest[0], dest[1], dest[2]);

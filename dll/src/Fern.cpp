@@ -6392,15 +6392,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool horizontalOnly = request.value("horizontal", true);
             Wirbel::Pose p{};
             uint8_t tier = 0;
-            int32_t code = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier);
+            bool landingKnown = true;
+            int32_t code = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier,
+                                                    &landingKnown);
             Sein::Info("PIPE:cmd", "teleport_relative: d=%.1f horiz=%d -> %d",
                        distance, horizontalOnly ? 1 : 0, code);
             json data;
             data["code"] = code;
             data["tier"] = tier;
-            if (code == 0) {
+            // Publish the landing ONLY when it was actually observed. A failed re-read
+            // used to arrive as (0,0,0) and overwrite the panel's live readout.
+            if (code == 0 && landingKnown) {
                 data["x"] = p.X;         data["y"] = p.Y;     data["z"] = p.Z;
                 data["pitch"] = p.Pitch; data["yaw"] = p.Yaw; data["roll"] = p.Roll;
+            } else if (code == 0) {
+                data["landing_unknown"] = true;   // [TPREL-ZEROPOSE-2026-09-10]
             }
             return Renge::MakeResponse(id, data).dump();
         }

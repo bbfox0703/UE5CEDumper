@@ -232,8 +232,12 @@ int32_t BugItGo(uint8_t* tierOut);
 // ControlRotation. outNewPose receives the resulting pose (re-read after the
 // move) so the caller can display the landed X/Y/Z/Pitch/Yaw. The pre-jump pose
 // is auto-saved (RecallLast undoes it). tierOut: 1 invoke / 2 raw write.
+// outLandingKnown (optional): FALSE when the post-move pose re-read FAILED, so
+// outNewPose is untouched -- NOT a landing at the origin. The move itself still
+// succeeded (that is what the return code says); publish nothing for the landing
+// rather than zeros nobody measured. [TPREL-ZEROPOSE-2026-09-10]
 int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
-                         uint8_t* tierOut);
+                         uint8_t* tierOut, bool* outLandingKnown = nullptr);
 
 // Force the OS mouse cursor on (show=true) or off — writes the local
 // PlayerController's bShowMouseCursor bitfield (a BlueprintReadWrite UPROPERTY;

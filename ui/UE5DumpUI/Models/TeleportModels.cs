@@ -39,6 +39,15 @@ public sealed class TeleportPose
     /// [POSEATTACH-2026-09-10]</remarks>
     public bool ParentRelative { get; init; }
 
+    /// <summary>TRUE when a move SUCCEEDED but the post-move pose re-read failed, so
+    /// X/Y/Z carry nothing — <b>not</b> a landing at the origin.</summary>
+    /// <remarks>The DLL leaves the Pose untouched when the re-read fails, and every
+    /// transport zero-initialises it, so a failed re-read used to be published as exactly
+    /// (0,0,0,0,0,0) and the panel overwrote its live readout with zeros the user could
+    /// copy or save as a marker. The move still worked — only the landing is unknown.
+    /// [TPREL-ZEROPOSE-2026-09-10]</remarks>
+    public bool LandingUnknown { get; init; }
+
     /// <summary>Resolved pawn object address as a hex string ("0x0"/"" when
     /// unavailable) — the object whose coordinates this pose reports. Used by the
     /// Teleport tab's "Locate in GWorld" handoff to select this exact pawn in the
