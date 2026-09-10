@@ -2536,4 +2536,57 @@ public class TeleportViewModelTests
         Assert.False(vm.IsBusy);
     }
 
+    /// <summary>
+    /// [POSEATTACH-2026-09-10] — a parent-relative fallback must SAY it is not world space.
+    /// </summary>
+    /// <remarks>
+    /// docs/teleport-spec.md:218-220 required this flag when the fallback was designed:
+    /// "return the raw values anyway with `source = raw` <b>and a warning flag</b>". The
+    /// fallback shipped in 2026-07; the flag did not. So a degraded attached-pawn read and
+    /// a healthy unattached one both arrived as <c>source = "raw"</c> — and the UI model's
+    /// own XML documented "raw" as MEANING not-attached. Those numbers were shown as world
+    /// coordinates, saved into a marker that passes the map guard, and later driven back
+    /// into the pawn as a world-space destination.
+    /// </remarks>
+    [Fact]
+    public async Task Pose_read_that_degraded_to_parent_relative_warns_loudly()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new TeleportPose { Code = 0, Source = "raw", ParentRelative = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.Contains("PARENT-RELATIVE", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("not world coordinates", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        // ⭐ It must also tell the user what NOT to do — the damage is off-screen (a marker
+        // saved from these numbers teleports the pawn somewhere else entirely), so naming
+        // the consequence is the point rather than flagging a colour.
+        Assert.Contains("marker", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The anti-over-shout control: a HEALTHY raw read must stay quiet. Without
+    /// this, "warn on every raw pose" would pass the test above and cry wolf on the common
+    /// case — every unattached pawn reads raw.</summary>
+    [Fact]
+    public async Task Healthy_raw_pose_read_does_NOT_warn()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new TeleportPose { Code = 0, Source = "raw", ParentRelative = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("PARENT-RELATIVE", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Pose read (raw)", vm.StatusText, StringComparison.Ordinal);
+    }
+
 }

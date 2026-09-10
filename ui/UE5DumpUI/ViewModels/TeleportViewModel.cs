@@ -1057,7 +1057,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
-            StatusText = $"Pose read ({p.Source}).";
+            // ⚠ SAY WHEN THE NUMBERS ARE NOT WORLD COORDINATES. On an attached pawn
+            // (vehicle / mount / moving platform) whose world-space invoke failed, the
+            // DLL falls back to the raw RelativeLocation -- parent-relative values that
+            // look exactly like a healthy read. Saving them as a marker stores a
+            // destination that will teleport the pawn somewhere else entirely.
+            // [POSEATTACH-2026-09-10]
+            StatusText = p.ParentRelative
+                ? $"Pose read ({p.Source}) -- ⚠ PARENT-RELATIVE, not world coordinates: "
+                  + "this pawn is attached (vehicle / platform) and the world-space read "
+                  + "failed. Do not save these as a marker."
+                : $"Pose read ({p.Source}).";
         }
         catch (Exception ex)
         {

@@ -3694,6 +3694,9 @@ public sealed class DumpService : IDumpService
         Roll  = res["roll"]?.GetValue<double>() ?? 0,
         Map    = res["map"]?.GetValue<string>() ?? "",
         Source = res["source"]?.GetValue<string>() ?? "raw",
+        // Absent on a healthy read; the DLL only emits it when the pose degraded to a
+        // parent-relative fallback. [POSEATTACH-2026-09-10]
+        ParentRelative = res["parent_relative"]?.GetValue<bool>() ?? false,
         PawnAddr    = res["pawn_addr"]?.GetValue<string>() ?? "",
         HasMovement = res["has_movement"]?.GetValue<bool>() ?? false,
         VelX  = res["vel_x"]?.GetValue<double>() ?? 0,

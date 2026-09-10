@@ -6100,8 +6100,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Wirbel::Pose p{};
             char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
             uint8_t source = 0;
+            bool parentRel = false;
             Wirbel::MovementState mv{};
-            int32_t code = Wirbel::GetPoseAndMovement(p, map, sizeof(map), &source, mv);
+            int32_t code = Wirbel::GetPoseAndMovement(p, map, sizeof(map), &source, mv,
+                                                      &parentRel);
             json data;
             data["code"] = code;
             if (code == 0) {
@@ -6109,6 +6111,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["pitch"] = p.Pitch; data["yaw"] = p.Yaw; data["roll"] = p.Roll;
                 data["map"] = map;
                 data["source"] = (source == 1) ? "invoke" : "raw";
+                // ⛔ "raw" alone cannot tell a HEALTHY unattached world-space read from a
+                // DEGRADED parent-relative one, and the UI's model documents "raw" as
+                // MEANING not-attached -- so those numbers were shown as world coords,
+                // saved into a marker that passes the map guard, and later driven back
+                // into the pawn as a world destination. teleport-spec.md:218-220 asked
+                // for this flag when the fallback was designed. [POSEATTACH-2026-09-10]
+                if (parentRel) data["parent_relative"] = true;
                 // Feature B: the resolved pawn — for the "Locate in GWorld" handoff
                 // (hex string, matching find_path's object_addr / get_current_target's
                 // player_pawn). "0x0" when unresolved.

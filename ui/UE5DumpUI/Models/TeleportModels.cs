@@ -22,8 +22,22 @@ public sealed class TeleportPose
     public string Map { get; init; } = "";
 
     /// <summary>"raw" (direct property read) or "invoke"
-    /// (K2_GetActorLocation, used for attached/vehicle pawns).</summary>
+    /// (K2_GetActorLocation, used for attached/vehicle pawns).
+    /// <para>⚠ "raw" does NOT mean "not attached" — read <see cref="ParentRelative"/>
+    /// before treating these numbers as world coordinates.</para></summary>
     public string Source { get; init; } = "raw";
+
+    /// <summary>TRUE when the pawn is ATTACHED (vehicle / mount / moving platform) and
+    /// the world-space invoke failed, so X/Y/Z are the raw RelativeLocation —
+    /// <b>parent-relative numbers, not world coordinates</b>.</summary>
+    /// <remarks>docs/teleport-spec.md:218-220 required this flag when the fallback was
+    /// designed; the fallback shipped in 2026-07 and the flag did not, so a degraded
+    /// read arrived as the same <c>source = "raw"</c> as a healthy unattached one. The
+    /// XML above this property used to document exactly that wrong inverse. Those
+    /// numbers were displayed as world coordinates, saved into a marker that passes the
+    /// map guard, and later driven back into the pawn as a world-space destination.
+    /// [POSEATTACH-2026-09-10]</remarks>
+    public bool ParentRelative { get; init; }
 
     /// <summary>Resolved pawn object address as a hex string ("0x0"/"" when
     /// unavailable) — the object whose coordinates this pose reports. Used by the

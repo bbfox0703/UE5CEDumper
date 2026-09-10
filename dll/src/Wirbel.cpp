@@ -413,12 +413,13 @@ void CopyMapName(uintptr_t world, char* buf, int32_t cap) {
 // ---- pose read (§5.4) ----
 
 int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
-                    MovementState* move = nullptr) {
+                    MovementState* move = nullptr, bool* outParentRelative = nullptr) {
     Chain c;
     int32_t rc = ResolveChain(c);
     if (rc != TP_OK) return rc;
 
     if (outSource) *outSource = 0;
+    if (outParentRelative) *outParentRelative = false;
     double xyz[3] = {};
     bool got = false;
 
@@ -439,9 +440,26 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
                 if (outSource) *outSource = 1;
             }
         }
-        if (!got)
+        if (!got) {
+            // ⛔⛔ THE DEGRADATION HAS TO LEAVE THIS FUNCTION, not just this log.
+            // docs/teleport-spec.md:218-220 says it in as many words: "If the invoke
+            // fails (game-thread idle), return the raw values anyway with `source = raw`
+            // AND A WARNING FLAG". The fallback shipped; the flag never did. So a healthy
+            // unattached world-space read and a degraded PARENT-RELATIVE one both left
+            // here as source=0 -- and the UI's own model documents "raw" as MEANING
+            // not-attached, so those numbers were displayed as world coordinates, saved
+            // into a marker that passes the map guard, and later driven back into the
+            // pawn as a world-space destination. [POSEATTACH-2026-09-10].
+            //
+            // ⚠ It is a separate flag rather than a third `source` value on purpose: the
+            // CE mailbox publishes that byte as `[176] source (0=raw, 1=invoke)`, and
+            // adding a value would change the MEANING of a contract field -- exactly the
+            // change Mimic.h says the surface hash cannot see. The mailbox is deliberately
+            // left alone here; the pipe carries the flag.
+            if (outParentRelative) *outParentRelative = true;
             LOG_WARN("Teleport: attached pawn but K2_GetActorLocation failed — "
                      "falling back to RelativeLocation (parent-relative!)");
+        }
     }
     if (!got && !ReadVec3Mem(c.root + static_cast<uintptr_t>(c.relLocOff),
                              c.relLocSize, xyz))
@@ -1342,16 +1360,18 @@ void SaveLastImpl() {
 
 namespace Wirbel {
 
-int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource) {
+int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
-    return GetPoseImpl(out, mapName, mapNameCap, outSource, nullptr);
+    return GetPoseImpl(out, mapName, mapNameCap, outSource, nullptr, outParentRelative);
 }
 
 int32_t GetPoseAndMovement(Pose& out, char* mapName, int32_t mapNameCap,
-                           uint8_t* outSource, MovementState& move) {
+                           uint8_t* outSource, MovementState& move,
+                           bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     move = MovementState{};
-    return GetPoseImpl(out, mapName, mapNameCap, outSource, &move);
+    return GetPoseImpl(out, mapName, mapNameCap, outSource, &move, outParentRelative);
 }
 
 int32_t GetPov(Pov& out) {
