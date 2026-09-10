@@ -370,7 +370,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 | wave | status | finders | raw | survived refutation | confirmed | commit |
 |---|---|---|---|---|---|---|
 | W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ✅ | 4 | 16 | 13 | **2H 4M 7L** | 2026-09-10 |
-| W2 TELEPORT ×2 · VALUESEARCH | 🔄 | 3 launched 2026-09-10 | — | — | — | — |
+| W2 TELEPORT ×2 · VALUESEARCH | ✅ | 3 | 13 | 10 | **0H 6M 4L** | 2026-09-10 |
 | W3 APP-SHELL ×2 · OBJTREE | ⬜ | — | — | — | — | — |
 | W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
 | W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ⬜ | — | — | — | — | — |
@@ -577,6 +577,159 @@ found nothing, and argued from that gap that two concurrent CE instances are out
 state — the day after the maintainer hit exactly that, twice. An operational lesson that lives
 only in a tool docstring is one grep away from invisible. ⬜ Move it into
 `docs/working-lessons.md`, and reference it from the handover's CE section.
+
+### ✅ W2 SWEPT 2026-09-10 `[BLANK-W2-2026-09-10]` — 13 raised, 10 confirmed, 3 refuted
+
+3 auditors over **11,715 never-audited lines**; TELEPORT's 8,084 read **twice along opposite
+arrows** over the same 19 files (DLL-publishes→UI-consumes and back) rather than split by file.
+7 adversarial refuters. 10 agents, ~1.95M tokens. **Nothing fixed** — record-only, per the plan.
+
+| | MED | LOW | REFUTED |
+|---|---|---|---|
+| TELEPORT-A | TPA-3 | TPA-4 | TPA-1 · TPA-2 |
+| TELEPORT-B | TPB-1 · TPB-2 | TPB-4 | TPB-3 |
+| VALUESEARCH | VS-1 · VS-2 · VS-4 | VS-3 · VS-5 | — |
+
+⭐ **Reading TELEPORT twice paid for itself immediately**: both auditors, from opposite ends,
+independently reported that two of the **2026-09 fix pass's own rows are incomplete**. Neither
+re-filed them (the brief forbids it) — both raised them as notes. See the next block.
+
+---
+
+#### ⛔⛔ FP1 and FP2 ARE FIXED ON THE PIPE ONLY — the fix pass's own claims are half-true
+
+This is the most important thing W2 produced and it is about **this project's own recent work**.
+Both were verified by hand at HEAD, not taken from the agents.
+
+**`[TPREL-ZEROPOSE-2026-09-10]` — one transport of three.**
+```
+Fern.cpp:6395-6397   bool landingKnown = true;  TeleportRelative(..., &tier, &landingKnown);   ✅ pipe
+Mimic.cpp:1176       TeleportRelative(distance, horizontalOnly, p, &tier);                     ⛔ CE mailbox
+Frieren.cpp:1346     TeleportRelative(distance, horizontalOnly != 0, p, nullptr);              ⛔ C ABI export
+```
+`Mimic.cpp:1177` then does `if (rc == 0) writePoseBlock(p, nullptr, 0, tier)` and
+`Frieren.cpp:1347` does `Teleport_CopyPose(p, outNewPose6)` — both publishing the **zero-initialised
+`Pose p{}`** as the landing, which is the original defect verbatim. `Wirbel.h:235-238` states the
+contract at the function (*"publish nothing for the landing rather than zeros nobody measured"*)
+and two of its three callers do not honour it.
+⚠ **Correcting the agent's framing**: it said the header "claims all three transports were the
+problem". It does not say that — it states the contract without scoping it. The substance stands;
+the characterisation was loose.
+
+**`[POSEATTACH-2026-09-10]` — the read warns, the SAVE cannot know, and the mode users actually
+run never shows the warning.**
+```
+Wirbel.cpp:1366  GetPose      GetPoseImpl(..., outParentRelative)   ✅
+Wirbel.cpp:1374  GetPoseFull  GetPoseImpl(..., outParentRelative)   ✅
+Wirbel.cpp:1352  SaveLastImpl GetPoseImpl(m.P, ..., nullptr)        ⛔
+Wirbel.cpp:1490  SaveMarker   GetPoseImpl(m.P, ..., nullptr)        ⛔
+Wirbel.cpp:1757  BugItSave    GetPoseImpl(m.P, ..., nullptr)        ⛔
+```
+⭐ **The irony is exact.** The warning the fix shipped reads *"Do not save these as a marker"*
+(`TeleportViewModel.cs:1066-1069`) — and the save path has **no way to know**. `struct Marker` has
+no flag, `teleport_save_marker` (`Fern.cpp:6216-6234`) publishes none, and `TP_OP_SAVE` /
+`TP_OP_GET_POSE` (`Mimic.cpp:1071-1086`) carry none.
+
+**And the warning is invisible in normal use.** `RefreshPoseAsync` (manual ↻) sets the
+`⚠ PARENT-RELATIVE` status at `:1066`. `RefreshPoseQuietAsync` — **the 500 ms auto-refresh, the mode
+this tab is left in** — calls `ApplyPoseAndMovement(p)` at `:1017` with no warning at all, and any
+later status message erases the one the manual path did set. The Current Pose card has a persistent
+element for `MovementNote` and for the source chip, and **none** for the degraded-read state.
+
+⬜ **Action: FP1 and FP2's register rows must record that they cover the pipe half only**, and the
+residuals above become their own rows. ⛔ Do **not** close FP1/FP2 on a pipe-only measurement.
+
+---
+
+#### The fix list — 10 rows, none repaired
+
+**MED** — 6 rows.
+
+1. ⬜ **`[W2-GRAVDIR-VERDICT]`** `TeleportViewModel.cs:3184`. On a UE5.4+ game that fully supports
+   arbitrary gravity, the Gravity Direction card states *"needs UE5.4+ (no reflected
+   GravityDirection)"* and paints an amber **Unavailable** badge whenever a pawn/CMC does not
+   resolve **at that instant** — main menu, loading, cutscene, spectator, vehicle pawn. A
+   transient absence is reported as a permanent verdict about the user's engine.
+   **Fix is display-side and the data is already on the wire**: split `!mp.HasCmc` from
+   `mp.HasCmc && !g.Resolved`, and discriminate on `r.State`.
+2. ⬜ **`[W2-TPREL-MAP]`** `TeleportViewModel.cs:3281`. After a directional teleport the Current
+   Pose Map row goes blank, because `teleport_relative`'s reply carries no `map` key. Every
+   Coordinate Library row is then re-flagged as belonging to another map (`Dist` collapses to `—`,
+   the summary reads `⚠ different map (you are on '')`) — and the durable half: an entry added with
+   *Add from fields* at that moment is **written to disk with `map = ""`**.
+   ⚠ **Second entrance, from the same auditor**: on a fresh connect nothing reads the pose at all
+   (`SetConnected` calls only `RefreshMarkersAsync` + `PrimeHeldBadgesAsync`), so `PoseMap` is `""`
+   until the user presses ↻ — *Add from fields* persists the same empty-map entry then too.
+3. ⬜ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
+4. ⬜ **`[W2-ORDEN-FINDENTRY]`** `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
+   **Smaller** silently skips every field of a width the target cannot be *encoded* at, even when
+   every value of that width satisfies the comparison. Because a group candidate needs ALL slots at
+   distinct leaves, one lost width class drops the whole object. The user sees zero or far fewer
+   matches with no warning, no error and no log line.
+5. ⬜ **`[W2-GROUPMATCH-WIDTH]`** `GroupMatch.cs:167`. The same defect in the C# mirror, for
+   Snapshot Group Match: *"no objects matched"* over a corpus that does contain the group,
+   indistinguishable from a correct empty answer.
+6. ⬜ **`[W2-GROUPMATCH-ENUM]`** `GroupMatch.cs:84`. `WidthBytes` has no `EnumProperty` case, so an
+   enum-backed state field (weapon type, quest stage, class) that IS a matchable leaf in the live
+   group scan can **never** satisfy any slot in Snapshot Group Match. A user reproducing a live
+   group across the corpus gets an empty result and no hint that a field was ineligible.
+
+**LOW** — 4 rows: `[W2-MS-PROMISE]` Move Speed Apply promises *"the override applies once a pawn
+exists"* when `Laufen` returned before storing anything, so the queued override silently does not
+exist (`TeleportViewModel.cs:2169`; its two siblings at `:2588`/`:3053` word it correctly) ·
+`[W2-CEGEN-MODAL]` the GodMode and Debug-Camera `[DISABLE]` blocks bail with `showMessage` instead
+of the documented `SilentReturn`, so unticking pops a modal over a fullscreen game — **twice** on
+the contract-check path (`ProtectionScriptGenerator.cs:64`) · `[W2-BETWEEN-PREVIEW]` the Between
+live preview parses with `NumberStyles.Any`, so for FVector/FRotator/FTransform it concatenates the
+three components into one fabricated number and for scalars it accepts thousands separators and
+parenthesised negatives the DLL refuses (`RoundModePreview.cs:75`) · `[W2-DEADSCAN-LOADMORE]` a
+cancelled or failed First Scan leaves the previous session's rows on screen with a **Load More**
+button whose DLL session has already ended — a dead control that produces no rows, no error and no
+log line (`ValueSearchViewModel.cs:1031`).
+
+---
+
+#### ⭐⭐ FIVE OF THE TEN CONFIRMED ROWS HAVE AN UNSAFE OBVIOUS FIX
+
+W2 added an `implied_fix_safe` field to the verdict schema, because W1 produced a *wrong fix* that
+only surfaced by accident. It fired on **half the confirmed rows** — read these before repairing:
+
+| row | the obvious fix | why not |
+|---|---|---|
+| `[W2-GROUPMATCH-ENUM]` | add `"EnumProperty" => 1` to `WidthBytes` | ⛔ **actively harmful** — two sibling predicates key on the same string set; `IsOneByte` (`:93`) changes meaning with it |
+| `[W2-GROUPMATCH-WIDTH]` | fix the C# side | ⛔ `snapshot-group-match-spec.md` §9 says *"Do not fork per-feature SDR logic"*, and `GroupMatch.cs:109-112` declares itself a **mirror** — fix both sides or neither |
+| `[W2-ORDEN-FINDENTRY]` | mechanical `Find` → `FindEntry` | ⚠ safe at `Orden.h:102` and `Aura.cpp:9609`, **not** at `Aura.cpp:9155`, where `Find()` is a deliberate **noise filter** |
+| `[W2-MS-PROMISE]` | make `Laufen` arm on failure so the promise becomes true | ⛔ harmful — the safe fix is to delete the clause, matching its two siblings |
+| `[W2-DEADSCAN-LOADMORE]` | clear the grid in the catch blocks | ⛔ would blank a 1,000-row result because the user mistyped or hit Cancel; those rows are still valid |
+| `[W2-MARKER-PARENTREL]` | make `SaveMarker` refuse | ⚠ the **reporting** fix is safe (pass `&parentRel`, carry a bool on `struct Marker`, emit the key); a **refusing** fix is not |
+
+#### ⛔ REFUTED — do not re-raise
+
+- **TPA-1** *"`Wirbel` measures the pawn never reached the target, then returns `TP_OK`"*. Three
+  independent routes. ⭐ **It is already on a refuted list** — `docs/todo.md:3130`, row 0 of the
+  a4-p2 no-channel table: *"published-elsewhere — it is the same read `teleport_get_pose`
+  returns"*. And the origin commit `29079c8c` calls the post-move check a **diagnostic** and names
+  the log as its channel. ⚠⚠ **That same phase's own closing note at `docs/todo.md:3153` warns
+  that an LLM agent re-reading unchanged code will keep reaching this plausible conclusion — and
+  five days later one did.** The note was right; keep it.
+- **TPA-2** *"the GodMode CE record unticks itself on the failure that DID arm the DLL"*. Settled
+  against CE's own source, not by argument: `D:\Github\cheat-engine\...\memoryrecordunit.pas:2573`
+  `setActive` → `:2671` `autoassemble(..., state=false)` **executes the `[DISABLE]` block**, which
+  writes 0 and disarms `Solitar`. The repo already states this twice at HEAD.
+- **TPB-3** *"the UI's Apply at 100% pins the knob while the CE path treats 100% as off"*.
+  Documented design in three places: `Laufen.cpp:530`'s own comment scopes the sentinel to *"the
+  single-call API the CE-Lua/mailbox path uses"*, `docs/pipe-protocol.md:1752-1756` publishes the
+  pipe's two-command pair, and commit `1dc90354`'s body says the rule was created **for** the
+  mailbox, not dropped from the pipe.
+
+#### Calibration
+
+10/13 confirmed, against W1's 13/16 and a predicted ~1-in-5. The brief's do-not-re-raise list held
+for six of the seven named tags — the one leak (TPA-1) was caught by a refuted list, which is the
+second line of defence working as designed. **The agents' restraint is visible in what they did
+NOT file**: TELEPORT-A held back four adjacent observations as too close to `[POSEATTACH]`, and
+raised the two genuine residuals as notes instead of findings, which is exactly the behaviour the
+brief asked for.
 
 ### What this sweep does NOT cover
 
