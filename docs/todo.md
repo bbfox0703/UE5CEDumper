@@ -1809,6 +1809,24 @@ stays editable. An edit writes this row's type of bytes into the neighbour (`:53
     failed first, then passed. The same review asked for one-fact-per-case pins of every check:
     class name, class address, the lenient path, Name, Offset, TypeName, Size and IsGuessed. They
     were added too (working-lessons §1.2a).
+  - **A second, narrower review** covered the `?` rule and test pinning, with a refuter defaulting
+    to REFUTED. It found the `?` rule sound:
+    - The DLL's only `?` pairs are Float/Float? and Double/Double?, each with the same Name hint
+      and Size.
+    - `NormalizeGuessedTypeToProperty` and the CE export treat both spellings alike.
+    - Guessed rows are never editable or navigable.
+  - **What it did find:** the row-COUNT check had no pinning test. Deleting it left the suite
+    green, and the in-place loop would then throw on a Guess? toggle, and on every DataTable refresh
+    (the RowMap row is appended). `Refresh_SameObject_TrailingRowCountChanges_Rebuilds` (+1 / −1)
+    was added. **Mutation-checked:** with the count check removed, both cases fail; restored
+    byte-exact, 17 / 17 pass. Its Double confidence case now uses the DLL's real `?0x10_double`,
+    8-byte row.
+  - 🟡 **Lead, LOW, not filed** (pre-existing; this change narrows it): in the in-place branch,
+    `SearchMatchCount` comes from the fresh rows but the highlights are re-marked on the reused
+    rows, and the second `MarkSearchMatches` return value is discarded.
+    - **When they can differ now:** since the gate, only on a reused guessed row whose kept label
+      differs from the fresh one, and only for a search term containing the `?`.
+    - **Fix shape:** take the count from the second `MarkSearchMatches` call.
 
 ##### `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer
 
@@ -3288,7 +3306,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 |---|---|---|---|---|
 | 1 | `[W1-QUOTA-UNLIMITED]` | HIGH | e8e52a4f | red → green test; UI 4802/4802; gates 21/21; P2 detector registered |
 | 2 | `[W1-SNAP-FAULT]` | HIGH | `git log --grep W1-SNAP-FAULT` | red → green + clean control; UI 4804/4804; gates 21/21; `-Target DLL` builds |
-| 3 | `[P4-OTHER-INSTANCE]` | HIGH | `git log --grep P4-OTHER-INSTANCE` | red (3/4) → green; the gate's adversarial review found a jump-to-top regression in the draft; fixed red (4/15) → green 15/15; UI 4819/4819; gates 21/21 |
+| 3 | `[P4-OTHER-INSTANCE]` | HIGH | `git log --grep P4-OTHER-INSTANCE` | red (3/4) → green; the gate's adversarial review found a jump-to-top regression in the draft; fixed red (4/15) → green 15/15; UI 4819/4819; gates 21/21. A second review found the row-count check unpinned; a test was added and mutation-checked (17/17, follow-up commit) |
 | 4 | `[P4-GUESS-SHIFT]` | MED | same commit as 3 (one shared gate, as planned) | the cross-gap test red → green; the `?`-suffix refinement test red → green |
 
 #### Live-check backlog — run at the end of the pass

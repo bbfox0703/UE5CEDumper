@@ -174,7 +174,11 @@ public class LiveWalkerSameObjectGateTests
     //
     // The tests above change several facts at once, so deleting any single check would leave them
     // green (working-lessons §1.2a: one negative control validates one axis). Every case below
-    // changes exactly one fact, so each check is pinned by itself.
+    // changes exactly one fact, so each check is pinned by itself: the class name, the class
+    // address, the lenient no-class-address path, one row's Name / Offset / TypeName / Size /
+    // IsGuessed, the row COUNT, and a guessed row's confidence label alone.
+    // Unpinned on purpose: `prevAddr != 0` (the DLL always sends a hex address), and a guessed
+    // row's TypeName compare as a whole (its kind is already in its Name, which is compared).
 
     private static async Task<(LiveWalkerViewModel vm, List<LiveFieldValue> before)> OnA(
         StubDumpService dump, InstanceWalkResult first)
@@ -268,6 +272,35 @@ public class LiveWalkerSameObjectGateTests
         AssertRebuilt(before, vm);
     }
 
+    /// <summary>The row COUNT, on its own: the same object re-walks with every existing row
+    /// unchanged and one row added or dropped at the END, so the shared prefix still matches.
+    /// Real triggers: toggling Guess? when the only gap is after the last reflected field, and
+    /// every refresh of a DataTable (its synthetic RowMap row is appended after the walk). Without
+    /// the count check the in-place loop indexes past the end, <c>RefreshAsync</c> catches the
+    /// throw, and the grid silently keeps the old rows. Found by the gate's second review.</summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public async Task Refresh_SameObject_TrailingRowCountChanges_Rebuilds(int delta)
+    {
+        static InstanceWalkResult Walk(int n) => new()
+        {
+            Address = AddrA, Name = "Hero", ClassName = "BP_Hero_C", ClassAddr = "0x900000",
+            Fields = Enumerable.Range(0, n).Select(i => new LiveFieldValue
+                { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x10 + 4 * i, Size = 4, TypedValue = "1" })
+                .ToList(),
+        };
+
+        var dump = new StubDumpService();
+        var (vm, before) = await OnA(dump, Walk(2));
+        dump.RegisterStruct(AddrA, Walk(2 + delta));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(2 + delta, vm.Fields.Count);
+        for (int i = 0; i < System.Math.Min(before.Count, vm.Fields.Count); i++)
+            Assert.NotSame(before[i], vm.Fields[i]);
+    }
+
     /// <summary>A guessed float or double carries a VALUE-driven confidence suffix
     /// (<c>Ubel.cpp</c> <c>IsLikelyFloat</c>: "Float" only for a clean .0/.5 at or below 1000,
     /// "Float?" otherwise), while its Name (<c>?0x14_float</c>), Offset and Size stay put. That is
@@ -275,18 +308,19 @@ public class LiveWalkerSameObjectGateTests
     /// every Auto tick, which is the [LWREFRESH-2026-08-21] defect the in-place branch exists for.
     /// Found by the gate's own adversarial review.</summary>
     [Theory]
-    [InlineData("Float", "Float?")]
-    [InlineData("Float?", "Float")]
-    [InlineData("Double", "Double?")]
-    public async Task Refresh_GuessedRowOnlyChangesItsConfidenceLabel_KeepsTheRows(string before, string after)
+    [InlineData("?0x10_float",  4, "Float",  "Float?")]
+    [InlineData("?0x10_float",  4, "Float?", "Float")]
+    [InlineData("?0x10_double", 8, "Double", "Double?")]   // the DLL's real double row: `_double`, 8 bytes
+    public async Task Refresh_GuessedRowOnlyChangesItsConfidenceLabel_KeepsTheRows(
+        string name, int size, string before, string after)
     {
-        static InstanceWalkResult Walk(string type, string value) => new()
+        InstanceWalkResult Walk(string type, string value) => new()
         {
             Address = AddrA, Name = "Stats", ClassName = "FHeroStats", ClassAddr = "0x950000",
             Fields = new List<LiveFieldValue>
             {
                 new() { Name = "Level", TypeName = "IntProperty", Offset = 0x0, Size = 4, TypedValue = "3" },
-                new() { Name = "?0x10_float", TypeName = type, Offset = 0x10, Size = 4,
+                new() { Name = name, TypeName = type, Offset = 0x10, Size = size,
                         TypedValue = value, IsGuessed = true },
             },
         };
