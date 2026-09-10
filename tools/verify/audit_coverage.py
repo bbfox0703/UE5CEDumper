@@ -62,7 +62,11 @@ SRC_EXT = ('.cpp', '.h', '.hpp', '.cs', '.py', '.lua', '.axaml', '.ps1', '.asm',
 # after the section landed reported 22 files / 1,178 lines where the run that produced the
 # section reported 31 / 3,409. Any section whose heading carries one of these tags is cut
 # from the corpus before matching. Add a tag here if a later section ever re-lists them.
-SELF_REFERENTIAL_TAGS = ('[A4-ASSESS-2026-09-09]',)
+# ⚠ `[BLANK-0601-PLAN-2026-09-10]` names `Grausam.cpp` in its "what this does NOT cover" list.
+#   ONE file is enough to matter: the trap is not volume, it is that a PLAN to sweep a file
+#   reads identically to a RECORD of having swept it. Tagged the moment the section was
+#   written, and the audit-#4 blank re-measured afterwards to prove the guard held.
+SELF_REFERENTIAL_TAGS = ('[A4-ASSESS-2026-09-09]', '[BLANK-0601-PLAN-2026-09-10]')
 
 
 def git(*a: str) -> str:

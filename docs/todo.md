@@ -249,6 +249,146 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## ⛔ THE BLANK SWEEP — `[BLANK-0601-PLAN-2026-09-10]` the 50,451 lines no audit ever scoped
+
+**Status: PLANNED, NOT STARTED.** Nothing below has been swept. This section is the batching
+plan and the resume ledger; a fresh session should start by reading the ledger table.
+
+### What this is, and why it is the largest open item in the repo
+
+`[A4-ASSESS-2026-09-09]` measured the coverage timeline and found a **31.3% hole**: every line
+authored between **2026-06-01 and 2026-07-03** falls outside every audit's scope *by
+construction*. Audit #5's predicate is "authored before 2026-06-01"; audit #3's window opens
+2026-07-03. Nothing covers what sits between them.
+
+Derive it, never quote it:
+
+```
+py tools/verify/audit_coverage.py timeline
+py tools/verify/blank_sweep.py clusters
+```
+
+At HEAD (2026-09-10) that is **50,451 surviving production lines across 211 files** — and
+**14,095 of them sit in 110 files that not one of the six audit documents so much as names**.
+
+⭐ **It is real code, not rename churn.** 74.2% of the band sits in hunks of **≥25 contiguous
+lines** (37,457 lines / 452 hunks); only 3.8% is 1–3-line fragments. Measured, not assumed —
+the fragmentation histogram is what decided that this is worth an audit at all.
+
+### The batching table — 14 clusters, and why clusters
+
+⛔ **Not "N files per agent".** Every defect the 2026-09 fix pass actually found sat in the
+**wire** — a field the DLL never creates, a consumer that never asks — where no per-file read
+can reach. A batch that carries the DLL side, the pipe command and the UI consumer *together*
+is the only shape that can see those. Line count is the **secondary** key.
+
+⚠ **`band%` decides the agent's diet.** It is the share of the files an agent must open that is
+actually never-audited code, and it runs **8% to 95%**. Handing an 8% cluster's whole files to
+an agent means reading 5,613 lines to audit 451 — and then reporting findings in the 92% that
+five earlier audits already cleared. Below 40% the agent gets **hunks**
+(`py tools/verify/blank_sweep.py hunks <CLUSTER>` prints the exact line ranges); at or above,
+whole files.
+
+| cluster | band | whole | files | band% | UNNAMED | diet |
+|---|---:|---:|---:|---:|---:|---|
+| SNAPSHOT | 5,358 | 6,236 | 14 | 86% | **79%** | whole |
+| PIVOT-SPC | 4,581 | 4,805 | 18 | 95% | **81%** | whole |
+| TELEPORT | 8,084 | 12,415 | 19 | 65% | 15% | whole |
+| AURA-GRAPH | 5,581 | 12,701 | 4 | 44% | 3% | whole |
+| LIVEWALKER | 4,199 | 10,427 | 9 | 40% | 5% | whole |
+| VALUESEARCH | 3,631 | 7,173 | 10 | 51% | 29% | whole |
+| WIRE | 3,618 | 13,382 | 12 | 27% | 0% | hunks |
+| EXPORT | 3,814 | 11,700 | 9 | 33% | 2% | hunks |
+| APP-SHELL | 4,926 | 12,865 | 31 | 38% | 41% | hunks |
+| OBJTREE | 2,676 | 9,940 | 23 | 27% | 12% | hunks |
+| SCAN-CORE | 1,809 | 19,446 | 14 | 9% | 0% | hunks |
+| WIRE-DTO | 1,220 | 3,508 | 31 | 35% | **79%** | hunks |
+| CE-BRIDGE | 451 | 5,613 | 6 | 8% | 0% | hunks |
+| DLL-OTHER | 503 | 3,985 | 11 | 13% | 9% | hunks |
+| **TOTAL** | **50,451** | **134,196** | **211** | 38% | 28% | |
+
+⚠ These numbers are **derived** — `blank_sweep.py clusters` re-prints them and fails loudly if
+any file matches no rule. Do not hand-edit the table; re-run it.
+
+### The five waves — sized for the 5-hour session limit
+
+⛔ **ONE WAVE PER SESSION is the plan.** Run a second only if the first closed with obvious
+headroom. **Never start a wave you cannot also finish, adjudicate and commit** — a wave killed
+mid-flight loses its finders' work, and the finders are the expensive half.
+
+| wave | clusters | band | finders | retires |
+|---|---|---:|---:|---|
+| **W1** | SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | 11,610 | 4 | **63% of all UNNAMED lines** |
+| **W2** | TELEPORT ×2 · VALUESEARCH | 11,715 | 3 | the area that already yielded 3 real defects |
+| **W3** | APP-SHELL ×2 · OBJTREE | 7,602 | 3 | the UI shell + browse surfaces |
+| **W4** | AURA-GRAPH ×2 · LIVEWALKER | 9,780 | 3 | the two big DLL cores |
+| **W5** | WIRE · EXPORT · SCAN-CORE+DLL-OTHER | 9,744 | 3 | the remainder |
+
+**16 finder agents total.** `TELEPORT ×2` / `APP-SHELL ×2` / `AURA-GRAPH ×2` are splits of one
+cluster, not two batches: **both halves get the same brief and the same file list**, one reading
+*DLL-publishes → UI-consumes* and the other the reverse. Splitting a cluster by file would
+destroy the very cross-side visibility the clustering exists for.
+
+⭐ **W1 first on purpose.** SNAPSHOT (79% unnamed), PIVOT-SPC (81%) and WIRE-DTO (79%) are the
+code nobody has ever even mentioned, and `Models/` is exactly where "a field the DLL never sets"
+lives. One wave retires 8,936 of the 14,095 never-named lines.
+
+### Per-wave protocol
+
+1. **Finders** — one agent per cluster (or half-cluster), all launched together.
+2. **Refuters** — findings go out in batches of ~4 to adversarial refuters prompted to
+   **default to refuted**. ~3 per cluster; ~10 per wave.
+3. **I adjudicate the survivors by hand.** ⚠ Not optional and not a formality: on 2026-09-09 I
+   hand-checked four phase-2 findings' *structure* correctly and got **all four verdicts wrong**
+   (§1.w4 — the consequence decides, not the structure), and one of them is on the "do not
+   re-raise" list twice.
+4. **Write the ledger row + the fix list. Commit.** ⛔ Then stop, whatever time is left.
+5. ⛔ **Record, do not fix.** Same discipline as the four-phase pass: a fix round against the
+   *complete* list is cheaper and lands clean. Repairs come after W5.
+
+### The brief every finder gets — non-negotiable
+
+Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for every 1 real**.
+
+1. **Report the EFFECT, not the ATTEMPT.** A finding with no consequence is not a finding.
+2. **§1.w4** — a discarded return is a *structure*, not a defect. Name what breaks for a user.
+3. **The refuted lists are binding**: `audit-2026-08-04-findings.md` (bottom),
+   `audit-2026-08-13-early-code-findings.md` §3 + §3345, `audit-2026-09-05-vendor-ue582.md`
+   §424, `audit-2026-08-26-dxgi-appcompat-crash.md` §7. **Do not re-raise them.**
+4. **Anti-vacuity**: "X is ABSENT" is satisfied for free by an empty run. A missing host is
+   UNDECIDED, never a pass.
+5. **Scope is the band's line ranges** — code outside them was cleared by five earlier audits.
+   ⭐ **The one exception is a wire defect with one side in-band**: those are exactly what this
+   sweep exists to find, and they cross the boundary by nature.
+6. Every finding names **file:line · the effect · a failure scenario with concrete inputs ·
+   whether any test or gate would have caught it**.
+
+### Ledger — a fresh session resumes from here
+
+⬜ pending · 🔄 running · ✅ swept (fix list written, committed)
+
+| wave | status | finders | raw | survived refutation | confirmed | commit |
+|---|---|---|---|---|---|---|
+| W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ⬜ | — | — | — | — | — |
+| W2 TELEPORT ×2 · VALUESEARCH | ⬜ | — | — | — | — | — |
+| W3 APP-SHELL ×2 · OBJTREE | ⬜ | — | — | — | — | — |
+| W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
+| W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ⬜ | — | — | — | — | — |
+
+⚠ **A `⬜` here is evidence; a heading anywhere else in this file is not** — see the 2026-08-24
+reconciliation at the top. This table is updated in the same commit as the wave it describes,
+which is what makes it trustworthy.
+
+### What this sweep does NOT cover
+
+- **The `>2026-08-03` band** — 31,784 lines, 19.7%, also never inside an area audit. Larger per
+  line than what W3 covers. Not planned here; it is the *next* blank.
+- **The 4,648-line / 80-file hard core** from the audit #3 re-check (`Grausam.cpp` first) and
+  the **3,409 lines / 31 files** of the audit #4 window that no later document names. Both are
+  separate rows on the fix list and are **not** subsumed by this plan.
+
+-----
+
 ## Closed work is not here
 
 Three sections used to sit at the top of this file — the Ghidra-free sweep (build 2545), the
