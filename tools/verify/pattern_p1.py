@@ -27,6 +27,18 @@ same signature: the code DISTINGUISHES a degraded case, says so in prose to a lo
 reads during play, and records the distinction in no state a caller can see. Searching the log
 MESSAGE TEXT for degradation vocabulary finds that shape directly -- and by construction it
 re-finds both known positives, which is what `control` asserts.
+
+⛔⛔ THE FIRST DRAFT HAD A TRIAGE FILTER, AND IT HID BOTH KNOWN POSITIVES. It ranked each row by
+whether the enclosing function "publishes something a caller can see" and showed only the rows
+where it did not -- 77 of 225. Both June positives were in the hidden 148: `DetectItemSize` DOES
+publish (its packed verdict), just not the tentative one; `CaptureSnapshotChunk` DOES publish (its
+result fields), just not the fault. **"The function publishes something" says nothing about whether
+it publishes THIS fact**, which is the entire question -- so the filter had 0/2 recall on exactly
+the shape it existed to find. And `control` passed anyway, because it checked the unfiltered set
+while the view printed the filtered one. Two fixes, both structural:
+  * the filter is GONE -- every row is shown, and a reader decides;
+  * `logs` and `control` now share ONE `collect()`, so the control validates the exact population
+    the view prints and can never again pass on a different set than the one a reader sees.
 """
 from __future__ import annotations
 
@@ -51,14 +63,6 @@ DEGRADED = re.compile(
     r'unable|fail|missing|skipp|truncat|capp?ed|cap hit|refus|stale|incomplete|'
     r'not validated|gave up|giving up|abort|bail|no longer|assume|guess|approximat|'
     r'best.effort|may be wrong|not exact|unreliab)')
-
-# A line that plausibly PUBLISHES something a caller can see: an out-param, a result struct member,
-# a stats field, a return of a status. Used only to rank -- never to decide.
-PUBLISHES = re.compile(
-    r'(?:^|[^\w])(?:out|res|result|stats|st|o|r)\s*(?:\.|->)\s*\w+\s*=(?!=)'
-    r'|\*\s*out\w*\s*=(?!=)'
-    r'|\bdata\s*\[\s*"'
-    r'|\breturn\s+(?:TP_ERR|ERR_|-?\d)')
 
 # The June sweep's confirmed P1 instances that this axis MUST re-find. A matcher that cannot
 # re-find its own known positives is broken; that is the red-before-green control for this work.
@@ -92,8 +96,8 @@ def enclosing_function(lines, idx):
         if s and not s[0].isspace() and '(' in s and not s.lstrip().startswith(('//', '*', '#')):
             m = sig.match(s)
             if m:
-                return m.group(1), i
-    return '?', max(0, idx - 1)
+                return m.group(1)
+    return '?'
 
 
 def log_message(lines, idx):
@@ -109,7 +113,10 @@ def log_message(lines, idx):
     return ' '.join(re.findall(r'"((?:[^"\\]|\\.)*)"', joined))
 
 
-def cmd_logs(show_all: bool) -> int:
+def collect():
+    """THE population -- the one `logs` prints AND the one `control` validates. Never filter it
+    in one caller and not the other: that is precisely how the first draft's control went green
+    over a view that hid both known positives."""
     rows = []
     for path in cpp_files():
         lines = read(path)
@@ -118,25 +125,18 @@ def cmd_logs(show_all: bool) -> int:
             if not LOG_CALL.search(line):
                 continue
             msg = log_message(lines, i)
-            if not msg or not DEGRADED.search(msg):
-                continue
-            fn, fstart = enclosing_function(lines, i)
-            body = '\n'.join(lines[fstart:min(len(lines), fstart + 400)])
-            rows.append((base, i + 1, fn, bool(PUBLISHES.search(body)), msg))
+            if msg and DEGRADED.search(msg):
+                rows.append((base, i + 1, enclosing_function(lines, i), msg))
+    return rows
 
-    silent = [r for r in rows if not r[3]]
-    print('\nP1b -- log calls carrying a DEGRADATION fact: %d' % len(rows))
-    print('   of which the enclosing function publishes NOTHING a caller can see: %d'
-          % len(silent))
-    print('\n⛔ A POPULATION, NOT A FINDING LIST. Every row needs a hand-read.\n')
 
-    for base, ln, fn, pub, msg in sorted(rows, key=lambda r: (r[3], r[0], r[1])):
-        if pub and not show_all:
-            continue
-        print('  %-18s :%-5d %-34s %s' % (base, ln, fn[:34], msg[:96]))
-    if not show_all:
-        print('\n  (%d rows whose function DOES publish something were hidden; --all to see them)'
-              % (len(rows) - len(silent)))
+def cmd_logs() -> int:
+    rows = collect()
+    print('\nP1b -- log calls whose MESSAGE carries a degradation fact: %d' % len(rows))
+    print('\n⛔ A POPULATION, NOT A FINDING LIST. Every row needs a hand-read: is this fact ALSO')
+    print('   recorded somewhere a caller can reach, and if not, what does a user lose?\n')
+    for base, ln, fn, msg in rows:
+        print('  %-20s :%-5d %-32s %s' % (base, ln, fn[:32], msg[:96]))
     return 0
 
 
@@ -188,37 +188,29 @@ def cmd_members() -> int:
     print('\n⛔ A POPULATION, NOT A FINDING LIST. A member can be internal by design, published')
     print('   under another name, or reached through a variable a literal grep cannot see.\n')
     for base, ln, st, name, snake in out:
-        print('  %-18s :%-5d %-28s %-24s (%s)' % (base, ln, st[:28], name, snake))
+        print('  %-20s :%-5d %-28s %-24s (%s)' % (base, ln, st[:28], name, snake))
     return 0
 
 
 def cmd_control() -> int:
-    """Red-before-green: the axis must re-find the June sweep's confirmed instances."""
-    hits = []
-    for path in cpp_files():
-        lines = read(path)
-        base = os.path.basename(path)
-        for i, line in enumerate(lines):
-            if LOG_CALL.search(line):
-                msg = log_message(lines, i)
-                if msg and DEGRADED.search(msg):
-                    hits.append((base, i + 1, msg))
-
-    print('\nCONTROL -- can the logs axis re-find the June sweep\'s known positives?\n')
+    """Red-before-green, over the SAME `collect()` population `logs` prints."""
+    rows = collect()
+    print('\nCONTROL -- does the population `logs` prints contain the June sweep\'s known'
+          ' positives?  (%d rows)\n' % len(rows))
     bad = 0
     for want_file, want_text in KNOWN_POSITIVES:
-        found = [h for h in hits if h[0] == want_file and want_text.lower() in h[2].lower()]
+        found = [r for r in rows if r[0] == want_file and want_text.lower() in r[3].lower()]
         ok = bool(found)
         bad += 0 if ok else 1
         print('  %-4s %-14s %-22r %s' % ('PASS' if ok else '****', want_file, want_text,
                                          ('%s:%d' % (found[0][0], found[0][1])) if ok
-                                         else 'NOT RE-FOUND'))
+                                         else 'NOT IN THE PRINTED POPULATION'))
     print()
     if bad:
-        print('*** %d known positive(s) not re-found -- the matcher is BROKEN, do not trust its'
-              ' output' % bad)
+        print('*** %d known positive(s) missing from what a reader sees -- the axis is BROKEN'
+              % bad)
         return 2
-    print('all known positives re-found; the axis is sound enough to enumerate with')
+    print('all known positives are in the population a reader sees')
     return 0
 
 
@@ -226,14 +218,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='action', required=True)
-    lg = sub.add_parser('logs')
-    lg.add_argument('--all', action='store_true',
-                    help='include rows whose enclosing function does publish something')
+    sub.add_parser('logs')
     sub.add_parser('members')
     sub.add_parser('control')
     a = ap.parse_args()
     if a.action == 'logs':
-        return cmd_logs(a.all)
+        return cmd_logs()
     if a.action == 'members':
         return cmd_members()
     return cmd_control()
