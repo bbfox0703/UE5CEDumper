@@ -251,7 +251,7 @@ Open work only. **Read this when deciding what to do next.**
 
 ## ⛔ THE BLANK SWEEP — `[BLANK-0601-PLAN-2026-09-10]` the 50,451 lines no audit ever scoped
 
-**Status: ✅ ALL FIVE WAVES SWEPT 2026-09-10 — 39 distinct defects confirmed (2 HIGH · 19 MED · 18 LOW), NONE repaired.** The whole-sweep table is at the end of . This section is the batching
+**Status: ✅ ALL FIVE WAVES SWEPT 2026-09-10 — 39 distinct defects confirmed (2 HIGH · 19 MED · 18 LOW), NONE repaired.** The whole-sweep table is at the end of `[BLANK-W5-2026-09-10]`. This section is the batching
 plan and the resume ledger; a fresh session should start by reading the ledger table.
 
 ### What this is, and why it is the largest open item in the repo
