@@ -314,6 +314,90 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Equal("", vm.Label);
     }
 
+    // [W1-SNAP-FAULT] The first chunk comes back with a DLL scan worker FAULT: part of its window
+    // was never walked, although Scanned still covers all of it. Before the fix that chunk was
+    // stored and the snapshot finalised as complete and USABLE -- no warning badge, and
+    // auto-selected as a Diff / Group / SPC / Pivot source.
+    private sealed class FaultingCaptureStub : StubDumpService
+    {
+        public int ChunkCalls;
+
+        public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
+            => Task.FromResult(6);
+
+        public override Task<SnapshotChunkResult> SnapshotChunkAsync(
+            string dataType, bool gameOnly, int offset, int limit,
+            bool nativeC = false, bool autoSkipNoise = true,
+            string numericFamily = "Any", CancellationToken ct = default)
+        {
+            ChunkCalls++;
+            var r = new SnapshotChunkResult { Total = 6 };
+            if (offset == 0)
+            {
+                r.Scanned = 3;
+                r.WorkerFaulted = true;   // a worker threw inside [0, 3)
+                var o = new SnapshotCapturedObject
+                {
+                    Index = 0, Addr = "0x0", Name = "Obj_0",
+                    ClassName = "BP_Thing_C", OuterClassName = "World",
+                    Path = "/Game/Map.Map:PersistentLevel.Obj_0",
+                };
+                o.Fields.Add(new SnapshotCapturedField { Name = "A", Type = "IntProperty", Hex = "01000000" });
+                r.Objects.Add(o);
+            }
+            else if (offset == 3)
+            {
+                r.Scanned = 3;   // a clean chunk -- the capture must not reach it
+            }
+            return Task.FromResult(r);
+        }
+    }
+
+    [Fact]
+    public async Task Capture_WorkerFaultedChunk_IsFinalisedUnusable_AndSaysFault()
+    {
+        var dump = new FaultingCaptureStub();
+        _lastLog = new MockLoggingService();
+        var vm = new SnapshotViewModel(dump, _store, _lastLog)
+        {
+            SelectedScope = "NumericNoByte",
+            GameOnly = true,
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var list = await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken);
+        Assert.True(list.Count == 1, Diag("the partial snapshot is kept, not deleted", list.Count, vm));
+        Assert.False(list[0].IsUsable, Diag("a faulted chunk must NOT be finalised usable", list[0].IsUsable, vm));
+        Assert.Equal(1, list[0].ObjectCount);   // what was captured is still stored
+
+        // The status names the cause that happened -- a worker FAULT -- never a deadline.
+        Assert.Contains("FAULT", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadline", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+
+        // Stops at the faulted chunk: a faulting decrypt stub is usually deterministic.
+        Assert.Equal(1, dump.ChunkCalls);
+    }
+
+    // The control: the same stub shape with NO fault finalises usable, so the assert above is
+    // not satisfied by a capture that marks everything unusable.
+    [Fact]
+    public async Task Capture_CleanChunks_StayUsable()
+    {
+        var dump = new CaptureStub();
+        _lastLog = new MockLoggingService();
+        var vm = new SnapshotViewModel(dump, _store, _lastLog) { SelectedScope = "NumericNoByte", GameOnly = true };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var list = await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken);
+        Assert.True(list.Count == 1, Diag("expected 1 persisted snapshot", list.Count, vm));
+        Assert.True(list[0].IsUsable, Diag("a clean capture stays usable", list[0].IsUsable, vm));
+        Assert.DoesNotContain("FAULT", vm.StatusText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Capture_PassesIncludeNativeFields_ToSnapshotChunk()
     {

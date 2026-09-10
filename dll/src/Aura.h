@@ -1696,6 +1696,12 @@ struct SnapshotChunkResult {
     int32_t total   = 0;   // GObjects count
     int32_t scanned = 0;   // indices iterated this chunk (advance offset by this)
     int64_t walkMs  = 0;   // Phase-0 telemetry: parallel walk+merge wall-time for this chunk
+    // A scan worker THREW while walking this chunk, so part of [offset, offset+scanned) was
+    // never captured. `scanned` still reports the full range (the pager must advance past the
+    // hole), which is exactly why this has to travel separately: without it a faulted chunk
+    // was stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
+    // Published as snapshot_chunk's `worker_faulted`; the UI finalises the snapshot UNUSABLE.
+    bool    workerFaulted = false;
     std::vector<SnapshotObject> objects;  // only objects with >=1 numeric field
 };
 

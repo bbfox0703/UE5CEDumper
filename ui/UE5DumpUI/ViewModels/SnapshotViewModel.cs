@@ -832,6 +832,10 @@ public partial class SnapshotViewModel : ViewModelBase
             // read after WhenAll (the await is the memory barrier).
             int minTotal = total, maxTotal = total;
             bool driftDetected = false;
+            // [W1-SNAP-FAULT] Same ownership as driftDetected (written by the producer, read after
+            // WhenAll): a DLL scan worker FAULTED on a chunk, so that chunk is missing an index
+            // range the DLL still reports as scanned.
+            bool faultDetected = false;
             await using (var session = await _store.BeginCaptureSessionAsync(ct))
             using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
@@ -873,6 +877,15 @@ public partial class SnapshotViewModel : ViewModelBase
                                 if (chunk.Total > maxTotal) maxTotal = chunk.Total;
                             }
                             await channel.Writer.WriteAsync(chunk, lct);
+                            // [W1-SNAP-FAULT] Keep the chunk -- its objects are real -- but the
+                            // snapshot now has a hole: finalise it UNUSABLE, the same verdict as
+                            // drift, and stop. A faulting object-decryption stub is usually
+                            // deterministic, so every later chunk would fault the same way.
+                            if (chunk.WorkerFaulted)
+                            {
+                                faultDetected = true;
+                                break;
+                            }
                             if (!driftDetected &&
                                 SnapshotConsistency.IsDriftSuspect(total, minTotal, maxTotal))
                             {
@@ -950,7 +963,8 @@ public partial class SnapshotViewModel : ViewModelBase
                 // Incremental pivot counts on the session connection — replaces the ~10s
                 // COUNT(DISTINCT) GROUP BY ×2 the lazy build runs (the documented finalize
                 // freeze). Dispose then restores pragmas + closes.
-                await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount, !driftDetected, ct);
+                await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount,
+                    isUsable: !driftDetected && !faultDetected, ct);
             }
 
             // FIFO eviction: drop oldest snapshots of this game until the DB fits the
@@ -1003,8 +1017,16 @@ public partial class SnapshotViewModel : ViewModelBase
             var driftNote = driftDetected
                 ? $" — ⚠ GObjects changed mid-capture ({total:N0}→{maxTotal:N0}); marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture)"
                 : "";
+            // Name the cause that happened -- a worker FAULT -- never a deadline or a cancel
+            // (P5: one wording must not carry several causes). [W1-SNAP-FAULT]
+            var faultNote = faultDetected
+                ? " — ⚠ a DLL scan worker FAULTED on part of the object list; the snapshot is partial and marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture) — the DLL's logs name the fault"
+                : "";
+            if (faultDetected)
+                _log.Warn(Constants.LogCatView,
+                    "Capture: a DLL scan worker faulted on a snapshot chunk; the snapshot was finalised UNUSABLE [W1-SNAP-FAULT]");
             outcome = (wasCapped || wasDiskLow) ? CaptureOutcome.Partial : CaptureOutcome.Success;
-            StatusText = $"Captured {objectCount:N0} objects, {fieldCount:N0} fields{driftNote}{cappedNote}{diskLowNote}{evicted}";
+            StatusText = $"Captured {objectCount:N0} objects, {fieldCount:N0} fields{driftNote}{faultNote}{cappedNote}{diskLowNote}{evicted}";
             Label = "";
             await RefreshAsync();
         }

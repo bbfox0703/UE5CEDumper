@@ -2495,6 +2495,9 @@ public sealed class DumpService : IDumpService
             ReadMs      = res["_t_read_ms"]?.GetValue<long>() ?? 0,
             RxLogMs     = res["_t_rxlog_ms"]?.GetValue<long>() ?? 0,
             ParseMs     = res["_t_parse_ms"]?.GetValue<long>() ?? 0,
+            // [W1-SNAP-FAULT] A DLL scan worker faulted on this chunk. Absent on an older DLL
+            // = false, the pre-fix behaviour (the fault then stays invisible, exactly as before).
+            WorkerFaulted = res["worker_faulted"]?.GetValue<bool>() ?? false,
         };
 
         var buildSw = System.Diagnostics.Stopwatch.StartNew();

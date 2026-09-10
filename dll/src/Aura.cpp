@@ -9915,10 +9915,14 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: cancelled (client gone / shutdown)");
     // A fault is NOT a cancellation, and saying "cancelled" for it would name a cause that
     // did not happen. Unlike the cancel case the C# side is still listening, so this chunk
-    // is about to be stored — with a hole in it.
-    if (scan.workerFaulted)
+    // is about to be stored — with a hole in it. It used to stop at this log line, and the
+    // snapshot was finalised as complete and usable; now the fact travels with the chunk
+    // (`worker_faulted`) and the UI finalises the snapshot UNUSABLE. [W1-SNAP-FAULT]
+    if (scan.workerFaulted) {
+        result.workerFaulted = true;
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: a worker FAULTED — this chunk "
                                     "is missing an index range and the snapshot is partial");
+    }
 
     return result;
 }

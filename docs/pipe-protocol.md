@@ -682,6 +682,11 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily ‚
   "id": 61, "ok": true,
   "total":   58432,
   "scanned": 100,          // ‚Üê advance offset by this, NOT objects.length
+  "worker_faulted": false, // true = a DLL scan worker FAULTED on this chunk, so part of the
+                           //   window was never captured although `scanned` reports all of
+                           //   it. The UI finalises the snapshot UNUSABLE. Its own key: a
+                           //   fault is not a deadline. Absent on older DLLs = false.
+                           //   [W1-SNAP-FAULT]
   "objects": [
     {
       "index":       12345,

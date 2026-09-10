@@ -140,5 +140,10 @@ public sealed class SnapshotChunkResult
     public long RxLogMs     { get; set; }   // the "Pipe RX: {line}" debug log (string build + write)
     public long ParseMs     { get; set; }   // JsonNode.Parse (DOM build from the line)
     public long BuildMs     { get; set; }   // materialising SnapshotCapturedObject[] from the DOM
+    // [W1-SNAP-FAULT] A DLL scan worker FAULTED while walking this chunk, so part of its index
+    // range was never captured (the DLL still reports the whole window as `Scanned`, so the
+    // pager can step past the hole). The capture finalises the snapshot UNUSABLE on it.
+    // Absent on an older DLL = false, the pre-fix behaviour.
+    public bool WorkerFaulted { get; set; }
     public List<SnapshotCapturedObject> Objects { get; set; } = new();
 }

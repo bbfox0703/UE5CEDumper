@@ -2036,6 +2036,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total"]        = chunk.total;
             data["scanned"]      = chunk.scanned;
             data["walk_ms"]      = chunk.walkMs;
+            // A scan worker faulted: this chunk is missing an index range even though
+            // `scanned` reports the full window. The UI finalises the snapshot UNUSABLE on
+            // it. Its own key, never `deadline_hit` wording -- a fault is not a timeout, and
+            // P5 records why one flag must not carry several causes. [W1-SNAP-FAULT]
+            data["worker_faulted"] = chunk.workerFaulted;
             data["serialize_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - serT0).count();
             data["objects"]      = std::move(objects);

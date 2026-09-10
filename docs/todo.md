@@ -411,7 +411,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
 
 **HIGH**
 
-1. ⬜ **`[W1-SNAP-FAULT]` a faulted snapshot chunk is stored and finalised as a complete, usable
+1. ✅ **`[W1-SNAP-FAULT]` a faulted snapshot chunk is stored and finalised as a complete, usable
    snapshot.** `dll/src/Aura.cpp:9804` is the **only one of seven** `ParallelGObjectsScan` call
    sites that does not fold the fault flag into a published stat — the other six all do:
    ```
@@ -442,6 +442,25 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    usability verdict. ⛔ **Do not reuse `deadline_hit`'s wording.** D2's deliberate residual (the
    `⬜ Still open from the sweep` list after blind-spot sweep round 3) already records that mislabelling.
    *(This pointer first read "`docs/todo.md:1738`", a line number that had already drifted.)*
+   ✅ **FIXED IN SOURCE 2026-09-10 — the fix pass's second row, in exactly the recorded shape.**
+   - **DLL:** `SnapshotChunkResult` carries `workerFaulted`, set where `CaptureSnapshotChunk`
+     used to only log the fault (`Aura.cpp`). `Fern` publishes it as `worker_faulted`, its own key
+     and never `deadline_hit` wording (`docs/pipe-protocol.md` updated).
+   - **UI:** the DTO parses it; an absent key on an older DLL reads as false. The capture ORs it
+     into the usability verdict: `CompleteSnapshotAsync(..., isUsable: !driftDetected &&
+     !faultDetected)`.
+   - **Behaviour on a fault:** the capture keeps what it captured but stops at the faulted chunk. A
+     faulting decrypt stub is usually deterministic, so later chunks would fault too.
+   - **Status text:** names a worker FAULT, never a deadline or a cancel.
+   - **Red before green:** `Capture_WorkerFaultedChunk_IsFinalisedUnusable_AndSaysFault` failed
+     first (*"a faulted chunk must NOT be finalised usable, got True"*), then passed. Its control,
+     `Capture_CleanChunks_StayUsable`, passes both ways.
+   - **Results:** UI tests **4804 / 4804**; gates **21 / 21**; `build.ps1 -Target DLL
+     -NoBumpBuildNumber` **SUCCESS** (`dist\UE5DumpUI.exe` left AOT, 54.8 MB).
+   - **No DLL unit test:** `dll_core_test` can fault `ParallelGObjectsScan` only through its
+     lambda, not inside `CaptureSnapshotChunk`. So the DLL half is proven by the build and by live
+     check L2.
+   - ⬜ **Live check deferred:** backlog L2 in `[FIXPASS-2026-09-10]`.
 
 2. ✅ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
    1 GB, and FIFO-deletes the user's snapshots.** `ExperimentalSettings.cs:31` sets
@@ -3214,6 +3233,51 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
   - the UNDECIDED `IsEditing` latch;
   - each row's written experiment.
 
+### 🔧 FIX PASS `[FIXPASS-2026-09-10]` — one commit per row, HIGH → MED → LOW; live checks DEFERRED to the end
+
+**The maintainer's direction, 2026-09-10:**
+- Fix one row at a time, HIGH first.
+- **Verify everything live together at the END.**
+- Every fixed row adds its live check to the backlog below, and nothing here is closed until its
+  check passes on a running game.
+
+⚠ **Before the live round:**
+- A full `build.ps1`, then `-Mode Publish -NoBumpBuildNumber` (AOT), with size and SHA checked.
+  Per-row work tests through `dotnet test --project ui/UE5DumpUI.Tests/...` only, so `dist\` stays
+  AOT.
+- ONE `dev-log.md` entry for the pass.
+- Any step that needs Cheat Engine is announced to the maintainer first.
+
+#### Ledger
+
+| # | row | sev | commit | offline evidence |
+|---|---|---|---|---|
+| 1 | `[W1-QUOTA-UNLIMITED]` | HIGH | e8e52a4f | red → green test; UI 4802/4802; gates 21/21; P2 detector registered |
+| 2 | `[W1-SNAP-FAULT]` | HIGH | `git log --grep W1-SNAP-FAULT` | red → green + clean control; UI 4804/4804; gates 21/21; `-Target DLL` builds |
+
+#### Live-check backlog — run at the end of the pass
+
+| # | row | the check | needs |
+|---|---|---|---|
+| L1 | `[W1-QUOTA-UNLIMITED]` | 1. On the AOT build, pick *Unlimited* and restart the UI. `experimental.json` must hold `"snapshotQuotaMb": 0`, and the combo must still read Unlimited. 2. Capture once: no snapshot may be FIFO-deleted. | UI + any game |
+| L2 | `[W1-SNAP-FAULT]` | Arm a faulting object-decryption stub during a snapshot capture. Adapt `tools/verify/sw1_worker_fault.py`, and note that the armed scan must be the process's FIRST parallel scan. Then check that the snapshot shows as ⚠ unusable, is excluded from SPC/Pivot, and that the status names a worker FAULT, not a deadline. | DumperTest + UI; no CE |
+
+#### Live experiments recorded in the finding phase — each joins the backlog when its row is fixed
+
+⚠ Items marked **CE** need Cheat Engine: announce first. Every other row carries its own `experiment`
+in its section; copy it into the backlog when the row is fixed.
+
+- **CE:** `[A3-ST1-SUPER-DRAIN]` — run `st1_queued_drain_sideeffect.py` with a frozen game thread, a
+  queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an actor. `bHidden` must not
+  flip while the thread is frozen.
+- **CE:** `[A3-B30-STALE-FLAG]` — tick the inject record, reopen the `.CT` without merging, tick
+  again. The pipe must survive.
+- `[A4-USMAP-ENUM-UNDERLYING]` — parse an asset with a non-uint8 enum using our `.usmap` and a
+  Dumper-7 one, in the throwaway CUE4Parse console. The property values must match.
+- **UNDECIDED:** the Live Walker `IsEditing` latch cleared by an in-flight refresh (next to
+  `[A4-EDIT-STALE-PENDING]`). Needs a DumperTest actor with a ticking float, Auto on.
+- **UNDECIDED:** `[W4-DEEPWALK-750MS]`, whose row names the experiment.
+
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
@@ -3243,6 +3307,7 @@ risk until the fix pass. `[W1-QUOTA-UNLIMITED]` deletes snapshots permanently, a
 and do not pick *Unlimited*.** ✅ *Fixed in source 2026-09-10 (the fix pass's first row). The
 mitigation still applies to any installed build older than the one that carries the fix.* `[W1-SNAP-FAULT]` stores a faulted chunk as complete, but it needs a
 faulting object-decryption stub, which in practice means active reversing work on an encrypted title.
+✅ *`[W1-SNAP-FAULT]` fixed in source 2026-09-10 (the fix pass's second row).*
 
 ⚠ **Do not start Track B before Track A.** Every instance a gate finds is an instance an agent does
 not have to be paid to read for — and on current numbers the gates would have caught **at least
