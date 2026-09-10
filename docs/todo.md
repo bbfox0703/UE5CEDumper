@@ -3237,6 +3237,110 @@ trusting either summary. `UE5DumpUI.exe` 54.8 MB `527F06B6` · `UE5Dumper.dll` 2
 the prior run — recorded because a build summary that disagrees with its own output is
 worth not forgetting.
 
+#### ✅ LIVE VERIFICATION 2026-09-10 — DumperTest **Shipping**, DLL + UI + real Cheat Engine
+
+Shipping fixture, UE 5.4, **24,497 objects**, builds 3534 → 3544. Game, CE and UI all killed
+afterwards; `tasklist` verified clear. ⭐ **Three of the eight rows now have a genuine
+red-before-green on a running game** — not a green test, a measured difference.
+
+| row | verdict | how |
+|---|---|---|
+| **`[B30-REOPEN]`** 🔴 | ✅ **VERIFIED, before/after** | real CE tick on a serving pipe |
+| **`[SOLIDE-REFUSAL]`** 🟡 | ✅ **VERIFIED, before/after** | rebuilt DLLs, pre-fix vs post-fix |
+| **`[BADGEPRIME]`** 🟠 | ✅ **VERIFIED** | six badges, against phase 3's own before |
+| `[R3-SEETHRU]` 🟠 | 🟡 regression only | the hazard needs a command in flight |
+| `[POSEATTACH]` 🟠 | 🟡 control only | needs an attached pawn + a failed invoke |
+| `[TPREL-ZEROPOSE]` 🟡 | ⬜ not reachable | needs the pawn/world to vanish mid-call |
+| `[B33-SPELLING]` 🟡 | ✅ implied | the serving branch resolved and fired (below) |
+| `[B21-DOCROW]` 🟡 | — | a document fix; nothing to run |
+
+#### ⭐⭐ `[B30-REOPEN]` — the pipe dies on the old table and survives on the new one
+
+Setup: DumperTest Shipping running, `UE5Dumper.dll` injected and **serving** (`get_object_count`
+= 24,497) — the exact precondition. Cheat Engine attached to the game, the table loaded, and
+`Inject DLL + Start Pipe Server` ticked by hand. Both runs produced the identical dialog:
+
+> *UE5CEDumper is already loaded and serving in this process as 'UE5Dumper.dll'.*
+> *No injection needed — just launch UE5DumpUI.exe and click Connect.*
+
+Then the record unticks itself, which is what runs `[DISABLE]`:
+
+| table | after dismissing the dialog |
+|---|---|
+| **PRE-FIX** — `git show 22a95b91^:scripts/UE5CEDumper.CT` (guard absent, `grep -c` = 0) | ⛔ **`\\.\pipe\UE5DumpBfx` GONE** — `PipeError: could not open` |
+| **POST-FIX** — the shipped `dist/UE5CEDumper.CT` | ✅ **pipe alive, 24,497 objects** |
+
+⭐ **The game process survived BOTH runs** — only the pipe died, which is precisely the defect:
+the user is told to go and connect, and the thing they were told to connect to is destroyed
+about 50 ms later. ⭐ And `[B33-SPELLING]` rides along: the serving branch could only fire
+because the pre-check resolved the mailbox symbol at all.
+
+#### ⭐ `[SOLIDE-REFUSAL]` — and the first reproducer was WRONG, which the before/after caught
+
+Measured on **rebuilt DLLs**, pre-fix and post-fix, each relaunched and re-injected:
+
+```
+PRE-FIX   arm #2 (RE-ARM): {'code': 0,   'held': 0}   <- the defect
+POST-FIX  arm #2 (RE-ARM): {'code': -12, 'held': 0}   <- FR_ERR_WEAK_PTR reported
+```
+
+⛔ **The obvious reproducer does not reach the fix at all.** Arming a permanently-refused field
+twice *looks* like a re-arm and is not one: arm #1 is refused and the job is **erased** (it never
+persisted), so arm #2 is another `newlyAdded`. Both pre- and post-fix returned −12 — no
+difference. **Only a before/after could have shown that**, and without it this row would have
+been "verified" on a path the fix never touches.
+
+The real sequence needs a hold that SUCCEEDS first: force `CharacterMovementComponent::MaxWalkSpeed`
+as `numeric` → **held 7** on the live components, so the job persists; then re-arm the same field
+as `object_null` → refused, `newlyAdded` false. ⚠ That really writes MaxWalkSpeed on 7 components,
+so the arm restores it in a `finally` and asserts nothing is left armed.
+
+#### ⭐ `[BADGEPRIME]` — six cards, against phase 3's own measurement
+
+UI connected to the same live DLL. Every card that read its reset label before now carries a real
+state **and a live value**:
+
+| card | phase 3 (before) | now |
+|---|---|---|
+| Debug Camera | Unknown | **OFF** |
+| Keep Foreground | Unknown | **OFF** |
+| Move Speed | Unavailable | **Off**, `Current: 600 cm/s` |
+| Gravity | Unavailable | **OFF**, `Current: 1.75× GravityScale` |
+| Super Jump | Unavailable | **OFF**, `Current: 700 cm/s JumpZVelocity` |
+| Fly | Unavailable | **OFF**, `Ready (MovementMode = 1)` |
+| *God Mode / Time Dilation* | *OFF (already primed)* | *OFF — the unchanged control* |
+
+⚠ Labels read from a **zoomed** capture this time, not a 0.55-scale one — that is what produced
+the wrong "Unknown" quotes in phase 3.
+
+#### ⚠ THREE HARNESS BUGS CAUGHT DURING THIS RUN, each by its own guard
+
+1. ⛔ **The game holds `dist/UE5Dumper.dll`**, so `-Target DLL` FAILS while it is running — and the
+   first before/after printed "FAILED", carried on, and measured the **same already-fixed binary
+   twice**, reporting it as a pre-fix result. The harness now kills the game first and aborts
+   unless BOTH the build summary says SUCCESS **and** the DLL's mtime moved. The stale-build trap
+   CLAUDE.md names, walked into and then closed.
+2. **`search_properties` names the property `prop_name`, not `name`.** Reading the wrong key found
+   no host — and the anti-vacuity guard reported the row **UNDECIDED** instead of passing it, which
+   is the only reason it was noticed.
+3. **The pipe takes `kind` as a STRING** (`"object_null"`), not the C++ enum's int.
+
+⚠ And a fourth, in my own editing rather than the rigs: a heredoc collapsed `\n` inside a Python
+string into a real newline for the **third time tonight**. Prose and code with escapes go through
+the Write tool, never a heredoc — that is now a habit to keep, not a lesson to re-learn.
+
+#### ⬜ What is still NOT verified live, and why
+
+- **`[POSEATTACH]`** — needs an **attached possessed pawn** whose `K2_GetActorLocation` invoke
+  fails; two coincident conditions this fixture cannot stage. Only the anti-over-shout control ran
+  (a healthy pose does **not** claim parent-relative). ⚠ Also note the CE mailbox still cannot
+  express the flag at all — a recorded contract gap.
+- **`[TPREL-ZEROPOSE]`** — needs the pawn or world to vanish **inside one locked call**.
+- **`[R3-SEETHRU]`** — the hazard needs another command in flight at the instant of the untick.
+  What was checked is that See-through still reads cleanly after its code moved.
+
+These three belong in `verification-register.md` as manual rows, not in a green tick.
+
 #### ⬜ STILL OPEN from the fix list
 
 ⚠ *(as of round 1; rows 4, 6, 7 and 8 were closed in round 2 above)* — **9** the 25
