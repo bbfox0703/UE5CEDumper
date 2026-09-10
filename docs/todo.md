@@ -1671,11 +1671,26 @@ three), the shape that produced the June sweep's most important result.
 
 ### Order, and why
 
-1. ⬜ **Finish the June sweep** (W5) — it is 4/5 done and its fix list is the input to everything else.
-2. ⬜ **Build Track A's gates**, validating each against the June band's known positives.
-3. ⬜ **ONE fix pass covering both blanks**, grouped **by shape, not by file** — the maintainer's
-   reason for planning this now.
-4. ⬜ **Track B A1–A4** for what no matcher can reach.
+1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
+2. 🔄 **Track A — the pattern sweeps.** P1, P2, P3 and P6 done; P4 / P7 / P8 under adjudication; P5
+   next. The gate-shaped detectors (P2, P6) are built and deliberately NOT registered until their
+   instances are repaired.
+3. ⬜ **Track B A1–A4** for what no matcher can reach.
+4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
+   shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
+   maintainer's stated reason for planning the second blank at all.
+
+⛔ **ORDER CORRECTED 2026-09-10, at the maintainer's direction.** This list first put the fix pass
+BEFORE Track B, which contradicted its own rationale: Track B reads the same band and can find more
+instances of the very shapes being fixed, which would force a second fix pass per shape. It also
+matches the standing instruction for this whole stream -- record now, repair together later.
+
+⚠ **What waiting costs, stated so it is a decision and not an accident.** Two HIGH rows keep their
+risk until the fix pass. `[W1-QUOTA-UNLIMITED]` deletes snapshots permanently, and this machine's
+`experimental.json` was measured at `5120` -- ONE step below the point where `ApplyAutoQuota` sets
+"Unlimited" by itself. ⭐ **No-code mitigation until the fix lands: leave *Auto-adjust quota* off
+and do not pick *Unlimited*.** `[W1-SNAP-FAULT]` stores a faulted chunk as complete, but it needs a
+faulting object-decryption stub, which in practice means active reversing work on an encrypted title.
 
 ⚠ **Do not start Track B before Track A.** Every instance a gate finds is an instance an agent does
 not have to be paid to read for — and on current numbers the gates would have caught **at least
