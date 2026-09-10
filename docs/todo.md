@@ -2026,7 +2026,7 @@ three), the shape that produced the June sweep's most important result.
 | A1 APP-SHELL | ✅ | 3 (+0 gap-fill) | 7 | 6 | **0H 1M 5L** | 2026-09-10 |
 | A2 SCAN-CORE ×2 · DLL-OTHER | ✅ | 4 (+0 gap-fill) | 11 | 9 | **0H 2M 7L** | 2026-09-10 |
 | A3 WIRE · CE-BRIDGE · WIRE-DTO | ✅ | 4 (+0 gap-fill) | 13 | 12 | **0H 4M 8L** | 2026-09-10 |
-| A4 AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | ⬜ | | | | | |
+| A4 AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | ✅ | 5 (+0 gap-fill) | 18 | 14 | **0H 4M 10L** | 2026-09-10 |
 
 ### ✅ A1 SWEPT 2026-09-10 `[TRACKB-A1-2026-09-10]` — APP-SHELL: 7 raised, 6 confirmed (1 MED · 5 LOW), 1 refuted
 
@@ -2886,6 +2886,317 @@ coordinate that B21's note says must be a visible rejected row. The Lua fence is
 - `[A3-PTR-NAV-REPAINT]` joins the same-object staleness bundle.
 - `[A3-CEFORM-4X-STALESLAB]` rides on `[A2-UFUNC-TAIL-4X]`.
 
+### ✅ A4 SWEPT 2026-09-10 `[TRACKB-A4-2026-09-10]` — the feature surfaces: 18 raised, 14 confirmed (4 MED · 10 LOW), 4 refuted — TRACK B IS CLOSED
+
+- **Scope: 10,346 never-audited lines in 81 files, across seven clusters:** AURA-GRAPH, SNAPSHOT,
+  PIVOT-SPC, VALUESEARCH, LIVEWALKER, OBJTREE, EXPORT and TELEPORT.
+- **Five finders, not the plan's four:**
+  - A4-1: Aura + Snapshot + Pivot/SPC
+  - A4-2: Value Search
+  - A4-3: Live Walker
+  - A4-4: the browse panels + the exporters
+  - A4-5: Teleport + the gameplay modules
+- **Coverage reconciled:** 21/21, 7/7, 7/7, 29/29 and 17/17 files; no gap-fill.
+- **Every lens hit its known positive:** `[P1-SPARSEDELEGATE-REFS]`, `[P5-GROUP-ADVICE]`,
+  `[A3-CONTAINER-4096-ADVICE]` + the LWREFRESH loop, `[P3-SDK-GUESSED]` and `[P1-SEETHRU-GIVEUP]`.
+- **Cost:** 15 agents, ~3.7M tokens.
+- **Constraints:** source reads only, with no CE, game, UI or build. **Nothing fixed.** All four
+  MEDs were re-read at their source by hand.
+- **Evidence beyond reading:**
+  - decompiled Avalonia 12.1.x (DataGrid and Base);
+  - fetched CUE4Parse's enum readers;
+  - vendored UE 5.8 unversioned serialization, Dumper-7 and RE-UE4SS;
+  - Python models of the CDOSCOPE preview loop, the AB4 verdict chain and the export anchor/clean order.
+
+⭐⭐ **THIRTEEN OF THE FOURTEEN ARE FIX-PASS CLAIMS NOT KEPT.** Each fix is named with its tag in the
+rows below; they are CDOSCOPE, AB4, V4, e88190ba, e0dec505, X5, CEPATHS, audit #5 W1, Z10,
+D4B-DELEGATEPAD, BADGEPRIME and AF5. Across Track B the count is **34 of 41**. See the close-out at the
+end of this section.
+
+##### ⛔ `[A4-NAV-BACKFIRST-GRAFT]` MED — a row clicked during Back's walk grafts the old level's field onto the new parent
+
+`LiveWalkerViewModel.cs:1090-1095`. V4's fix claims that capturing the parent "at gesture time" handles
+the reverse ordering. It does not:
+- `GoBackAsync` pops the crumb synchronously (`:2352-2356`), then awaits the walk. The grid keeps
+  showing the level just left, and the Back button has no `IsEnabled`.
+- A → click on one of those stale rows captures `parentAtGesture = CurrentCrumb`, which is already
+  the popped-to crumb.
+- `IsStillOnParent` then passes, and the old level's `field.Offset` is appended under the new parent.
+- Copy CE XML, Copy CE Field, the AA script and a saved bookmark all persist the wrong chain. This is
+  V4's own corruption, through the half its re-derivation named (test #2, never written).
+
+The same window is open after Parent, Forward and a breadcrumb jump. The container drill takes the
+same path.
+- ✅ **Safe fix:** stamp which crumb the rendered `Fields` belong to, and compare that stamp to
+  `CurrentCrumb` by reference at gesture entry.
+  - Do it BEFORE the scroll-hint and view-state writes, in both `NavigateToFieldAsync` and
+    `NavigateToContainerAsync`.
+  - Set the stamp at EVERY Fields-population site, including the six that bypass `UpdateDisplay`,
+    and after `HydrateSlot` / `PathStepToBreadcrumbs` rebuild crumbs.
+  - Add the re-derivation's test #2.
+- ⛔ **Unsafe:**
+  - `IsEnabled="{Binding !IsLoading}"` on row buttons: every auto-refresh tick would blink them off,
+    and `IsLoading` is one shared flag;
+  - a global nav mutex;
+  - clearing `Fields` on Back, where the Reset jumps the grid to the top.
+
+##### ⛔ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again
+
+`LiveFieldValue.cs:578-583` + `LiveWalkerPanel.axaml.cs:448-459`. `_editableValue` is set only by the
+editor's TwoWay binding and is never reset. Since LWREFRESH the row object survives the post-commit
+refresh, so the last typed text survives with it. The refuter decompiled Avalonia to confirm two
+things:
+- **Opening the editor does not overwrite it:** `BindingExpression.StartCore` publishes to the
+  target before subscribing.
+- **Committing does not push the TextBox either:** the template column's `CellEditBinding` is null.
+
+**Scenario:** type 250 into Health and commit; the game drops Health to 57; double-click the cell and
+press Enter without typing. 250 is written again, with *"Written: Health = 250"*. An older variant
+needs no refresh at all: Escape, then reopen and Enter. Under `[P4-OTHER-INSTANCE]`, instance A's text
+is written into instance B.
+- ✅ **Safe fix:** reset the pending value when an edit BEGINS. `FieldGrid_BeginningEdit` calls a
+  `LiveFieldValue.ResetPendingEdit()` after its `!IsEditable` check. This also closes the Escape
+  variant.
+- ⛔ **Unsafe:**
+  - resetting in `CopyLiveValuesFrom` only: it misses the Escape variant, and a mid-edit refresh
+    would drop typed text;
+  - going back to row replacement;
+  - comparing against the current value, which silently drops a deliberate re-type.
+- 🟡 **UNDECIDED, same loop:** the in-place branch clears the `IsEditing` latch unconditionally
+  (`:6562`) while an editor may now survive the copy.
+
+##### ⛔ `[A4-PARENT-CRUMB-VTABLE]` MED — the Parent (Outer) crumb claims `[child + 0]` with a dereference, so CE exports through a Parent hop read the child's vtable
+
+`LiveWalkerViewModel.cs:2577-2584` (hand-verified): `FieldOffset = 0, IsPointerDeref = true`. The
+e88190ba fix named exactly this shape as the defect ("a positive claim of `[UWorld + 0]`") and gave the
+`-1` sentinel to two producers of an Outer hop. `GoToParentAsync` is the third, and was missed. So an
+Instance-Finder object followed by Parent exports `[E+0]`, E's vtable, and every ULevel record is
+applied to it. A GWorld spine passes the AA script's `FieldOffset >= 0` gate too.
+- ⛔ **The finding's own fix is PARTLY HARMFUL.** The refuter modelled it in Python: stamping `-1`
+  breaks the commonest Parent use, drilling Actor › RootComponent and pressing Parent. Both XML
+  commands run `AnchorAtLastUnchainableHop` BEFORE `CleanBreadcrumbs`, so the `-1` re-roots the chain
+  before the cycle collapse. A restart-stable GWorld chain would become a session-only address.
+- ✅ **Safe fix, either of:**
+  - (a) in `GoToParentAsync`, when `parentAddr` is already on the spine, truncate to that crumb, as a
+    breadcrumb jump does; stamp `-1` only otherwise;
+  - (b) run `CleanBreadcrumbs` before `AnchorAtLastUnchainableHop` in both export commands.
+- Add both scenarios as tests. Do not special-case the name "Outer".
+
+##### ⛔ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty
+
+`UsmapExportService.cs:312-317` (hand-verified). The band header claims the file was *"checked byte for
+byte against the two canonical writers"* (21ca54f8, audit #5 W1). But both vendored writers write the
+enum's REAL underlying property: Dumper-7 `MappingGenerator.cpp:203-208` and RE-UE4SS
+`Generator.cpp:250-254`.
+- **Why it matters:** in unversioned cooked data an enum UPROPERTY is serialized as an integer of its
+  own width (vendored UE 5.8 `UnversionedPropertySerialization.cpp:126-133`, `:261`). CUE4Parse takes
+  that width from the mapping's inner type.
+- **Consequence:** a `ENiagaraCoordinateSpace : uint32` field makes FModel / CUE4Parse read 1 of 4
+  bytes and misalign every later property of that object. The vendored 5.8 tree has 101 non-uint8
+  enums used directly as UPROPERTY types (136 properties).
+- **Arm 3** (`:349-356`, a ByteProperty with an enum) is written as a bare ByteProperty, so every
+  `TEnumAsByte` shows as a number instead of its name.
+- **Arm 2** (container inners) is narrowed by the refuter: 5.8 serializes container enums as FName
+  through `SerializeItem`, so its desync is doubtful.
+- Not caught: the round-trip test reader skips the inner as one byte, and the register row W1/W7 only
+  "loads" a mapping.
+- ⚠ `docs/audit-2026-09-05-vendor-ue582.md:430` asserts that *".usmap has no underlying-type field"*.
+  Both vendored writers contradict it.
+- ✅ **Safe fix:**
+  - Arm 3: emit the canonical fake `[26][0][enumName]`.
+  - Arm 1: map `Size` 1/2/4/8 to Byte/UInt16/Int/Int64, falling back to Byte, never 0xFF.
+  - Make the test reader recurse, and add a Size=4 case.
+  - The exact fix is a DLL-side underlying-type key on `walk_class`.
+- ✅ **Register:** add a step that PARSES an asset with a non-uint8 enum, using both our `.usmap` and a
+  Dumper-7 one.
+
+##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
+
+`Aura.cpp:4985-5002`. `previewBaseOf` breaks at the first preview class on the super chain and
+memoizes it. An exact instance short-circuits too. So an ancestor row reads *"(CDO default)"*, which
+Aura.h defines as *"subclasses were searched and none was live"*, while Force and Freeze on the same
+row act on N live instances. That is the disagreement CDOSCOPE was written to remove, reached through
+its own untested chain walk. Modelled in Python: `Pawn · BaseEyeHeight` samples `Default__Pawn`.
+- ✅ **Safe fix:** credit EVERY preview class on the chain, including for exact hits, starting from the
+  super. Keep the per-class memo, and pin it as a pure helper.
+
+##### `[A4-CDOSCOPE-NESTED-PREVIEW]` LOW — CDOSCOPE removed the swap that kept Deep nested rows out of preview; container-element rows now show a wrong Preview
+
+`Aura.cpp:5075` → `Ubel.cpp:6479`. A nested row's lookup key became its root field's defining class. A
+Deep search matching both a direct field and a `Slots[].Count` leaf of the same class therefore
+previews `inst + 0x08`, a UObject header word, sometimes with a source suffix. Aura.h:604, the band
+comment and a69e23ba's body all promise that nested rows are never previewed.
+- ✅ **Safe fix:** skip `isNested` rows in the Phase-2 loop.
+- ⛔ **Unsafe:** restoring the swap, which brings back CDOSCOPE's proxy defect.
+
+##### `[A4-PIVOT-CROSSGAME-ID]` LOW — Class Pivot restores the previous game's snapshot pick and class list into a different game
+
+`ClassPivotViewModel.cs:479-520`, `:562`, `:672`. Snapshot ids are per-game-DB `AUTOINCREMENT`, and
+`SetEngineState` switches the DB file but clears neither `_classCache` nor `_fieldCache`. So after a
+reconnect to a different game:
+- AF5's restore-by-Id preselects B#5 instead of the newest;
+- A's cached class list is shown for it, under a normal status.
+
+The prune comment *"a recaptured Id can't ever read a stale list"* holds within one file only.
+Out-of-band twins that carry picks across a game switch by Id: `SnapshotViewModel.RefreshAsync :632-643`
+and `SpcQueryViewModel.RefreshAsync :453-467`.
+- ✅ **Safe fix:**
+  - put the PeHash into both cache keys, captured at load start;
+  - drop the kept selection and ticks only when the PeHash CHANGED;
+  - fix the three twins together.
+- ⛔ **Unsafe:**
+  - clearing inside `SetEngineState`: it also runs on a same-game Extra Scan, which reopens AF5;
+  - a clear alone: an in-flight load re-inserts A's list after it.
+
+##### `[A4-AB4-UINT64]` LOW — AB4's ordered-predicate verdict never covers the 64-bit members, so `Bigger -5` still drops every UInt64Property field
+
+`Radar.cpp:494-513`. `IntegerMemberRange` has no UInt64 or Int64 arm, and its premise ("one that
+parsed as unsigned fits UInt64") is false for a negative target. So:
+- UInt64 gets no entry at all, and every UInt64Property is silently skipped on first scan and pruned on
+  refine;
+- `Smaller 9223372036854775808` drops every Int64 field the same way.
+
+The AB4 commit says *"Bigger -5 dropped every UInt16/UInt32/UInt64 field … the same verdict covers
+it"*. Modelled in Python. `dll_helpers_test` asserts only UInt16/32.
+- ✅ **Safe fix:** a UInt64 arm with an exact `scalar >= 2^64` upper test, and an Int64 arm with an
+  exact `>= 2^63` test. Rewrite the false comment, and pin `FindEntry(UInt64)`.
+- 🟡 **Records gap:** the AB4 "Between" residual is cited as "recorded in todo.md" by three sources
+  and is NOT there. It survives only in `working-lessons.md:2805-2807`.
+
+##### `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint
+
+`LiveWalkerViewModel.cs:2822` (+ `:2758`). This is the path the stale warning itself names as common:
+Snapshot and Pivot handoffs, 13 cross-tab handlers, the Go box, Find Refs' Open. The freed object opens
+to an empty grid with *"← Back returns to X"*, or with nothing at all. The same commit, e0dec505, wrote
+the opposite ordering rule into the GoBack twin.
+- ✅ **Safe fix:** compose at both sites; never assign `""` over a status.
+- ⛔ **Unsafe:** moving the hint before the walk, which loses the only return path when the user needs
+  it most.
+
+##### `[A4-LW-DISCONNECT-PARENT]` LOW — X5's ClearOnDisconnect leaves the Parent button, the References header and the function list
+
+`LiveWalkerViewModel.cs:5805-5833`. The method promises *"a reconnect never shows an object (and its
+live addresses) from the previous game"*. But `HasParent` / `CurrentOuter*`, `HasReferences` and
+`_allFunctions` survive:
+- the Parent button stays live, and after a reconnect it walks the previous process's Outer address
+  under a stale crumb;
+- the Functions filter brings the old game's UFunctions back.
+
+X5's live PASS was rooted at UWorld, where `HasParent` is false, so it could not see this.
+- ✅ **Safe fix:** call `ClearDisplayedNode()` + `ClearReferences()`, and clear the function list.
+  `Flush()` the keyword memory first if the filter box is blanked.
+
+##### `[A4-PUSHCE-UNPADDED]` LOW — the batch "Push CE Field(s)" still pushes the unpadded FieldAddress
+
+`LiveWalkerViewModel.cs:4800-4802`. `[CEPATHS-UNPADDED-2026-09-09]` moved HEX and +CE to
+`PayloadAddress` and claims *"both CE-facing handlers"*. The batch push is a third, self-described as
+*"the multi-select batch form of the per-row +CE"*. On a checked build a delegate row lands on the
+access detector.
+- ✅ **Safe fix:** `field.PayloadAddress` at `:4802` only. Correct the stale doc at `:5479-5480`, and
+  add a caller-level test.
+
+##### `[A4-GAMEONLY-ADVICE]` LOW — Interesting Functions and Console advise "Game classes only" when it is already ticked
+
+Interesting Functions `:650-665`, Console `:287-293`. This turns the P5 lead into a measured defect.
+Z10's written rule, *"only while it is still OFF"*, reached Property Search only (same commit
+a87706c7). Interesting Functions defaults the box to ticked, so its only advice is already applied.
+Two tests PIN the wrong text. The panels' checkbox actually reads "Game Only".
+- ✅ **Safe fix:** carry the scan-time GameOnly in `LoadScanFacts`, capture Console's before its
+  await, and invert the two tests. Never read the live checkbox.
+
+##### `[A4-DELEGATE-ARRAY-PAD]` LOW — CE XML / CSX element leaves of a `TArray<FScriptDelegate>` read the checked-build access detector
+
+`CeXmlExportService.cs:2890-2912`, `:4133-4140`, and CSX `ConvertArrayPointerElementsToFields :706`. The
+band comment says the field projection folds `DelegatePad`, "so nothing here needs to know". That is
+true for FIELDS and false for ELEMENTS. The DLL's sixth D4B site states the contrary for exactly this
+type.
+- ⛔ **Unsafe:**
+  - "add `field.DelegatePad`", which is 0 on an ArrayProperty;
+  - setting the pad on the ARRAY field, which moves the group header off `Data`;
+  - gating on `ArrayInnerType == "DelegateProperty"` alone, which breaks the correct multicast path.
+- ✅ **Safe fix:** a DLL-sent per-element pad, applied only when `TypeName == ArrayProperty`, to the
+  live loop, the fabricate tail and CSX.
+
+##### `[A4-STEALTH-PRIME]` LOW — BADGEPRIME's connect prime skips the Stealth card, and gate 17d cannot see it
+
+`TeleportViewModel.cs:2330-2331` / `:2373-2399`. The fix promises a *"read-back of EVERY badge the
+disconnect branch resets"*. Stealth is reset with a tuple assignment and never primed.
+- So after a reconnect the card reads "Off" while Solide keeps holding the meter.
+- The M9 experimental gate-off keys on `StealthState` and therefore releases nothing.
+- Gate 17d matches only `Apply\w+State(-1)`, so it prints `CHECK OK` (measured).
+- Adjacent: Property Search's `ClearOnDisconnect` empties the Forced-fields strip claiming "holds die
+  with the process", which is false for a pipe drop.
+- ⛔ **Unsafe:** treating any numeric job at 0 as the Stealth hold. It may be a Property Search Force,
+  and gate-off would then release it.
+- ✅ **Safe fix:** intersect `find_stealth_meter`'s candidates with `get_forced_fields`, and fall back
+  to an honest "Unknown". Teach gate 17d the tuple form.
+
+##### ⛔ REFUTED — do not re-raise
+
+- **`A4-2-2`** "the All-fields token is global, so slot B's click drops slot A's list". The command is
+  a default `AsyncRelayCommand`, which disables every bound button while one fetch is pending, so the
+  second click cannot happen. The token's justifying comment is inaccurate; correct it.
+- **`A4-4-02`** "ClassStruct / ObjectTree ClearOnDisconnect leaves IsLoading stuck". The in-flight
+  load's failure continuation is Posted BEFORE the reset, and at higher dispatcher priority (Normal vs
+  Default, from decompiled Avalonia.Base). So the ticketed `finally` clears the flag first. Lead,
+  unmeasured: ClassStruct's `ClearOnDisconnect` never calls `ClearError`.
+- **`A4-5-2`** "ClearAll's busy bail still clears the markers". The mechanism is RECORDED (the "Clear
+  all markers can raise three dialogs" row, d515ec19, byte-identical code). **But its recorded fix is
+  insufficient**: a flag at the top of the slot loop cannot stop slot 0's `:266` write after the modal.
+  The safe repair is `if hadError then break end` right after each wait. That row is amended in place.
+- **`A4-5-3`** "TeleportRelative's landing publishes a parent-relative pose unflagged". `pattern_p3.py
+  outparams` at HEAD lists exactly these sites, and `[PATTERN-P3-2026-09-10]` ruled them
+  ALREADY-RECORDED under `[POSEATTACH]`.
+
+##### Leads, not filed
+
+- **Float Exact twin:** live Value Search matches `513.36` against a float `513.36f`; Snapshot Group
+  / SPC never do. `SnapshotNumeric.ExactMatch` compares the float against the user's double.
+  Unmeasured.
+- **Value Search on a two-lane disconnect:** a game crash mid-scan may read "First Scan cancelled."
+  (AE23-shaped). The experiment is written in the result.
+- **Group refine:** it re-targets slots in place before knowing every slot parses (`Fern.cpp:3674-3707`).
+- **Live Walker refresh inside a container view** shrinks a full-length scalar array back to
+  ArrayLimit rows. `[P4-CONTAINER-BASE]` calls that branch correct only below the limit.
+- **Solide SOLIDE-REFUSAL:** a refused re-arm has already changed the job's value. Unreachable from the
+  UI today.
+- **Laufen's B22 refusal** lands on the "no pawn" message, widening `[W2-MS-PROMISE]`.
+- **`UsmapExportService.GenerateUsmapAsync`** drops classes whose walk throws, without counting them
+  (P1).
+- **Interesting Functions / Properties / Console / Property Search `ClearOnDisconnect`** do not
+  supersede an in-flight Task.Run scoring pass. The window is sub-second.
+- **Serie off-by-one** at `maxChunks`. Effect near nil.
+- **A third `[A2-TOPTIONAL-INTRUSIVE]` twin** in Value Search's V1c gate. String scans only.
+- **Stale comments** say no test compiles `Aura.cpp`.
+
+---
+
+#### ⭐⭐ TRACK B CLOSE-OUT — the >2026-08-03 blank is swept
+
+| wave | lines | finders | raised | confirmed | refuted | fix-pass claims not kept |
+|---|---:|---:|---:|---|---:|---:|
+| A1 APP-SHELL | 6,695 | 3 | 7 | 6 (1M 5L) | 1 | 5 / 6 |
+| A2 DLL core | 7,334 | 4 | 11 | 9 (2M 7L) | 2 | 7 / 9 |
+| A3 the wire | 7,409 | 4 | 13 | 12 (4M 8L) | 1 | 9 / 12 |
+| A4 feature surfaces | 10,346 | 5 | 18 | 14 (4M 10L) | 4 | 13 / 14 |
+| **Total** | **31,784** | **16** | **49** | **41 (0H 11M 30L)** | **8** | **34 / 41** |
+
+- **Coverage:** every assigned file in every lens was opened (the reconciliation never needed a
+  gap-fill), and every known positive was reported.
+- ⭐ **The finding of the whole track: 34 of the 41 are repairs that state a claim they do not keep.**
+  The claim sits in a comment, a commit body, a doc row, or a test that pins it. The recurring
+  mechanism is a fix that reached some of its twins and not the others: the third producer, the third
+  handler, the other exit, the sibling panel, the batch form of a per-row button. The June band was
+  new code, and its defects were mostly P1 / P3. This band is FIX code, and its defects are mostly P9.
+  **A fix pass is not evidence; the claim it writes down is a new thing to verify.**
+- **The single fix pass comes next, LAST and grouped by shape.** It covers the June blank, Track A and
+  Track B. ⚠ **Live confirmations that need Cheat Engine wait for the maintainer's go-ahead** (another
+  session was using CE throughout Track B):
+  - `[A3-ST1-SUPER-DRAIN]`, `[A3-B30-STALE-FLAG]`;
+  - the USMAP asset-parse step;
+  - the UNDECIDED `IsEditing` latch;
+  - each row's written experiment.
+
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
@@ -2893,7 +3204,8 @@ coordinate that B21's note says must be a visible rejected row. The Lua fence is
    P3, P4 / P7 / P8 and P5 as adjudicated sweeps, P2 and P6 as detectors. **20 new confirmed
    (1 HIGH · 4 MED · 15 LOW)**; P2's and P6's instances were already recorded. The gate-shaped
    detectors (P2, P6) are built and deliberately NOT registered until their instances are repaired.
-3. 🔄 **Track B A1–A4** for what no matcher can reach. **A1 done 2026-09-10**
+3. ✅ **Track B A1–A4** — done 2026-09-10. **41 confirmed (0 HIGH · 11 MED · 30 LOW)**, 34 of them
+   fix-pass claims not kept; see the close-out under `[TRACKB-A4-2026-09-10]`. **A1 done 2026-09-10**
    (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept). **A2 done
    2026-09-10** (`[TRACKB-A2-2026-09-10]`: 2 MED · 7 LOW, settled against vendored engine source).
    **A3 done 2026-09-10** (`[TRACKB-A3-2026-09-10]`: 4 MED · 8 LOW; three of the MEDs break the fix they
@@ -8494,6 +8806,15 @@ deliberately NOT fixed in it: each needs a product decision, not a mechanical ch
   so after a wedged mailbox on slot 0 the loop still runs slots 1 and 2. `hadError` does correctly
   suppress the false "all markers cleared" line and the auto-close, so this is UX cost rather than a
   correctness lie — which is why it was left. Fix = a flag checked at the top of the slot loop.
+  ⚠ *Amended 2026-09-10 by wave A4 (`[TRACKB-A4-2026-09-10]`, refuted A4-5-2).*
+  - *That fix is INSUFFICIENT. A top-of-loop flag cannot stop slot 0's own clear in the same
+    iteration. The DLL drains the mailbox on its own thread while CE sits in the modal "busy"
+    dialog, so after OK the `readInteger(cmd) == 0` re-read at `:266` can pass and clear slot 0
+    anyway. The user then reads "markers not cleared" over cleared markers.*
+  - *The misreport is in the benign direction, so this stays LOW / UX.*
+  - *Safe repair: `if hadError then break end` immediately after BOTH the idle wait and the mailbox
+    wait, which leaves the `for` loop with the deferred untick still reachable.*
+  - *Never change onBusy to `return`: that strands the momentary record ticked.*
 
 -----
 

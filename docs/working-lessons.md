@@ -1788,6 +1788,44 @@ rebuild). ⚠ And the flag's own warning — *"packaging would build the REAL pr
 was printed and lost, because the log was read with `| tail`. **When a tool prints a warning
 about a mode you are not in, `tail` is the wrong reader.**
 
+### 2.20 ⭐ A FIX PASS'S WRITTEN CLAIM IS A NEW THING TO VERIFY — Track B measured it: 34 of 41
+
+The >2026-08-03 blank (31,784 lines; `docs/todo.md` `[TRACKB-A1-2026-09-10]` … `[TRACKB-A4-2026-09-10]`)
+was mostly FIX code: audit #5's repairs, D1–D5 and the blind-spot sweeps. **34 of its 41 confirmed
+defects were repairs that state a claim the code does not keep.** The claim lived in one of four
+places:
+- a comment: *"stable across all UE versions"*, *"checked byte for byte against the two canonical
+  writers"*;
+- a commit body: *"our calls stop entering the detour at all"*;
+- a closing doc row;
+- a test that pins the claim rather than the behaviour.
+
+Three of A3's four MEDs broke the very fix they sat in, one of them fixed the same day.
+
+The recurring mechanism is §2.17's, generalised: **the fix reached some of its twins and not the
+others.** The twins it missed were:
+- the third producer of a crumb shape;
+- the third CE-facing handler;
+- the batch form of a per-row button;
+- the other two DLL exits;
+- the sibling panel;
+- the C# emitter of the same Lua idiom the helper was fixed for;
+- the ancestor preview class;
+- the badge reset with a tuple instead of the helper the gate greps for.
+
+The mechanical pattern sweeps found few of these, because the twin relation is written in PROSE,
+not in a symbol a matcher can follow. (It is also why every gate here needs a negative control on
+the population, not just on the rule: gate 17d went green over the Stealth badge it was written for.)
+
+**How to apply.**
+1. When verifying or auditing a fix, do not stop at "the cited site now behaves". Find the sentence
+   the fix wrote: `git show -s <sha>`, the comment above the change, the row that closed it.
+2. Treat each quantifier in it as a claim to enumerate: *every* badge, *both* handlers, *the only*
+   decoder, *all* versions, *nothing here needs to know*.
+3. List the population that word ranges over, and check each member.
+4. A fix should write its claim so it is enumerable. Name the set, and pin it with a test that
+   iterates the set rather than one that names the members the author remembered.
+
 
 ## 3. Traps in our own stack
 
