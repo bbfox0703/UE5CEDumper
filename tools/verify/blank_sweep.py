@@ -3,6 +3,9 @@ r"""The 06-01..07-03 blank sweep -- clusters, hunks and the per-agent diet.
     py tools/verify/blank_sweep.py clusters            # the batching table
     py tools/verify/blank_sweep.py files SNAPSHOT      # one cluster's files
     py tools/verify/blank_sweep.py hunks SNAPSHOT      # the band's LINE RANGES, per file
+    py tools/verify/blank_sweep.py months              # when the band's lines were authored
+
+    ... --band aug                                     # the OTHER blank (>2026-08-03)
 
 The band is author-time 2026-06-01 .. 07-03: the window that NO audit ever scoped. 50,451
 surviving production lines across 211 files, the largest never-audited block in the tree.
@@ -31,7 +34,16 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import audit_coverage as ac  # noqa: E402
 
-LO, HI = 1780272000, 1783036800   # 2026-06-01 .. 2026-07-03, the never-audited band
+# The two never-audited bands, as (label, inclusive-lo, exclusive-hi) author-time epochs.
+# `jun` is the 31.3% hole between audit #5's predicate and audit #3's window opening.
+# `aug` is everything after audit #4 closed -- 19.7%, and it is STILL GROWING, which is the
+# one structural difference between them: `jun` is a closed interval that can be swept once,
+# `aug` accumulates every commit made since. Sweep it and it starts refilling the next day.
+BANDS = {
+    'jun': ('2026-06-01..07-03', 1780272000, 1783036800),
+    'aug': ('>2026-08-03',       1785715200, 9999999999),
+}
+BAND_LABEL, LO, HI = BANDS['jun']
 
 # (cluster, regex over the repo-relative path). FIRST match wins, so order is precedence.
 # `ui/UE5DumpUI/` and `dll/src/` sit last as catch-alls; `clusters` fails loudly on anything
@@ -139,6 +151,34 @@ def ranges(lines):
     return [(a, b) for a, b in out]
 
 
+def cmd_months() -> int:
+    """Author-month histogram for the selected band.
+
+    Only meaningful for `aug`, and that is the point: `jun` is a closed 32-day interval,
+    while `aug` runs to HEAD and therefore contains code written days ago by the work that
+    is doing the sweeping. Lines authored this week were reviewed in their own PR and are
+    not 'never audited' in the sense the older months are -- so the histogram is what tells
+    you how much of the band is genuinely stale.
+    """
+    import collections
+    import time
+    months = collections.Counter()
+    files = ac.source_files(production_only=True)
+    for n, f in enumerate(files):
+        for _, t in ac.blame(f):
+            if LO <= t < HI:
+                months[time.strftime('%Y-%m', time.gmtime(t))] += 1
+        if n % 60 == 0:
+            print('  ...%d/%d' % (n, len(files)), file=sys.stderr, flush=True)
+    tot = sum(months.values())
+    print('\nband %s -- %d lines by author-month\n' % (BAND_LABEL, tot))
+    for m in sorted(months):
+        v = months[m]
+        print('  %-9s %7d  %5.1f%%  %s'
+              % (m, v, 100.0 * v / max(tot, 1), '#' * (v * 40 // max(tot, 1))))
+    return 0
+
+
 def cmd_clusters() -> int:
     g = scan()
     order = [r[0] for r in RULES] + ['*** UNASSIGNED']
@@ -200,14 +240,24 @@ def cmd_hunks(name: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--band', choices=sorted(BANDS), default='jun',
+                    help="which never-audited band (default: jun, the 06-01..07-03 hole)")
     sub = ap.add_subparsers(dest='action', required=True)
     sub.add_parser('clusters')
+    sub.add_parser('months')
     for a in ('files', 'hunks'):
         p = sub.add_parser(a)
         p.add_argument('cluster')
     a = ap.parse_args()
+
+    global LO, HI, BAND_LABEL
+    BAND_LABEL, LO, HI = BANDS[a.band]
+    print('band: %s  (%s)' % (a.band, BAND_LABEL), file=sys.stderr)
+
     if a.action == 'clusters':
         return cmd_clusters()
+    if a.action == 'months':
+        return cmd_months()
     return cmd_files(a.cluster) if a.action == 'files' else cmd_hunks(a.cluster)
 
 

@@ -66,7 +66,8 @@ SRC_EXT = ('.cpp', '.h', '.hpp', '.cs', '.py', '.lua', '.axaml', '.ps1', '.asm',
 #   ONE file is enough to matter: the trap is not volume, it is that a PLAN to sweep a file
 #   reads identically to a RECORD of having swept it. Tagged the moment the section was
 #   written, and the audit-#4 blank re-measured afterwards to prove the guard held.
-SELF_REFERENTIAL_TAGS = ('[A4-ASSESS-2026-09-09]', '[BLANK-0601-PLAN-2026-09-10]')
+SELF_REFERENTIAL_TAGS = ('[A4-ASSESS-2026-09-09]', '[BLANK-0601-PLAN-2026-09-10]',
+                          '[BLANK-AUG-PLAN-2026-09-10]')
 
 
 def git(*a: str) -> str:

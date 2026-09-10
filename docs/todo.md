@@ -904,6 +904,124 @@ measured tree-wide, are worth more than eleven speculative findings would have b
 
 -----
 
+## ⛔ THE SECOND BLANK — `[BLANK-AUG-PLAN-2026-09-10]` the 31,784 lines after audit #4 closed
+
+**Status: PLANNED, NOT STARTED.** Planned while W4 of the June sweep was still running, at the
+maintainer's direction, because the June sweep's confirmed defects fall into **repeating shapes**
+and a fix pass that repairs a shape everywhere at once is far cheaper than one that repairs it
+twice.
+
+### What it is — measured, not estimated
+
+```
+py tools/verify/blank_sweep.py --band aug months
+py tools/verify/blank_sweep.py --band aug clusters
+```
+
+**31,784 surviving production lines across 242 files (19.7% of the tree)**, authored after audit
+#4's window closed on 2026-08-03. By author-month:
+
+```
+  2026-08     27516   86.6%  ##################################
+  2026-09      4268   13.4%  #####
+```
+
+⭐ **86.6% is a single month**, and it is the month that followed audit #4 — heavy fix and feature
+work. ⚠ **Audit #5's own fixes are inside this band**: #5 audited pre-2026-06-01 code and its
+repairs were written in August, so the repairs have never themselves been audited.
+
+⛔⛔ **THE ONE STRUCTURAL DIFFERENCE FROM THE JUNE BLANK, AND IT CHANGES THE PLAN.** `jun` is a
+**closed** 32-day interval: sweep it once and it is done forever. `aug` runs to **HEAD** and
+accumulates every commit made since — **sweep it and it starts refilling the next day.** A
+one-shot area sweep of this band therefore has a shelf life. That is the argument for Track A
+below being permanent machinery rather than another read-through.
+
+| cluster | band | whole | files | band% | UNNAMED | notes |
+|---|---:|---:|---:|---:|---:|---|
+| APP-SHELL | 6,695 | 22,514 | 69 | 30% | **2,966 (44%)** | biggest; `CeLuaHygiene.cs` 742/864 |
+| SCAN-CORE | 4,469 | 20,177 | 17 | 22% | 28 | `Ubel.cpp` 1,586 · `Genau.cpp` 840 |
+| WIRE | 3,429 | 13,337 | 11 | 26% | 0 | `Fern.cpp` 1,232 · `Frieren.cpp` 797 |
+| DLL-OTHER | 2,865 | 5,726 | 15 | **50%** | 130 | the only whole-file cluster |
+| CE-BRIDGE | 2,471 | 9,359 | 17 | 26% | 70 | 5.5× its June size |
+| AURA-GRAPH | 2,126 | 12,641 | 4 | 17% | 77 | |
+| VALUESEARCH | 1,892 | 6,939 | 7 | 27% | 112 | |
+| LIVEWALKER | 1,781 | 10,277 | 7 | 17% | 84 | |
+| OBJTREE | 1,623 | 9,506 | 20 | 17% | 91 | |
+| WIRE-DTO | 1,509 | 4,595 | 32 | 33% | **821 (54%)** | |
+| TELEPORT | 1,360 | 13,593 | 17 | 10% | 116 | |
+| EXPORT | 1,146 | 12,021 | 9 | 10% | 0 | |
+| SNAPSHOT | 283 | 5,753 | 9 | 5% | 130 | |
+| PIVOT-SPC | 135 | 3,319 | 8 | 4% | 122 | |
+| **TOTAL** | **31,784** | **149,757** | **242** | 21% | 4,747 | |
+
+⚠ **band% is 21% here against 38% in June**, so **thirteen of fourteen clusters get HUNKS**, not
+whole files. Only `DLL-OTHER` (50%) is read whole.
+
+---
+
+### ⭐⭐ TRACK A — the PATTERN sweep, and it goes FIRST
+
+The June sweep's confirmed defects are not independent bugs; they are **instances of a small number
+of shapes**. Each shape can be searched for mechanically across the **whole tree** — not just this
+band — which is both cheaper than reading and strictly more complete than any reader.
+
+⛔ **Two of these are already on the fix list as gates.** That is the point: **a gate IS a permanent
+tree-wide pattern sweep**, and it is the only form of this work that survives the band continuing
+to grow. Build the gates first and Track B shrinks.
+
+| # | shape (from the June sweep's confirmed rows) | mechanical search | status |
+|---|---|---|---|
+| **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | every `stats`/out-param member of a DLL result struct → does a key reach `Fern.cpp`? `tools/verify/pipe_wire_parity.py` **already does this** | ⬜ re-run tree-wide |
+| **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ⬜ **`[W1-GATE-JSONDEFAULT]`** — already planned |
+| **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ⬜ **new gate, and the highest-value one** — this is W2's headline defect |
+| **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
+| **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ⬜ partly covered by `docs/todo.md:1314` |
+| **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | ⬜ **`[W1-GATE-SESSIONGATE]`** — already planned |
+| **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | ⬜ new check |
+| **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | ⬜ new check |
+
+⚠ **P9 — "a promise in a status line the code did not keep"** has no mechanical form and stays a
+reading job. It is the reason Track B still exists.
+
+⭐ **Run Track A against the WHOLE TREE, including the June band.** June was swept by *readers*;
+a pattern matcher will reach instances a reader's attention did not, and the June band is now the
+best-labelled corpus we have for validating each matcher (every confirmed row is a known positive —
+**a matcher that does not re-find its own June instances is broken**, which is the red-before-green
+control for this work).
+
+---
+
+### TRACK B — the area sweep, 4 waves
+
+Same protocol as the June waves: finders → adversarial refuters (default REFUTED,
+`implied_fix_safe` mandatory) → hand adjudication → ledger row + commit. **One wave per session.**
+
+| wave | clusters | band | finders | shape |
+|---|---|---:|---:|---|
+| **A1** | APP-SHELL ×2 | 6,695 | 2 | two lenses, as W3 |
+| **A2** | SCAN-CORE ×2 · DLL-OTHER | 7,334 | 3 | the DLL core — `Ubel` (the UStruct walker) and `Genau` (the offset finder) barely appeared in June |
+| **A3** | WIRE · CE-BRIDGE · WIRE-DTO | 7,409 | 3 | ⭐ the whole wire surface in ONE wave, so P1/P3 can be judged across all three transports at once |
+| **A4** | AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | 10,346 | 4 | ⭐ **every one of these was already swept in June** — same files, different lines, so the recorded rows are a map and the agents start with context |
+
+⭐ **A3 is deliberately shaped around the patterns, not around size.** Putting `WIRE`, `CE-BRIDGE`
+and `WIRE-DTO` in one wave means a single agent set holds the pipe, the mailbox, the C ABI exports
+and the DTOs simultaneously — which is exactly what it takes to see P3 (a fix on one transport of
+three), the shape that produced the June sweep's most important result.
+
+### Order, and why
+
+1. ⬜ **Finish the June sweep** (W5) — it is 4/5 done and its fix list is the input to everything else.
+2. ⬜ **Build Track A's gates**, validating each against the June band's known positives.
+3. ⬜ **ONE fix pass covering both blanks**, grouped **by shape, not by file** — the maintainer's
+   reason for planning this now.
+4. ⬜ **Track B A1–A4** for what no matcher can reach.
+
+⚠ **Do not start Track B before Track A.** Every instance a gate finds is an instance an agent does
+not have to be paid to read for — and on current numbers the gates would have caught **at least
+four** of the June sweep's confirmed rows outright.
+
+-----
+
 ## Closed work is not here
 
 Three sections used to sit at the top of this file — the Ghidra-free sweep (build 2545), the
