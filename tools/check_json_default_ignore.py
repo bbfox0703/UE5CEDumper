@@ -54,8 +54,14 @@ PRIMITIVES = {'bool', 'byte', 'sbyte', 'short', 'ushort', 'int', 'uint', 'long',
 DEFAULT_LIT = re.compile(r'^(?:0+(?:\.0*)?[fFdDmMuUlL]*|0x0+|false|default(?:\([^)]*\))?|null)$')
 NEVER = re.compile(r'JsonIgnore\s*\(\s*Condition\s*=\s*JsonIgnoreCondition\.Never\s*\)')
 WWD_PROP = re.compile(r'JsonIgnore\s*\(\s*Condition\s*=\s*JsonIgnoreCondition\.WhenWritingDefault')
-PROP = re.compile(r'^\s*public\s+(?:required\s+)?([\w<>\[\],.?\s]+?)\s+(\w+)\s*\{\s*get;[^}]*\}'
-                  r'\s*(?:=\s*(.+?);)?\s*(?://.*)?$')
+# UNANCHORED, because it runs under finditer over a whole class body. ⚠ The first attempt at the
+# multi-declaration fix kept this pattern's `^...$` anchors from the old per-line design, and with
+# no re.M they can only ever match a ONE-LINE class body: the selftest failed three cases and the
+# TREE RUN WENT GREEN with the known positive missing. Read on its own, that exit 0 would have
+# recorded P2 as clean. The initializer stops at the first `;` -- a value-type initializer never
+# contains one.
+PROP = re.compile(r'public\s+(?:required\s+)?([\w<>\[\],.?\s]+?)\s+(\w+)\s*\{\s*get;[^}]*\}'
+                  r'(?:\s*=\s*([^;{}]+?)\s*;)?')
 
 
 def strip_comments(src: str) -> str:
@@ -125,18 +131,21 @@ def parse(sources: dict) -> tuple:
             body_start = m.end() - 1
             body = brace_body(src, body_start)
             base_line = src.count('\n', 0, body_start) + 1
-            props, pending = [], []
-            for off, line in enumerate(body.split('\n')):
-                s = line.strip()
-                if s.startswith('[') and s.endswith(']'):
-                    pending.append(s)
-                    continue
-                pm = PROP.match(line)
-                if pm:
-                    props.append((path, base_line + off, pm.group(1).strip(), pm.group(2),
-                                  (pm.group(3) or '').strip(), ' '.join(pending)))
-                if s:
-                    pending = []
+            # ⚠ Declarations are matched ANYWHERE in the body, not one per line. The first draft
+            # anchored a per-line regex with `$`, and its own selftest caught the result: two
+            # properties on one line merged into ONE property whose "initializer" ran to the last
+            # `;` -- it flagged the default-valued one and never saw the other. Attributes are taken
+            # only from the span AFTER the previous `;` or `}`, so a method's attributes can never
+            # leak onto the next property.
+            props, prev = [], 0
+            for pm in PROP.finditer(body):
+                span = body[prev:pm.start()]
+                cut = max(span.rfind(';'), span.rfind('}'))
+                attrs = ' '.join(re.findall(r'\[[^\]]*\]', span[cut + 1:]))
+                props.append((path, base_line + body.count('\n', 0, pm.start()),
+                              pm.group(1).strip(), pm.group(2), (pm.group(3) or '').strip(),
+                              attrs))
+                prev = pm.end()
             classes.setdefault(name, []).extend(props)
 
             if re.search(r':\s*JsonSerializerContext\b', src[m.start():body_start]):
