@@ -25,6 +25,15 @@ r.Aborted` / `? "..."`), and every flag passed to a renderer as an argument -- i
 control now asserts both shapes. Still not followed: a flag stored in a field and rendered elsewhere
 (`_scanTruncated = result.DeadlineHit`) -- one hop away, and a reader's job.
 
+⚠ MEASURED LIMITS (the P5 adjudication, 2026-09-10, `[PATTERN-P5-2026-09-10]`):
+  * the flags axis misses a flag assigned to a LOCAL and copied into stats later -- FindReferencesToUObject
+    (`bool deadlineHit = scan.incomplete();`, Aura.cpp ~3884) is reached only through its wire row;
+  * a cancel that arrives through `scan.deadlineHit` (Tot sets it) is not expanded, so FindInContainersDeep
+    is listed as clock + fault and is really clock + fault + cancel-when-empty;
+  * `per_slot_cap` (a number, not a stop flag) is pulled in by key name;
+  * the "text names" heuristic was wrong on ~12 of 51 UI rows -- it reads catch blocks, comments and the
+    OTHER branch of a ternary. It says where to look, never what the text says.
+
 ⚠ THE "TEMPLATE" IS ONLY HALF A TEMPLATE. The June sweep named `begin_group_scan` the model to copy:
 `deadline_hit`, `per_slot_cap_hit` and `per_slot_cap` as distinct fields. The per-slot cap IS
 separate -- but the survey for this tool found that the group scan's own `deadline_hit` is still set

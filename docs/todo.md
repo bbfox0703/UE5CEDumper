@@ -1263,7 +1263,7 @@ to grow. Build the gates first and Track B shrinks.
 | **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_json_default_ignore.py`, selftest 7/7, tree = 2 rows (1 defect, recorded; 1 benign). Registered in the fix-pass commit that repairs both; see `[PATTERN-P2-2026-09-10]` below. |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ✅ **SWEPT 2026-09-10** — 44/44 ruled, **4 confirmed (1 HIGH · 2 MED · 1 LOW)**, 0 refuted; see `[PATTERN-P4-P7-P8-2026-09-10]` below. All of `LiveFieldValue`'s own `init` members; it has the only copy path that has any (`SpcQueryViewModel.CopyGroupCellsFrom` has none). ⚠ The population missed 10 of 54 members; the one that matters (`StructDataAddr`) was found by reading. |
-| **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | 🔄 **63 rows prepared 2026-09-10**: `tools/verify/pattern_p5.py` (flags / wire / ui axes, control 4/4), 35 DLL+wire rows and 28 UI rows. ⚠ *This cell first said "partly covered by `docs/todo.md:1314`", but that line never held a P5 row (checked at both commits that cited it). The value scan's cap-in-`deadline_hit` is **NOT filed**; its only trace is a rig note in `docs/verification-register.md` (D2, note (c)). The fault half is D2's deliberate residual.* |
+| **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ✅ **SWEPT 2026-09-10** — 86/86 ruled (35 DLL/pipe · 29 UI · 22 UI supplement), **2 confirmed, both LOW**, 1 refuted, 1 overridden to recorded; see `[PATTERN-P5-2026-09-10]` below. Tool: `tools/verify/pattern_p5.py`, control 6/6; its UI axis first missed 36 flag reads, now fixed. ⚠ *This cell first said "partly covered by `docs/todo.md:1314`", a line that never held a P5 row. The value scan's cap-in-`deadline_hit` is filed nowhere, and **needs no filing**: its one consumer names the cap and gives the cap's remedy.* |
 | **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_session_gate.py`, selftest 5/5; 20 snapshot-address handoffs, 16 gated, 4 ungated (Class Pivot, recorded). Registered in the fix-pass commit that gates them; see `[PATTERN-P6-2026-09-10]` below. |
 | **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | ✅ **SWEPT 2026-09-10** — 5/5 ruled, **0 new**: the tree-wide residue is the one recorded instance (Teleport's pose poll). Every other auto path runs its manual path's own code. See `[PATTERN-P4-P7-P8-2026-09-10]` below. |
 | **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | ✅ **SWEPT 2026-09-10** — 9/9 ruled, **1 confirmed (LOW)**, 0 refuted, plus `[W1-CONTAINER-STALE]` widened to `ValueTooltip`; see `[PATTERN-P4-P7-P8-2026-09-10]` below. Tool: `tools/verify/pattern_p8.py`; 3 of its 9 rows were name-collision artifacts (limit recorded in its header). |
@@ -1357,6 +1357,9 @@ code**, which is the behaviour the brief asked for.
    (`deadline_hit=false`) — so when that binding was the only reference, Live Walker says *"No
    references found — likely held by a non-reflected pointer"*, blaming the game for our gap. An
    aggregate channel already exists (`ContainerScanStats`).
+   ⚠ *Widened 2026-09-10 (`[PATTERN-P5-2026-09-10]`): the same hint also prints on a PARTIAL scan,
+   i.e. `deadline_hit=true` from a deadline or a worker fault (`LiveWalkerViewModel.cs:2694`). One fix
+   covers both: never blame the game unless the scan was complete.*
 6. ⬜ **`[P1-SEETHRU-NOPRODUCER]`** `Schlacht.cpp:361` (+ `:443`). On a build missing
    `SetActorHiddenInGame`, `LineTraceSingle` or `KismetSystemLibrary`, or when a hit cannot be
    resolved to an actor, See-through does **nothing at all** — and Tick still ends `STR_OK` with
@@ -1845,6 +1848,157 @@ same-object staleness, and they land as one change right after. `[P8-BOOKMARK-TI
 
 ---
 
+#### ✅ P5 SWEPT 2026-09-10 `[PATTERN-P5-2026-09-10]` — 86/86 ruled, 2 confirmed (both LOW), 1 refuted, 1 overridden to recorded
+
+Three adjudicators ruled every row. Refuters then took every candidate, defaulting to REFUTED. After
+that, three things were settled by hand: both confirmed rows, and one disagreement between batches.
+These are source reads only, because CE and a game were in use by another session. **None of this is
+repaired.**
+
+| batch | rows | ruled | defect rows → outcome | correct merge | not a conflation | recorded | known positive |
+|---|---:|---:|---|---:|---:|---:|---|
+| DLL flags + pipe keys | 35 | 35 | 1 → 1 confirmed | 0 | 24 | 10 | `ScanForValue`, `FindInContainersDeep` → ALREADY-RECORDED ✅ |
+| UI renderings | 29 | 29 | 3 → 1 confirmed, 1 refuted | 7 | 17 | 2 | `ScanSuffix` (`InstanceFinder:647`) → ALREADY-RECORDED ✅ |
+| UI supplement — rows the first population missed | 22 | 22 | 1 → overridden to recorded (below) | 2 | 19 | 0 | none mechanical; the widening is pinned by the tool's control |
+
+⭐⭐ **P5 IS MOSTLY BOUNDED BY ITS OWN CONSTANTS.**
+- **Deadlines the user cannot change.** Every scan whose flag folds cancel + clock + fault into
+  `deadline_hit` runs on a `constexpr` deadline (`Aura.cpp:2670/2961/3589/5850/6073`). So every
+  rendering says "retry" or "re-run", which is right for all three causes.
+- **The user's own cancel never reaches these texts.** The DLL has no cancel command, and every VM
+  catches its `OperationCanceledException` with its own "cancelled" line. A DLL-side cancel comes
+  only from a dropped connection, and that reply is never delivered (`Tot.h:78-110`).
+- **Every neutral pipe key is single-cause** (`truncated` / `aborted` / `budget_hit`). Where a producer
+  has both a cap and an abort, they go out as separate keys.
+
+The two real instances are both places where **advice** was written for only one cause.
+
+⚠ **The value scan's cap folded into `deadline_hit` needs no filing.** Its only consumer
+(`ValueSearchViewModel.cs:1026`) names it: *"(Ns deadline / result cap) — raise the Timeout slider or
+narrow the predicate"*. "Narrow the predicate" is the cap's remedy, and Max is visible in single mode.
+⛔ Do not "fix" this half. Only its group twin gives the wrong advice (`[P5-GROUP-ADVICE]`).
+
+##### `[P5-GROUP-ADVICE]` LOW — Group First Scan names the candidate cap but advises only deadline remedies
+
+`ValueSearchViewModel.cs:1449`. `ScanForValueGroup` folds its 50,000-candidate cap
+(`Aura.cpp:9459-9460`) into the same `deadline_hit` as the clock (`:9384`). The text reads
+*"⚠ truncated (Ns deadline / result cap) — raise the Timeout slider or refine"*. Neither remedy
+helps a cap stop:
+- A longer timeout re-scans into the same cap.
+- A refine prunes the capped set, and the panel's own `InheritedTruncation` (AE24,
+  `PartialResultNotice.cs:149-167`) says that cannot surface a match that never entered the set.
+- The control that does address the cap, **Max**, sits inside the single-mode panel
+  (`ValueSearchPanel.axaml:72`/`:209`). It never renders in group mode.
+
+The single-mode twin at `:1026` gets this right.
+
+- **Measured, not constructed.** The archived AE13 run on DQ7R
+  (`docs/archive/todo-closed-2026-08-23-build-3337.md:1674-1689`) printed exactly this text on a cap
+  stop, at 1,849 ms of a 25 s budget. The duration being shown is the only mitigation.
+- ✅ **Safe fix:** re-word `:1449` alone to name a remedy that is reachable in group mode, and drop
+  "or refine". For example: *"raise the Timeout slider (deadline) or use more / more distinctive
+  values (result cap)"*. No test pins that string. `begin_group_scan` is pipe-only, so a separate cap
+  field would not be a three-exit P3 hazard, but it is not needed.
+- ✅ **More precise, still no wire change:** a cap stop yields `Total == the sent max_results`
+  exactly. Every push is followed by a `>= maxResults` break, and the clock is checked only at the
+  top of an iteration. So the UI can tell the two causes apart. Capture `MaxResults` in a local
+  before the await.
+- ⛔ **Unsafe:**
+  - advising "raise Max" in group mode, where it is not rendered (the Z10 trap), unless the same
+    change adds Max to the group row;
+  - a per-cause field on the pipe;
+  - folding anything more into `deadline_hit`;
+  - copying this wording onto `:1026`.
+
+##### `[P5-PIVOT-FETCHCAP]` LOW — Class / Array Pivot says "(capped at 5,000)" when a different cap fired
+
+`ClassPivotViewModel.cs:986` / `:1005`. `PivotResult.Truncated` is defined as the **group** cap: 5,000
+(`PivotEngine.cs:88-93`), the top N groups of a complete input, with every count exact. Commit
+220443c7 later folded the 2,000,000-row **fetch** cap into the same flag (`SnapshotStore.cs:2239/2257`
+for class, `:2382/2409` for array). Its consequence is different:
+- the pivot is built over a **prefix**, in `gobjects_index` order;
+- the instance count, the group count and every group's count are all undercounts;
+- the break can land mid-instance, which in Field mode creates a bogus "(missing)" group.
+
+The status still says *"N groups (capped at 5,000) from M instances"*. Only a view-log Warn names the
+fetch cap. It is rare: the snapshot keeps at most 256 elements per array, so it takes something like
+800 owners × 256 elements × 10 ticked props. The feature is experimental-gated; this is reasoned,
+not measured.
+
+- ✅ **Safe fix** (C# only; no wire change, no P3): give the fetch cap its own `PivotResult` flag and
+  its own sentence, and stop presenting the counts as totals when it fires. Both caps can fire on one
+  run, so both sentences must be able to show.
+- ⛔ Word the remedy *"tick only the fields you need"*, not "fewer fields". With **zero** value fields
+  ticked, the `prop_name IN` filter is dropped and every prop is fetched (`SnapshotStore.cs:2217/2355`).
+- ⛔ Do not remove `result.Truncated = true` at `:2257/:2409` unless the new flag lands in the same
+  change. Otherwise the fetch cap goes silent, which is exactly what 220443c7 fixed.
+
+##### ⛔ Refuted or overridden — do not re-raise
+
+- **REFUTED: `PropertyXrefDialog.cs:430` "[DEADLINE HIT — partial]" for a worker fault** (P5U-2).
+  - The harm rested on "a Refresh repairs a fault", which the source does not support. These scans
+    rebuild no reused index, so a stub that faults on an index faults again.
+  - The fault-as-deadline label itself is D2's residual.
+  - ⛔ Its proposed fix, reusing `DeadlineClause`, is **unsafe**. It adds "retry to continue", a
+    promise neither cause can keep: the 30 s scan restarts from index 0.
+  - If this text is ever re-worded, name both causes without promising anything, e.g.
+    *"[⚠ partial — the 30 s budget ran out, or a scan worker faulted (see offsets log)]"*.
+- **OVERRIDDEN to ALREADY-RECORDED: Live Walker Find Refs' "DEADLINE HIT, retry to continue" for a
+  worker fault** (P5S-1).
+  - The refuter CONFIRMED it as new, reading D2 as covering only `DeadlineClause`.
+  - But `DeadlineClause` has **one** call site, so D2's "8 emit sites" cannot mean it. `git grep
+    DeadlineHit e6360903` lists **exactly eight** fault-reachable renderings, and both
+    `LiveWalkerViewModel.cs:2679` and `PropertyXrefDialog.cs:430` are among them.
+  - D2 accepted this label for all eight. Its residual text now names them.
+  - ⚠ **Its by-product is real, and is filed as a widening, not under P5.** When the scan is partial,
+    `:2694` still says *"No references found — likely held by a non-reflected pointer"*, blaming the
+    game for a scan that did not finish. `[P1-SPARSEDELEGATE-REFS]` records the same wrong blame on
+    the `deadline_hit=false` path. Its fix should also suppress the hint whenever `DeadlineHit` is set.
+
+##### Tools and records corrected on the way
+
+- ⚠ **`pattern_p5.py`'s UI axis dropped 36 of 64 flag reads.** It missed every ternary broken across
+  lines and every flag passed to a renderer as an argument, including `ScanSuffix`, the only
+  `DeadlineClause` caller. Fixed in 8a3f65ad (control 6/6). The 22 rows it missed were adjudicated as
+  the supplement above.
+- **Its remaining limits**, now written in its header:
+  - The flags axis misses a flag assigned to a local and copied later. `FindReferencesToUObject` was
+    reached through its wire row instead.
+  - `FindInContainersDeep`'s cancel cause arrives through `scan.deadlineHit` and is not expanded.
+  - `per_slot_cap` numbers are pulled in by key name.
+  - The "text names" heuristic was wrong on **~12 rows**. Treat it as a pointer to look, never as
+    evidence.
+- **D2's residual said "`DeadlineClause` and its 8 emit sites".** `DeadlineClause` has one. It is now
+  re-worded to list the eight renderings, so "not through `DeadlineClause`" can no longer be read as
+  "not recorded".
+- The brief's first claim, that `todo.md:1314` recorded the value scan's cap, was false. Fixed in
+  70f13d74.
+
+##### Leads, not filed (unmeasured, and not checked against every record)
+
+- **A comment contradicts the code** at `Aura.cpp:3881-3883`. It says Find Refs' sparse-delegate pass
+  is gated on `scan.deadlineHit`, but the gate at `:3899` tests the local `incomplete()`. So a worker
+  fault also skips that pass. That is harmless if intended, but both the comment and e6360903's body
+  say otherwise.
+- **P1-shaped stops that are published nowhere:**
+  - Find Refs' 32-match cap (`ConcatTruncate`, `Aura.cpp:3875`). "Found 32 reference(s)" does not
+    say it was capped; this is the `[W3-XREF-CAP]` shape.
+  - `pe_profile_get`'s `emitted < limit` bound (`Fern.cpp:4247`).
+  - `SearchByName`'s and `ListClasses`' aborts (`Aura.cpp:1562-1564`, `:5484-5486`). These run on
+    connection-bound threads and abort only when their own reader is gone, so they are likely
+    harmless.
+- **Z10-shaped, verify before filing:** Console and Interesting Functions advise *'tick "Game classes
+  only"'* on a row-cap stop even when it is already ticked (`ConsoleViewModel.cs:290-292`,
+  `InterestingFunctionsViewModel.cs:655-656`).
+- **The class-picker badge** says *"the result list was capped"* on Value Search when a timeout or a
+  fault set it. That is harmless, because its acted-on claim is "lower bound". But if it ever gains
+  advice, it must not say "raise Max".
+
+⬜ **For the fix pass:** two independent text-level changes, neither needing a wire change.
+`[P5-GROUP-ADVICE]` is one string. `[P5-PIVOT-FETCHCAP]` is one flag and one sentence, C# only.
+
+---
+
 ### TRACK B — the area sweep, 4 waves
 
 Same protocol as the June waves: finders → adversarial refuters (default REFUTED,
@@ -1865,9 +2019,10 @@ three), the shape that produced the June sweep's most important result.
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
-2. 🔄 **Track A — the pattern sweeps.** P1, P2, P3 and P6 done; P4 / P7 / P8 under adjudication; P5
-   next. The gate-shaped detectors (P2, P6) are built and deliberately NOT registered until their
-   instances are repaired.
+2. ✅ **Track A — the pattern sweeps** — done 2026-09-10. All eight shapes were run tree-wide: P1,
+   P3, P4 / P7 / P8 and P5 as adjudicated sweeps, P2 and P6 as detectors. **20 new confirmed
+   (1 HIGH · 4 MED · 15 LOW)**; P2's and P6's instances were already recorded. The gate-shaped
+   detectors (P2, P6) are built and deliberately NOT registered until their instances are repaired.
 3. ⬜ **Track B A1–A4** for what no matcher can reach.
 4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
    shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
@@ -3242,6 +3397,18 @@ because it is a pipe-contract + UI change rather than a correctness one:
   claim is true and the log names the real cause; a second wire field would mean a protocol
   change plus `PartialResultNotice.DeadlineClause` and its 8 emit sites, and that string is
   pinned by 3 test files.
+  ⚠ *Corrected 2026-09-10 (`[PATTERN-P5-2026-09-10]`). `DeadlineClause` has **one** call site
+  (`ScanSuffix` → `InstanceFinderViewModel.cs:647`), both then and now. The **eight** are the
+  fault-reachable `deadline_hit` renderings at e6360903. They are listed here so that "not through
+  `DeadlineClause`" is never again read as "not recorded":*
+  - *`ScanSuffix`;*
+  - *the four batch cells: `GameClassFilterViewModel.cs:362`, `InstanceFinderViewModel.cs:978`,
+    `InterestingPropertiesViewModel.cs:241`, `PropertySearchViewModel.cs:814`;*
+  - *`LiveWalkerViewModel.cs:2679`;*
+  - *`ValueSearchViewModel.cs:1025`;*
+  - *`PropertyXrefDialog.cs:430`.*
+
+  *The group scan's `:1448` is not one of them: that loop is serial and has no fault cause.*
 - ⚠ **What no test reaches**: D4's three walker early-returns need a live `FSparseDelegateStorage`
   and the AOB resolver, and every D1 call-site path needs a running game with the PE hook down.
   The pure cores are pinned; the call sites are reviewed, not tested. Live rows for these belong
