@@ -2021,7 +2021,7 @@ three), the shape that produced the June sweep's most important result.
 | wave | status | finders | raw | survived refutation | confirmed | commit |
 |---|---|---|---|---|---|---|
 | A1 APP-SHELL | ✅ | 3 (+0 gap-fill) | 7 | 6 | **0H 1M 5L** | 2026-09-10 |
-| A2 SCAN-CORE ×2 · DLL-OTHER | ⬜ | | | | | |
+| A2 SCAN-CORE ×2 · DLL-OTHER | ✅ | 4 (+0 gap-fill) | 11 | 9 | **0H 2M 7L** | 2026-09-10 |
 | A3 WIRE · CE-BRIDGE · WIRE-DTO | ⬜ | | | | | |
 | A4 AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | ⬜ | | | | | |
 
@@ -2278,6 +2278,311 @@ and commit 45eb7c2f promise.
 - `[A1-SLOTSYM-FAILED]` belongs with `[B30-REOPEN]`'s family: every `[DISABLE]` must be safe to run
   after an ENABLE that applied nothing. That rule deserves a shared rig case for every toggle.
 
+### ✅ A2 SWEPT 2026-09-10 `[TRACKB-A2-2026-09-10]` — the DLL core: 11 raised, 9 confirmed (2 MED · 7 LOW), 2 refuted
+
+**7,334 never-audited lines in 32 files.** This covers SCAN-CORE (the walker `Ubel`, the offset finder
+`Genau`, `Himmel`, `Sein`, the four `Lugner` proxies, `Macht`, `Linie`) and DLL-OTHER (15 files, read
+whole).
+
+- **Finders: 4, not the plan's 3.** The walker got two lenses, one for layout across engine versions
+  and one for memory safety, caches and threads. It is the heart of the DLL and barely appeared in
+  June.
+- **Coverage was reconciled.** Every finder opened every assigned file (5/5, 5/5, 12/12, 15/15), and
+  no gap-fill ran.
+- **Known positives:** both open recorded rows whose sites sit in the Genau hunks,
+  `[W5-OFFSETS-UNMEASURED]` and `[P1-GENAU-ABORT]`, were reported by the Genau finder. Those hunks
+  were demonstrably read.
+- **Cost:** 11 agents, ~2.6M tokens.
+- **Constraints:** source reads only, because CE and a game were in use by another session.
+  **Nothing fixed.** Every confirmed row was re-read at its source, and S1a-02's premise was
+  re-checked by hand in the vendored RE-UE4SS templates.
+
+⭐⭐ **The layout claims were settled against REAL engine source, not argued.** The refuters read
+`vendor/UnrealEngine` at the 5.8.2 tag and every tag back to 5.2, all 31 `vendor/RE-UE4SS`
+member-layout templates, the vendored UHT, and CE 7.5's Pascal source. They also modelled one arithmetic
+chain in Python. That is how one MED was **refuted** — UHT turns every bitfield container into
+`UhtBoolType.UInt8` — and how both MEDs were **confirmed**.
+
+⭐ **Seven of the nine are again a repair or a comment that states a claim the code does not keep**,
+the same shape as A1:
+
+| row | the claim | where it is stated |
+|---|---|---|
+| `[A2-UFUNC-TAIL-4X]` | the UFunction tail is "stable across all UE versions" | `Ubel.cpp:1468-1470` |
+| `[A2-TOPTIONAL-INTRUSIVE]` | pointer / weak optionals are unset-by-null, and containers carry a trailing flag | `Ubel.cpp:5708-5715`, `technical-notes.md:586-603` |
+| `[A2-STRUCT-PREVIEW-BOOLMASK]` | the shared struct decoder is "now the ONLY one" | `Ubel.cpp:1982` |
+| `[A2-LAZY-LATCH-GUESS]` | "a real ElementSize gets MEASURED and latched" | commit 0c0660b0, `Ubel.cpp:391-393` |
+| `[A2-WALKCLASSEX-UNMAPPED]` | an unmapped class gets the shared EMPTY ClassInfo, "never a cached one" | `Ubel.h:157-162`, commit 902e6702; and A10b's "FIXED" |
+| `[A2-HEAP-ANCHOR-TEXT]` | "the data-scan fallback anchors just as well as the AOB" | `Genau.cpp:1666`, `verification-register.md:7940` |
+| `[A2-METHODE-MANUALMAP]` | CE's `InjectDLL` TRUE "can be true on a real failure" | commit b491b1dc (AB2), `working-lessons.md:2408-2417` |
+
+##### ⛔ `[A2-UFUNC-TAIL-4X]` MED — on UE 4.11-4.17, `ParmsSize` is really `NumParms`, and invoke buffers are undersized inside the game
+
+`Ubel.cpp:1472-1474`. `FunctionFlags` itself is measured (`DynOff::FunctionFlagsOffsetFor`, which is
+correct for these versions). But the three fields behind it are read at a hardcoded `+4/+6/+8`, under a
+comment that calls this "stable across all UE versions".
+
+The RE-UE4SS templates put a `uint16 RepOffset` first on **every version from 4.11 to 4.17**: at 4.11,
+`FunctionFlags` is 0x88, `RepOffset` 0x8C and `NumParms` 0x8E. The field disappears at 4.18, where
+`NumParms` is 0x8C. Re-checked by hand in `MemberVariableLayout_4_11/4_17/4_18_Template.ini`. On 4.11-4.17
+the three reads therefore land one field late:
+
+| field read | what it actually gets |
+|---|---|
+| `numParms` | `RepOffset`'s low byte |
+| `parmsSize` | `NumParms` |
+| `returnValueOffset` | the real `ParmsSize` |
+
+- **The consequence is an invoke that corrupts the game's heap.** `Fern`'s `invoke_function` sizes its
+  buffer from `max(caller, fi.parmsSize)` (`Fern.cpp:5459-5473`). The UI's own buffer comes from the
+  listed `parms_size` (`InvokeParamDialog.cs:596`), and it silently skips every param past it. So both
+  are the same small number. ProcessEvent then reads inputs from, and writes out-params and the return
+  value into, heap memory past the end of that buffer. `Wirbel`, `Schlacht` and `Dunste` size their
+  feature invokes the same way.
+- **Reachable on supported titles.** NEKOPALIVE is UE 4.11, "the verified floor", and Extinction is
+  4.15 (`test-games.md`). There is no version gate on the invoke path.
+- The CE mailbox path does **not** overflow: its return clear is bounded by a fixed slab. It only
+  reports a wrong `parmsSize` to CE.
+- ✅ **Safe fix:** shift the tail by the `RepOffset` width when the **engine version is below 418**.
+  Put it in a `constexpr` beside `FunctionFlagsOffsetFor` so `dll_helpers_test` can pin the
+  4.17 / 4.18 boundary. Defence in depth: invoke sizing may also take the max with the param walk's
+  `max(offset+size)`.
+- ⛔ **Unsafe:**
+  - "when `funcFlagsOff == 0x88`, read `+6/+8/+0xA`". 0x88 is ALSO the offset for 4.18-4.21, which
+    have no `RepOffset`, so this would break OCTOPATH and DQ XI S.
+  - Sizing from the walked params ALONE. A failed walk yields 0, which recreates the zero-length-buffer
+    overflow documented at `Fern.cpp:5441-5452`.
+- **Same family, a lead:** the UProperty-mode param `StructProperty` / `PropertyClass` reads in
+  `WalkFunctions` use a fixed `UPROPERTY_OFFSET+0x2C` (`:1632`, `:1651`). For 4.11-4.17, c0b4e709's
+  own measured table says 0x28. Fix the two together.
+
+##### ⛔ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty
+
+`Ubel.cpp:5770-5839`. UE decides "set" through `ValueProperty->HasIntrusiveUnsetOptionalState()`.
+Checked at every tag from 5.3 (where `FOptionalProperty` first appears; the comment's "5.2+" is off)
+to 5.8.2:
+- **Object, class, weak, soft, lazy and interface optionals are NON-intrusive:** a trailing `bIsSet`
+  flag. (An object optional is intrusive only under `CPF_NonNullable`.) The walker derives "set" from
+  the value bytes instead:
+  - `TOptional<AActor*>` set to null shows "(unset)";
+  - after `Reset()`, which writes no bytes, the old actor's name and a **drillable stale pointer** are
+    published.
+- **TArray / TMap / TSet optionals are INTRUSIVE from 5.5 on.** The walker reads `bIsSet` at
+  `field + innerSize`, which is the NEXT property's first byte. That is the neighbour-aliasing bug
+  build 530 fixed for Str / Name / Text, still live for containers.
+- **The measured discriminator is already in hand:** `fi.Size` vs `innerSize`.
+- **Twin:** Find Refs (`Aura.cpp:3217-3231`) holds the same wrong belief and reports a reset
+  optional's stale pointer as a live reference.
+- **Population:** stock-engine runtime code declares no pointer or container `TOptional` UPROPERTY
+  (editor gizmos and tests do). Game code is unmeasured. The defect is systematic and affirmatively
+  wrong, hence MED.
+- ✅ **Safe fix:** match UE's exact `CalcSize`, and refuse anything else:
+  - non-intrusive only when `fi.Size == Align(innerSize+1, align)`;
+  - intrusive only when `fi.Size == innerSize`.
+- ✅ For intrusive fields, use the per-type sentinel (`ArrayMax == -1` at +12 for TArray / FString)
+  and never the trailing byte.
+- ✅ For non-intrusive object / weak fields, read the flag AND gate `ptrValue` on it.
+- ✅ Keep the okProbe refusal first. Fix Find Refs in the same change, and correct
+  `technical-notes.md:586-603`.
+- ⛔ **Unsafe:**
+  - a version gate: from 5.5 intrusiveness is per type and per `CPF_NonNullable`;
+  - a loose "`fi.Size > innerSize` means trailing flag": a garbage `innerSize` would send an intrusive
+    field back to the neighbour byte.
+- 🟡 **Unfiled lead the refuter surfaced:** on 5.3 / 5.4, Str / Name / Text optionals are
+  non-intrusive too. The build-530 sentinel arms were measured on a 5.5 title, so a default-constructed
+  unset `TOptional<FString>` on 5.4 would read as set `""`. The DumperTest 5.4 fixture has
+  `Opt_Str_Set` but no `Opt_Str_Unset`.
+
+##### `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask
+
+`Ubel.cpp:2015` → `PreviewScalarValue` (`Ubel.h:820`), which returns `p[0] != 0`. So every packed bool
+in a byte previews the whole byte. `AActor::ReplicatedMovement`'s `bSimulatedPhysicSleep` and
+`bRepPhysics` share a byte, and a physics actor previews both as `true`. The drill-down rows are
+correct. `ReadStructArrayElements` (`:2728-2733`) applies the mask, so the same struct decodes
+differently as a field than as an array element. The hand-copied `TOptional<struct>` preview (`:5933`)
+repeats the defect, which contradicts "now the ONLY one" (`:1982`).
+- ✅ **Safe fix:** use `mask != 0 ? (b & mask) != 0 : b != 0`, the array reader's fallback. Collect
+  the FieldMask in `WalkFFieldChain`, because on UE5 `WalkClass` never collects it. Route the TOptional
+  copy through the shared decoder.
+- ⛔ **Unsafe:** a bare `(p[0] & mask) != 0`. Mask 0 means "unresolved", so every bool on a title
+  where the probe misses (DQ XI S) would read `false`.
+
+##### `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured"
+
+`Ubel.cpp:1724` (+ `:1745`, `:1780`, `:3033`, `:394`).
+- `InferScalarSize("LazyObjectProperty")` is a version guess (`ver >= 503 ? 0x18 : 0x1C`).
+- `ValidateArrayElemSize` and `ResolveInnerSize` let that guess override the engine's raw
+  ElementSize.
+- `ReadLazyObjectArrayElements` then feeds the overridden size into the envelope latch, which logs
+  *"payload envelope measured"*. `Ubel.cpp:391-393` forbids exactly this.
+
+**Modelled in Python:** a 5.0-5.2 title mis-resolved as 504 strides 0x18 over 0x1C elements, reads
+every GUID 4+4i bytes early, and writes a false "measured +0x08" line. Needs a version mis-resolved
+across 5.2/5.3 AND an array walked before any scalar lazy field; the first scalar lazy walk heals it.
+- ✅ **Safe fix:** for LazyObjectProperty only, derive the size from the RAW engine value via
+  `LazyGuidOffset(raw)+0x10`, which accepts only 0x0C / 0x08 and otherwise falls back as today.
+- ⛔ **Unsafe:** deleting the `InferScalarSize` entry. The generic arm accepts any raw size from 1 to
+  65536, so a garbage ElementSize would reach the pipe, the exporter and FindInContainers.
+- 🟡 **Same shape, tracked elsewhere:** the soft path's `>= 501` discriminator
+  (`verification-register.md:500`).
+
+##### `[A2-WALKCLASSEX-UNMAPPED]` LOW — WalkClassEx permanently memoizes an UNMAPPED class address, defeating Aura's refusal gate
+
+`Ubel.cpp:1229`. `WalkClass` sets `info.Address` BEFORE its read-fault early return (`:968`, `:994-998`),
+and `ReadSafe` zeroes on fault. So an unmapped address comes back as `{Address=addr, PropertiesSize=0}`.
+- `WalkClassEx` calls `ShouldPublishClassWalk(true, 0)`, which accepts, and memoizes the empty result
+  forever.
+- Aura's two refusal gates (`WalkClassEx(cls).Address != cls`, `Aura.cpp:2371`/`:3387`) then PASS and
+  pin empty container / ref metadata in two more never-erased caches.
+- ⚠ **This makes A10b's "FIXED" claim false for the exact scenario it names**, a transient read fault
+  on `cls`. Its live control measured only the healthy side.
+- Reached by `walk_class` / `walk_class_batch` with a raw address, e.g. from the ungated Class Pivot
+  handoffs `[PATTERN-P6-2026-09-10]` records.
+- ✅ **Safe fix:** thread `WalkClass`'s read-fault verdict out (a `WalkClassImpl(addr, bool& ok)`),
+  pass it to the gate, and add a `VirtualFree` / re-commit `dll_core_test` case.
+- ⛔ **Unsafe:**
+  - gating on `Fields.empty()` or `Name.empty()` (field-less classes are legitimate, forks return "");
+  - re-reading PropertiesSize (a race);
+  - un-memoizing with no once-per-address log guard (it would flood `walk-0.log`);
+  - bounding or evicting the cache (the dangling-`const&` hazard).
+- **Twin, fix together:** `GetCachedStructFields` (`:2549-2645`) publishes `WalkClass`'s result
+  unconditionally into a third never-erased cache.
+
+##### `[A2-GNAMES-PTRSCAN-ABORT]` LOW — a WIDENING of `[P1-GENAU-ABORT]`: the GNames tier-3 pointer scan aborts with no log and no flag
+
+`Genau.cpp:2122`. `FindGNamesByPointerScan` returns 0 on `Tot::Requested()`, silently.
+`s_gnamesReport.cancelled` stays false, so `UE5_Init` can latch initialized with GNames missing, which
+is the recorded row's consequence. The recorded row names only the three LOGGED sweeps. The P1 matcher
+enumerates log calls, so a bail with no log line was outside its population by construction. Tier 3 is
+reachable: a DumperTest D1 run resolved GNames by `pointer_scan`.
+- The `ExtraScanGWorld` bails (`:4515`/`:4558`) are real but mostly masked: `RecoverGWorldViaEngine`
+  follows with no Tot poll, and GWorld is non-critical.
+- ✅ **Safe fix:** set `s_gnamesReport.cancelled` at the bail, in the recorded row's shape.
+- ⛔ **Harmful:** ORing `ExtraScanGWorld`'s bail into the latch guard. That refuses a complete init
+  over a non-critical pointer that has its own recovery route.
+
+##### `[A2-CRC-PATH-LS]` LOW — CrashReportClient version detection logs its path with `%ls`, which this file forbids
+
+`Genau.cpp:2849`/`:2853`, written by 6a74065a twelve days after `[NONASCIILS-2026-08-24]` and 2,700
+lines below the file's own *"CONVERT FIRST; NEVER %ls"* note (`:116`). On a non-ASCII install path the
+record comes out empty; `utf8_helpers_test.cpp:582-609` pins the CRT behaviour. The version source is
+still named by its ASCII label elsewhere, so the loss is only the resolved path and the record's
+integrity.
+- ✅ **Safe fix:** `Utf8Helpers::EncodeUtf16`, then `%s`. It is byte-identical for ASCII paths.
+- **Gate gap:** nothing scans call sites for `%ls` in log calls.
+
+##### `[A2-HEAP-ANCHOR-TEXT]` LOW — a data-scan GObjects anchors to the heap, and later refusals print the "GObjects never validated" text
+
+`Genau.cpp:1666`. `DataScanGObjectsCandidates` returns a HEAP `FUObjectArray` by design, so the module
+anchor has no module and collapses to `AnchorState::None`. The anchor line prints `'(unknown)'`. Every
+later Pass-2 refusal then logs *"GObjects never validated this run"*, the AA38 python.exe signature, on
+a run where GObjects DID validate. On this PC that happens whenever `GWLD_V3` matches inside
+Bitdefender's `atcuf64.dll`. **No published pointer moves:** both states refuse on a monolithic build.
+- ✅ **Safe fix:** text only. Or add a fourth `AnchorState` that refuses with truthful text.
+  - ⚠ The constexpr switch ends in `return Accept; // unreachable`, so a new enum value without its
+    case silently ACCEPTS. Extend the truth table from 12 rows to 16.
+  - Keep the `None` wording byte-identical: an archived live check greps it.
+- ⛔ **Unsafe:** treating a heap anchor as modular / Accept, which re-admits the Bitdefender GWorld
+  candidate.
+
+##### `[A2-METHODE-MANUALMAP]` LOW — Methode reports a SUCCESSFUL CE force-load as "Injection failed", and blames CE's BOOL
+
+`Methode.cpp:385-416`. From CE's source: `ForceLoadModule` re-raises on every failure
+(`CEFuncProc.pas:768-811`), so `ce_InjectDLL` TRUE after `EInjectError` means the forced load
+SUCCEEDED. That load is CE's manual PE mapper. It never links into the PEB, so the post-inject module
+walk cannot see it, and the user reads *"Injection failed — the DLL is not mapped … CE's result cannot
+be trusted"*.
+- **Measured on `dist\UE5Dumper.dll`:** CE's mapper processes neither the TLS directory nor `.pdata`.
+  So no SEH or C++ exception inside the image can be dispatched, and `ReadSafe`'s everyday `__except`
+  makes a game crash the realistic outcome.
+- Reachable through CE's own "Always force load modules" setting.
+- ✅ **Safe fix:** word the TRUE-but-absent message as ambiguous, and name that setting. Optionally
+  read HKCU `Always Force Load` before injecting and warn up front; that is the only point where the
+  case is distinguishable. Correct the comment and `working-lessons.md:2408-2417`, but not the
+  append-only dev-log.
+- ⛔ **Unsafe:** saying "CE manual-mapped it" whenever TRUE and absent. The APC path and a
+  `GetExitCodeThread` failure also return TRUE with nothing mapped. Do not try to support manual
+  mapping.
+
+##### ⛔ REFUTED — do not re-raise
+
+- **`A2-S1a-01`** "packed bools in a uint32 container never get a mask — c0b4e709's FieldSize==1
+  tightening was a regression". **False premise**:
+  - the vendored UHT turns EVERY bitfield container into `UhtBoolType.UInt8`
+    (`UhtUInt32Property.cs:76-78` and its three siblings), so FieldSize is 1;
+  - ByteOffset is always 0 (`DetermineBitfieldOffsetAndMask`);
+  - live evidence agrees: `Wirbel::SetMouseCursor` writes `bShowMouseCursor` (a `uint32 :1`) through
+    the `fieldSize == 1` probe, verified on TQ2 and DQIII HD-2D (ec016229).
+  - ⛔ Its implied fix (accept 2/4/8) would reopen the false pointer-byte latch c0b4e709 closed.
+- **`A2-D-2`** "a same-PID pipe holder is treated as go, so a second DLL image runs a full duplicate
+  init". The facts are right, but the second image still **declines to serve**. `AlreadyOurs` creates
+  no second server, so `IsOurModule`'s fail-open argument holds; only its "returns INIT_SKIPPED" clause
+  is stale. The mailbox thread and the feature-state split pre-date the change. What is left is an
+  eager, unrequested scan in a contrived two-image state.
+
+##### Measured clean — worth as much as the rows
+
+- **The four proxies forward every export, measured with `pefile` against this machine's System32**:
+  - version 17/17, dinput8 6/6, dxgi 20/20, winmm 180/180;
+  - 0 missing, 0 wrong ordinals (winmm's NONAME `@2` is deliberately unforwarded);
+  - the tables, thunks and `.def` files agree;
+  - the real DLL loads only via `SystemDllPath`, with truncation refused;
+  - loader-lock rules hold per the dxgi appcompat audit;
+  - the `.asm` thunks keep RSP aligned and preserve every argument register.
+- **`Grimoire`'s `FunctionFlagsOffsetFor` / sweep and `UBoolPropFieldSizeFor` were re-derived from all
+  31 RE-UE4SS templates:** every row matches. `Lineal` is byte-identical to the vendored
+  `UObjectArray.h`. `Methode`'s plugin ABI matches `cepluginsdk.h`.
+- **`Renge.h`:** all 100 command constants are referenced in `Fern` and present in the UI. No orphan.
+- **Walker memory safety:**
+  - no `catch(...)` or `__try` anywhere in `Ubel.cpp`;
+  - every allocation and loop bound sized from game memory is clamped;
+  - the `s_walkClassCache` LRU copies out under its mutex, and no band hunk adds an eviction to the
+    reference-returning caches;
+  - the blind-spot DLL fixes (`[D5-LAZYGUID]`, the multicast header reads, the sparse "(0 bindings)"
+    claim) hold as promised.
+- **`Sein`:** thread-safe; every failed open reroutes; retention is by age, stamped from each file's
+  own mtime.
+- **`Flamme`:** never trusts a cached pattern as truth; it re-validates every hint.
+
+##### Leads, not filed (unmeasured, or near-misses the finders held back)
+
+- **Layout:**
+  - `Macht.h:408-410` claims TSet call sites "need no change". That is false for `alignof(T) >= 16`
+    (a struct with FQuat / FTransform), which is strided 8 bytes short per element.
+  - `WalkDataTableRows` (`:7050-7061`, out of band) reads a ByteProperty's enum at `FENUMPROP_ENUM`,
+    not `FBYTEPROP_ENUM`, and has no 2-byte arm.
+  - `ReadEnumRawValue` picks signedness from width, not from the underlying property.
+- **Caches enriched before `CorrectSubclassOffsets` recalibrates are never invalidated,** so
+  `objClassName` / `enumName` can stay stale for the process on a layout where +0x2C is wrong.
+  Relatedly, `Ubel.cpp:5327-5328` claims the family write "is not a data race" while the readers never
+  take the lock.
+- **`[P1-ENUMNAMES]` widening:** when `bUEnumNamesFailed` is latched, `GetEnumEntries` warns "truncated
+  read, retry pending", which is false. The warning is unthrottled: one line per enum field per walk.
+- **`Sein` rotation:** a tailer that holds `-0.log` without delete-share makes the rename fail. The
+  truncating reopen then silently destroys the previous 8 MB.
+- **`Flamme`:** the scan thread and the pipe threads share `<cache>.tmp.<pid>` with no serialization.
+- **`Dunste.SetEnabled(true)`** kills a pending collision restore before `ResolveCtx` can fail, and
+  never re-arms it.
+- **`Genau` Step 6.5:** can mark as measured an `FFIELD_NAME=0x28` that Step 5 had disproved. No known
+  title reaches it.
+- **Gate gap:** `check_all.py` does not run `gen_proxy_forwarders.py winmm --check`, though the winmm
+  files are generated.
+- **Stale comments:**
+  - four places still say no test target compiles `Ubel.cpp` (`dll_core_test` has since 2026-08-25);
+  - `VersionNeedleScan.h:257-260`;
+  - `Heiter.cpp:464` vs `Grimoire.h:937`;
+  - `GetCachedStructFields :2580-2587`.
+
+⬜ **For the fix pass:**
+- `[A2-UFUNC-TAIL-4X]` + the `WalkFunctions` +0x2C lead form one "UE 4.11-4.17 layout" change: a
+  version-keyed constexpr pinned at the 4.17 / 4.18 boundary.
+- `[A2-TOPTIONAL-INTRUSIVE]` + the Find Refs twin + `technical-notes.md` land together.
+- `[A2-WALKCLASSEX-UNMAPPED]` + the `GetCachedStructFields` twin land together, with the `VirtualFree`
+  test.
+- `[A2-GNAMES-PTRSCAN-ABORT]` joins `[P1-GENAU-ABORT]`.
+- `[A2-LAZY-LATCH-GUESS]` goes with the soft-path discriminator.
+- `[A2-CRC-PATH-LS]` is worth a `%ls`-in-log gate so the next instance is caught mechanically.
+
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
@@ -2286,7 +2591,9 @@ and commit 45eb7c2f promise.
    (1 HIGH · 4 MED · 15 LOW)**; P2's and P6's instances were already recorded. The gate-shaped
    detectors (P2, P6) are built and deliberately NOT registered until their instances are repaired.
 3. 🔄 **Track B A1–A4** for what no matcher can reach. **A1 done 2026-09-10**
-   (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept); A2 next.
+   (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept). **A2 done
+   2026-09-10** (`[TRACKB-A2-2026-09-10]`: 2 MED · 7 LOW, settled against vendored engine source); A3
+   next.
 4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
    shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
    maintainer's stated reason for planning the second blank at all.
