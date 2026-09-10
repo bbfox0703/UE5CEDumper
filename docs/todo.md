@@ -1868,6 +1868,9 @@ repaired.**
 - **The user's own cancel never reaches these texts.** The DLL has no cancel command, and every VM
   catches its `OperationCanceledException` with its own "cancelled" line. A DLL-side cancel comes
   only from a dropped connection, and that reply is never delivered (`Tot.h:78-110`).
+  ⚠ *Holds for the scan VMs P5 covered, NOT for every VM. Proxy Deploy's Deploy / Undeploy have no
+  `OperationCanceledException` handling at all, and a cancel there crashes the UI
+  (`[A3-DEPLOY-CANCEL]`, `[TRACKB-A3-2026-09-10]`).*
 - **Every neutral pipe key is single-cause** (`truncated` / `aborted` / `budget_hit`). Where a producer
   has both a cap and an abort, they go out as separate keys.
 
@@ -2022,7 +2025,7 @@ three), the shape that produced the June sweep's most important result.
 |---|---|---|---|---|---|---|
 | A1 APP-SHELL | ✅ | 3 (+0 gap-fill) | 7 | 6 | **0H 1M 5L** | 2026-09-10 |
 | A2 SCAN-CORE ×2 · DLL-OTHER | ✅ | 4 (+0 gap-fill) | 11 | 9 | **0H 2M 7L** | 2026-09-10 |
-| A3 WIRE · CE-BRIDGE · WIRE-DTO | ⬜ | | | | | |
+| A3 WIRE · CE-BRIDGE · WIRE-DTO | ✅ | 4 (+0 gap-fill) | 13 | 12 | **0H 4M 8L** | 2026-09-10 |
 | A4 AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | ⬜ | | | | | |
 
 ### ✅ A1 SWEPT 2026-09-10 `[TRACKB-A1-2026-09-10]` — APP-SHELL: 7 raised, 6 confirmed (1 MED · 5 LOW), 1 refuted
@@ -2343,6 +2346,10 @@ the three reads therefore land one field late:
   4.15 (`test-games.md`). There is no version gate on the invoke path.
 - The CE mailbox path does **not** overflow: its return clear is bounded by a fixed slab. It only
   reports a wrong `parmsSize` to CE.
+  ⚠ *Corrected by wave A3 (`[A3-CEFORM-4X-STALESLAB]`). The CE invoke FORM bakes that wrong
+  `parmsSize` as its zero-fill span, and `Mimic` runs ProcessEvent on the persistent 1024-byte slab. So
+  struct and out-FString slots past NumParms carry the previous command's bytes, and an out-FString
+  assignment then frees a stale pointer inside the game. The root fix above cures it.*
 - ✅ **Safe fix:** shift the tail by the `RepOffset` width when the **engine version is below 418**.
   Put it in a `constexpr` beside `FunctionFlagsOffsetFor` so `dll_helpers_test` can pin the
   4.17 / 4.18 boundary. Defence in depth: invoke sizing may also take the max with the param walk's
@@ -2583,6 +2590,302 @@ be trusted"*.
 - `[A2-LAZY-LATCH-GUESS]` goes with the soft-path discriminator.
 - `[A2-CRC-PATH-LS]` is worth a `%ls`-in-log gate so the next instance is caught mechanically.
 
+### ✅ A3 SWEPT 2026-09-10 `[TRACKB-A3-2026-09-10]` — the wire: 13 raised, 12 confirmed (4 MED · 8 LOW), 1 refuted
+
+- **Scope: 7,409 never-audited lines in 60 files** — WIRE (`Fern`, `Frieren`, `Mimic`, `Stark`, `Tot`,
+  the UI pipe client), CE-BRIDGE (proxy deploy, `ParamBufferBuilder`, the CE script generators) and
+  WIRE-DTO (32 files, 25 never named by any audit).
+- **Four finders:** one per cluster, plus **A3-X, a cross-transport lens** that held the pipe, the
+  mailbox, the C ABI and the UI parser at once, which is the reason the plan put these in one wave.
+- **Coverage reconciled:** 11/11, 11/11, 17/17, 32/32 files; no gap-fill.
+- **Every lens hit its known positive:** `[P1-GENAU-ABORT]`'s latch guard, the FP1/FP2 pose residuals,
+  the `[B30-REOPEN]` fix, `[W1-CONTAINER-STALE]` / `[P4-*]`.
+- **Cost:** 12 agents, ~2.9M tokens.
+- **Constraints:** source reads only, with no CE, game, UI or build, because CE was in use by another
+  session. **Nothing fixed.** All four MEDs were re-read at their source by hand.
+
+⭐⭐ **THREE OF THE FOUR MEDs BREAK THE FIX THEY SIT IN.** `[A3-B30-STALE-FLAG]` defeats
+`[B30-REOPEN]`, fixed earlier TODAY. `[A3-ST1-SUPER-DRAIN]` defeats ST1's "our calls stop entering the
+detour at all". `[A3-DEPLOY-CANCEL]` defeats AE20's "the token-taking commands carry a whole cancelled
+reporting path". The fourth, `[A3-BOOL-NATIVE-NOWRITE]`, breaks the rule AA1 wrote down, and AA1 names
+the very function that breaks it as its correct implementation. **Nine of the twelve are fix-pass
+claims not kept**, the same shape as A1 (5/6) and A2 (7/9).
+
+⭐ **The wire itself is measured clean where the plan feared it most.**
+- **`Mimic.h` vs every mirror.** A3-X checked it against `CeMailboxLayout`, the generators' inline
+  offsets and both Lua helpers, for **layout AND meaning: 0 mismatches**. That answers A1's lead: the C#
+  side is still pinned only by `ContractVersion`, but today it agrees.
+- **Fern reply keys vs `DumpService` parse sites, diffed mechanically:** 34 commands (A3-X) and the
+  band DTOs (A3-D), **0 name or type mismatches**.
+- **Reach re-derived at HEAD.** `Fern` reaches 374 module symbols, `Mimic` 43 and `Frieren` 140; 23 are
+  reachable from all three and 89 from two or more. The in-band multi-exit functions were compared and
+  **only `[A3-ST1-SUPER-DRAIN]` survived**. P3 on the transports is now bounded.
+
+##### ⛔ `[A3-ST1-SUPER-DRAIN]` MED — ST1's fail-open direct call still re-enters our ProcessEvent detour, and drains the invoke queue off the game thread
+
+`Frieren.cpp:2261-2279`. `Mimic` auto-routes any `Native|Static` UFunction to
+`UE5_CallProcessEventDirect` (`Mimic.cpp:641`/`:702`). When the instance's class overrides ProcessEvent,
+which is every `AActor`, the direct call correctly fails open to the override. But
+`AActor::ProcessEvent` then calls `Super::ProcessEvent` (vendor 5.8.2 `Actor.cpp:1488-1523`), which is
+the address MinHook patched. So `HookedProcessEvent` runs on the mailbox thread with
+`InOwnPeCall() == false`, and the drain executes **every queued request there, off the game thread**.
+
+- **The danger is the queue.** An invoke that timed out (-5) stays queued on purpose. A later static
+  native on an actor class (e.g. stock `APawn::GetMovementBaseActor`) then runs that stateful call on
+  the wrong thread: ST1's exact crash class, through a path its fix did not reach.
+- **Mailbox exit only.** The pipe queues these calls; `direct_call` is used only by the
+  KismetMathLibrary self-test, whose CDO does not override.
+- ✅ **Safe fix:** a Stark helper (e.g. `CallAddressAsOwnSEH`) that holds `OwnPeCallGuard` in an OUTER
+  frame and calls `peAddr` inside its own `__try` frame (MSVC C2712). Call it from the fail-open branch.
+  It must live in `Stark.cpp`, where the guard is. No contract bump.
+- ⛔ **Harmful:**
+  - routing overriding classes through the trampoline, which skips `AActor`'s world, GC and delegate
+    checks;
+  - queueing static natives on actor classes, which brings back the idle-menu timeouts;
+  - setting the guard in `CallProcessEventSEH`, which suppresses the legitimate game-thread drain.
+- **Live confirmation, which needs CE — ask first:** `tools/verify/st1_queued_drain_sideeffect.py` with
+  a frozen game thread, a queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an
+  actor. `bHidden` flips while the thread is frozen.
+
+##### ⛔ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI
+
+`ProxyDeployViewModel.cs:1391-1414` (+ Undeploy `:1452`). AE20 made "Cancel operation" reach all nine
+commands, but `DeploySelectedAsync` and `UndeploySelectedAsync` have **no try/catch at all**. The cancel
+rethrows through `AsyncRelayCommand` onto the dispatcher, where the refuter decompiled both
+CommunityToolkit.Mvvm 8.4.2 and Avalonia 12.1.1. `DispatcherFaultGuard` sees our frames on the stack,
+refuses to swallow, and **the process dies**.
+
+- Even a ONE-game deploy reaches it, through the post-loop refresh's token.
+- The writes are staged-atomic, so no half-written DLL is left. What is lost is the app and the
+  connected session.
+- Refresh's `catch(Exception)` shows the user's own cancel as a red "Refresh failed".
+- ✅ **Safe fix:** wrap each loop plus its refresh in `catch (OperationCanceledException)`, mirroring
+  `UpdateAll :1562-1567`.
+  - Report the partial tally.
+  - Still call `RequestOptionSave` when picks changed.
+  - Do NOT re-run the refresh with the cancelled token inside the catch, because it throws again. Skip
+    it, or use `CancellationToken.None`.
+  - Give Refresh a neutral "cancelled" branch.
+- ⛔ **Unsafe:**
+  - `FlowExceptionsToTaskScheduler`, which hides every real fault;
+  - teaching `DispatcherFaultGuard` to swallow OCE;
+  - dropping Deploy/Undeploy from the cancellable set, which reverts AE20;
+  - a bare `catch(Exception)`.
+
+##### ⛔ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down
+
+`CeInjectScriptGenerator.cs:264`, and identically `scripts/UE5CEDumper.CT:804`/`:832`.
+`UE5_StartedByThisRecord` is ONE global in CE's Lua state, and that state lives for the whole CE
+session.
+
+1. Tick the inject record, which sets the flag.
+2. File > Open, without merging. CE frees the records and **never runs `[DISABLE]`**; the refuter
+   checked `OpenSave.pas`, `addresslist.pas` and `MemoryRecordUnit.pas`.
+3. Tick the reloaded record. The "already loaded and serving" branch (`:168-176`) shows its message and
+   defers an untick **without clearing the flag**.
+4. The untick runs `[DISABLE]`, which passes the stale guard and calls `UE5_Shutdown`.
+
+That is B30's exact symptom, on both shipped artifacts. The live before/after of the B30 fix ran in a
+fresh CE session, where the flag was nil.
+
+- ✅ **Safe fix, in BOTH artifacts:** set `UE5_StartedByThisRecord = false` in the SERVING branch
+  before its deferred untick, or use a consume-once skip marker. Either one fails safe, leaving the
+  pipe up. Pin the ordering in `CeInjectScriptGeneratorTests`.
+- ⛔ **Unsafe:**
+  - per-`memrec.ID` keying: CE reloads records with their saved IDs;
+  - an owner token in the mailbox: a contract bump that makes every saved `.CT` refuse, for a problem
+    Lua can solve;
+  - fixing the generator only;
+  - going back to the symbol probe, which was the original B30.
+
+##### ⛔ `[A3-BOOL-NATIVE-NOWRITE]` MED — editing a native bool in Live Walker writes nothing and reports "Written"
+
+`FieldValueConverter.cs:63` + `LiveWalkerViewModel.cs:5388-5392`/`:5418`. Hand-verified at source:
+- The DLL publishes a bool mask only when FieldMask is a single bit (`Ubel.cpp:5427`).
+- A native bool — every Blueprint bool, and plain `UPROPERTY() bool bFoo;` — has FieldMask `0xFF`, so
+  no mask is sent, and `DumpService` parses it as 0.
+- `ApplyBoolMask(cur, 0, v)` returns `cur` for both values. The editor writes back the byte it just
+  read and prints `Written: bFoo = true`, and the row still reads false after the refresh.
+- AA1 wrote the rule "absent mask = native bool = whole byte" and named `ApplyBoolMask` as a correct
+  implementation of it. It is not.
+- The same no-op hits map-value, array-element and struct-sub-field bool rows.
+- ✅ **Safe fix:**
+  1. The DLL recognises the native layout explicitly (`FieldSize==1 && FieldMask==0xFF`) and sends an
+     ADDITIVE key, e.g. `bool_native:true`. That is pipe-only, like `bool_bit`, needs no contract bump,
+     and leaves older UIs and CSX unaffected.
+  2. The UI writes `0x01` / `0x00` only for a confirmed native bool, does the masked read-modify-write
+     for a single-bit mask, and REFUSES honestly when the mask is unresolved.
+  3. The UI reads the byte back and reports a mismatch instead of "Written".
+- ⛔ **Unsafe:**
+  - "treat mask 0 as the whole byte". Mask 0 also means "probe missed" (DQ XI S, where every packed
+    bitfield reads as mask 0), so that turns a harmless no-op into the AA1 corruption of up to 7
+    sibling bools;
+  - stamping `0xFF` for true, which C++ that XORs a bool reads as still true.
+
+##### `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init
+
+`Mimic.cpp:470-471` returns "initialized" whenever `g_cachedGObjects && g_cachedGNames`. `UE5_Init`
+publishes those right after `FindAll`, **before** `Serie` / `Aura` init, decoy recovery and
+`ValidateAndFixOffsets`, which writes defaults and then probes. `UE5_Shutdown` never clears them.
+
+- So a CE hotkey in that tail runs against unprobed DynOff with no "waiting" line. That breaks
+  `Frieren.cpp:83-91`'s promise that it "waits and returns the first caller's result".
+- **Measured from real init logs:** the unguarded tail is 190-445 ms per init. Commands resolving
+  UFunctions or properties through DynOff give one-off errors that succeed on retry.
+- ✅ **Narrowest safe fix:** an "init in progress" atomic set under `s_initMutex`, so the fast path
+  waits only when it is set.
+- ⛔ **Unsafe:**
+  - always calling `UE5_Init`: a pathological rescan can pass the 10 s mailbox timeout, and after a
+    cancelled scan a full cancel-immune `UE5_Init` would run on the poller;
+  - clearing the globals in `UE5_Shutdown`;
+  - moving the publish to the end of init.
+
+##### `[A3-FIRE-STRUCT-BOOLMASK]` LOW — FIRE writes a packed-bool struct sub-field as a whole byte
+
+`ParamBufferBuilder.cs:381`. This is the write-side twin of `[A2-STRUCT-PREVIEW-BOOLMASK]`, and the AA1
+mask never reached it: no mask exists at any tier of the invoke wire.
+- `FHitResult`'s `bBlockingHit` and `bStartPenetrating` share a byte. Typing one bit either zeroes its
+  sibling or lands on bit 0, and the dialog still says OK.
+- The Copy AA Script path (`ue5_invoke_helper.lua`) has the same defect.
+- ✅ **Safe fix, only with ALL of:**
+  - AA1's accept set: a single-bit mask gets the read-modify-write, and mask 0 / `0xFF` keep today's
+    write;
+  - collecting the mask in the UE5 FField walk first (A2);
+  - an additive key that defaults to 0;
+  - changing the Copy AA Script path in the SAME commit.
+- ⛔ **Unsafe:** deduping rows by offset, or refusing such structs.
+
+##### `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row
+
+`InvokeScriptGenerator.cs:396`/`:420`. The A2 row said the CE mailbox path "only reports a wrong
+`parmsSize`". But the CE invoke form bakes that wrong `parmsSize` as its zero-fill span, and `Mimic`
+runs ProcessEvent **on the persistent 1024-byte slab**, which LIST_INSTANCES (every Freeze rescan), the
+pose handlers and the pointer query all dirty.
+- So on 4.11-4.17, struct and out-FString slots past NumParms carry the previous command's bytes.
+- An out-FString assignment then frees a stale pointer inside the game.
+
+A2's root fix cures it. The hardening is safe only as `max(PARMS_SIZE, max(Offset+Size))` clamped to
+1024, never the walked size alone.
+
+- 🟡 **Unfiled lead:** the CE form has **no 1024 clamp on any version**, and `Mimic` never refuses
+  `ParmsSize > 1024` on the DLL side.
+
+##### `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy
+
+`ProxyDeployViewModel.cs:1396`/`:1406-1408`. The radios have no `IsEnabled`, and their handler takes no
+gate, so a click mid-Deploy silently re-targets every remaining game to another DLL flavour. The
+result line never says so.
+- The finding missed a deterministic part: the in-flight game was deployed with the OLD flavour, but
+  `LastManualProxyByGame` records the NEW one and persists it. That is a wrong remembered fact which
+  feeds the Suggested column.
+- ✅ **Safe fix:** `IsEnabled="{Binding !IsBusy}"` on the four radios, not on their panel, which also
+  holds the LKG checkbox.
+- ⛔ **Unsafe:** disabling the foreign-overwrite checkbox mid-run, which would stop the user withdrawing
+  consent; gating the handler alone.
+
+##### `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern
+
+`ContainerTruncation.cs:43` via `LiveWalkerViewModel.cs:1254-1277`. The scalar-array re-fetch asks for
+the full count, but the DLL clamps every request at 4,096 (`Ubel.cpp:42`/`:2227`). So a 10,000-element
+`TArray<float>` shows 4,096 rows plus advice the slider cannot satisfy, with no paging. That is the Z10
+shape that `FixedCapStatusLine` exists to prevent. Commit 3860bfbc's "Scalar arrays are re-fetched in
+full" was false past 4,096 on the day it shipped. Pointer and struct arrays have the same problem at
+slider ≥ 8192.
+- ✅ **Safe fix:** a UI honesty fix derived from the reply (`ReadCount < TotalCount` despite a full
+  request, then `FixedCapStatusLine`), never a hardcoded 4096.
+- ⛔ **Unsafe:** unbounded paging; raising the DLL cap.
+
+##### `[A3-PTR-NAV-REPAINT]` LOW — a pointer that gains a target after refresh shows its name but no → button
+
+`LiveFieldValue.cs:158-161`. `_ptrAddress` notifies `DisplayValue` / `ValueTooltip` / `EditableValue`,
+but not `IsPointerNavigation`. That property drives the → button and the Ptr copy column. A pointer that
+was null at the first walk therefore repaints its name after an auto-refresh, and cannot be drilled.
+This is a P4-CONTAINER-BASE twin that P8 could not see, because `PtrAddress` IS observable.
+- ✅ **Safe fix:** add the `[NotifyPropertyChangedFor]` attributes. Land them in the same-object
+  staleness bundle, next to `[P4-CONTAINER-BASE]`'s `IsContainerNavigable` notifications.
+
+##### `[A3-RECYCLE-GUID-FAILOPEN]` LOW — `RecycleBinPolicy` says a failed volume-GUID lookup fails closed; it fails open
+
+`RecycleBinPolicy.cs:75`/`:78-85`. On a failed lookup the per-volume value is null. `IsDisabled` tests
+`== 1`, so null reads as "bin enabled", and the verdict rests on `SHQueryRecycleBin` alone, which the
+policy's own header measured as blind to NukeOnDelete. A leftover proxy DLL could then be hard-deleted
+while the UI says "moved to the Recycle Bin", which is the B13/B41 false claim. `ReadDword`'s doc
+("Null is load-bearing") is false too.
+- **Measured on this machine:** no fixed volume here fails the lookup. The exposure is SUBST and
+  RAM-disk-style volumes, and that path is unmeasured.
+- ✅ **Safe fix:** refuse only when the lookup failed AND the per-volume flag would decide: no
+  NoRecycleFiles policy, and `UseGlobalSettings != 1`.
+- ⛔ **Unsafe:** refusing unconditionally, or changing null semantics inside `IsDisabled`.
+
+##### `[A3-COORD-NONFINITE]` LOW — a coordinate CSV / Lua import stores `NaN` / `Infinity` / `1e400` as 0 without a word
+
+`CoordinateLibraryFile.cs:151-154`. `double.TryParse` accepts non-finite values, and `Round` maps them to
+0 without recording an issue. So a teleport lands at the world origin, which is exactly the silent wrong
+coordinate that B21's note says must be a visible rejected row. The Lua fence is reachable through
+`1e400`.
+- ✅ **Safe fix:** `&& double.IsFinite(value)` in `CoordPrecision.TryParse`, the in-tree idiom.
+- ⛔ **Unsafe:** changing `Round`, which is also the pose-capture and writer path; a NaN would reach
+  generated Lua as a nil global.
+
+##### ⛔ REFUTED — do not re-raise
+
+- **`A3-W-START-RESURRECT`** — "a shutdown landing mid-auto-start is undone: the pipe restarts".
+  - The mechanics are right, but the end state is FR1's **recorded, chosen option**: "keep serving but
+    re-arm the mailbox poller"; "an aborted scan publishes INIT_FAILED" (audit-2026-08-13:552-562,
+    commit cfaa5cdb).
+  - It is only reachable through the autorun menu's Shutdown after a >25 s wedged scan.
+  - ⛔ Do NOT remove `Tot::ResetShutdown` from `Fern::Start`, and do not gate `:890` without the
+    maintainer reversing FR1.
+  - The one safe piece: re-test `Tot::ShutdownRequested()` after the claim watcher's sleep.
+
+##### Leads, not filed (unverified by a refuter unless stated)
+
+- **Pipe-claim watcher never re-arms:** `s_claimWatcherStarted` (`Frieren.cpp:2298`) is never reset.
+  After a Disable/re-enable, a deferring `UE5_StartPipeServer` never claims the pipe when the other
+  holder exits. That is RELAUNCHPIPE's permanent deferral again.
+- **Two-lane stall banner can stick ON:** `RaiseStalledIfChanged` fires outside its lock, and the
+  consumer posts the event ARGUMENT. That is X7's symptom via a microsecond race.
+- **The router's reconnect-both teardown** cancels the SURVIVING lane's requests with `TrySetCanceled`,
+  so a bare OCE catch reads a game exit as a user cancel (AC10's promise, on that lane).
+- **`Fern::RunScan` ignores `UE5_Init`'s return** and publishes `scanned:true` over an aborted scan: a
+  P3 twin of FR1/D5, reachable only via the unbound RunScan thread.
+- **`Mimic::StopThread` runs before `Stark::Shutdown`.** A CE invoke pending on a paused game adds
+  3 s to Disable and repopulates the mailbox.
+- **Invoke error texts:**
+  - `-3` renders as "(ProcessEvent offset not found)", but also means "distrusted";
+  - `DeferAndWatch` returns INIT_READY where `Mimic.h` defines INIT_SKIPPED (log wording only).
+- **`get_ce_pointer_info`'s `flat_layout` is never parsed, and the call has no production caller:**
+  UNDECIDED over an empty host.
+- **CE generators:**
+  - `FreezeScriptGenerator`'s `FREEZE_KEY` is shared by two freeze records on the same field, so
+    enabling the second silently stops the first;
+  - TimeDilation's `[DISABLE]` uses SilentReturn, so a busy mailbox leaves the cheat running with the
+    record unticked;
+  - several generators hand-roll closes or unticks (B15-class exposure against the MUST rule; they
+    behave the same today).
+- **`RecycleBinPolicy` leads:** whether Explorer still honours `UseGlobalSettings`; `MoveToRecycleBin`
+  lacks `FOF_WANTNUKEWARNING`, so a file larger than the bin is nuked with rc=0.
+- **`ContainerGeometry.SetStrideOf`** repeats A2's TSet `alignof >= 16` claim, so the UI inherits the
+  DLL's under-stride. Fix the two together.
+- **`AddressHelper.TryNormalizeAddress`** (out of band) treats a hex-letter base as a module name and
+  never compares that name to the game module. Its consumers only read.
+- **Latent:** `list_enums` / `pe_profile_get` emit `truncated` and nothing reads it. The harm is
+  unreachable while handlers stay connection-bound.
+- **Stale comments:**
+  - four sites still say `g_perCommand` clears only at the first accept;
+  - `Frieren.cpp:3` "~30 C ABI exports";
+  - `ConnectWithRetryAsync`'s give-up line renders green.
+
+⬜ **For the fix pass:**
+- `[A3-BOOL-NATIVE-NOWRITE]`, `[A3-FIRE-STRUCT-BOOLMASK]` and `[A2-STRUCT-PREVIEW-BOOLMASK]` form one
+  **"bool mask, end to end"** change: collect the mask on UE5, add `bool_native`, and fix every write
+  and preview path in one commit.
+- `[A3-B30-STALE-FLAG]` lands in both artifacts together, and its live check needs CE (**ask first**).
+- `[A3-ST1-SUPER-DRAIN]` needs a live check, which also needs CE (**ask first**).
+- `[A3-DEPLOY-CANCEL]` and `[A3-RADIO-MIDDEPLOY]` are one Proxy Deploy change.
+- `[A3-PTR-NAV-REPAINT]` joins the same-object staleness bundle.
+- `[A3-CEFORM-4X-STALESLAB]` rides on `[A2-UFUNC-TAIL-4X]`.
+
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
@@ -2592,8 +2895,9 @@ be trusted"*.
    detectors (P2, P6) are built and deliberately NOT registered until their instances are repaired.
 3. 🔄 **Track B A1–A4** for what no matcher can reach. **A1 done 2026-09-10**
    (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept). **A2 done
-   2026-09-10** (`[TRACKB-A2-2026-09-10]`: 2 MED · 7 LOW, settled against vendored engine source); A3
-   next.
+   2026-09-10** (`[TRACKB-A2-2026-09-10]`: 2 MED · 7 LOW, settled against vendored engine source).
+   **A3 done 2026-09-10** (`[TRACKB-A3-2026-09-10]`: 4 MED · 8 LOW; three of the MEDs break the fix they
+   sit in); A4 next.
 4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
    shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
    maintainer's stated reason for planning the second blank at all.
