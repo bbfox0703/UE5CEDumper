@@ -1256,7 +1256,7 @@ to grow. Build the gates first and Track B shrinks.
 
 | # | shape (from the June sweep's confirmed rows) | mechanical search | status |
 |---|---|---|---|
-| **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | every `stats`/out-param member of a DLL result struct → does a key reach `Fern.cpp`? `tools/verify/pipe_wire_parity.py` **already does this** | ⬜ re-run tree-wide |
+| **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | 🔄 **240 rows under adjudication 2026-09-10** — control green |
 | **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ⬜ **`[W1-GATE-JSONDEFAULT]`** — already planned |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ⬜ **new gate, and the highest-value one** — this is W2's headline defect |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
