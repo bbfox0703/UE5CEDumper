@@ -124,12 +124,27 @@ def class_bodies(src: str) -> list:
 
 
 def snapshot_classes(vm_files: dict) -> dict:
-    """{class: its own body text, partials merged} for classes whose body reads SnapshotMeta."""
+    """{class: its own body text, partials merged} for classes that read stored snapshots --
+    directly (SnapshotMeta / ISnapshotStore) or THROUGH a class that does.
+
+    ⚠ The transitive step is not optional. The first class-body version required `SnapshotMeta` in a
+    class's OWN body, and SPC dropped out of scope entirely: `SpcQueryViewModel` reaches snapshots
+    only through its helper `SpcSnapshotPick.Meta`. SPC happens to be gated, so the headline number
+    still looked right -- but an ungated SPC would have vanished from the report without a trace.
+    """
     merged = {}
     for raw in vm_files.values():
         for name, body in class_bodies(strip_code(raw)):
             merged[name] = merged.get(name, '') + '\n' + body
-    return {c: t for c, t in sorted(merged.items()) if 'SnapshotMeta' in t}
+    readers = {c for c, t in merged.items() if re.search(r'\b(?:SnapshotMeta|ISnapshotStore)\b', t)}
+    grew = True
+    while grew:
+        grew = False
+        for c, t in merged.items():
+            if c not in readers and any(re.search(r'\b%s\b' % re.escape(r), t) for r in readers):
+                readers.add(c)
+                grew = True
+    return {c: merged[c] for c in sorted(readers)}
 
 
 def gated_props(text: str):
@@ -326,6 +341,13 @@ def selftest() -> bool:
           (S, 'OpenViaCanExecute', 'SAFE')}),
         ('a class-name payload is not an address and is not counted',
          {'vm.cs': STATS_VM}, {}, set()),
+        ('a VM that reaches snapshots ONLY through a helper type is still in scope',
+         {'vm.cs': GROUP_VM.replace('    private SnapshotMeta? _m;\n',
+                                    '    public ObservableCollection<SpcSnapshotPick> SnapshotPicks { get; } = new();\n')
+                   + '\npublic sealed class SpcSnapshotPick { public SnapshotMeta Meta { get; } = new(); }\n'},
+         {'v.axaml': GROUP_VIEW},
+         {(S, 'OpenGroupInLiveWalker', 'SAFE'), (S, 'LocateGroupSlotInGWorld', 'SAFE'),
+          (S, 'OpenViaCanExecute', 'SAFE')}),
     ]
     ok_all = True
     for what, vms, views, want in cases:
