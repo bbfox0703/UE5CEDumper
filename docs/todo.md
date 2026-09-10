@@ -3208,12 +3208,40 @@ reproduce" a real defect. Caught by a unit test pinning the reset literal per ca
 reports **11**, because it counts `Apply*State` SYMBOLS and `ApplyLaneState` drives both
 time lanes. As CARDS it is twelve.
 
+#### ✅ ROUND 2 — 2026-09-10, builds 3527 → 3534. Rows 4, 6, 7, 8: ALL EIGHT DEFECT ROWS CLOSED
+
+| # | row | commit | what shipped |
+|---|---|---|---|
+| **4** | `[POSEATTACH]` 🟠 | `242d48c4` | `parent_relative` on the pose reply — the flag `teleport-spec.md:218-220` asked for in 2026-07 |
+| **7** | `[TPREL-ZEROPOSE]` 🟡 | `5058e971` | a failed landing re-read publishes `landing_unknown`, not `(0,0,0)` |
+| **8** | `[SOLIDE-REFUSAL]` 🟡 | `5058e971` | a refused RE-ARM returns its reason; the erase stays gated on `newlyAdded` |
+| **6** | `[B21-DOCROW]` 🟡 | `5058e971` | the tracker row reads "1 of 3 shipped", with the two live holes named |
+
+⭐ **The two teleport fixes share one rule and it is this assessment's own thesis: never
+publish the WISH as the FACT.** `[TPREL-ZEROPOSE]` deliberately does **not** fall back to
+the requested destination when the landing cannot be read — that would report where we
+*told* the pawn to go as where it *is*, which is the exact shape the whole sweep was about.
+It publishes nothing and says so.
+
+⚠ **`[POSEATTACH]` is a pipe-only flag, and the CE mailbox is knowingly left short.** Adding
+a third value to the mailbox's `[176] source (0=raw, 1=invoke)` byte would change the
+MEANING of a contract field — the change `Mimic.h` states the surface hash cannot see. The
+CE path therefore still cannot tell a degraded parent-relative pose from a healthy one.
+**That is a recorded gap, not an oversight**, and it is the natural next row if the CE
+trainer path matters.
+
+⚠ **One publish run reported `FAILED` while still producing binaries**; the re-run reported
+SUCCESS, and the artifacts were then checked by **size and hash by hand** rather than
+trusting either summary. `UE5DumpUI.exe` 54.8 MB `527F06B6` · `UE5Dumper.dll` 2.8 MB
+`3F48A565` · `UE5CEDumper.CT` 44.8 KB `C1239550`, build 3534. Most likely a file lock from
+the prior run — recorded because a build summary that disagrees with its own output is
+worth not forgetting.
+
 #### ⬜ STILL OPEN from the fix list
 
-Rows **4** `[POSEATTACH]` 🟠 · **6** `[B21-DOCROW]` 🟡 · **7** `[TPREL-ZEROPOSE]` 🟡 ·
-**8** `[SOLIDE-REFUSAL]` 🟡 · **9** the 25 register rows · **10** gates A + B (command-name
-and request-param parity, both measured green today) · **13** phase 2's axis B re-run for
-the 4 helper-delegating commands.
+⚠ *(as of round 1; rows 4, 6, 7 and 8 were closed in round 2 above)* — **9** the 25
+register rows · **10** gates A + B (command-name and request-param parity, both measured
+green today) · **13** phase 2's axis B re-run for the 4 helper-delegating commands.
 
 ⛔ **None of the three fixes above has been re-verified on a running game.** They are held
 by unit tests, two new gates and code reading. `[B30-REOPEN]` in particular is a CE
