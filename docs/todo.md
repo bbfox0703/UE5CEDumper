@@ -371,7 +371,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 |---|---|---|---|---|---|---|
 | W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ✅ | 4 | 16 | 13 | **2H 4M 7L** | 2026-09-10 |
 | W2 TELEPORT ×2 · VALUESEARCH | ✅ | 3 | 13 | 10 | **0H 6M 4L** | 2026-09-10 |
-| W3 APP-SHELL ×2 · OBJTREE | 🔄 | 3 launched 2026-09-10 | — | — | — | — |
+| W3 APP-SHELL ×2 · OBJTREE | ✅ | 3 | 8 | 6 (**5 distinct**) | **0H 3M 2L** | 2026-09-10 |
 | W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
 | W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ⬜ | — | — | — | — | — |
 
@@ -730,6 +730,169 @@ second line of defence working as designed. **The agents' restraint is visible i
 NOT file**: TELEPORT-A held back four adjacent observations as too close to `[POSEATTACH]`, and
 raised the two genuine residuals as notes instead of findings, which is exactly the behaviour the
 brief asked for.
+
+### ✅ W3 SWEPT 2026-09-10 `[BLANK-W3-2026-09-10]` — 8 raised, 6 confirmed (5 DISTINCT), 2 refuted
+
+3 auditors over **7,602 never-audited lines**. APP-SHELL's 4,926 read through **two lenses** over
+the same 31 files — *persistence and lifecycle*, then *composition and cross-panel wiring* —
+deliberately **not** W2's opposite-arrows shape, because APP-SHELL is not a wire cluster and the
+productive division there is which question you ask, not which end you start from. 5 refuters.
+8 agents, ~1.6M tokens. **Nothing fixed.**
+
+| | MED | LOW | REFUTED |
+|---|---|---|---|
+| APP-SHELL-A | — | ASA-1 · ASA-2 | — |
+| APP-SHELL-B | — | ASB-2 *(= ASA-1)* | ASB-1 · ASB-3 |
+| OBJTREE | OT-1 · OT-2 · OT-3 | — | — |
+
+⚠ **ASA-1 and ASB-2 are the SAME defect** — same file, adjacent lines, same two properties. Both
+lenses reached it independently. That is corroboration, **not two rows**: the honest count is
+**5 distinct confirmed defects**, and the ledger records 6/5.
+
+---
+
+#### ⭐⭐ This wave's largest output is NOT findings — it is MECHANICAL VERIFICATION
+
+APP-SHELL-A filed only two LOW rows and spent its budget proving things instead, with scripts
+rather than by eye. That is the right trade and the results close real open questions:
+
+- **The ~90 model-default / VM-default pairs.** `UiOptionsSettings.cs:18-20` declares the
+  invariant (every model default MUST equal the corresponding VM `[ObservableProperty]`
+  initializer, because an older options file hydrates missing keys to the model default), and W1's
+  WIRE-DTO agent flagged that `UiOptionsStoreTests` pins **3 of ~90**. A script parsed every
+  property + initializer out of the 15 sub-classes and every backing-field initializer out of the
+  15 mapped ViewModels, then resolved 4 name mismatches and 5 constant references by hand:
+  ⭐ **ZERO disagreements. The other 87 hold.**
+- **`ApplyOptions` ↔ `BuildOptions` coverage**: all 90 model fields are both written on load and
+  read on save. The only asymmetry in the whole options pipeline is the change-tracking gap now
+  filed as ASA-1.
+- **The W1 `WhenWritingDefault` trap, swept tree-wide.** Only three context-level users exist:
+  `ExperimentalSettings` (**is** `[W1-QUOTA-UNLIMITED]`, deliberately not re-raised),
+  `AobUsageRecord` (no initialized non-string member whose 0/false is legitimate) and
+  `ClassDenylistSettings` (only `List<string> = new()`, whose default is null, so an empty list is
+  still written). ⭐ **Independently reproduces the blast-radius analysis recorded in W1 — no new
+  instance exists.**
+- **Resource integrity**: all **1,322** `x:Key` definitions unique within their dictionaries, and
+  every `{StaticResource}` / `{DynamicResource}` / `Res.Get("...")` in the whole UI resolves. A
+  missing key is a XAML **load failure**, not a blank label, so this is a crash class now measured
+  rather than assumed. `MainTabIndex` 0..18 matches `MainWindow.axaml`'s 19 `TabItem`s in order, so
+  the index-based cross-tab handoffs land on the tabs they name.
+- **Hotkey failure reporting** — the shape the brief flagged as high-yield — came back **clean**:
+  a failed `RegisterSpecific` returns false, sets the row's `Conflicted` flag, raises a banner
+  naming the combo, and the cursor-hotkey ladder reports "Ctrl/Alt+F5..F8 are all taken" and unticks
+  itself. **No hotkey is shown as bound while dead.**
+
+---
+
+#### ⛔⛔ `[W1-QUOTA-UNLIMITED]` ESCALATES — a second entrance that needs NO user action
+
+W1 framed that HIGH row as *the user choosing "Unlimited"*. It is worse than that, and I verified
+it at HEAD:
+
+```csharp
+// SnapshotViewModel.cs:1184-1186
+if (bytes == null)                        // exceeds every preset → Unlimited
+{
+    if (_gate.SnapshotQuotaMb != 0) SelectedQuotaLabel = MbToLabel(0);
+```
+
+With **Auto-snapshot quota adjustment on**, `AutoSnapshotPlanner.RaiseQuotaBytes` returns `null`
+once the retained set exceeds the 5 GB top preset, and `ApplyAutoQuota` then sets **Unlimited by
+itself** → `_gate.SnapshotQuotaMb = 0` → the key is omitted from `experimental.json` → next launch
+reloads **1024 MB** → `SnapshotStore` FIFO-deletes. ⭐ **A user who never opened the quota combo can
+lose snapshots.**
+
+⚠ **This machine's `experimental.json` currently reads `"snapshotQuotaMb": 5120` — one preset below
+the trigger.** ⬜ Widen the W1 row rather than filing anew; the fix is the same one line.
+
+⚠ **And a second, latent hazard in the same pair of methods:** `MbToLabel`
+(`SnapshotViewModel.cs:545-553`) maps anything not exactly 512/1024/2048/5120/0 to `"1 GB"` and
+`OnSelectedQuotaLabelChanged` writes that back — so `ApplyAutoQuota`, whose own doc says *"Raise
+(never lower)"*, **would lower a non-preset quota to 1 GB**. Unreachable today *only* because
+`AutoSnapshotPlanner.QuotaPresetBytes` happens to hold exactly those four values, and **nothing
+pins the two lists together**. A hand-edited `experimental.json` already shows "1 GB" in the combo
+while eviction runs at the hand-edited number.
+
+---
+
+#### The fix list — 5 distinct rows, none repaired
+
+**MED** — 3 rows, all OBJTREE.
+
+1. ⬜ **`[W3-CONSOLE-REINVOKE]`** `ConsoleViewModel.cs:486`. The sticky-instance self-heal fires on
+   `!result.Success`, which is true for **every** non-zero ProcessEvent code — including
+   **`-5` (game-thread dispatch timeout)**. `Stark.cpp:412-423` states verbatim that on `-5` *"The
+   request stays queued"* and will execute when the game thread next drains, and
+   `Fern.cpp:5580-5588` deliberately **leaks the FString buffers** for exactly that reason. So a
+   `-5` makes the UI enqueue the **same exec command a second time** — and a stateful console
+   command (give item, spawn, teleport, set) then runs twice.
+   ⛔ **Fix is partly unsafe**: excluding `-5` is correct; the finding's repair also covers `-4`,
+   and **that half must be refused** — a stale pin produces `-2`/`-4`, never `-5`.
+2. ⬜ **`[W3-XREF-CAP]`** `PropertyXrefDialog.cs:433`. `Aura::FindPropertyXrefs` and
+   `FindFunctionsByClassParam` self-cap each worker at `maxResults` then `ConcatTruncate`, and
+   **neither folds the cap into any published flag** — both set only
+   `out.stats.deadlineHit = scan.incomplete()`, which covers the clock and worker faults but never
+   the cap. The dialog renders a capped page as a complete answer.
+   ⭐ **Same shape as W1's `[W1-SNAP-FAULT]`, one layer over**: a cap that six sibling sites publish
+   and these do not.
+   ⛔ **THE CHEAP FIX IS ACTIVELY HARMFUL** — do **not** copy `Aura.cpp:8255-8256`'s
+   `if (size >= maxResults) deadlineHit = true;`. That is the very conflation
+   `docs/todo.md:1314` is open about.
+   ⚠ **Four call sites, not one**: `InstanceFinderViewModel.cs:977` and
+   `GameClassFilterViewModel.cs:356` also call `FindFunctionsByClassAsync(..., 200, ct)` and read
+   only `Scan.DeadlineHit`. ⚠ And the only existing hint is **accidental and misleading**:
+   `Fern.cpp:4809` reuses `functions_with_script` as "matched" and `Aura.cpp:6130` sums across
+   workers that each self-cap, so a capped 8-thread scan can print *"(1,432 matched)"* beside 200
+   rows. Do not mistake that for a disclosure when fixing this.
+3. ⬜ **`[W3-BATCH-METHOD]`** `InterestingFunctionsViewModel.cs:331`. `BatchFindFuncPropsAsync`
+   consumes `res.Props` and `res.BudgetHit` and **never reads `res.Method`**. The DLL publishes
+   four method tags and **two of them mean nothing was analysed at all** — `"none"`
+   (`Aura.cpp:6257`, UFUNCTION_FUNC offset never resolved on this build) and
+   `"blueprint_no_script"` (`Aura.cpp:6289`, refused so the shared interpreter is not disassembled
+   and misattributed). The "Uses" column writes a bare **0**, indistinguishable from "analysed, found
+   none". No DLL change and no contract bump needed — `method` is already published
+   (`Fern.cpp:4855`) and already parsed (`DumpService.cs:1329`).
+
+**LOW** — 2 rows: `[W3-CAP-NOSAVE]` `PropertySearchCap` and `ClassListCap` round-trip through
+`ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls
+`ScheduleOptionSave()` — raising a cap and touching nothing else writes nothing to disk (**found
+independently by both APP-SHELL lenses**) · `[W3-DIP-PIXELS]` `WindowRestoreState.PositionAcceptable`
+passes DIP-sized `_pendW`/`_pendH` straight into `WindowPlacement.IsVisibleEnough`, whose header
+states *"All coordinates are PHYSICAL pixels"* — the audit-#5 **AF21** unit fix landed in
+`MainWindow` and never in this newer 100%-band twin. ⛔ The tempting mechanical fix is harmful; the
+safe form is to give `WindowRestoreState` a scale it does not currently have.
+
+---
+
+#### ⛔ REFUTED — do not re-raise
+
+- **ASB-1** *"the experimental-tab lock covers 3 of 4 tabs; Detect Player Stats is missing"*. Every
+  cited fact is true — `MainWindow.axaml.cs:734` really does list only three tags, and
+  `"DetectStats"` really is consumed nowhere else — but **the harm does not exist**: the only
+  toggle lives on the System tab, so the hidden tab is never the selected tab, and the lock is
+  documented as session-only, making the same end state deliberately reachable.
+  ⚠ *Citation slip in the finding worth noting: there is no `MainTabIndex.cs`; the enum is at
+  `MainWindowViewModel.cs:22-47`.*
+- **ASB-3** *"ColorPickerDialog's hue strip latches into permanent drag mode"*. The code shape is
+  as cited and the dialog is production-reachable, but the load-bearing premise — *"a bare `Border`
+  does not capture the pointer, unlike `Button`"* — **is factually wrong for Avalonia**. Settled by
+  **decompiling the exact assemblies the csproj references** (Avalonia 12.1.1 /
+  Avalonia.Win32 12.1.1, via `ilspycmd` out of the NuGet cache) and reading
+  `MouseDevice.MouseDown`, `Pointer.Capture` and `WindowsMousePointer` — not by argument.
+
+#### The `implied_fix_safe` field fired again — 4 of 6
+
+W2 introduced it and it hit 5/10; W3 hits **4/6**. Across the two waves it has now flagged a
+harmful or partly-harmful obvious repair on **nine of sixteen confirmed rows**. It is no longer an
+experiment: ⬜ **make it a permanent part of the verdict schema for W4 and W5**, and treat any
+confirmed row without it as un-triaged.
+
+#### Calibration
+
+6/8 confirmed, against W1's 13/16 and W2's 10/13. **The falling raw count is the signal to watch,
+not the ratio**: APP-SHELL-A opened 46 files and filed two LOW rows, because it kept finding that
+the code was right and said so with a script. Eleven `clean_areas` entries, several of them
+measured tree-wide, are worth more than eleven speculative findings would have been.
 
 ### What this sweep does NOT cover
 
