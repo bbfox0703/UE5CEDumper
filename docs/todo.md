@@ -372,7 +372,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 | W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ✅ | 4 | 16 | 13 | **2H 4M 7L** | 2026-09-10 |
 | W2 TELEPORT ×2 · VALUESEARCH | ✅ | 3 | 13 | 10 | **0H 6M 4L** | 2026-09-10 |
 | W3 APP-SHELL ×2 · OBJTREE | ✅ | 3 | 8 | 6 (**5 distinct**) | **0H 3M 2L** | 2026-09-10 |
-| W4 AURA-GRAPH ×2 · LIVEWALKER | 🔄 | 3 launched 2026-09-10 | — | — | — | — |
+| W4 AURA-GRAPH ×2 · LIVEWALKER | ✅ | 3 | 12 (**10 distinct**) | 6 (+1 undecided) | **0H 5M 1L** | 2026-09-10 |
 | W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ⬜ | — | — | — | — | — |
 
 ⚠ **A `⬜` here is evidence; a heading anywhere else in this file is not** — see the 2026-08-24
@@ -893,6 +893,150 @@ confirmed row without it as un-triaged.
 not the ratio**: APP-SHELL-A opened 46 files and filed two LOW rows, because it kept finding that
 the code was right and said so with a script. Eleven `clean_areas` entries, several of them
 measured tree-wide, are worth more than eleven speculative findings would have been.
+
+### ✅ W4 SWEPT 2026-09-10 `[BLANK-W4-2026-09-10]` — 12 raised, 6 confirmed, 5 refuted, 1 undecided
+
+3 auditors over **9,780 never-audited lines**, including `Aura.cpp`'s 4,610 across 269 hunks — the
+**largest single never-audited block in the repository**. Aura read through two lenses over the
+same 4 files: *is the computation right?* against *does the answer survive the journey out?*
+6 refuters. 10 agents, ~1.9M tokens. **Nothing fixed.**
+
+| | MED | LOW | REFUTED | UNDECIDED |
+|---|---|---|---|---|
+| AURA-ENGINE | — | — | AE-1 · AE-2 · AE-3 | — |
+| AURA-WIRE | AW-1 · AW-3 | — | AW-4 | AW-2 |
+| LIVEWALKER | LW-1 · LW-2 · LW-3 | LW-4 | LW-5 | — |
+
+⚠ **Two cross-lens duplicate pairs** (AE-3≈AW-2 at `Aura.cpp:8621`; AE-2≈AW-4 at `:8906`), so
+**10 distinct** were raised. All 6 confirmed rows are distinct.
+
+---
+
+#### ⭐⭐ THE ANSWER ON THE BIGGEST NEVER-AUDITED BLOCK: the algorithms are sound; the defects are all on the publishing side
+
+**AURA-ENGINE filed three findings and all three were refuted.** **AURA-WIRE's two survived.** That
+contrast, over the same four files read at the same time, is the wave's most useful result — and it
+is the third independent confirmation that *"computed and never published"* is this codebase's
+dominant defect shape, not *"computed wrongly"*.
+
+The engine lens's fourteen `clean_areas` are the real product. The ones that close real risk:
+
+- **`ParallelIndexRanges` partition arithmetic — VERIFIED COMPLETE AND DISJOINT** for every
+  `nthreads` in [1,16] and every `count`. This was named in the brief as the highest-risk item in
+  the wave (*"a boundary defect here is invisible in testing and silently loses objects"*). It is
+  not there: the union of ranges is exactly `[0, count)`, no index visited twice, none lost at the
+  last chunk.
+- **`ConcatTruncate` genuinely reproduces the serial "lowest-index N"** — ranges ascending and
+  disjoint, each worker self-capping, so tid-order concatenation is globally ascending; the
+  truncation keeps the correct prefix even when a worker returned early or faulted mid-vector.
+- **Cooperative cancel verified at ALL SEVEN call sites**, each with a *chunk-relative* stride so an
+  off-aligned worker polls on its first iteration.
+- ⭐ **`workerFaulted`: six of seven sites fold it; the seventh is the already-recorded
+  `[W1-SNAP-FAULT]`. NO NEW UNFOLDED SITE EXISTS.** The brief explicitly invited "the same shape at
+  a new call site" — the answer came back **negative**, which is exactly the kind of bounded
+  result a sweep should be able to produce.
+- **`GraphPath.h` (191 lines, 100% band, never named by any audit)** — no termination, cycle or
+  connectivity defect in the BFS core. Cycles cannot loop (visited inserted at *discovery*), the
+  visited cap is checked before emplace, depth semantics match the doc, and the pure core never
+  emits a `found` path whose steps fail to connect root→target.
+- **LWC: no width is derived from a UE version check anywhere in the band.** Every vector read takes
+  its width from a reflected size and refuses anything else.
+- **Memory safety: no bare `reinterpret_cast` deref of game memory anywhere**; every allocation
+  sized from game memory is clamped (`scriptNum` to 1<<22, TArray count to `0x100000`, the Native-C
+  window to `0x10000`).
+- **Kismet-bytecode index arithmetic: every buffer index proved in range, no off-by-one** across
+  four separate walkers.
+
+---
+
+#### The fix list — 6 rows, none repaired
+
+**MED** — 5 rows.
+
+1. ⬜ **`[W4-STRIDE-TENTATIVE]`** `Aura.cpp:1235`. `DetectItemSize` has **four** outcomes and
+   publishes **one**. The packed verdict reaches the wire, the UI badge and every dump's
+   `packed_unverified` stamp — but the **tentative** and **could-not-detect** verdicts are spent on
+   log lines. A user cannot tell a confident detection from a guess.
+2. ⬜ **`[W4-RELATED-STOPS]`** `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
+   (`maxResults` 128, `kMaxOwnedSubs` 128, `kMaxVisited` 200000, and an 8 s deadline *or*
+   `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
+   no stats struct and no member to carry one. The Related Objects panel renders a cut-off
+   enumeration as the complete one.
+3. ⬜ **`[W4-RELATED-RACE]`** `RelatedObjectsViewModel.cs:106`. `LoadAsync` clears before its
+   `await` and appends after, with **no generation ticket** — the only VM in the cluster without
+   one. Two overlapping loads both pass their `Clear()` and both `Add()`, so the grid holds object
+   A's related graph concatenated with object B's under one header.
+4. ⬜ **`[W4-BOOKMARK-DT]`** `LiveWalkerViewModel.cs:4173`. `PersistedCrumb` carries
+   `IsContainerView` and **not** `IsDataTableView`, so a bookmark saved on a DataTable row view can
+   never be restored — and the failure is reported as *"the game may have restarted"*, blaming the
+   user's session for a serialisation gap.
+5. ⬜ **`[W4-LOOKUP-FILTER]`** `InstanceFinderViewModel.cs:620`. A reverse-address lookup empties
+   `_allInstances` on purpose and adds its single result straight into the bound collection; the
+   next `ApplyInstanceFilter` re-projects unconditionally from the now-empty backing list, so a
+   leftover keyword **permanently erases the result while the status line still reports a match**.
+
+**LOW** — 1 row: `[W4-HEXSORT]` nine address/hex `DataGrid` columns in this cluster sort as **text**
+(`InstanceFinderPanel.axaml:226/:136/:388/:391`, `LiveWalkerPanel.axaml:651/:654/:657/:455/:930`).
+
+---
+
+#### ⛔⛔ ALL SIX CONFIRMED ROWS HAVE AN UNSAFE OBVIOUS FIX — 6 of 6
+
+`implied_fix_safe` hit **5/10** in W2, **4/6** in W3 and now **6/6**. Cumulative: **15 of 22**
+confirmed rows across three waves carry a harmful or partly-harmful obvious repair. Highlights:
+
+| row | the obvious fix | why not |
+|---|---|---|
+| `[W4-STRIDE-TENTATIVE]` | add a `"tentative"` value to `item_layout_mode` | ⛔ wrong shape — that field is a 3-value **layout** descriptor and tentativeness is **orthogonal**; a tentative detection is still classed |
+| `[W4-RELATED-STOPS]` | one boolean for "we stopped early" | ⛔ that is **P5**, the conflation `docs/todo.md:1314` is already open about and `[W3-XREF-CAP]` flags — **four** conditions fire here and `Tot::Requested()` is one of them |
+| `[W4-RELATED-RACE]` | `if (IsBusy) return;` | ⛔ `DetectTargetAsync` sets `IsBusy = true` **then** awaits `LoadForAddress`, so that guard deadlocks the legitimate path |
+| `[W4-BOOKMARK-DT]` | the finding's own recommended second half | ⛔ dangerous — only the `PersistedCrumb` half is safe |
+| `[W4-LOOKUP-FILTER]` | clear `InstanceFilterText` inside the lookup | ⛔ actively harmful — it is an `[ObservableProperty]`, so the assignment re-enters the filter |
+| `[W4-HEXSORT]` | wire `DataGridSortComparers.Hex` onto `HexValue` | ⛔ unsound — `ulong.TryParse` with `NumberStyles.HexNumber` fails on the dump formats actually present |
+
+⭐ **This is now the single most important input to the coming fix pass**: on current evidence the
+obvious repair is wrong more often than it is right. ⬜ **No row gets repaired without reading its
+`implied_fix_safe` first.**
+
+---
+
+#### 🟡 UNDECIDED — `[W4-DEEPWALK-750MS]` `Aura.cpp:8621`, and the experiment is cheap
+
+Snapshot capture bounds each object's deep container walk with a **750 ms wall-clock** backstop and
+publishes nothing — the one non-deterministic limit in a subsystem whose `WalkLeafLimits` header
+(`:2426-2435`) states the determinism rationale **verbatim**, *"unlike a wall-clock deadline"*.
+The mechanism is verified; the harm's reachability at HEAD is not, and the finding's only evidence
+for it is a **pre-fix** measurement of the very population the fix bounds.
+
+⭐ **The refuter designed an experiment needing no rebuild and no instrumentation**: capture snapshot
+A of a frozen game state on an idle machine, then snapshot B of the **same frozen state** under
+synthetic CPU+IO load, and compare per-key element counts across the two SQLite databases. If they
+differ, the backstop is reachable in practice and this becomes a real row.
+
+#### ⛔ REFUTED — do not re-raise
+
+- **AE-1** (filed HIGH) *"`RecoverViaWorldLevel` returns `found=true`/`ok_via_level` for a path that
+  stops at the owning actor"*. ⭐ **Already on a binding refuted list** —
+  `docs/audit-2026-08-13-early-code-findings.md:2722` — and the refuter **proved it is the same
+  site, not a drifted line number**: `git show 5560b107:dll/src/Aura.cpp` line 3838 is
+  byte-identical to today's `:4341`. Also deliberate twice over: the comment three lines above says
+  *"landing on the owner is useful"*, and `git log -S` finds commit `65f0c75f`, whose body
+  enumerates it under *"Honest limits (not bugs)"* and describes the exact UI coupling the finding
+  called a violation as the stated design.
+- **AE-2 / AW-4** *"`AppendOwnedSubObjectLeaves` never got the abort/visited guard its twin was
+  given"* — rejected on both lenses.
+- **AE-3** *"the 750 ms backstop truncates at a different element each run"* — the engine lens's
+  framing was refuted; the wire lens's framing of the same site survives as the UNDECIDED above.
+  ⚠ Same line, two framings, two different verdicts: keep both facts.
+- **LW-5** *"Batch Find Func caches a thrown scan as `—`"*.
+
+#### Calibration
+
+6/12 confirmed — the lowest ratio of the sweep (W1 13/16, W2 10/13, W3 6/8), and the **first wave
+where a HIGH was refuted**. That is the do-not-re-raise machinery working: the brief named five
+recorded rows with their exact lines, and the refuters caught the sixth from a list the brief only
+pointed at. ⚠ The falling ratio does **not** mean the code is cleaner — it means the code was
+already picked over by three earlier waves, exactly as designed.
 
 ### What this sweep does NOT cover
 
