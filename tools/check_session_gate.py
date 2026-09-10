@@ -7,13 +7,13 @@ today: Class Pivot's four row handoffs are ungated, which is `[W1-PIVOT-SESSION]
 is in its record-don't-fix phase, so they are not repaired here; the detector is registered in the
 SAME commit that gates them, during the fix pass.
 
-WHAT IT REFUSES. In a ViewModel that reads STORED snapshots (it references `SnapshotMeta`), a command
-that hands an ADDRESS to the live game -- `NavigateToInstance` / `LocateInGWorld` /
-`LocateInGameEngine` with an address payload, or a clipboard copy of one -- where nothing that
-enables it depends on the game session. A snapshot row's address means something only in the launch
-that captured it (`EngineState.GameSessionId` = PeHash + ProcessCreationTime). Handed to a later
-launch, Live Walker walks an arbitrary address and renders whatever is there as a UObject, and Copy
-Address gives CE a meaningless number.
+WHAT IT REFUSES. In a ViewModel class that reads STORED snapshots (its own body references
+`SnapshotMeta`), a command that hands an ADDRESS to the live game -- `NavigateToInstance` /
+`LocateInGWorld` / `LocateInGameEngine` with an address payload, or a clipboard copy of one -- where
+nothing that enables it depends on the game session. A snapshot row's address means something only in
+the launch that captured it (`EngineState.GameSessionId` = PeHash + ProcessCreationTime). Handed to a
+later launch, Live Walker walks an arbitrary address and renders whatever is there as a UObject, and
+Copy Address gives CE a meaningless number.
 
 THE PREDICATE. A handoff command is SAFE when its `[RelayCommand(CanExecute = X)]` reaches the session,
 or EVERY element that binds it has `IsEnabled` / `IsVisible` bound to a property whose expression
@@ -24,6 +24,16 @@ reading the ViewModel alone would call two gated panels ungated. That is why thi
 Legitimate population EMPTY: a CLASS-NAME payload (Detect Player Stats' `LocateInGWorld(row.ClassName)`)
 means the same thing in every launch and is not an address, so it is not counted; an address handoff
 with no session gate has no legitimate reason to exist. No baseline, no allowlist.
+
+⛔ ATTRIBUTION IS BY CLASS BODY, NOT BY FILE -- and the first run proved why. Its first draft mapped
+every class name declared in a file to the WHOLE file, so the helper and row classes declared beside
+each ViewModel (`PivotFieldPick`, `DiscoverSnapshotPick`, `NoiseRowVm`, `SpcGroupCellVm`,
+`SpcSnapshotPick`) each re-reported their neighbour's commands, judged against the wrong panel's
+`IsEnabled`: the run said FIFTEEN ungated handoffs when the true number is four. Its selftest keyed on
+(method, status) and so could not see the duplication either; it now keys on (class, method, status)
+and carries a helper-class-beside-the-VM case. The same draft missed any command whose attribute was
+`[RelayCommand(CanExecute = nameof(X))]` -- the nested `)` defeated a `[^)]*` -- which the selftest
+caught.
 
 MEASURED POPULATION (2026-09-10): Snapshot Diff, Snapshot Group, SPC single and SPC Group -- gated;
 Class Pivot -- 4 ungated handoffs (recorded); Detect Player Stats -- class-name payload, not counted.
@@ -43,16 +53,20 @@ VMS = REPO / 'ui' / 'UE5DumpUI' / 'ViewModels'
 VIEWS = REPO / 'ui' / 'UE5DumpUI' / 'Views'
 
 HANDOFF = re.compile(r'\b(NavigateToInstance|LocateInGWorld|LocateInGameEngine)\?\.Invoke\(([^)]*)\)')
-RELAY = re.compile(r'\[RelayCommand(?:\(([^)]*)\))?\]\s*(?:\[[^\]]*\]\s*)*'
+RELAY = re.compile(r'\[RelayCommand(\((?:[^()]|\([^()]*\))*\))?\]\s*(?:\[[^\]]*\]\s*)*'
                    r'(?:(?:private|public|internal|protected)\s+)?(?:async\s+)?'
                    r'[\w<>?\[\],.]+(?:<[^>]*>)?\s+(\w+)\s*\(')
 BOOLPROP = re.compile(r'\b(?:public|private|internal|protected)\s+(?:static\s+)?bool\s+(\w+)\s*'
                       r'(?:\(\s*\))?\s*=>\s*(.*?);', re.S)
+CLASS = re.compile(r'\b(?:class|record|struct)\s+(\w+)[^{;]*\{')
 SESSION = re.compile(r'GameSessionId|_currentSessionId')
 ELEM = re.compile(r'<([A-Za-z][\w.:]*)\b([^<>]*?)/?>', re.S)
 
 
-def strip_comments(src: str) -> str:
+def strip_code(src: str) -> str:
+    """Blank comments, and blank {}() INSIDE string literals, keeping every newline and every
+    identifier -- so `$"{addr:X}"` cannot unbalance a brace or paren matcher, while a
+    `CanExecute = "CanX"` string form stays readable."""
     out, i, n = [], 0, len(src)
     while i < n:
         if src.startswith('//', i):
@@ -69,7 +83,7 @@ def strip_comments(src: str) -> str:
             j = i + 1
             while j < n and src[j] != '"':
                 j += 2 if src[j] == '\\' else 1
-            out.append(src[i:j + 1])
+            out.append('"' + re.sub(r'[{}()]', ' ', src[i + 1:j]) + '"')
             i = j + 1
         else:
             out.append(src[i])
@@ -89,17 +103,33 @@ def match_close(src: str, pos: int, o: str, c: str) -> int:
     return -1
 
 
+def class_bodies(src: str) -> list:
+    """-> [(name, own_body)] with every NESTED class body blanked out of its container's text."""
+    spans = []
+    for m in CLASS.finditer(src):
+        op = m.end() - 1
+        cl = match_close(src, op, '{', '}')
+        if cl > 0:
+            spans.append((m.group(1), op, cl))
+    out = []
+    for name, op, cl in spans:
+        body = list(src[op + 1:cl])
+        for _, o2, c2 in spans:
+            if o2 > op and c2 < cl:
+                for k in range(o2 - op - 1, c2 - op):
+                    if 0 <= k < len(body) and body[k] != '\n':
+                        body[k] = ' '
+        out.append((name, ''.join(body)))
+    return out
+
+
 def snapshot_classes(vm_files: dict) -> dict:
-    """{class: merged text of ALL its partial files}, for classes whose files read SnapshotMeta."""
-    declared, readers = {}, set()
-    for path, raw in vm_files.items():
-        src = strip_comments(raw)
-        names = re.findall(r'\bclass\s+(\w+)', src)
-        for n in names:
-            declared.setdefault(n, []).append(src)
-        if 'SnapshotMeta' in src:
-            readers.update(names)
-    return {c: '\n'.join(declared[c]) for c in sorted(readers)}
+    """{class: its own body text, partials merged} for classes whose body reads SnapshotMeta."""
+    merged = {}
+    for raw in vm_files.values():
+        for name, body in class_bodies(strip_code(raw)):
+            merged[name] = merged.get(name, '') + '\n' + body
+    return {c: t for c, t in sorted(merged.items()) if 'SnapshotMeta' in t}
 
 
 def gated_props(text: str):
@@ -136,17 +166,15 @@ def handoff_commands(text: str) -> list:
         if j >= len(text) or text[j] == ';':
             continue
         if text.startswith('=>', j):
-            k = text.find(';', j)
-            body = text[j:k]
+            body = text[j:text.find(';', j)]
         else:
-            k = match_close(text, j, '{', '}')
-            body = text[j:k]
+            body = text[j:match_close(text, j, '{', '}')]
         whats = [h.group(1) for h in HANDOFF.finditer(body) if re.search(r'addr', h.group(2), re.I)]
         if 'CopyToClipboardAsync' in body and re.search(r'addr', method + body, re.I):
             whats.append('CopyToClipboard')
         if not whats:
             continue
-        ce = re.search(r'CanExecute\s*=\s*(?:nameof\s*\(\s*)?(\w+)', m.group(1) or '')
+        ce = re.search(r'CanExecute\s*=\s*(?:nameof\s*\(\s*)?"?(\w+)', m.group(1) or '')
         out.append((method, re.sub(r'Async$', '', method) + 'Command', ce.group(1) if ce else None,
                     '+'.join(sorted(set(whats)))))
     return out
@@ -158,7 +186,7 @@ def analyse(vm_files: dict, views: dict) -> list:
     for cls, text in snapshot_classes(vm_files).items():
         gated = gated_props(text)
         panel = [(p, v) for p, v in views.items()
-                 if re.search(r'x:DataType="vm:%s"' % cls, v) or '(vm:%s)' % cls in v]
+                 if re.search(r'vm:%s\b' % re.escape(cls), v)]
         for method, cmd, ce, what in handoff_commands(text):
             elems = []
             for path, v in panel:
@@ -173,7 +201,7 @@ def analyse(vm_files: dict, views: dict) -> list:
                             continue
                         path_ = b.group(1).strip()
                         if path_.startswith('!'):
-                            how = '%s={!…} (a negation cannot express a session match)' % attr
+                            how = '%s={!...} (a negation cannot express a session match)' % attr
                             continue
                         leaf = re.findall(r'(\w+)', path_)[-1]
                         how = '%s={%s}' % (attr, leaf)
@@ -201,15 +229,14 @@ def load_tree():
     return vms, views
 
 
-# Class Pivot's pre-fix shape, VERBATIM in the parts that decide the verdict, so the selftest stays
-# valid after the fix pass changes the real files.
+# Class Pivot's pre-fix shape, VERBATIM in the parts that decide the verdict, WITH a helper class
+# declared beside it the way the real file does -- the case the first draft got wrong.
 PIVOT_VM = '''
 public partial class ClassPivotViewModel : ObservableObject
 {
     private SnapshotMeta? _selectedSnapshot;
     public event Action<string>? NavigateToInstance;
     public event Action<string>? LocateInGWorld;
-    public event Action<string>? LocateInGameEngine;
     public bool CanLocateResult => SelectedResult != null;
     public bool CanLocateResultInGWorld => SelectedResult != null;
     [RelayCommand]
@@ -227,9 +254,14 @@ public partial class ClassPivotViewModel : ObservableObject
     [RelayCommand]
     private async Task CopyAddressAsync(PivotResultRow? row)
     {
-        var hex = row.ObjAddr;
+        var hex = $"{row.ObjAddr:X}";
         await _platform.CopyToClipboardAsync(hex);
     }
+}
+public sealed class PivotFieldPick : ObservableObject
+{
+    public SnapshotMeta? Owner { get; set; }
+    public string Name { get; set; } = "";
 }
 '''
 PIVOT_VIEW = '''
@@ -240,6 +272,7 @@ PIVOT_VIEW = '''
           CommandParameter="{Binding SelectedResult}" Padding="8,4"/>
   <Button Content="x" Command="{Binding LocateResultInGWorldCommand}"
           CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanLocateResultInGWorld}"/>
+  <DataTemplate x:DataType="vm:PivotFieldPick"><TextBlock Text="{Binding Name}"/></DataTemplate>
 </UserControl>
 '''
 GROUP_VM = '''
@@ -278,21 +311,25 @@ public partial class DetectStatsViewModel : ObservableObject
 
 
 def selftest() -> bool:
+    C = 'ClassPivotViewModel'
+    S = 'SpcQueryViewModel'
     cases = [
-        ('Class Pivot pre-fix: its three address handoffs are UNGATED',
+        ('Class Pivot pre-fix: its three address handoffs are UNGATED -- and the helper class '
+         'declared beside it inherits NONE of them',
          {'vm.cs': PIVOT_VM}, {'v.axaml': PIVOT_VIEW},
-         {('OpenInLiveWalker', 'UNGATED'), ('LocateResultInGWorld', 'UNGATED'),
-          ('CopyAddressAsync', 'UNGATED')}),
-        ('SPC Group: gated in XAML only, through a property chain, and via CanExecute -- all SAFE',
+         {(C, 'OpenInLiveWalker', 'UNGATED'), (C, 'LocateResultInGWorld', 'UNGATED'),
+          (C, 'CopyAddressAsync', 'UNGATED')}),
+        ('SPC Group: gated in XAML only, through a property chain, and via CanExecute = nameof(...) '
+         '-- all SAFE',
          {'vm.cs': GROUP_VM}, {'v.axaml': GROUP_VIEW},
-         {('OpenGroupInLiveWalker', 'SAFE'), ('LocateGroupSlotInGWorld', 'SAFE'),
-          ('OpenViaCanExecute', 'SAFE')}),
+         {(S, 'OpenGroupInLiveWalker', 'SAFE'), (S, 'LocateGroupSlotInGWorld', 'SAFE'),
+          (S, 'OpenViaCanExecute', 'SAFE')}),
         ('a class-name payload is not an address and is not counted',
          {'vm.cs': STATS_VM}, {}, set()),
     ]
     ok_all = True
     for what, vms, views, want in cases:
-        got = {(m, s) for _, m, s, _ in analyse(vms, views)}
+        got = {(c, m, s) for c, m, s, _ in analyse(vms, views)}
         ok = got == want
         ok_all &= ok
         print('  %-4s %s' % ('PASS' if ok else 'FAIL', what))
