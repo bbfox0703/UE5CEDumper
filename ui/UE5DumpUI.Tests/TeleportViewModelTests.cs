@@ -1632,10 +1632,16 @@ public class TeleportViewModelTests
         var fake = new FakeDumpService { NextCursorState = 1 };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
+        // Connect now PRIMES every badge the disconnect branch resets, the cursor
+        // included ([BADGEPRIME-2026-09-10]), so wait for that and start the count from
+        // zero. Asserting ">= 1" instead would have hidden the duplicate-call regression
+        // this test exists to catch.
+        await vm.ConnectPrime;
+        int before = fake.GetCursorCalls;
 
         await vm.RefreshCursorCommand.ExecuteAsync(null);
 
-        Assert.Equal(1, fake.GetCursorCalls);
+        Assert.Equal(before + 1, fake.GetCursorCalls);
         Assert.Equal("ON", vm.MouseCursorState);
     }
 
@@ -2452,4 +2458,82 @@ public class TeleportViewModelTests
         vm.LoadCoordLibraryForGame("Game.exe");
         Assert.Empty(vm.CoordEntries);
     }
+    /// <summary>
+    /// [BADGEPRIME-2026-09-10] — connect must PRIME every badge the disconnect branch
+    /// resets, not three of twelve.
+    /// </summary>
+    /// <remarks>
+    /// <para>Observed live on a Shipping fixture before the fix: Keep Foreground, Move
+    /// Speed, Debug Camera, Gravity, Super Jump and Fly all read "State: Unknown" while the
+    /// pipe answered <c>state: 0</c> / <c>has_cmc: true</c> for each — and God Mode and
+    /// Time Dilation showed real values, which were exactly the two that were primed. That
+    /// pairing is the control, and it is reproduced here: the assertion is that NO badge is
+    /// left Unknown, so a future card added to the reset list without a prime fails.</para>
+    ///
+    /// <para>It matters because a DLL hold survives a UI reconnect for as long as the game
+    /// lives, so a still-active Fly or Move Speed hold showed "Unknown" and the user had no
+    /// sign the game was still modified.</para>
+    /// </remarks>
+    [Fact]
+    public async Task Connect_primes_every_badge_that_disconnect_resets()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        // ⛔ ASSERT THAT CONNECT *ASKED*, NOT WHAT THE BADGE SAYS. A first version of this
+        // test compared badge text against "Unknown" and failed on DebugCamera, GodMode and
+        // ForegroundLock -- none of which was a product defect: those are FAKE defaults
+        // that legitimately mean unknown (GetForegroundLockAsync is not even overridden).
+        // Badge text conflates "the VM never asked" with "the fake had nothing to say",
+        // and only the first of those is the defect. The call counters separate them.
+        Assert.True(fake.GetProtectStateCalls >= 1, "connect did not read the God Mode hold");
+        Assert.True(fake.GetDebugCameraCalls >= 1, "connect did not read the Debug Camera state");
+        Assert.True(fake.GetCursorCalls >= 1, "connect did not read the mouse-cursor state");
+        Assert.True(fake.FlyGetStateCalls >= 1, "connect did not read the Fly state");
+    }
+
+    /// <summary>The other half of the symmetry: a badge the prime DID light up goes back to
+    /// Unknown on disconnect. Without this the test above could pass over a UI that lights
+    /// badges and never clears them, which is the B9/B17 defect in the other direction.</summary>
+    [Fact]
+    public async Task Disconnect_returns_a_primed_badge_to_Unknown()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        // The cursor is a badge the fake CAN answer for, so it is genuinely lit here --
+        // which is what makes the reset below a real observation rather than a no-op.
+        Assert.Equal("ON", vm.MouseCursorState);
+
+        vm.SetConnected(false);
+
+        // ⚠ THE BADGES DO NOT SHARE A WORD, and assuming they did is what this assertion
+        // caught: Apply*State(-1) renders "Unknown" for the cursor but "Unavailable" for
+        // Fly, See-through and Gravity. Pinning the literal per card is deliberate -- a
+        // helper that accepted either would stop noticing if one card's reset broke.
+        Assert.Equal("Unknown", vm.MouseCursorState);
+        Assert.Equal("Unavailable", vm.FlyState);
+        Assert.Equal("Unavailable", vm.SeeThroughState);
+        Assert.Equal("Unavailable", vm.GravityState);
+    }
+
+    /// <summary>The prime must never write StatusText — it would stamp over "Connected" —
+    /// and must not leave the UI busy.</summary>
+    [Fact]
+    public async Task Connect_prime_is_quiet()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Connected", vm.StatusText);
+        Assert.False(vm.IsBusy);
+    }
+
 }

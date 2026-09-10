@@ -859,16 +859,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             StatusText = "Connected";
             _ = RefreshMarkersAsync();
-            // Reflect any dilation the DLL is already holding (prior session / CE
-            // record) — it survives a UI reconnect as long as the game lives.
-            _ = RefreshHeldTimeStateAsync();
-            // Same "state lives in the DLL" model for God Mode: `want` survives a UI
-            // reconnect, so the badge must reflect it without the user pressing ↻
-            // (audit #5 AD4 — nothing queried it on connect, and AutoTick polls only
-            // pose + markers). Deliberately NOT RefreshGodModeAsync: that one sets
-            // IsBusy, which flickers every CanOperate-bound button, and writes
+            // Reflect whatever the DLL is ALREADY holding — a dilation, a god-mode
+            // `want`, a Fly or Move Speed hold from a previous UI session or a CE
+            // record. All of it survives a UI reconnect as long as the game lives, so
+            // the badges must show it without the user pressing ↻ on each card.
+            //
+            // ⚠ This used to be two calls covering three badges, while the disconnect
+            // branch below reset TWELVE — so nine cards read "Unknown" over state the
+            // DLL could answer for. Measured live on Shipping, with the two primed
+            // cards as the control. [BADGEPRIME-2026-09-10]; the asymmetry is now held
+            // by tools/check_badge_prime_symmetry.py.
+            //
+            // Deliberately NOT the button-driven RefreshXxxAsync methods: those set
+            // IsBusy, which flickers every CanOperate-bound button, and write
             // StatusText, which would overwrite the "Connected" just set above.
-            _ = RefreshHeldProtectStateAsync();
+            ConnectPrime = PrimeHeldBadgesAsync();
         }
         else
         {
@@ -2311,6 +2316,94 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Quiet read-back of EVERY badge the disconnect branch resets, run once on connect.
+    /// </summary>
+    /// <remarks>
+    /// <para>⛔ WHY THIS EXISTS. <see cref="SetConnected"/>'s disconnect branch walks twelve
+    /// badges back to Unknown; before 2026-09-10 its connect branch primed only three, so
+    /// nine cards sat at "Unknown" while the DLL held a definite answer for each. Measured
+    /// live on a Shipping fixture: Keep Foreground, Move Speed, Debug Camera, Gravity,
+    /// Super Jump and Fly all read "State: Unknown" against a pipe answering
+    /// <c>state: 0</c> / <c>has_cmc: true</c> — while God Mode and Time Dilation showed
+    /// real values, and those were exactly the two that were primed.
+    /// [BADGEPRIME-2026-09-10].</para>
+    ///
+    /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
+    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, added for
+    /// audit #5 AD4). So after a UI restart a still-active Fly, Move Speed or Gravity hold
+    /// showed "Unknown" and the user had no sign the game was still modified.</para>
+    ///
+    /// <para>⚠ QUIET IS THE WHOLE CONTRACT. The button-driven <c>Refresh*Async</c> methods
+    /// set <c>IsBusy</c> — which flickers every <c>CanOperate</c>-bound control — and write
+    /// <c>StatusText</c>, which would stamp over the "Connected" that <see cref="SetConnected"/>
+    /// has just set. That is why they are not simply called here, and why each read below
+    /// applies its readout and logs on failure without touching either.</para>
+    ///
+    /// <para>Sequential on purpose: twelve badges need only eight pipe round-trips (four
+    /// cards share <c>GetMovementParamsAsync</c>), and firing them one after another keeps
+    /// a reconnect from bursting the pipe. One failure must not skip the rest, so every
+    /// read is guarded on its own.</para>
+    ///
+    /// <para>⛔ ADDING A CARD? Add its reset to <see cref="SetConnected"/> AND its prime
+    /// here. The two lists are kept honest by <c>tools/check_badge_prime_symmetry.py</c>,
+    /// which fails if a badge is reset on disconnect and primed by nothing on connect.</para>
+    /// </remarks>
+    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
+    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
+    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
+    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
+    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
+    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
+    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
+    /// honest fix. Production code never awaits this.</remarks>
+    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
+
+    private async Task PrimeHeldBadgesAsync()
+    {
+        // God Mode, and the two time lanes — the three that were already primed.
+        await PrimeOneAsync(RefreshHeldProtectStateAsync, "protect");
+        await PrimeOneAsync(RefreshHeldTimeStateAsync, "time");
+
+        // Four cards off ONE call: Move Speed, Gravity, Super Jump, Gravity Direction.
+        await PrimeOneAsync(async () =>
+        {
+            var mp = await _dump.GetMovementParamsAsync();
+            ApplyMoveSpeedReadout(mp);
+            ApplyGravityReadout(mp);
+            ApplySuperJumpReadout(mp);
+            ApplyGravDirReadout(mp);
+        }, "movement");
+
+        await PrimeOneAsync(async () =>
+            ApplyDebugCameraState(await _dump.GetDebugCameraStateAsync()), "debugcamera");
+        await PrimeOneAsync(async () =>
+            ApplyForegroundLockState(await _dump.GetForegroundLockAsync()), "foreground");
+        await PrimeOneAsync(async () =>
+            ApplyFlyReadout(await _dump.FlyGetStateAsync()), "fly");
+        await PrimeOneAsync(async () =>
+            ApplySeeThroughReadout(await _dump.SeeThroughGetStateAsync()), "seethrough");
+        await PrimeOneAsync(async () =>
+            ApplyMouseCursorState(await _dump.GetMouseCursorAsync()), "cursor");
+    }
+
+    /// <summary>One quiet prime: log-only on failure, and never abandons the rest.</summary>
+    /// <remarks>A prime that threw used to be indistinguishable from a badge that is
+    /// genuinely Unknown — and leaving the badge at Unknown IS the honest outcome for a
+    /// read that failed, so the catch deliberately does not force any other state.</remarks>
+    private async Task PrimeOneAsync(Func<Task> read, string what)
+    {
+        if (!IsConnected) return;
+        try
+        {
+            await read();
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Teleport prime '{what}' failed — its badge stays Unknown", ex);
+        }
+    }
     /// <summary>Quiet read-back of the God Mode hold (used on connect). The DLL's
     /// re-assert worker keeps driving <c>want</c> for as long as the game process
     /// lives, so a UI reconnect should show the badge that is actually in force

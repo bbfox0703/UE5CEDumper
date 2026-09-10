@@ -167,6 +167,15 @@ GATES = [
      "Run 'py tools/check_ce_untick_placement.py --list' for every site and its "
      "verdict, or '--selftest' for the negative controls", False),
 
+    ("check_badge_prime_symmetry",
+     ["tools/check_badge_prime_symmetry.py"],
+     "a gameplay card's badge is reset to Unknown on disconnect and primed by NOTHING on "
+     "connect, so after a UI reconnect it reads 'never asked' over state the DLL is still "
+     "holding -- a live Fly or Move Speed hold with no sign the game is modified. Add the "
+     "read to TeleportViewModel.PrimeHeldBadgesAsync, quietly (no IsBusy, no StatusText). "
+     "It counts Apply*State SYMBOLS, so the two time lanes are one entry. "
+     "Run 'py tools/check_badge_prime_symmetry.py --list' or '--selftest'", False),
+
     ("check_ce_idlewait_scope",
      ["tools/check_ce_idlewait_scope.py"],
      "a CE mailbox emitter's bounded wait-for-IDLE is conditioned on the "

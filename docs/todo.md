@@ -2922,13 +2922,24 @@ three prime calls actually reach.
 | card | the UI showed | the pipe answered |
 |---|---|---|
 | Keep Foreground | **State: Unknown** | `get_foreground_lock` → `state: 0` |
-| Move Speed | **State: Unknown** | `get_movement_params` → `code: 0, has_cmc: true, cmc_addr: 0x1D8775730D0` |
+| Move Speed | **State: Unavailable** | `get_movement_params` → `code: 0, has_cmc: true, cmc_addr: 0x1D8775730D0` |
 | Debug Camera | **State: Unknown** | `get_debug_camera_state` → `state: 0` |
-| Gravity | **State: Unknown** | (same family) |
-| Super Jump | **State: Unknown** | (same family) |
-| Fly | **State: Unknown** | `fly_get_state` → `active: false, has_cmc: true, current_mode: 1, mode_resolved: true` |
+| Gravity | **State: Unavailable** | (same family) |
+| Super Jump | **State: Unavailable** | (same family) |
+| Fly | **State: Unavailable** | `fly_get_state` → `active: false, has_cmc: true, current_mode: 1, mode_resolved: true` |
 | **God Mode** | **State: OFF** ✅ | `get_god_mode` → `state: 0` |
 | **Time Dilation** | **State: OFF** ✅ | `get_time_state` → `code: 0` |
+
+⚠ **CORRECTED 2026-09-10 while fixing this row.** The table first quoted *"State: Unknown"*
+for all six — read off a 0.55-scale screenshot. The badges do **not** share a word:
+`Apply*State(-1)` renders **"Unknown"** for Debug Camera, God Mode, Foreground Lock and
+Mouse Cursor, and **"Unavailable"** for Move Speed, Gravity, Super Jump, Fly, See-through
+and Gravity Direction. Derive it, never read it off a screenshot:
+`awk '/private void Apply<X>State\(int state\)/,/};/' TeleportViewModel.cs`.
+⛔ **The finding is unaffected** — both words mean *this card was never asked* — but four of
+the six labels were wrong, and a wrong quoted string is how a later reader "fails to
+reproduce" a real defect. It was caught by a unit test asserting the reset literal, which
+is the argument for pinning the literal per card rather than accepting either word.
 
 ⭐⭐ **The two that render correctly are EXACTLY the two that are primed.** That is not a coincidence
 to be argued about — it is the control that says the instrument (me reading badges off a screenshot)
