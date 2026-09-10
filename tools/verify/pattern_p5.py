@@ -10,10 +10,20 @@ ran out, the user cancelled, a worker faulted, the result cap was hit. Each caus
 something different (raise the timeout, narrow the predicate, re-run, nothing at all). A consumer
 that names ONE cause for a flag that carries several gives the wrong advice for the rest.
 
-KNOWN POSITIVES, all recorded: `deadline_hit` forced by the result CAP (`Aura.cpp` ~8257, drifted from
-the 8244-8247 the June sweep cited); `scan.incomplete()` folding clock, cancel and worker fault into
-one bit (`docs/todo.md:1314`); `FindReferences`' `(deadlineHit && matches.empty()) || workerFaulted`;
-the D2 residual (`docs/todo.md:1738`) -- a worker fault shown to the user as a deadline.
+KNOWN POSITIVES: `deadline_hit` forced by the result CAP (`Aura.cpp` ~8257, drifted from the 8244-8247
+the June sweep cited); `scan.incomplete()` folding clock, cancel and worker fault into one bit;
+`FindReferences`' `(deadlineHit && matches.empty()) || workerFaulted`; the D2 residual -- a worker fault
+shown to the user as a deadline (grep docs/todo.md for "D2's deliberate residual").
+⚠ NOT "all recorded", as this paragraph first said: the CAP half is filed NOWHERE -- its only trace is a
+rig note in docs/verification-register.md ("non-fault causes"). The `docs/todo.md:1314` / `:1738` this
+paragraph cited were line numbers that never held / no longer held those rows.
+
+⛔ THE UI AXIS FIRST SAW A RENDERING ONLY WHEN ITS OWN LINE HELD `if (`, `?`, `&&` or `||`, and dropped
+36 flag reads. About half were real renderings: every ternary broken across lines (`var capSuffix =
+r.Aborted` / `? "..."`), and every flag passed to a renderer as an argument -- including
+`PartialResultNotice.ScanSuffix(..., cs.DeadlineHit, ...)`, the ONLY caller of `DeadlineClause`. The
+control now asserts both shapes. Still not followed: a flag stored in a field and rendered elsewhere
+(`_scanTruncated = result.DeadlineHit`) -- one hop away, and a reader's job.
 
 ⚠ THE "TEMPLATE" IS ONLY HALF A TEMPLATE. The June sweep named `begin_group_scan` the model to copy:
 `deadline_hit`, `per_slot_cap_hit` and `per_slot_cap` as distinct fields. The per-slot cap IS
@@ -165,7 +175,16 @@ def collect_ui():
         lines = io.open(p, encoding='utf-8', errors='replace').read().split('\n')
         for i, l in enumerate(lines):
             m = None if l.lstrip().startswith('//') else UI_FLAG.search(l)   # doc comments are not renderings
-            if not m or not re.search(r'\bif\s*\(|\?|&&|\|\|', l):
+            if not m:
+                continue
+            # A rendering is a flag that DECIDES something: a conditional on its own line OR THE NEXT
+            # (C# breaks `var x = r.Aborted` / `? "..." : ...` across lines), or the flag handed to a
+            # call as an argument -- `ScanSuffix(..., cs.DeadlineHit, ...)`, the only DeadlineClause
+            # emitter, was invisible to the one-line predicate this replaced.
+            nxt = lines[i + 1] if i + 1 < len(lines) else ''
+            cond = re.search(r'\bif\s*\(|\?|&&|\|\|', l) or re.match(r'\s*[?:]', nxt)
+            arg = re.search(re.escape(m.group(0)) + r'\s*[,)]', l)
+            if not (cond or arg):
                 continue
             window = ' '.join(lines[i:i + 3])
             named = {c for c, rx in TEXT_CAUSES.items() if rx.search(window)}
@@ -219,14 +238,21 @@ def cmd_control() -> int:
     ui = collect_ui()
     c = any('ValueSearchViewModel' in p and flag == 'DeadlineHit' and {'clock', 'cap'} <= named
             for p, _, flag, named, _, _ in ui)
+    d = any('InstanceFinderViewModel' in p and flag == 'DeadlineHit' and 'cs.DeadlineHit' in snip
+            for p, _, flag, _, _, snip in ui)
+    e = any(snip.startswith('var capSuffix = ') for _, _, _, _, _, snip in ui)
     print('\nCONTROL -- does every axis re-find its known positives, over what it prints?\n')
     print('  %-4s flags  a cap forces a deadline-named flag (Aura.cpp ~8257 / ~9460)' % ('PASS' if a1 else '****'))
     print('  %-4s flags  a fault shares a deadline-named flag (Aura.cpp ~3052, incomplete())' % ('PASS' if a2 else '****'))
     print('  %-4s wire   all SIX deadline_hit publish sites seen, not just the data[...] two  (saw %d)'
           % ('PASS' if b else '****', n_deadline))
     print('  %-4s ui     ValueSearch renders DeadlineHit as "deadline / result cap"' % ('PASS' if c else '****'))
+    print('  %-4s ui     a flag passed to a renderer as an ARGUMENT (ScanSuffix(..., cs.DeadlineHit, ...))'
+          % ('PASS' if d else '****'))
+    print('  %-4s ui     a ternary broken across lines (`var capSuffix = r.Aborted` / `? ...`)'
+          % ('PASS' if e else '****'))
     print()
-    if not (a1 and a2 and b and c):
+    if not (a1 and a2 and b and c and d and e):
         print('*** an axis cannot re-find its known positive -- it is BROKEN; do not trust it')
         return 2
     print('every axis re-finds its known positives')
