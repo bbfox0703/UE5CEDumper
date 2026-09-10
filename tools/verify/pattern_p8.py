@@ -24,6 +24,13 @@ write). Only re-assigned members are candidates; the rest are listed for complet
 
 ⛔ A POPULATION PRODUCER, NOT A FINDING LIST. P8 is a SWEEP: a plain member can be legitimately
 immutable in ways this heuristic cannot prove.
+
+⚠ MEASURED LIMITS (the P4/P7/P8 adjudication, 2026-09-10, `[PATTERN-P4-P7-P8-2026-09-10]`).
+3 of the 9 `reads` rows were artifacts, and the control stayed green:
+  * the `.P =` match is by member NAME, not type -- `GroupSlotMatch.ClassName` writes
+    (DumpService.cs:2191/2429) were attributed to `PropertySearchMatch`, which shares the name;
+  * a READ, `PropertyName = match.PropName` (PropertySearchViewModel.cs:375), was counted as a write.
+Both are false positives, which adjudication removes; neither can hide a real row.
 """
 from __future__ import annotations
 

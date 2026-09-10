@@ -439,8 +439,9 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    raw and unguarded under `/EHa`.
    **Fix shape** (from the finder, and it reuses machinery both sides already have): add the flag
    to `SnapshotChunkResult`, publish it, carry it on the C# DTO, OR it into the producer's
-   usability verdict. ⛔ **Do not reuse `deadline_hit`'s wording** — `docs/todo.md:1738` already
-   records that mislabelling as D2's deliberate residual.
+   usability verdict. ⛔ **Do not reuse `deadline_hit`'s wording.** D2's deliberate residual (the
+   `⬜ Still open from the sweep` list after blind-spot sweep round 3) already records that mislabelling.
+   *(This pointer first read "`docs/todo.md:1738`", a line number that had already drifted.)*
 
 2. ⬜ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
    1 GB, and FIFO-deletes the user's snapshots.** `ExperimentalSettings.cs:31` sets
@@ -836,8 +837,10 @@ while eviction runs at the hand-edited number.
    ⭐ **Same shape as W1's `[W1-SNAP-FAULT]`, one layer over**: a cap that six sibling sites publish
    and these do not.
    ⛔ **THE CHEAP FIX IS ACTIVELY HARMFUL** — do **not** copy `Aura.cpp:8255-8256`'s
-   `if (size >= maxResults) deadlineHit = true;`. That is the very conflation
-   `docs/todo.md:1314` is open about.
+   `if (size >= maxResults) deadlineHit = true;`. That is the very conflation P5 names.
+   ⚠ *This line first cited "`docs/todo.md:1314`" as the open row, but that line never held one. The
+   value scan's cap merge is recorded only as a rig note in `docs/verification-register.md` (D2,
+   note (c), `Aura.cpp:8244`); see the P5 row of the Track-A table.*
    ⚠ **Four call sites, not one**: `InstanceFinderViewModel.cs:977` and
    `GameClassFilterViewModel.cs:356` also call `FindFunctionsByClassAsync(..., 200, ct)` and read
    only `Scan.DeadlineHit`. ⚠ And the only existing hint is **accidental and misleading**:
@@ -1259,11 +1262,11 @@ to grow. Build the gates first and Track B shrinks.
 | **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | ✅ **SWEPT 2026-09-10** — 240/240 ruled, **7 confirmed, all LOW**, 1 refuted; see `[PATTERN-P1-2026-09-10]` below |
 | **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_json_default_ignore.py`, selftest 7/7, tree = 2 rows (1 defect, recorded; 1 benign). Registered in the fix-pass commit that repairs both; see `[PATTERN-P2-2026-09-10]` below. |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
-| **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | 🔄 **44 rows under adjudication 2026-09-10** — all of `LiveFieldValue`'s own `init` members; the only copy path with any (`SpcQueryViewModel.CopyGroupCellsFrom` has none) |
-| **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ⬜ partly covered by `docs/todo.md:1314` |
+| **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ✅ **SWEPT 2026-09-10** — 44/44 ruled, **4 confirmed (1 HIGH · 2 MED · 1 LOW)**, 0 refuted; see `[PATTERN-P4-P7-P8-2026-09-10]` below. All of `LiveFieldValue`'s own `init` members; it has the only copy path that has any (`SpcQueryViewModel.CopyGroupCellsFrom` has none). ⚠ The population missed 10 of 54 members; the one that matters (`StructDataAddr`) was found by reading. |
+| **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | 🔄 **63 rows prepared 2026-09-10**: `tools/verify/pattern_p5.py` (flags / wire / ui axes, control 4/4), 35 DLL+wire rows and 28 UI rows. ⚠ *This cell first said "partly covered by `docs/todo.md:1314`", but that line never held a P5 row (checked at both commits that cited it). The value scan's cap-in-`deadline_hit` is **NOT filed**; its only trace is a rig note in `docs/verification-register.md` (D2, note (c)). The fault half is D2's deliberate residual.* |
 | **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_session_gate.py`, selftest 5/5; 20 snapshot-address handoffs, 16 gated, 4 ungated (Class Pivot, recorded). Registered in the fix-pass commit that gates them; see `[PATTERN-P6-2026-09-10]` below. |
-| **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | 🔄 **5 rows under adjudication 2026-09-10** — every auto/timer path that does real work; Live Walker's auto-refresh runs the manual `RefreshAsync()` itself |
-| **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | 🔄 **9 rows under adjudication 2026-09-10** — `tools/verify/pattern_p8.py`, control green on both axes |
+| **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | ✅ **SWEPT 2026-09-10** — 5/5 ruled, **0 new**: the tree-wide residue is the one recorded instance (Teleport's pose poll). Every other auto path runs its manual path's own code. See `[PATTERN-P4-P7-P8-2026-09-10]` below. |
+| **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | ✅ **SWEPT 2026-09-10** — 9/9 ruled, **1 confirmed (LOW)**, 0 refuted, plus `[W1-CONTAINER-STALE]` widened to `ValueTooltip`; see `[PATTERN-P4-P7-P8-2026-09-10]` below. Tool: `tools/verify/pattern_p8.py`; 3 of its 9 rows were name-collision artifacts (limit recorded in its header). |
 
 ⚠ **P9 — "a promise in a status line the code did not keep"** has no mechanical form and stays a
 reading job. It is the reason Track B still exists.
@@ -1649,6 +1652,196 @@ that is the gate working, not a regression. Register the detector in the same co
 🟡 **Lead, not filed:** a bookmark whose saved address is recycled in a new launch by **another instance
 of the same class** passes the class-name identity check, and loads that other instance under the
 bookmark's label. Narrow, and not measured.
+
+---
+
+#### ✅ P4 / P7 / P8 SWEPT 2026-09-10 `[PATTERN-P4-P7-P8-2026-09-10]` — 58/58 ruled, 5 confirmed (1 HIGH · 2 MED · 2 LOW), 0 refuted
+
+Two adjudicators ruled every row, one per batch. Each defect candidate then went to an adversarial
+refuter, which defaults to REFUTED; none was refuted. `[P4-OTHER-INSTANCE]`'s branch guard and
+navigation path were then re-read by hand. These are source reads only: nothing was built, launched
+or measured, because CE and a game were in use by another session. **None of the five is repaired.**
+
+| batch | rows | ruled | defect rows → findings | legitimate | recorded | n/a | known positives |
+|---|---:|---:|---:|---:|---:|---:|---|
+| P4 — `LiveFieldValue`'s own `init` members | 44 | 44 | 9 → 4 | 33 | 2 | 0 | `MapElements`, `SetElements` → ALREADY-RECORDED ✅ |
+| P7 — auto / timer paths that do real work | 5 | 5 | 0 | 3 | 1 | 1 | Teleport pose poll → ALREADY-RECORDED ✅ |
+| P8 — computed reads of a plain member | 9 | 9 | 3 → 1 | 0 | 3 | 3 | `ArrayElements` (both axes) → ALREADY-RECORDED ✅ |
+
+**P7's residue across the whole tree is the one recorded instance.** Every other auto path runs its
+manual path's own code: Live Walker's auto-refresh, the System-tab diagnostics timer, and the
+Snapshot auto loop, whose cap and low-disk note lands in a `StatusText` that the countdown never
+overwrites.
+
+⭐⭐ **ONE COMMIT, FIVE DEFECTS.** All four P4 findings came from the same change, and so did
+`[W1-CONTAINER-STALE]` before them: `[LWREFRESH-2026-08-21]` (ce6f5426). Before that commit,
+`Fields[i] = newFields[i]` replaced every row object, so every `init` member was fresh. The fix for
+the one-row grid drift copies values onto the surviving rows instead. That is correct for the drift,
+but it silently narrowed "fresh" to the members `CopyLiveValuesFrom` assigns. The class header
+(`LiveFieldValue.cs:104-108`) states the premise that all four break: the `init` members are
+"exactly what the same-layout branch checks". What the branch at `LiveWalkerViewModel.cs:6524-6525`
+actually checks is the field **count** and **`Fields[0].Name`**, and nothing else.
+
+##### ⛔ `[P4-OTHER-INSTANCE]` HIGH — opening a second instance of the same class reuses the first one's rows
+
+`LiveWalkerViewModel.cs:6524`. The in-place branch never compares the address, and no navigation
+clears `Fields` first. This was re-checked by hand:
+- `NavigateToAddressAsync:2801` clears only `Breadcrumbs`.
+- `NavigateToAsync:6112-6141` goes straight to `UpdateDisplay`.
+- The only other `Fields.Clear()` sites are GWorld (`:972`), disconnect (`:5818`) and a failed Locate (`:6409`).
+- Back, Forward, a breadcrumb jump, Parent and a bookmark load all reach the same `UpdateDisplay`.
+
+- **Scenario:** in Instance Finder, open instance A of `BP_Enemy` in Live Walker. Go back to the
+  finder, open instance B the same way. The count and first name match, so B's values are copied onto
+  A's row objects. The header, the values and the Address column are all B's. But `StructDataAddr`
+  is **absolute** (`instanceAddr + offset`, `Ubel.cpp:5311`) and still A's. Drilling B's `Stats`
+  struct walks **A's** struct under the label "B > Stats". **Editing `Stats.Health` then writes A's
+  memory in the running game** (`CommitFieldEditAsync :5406`). The same mix-up reaches:
+  - Map and Set previews: B's count, A's entries.
+  - Array drills: B's elements at A's addresses.
+  - Copy CE XML and CSX: A's entries, and A's pointer targets' classes.
+- **Widest variant:** two sibling subclasses with equal field counts and the same inherited first
+  field. Here even `Name`, `TypeName` and `Offset` are the other class's.
+- **Also reached** by a pointer drill from A to a B of A's exact class (`Owner`, `AttachParent`, a
+  `Next` link).
+- ✅ **Safe fix (the refuter's):** gate the branch on identity. Capture the previous `CurrentAddress`
+  **before** `:6436` overwrites it. Require the same address **and** the same class, because a struct
+  at offset 0 shares its owner's address. Anything else takes the existing Clear+Add rebuild. The
+  grid jumping to the top when the object changes is expected.
+- ⛔ **Unsafe fixes:**
+  - Reverting to `Fields[i] = newFields[i]` brings back the measured drift.
+  - Adding the missing members to `CopyLiveValuesFrom` makes the structural members mutable, and it
+    still cannot fix the sibling-subclass variant.
+- **Caught by:** a VM test that calls `NavigateToAddressAsync(A)` and then `(B)`: same class,
+  different `StructDataAddr`; assert that the row holds B's. Live: on DumperTest, open two actors of
+  one class via Instance Finder, drill a struct row, and compare the breadcrumb address with B's base.
+- 🛡 **Until the fix, no code needed:** before opening another instance of a class already on
+  screen, click 🌍 GWorld first; `PopulateFromWorld` clears the grid. At the very least, do not edit
+  a struct or container sub-field right after switching instances.
+
+##### `[P4-GUESS-SHIFT]` MED — with Guess? on, a same-object refresh pairs rows by index after the guessed rows moved
+
+`LiveWalkerViewModel.cs:6543`. The guessed rows are re-derived from the bytes on every walk:
+padding-run length, pointer vs two int32s, a float at 0.0 turning into padding (`Ubel.cpp:3633`,
+`:3761-3944`). They are sorted in among the reflected rows by offset, so equal counts do not mean the
+rows line up.
+
+**Cross-gap variant:** in the same tick, one gap loses a row and another gains one. Every reflected
+row between the two gaps then shows its **neighbour's** value and address under its own name, and
+stays editable. An edit writes this row's type of bytes into the neighbour (`:5397-5406`).
+
+- **Guess? is not rare:** `AutoFillGapsRetryAsync` turns it on silently and leaves it on (`:6188`).
+- It self-heals as soon as the count next differs.
+- The finding's within-gap example (ptr+double) depends on the values; the cross-gap one does not.
+- ✅ **Safe fix:** the same gate as `[P4-OTHER-INSTANCE]`, plus a per-row `Name` + `Offset` +
+  `TypeName` + `Size` match. The cost is honest: on a noisy Guess? object with auto-refresh, a layout
+  change jumps the grid to the top. That is strictly better than an editable row pointing at its
+  neighbour.
+- ⛔ **Unsafe:** making the structural members observable and copying them. `SelectedField` and
+  `RestoreSelectedField` would then silently re-point to a different field under the user.
+
+##### `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer
+
+`LiveFieldValue.cs:206/263/315`. A container's DATA pointer moves when the container reallocates,
+and is omitted while it is unallocated (`Fern.cpp:1515/1611/1651`). A refresh copies `ArrayCount`
+and `ArrayElements`, but not the base. Drilling the refreshed row then computes each element's
+address from the stale base (`PopulateArrayContainerFields :1478-1517`). The result is **current
+values shown next to addresses in the freed allocation**. An inline edit of a scalar element writes
+into freed heap and still prints `Written: …` (`:5406`, `:5418`).
+
+- **Scenario:** a `TArray<FInventorySlot>` at Num = Max = 4 grows on a pickup and is reallocated.
+  Refresh, drill the array, edit `[2].Count`.
+- A refresh from **inside** the container view re-walks and is correct (`:5131-5144`).
+- ✅ **Safe for arrays:** make `ArrayDataAddr` copyable. Its elements are already copied from the
+  same walk, and nothing binds it, so no notification is needed.
+- ✅ **Safest for all three:** re-walk the parent at drill time in `NavigateToContainerAsync`, the
+  way `RefreshAsync`'s container branch does.
+- ⛔ **Do NOT copy `MapDataAddr` / `SetDataAddr` on their own.** `MapElements` / `SetElements` are
+  still first-walk (`[W1-CONTAINER-STALE]`), so a fresh base would pair **old sparse indices with the
+  live buffer**. Edits would then corrupt a live entry instead of freed memory, which is worse. Those
+  two must move in the same change as the W1 fix.
+- **Also needed:** `ArrayCount`, `MapCount` and `SetCount` need
+  `[NotifyPropertyChangedFor(nameof(IsContainerNavigable))]`. Without it, a realized row that goes
+  from 0 to N elements never shows its `[]` button.
+
+##### `[P4-PTRCLASS]` LOW — a retargeted pointer keeps its first-walk `PtrClassAddr`, and the exporters walk the new target with the old class
+
+`LiveFieldValue.cs:176`. `PtrClassAddr` is `GetClass(target)`, which is a value (`Ubel.cpp:4165-4168`).
+`PtrAddress`, `PtrName` and `PtrClassName` are copied; `PtrClassAddr` is not. Both exporters pass it
+to `walk_instance` as the class override (`CeXmlExportService.cs:422/591`, `CsxExportService.cs:483`),
+and `WalkInstance` honours any non-zero override (`Ubel.cpp:3987`). All three conditions must hold
+for it to bite:
+- it is export only;
+- drilldown depth is ≥ 1 (the default is 0, but the value is persisted once raised);
+- the pointer retargets to a different class (e.g. `Pawn` goes from hero to car).
+
+- ✅ **Safe fix:** copy it in `CopyLiveValuesFrom`; nothing binds it.
+- ⛔ **Unsafe:** dropping the override in the exporters. The CSX DataTable drilldown relies on it for
+  row data that is raw struct memory (`CsxExportService.cs:871-881`), and the synthetic sub-field
+  pointers carry it on purpose.
+
+##### `[P8-BOOKMARK-TIP]` LOW — re-saving into an occupied bookmark slot leaves its tooltip naming the previous target
+
+`LiveWalkerViewModel.cs:3641`. `SaveBookmarkToSlot` writes the plain members `SavedAddress`,
+`SavedObjectName` and `SavedClassName`, then sets `IsOccupied = true`. That setter raises
+`TooltipText` only `if (SetProperty(...))` (`:6859`), and `true → true` raises nothing. The label
+repaints, but the hover keeps A's class, name and address, while a click goes to B. Save mode has no
+occupied-slot guard (`:3670-3673`), so this is the normal re-save gesture. The existing tests call the
+getter directly and only ever save into empty slots, so they cannot see it.
+
+- ✅ **Safe fix:** raise `nameof(TooltipText)` explicitly at the end of `SaveBookmarkToSlot`, through
+  a slot method. Also correct the setter's comment at `:6857-6858`.
+- ⛔ **Unsafe:**
+  - raising on a same-value `IsOccupied` set, which `BookmarkTests.cs:55-65` pins as not happening;
+  - replacing the slot object.
+
+##### Widenings of recorded rows
+
+- **`[W1-CONTAINER-STALE]` reaches a second reader: `ValueTooltip`** (`LiveFieldValue.cs:457`, bound at
+  `LiveWalkerPanel.axaml:624`). That hover exists because the 200 px cell clips long array previews.
+  A fix must raise **both** `DisplayValue` and `ValueTooltip`. `LiveFieldValueTooltipTests` pins the
+  pair only at the attribute level, so a hand-written `OnPropertyChanged` must pair them by hand.
+- **`[W1-CONTAINER-STALE]` fix trap:** `MapStride`, `MapValueOffset` and `SetStride` are published
+  only when the container had elements, and the three data addresses only when non-null. Suppose a
+  W1 fix makes `MapElements` / `SetElements` copyable but leaves these `init`. The fresh elements are
+  then paired with a **zero stride**, which falls back to the client-side guess that audit #5 V2
+  retired. **Six members must travel with the element lists.**
+
+##### What the sweep did not cover, and the tools' limits
+
+- ⚠ **The P4 population missed 10 of the 54 `init` members.** Every one has a name containing
+  `StructType` / `StructClass` / `StructData` / `StructName` / `RowStruct`, and the enumerator was an
+  uncommitted scratch script. Nine of the ten are layout or synthetic-row-only. The tenth,
+  **`StructDataAddr`, is the sharpest consequence of `[P4-OTHER-INSTANCE]`**, and it was found by
+  reading, not from the list.
+- ⚠ **`pattern_p8.py` produced 3 artifact rows out of 9, with its control green.** Its `.P =` match
+  goes by member name, not type, so `GroupSlotMatch.ClassName` writes (`DumpService.cs:2191/2429`) were
+  attributed to `PropertySearchMatch`. It also counted a read (`PropertyName = match.PropName`,
+  `PropertySearchViewModel.cs:375`) as a write. These are false positives, which adjudication
+  removes; they cannot hide a real row. The limit is recorded in the tool's header.
+- **Stale comment, not a finding:** `OnFieldsRebuilt` (`LiveWalkerViewModel.cs:763-775`) still
+  describes the in-place branch as `Fields[i] = newFields[i]` raising Replace.
+
+##### Leads, not filed (unmeasured)
+
+- **DataTable objects.** The RowMap row is appended after `UpdateDisplay`, so every refresh of one
+  takes the **rebuild** branch and scrolls to the top. An auto tick that lands before the previous
+  row load finishes could take the in-place branch, and both loads pass the `:6662` guard, which
+  would append two RowMap rows.
+- **Snapshot auto loop.** The dataset cap measures the whole db+WAL file (`SnapshotStore.cs:546`).
+  Once the file is above the cap, every later auto capture may stop after one chunk and still count
+  as captured. Each stop IS disclosed. Whether FIFO eviction brings the file back under the cap was
+  not traced.
+- **Live Walker status messages.** `RefreshAsync` opens with `ClearStatus()`, so with Auto on, a
+  message from another action stays up for at most one interval (≥ 6 s). No warning whose loss matters
+  was found.
+- **Pointer panel.** `ResetDiagnosticsAsync`'s "Reset done" is erased at once by the refresh it
+  awaits (`PointerPanelViewModel.cs:1480-1483 → :1458`). It is a confirmation, not a warning.
+
+⬜ **For the fix pass:** `[P4-OTHER-INSTANCE]` and `[P4-GUESS-SHIFT]` share one gate and land
+together. After the gate, the copy path runs only for a same-object, same-layout refresh. Then
+`[W1-CONTAINER-STALE]`, `[P4-CONTAINER-BASE]` (the six members above) and `[P4-PTRCLASS]` are
+same-object staleness, and they land as one change right after. `[P8-BOOKMARK-TIP]` is independent.
 
 ---
 
