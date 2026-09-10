@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **8 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **9 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -3339,7 +3339,16 @@ the Write tool, never a heredoc — that is now a habit to keep, not a lesson to
 - **`[R3-SEETHRU]`** — the hazard needs another command in flight at the instant of the untick.
   What was checked is that See-through still reads cleanly after its code moved.
 
-These three belong in `verification-register.md` as manual rows, not in a green tick.
+⭐ **FILED 2026-09-10 as `verification-register.md`'s FP1 / FP2 / FP3** — a new `### ⬜` batch
+(open batch headings 8 → 9, both pinned copies updated from the tree). Each row names the
+producer-side observable as well as the screen, per the register's charter, and each says what
+would make it VACUOUS: FP1's pairing (`source: "raw"` **with** `parent_relative: true`, the
+combination that used to be indistinguishable), FP2's absence assertion (no `x`/`y`/`z` keys at
+all, not a zero in them) and FP3's entry proof (the idle wait must be shown to have SPUN — an
+idle mailbox at the moment of the untick makes the run decide nothing).
+
+⭐ **FP3 first**, and not for severity: it is the only one whose staging needs no special game —
+a long command on this same fixture and a well-timed untick.
 
 #### ⬜ STILL OPEN from the fix list
 
