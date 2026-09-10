@@ -443,7 +443,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    `⬜ Still open from the sweep` list after blind-spot sweep round 3) already records that mislabelling.
    *(This pointer first read "`docs/todo.md:1738`", a line number that had already drifted.)*
 
-2. ⬜ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
+2. ✅ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
    1 GB, and FIFO-deletes the user's snapshots.** `ExperimentalSettings.cs:31` sets
    `DefaultIgnoreCondition = WhenWritingDefault`, which compares against `default(int) == 0`, not
    against the `= 1024` initializer at `:19`. **MEASURED** on the real source-generated context:
@@ -465,6 +465,21 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    empty list is still written), and `AobUsageRecord`'s ints/bools carry no initializer at all
    (its only initialized non-string is `Version = 1`, and 0 is never a legitimate version).
    `AobMakerMessage`'s per-property `[JsonIgnore]`s are outgoing wire fields, not persisted state.
+   ✅ **FIXED IN SOURCE 2026-09-10 — the fix pass's first row (HIGH first).**
+   - **The fix:** `ExperimentalSettingsJsonContext` no longer sets `DefaultIgnoreCondition =
+     WhenWritingDefault`, the spec-conforming repair. `AobUsageFile.Version` is marked
+     `[JsonIgnore(Condition = Never)]`, which is behaviour-neutral and states the intent.
+   - **The gate:** `tools/check_json_default_ignore.py` is now registered in `check_all.py`.
+   - **Red before green:** `ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip`
+     failed first, *"Expected: 0 / Actual: 1024"*, the exact defect, then passed after the fix.
+   - **Results:** UI tests **4802 / 4802**; `check_all.py` **21 gates, 0 failed**.
+   - ⬜ **Live verification is deferred to the end of the fix pass**, as the maintainer directed:
+     1. In an AOT build, pick *Unlimited*, restart the UI, and confirm `experimental.json` carries
+        `"snapshotQuotaMb": 0` and the combo still reads Unlimited.
+     2. Confirm no snapshot is FIFO-deleted on the next capture.
+   - ⚠ **Not covered by this fix:** the escalation's second, latent hazard (`MbToLabel` maps a
+     non-preset quota to "1 GB", and nothing pins it to `AutoSnapshotPlanner.QuotaPresetBytes`). It is
+     still open; see below.
 
 **MED**
 
@@ -1260,7 +1275,7 @@ to grow. Build the gates first and Track B shrinks.
 | # | shape (from the June sweep's confirmed rows) | mechanical search | status |
 |---|---|---|---|
 | **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | ✅ **SWEPT 2026-09-10** — 240/240 ruled, **7 confirmed, all LOW**, 1 refuted; see `[PATTERN-P1-2026-09-10]` below |
-| **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_json_default_ignore.py`, selftest 7/7, tree = 2 rows (1 defect, recorded; 1 benign). Registered in the fix-pass commit that repairs both; see `[PATTERN-P2-2026-09-10]` below. |
+| **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ✅ **REGISTERED 2026-09-10** in the fix-pass commit that repaired both instances (`[W1-QUOTA-UNLIMITED]` fixed; `AobUsageFile.Version` marked `Never`). `tools/check_json_default_ignore.py`, selftest 7/7, tree now clean. Built and measured earlier as a detector; see `[PATTERN-P2-2026-09-10]` below. |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ✅ **SWEPT 2026-09-10** — 44/44 ruled, **4 confirmed (1 HIGH · 2 MED · 1 LOW)**, 0 refuted; see `[PATTERN-P4-P7-P8-2026-09-10]` below. All of `LiveFieldValue`'s own `init` members; it has the only copy path that has any (`SpcQueryViewModel.CopyGroupCellsFrom` has none). ⚠ The population missed 10 of 54 members; the one that matters (`StructDataAddr`) was found by reading. |
 | **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ✅ **SWEPT 2026-09-10** — 86/86 ruled (35 DLL/pipe · 29 UI · 22 UI supplement), **2 confirmed, both LOW**, 1 refuted, 1 overridden to recorded; see `[PATTERN-P5-2026-09-10]` below. Tool: `tools/verify/pattern_p5.py`, control 6/6; its UI axis first missed 36 flag reads, now fixed. ⚠ *This cell first said "partly covered by `docs/todo.md:1314`", a line that never held a P5 row. The value scan's cap-in-`deadline_hit` is filed nowhere, and **needs no filing**: its one consumer names the cap and gives the cap's remedy.* |
@@ -1564,7 +1579,9 @@ second is the one worth remembering:
 
 Final: selftest **7/7**, tree **red with exactly the 2 rows above**.
 
-⬜ **For the fix pass — both repairs, and the test, ready to apply:**
+✅ **APPLIED 2026-09-10 (fix pass, first row).** All four items below landed in one commit: the
+test went red first, then green; UI tests 4802 / 4802; gates 21 / 21. The recipe is kept for the
+record:
 - `ExperimentalSettings`: drop `DefaultIgnoreCondition = WhenWritingDefault` from its context — the
   **spec-conforming** fix (`docs/teleport-coord-library-spec.md:618`: "MUST NOT be WhenWritingDefault";
   follow the `UiOptionsSettings` / `BookmarkFile` dialect). `enabled: false` will then be written too,
@@ -3223,7 +3240,8 @@ matches the standing instruction for this whole stream -- record now, repair tog
 risk until the fix pass. `[W1-QUOTA-UNLIMITED]` deletes snapshots permanently, and this machine's
 `experimental.json` was measured at `5120` -- ONE step below the point where `ApplyAutoQuota` sets
 "Unlimited" by itself. ⭐ **No-code mitigation until the fix lands: leave *Auto-adjust quota* off
-and do not pick *Unlimited*.** `[W1-SNAP-FAULT]` stores a faulted chunk as complete, but it needs a
+and do not pick *Unlimited*.** ✅ *Fixed in source 2026-09-10 (the fix pass's first row). The
+mitigation still applies to any installed build older than the one that carries the fix.* `[W1-SNAP-FAULT]` stores a faulted chunk as complete, but it needs a
 faulting object-decryption stub, which in practice means active reversing work on an encrypted title.
 
 ⚠ **Do not start Track B before Track A.** Every instance a gate finds is an instance an agent does

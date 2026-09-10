@@ -2,12 +2,11 @@
 
     py tools/check_json_default_ignore.py [--list] [--selftest]
 
-⛔ STATUS: A FINDING-PHASE DETECTOR, DELIBERATELY NOT REGISTERED IN check_all.py. It is written as a
-gate and is RED BY DESIGN today: the tree holds one real instance ([W1-QUOTA-UNLIMITED]) and one
-benign one (AobUsageFile.Version = 1, which is always written because 1 != 0). The blank sweep is in
-its record-don't-fix phase, so neither is repaired here. Registering it now would put a red gate in
-CI. It is registered in the SAME commit that repairs both, during the fix pass -- and the repair's
-red-before-green test is parked, ready, for that pass.
+STATUS: REGISTERED in check_all.py (fix pass, 2026-09-10), in the same commit that repaired the two
+instances it was written against: [W1-QUOTA-UNLIMITED] (ExperimentalSettings' context dropped
+WhenWritingDefault) and the benign AobUsageFile.Version (now [JsonIgnore(Condition = Never)]). It was
+built during the finding phase and deliberately left unregistered, red by design, until then. The
+repair's red-before-green test is ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip.
 
 WHAT IT REFUSES. A VALUE-TYPE property whose initializer differs from `default(T)`, serialized under
 `JsonIgnoreCondition.WhenWritingDefault` -- set on a source-generated context's

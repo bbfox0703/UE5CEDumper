@@ -197,6 +197,15 @@ GATES = [
      "Convenience copies (an address, a name) are deliberately NOT flagged: that split "
      "is what keeps this check baseline-free. "
      "Run 'py tools/check_clipboard_delivery.py --list' or '--selftest'", False),
+
+    ("check_json_default_ignore",
+     ["tools/check_json_default_ignore.py"],
+     "a value-type property whose initializer differs from default(T) is serialized under "
+     "WhenWritingDefault, so a user choosing the type-default (0 / false) has the key OMITTED "
+     "and the next load silently re-runs the initializer -- [W1-QUOTA-UNLIMITED] deleted "
+     "snapshots that way. Drop WhenWritingDefault from the context (the spec rule), or mark a "
+     "property that can never take default(T) [JsonIgnore(Condition = JsonIgnoreCondition.Never)]. "
+     "Run 'py tools/check_json_default_ignore.py --list' or '--selftest'", False),
 ]
 
 

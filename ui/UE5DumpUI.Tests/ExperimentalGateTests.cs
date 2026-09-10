@@ -78,6 +78,29 @@ public class ExperimentalGateTests : IDisposable
     }
 
     [Fact]
+    public void SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip()
+    {
+        // [W1-QUOTA-UNLIMITED]. 0 means "Unlimited", and it is chosen by the user (the quota
+        // combo) or BY ITSELF (ApplyAutoQuota, once the retained set outgrows the 5 GB preset).
+        // Under DefaultIgnoreCondition = WhenWritingDefault the key was OMITTED -- 0 is
+        // default(int) -- the next launch reloaded the = 1024 initializer, and SnapshotStore then
+        // FIFO-deleted the snapshots the user had opted to keep. The test above round-trips 2048
+        // only, which serializes fine and could never see it.
+        var gate = new ExperimentalGate(_platform);
+        gate.SnapshotQuotaMb = 0;
+        Assert.Equal(0, new ExperimentalGate(_platform).SnapshotQuotaMb);
+
+        // The flag beside it must survive the same round-trip, in both states.
+        gate.IsEnabled = true;
+        var reopened = new ExperimentalGate(_platform);
+        Assert.True(reopened.IsEnabled);
+        Assert.Equal(0, reopened.SnapshotQuotaMb);
+        reopened.IsEnabled = false;
+        Assert.False(new ExperimentalGate(_platform).IsEnabled);
+        Assert.Equal(0, new ExperimentalGate(_platform).SnapshotQuotaMb);
+    }
+
+    [Fact]
     public void Changed_FiresOnFlip_NotOnSameValue()
     {
         var gate = new ExperimentalGate(_platform);
