@@ -1258,7 +1258,7 @@ to grow. Build the gates first and Track B shrinks.
 |---|---|---|---|
 | **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | ✅ **SWEPT 2026-09-10** — 240/240 ruled, **7 confirmed, all LOW**, 1 refuted; see `[PATTERN-P1-2026-09-10]` below |
 | **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ⬜ **`[W1-GATE-JSONDEFAULT]`** — already planned |
-| **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | 🔄 **112 rows under adjudication 2026-09-10** — `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
+| **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
 | **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ⬜ partly covered by `docs/todo.md:1314` |
 | **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | ⬜ **`[W1-GATE-SESSIONGATE]`** — already planned |
@@ -1393,6 +1393,141 @@ is itself a useful rule for the fix pass.
   "flips NO→YES", impossible since the G3 gate (`Fern.cpp:5231-5250`); and `Ubel.cpp:6080` labels
   `supported=false` *"UE < 5.0 unsupported"* when its only producer is now a key-shape probe that
   fires on any version.
+
+---
+
+#### ✅ P3 SWEPT 2026-09-10 `[PATTERN-P3-2026-09-10]` — 112/112 ruled, 6 confirmed (2 MED · 4 LOW), 0 refuted
+
+`tools/verify/pattern_p3.py` — five axes of *"a fix that reached some of its twins"*. 4 adjudicators
+ruled every row, 3 refuters took the candidates. 8 agents, ~1.25M tokens. **Nothing fixed.**
+
+| batch | rows | ALREADY-RECORDED | NOT-A-TWIN | LEGITIMATE-DIFFERENCE | DEFECT-CANDIDATE |
+|---|---:|---:|---:|---:|---:|
+| OUTPARAMS + VALIDITY | 13 | 5 | 5 | 3 | 0 |
+| TYPEMAPS | 29 | 2 | 9 | 12 | 6 |
+| CONSUMERS | 57 | 3 | 38 | 15 | 1 |
+| TAGS | 13 | 3 | 6 | 4 | 0 |
+| **total** | **112** | **13** | **58** | **34** | **7** |
+
+⭐ **Coverage reconciled**: every batch returned its exact row count, and the 7 candidate rulings map
+onto the 6 findings with nothing unfiled (`SnapshotNumeric.Render` is the display half of P3M-02,
+same root, same fix site).
+
+⭐ **The known-positive control held through the agents — nine of nine.** The workflow checked each
+named positive's ruling individually, not just the row count: `TeleportRelative.outLandingKnown`,
+`GetPoseImpl.outParentRelative`, `bOffsetsValidated`, `MapInnerTypeToCeField`, `WidthBytes`,
+`DelegatePad`, `[TPREL-ZEROPOSE-2026-09-10]`, `[POSEATTACH-2026-09-10]` and `[D4B-DELEGATEPAD]` all came
+back `ALREADY-RECORDED`.
+
+⚠ **Zero refutations, and why that is not soft refuting.** In P3 the *adjudicators* were the filter:
+**92 of 112 rows were dismissed** — 58 not-a-twin, 34 a legitimate difference — each with a named
+reason. What reached the refuters was already solid, and they logged the routes they tried and the
+evidence they used. P3C-1's refuter is the clearest case: trying route 4, it found commit `860245b0`'s
+body stating that guessed fields *"are excluded from all exports"* — the attempt to refute turned up
+the contract the SDK exporter breaks.
+
+---
+
+#### ⭐⭐ The method result: a WRITTEN twin contract is what decides P3, in both directions
+
+Every one of the six confirmed rows has **a written statement that the two places are twins**, and one
+of them breaks it: Y11's doc names "two paths" and Y16 names the CE form as the third; `GroupMatch`'s
+width helpers say they *mirror SnapshotNumeric's declared-type set*; the invoke dialog's
+`IsEmptyOnlyParam` groups FString with the opaque family; `PropertyScoringTable`'s doc says delegates
+count as non-value; the SDK's container-inner map already mirrors five scalar arms; `860245b0` says
+guessed fields are excluded from *all* exports.
+
+And the 34 `LEGITIMATE-DIFFERENCE` rulings were decided by written statements too — a documented
+pipe-only command, `Mimic.h`'s definition of `LI_OUT_TRUNCATED`, a transport that says it cannot
+carry a fact. **Where the relationship is written down, P3 is decidable; where it is not, the tool's
+pairing was usually noise.** That is also why the fixes in this batch are the safest of the whole
+sweep: when the twin contract is explicit, "copy the fix into the twin" has something to be checked
+against.
+
+---
+
+#### The fix list — 6 rows, none repaired
+
+**MED**
+
+1. ⬜ **`[P3-INVOKE-Y11-CEFORM]`** `InvokeScriptGenerator.cs:553`. Three invoke paths build the same
+   ProcessEvent params from the same `FunctionInfoModel`. **FIRE** has audit #5's Y11 unwritable-param
+   gate (`ParamBufferBuilder.TryValidateScalar` + `IsEmptyOnlyParam` / `IsRefusedParam`, called at
+   `InvokeParamDialog.cs:664`); the **interactive CE invoke form does not** — an FText param is sent
+   zeroed, and a typed container or delegate value is written as a raw int32. Y11's own doc says
+   "two paths"; Y16 already names this form as the third.
+   ⚠ **Safe only through the SHARED predicates**, never a hand-copied type list — the twin shares the
+   contract (same params, same zero-filled buffer, same ProcessEvent), so the fix is to call what FIRE
+   calls.
+2. ⬜ **`[P3-SNAPNUM-ENUM]`** `SnapshotNumeric.cs:17` (+ `Render` `:169`). No `EnumProperty` arm, so
+   every enum field captured since **AB14** made enums scannable gets `numeric_value NULL`: every SPC
+   numeric predicate and every Group Match slot skips it, and the grid shows raw hex. The DLL side
+   (`Radar.cpp:287` `kNumericAll`, `:407` EnumProperty→UInt8) and snapshot *capture* both have it; the
+   C# decoder does not. Reachable under the non-default `NumericAll` capture scope.
+   ⭐⭐ **This is the ROOT of `[W2-GROUPMATCH-ENUM]`.** `GroupMatch.WidthBytes`' own header says it
+   *mirrors SnapshotNumeric's declared-type set* — so the W2 row is the mirror of this one, and fixing
+   `WidthBytes` alone (which W2's refuter already showed is unsafe in isolation) would leave SPC
+   broken. ⬜ **Fix order: SnapshotNumeric first**, then the Group Match mirror.
+   ✅ Safe on its own: an `EnumProperty` arm in `TryFromHex` **and** `Render`, decoding unsigned at the
+   captured `byteLen` (the DLL always stores 1 byte, `Radar.cpp:407`).
+
+**LOW**
+
+3. ⬜ **`[P3-INVOKE-STRUCT-FSTRING]`** `ParamBufferBuilder.cs:353`. On the FIRE path a **top-level**
+   string param goes through `InvokeStringParam` and the DLL builds the FString by value — but an
+   FString-family **struct sub-field** takes the scalar route and is written as a raw int32 over
+   `FString.Data`: a third hole beside Y11-OPAQUEDROP, and a code-path twin inside one builder.
+   ✅ Safe with one caveat: refuse a *non-empty* string member in `TryValidateStructSubFields`; an
+   all-zero FString `{null,0,0}` is the valid empty and must still pass.
+4. ⬜ **`[P3-SCORING-MCDELEGATE]`** `PropertyScoringTable.cs:397`. `IsNonValueType` holds
+   `DelegateProperty`, `MulticastInlineDelegateProperty` and `MulticastSparseDelegateProperty` and
+   misses the **UE4 ≤ 4.22** name `MulticastDelegateProperty`, so old-UE4 delegates escape the
+   non-value penalty the map's own doc (`:394-396`) says they get. The calibration games are all 4.23+,
+   which is why nobody saw it. ✅ Safe: one name, a private predicate, one consumer.
+5. ⬜ **`[P3-SDK-INNERS]`** `SdkExportService.cs:334`. The scalar path (`MapCppDeclCore` `:278-303`)
+   spells `TSoftClassPtr<>`, `TLazyObjectPtr<>`, `FScriptDelegate` and `FFieldPath`; the
+   container-inner map declares all four as `uint8_t`. ⚠ Partly safe: copying the four scalar arms is,
+   the rest of the finding's sketch is not.
+6. ⬜ **`[P3-SDK-GUESSED]`** `SdkExportService.cs:561`. CE XML (`:2178`) and CSX (`:102`) both skip
+   Live Walker's **Guess?** rows; the SDK header export declares them, and their `?0x…` names **do not
+   compile**. The contract is written: commit `860245b0` — guessed fields are *"excluded from all
+   exports"*. ✅ **Safe and measured**: filter `!f.IsGuessed` in `EmitClassHeaderFromLive`. Confined to
+   the live path; the schema path (`walk_class`) can never see guessed rows.
+
+`implied_fix_safe`: **4 safe or safe-with-caveat, 2 partly** — the safest batch in the sweep, for the
+reason given above.
+
+#### Widenings to rows already recorded
+
+- **`[W2-GROUPMATCH-ENUM]`** — its root is `[P3-SNAPNUM-ENUM]`; fix that first.
+- **`[W5-CEXML-FSTRING]` should also carry `TextProperty`.** `MapInnerTypeToCeField` has no FText arm
+  either: `TArray<FText>` becomes a group placeholder and an FText map value leaves an empty folder.
+  Low value (`:2581` notes FText has no clean CE encoding) — fold into that row's fix.
+
+#### Leads — noticed while reading, NOT verified, NOT filed
+
+- ⬜ **CE XML scalar `DelegateProperty`** — `MapCeField` has no arm for it, so a **bound** single-cast
+  delegate (which `Ubel` stamps with `ptrValue`, making it navigable) becomes an empty placeholder
+  folder — the very outcome `MapCeField`'s own comment (`:3966-3973`) calls a defect for pointer types.
+  A code-path twin with no mechanical form.
+- ⬜ **DataTable exports stop at 64 rows with no note** (P1/P7, not P3). `DataTableRowData` is a fixed
+  64-row page (`IDumpService.cs:125`) while `DataTableRowCount` is the true total, and
+  `BuildContainerLimitWarning` (`LiveWalkerViewModel.cs:1993-2015`) checks only Array/Map/Set — so
+  *Copy CE XML* and *Export CSX* both export at most 64 rows of a larger DataTable silently. Audit #5's
+  V8 fixed the Live Walker badge for this path, not the export note. **Checked only by grep.**
+
+#### What the adjudicators measured about the tool — and the one fix it forced
+
+- ⛔ **A recall bug, found and fixed.** The type-map axis matched braces with a bare counter;
+  `SdkExportService` emits C++ source full of `"{"` / `"};"` literals, so one method's body swallowed a
+  later one — spotted because `EmitClassHeaderFromLive`, which has no type switch, inherited
+  `MapFunctionParamType`'s exact lacks-list. The same bug run the other way (an unbalanced `"}"`
+  literal) would end a body early and **hide** a map. Fixed with a literal- and comment-aware scanner,
+  then **measured**: 29 rows → 28, the one removed row was the fabricated one, **none added, none
+  changed**. No map had been hidden; the adjudicated bound stands. Control 7/7 after the fix.
+- The validity axis **inverts reality** for flags published through a renamed cache global; consumers
+  over-reports four ways (43 of its 57 rows were gaps against an exporter that is not a live-value
+  twin); tags over-counts shared callees and pipe-only commands. All four are now in the tool's header.
 
 ---
 
