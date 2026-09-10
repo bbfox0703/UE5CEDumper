@@ -7,8 +7,8 @@ today: Class Pivot's four row handoffs are ungated, which is `[W1-PIVOT-SESSION]
 is in its record-don't-fix phase, so they are not repaired here; the detector is registered in the
 SAME commit that gates them, during the fix pass.
 
-WHAT IT REFUSES. In a ViewModel class that reads STORED snapshots (its own body references
-`SnapshotMeta`), a command that hands an ADDRESS to the live game -- `NavigateToInstance` /
+WHAT IT REFUSES. In a ViewModel class that reads STORED snapshots (it references `SnapshotMeta` /
+`ISnapshotStore`, directly or through a helper type), a command that hands an ADDRESS to the live game -- `NavigateToInstance` /
 `LocateInGWorld` / `LocateInGameEngine` with an address payload, or a clipboard copy of one -- where
 nothing that enables it depends on the game session. A snapshot row's address means something only in
 the launch that captured it (`EngineState.GameSessionId` = PeHash + ProcessCreationTime). Handed to a
@@ -34,6 +34,14 @@ each ViewModel (`PivotFieldPick`, `DiscoverSnapshotPick`, `NoiseRowVm`, `SpcGrou
 and carries a helper-class-beside-the-VM case. The same draft missed any command whose attribute was
 `[RelayCommand(CanExecute = nameof(X))]` -- the nested `)` defeated a `[^)]*` -- which the selftest
 caught.
+
+⛔ AND AN ADDRESS COUNTS ONLY WHEN IT COMES FROM A ROW. Once readers were found transitively, the
+Pointer panel came into scope -- it reads snapshots for unrelated reasons -- and its nine copy commands
+were reported as ungated handoffs. They copy the LIVE global pointers (GObjects, GNames, GWorld ...),
+which belong to the current launch by definition. A payload now counts only when it is rooted at the
+command's own parameter (a CommandParameter row) or at a Selected* row. That is the third bug in this
+detector, and all three were found the same way: by checking the run against the hand-made map row
+by row, never by its total -- two of the three left the headline number looking right.
 
 MEASURED POPULATION (2026-09-10): Snapshot Diff, Snapshot Group, SPC single and SPC Group -- gated;
 Class Pivot -- 4 ungated handoffs (recorded); Detect Player Stats -- class-name payload, not counted.
@@ -184,8 +192,18 @@ def handoff_commands(text: str) -> list:
             body = text[j:text.find(';', j)]
         else:
             body = text[j:match_close(text, j, '{', '}')]
-        whats = [h.group(1) for h in HANDOFF.finditer(body) if re.search(r'addr', h.group(2), re.I)]
-        if 'CopyToClipboardAsync' in body and re.search(r'addr', method + body, re.I):
+        params = []
+        for chunk in text[op + 1:cl].split(','):
+            pm = re.search(r'(\w+)\s*(?:=\s*.+)?$', chunk.strip())
+            if pm:
+                params.append(pm.group(1))
+        # An address counts only when it comes from a ROW: the command's own parameter (a
+        # CommandParameter) or a Selected* row. See the header for the nine live-pointer copies
+        # this rule exists to exclude.
+        roots = [re.escape(x) for x in params] + [r'Selected\w*']
+        rooted = re.compile(r'\b(?:%s)\s*\??\.\s*\w*addr' % '|'.join(roots), re.I)
+        whats = [h.group(1) for h in HANDOFF.finditer(body) if rooted.search(h.group(2))]
+        if 'CopyToClipboardAsync' in body and rooted.search(body):
             whats.append('CopyToClipboard')
         if not whats:
             continue
@@ -324,6 +342,16 @@ public partial class DetectStatsViewModel : ObservableObject
 }
 '''
 
+LIVE_VM = """
+public partial class PointerPanelViewModel : ObservableObject
+{
+    private readonly ISnapshotStore _store;
+    public string GObjectsAddr { get; set; } = "";
+    [RelayCommand]
+    private async Task CopyGObjectsAsync() { await _platform.CopyToClipboardAsync(GObjectsAddr); }
+}
+"""
+
 
 def selftest() -> bool:
     C = 'ClassPivotViewModel'
@@ -348,6 +376,8 @@ def selftest() -> bool:
          {'v.axaml': GROUP_VIEW},
          {(S, 'OpenGroupInLiveWalker', 'SAFE'), (S, 'LocateGroupSlotInGWorld', 'SAFE'),
           (S, 'OpenViaCanExecute', 'SAFE')}),
+        ('a LIVE global pointer copied by a snapshot-reading class is not a snapshot address',
+         {'vm.cs': LIVE_VM}, {}, set()),
     ]
     ok_all = True
     for what, vms, views, want in cases:
