@@ -1278,6 +1278,63 @@ that last inch.
 
 ⚠ **`dist/` was rebuilt afterwards** — capturing the pre-fix text left the pre-fix generator in the
 published exe. Republished AOT-trimmed and re-verified: 54.8 MB `628552A1`, build 3546.
+
+##### ✅ FP3's LAST INCH CLOSED 2026-09-10 — the REAL untick, through a pushed CE record
+
+The first FP3 run proved the `[DISABLE]` block's mailbox discipline but **not the untick PATH**:
+the chunk was pasted into CE's Lua Engine, where `memrec` is nil, so the record bookkeeping around
+it never ran. That inch is now closed, and it took correcting two of my own mistakes to get there.
+
+**The run.** DumperTest Shipping (pid 34864, 24,497 objects) → UI *Add to CE* on the See-through
+card → the plugin logged `CreateAAScript: desc='See-through occluders (toggle)', scriptLen=17543,
+success (verified)`. ⭐ **17,543 bytes is byte-for-byte the generator's own output**, so the record
+CE received is the shipped artifact, not a copy. Ticked it: `seethrough_get_state` → `active: true,
+has_target: true, hidden_count: 1`. Armed the busy mailbox (sentinel + suspend). **Unticked the
+record by hand.**
+
+| after the real untick | |
+|---|---|
+| mailbox `cmd` | **999 — the sentinel, untouched** |
+| mailbox `status` | **1 — unchanged**; the block's own `writeInteger(mb + 0x04, 0)` never ran |
+| `seethrough_get_state` | **still `active: true, hidden_count: 1`** |
+
+⭐ **That third row is the corroboration the Lua-Engine run could not give**: the DLL never received
+the OFF, which is precisely correct when the mailbox is busy — the disable refused rather than
+clobbering. Four independent signals now agree (the Lua's message, `cmd`, `status`, and the DLL's
+own state).
+
+⛔ **CORRECTION — "the AOBMaker plugin was offline" WAS WRONG, twice over.** The plugin is installed
+(`C:\Program Files\Cheat Engine\plugins\AOBMaker_CEPlugin.dll`), **enabled** in CE's plugin list, and
+serving. Both of my readings were my own errors:
+
+1. The UI's header genuinely said *AOBMaker Offline* — because **Cheat Engine was not running** at
+   that moment. With CE up it reads **● AOBMaker Connected**.
+2. My follow-up pipe probe reported "NOT present (err 3)" for a pipe that was serving: the path
+   literal went through `py -c "…"` and the **shell ate a backslash**, so it probed `\.\pipe\…`
+   instead of `\\.\pipe\…`. ERROR_PATH_NOT_FOUND reads exactly like "the plugin is down" and is
+   nothing of the kind. The plugin's own log said `PipeServer: listening` the whole time.
+   ⚠ **Probe paths belong in a FILE, never in a shell-quoted `-c` string** — the same escaping
+   hazard that mangled a heredoc three times in this stream.
+
+⛔⛔ **AND THE OPERATIONAL TRAP THAT WASTED THE MOST TIME: `open_application` LAUNCHES A NEW CHEAT
+ENGINE EVERY CALL.** CE does not single-instance itself, so using `open_application` to *front* it
+silently accumulated **three** instances. Only one can own `\\.\pipe\AOBMakerCEBridge`; the others
+retry-spam `CreateNamedPipe failed, err=231` (ERROR_PIPE_BUSY) forever, and the bridge is unusable
+even though every instance looks fine on screen. ⭐ **The maintainer spotted it from the screen
+before the logs did**, twice.
+
+⚠ **The fix is already in the repo**: `py tools/verify/front_window.py front cheatengine` moves
+focus without launching anything. Use `open_application` **once** to start CE and never again in the
+same session; verify with
+`tasklist /FI "IMAGENAME eq cheatengine-x86_64.exe"` before trusting any bridge result.
+`front_window.py`'s header says `open_application` "will not re-front an already-running
+single-instance app" — CE is **not** single-instance, and that is the case it does not cover.
+
+⚠ **One thing still unexplained and deliberately not smoothed over**: the fixture died twice while I
+was cycling windows, and once with no `taskkill` of mine in between. A later controlled run held it
+alive for 30 s idle and 30 s with CE attached, and the pipe stayed up — so **CE attachment is not
+the cause**, and the deaths remain unattributed. Not chased further because the measurement it would
+have blocked has since been taken cleanly.
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 
 *L12 closed **25 of the 26 INFO rows**; only these seven changed runtime behaviour. The other
