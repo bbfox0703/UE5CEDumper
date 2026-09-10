@@ -251,7 +251,7 @@ Open work only. **Read this when deciding what to do next.**
 
 ## ⛔ THE BLANK SWEEP — `[BLANK-0601-PLAN-2026-09-10]` the 50,451 lines no audit ever scoped
 
-**Status: PLANNED, NOT STARTED.** Nothing below has been swept. This section is the batching
+**Status: ✅ ALL FIVE WAVES SWEPT 2026-09-10 — 39 distinct defects confirmed (2 HIGH · 19 MED · 18 LOW), NONE repaired.** The whole-sweep table is at the end of . This section is the batching
 plan and the resume ledger; a fresh session should start by reading the ledger table.
 
 ### What this is, and why it is the largest open item in the repo
@@ -373,7 +373,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 | W2 TELEPORT ×2 · VALUESEARCH | ✅ | 3 | 13 | 10 | **0H 6M 4L** | 2026-09-10 |
 | W3 APP-SHELL ×2 · OBJTREE | ✅ | 3 | 8 | 6 (**5 distinct**) | **0H 3M 2L** | 2026-09-10 |
 | W4 AURA-GRAPH ×2 · LIVEWALKER | ✅ | 3 | 12 (**10 distinct**) | 6 (+1 undecided) | **0H 5M 1L** | 2026-09-10 |
-| W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | 🔄 | 3 launched 2026-09-10 | — | — | — | — |
+| W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ✅ | 3 | 8 | 5 | **0H 1M 4L** | 2026-09-10 |
 
 ⚠ **A `⬜` here is evidence; a heading anywhere else in this file is not** — see the 2026-08-24
 reconciliation at the top. This table is updated in the same commit as the wave it describes,
@@ -1037,6 +1037,147 @@ where a HIGH was refuted**. That is the do-not-re-raise machinery working: the b
 recorded rows with their exact lines, and the refuters caught the sixth from a list the brief only
 pointed at. ⚠ The falling ratio does **not** mean the code is cleaner — it means the code was
 already picked over by three earlier waves, exactly as designed.
+
+### ✅ W5 SWEPT 2026-09-10 `[BLANK-W5-2026-09-10]` — 8 raised, 5 confirmed, 3 refuted — THE JUNE BLANK IS CLOSED
+
+3 auditors over the **last 9,744** never-audited lines: WIRE (all three DLL transports in one
+cluster), EXPORT, SCAN-CORE+DLL-OTHER. Each auditor also **piloted the eight-shape pattern
+catalogue** (`pattern_sweep`, mandatory). 5 refuters. 8 agents, ~1.8M tokens. **Nothing fixed.**
+
+| | MED | LOW | REFUTED |
+|---|---|---|---|
+| WIRE | — | — | WR-1 · WR-2 |
+| EXPORT | EX-1 | EX-2 · EX-3 | — |
+| SCAN-CORE | — | SC-2 · SC-3 | SC-1 |
+
+---
+
+#### ⭐⭐ The pattern-catalogue pilot worked — and it produced BOUNDED NEGATIVES
+
+Instances each auditor reported per shape, **before** refutation:
+
+```
+cluster      P1   P2   P3   P4   P5   P6   P7   P8
+WIRE          2    0    3    0    0    0    0    0
+EXPORT        1    1    2    0    0    0    1    0
+SCAN-CORE     1    0    1    0    0    0    0    0
+```
+
+- **P3 was enumerated MECHANICALLY, not sampled.** The WIRE auditor extracted every module symbol
+  each transport references — **`Fern` 209, `Mimic` 36, `Frieren` 90** distinct `Ns::Symbol`s —
+  and intersected them: **18 functions are reachable from all three** (16 feature-level). For
+  those plus the 7 that `Mimic` reaches *through* a `Frieren` export, it compared every call
+  site's argument list and every published result field. That is the systematic version of W2's
+  headline, and it is now a population with a known size.
+- ⛔ **The FP1 residual goes one hop further than W2 recorded.** `Mimic.cpp:1074`
+  (`TP_OP_GET_POSE`) and `Frieren.cpp:1280` (`UE5_TeleportGetPose`) both pass `nullptr` for
+  `outParentRelative` — the degraded-read flag is **unrequested at the transport level**, not only
+  inside `Wirbel`'s save paths. ⬜ Fold into `[W2-MARKER-PARENTREL]` and FP1's register row.
+- **P3 is W5's dominant confirmed shape** — three of five confirmed rows (EX-1, EX-2, SC-2), all
+  *a prior fix that reached some of its consumers and not the rest*.
+- **P1: "the pipe is mostly GOOD at this."** `search_properties` publishes both `truncated` and
+  `aborted`; `list_all_functions` publishes `truncated` + `aborted` + `limit`; `find_by_address`
+  publishes a full `container_scan` stats block precisely so a clean miss can be told from a
+  cut-off. **The confirmed P1 rows are outliers, not the rule** — which is what makes them fixable
+  by copying the local convention.
+- ⭐⭐ **P5 HAS A TEMPLATE, AND THE FIX PASS SHOULD COPY IT.** `begin_group_scan` publishes
+  `deadline_hit`, `per_slot_cap_hit` and `per_slot_cap` as **three distinct fields for three
+  distinct causes**, with an in-code comment explaining why they must not merge
+  (`Fern.cpp:3609-3616`). That is the correct shape for every P5 row on the fix list. And one merge
+  that *looks* like P5 is **correct**: `LI_OUT_TRUNCATED` folds cap+abort into one bit because
+  `Mimic.h:243-246` defines it as *"the returned set is a PREFIX and more instances exist unheld"* —
+  true of both causes, and the only thing a CE Lua freeze loop can act on.
+- **P2 re-confirmed tree-wide a THIRD independent time** — the EXPORT auditor's `1` is the recorded
+  `[W1-QUOTA-UNLIMITED]` row, not a new one. Three measurements (W1, W3, W5) now agree the
+  whole-tree population is exactly one file.
+- **P4, P6, P8: zero instances across all three clusters.** P6 has one UNDECIDED over an empty host:
+  the entire watch subsystem has no consumer (`DumpService.WatchAsync`/`UnwatchAsync` are referenced
+  only by their interface declaration and nothing subscribes to `IPipeClient.EventReceived`), so
+  `interval_ms` having a 50 ms floor and **no ceiling** is a latent gap, not a defect.
+
+---
+
+#### The fix list — 5 rows, none repaired
+
+**MED** — 1 row.
+
+1. ⬜ **`[W5-CEXML-FSTRING]`** `CeXmlExportService.cs:3414`. CE XML **drops the whole FString
+   family** — `StrProperty` / `Utf8StrProperty` / `AnsiStrProperty` — when it is a **TMap key or
+   value or a TArray element**, while the same type exports as a working CE String everywhere else.
+   `MapInnerTypeToCeField` has no arm for them and returns `null`; `EmitMapProperty`'s
+   `if (ceVal != null) EmitLeaf(...)` then emits **nothing**, and the per-element folder is written
+   out empty. ⚠ P3 at the path level: the UE5.5 string-type work reached the scalar path and not the
+   container-element path.
+   ⛔ **Obvious fix is unsafe**: adding the three arms routes them into `EmitLeaf`, which cannot
+   write `Length` / `Unicode` / `CodePage` / `ZeroTerminate` — a CE String needs those.
+
+**LOW** — 4 rows.
+
+2. ⬜ **`[W5-CSX-DELEGATEPAD]`** `CsxExportService.cs:111`. The `[D4B-DELEGATEPAD]` fix reached the
+   DLL readers, CE XML and `ue5_dissect.lua`, and **never reached `CsxExportService`** — every CSX
+   offset is the raw `field.Offset`. Wrong on checked builds (UE 5.3+ with `DO_CHECK`).
+   ⛔ A blanket `+ field.DelegatePad` is wrong: **Multicast fields also carry `DelegatePad = 8`**.
+3. ⬜ **`[W5-INSTEXPORT-TRUNC]`** `CeXmlExportService.cs:1311`. `GenerateInstanceXml` computes the
+   60,000-entry truncation flag and publishes it as `LastExportTruncated` with an explicit contract
+   (`:208-212`: *"The caller reads this right after the synchronous Generate\* call"*). Two of three
+   production callers honour it (`LiveWalkerViewModel.cs:4380`, `:4729`); **Instance Finder's
+   drops it**, so a truncated table is exported without a word. P1/P7.
+   ⛔ Copying LiveWalker's handling verbatim **breaks in four ways**, starting with a warning text
+   that is wrong at this call site.
+4. ⬜ **`[W5-OFFSETS-UNMEASURED]`** `Genau.cpp:4286`. `ValidateAndFixOffsets` computes `allMeasured`
+   and a 16-entry reason and publishes them as `DynOff::bOffsetsValidated` /
+   `g_offsetsFallbackReason` — and **only the pipe** (`Fern.cpp:5055-5057`) carries the verdict. The
+   C ABI and the CE mailbox, **which build CE structures from those very offsets**, do not. P3.
+   ⛔ Making `UE5_Init` return false on `!allMeasured` is harmful — `Grimoire.h`'s *"TWO flags,
+   deliberately"* block explains why.
+5. ⬜ **`[W5-DENKEN-DEADGUARD]`** `Denken.cpp:221`. The *"bail to save budget in a followed impl"*
+   guard is **dead in every reachable state** — `TryFollow` increments `ctx.callsFollowed` before
+   recursing, so the inner branch can never be taken.
+   ⛔ The obvious repair (drop `&& ctx.callsFollowed == 0`) is a **behaviour regression**.
+
+#### ⛔ `implied_fix_safe`: 5 of 5 again
+
+W2 **5/10**, W3 **4/6**, W4 **6/6**, W5 **5/5** — **twenty of twenty-seven** confirmed rows across
+four waves carry a harmful or partly-harmful obvious repair.
+
+#### ⛔ REFUTED — do not re-raise
+
+- **WR-1** *"a cancelled noise-classification flags a GAMEPLAY class as engine package"*. Mechanism
+  real, harm unreachable: commit `bea9009c` (2026-09-07) took the process-wide cancel flag out of the
+  pipe path, and the only delivering trigger left is followed by a disconnect that resets every
+  picker.
+- **WR-2** — the WIRE auditor's own *"one new P3 instance"*: the 2026-09-07 cancelled-reply fix
+  landed on three loops, and `find_instances` / `search_objects` never set `rset.aborted` while
+  `Mimic.cpp:966-967` folds `truncated || aborted`. Harm unreachable for the same `bea9009c` reason.
+  ⚠ **The contract mismatch itself is real and stays recorded as a latent gap**: the pipe publishes
+  only `truncated`, and the mailbox folds an `aborted` its producer never arms.
+- **SC-1** *"Denken's budget flag is the one that never fires"*. ⭐ **Settled by measurement on the
+  real log corpus**: 4,315 `AnalyzeNativeFunctionProps` lines pulled from
+  `%LOCALAPPDATA%\UE5CEDumper\Logs` across DQ7R, DumperTest and other titles — **0** hit the
+  instruction budget, **0** hit the chunk window. The fourth verdict this sweep settled by reading
+  the real artifact instead of arguing.
+
+---
+
+#### ⛔⛔ THE JUNE BLANK IS CLOSED — the whole sweep in one table
+
+| wave | lines | raised | confirmed | HIGH | MED | LOW |
+|---|---:|---:|---:|---:|---:|---:|
+| W1 | 11,610 | 16 | 13 | 2 | 4 | 7 |
+| W2 | 11,715 | 13 | 10 | 0 | 6 | 4 |
+| W3 | 7,602 | 8 | 5 *(6, one cross-lens duplicate)* | 0 | 3 | 2 |
+| W4 | 9,780 | 12 *(10 distinct)* | 6 *(+1 undecided)* | 0 | 5 | 1 |
+| W5 | 9,744 | 8 | 5 | 0 | 1 | 4 |
+| **total** | **50,451** | **57** | **39 distinct** | **2** | **19** | **18** |
+
+Plus two **escalations** of recorded rows that are worth as much as new ones: `[W1-QUOTA-UNLIMITED]`
+has a second entrance needing no user action (W3; this machine sits one preset below the trigger),
+and FP1/FP2 are fixed on the pipe only — now traced one hop further, to the transports' own get-pose
+calls (W2, W5).
+
+**Nothing has been repaired.** Next, in order: **P1** (the pattern sweep — tool shipped, control
+green), the remaining shapes, then **one fix pass grouped by shape across both blanks**, reading every
+row's `implied_fix_safe` first.
 
 ### What this sweep does NOT cover
 
