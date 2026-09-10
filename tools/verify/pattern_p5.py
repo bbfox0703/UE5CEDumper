@@ -91,7 +91,8 @@ def strip(src: str) -> str:
 
 def enclosing_function(lines, idx):
     sig = re.compile(r'^[A-Za-z_][\w:<>,\s\*&]*\b(\w+)\s*\([^;]*$')
-    for i in range(idx, max(-1, idx - 600), -1):
+    # 3000, not 600: the value scan is longer than 600 lines, and its row printed as "?()".
+    for i in range(idx, max(-1, idx - 3000), -1):
         s = lines[i]
         if s and not s[0].isspace() and '(' in s and not s.lstrip().startswith(('#', '}')):
             m = sig.match(s)
@@ -163,7 +164,7 @@ def collect_ui():
             continue
         lines = io.open(p, encoding='utf-8', errors='replace').read().split('\n')
         for i, l in enumerate(lines):
-            m = UI_FLAG.search(l)
+            m = None if l.lstrip().startswith('//') else UI_FLAG.search(l)   # doc comments are not renderings
             if not m or not re.search(r'\bif\s*\(|\?|&&|\|\|', l):
                 continue
             window = ' '.join(lines[i:i + 3])
