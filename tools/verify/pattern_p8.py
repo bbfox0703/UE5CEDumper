@@ -137,8 +137,8 @@ def analyse_class(body: str):
     for m in BLOCK_PROP.finditer(body):
         op = body.find('{', m.end() - 4)
         blk = body[op:close(body, op)]
-        if re.search(r'\bset\b', blk):
-            continue                                     # a full property, not a computed one
+        if re.search(r'\b(?:set|init)\b', blk) or not re.search(r'\bget\s*(?:\{|=>)', blk):
+            continue      # a full property, or an AUTO property ({ get; init; }) -- not computed
         computed[m.group(1)] = blk
     return plain, notify, bodies, computed
 
@@ -170,17 +170,21 @@ def load(root=UI) -> dict:
 
 def collect_reads(files: dict) -> list:
     """-> [(file, class, computed, plain_member, reassigned_where)]"""
-    alltext = '\n'.join(strip(t) for t in files.values())
+    stripped = {f: strip(t) for f, t in files.items()}
     rows = []
     for cls, (path, body) in observable_classes(files).items():
         plain, notify, bodies, computed = analyse_class(body)
         if not plain:
             continue
+        # A `.P =` counts only in a file that NAMES this class. `ClassName` / `PropName` are common
+        # member names: the first run matched them tree-wide and marked every PropertySearchMatch
+        # member "re-assigned" on the strength of other types' assignments.
+        mentioning = [f for f, t in stripped.items() if re.search(r'\b%s\b' % re.escape(cls), t)]
         for d in computed:
             for p in sorted(reads_of(d, bodies, computed) & plain):
                 where = [mn for mn, b in bodies.items() if re.search(r'(?<![.\w])%s\s*=(?!=)' % p, b)]
-                if re.search(r'\.%s\s*=(?!=)' % p, alltext):
-                    where.append('.%s= elsewhere' % p)
+                where += ['.%s= in %s' % (p, os.path.basename(f)) for f in mentioning
+                          if re.search(r'\.%s\s*=(?!=)' % re.escape(p), stripped[f])]
                 rows.append((path, cls, d, p, where))
     return rows
 
@@ -222,10 +226,16 @@ def cmd_reads() -> int:
 
 def cmd_ordering() -> int:
     rows = collect_ordering(load())
-    print('\nP8b -- a plain member assigned AFTER the notifier that repaints its reader: %d\n' % len(rows))
+    grouped = {}
     for path, cls, mname, m_, p, d in rows:
-        print('  %-30s %s.%s: %s (notifies %s) is assigned BEFORE plain %s'
-              % (os.path.basename(path), cls, mname, m_, d, p))
+        g = grouped.setdefault((os.path.basename(path), cls, mname, p), [set(), set()])
+        g[0].add(m_)
+        g[1].add(d)
+    print('\nP8b -- a plain member assigned AFTER the notifier that repaints its reader: %d distinct'
+          ' (%d raw notifier x reader pairs)\n' % (len(grouped), len(rows)))
+    for (f, cls, mname, p), (ms, ds) in sorted(grouped.items()):
+        print('  %s  %s.%s: plain %s is assigned after %d notifier(s) [%s] that repaint %s'
+              % (f, cls, mname, p, len(ms), ', '.join(sorted(ms)), ', '.join(sorted(ds))))
     return 0
 
 
