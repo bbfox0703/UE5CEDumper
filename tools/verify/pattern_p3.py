@@ -28,6 +28,23 @@ decidable here. So this axis prints every reference with its line and a reader d
 ⛔ THE CONTROL RUNS OVER THE SAME COLLECTORS THE AXES PRINT. P1's first draft had a control that
 passed over the unfiltered population while the view hid both known positives. Here every axis is a
 `collect_*` function, and `control` calls exactly those.
+
+⚠⚠ LIMITS THE FIRST ADJUDICATION MEASURED (2026-09-10, 112 rows, `[PATTERN-P3-2026-09-10]`).
+Recorded so the next reader corrects for them instead of rediscovering them:
+  * typemaps -- the C# method extractor used a bare brace counter, and `SdkExportService` EMITS C++
+    SOURCE full of "{" / "};" literals, so one body swallowed a later method. Fixed (`cs_skip`).
+    Measured afterwards: 29 rows -> 28; the one removed row was fabricated; NONE added and none
+    changed, so no map had been hidden and the adjudicated bound stands.
+  * validity -- matches RAW identifiers, so a flag the pipe publishes through a renamed cache global
+    (`bLowConfidence` -> `g_cachedIsLowConfidence` -> `is_low_confidence`) is shown as "Fern never
+    references it", and the cache STORE in Frieren is shown as the exposure: the inverse of reality.
+  * consumers -- over-reports four ways: reads through a helper (`ContainerGeometry`, the shared
+    `ResolveDrilldownAsync`) are invisible; `lfv_members()` parses EVERY class in LiveFieldValue.cs,
+    so sub-type members appear; one member (`InnerType`) is not on LiveFieldValue at all; and
+    pass-through COPIES in CE XML's reconstruction count as reads. 43 of 57 rows were gaps against
+    `SdkExportService`, which exports class LAYOUTS and is not a live-value twin.
+  * tags -- over-counts twice: a fix placed in a shared CALLEE shows as "tag absent" in every caller
+    that inherits it, and pipe-only commands have no mailbox or C ABI counterpart at all.
 """
 from __future__ import annotations
 
@@ -254,22 +271,113 @@ SIBLING_SKIP = {'ArrayProperty', 'MapProperty', 'SetProperty', 'OptionalProperty
 BROAD = 8
 
 
+def cs_skip(text, i):
+    """If a C# comment or literal starts at i, return the index just past it; else i.
+
+    ⛔ WHY THIS EXISTS. The first draft matched braces with a bare counter, and a P3 adjudicator
+    caught the symptom: `EmitClassHeaderFromLive` -- which contains no type switch -- inherited
+    `MapFunctionParamType`'s exact lacks-list. `SdkExportService` EMITS C++ SOURCE, so its method
+    bodies are full of "{" and "};" string literals; the counter walked straight past the method's
+    real end and swallowed a later one. That case only produced a duplicate row. The mirror case is
+    the dangerous one: an unbalanced "}" literal ENDS a body early, drops a type map below the
+    BROAD threshold and HIDES it -- a recall hole in the bound P3 exists to establish.
+    """
+    n = len(text)
+    if text.startswith('//', i):
+        j = text.find('\n', i)
+        return n if j < 0 else j
+    if text.startswith('/*', i):
+        j = text.find('*/', i + 2)
+        return n if j < 0 else j + 2
+    if text.startswith('"""', i):                                   # C# 11 raw string
+        j = text.find('"""', i + 3)
+        return n if j < 0 else j + 3
+    m = re.match(r'(\$@|@\$|\$|@)?"', text[i:i + 3])
+    if m and (m.group(1) or text[i] == '"'):
+        pre = m.group(1) or ''
+        verbatim, interp = '@' in pre, '$' in pre
+        k = i + len(pre) + 1
+        depth = 0
+        while k < n:
+            ch = text[k]
+            if depth > 0:                                            # inside an interpolation hole
+                nk = cs_skip(text, k)
+                if nk != k:
+                    k = nk
+                    continue
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                k += 1
+                continue
+            if interp and ch == '{':
+                if text.startswith('{{', k):
+                    k += 2
+                    continue
+                depth = 1
+                k += 1
+                continue
+            if not verbatim and ch == '\\':
+                k += 2
+                continue
+            if ch == '"':
+                if verbatim and text.startswith('""', k):
+                    k += 2
+                    continue
+                return k + 1
+            k += 1
+        return n
+    if text[i] == "'":                                               # char literal
+        if text.startswith("'\\", i):
+            j = text.find("'", i + 2)
+            return n if j < 0 else j + 1
+        if i + 2 < n and text[i + 2] == "'":
+            return i + 3
+    return i
+
+
+def cs_match_close(text, open_pos, o, c):
+    depth, k, n = 0, open_pos, len(text)
+    while k < n:
+        nk = cs_skip(text, k)
+        if nk != k:
+            k = nk
+            continue
+        ch = text[k]
+        if ch == o:
+            depth += 1
+        elif ch == c:
+            depth -= 1
+            if depth == 0:
+                return k
+        k += 1
+    return -1
+
+
 def cs_methods(text):
-    """-> [(name, start_line, body_text)] including expression-bodied members."""
+    """-> [(name, start_line, body_text)] including expression-bodied members.
+    Every brace, paren and ';' is found by a scanner that skips comments and literals."""
     out = []
+    n = len(text)
     for m in CS_SIG.finditer(text):
         op = m.end() - 1
-        cl = match_close(text, op)
+        cl = cs_match_close(text, op, '(', ')')
         if cl < 0:
             continue
         j = cl + 1
-        while j < len(text) and text[j] not in '{;=':
-            j += 1
-        if j >= len(text) or text[j] == ';':
+        while j < n and text[j] not in '{;=':
+            nj = cs_skip(text, j)
+            j = nj if nj != j else j + 1
+        if j >= n or text[j] == ';':
             continue
         if text.startswith('=>', j):
             depth, k = 0, j
-            while k < len(text):
+            while k < n:
+                nk = cs_skip(text, k)
+                if nk != k:
+                    k = nk
+                    continue
                 ch = text[k]
                 if ch in '({[':
                     depth += 1
@@ -280,7 +388,7 @@ def cs_methods(text):
                 k += 1
             out.append((m.group(1), line_of(text, m.start()), text[j:k]))
         elif text[j] == '{':
-            k = match_close(text, j, '{', '}')
+            k = cs_match_close(text, j, '{', '}')
             if k > 0:
                 out.append((m.group(1), line_of(text, m.start()), text[j:k]))
     return out
