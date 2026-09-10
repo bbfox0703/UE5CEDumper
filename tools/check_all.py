@@ -167,6 +167,18 @@ GATES = [
      "Run 'py tools/check_ce_untick_placement.py --list' for every site and its "
      "verdict, or '--selftest' for the negative controls", False),
 
+    ("check_ce_idlewait_scope",
+     ["tools/check_ce_idlewait_scope.py"],
+     "a CE mailbox emitter's bounded wait-for-IDLE is conditioned on the "
+     "enable/disable discriminator, so only ONE of the two blocks gets it -- while the "
+     "cmd store below is emitted for both. The unguarded block then writes operands, "
+     "clears status and stores cmd while another command may still be in flight "
+     "(the AA10 hazard). Emit the call unconditionally and pass "
+     "'enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn'. "
+     "It deliberately does NOT flag a guard that is not the enable discriminator "
+     "(if (dll), if (verifyReturn)) -- that split is what keeps the check baseline-free. "
+     "Run 'py tools/check_ce_idlewait_scope.py --list' or '--selftest'", False),
+
     ("check_clipboard_delivery",
      ["tools/check_clipboard_delivery.py"],
      "a DELIVERY clipboard copy (the payload is a generated CE script / memory-record "

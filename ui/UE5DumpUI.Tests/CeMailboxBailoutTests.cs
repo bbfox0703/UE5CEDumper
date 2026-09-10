@@ -1614,4 +1614,50 @@ public class CeMailboxBailoutTests
         Assert.Equal("0x330", CeMailboxLayout.OffParamsData1);
         Assert.Equal("0x338", CeMailboxLayout.OffParamsData2);
     }
+    /// <summary>The [DISABLE] half — added 2026-09-10 because nothing tested it.</summary>
+    private static string DisableBlock(string script)
+    {
+        int a = script.IndexOf("[DISABLE]", StringComparison.Ordinal);
+        Assert.True(a >= 0, "no [DISABLE] block");
+        return script[a..];
+    }
+
+    /// <summary>
+    /// [R3-SEETHRU-2026-09-10] — a toggle's [DISABLE] block writes the mailbox exactly
+    /// as its [ENABLE] does (operands, status clear, then the cmd store), so it needs the
+    /// same bounded wait-for-IDLE. SeeThrough's sat inside <c>if (enable)</c> and only
+    /// [ENABLE] got it; unticking wrote over a command that might still be in flight.
+    ///
+    /// <para>⛔ THIS TEST EXISTS BECAUSE ITS ABSENCE IS WHY THE DEFECT SURVIVED. Phase 1
+    /// of the audit-#4 assessment measured that no test fed ANY toggle generator's
+    /// [DISABLE] block through an idle-wait assertion — the suite checked the enable half
+    /// and stopped. So this is a Theory over the whole shared roster, not a SeeThrough
+    /// spot-check: fixing one generator while leaving the hole open is what let a
+    /// copy-paste reintroduce it in the first place.</para>
+    ///
+    /// <para>The source-shape twin is gate <c>check_ce_idlewait_scope</c>; this one pins
+    /// the EMITTED script, which is the actual contract with Cheat Engine.</para>
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void Disable_block_waits_for_IDLE_before_it_writes_the_mailbox(string name, string script)
+    {
+        var d = DisableBlock(script);
+
+        // The wait's own loop variable — the one marker every AppendIdleWait* emits.
+        Assert.True(d.Contains("_idleCmd", StringComparison.Ordinal),
+            $"{name}: the [DISABLE] block never waits for IDLE before writing the mailbox");
+
+        // ⭐ And it must come BEFORE the cmd store, not merely be present somewhere.
+        // A wait emitted after the write would satisfy a bare Contains and still be the
+        // defect — the same anti-vacuity point as the ordering assertion in the B30 tests.
+        int wait = d.IndexOf("_idleCmd", StringComparison.Ordinal);
+        int store = d.IndexOf($"writeInteger(mb + {CeMailboxLayout.OffCmd}", StringComparison.Ordinal);
+        if (store >= 0)
+        {
+            Assert.True(wait < store,
+                $"{name}: the idle wait is emitted AFTER the cmd store, which is no guard at all");
+        }
+    }
+
 }

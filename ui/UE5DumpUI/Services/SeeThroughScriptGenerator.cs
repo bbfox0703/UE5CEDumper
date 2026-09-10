@@ -66,16 +66,29 @@ public static class SeeThroughScriptGenerator
         // Pierce depth: how many nearest objects to see through. EDIT `pierceCount`
         // below (1 = just the nearest object; 2 = it + the wall behind; …). Only the
         // [ENABLE] block sends it; [DISABLE] sends 0 (ignored).
-        if (enable)
-        {
-            Line(sb, "local pierceCount = 1   -- EDIT ME: how many nearest objects to see through (1 = nearest only)");
         // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
         // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
         // a toggle fired while another command was still in flight wrote straight
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "SeeThrough");
+        //
+        // ⛔⛔ AND IT MUST BE OUTSIDE THE `enable` BRANCH. Until 2026-09-10 this call
+        // sat between the `{` and the `else` below, so ONLY [ENABLE] got the wait --
+        // while the cmd store further down is emitted for BOTH blocks. Unticking
+        // See-through therefore wrote operands, cleared status and stored cmd with no
+        // idle wait at all, which is the exact AA10 hazard the paragraph above
+        // describes. The comment was outdented to the outer level, which is what made
+        // it read as unconditional; the file's own contract check two lines up always
+        // was. Movement and TimeDilation carry this same comment with an unconditional
+        // call and an `enable ? ... : ...` mode -- that is the shape, and this is now
+        // it. Measured across all 14 generators: it was the only enable-guarded one.
+        // [R3-SEETHRU-2026-09-10], held by tools/check_ce_idlewait_scope.py.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "SeeThrough",
+            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+        if (enable)
+        {
+            Line(sb, "local pierceCount = 1   -- EDIT ME: how many nearest objects to see through (1 = nearest only)");
             Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, pierceCount)    -- pierce depth (>=1)");
         }
         else
