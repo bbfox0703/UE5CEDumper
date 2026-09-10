@@ -372,7 +372,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 | W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ✅ | 4 | 16 | 13 | **2H 4M 7L** | 2026-09-10 |
 | W2 TELEPORT ×2 · VALUESEARCH | ✅ | 3 | 13 | 10 | **0H 6M 4L** | 2026-09-10 |
 | W3 APP-SHELL ×2 · OBJTREE | ✅ | 3 | 8 | 6 (**5 distinct**) | **0H 3M 2L** | 2026-09-10 |
-| W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
+| W4 AURA-GRAPH ×2 · LIVEWALKER | 🔄 | 3 launched 2026-09-10 | — | — | — | — |
 | W5 WIRE · EXPORT · SCAN-CORE+DLL-OTHER | ⬜ | — | — | — | — | — |
 
 ⚠ **A `⬜` here is evidence; a heading anywhere else in this file is not** — see the 2026-08-24
