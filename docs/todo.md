@@ -1261,7 +1261,7 @@ to grow. Build the gates first and Track B shrinks.
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
 | **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ⬜ partly covered by `docs/todo.md:1314` |
-| **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | ⬜ **`[W1-GATE-SESSIONGATE]`** — already planned |
+| **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_session_gate.py`, selftest 5/5; 20 snapshot-address handoffs, 16 gated, 4 ungated (Class Pivot, recorded). Registered in the fix-pass commit that gates them; see `[PATTERN-P6-2026-09-10]` below. |
 | **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | ⬜ new check |
 | **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | ⬜ new check |
 
@@ -1597,6 +1597,58 @@ public void SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip()
 ```
 ⚠ `ExperimentalGateTests.cs` is **CRLF** in the working copy (150 CRLF, 0 LF, measured 2026-09-10) —
 insert with CRLF, never mix.
+
+---
+
+#### ✅ P6 MEASURED 2026-09-10 `[PATTERN-P6-2026-09-10]` — 20 snapshot-address handoffs: 16 gated, 4 ungated (all Class Pivot, recorded)
+
+`tools/check_session_gate.py`. **A detector written as a gate and deliberately NOT registered in
+`check_all.py`** — red by design until the fix pass gates Class Pivot, and registered in that same
+commit.
+
+| panel | address handoffs | verdict |
+|---|---:|---|
+| Snapshot Diff | 4 | ✅ gated — `IsEnabled` → `CanUseDiffRowActions` → `GameSessionId` |
+| Snapshot Group | 4 | ✅ gated — **in XAML only**; the RelayCommands carry no `CanExecute` |
+| SPC single | 4 | ✅ gated — `CanUseResultRowActions` → `_currentSessionId` |
+| SPC Group | 4 | ✅ gated — **in XAML only**, through the shared `CanUseResultRowActions` |
+| **Class Pivot** | **4** | ⛔ **ungated** — `[W1-PIVOT-SESSION]`, recorded. Open-in-Live-Walker and Copy Address have no `IsEnabled` at all; the two Locates are gated on `SelectedResult != null`, which never reaches the session |
+| Detect Player Stats | — | not counted: `LocateInGWorld(row.ClassName)` passes a **class name**, valid in every launch (confirmed at the invoke sites, not taken from the comment) |
+| Live Walker bookmarks | — | out of scope: a restore re-resolves through the GWorld spine and checks the saved class name before saying "loaded" — an identity check, not a session gate |
+
+⭐⭐ **THE DETECTOR HAD THREE BUGS, AND TWO OF THEM LEFT THE HEADLINE NUMBER RIGHT.** Each was found the
+same way — by checking the run against the hand-made map above **row by row, never by its total**:
+
+1. **Attribution by file.** Every class declared in a file was mapped to the whole file, so the helper
+   and row classes beside each ViewModel (`PivotFieldPick`, `NoiseRowVm`, `SpcSnapshotPick` …) re-reported
+   their neighbour's commands against the wrong panel. The run said **15** ungated; the truth is **4**.
+2. **Readers from a class's own body only.** SPC reaches snapshots through its helper
+   `SpcSnapshotPick.Meta`, so **SPC dropped out of scope entirely** — and because SPC is gated, the count
+   of ungated handoffs *stayed correct*. An ungated SPC would have vanished without a trace.
+3. **Readers found transitively, payloads not checked.** The Pointer panel came into scope and its
+   **nine copies of the LIVE global pointers** (GObjects, GNames, GWorld …) were reported as snapshot
+   handoffs. An address now counts only when it is rooted at the command's own row parameter or a
+   `Selected*` row.
+
+Plus one the selftest caught: `[RelayCommand(CanExecute = nameof(X))]` holds a nested `)` that `[^)]*`
+could not cross, so such commands were never seen. Final: selftest **5/5**, tree = exactly the table.
+
+⚠ **The general lesson, stated because it has now happened in P1, P2 and P6**: a total that matches the
+expectation is not a verification. P1's filter hid both known positives and still produced a
+plausible count; P2's detector went green with its known positive missing; two of P6's three bugs left
+the number right. **Every one was caught by comparing individual rows with an independent answer.**
+
+⬜ **For the fix pass:** gate Class Pivot's four handoffs the way both siblings do — a `CanUse…` property
+comparing the selected snapshot's `GameSessionId` with the live session, bound as `IsEnabled` on all four
+buttons. The tell that this was always intended: `_engineState` is assigned at
+`ClassPivotViewModel.cs:226` and **read nowhere**, where both siblings store `state.GameSessionId` at the
+same point and compare it. ⚠ Expect the buttons to be **disabled by default after a reconnect**:
+`RefreshAsync:501-503` defaults the picker to `Snapshots[0]`, which is then a previous-launch snapshot —
+that is the gate working, not a regression. Register the detector in the same commit.
+
+🟡 **Lead, not filed:** a bookmark whose saved address is recycled in a new launch by **another instance
+of the same class** passes the class-name identity check, and loads that other instance under the
+bookmark's label. Narrow, and not measured.
 
 ---
 
