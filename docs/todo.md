@@ -369,7 +369,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 
 | wave | status | finders | raw | survived refutation | confirmed | commit |
 |---|---|---|---|---|---|---|
-| W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ⬜ | — | — | — | — | — |
+| W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | 🔄 | 4 launched 2026-09-10 | — | — | — | — |
 | W2 TELEPORT ×2 · VALUESEARCH | ⬜ | — | — | — | — | — |
 | W3 APP-SHELL ×2 · OBJTREE | ⬜ | — | — | — | — | — |
 | W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
