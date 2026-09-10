@@ -1257,7 +1257,7 @@ to grow. Build the gates first and Track B shrinks.
 | # | shape (from the June sweep's confirmed rows) | mechanical search | status |
 |---|---|---|---|
 | **P1** | **computed and never published** — a fault flag, a cap, a refusal, a method tag. *The single most common shape.* | `tools/verify/pattern_p1.py`: **P1b** log calls whose message carries a degradation fact (225) + **P1a** result-struct members no transport names (15). ⛔ *This row first said `pipe_wire_parity.py` "already does this" — false: that tool measures the MIRROR (published, never read) and would miss four of P1's five confirmed instances, which never become reply keys at all.* | ✅ **SWEPT 2026-09-10** — 240/240 ruled, **7 confirmed, all LOW**, 1 refuted; see `[PATTERN-P1-2026-09-10]` below |
-| **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | ⬜ **`[W1-GATE-JSONDEFAULT]`** — already planned |
+| **P2** | **serializer drops a legitimate value** — `WhenWritingDefault` vs a non-`default(T)` initializer | JSON contexts × property initializers | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_json_default_ignore.py`, selftest 7/7, tree = 2 rows (1 defect, recorded; 1 benign). Registered in the fix-pass commit that repairs both; see `[PATTERN-P2-2026-09-10]` below. |
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ⬜ new check |
 | **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ⬜ partly covered by `docs/todo.md:1314` |
@@ -1528,6 +1528,75 @@ reason given above.
 - The validity axis **inverts reality** for flags published through a renamed cache global; consumers
   over-reports four ways (43 of its 57 rows were gaps against an exporter that is not a live-value
   twin); tags over-counts shared callees and pipe-only commands. All four are now in the tool's header.
+
+---
+
+#### ✅ P2 MEASURED 2026-09-10 `[PATTERN-P2-2026-09-10]` — tree-wide population: exactly 2, one defect (recorded), one benign
+
+`tools/check_json_default_ignore.py`. **A detector written as a gate and deliberately NOT registered in
+`check_all.py`**: the sweep is in its record-don't-fix phase, so the tree stays red by design and the
+detector is registered in the **same commit** that repairs its instance, during the fix pass.
+
+| row | verdict |
+|---|---|
+| `ExperimentalSettings.SnapshotQuotaMb = 1024` (`ExperimentalSettings.cs:19`) | ⛔ **the defect** — `[W1-QUOTA-UNLIMITED]`, already recorded (and escalated in W3: `ApplyAutoQuota` sets 0 by itself) |
+| `AobUsageFile.Version = 1` (`AobUsageRecord.cs:94`) | benign — 1 ≠ 0, so it is always written today; the detector flags it because nothing *states* that it must never be omitted |
+
+⭐ **Fourth independent measurement, same answer.** W1 (by hand), W3 and W5 (by agents) and now a
+mechanical detector all agree the whole-tree population is one real instance.
+
+⭐ **The detector's selftest caught TWO bugs in its own parser before either could mislead**, and the
+second is the one worth remembering:
+1. Properties were matched one per line with a `$` anchor, so two declarations on one line merged
+   into one property with a garbled initializer (the enum case flagged `Mode.First` and missed
+   `Mode.Third`).
+2. The first fix for that kept the regex's `^…$` anchors under `finditer`, where without `re.M` they
+   can only match a one-line class body. The selftest failed three cases — and **the tree run went
+   GREEN with the known positive missing**. Read on its own, that `exit 0` would have recorded P2 as
+   clean. It is the second time in this stream a broken matcher reported green (P1's triage filter
+   was the first) and the second time a control caught it.
+
+Final: selftest **7/7**, tree **red with exactly the 2 rows above**.
+
+⬜ **For the fix pass — both repairs, and the test, ready to apply:**
+- `ExperimentalSettings`: drop `DefaultIgnoreCondition = WhenWritingDefault` from its context — the
+  **spec-conforming** fix (`docs/teleport-coord-library-spec.md:618`: "MUST NOT be WhenWritingDefault";
+  follow the `UiOptionsSettings` / `BookmarkFile` dialect). `enabled: false` will then be written too,
+  which old and new builds both read identically.
+- `AobUsageFile.Version`: add `[JsonIgnore(Condition = JsonIgnoreCondition.Never)]` — **behaviour-neutral**
+  (it is already always written) and it states the intent. ⚠ Do **not** change that context's
+  `DefaultIgnoreCondition`: the per-machine hint cache is shared with the DLL's `Flamme`, and writing
+  every zero-valued field would change a cross-language file for no gain.
+- Register the detector in `check_all.py` in the same commit.
+- The red-before-green test, written and measured red-by-construction, then backed out when the
+  maintainer confirmed this is still the finding phase — add it to `ExperimentalGateTests.cs` **before**
+  the fix and watch it fail:
+
+```csharp
+[Fact]
+public void SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip()
+{
+    // [W1-QUOTA-UNLIMITED]. 0 means "Unlimited", chosen by the user (the quota combo) or BY ITSELF
+    // (ApplyAutoQuota, once the retained set outgrows the 5 GB preset). Under WhenWritingDefault the
+    // key was OMITTED -- 0 is default(int) -- the next launch reloaded the = 1024 initializer, and
+    // SnapshotStore FIFO-deleted the snapshots the user had opted to keep. The test above
+    // round-trips 2048 only, which serializes fine and could never see it.
+    var gate = new ExperimentalGate(_platform);
+    gate.SnapshotQuotaMb = 0;
+    Assert.Equal(0, new ExperimentalGate(_platform).SnapshotQuotaMb);
+
+    // The flag beside it must survive the same round-trip, in both states.
+    gate.IsEnabled = true;
+    var reopened = new ExperimentalGate(_platform);
+    Assert.True(reopened.IsEnabled);
+    Assert.Equal(0, reopened.SnapshotQuotaMb);
+    reopened.IsEnabled = false;
+    Assert.False(new ExperimentalGate(_platform).IsEnabled);
+    Assert.Equal(0, new ExperimentalGate(_platform).SnapshotQuotaMb);
+}
+```
+⚠ `ExperimentalGateTests.cs` is **CRLF** in the working copy (150 CRLF, 0 LF, measured 2026-09-10) —
+insert with CRLF, never mix.
 
 ---
 
