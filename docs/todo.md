@@ -2016,6 +2016,268 @@ and `WIRE-DTO` in one wave means a single agent set holds the pipe, the mailbox,
 and the DTOs simultaneously — which is exactly what it takes to see P3 (a fix on one transport of
 three), the shape that produced the June sweep's most important result.
 
+### Track B ledger — a fresh session resumes from here
+
+| wave | status | finders | raw | survived refutation | confirmed | commit |
+|---|---|---|---|---|---|---|
+| A1 APP-SHELL | ✅ | 3 (+0 gap-fill) | 7 | 6 | **0H 1M 5L** | 2026-09-10 |
+| A2 SCAN-CORE ×2 · DLL-OTHER | ⬜ | | | | | |
+| A3 WIRE · CE-BRIDGE · WIRE-DTO | ⬜ | | | | | |
+| A4 AURA-GRAPH · VALUESEARCH · LIVEWALKER · OBJTREE · TELEPORT · EXPORT · SNAPSHOT+PIVOT-SPC | ⬜ | | | | | |
+
+### ✅ A1 SWEPT 2026-09-10 `[TRACKB-A1-2026-09-10]` — APP-SHELL: 7 raised, 6 confirmed (1 MED · 5 LOW), 1 refuted
+
+- **Scope: 6,695 never-audited lines in 69 files.** Re-derived at the start of the wave, and unchanged
+  since the plan, because nothing but docs and tools has been committed since.
+- **Three lenses, not the plan's two:**
+  - **A** persistence, lifecycle and fault handling, and **B** composition, wiring and promises. Both
+    read the same 60 files.
+  - **C** took the 9 CE Lua emitter files. These have their own rulebook in CLAUDE.md, and a generic
+    lens would have spread thin over them.
+- **Coverage was reconciled, not assumed.** Each finder returned the list of files it opened: 60/60,
+  60/60 and 9/9. So the gap-fill stage never had to run.
+- **Cost:** 7 agents, ~1.7M tokens.
+- **Constraints:** source reads only, because CE and a game were in use by another session.
+  **Nothing fixed.**
+- **Hand adjudication:** every confirmed row was re-read at its source before being recorded here.
+
+⭐⭐ **FIVE OF THE SIX CONFIRMED ROWS ARE REPAIRS THAT STATE A CLAIM THEY DO NOT KEEP.** The brief
+predicted this: the band is August/September fix-pass code, and no audit has ever read a fix pass.
+
+| row | the claim | where it is stated |
+|---|---|---|
+| `[A1-COORD-RESURRECT]` | the `.bak` fallback is for a **corrupt** main file | `CoordinateLibraryStore.cs:109`, commit 93bb0f5e |
+| `[A1-COORD-BACKUP]` | a `.preclear.bak` / `.preimport.bak` makes a clear or an import recoverable | the B6 fix (d98e143b), `en.axaml:1267-1269` |
+| `[A1-LOG-RESUME]` | after startup, "slot 0 is free for the new session" | the B31 fix, `LoggingService.cs:286-288`, `:298` |
+| `[A1-SLOTSYM-FAILED]` | refcounting makes "a second live record's symbol survives" true | `CeLuaHygiene.cs:803-804` |
+| `[A1-LUA-WAIT]` | a real deadline, "iteration count only as fallback" | `CeLuaHygiene.cs:191`/`:640`, commit 45eb7c2f |
+
+The sixth, `[A1-DETECT-REPUBLISH]`, is a fix (X5) that an older, still-open gap (L18) undoes; the fix
+never accounted for it.
+
+##### ⛔ `[A1-COORD-RESURRECT]` MED — Teleport's coordinate library "Clear all" comes back after reconnect or restart
+
+`CoordinateLibraryStore.cs:123`. `TryRead` returns null for a **missing** main file (`:140`) as well as
+a corrupt one, and in both cases `Load` falls back to the rolling `.bak` (`:123`). Clear all deletes only
+the main file and deliberately leaves the backups (`:222`).
+
+So the next `LoadCoordLibraryForGame` silently restores the library as it was before the last save,
+and logs *"main file unreadable, recovered from .bak"*. That load runs on every connect, on the Extra
+Scan fan-out, and on every restart. The confirm dialog had promised it *"deletes all N entries … and
+removes the library file"* (`en.axaml:1267`). Any library that has been saved twice has a `.bak`, so
+this is the normal case, not an edge case. Hand-verified at source.
+
+- ✅ **Safe fix:** try `.bak` only when the main file EXISTS but cannot be read (`File.Exists(path)`),
+  which is the documented intent. `Load_CorruptMainFile_RecoversFromBackup` still passes. Add a test:
+  Save, Save, SavePreClearBackup, Delete, Load → empty.
+- ⛔ **Unsafe:** making `Delete` also remove the rolling `.bak`. `ClearCoordLibraryAsync` calls
+  `Delete` even when the pre-clear copy FAILED, because the copy swallows its own exception. In that
+  case `.bak` is the only surviving copy, and deleting it turns a resurrection into exactly the
+  unrecoverable loss B6 fixed.
+
+##### `[A1-COORD-BACKUP]` LOW — after a `.bak` recovery, the one-shot backups copy the corrupt file
+
+`CoordinateLibraryStore.cs:218` (+ `:197`). `SavePreClearBackup` and `SavePreImportBackup` copy
+whatever main file is on disk. After a `.bak` recovery, the file on disk is still the corrupt one,
+because the load runs with persistence suppressed.
+
+- **Clear all** then backs up garbage and still reports *"Backed up to …preclear.bak"*.
+- **The import twin is worse.** A Replace-import backs up the corrupt main. The same Save then rolls
+  the corrupt main over the only good `.bak`, so the pre-import library ends up in no file at all.
+- **Why LOW, down from the finder's MED:** it needs the rare corrupt-main state, AND a Clear or
+  Replace as the first change after connect. Any ordinary save in between self-heals.
+- ✅ **Safe fix:** write the one-shot backup from the IN-MEMORY library (temp file + rename).
+  Separately safe: make `Save` refuse to roll an unparseable main file over `.bak`.
+- ⛔ **Unsafe:** "re-persist after a `.bak` recovery" by calling `Save`.
+  - `Save`'s roll copies the corrupt main over the only good `.bak` before the rename. A crash in
+    between leaves both files corrupt, and this would now happen on every connect.
+  - `TryRead` also treats a sharing violation as "unreadable", so an automatic re-persist would push
+    the newest revision into `.bak` with no user action.
+- ⚠ **Fix these two rows together.** They are in the same file, and each one's safe fix assumes the
+  other's.
+
+##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
+
+`LoggingService.cs:286`. When there is no checkpoint, Serilog.Sinks.File 7.0.0 resumes the
+highest-sequence file (the refuter decompiled `RollingFileSink.OpenFile` to confirm this).
+`ArchivePreviousLog` handles only `-0.log` and `-1..9.log` (`:312-318`), never `-0_NNN.log`. So once a
+category has rolled:
+- `pipe-0.log` / `view-0.log` are never created again;
+- sessions are no longer archived under their own date;
+- the documented "grep view-0.log" steps look at the wrong file;
+- the compression sweep treats the live rolled file as idle after an hour and reports it as "failed".
+
+Field evidence already exists: a 28-minute session on build 3262 logged into `pipe-0_005/006.log`
+(`docs/archive/todo-closed-2026-08-25-build-3356.md:498`). No data is lost; the harm is to
+diagnostics only.
+
+- ✅ **Safe fix:** have `ArchivePreviousLog` also archive `{prefix}-0_*.log` at startup (oldest first),
+  and rewrite `:286-288`.
+- ⛔ **Unsafe:** widening `LogCompressionPolicy.IsLiveLog` to match `-0_NNN.log`. That would mark every
+  closed 8 MB rolled file as live forever, dropping the largest and most compressible files from both
+  sweeps. The in-session case needs a different rule: the newest `-0*` file per prefix in our own
+  folder is the live one.
+
+##### `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows
+
+`DetectStatsViewModel.cs:250`. X5's `ClearOnDisconnect` (`:110-112`) promises that a reconnect never
+shows the previous game's fields. But `DetectAsync` has no cancellation (July **L18**, still open), and
+its per-class probe catch (`:206-209`) swallows every pipe failure. So a run that was suspended at the
+disconnect finishes anyway and republishes its rows at `:250-255`.
+
+- **Deterministic window:** with the snapshot signal on, the multi-hundred-ms
+  `TryLoadDecreasedFieldsAsync` await (`:170`). The probe-loop window is an ordering race.
+- **Why LOW:** the feature is experimental-gated, the rows are labelled "reference only", and the
+  handoffs pass class names only.
+- ✅ **Safe fix:** a generation guard, in the `InstanceFinderViewModel` mould. Bump it in
+  `ClearOnDisconnect`, check it after every await, and bail without touching the results or the
+  status.
+- ⛔ **Unsafe or insufficient:** L18's own fix, a CTS cancelled from the tab.
+  - The per-class catch swallows the `OperationCanceledException`, so the loop still publishes.
+  - A `ThrowIfCancellationRequested` outside that catch makes the outer catch print "Detect failed"
+    over the reset.
+
+##### `[A1-SLOTSYM-FAILED]` LOW — a failed second "Get GWorld" record tears down a live record's symbol
+
+`CeLuaHygiene.cs:846`. `AppendSlotSymbolRelease` decrements the refcount unconditionally. But:
+- CE runs `[DISABLE]` on the deferred untick after every failed ENABLE (`MemoryRecordUnit.pas`
+  `setActive`; this repo measured it live as `[B30-REOPEN]`);
+- every PointerQuery ENABLE bail returns **before** the register step
+  (`PointerQueryScriptGenerator.cs:176-195/:210-221`).
+
+With two records, B's ENABLE fails, its `[DISABLE]` runs, `_rc` drops to 0, and
+`unregisterSymbol('UE_GWorld')` fires while A still reads ticked. Every `[UE_GWorld]+offset` record then
+resolves to `??`. The only report is a `dbg()` line, which is silent at DEBUG=0.
+
+The refuter **measured** this under real Lua over the UI-emitted script: *"A is still ticked but
+UE_GWorld is GONE"*. The existing rigs (`slotsym_gworld_test.lua`, `slotsym_release_test.lua`) have no
+failed-ENABLE case.
+
+- ✅ **Safe fix:** per-record ownership in the shared emitters. Keep a holder set
+  `UE5_slotSymHolders[sym][memrec.ID]`: add the record on a successful register, remove it on release,
+  and unregister only when the set is empty. Fall back to the count when `memrec` is nil.
+- ⛔ **Unsafe:**
+  - Copying `[B30-REOPEN]`'s ownership flag. It is one global boolean, and two records share Lua
+    globals, which is exactly the case SLOTSYM exists for.
+  - A `getAddressSafe(sym)` guard. A's registration makes it true for B too.
+
+##### `[A1-LUA-WAIT]` LOW — `_tick and (elapsed >= Ms) or (iters >= N)` keeps the iteration bound live
+
+`CeLuaHygiene.cs:192-194` and `:644-646`. In Lua, `a and b or c` evaluates `c` whenever `b` is false.
+So both mailbox deadlines are **min(real ms, N × sleep cost)**, not the real deadline that the comments
+and commit 45eb7c2f promise.
+
+- **Harmless** while CE's `sleep(1)` costs ~15.5 ms, as on the measured machines.
+- **Where it is shorter,** the 1.5 s idle wait and the 10 s status wait shrink by up to ~15×. One such
+  case is Windows before 10 2004: there a 1 ms timer request is global, and the injected DLL makes one
+  itself (`Mimic.cpp:78-82`). A timeout while the DLL is still processing then unticks a record that
+  the DLL goes on to apply.
+- ⭐ **A P3 twin of a fixed defect.** `AA29` found exactly this in `ue5_freeze_helper.lua` /
+  `ue5_invoke_helper.lua`, and e8893e5a fixed only those two. The C# emitter that feeds every generated
+  script kept the idiom. `pattern_p3.py` never compares Lua text twins, so the P3 sweep could not see it.
+- **Evidence:** the Lua semantics were measured; the platform leg is inferred.
+- ✅ **Safe fix:** mirror the helpers' `if … elseif _tick then … else … end` shape exactly, in both
+  emitters. Add a test that runs the emitted loop under Lua. The current
+  `IdleWait_measures_a_real_deadline_not_sleep_iterations` asserts substrings, and passes both before
+  and after the fix.
+- ⛔ **Unsafe:**
+  - deleting the iteration arm, which leaves no bound at all where `getTickCount` is missing;
+  - any rewrite that keeps the `a and b or c` form;
+  - retuning the constants;
+  - changing only one of the two emitters.
+
+##### ⛔ REFUTED — do not re-raise
+
+- **`A1-A-2`** `ProxyOrphanScanner.cs:472`: "the already-gone branch drops the prune stop reason".
+  - `RemoveOrphanProxyAsync` re-plans from disk first. A folder whose file of ours has gone classifies
+    as `NoFilesAtAll` and is *Skipped* before any prune happens.
+  - What remains is a millisecond race inside one `Task.Run`.
+  - "Never listed again" is the documented rule (`OrphanScanTypes.cs:88-94`).
+  - ⛔ Do not add `NoFilesAtAll` to `ShouldSurface`: every empty `Binaries\Win64` in every library
+    would then be listed.
+
+##### Measured clean — worth as much as the rows
+
+- **Deletes that reach user folders are scoped right.**
+  - `ProxyOrphanScanner`: non-actionable plans carry their files for display only. Removal re-plans
+    from disk and refuses a non-actionable verdict. The prune is non-recursive and deepest-first.
+  - `AppDataFolderMaintenance` / `AppDataRetentionPolicy`: a delete needs the literal `{prefix}.`
+    lead-in inside the enumerated folder, and `maxAgeDays <= 0` deletes nothing. Migration moves a
+    whole group, never overwrites, and rolls back on failure.
+  - Log compression deletes nothing, and re-measures success with `GetCompressedFileSizeW`.
+  - `VolumeRoot`'s four callers each fail to a safe sentinel.
+- **The fault spine fails closed.**
+  - `InputLayerFaultClassifier` (476 lines, never named by any audit) rethrows on every truncation,
+    no-stack and classifier-throw path, and the AOT build keeps the type names its markers match on.
+  - `DispatcherFaultGuard` fixes its verdict before logging.
+- **The CE Lua emitters use only real CE API.** Every call was checked against
+  `D:\Github\cheat-engine`'s `LuaHandler.pas` registrations. `processMessagesPaintOnly`, which is
+  absent from CE 7.5, is feature-tested rather than called.
+- **The mailbox layout matches `Mimic.h` field for field:** offsets, command ids, status and init
+  values, magic, and `ContractVersion 3`.
+  - Every bail branch leaves its record in the state its shape requires, and the success-close is
+    unreachable after every bail.
+  - The round-2 `onUnreadable` fix holds at all five callers. Teleport's two omissions are correct for
+    its shape.
+- **Composition.**
+  - Every cross-tab handoff lands on the tab it drives, and is wired exactly once.
+  - `AppComposition`'s 13 parameters line up with the constructor (B27 closed).
+  - The in-band keyword boxes all follow the space-AND rule.
+  - `Constants.cs` adds no per-game root file.
+
+##### Leads, not filed (unmeasured or doc-only)
+
+- ⚠ **A byte-corrupted test fixture — the CLAUDE.md NUL class.** `ProxyOrphanScannerTests.cs:614`
+  holds a literal `0x0B` byte where the `\v` of `\version.dll` was meant (verified by byte scan;
+  committed in 4f2f2dec). No current assertion reads that path:
+  `BuildReport_ListsEveryPathAndTheFileDetail` passes on `DllNames`. So the test would not notice if
+  the authorised-file line vanished from the report.
+- **The mailbox gate pins only `ContractVersion` on the C# side.** `check_mailbox_contract.py` hashes
+  the DLL surface, but nothing compares these against `Mimic.h`: `CeMailboxLayout`'s offsets and
+  command ids, `InvokeScriptGenerator`'s private offsets, or Teleport's inline `0x331` /
+  `0x340-0x358`. The tests pin them to their own literals. Today they all agree. But a layout change
+  made by the gate's own procedure would bump the version and pass, while UI scripts kept writing the
+  old offsets.
+- **`PointerQueryScriptGenerator.cs:161-162`** (out of band): the ENABLE-side stale-buffer clear may
+  free a buffer that belongs to another live record. It is the same two-record family as
+  `[A1-SLOTSYM-FAILED]`.
+- **`CeReadinessLua`** (out of band, `:79`/`:84`).
+  - An unreadable mailbox (the game has exited) is reported as *"AOB scan may be wedged"*. That is the
+    guess-instead-of-read shape the MUST rule forbids.
+  - The 250 ms poll does not pump messages, so CE freezes for up to 25 s.
+- **`en.axaml` contradicts itself or overclaims.**
+  - `:143` and `:156` disagree on the Value Search timeout ("10–60 s, default 15" vs "10–90 s,
+    default 25").
+  - `:429` says the Self-Test "confirms the ProcessEvent hook is on the correct vtable slot", which
+    `SelfTestAdvice`'s own doc says it cannot establish.
+- **`AppDataRetentionPolicy.cs:13-15`**: the parameter doc says "unused" means max(write, access), but
+  the method it points to deliberately uses write time only. A maintainer who "restores" the doc's
+  version would silently disable the `Snapshots\` sweep.
+- **SDK / USMAP exports** write straight to the final file name (`MainWindowViewModel.cs` ~3512/3660).
+  A disconnect mid-write can leave a truncated file, where DumpAll uses `.partial`.
+- **Live Funcs' Diff baseline survives a reconnect to a different game** (`ResetOnDisconnect` keeps
+  `_baseline`). Also, `SetBaseline` sets `DiffMode = true` expecting a refresh, which does not fire
+  when it is already true.
+- **Game Class Filter:** a disconnect cancels the batch, and its catch then writes "Find Func cancelled
+  at N/M" on an emptied grid.
+- **Detect Stats' ✓ column** sorts on a two-state bool under a three-state badge.
+- **Smaller doc and code mismatches:**
+  - `PropertyScoringTable.cs:93-95` claims "Max" does not fire on `ChannelMaxIndex`, but the tokenizer
+    splits that name so it does.
+  - `ProxyImportAnalyzer.cs:20-25`'s doc contradicts `:57-65`.
+  - `DumperDllPathStore` writes UTF-8 without a BOM; CE-side ANSI path handling for a non-ASCII folder
+    was not checked.
+  - `TeleportScriptGenerator.cs:126-127` has a ~15 ms boundary where a busy flag suppresses the
+    command's own error message.
+  - Stale comments at `CeLuaHygiene.cs:324-329`, `MainWindow.axaml.cs:290` and
+    `Constants.cs:199-261`.
+
+⬜ **For the fix pass:**
+- `[A1-COORD-RESURRECT]` and `[A1-COORD-BACKUP]` land together (same store).
+- `[A1-LUA-WAIT]` joins the P3 group, as a twin of AA29.
+- `[A1-SLOTSYM-FAILED]` belongs with `[B30-REOPEN]`'s family: every `[DISABLE]` must be safe to run
+  after an ENABLE that applied nothing. That rule deserves a shared rig case for every toggle.
+
 ### Order, and why
 
 1. ✅ **Finish the June sweep** — done 2026-09-10: 50,451 lines, 39 distinct confirmed defects.
@@ -2023,7 +2285,8 @@ three), the shape that produced the June sweep's most important result.
    P3, P4 / P7 / P8 and P5 as adjudicated sweeps, P2 and P6 as detectors. **20 new confirmed
    (1 HIGH · 4 MED · 15 LOW)**; P2's and P6's instances were already recorded. The gate-shaped
    detectors (P2, P6) are built and deliberately NOT registered until their instances are repaired.
-3. ⬜ **Track B A1–A4** for what no matcher can reach.
+3. 🔄 **Track B A1–A4** for what no matcher can reach. **A1 done 2026-09-10**
+   (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept); A2 next.
 4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
    shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
    maintainer's stated reason for planning the second blank at all.
