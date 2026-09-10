@@ -369,7 +369,7 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 
 | wave | status | finders | raw | survived refutation | confirmed | commit |
 |---|---|---|---|---|---|---|
-| W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | 🔄 | 4 launched 2026-09-10 | — | — | — | — |
+| W1 SNAPSHOT · PIVOT-SPC · WIRE-DTO · CE-BRIDGE | ✅ | 4 | 16 | 13 | **2H 4M 7L** | 2026-09-10 |
 | W2 TELEPORT ×2 · VALUESEARCH | ⬜ | — | — | — | — | — |
 | W3 APP-SHELL ×2 · OBJTREE | ⬜ | — | — | — | — | — |
 | W4 AURA-GRAPH ×2 · LIVEWALKER | ⬜ | — | — | — | — | — |
@@ -378,6 +378,205 @@ Calibration is the whole ballgame: the last agent sweep ran **~4 refuted for eve
 ⚠ **A `⬜` here is evidence; a heading anywhere else in this file is not** — see the 2026-08-24
 reconciliation at the top. This table is updated in the same commit as the wave it describes,
 which is what makes it trustworthy.
+
+### ✅ W1 SWEPT 2026-09-10 `[BLANK-W1-2026-09-10]` — 16 raised, 13 confirmed, 3 refuted
+
+4 finder agents over **11,610 never-audited lines / 69 files**, then 7 adversarial refuters
+(default verdict REFUTED), then hand-adjudication. **Nothing was fixed** — record-only, per the
+plan; repairs come after W5.
+
+| | HIGH | MED | LOW | REFUTED |
+|---|---|---|---|---|
+| SNAPSHOT | SNAP-1 | — | SNAP-2 · SNAP-4 · SNAP-5 | SNAP-3 |
+| PIVOT-SPC | — | PIV-1 · PIV-2 · PIV-3 | PIV-4 · PIV-6 | PIV-5 |
+| WIRE-DTO | DTO-1 | DTO-3 | DTO-2 | — |
+| CE-BRIDGE | — | — | CEB-1 | CEB-2 |
+
+⚠ **CALIBRATION UPDATE, AND READ BOTH WAYS.** The brief told every agent to expect roughly **four
+refuted for every one real** — the rate the last agent sweep ran at. W1 came back **13/16
+confirmed**. Two readings, and the evidence favours the first:
+1. **The blank was genuinely unswept.** These files had never been read by anyone; ordinary
+   first-pass defects were simply still there. Two of the confirmed rows have their **origin
+   commit inside the band** (PIV-2: Class Pivot shipped `e554639c` 2026-06-02, the session gate
+   landed `534314f4` 2026-06-16 naming only Snapshot/SPC).
+2. The refuters were soft. **Against this:** 3 outright refutations, three MED→LOW downgrades,
+   four findings materially narrowed, and — the tell that they were not rubber-stamping —
+   **SNAP-5's refuter proved the finding's own implied fix would be actively harmful.**
+
+⭐ **Two of the seven refuters MEASURED instead of arguing**, which is why their verdicts are
+worth more than the others: DTO-1's ran the serializer round-trip with three controls, and
+CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStream.TryConnect`.
+
+#### The fix list — 13 rows, none repaired
+
+**HIGH**
+
+1. ⬜ **`[W1-SNAP-FAULT]` a faulted snapshot chunk is stored and finalised as a complete, usable
+   snapshot.** `dll/src/Aura.cpp:9804` is the **only one of seven** `ParallelGObjectsScan` call
+   sites that does not fold the fault flag into a published stat — the other six all do:
+   ```
+   2800  stats->deadlineHit    = scan.incomplete();
+   3052  stats->deadlineHit    = (scan.deadlineHit && matches.empty()) || scan.workerFaulted;
+   3884  bool deadlineHit      = scan.incomplete();
+   5978  out.stats.deadlineHit = scan.incomplete();
+   6133  out.stats.deadlineHit = scan.incomplete();
+   8251  result.stats.deadlineHit = scan.incomplete();
+   9919  if (scan.workerFaulted)          <- the snapshot path: a log line, nothing else
+   ```
+   `Aura.cpp:9776` sets `result.scanned` to the FULL range regardless, so the C# pager steps over
+   the hole; `SnapshotChunkResult` (`Aura.h:1695`) has no field to carry it and `Fern.cpp:2035`
+   publishes none. `CompleteSnapshotAsync(..., !driftDetected, ...)` therefore writes
+   `is_usable=1`, which means no ⚠ badge and auto-selection as a Diff/Group/SPC/Pivot source.
+   ⭐ **This was KNOWN AND LEFT.** `git show -s e6360903` line 25, verbatim, and repeated as a
+   comment at `Aura.cpp:9916-9918`: *"…still listening, so that chunk is about to be STORED with
+   a hole in it."* The D2 fix shipped a corrected `Sein::Warn` string for it and no channel.
+   ⚠ Not vacuous: `SnapshotChunkSize = 8192` vs `ScanThreadCount`'s `if (workItems < 8192)
+   return 1` — 8192 is **not** < 8192, so a full chunk always runs multi-threaded and a fault
+   leaves a genuinely PARTIAL result, not an empty one (`sw1_worker_fault.py`'s own TRAP 2).
+   Reachable in production, not only from the harness: `UE5_SetObjectDecryption` is a shipped
+   export on all four proxies and `docs/reversing-nonstandard-ue-games.md:175` documents the
+   supported flow as the user passing in their own reversed routine, which `Aura.cpp:322` calls
+   raw and unguarded under `/EHa`.
+   **Fix shape** (from the finder, and it reuses machinery both sides already have): add the flag
+   to `SnapshotChunkResult`, publish it, carry it on the C# DTO, OR it into the producer's
+   usability verdict. ⛔ **Do not reuse `deadline_hit`'s wording** — `docs/todo.md:1738` already
+   records that mislabelling as D2's deliberate residual.
+
+2. ⬜ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
+   1 GB, and FIFO-deletes the user's snapshots.** `ExperimentalSettings.cs:31` sets
+   `DefaultIgnoreCondition = WhenWritingDefault`, which compares against `default(int) == 0`, not
+   against the `= 1024` initializer at `:19`. **MEASURED** on the real source-generated context:
+   ```
+   Unlimited (0): wrote Enabled=True SnapshotQuotaMb=0
+                  { "enabled": true }
+                  reloaded => Enabled=True SnapshotQuotaMb=1024
+   controls: 2048 -> 2048   1024 -> 1024   512 -> 512
+   ```
+   `ExperimentalGate.cs:69` clamps only negatives, so 0 survives to `Save`. Eviction is permanent
+   (`SnapshotStore.cs:787` skips only on `<= 0`; `:829-836` DELETEs in a committed transaction).
+   ⛔ **It violates a written spec rule**: `docs/teleport-coord-library-spec.md:618` —
+   `DefaultIgnoreCondition` **MUST NOT** be `WhenWritingDefault` where a legitimate type-default
+   value can be saved. Five sibling sites already know the trap by name
+   (`UiOptionsSettings.cs:22-25`, `CoordinateLibraryFile.cs:215`, `CoordinateLibraryStore.cs:23`,
+   `CoordinateLibraryTests.cs:226`, `UiOptionsStoreTests.cs:123`).
+   ⭐ **Blast radius checked and it is a lone case** — the other two context-level users are safe:
+   `ClassDenylistSettings` holds `List<string> = new()` (reference-type default is `null`, an
+   empty list is still written), and `AobUsageRecord`'s ints/bools carry no initializer at all
+   (its only initialized non-string is `Version = 1`, and 0 is never a legitimate version).
+   `AobMakerMessage`'s per-property `[JsonIgnore]`s are outgoing wire fields, not persisted state.
+
+**MED**
+
+3. ⬜ **`[W1-SPC-JOINMODE]` SPC persists its own auto-chosen join mode and replays it as a fake
+   user override.** `SpcQueryViewModel.cs:521`. Opening the SPC tab auto-ticks the two newest
+   picks (`:472-478`) and calls `AutoSelectJoinMode` (`:481`), so `In-session` reaches
+   `ui-options.json` with **zero user action**. On restart `ApplyOptions`
+   (`MainWindowViewModel.cs:2532`) writes it through the public setter; the value differs from the
+   `Strict` default so the changed-hook fires with the programmatic flag false and latches
+   `_joinModeUserOverride`, which has exactly one write and one read and is never reset.
+   `AutoSelectJoinMode` then early-returns forever and the documented cross-session fallback to
+   Strict is dead. `docs/experimental-snapshot-spc-pivot.md:448` states the In-session key is only
+   valid *"while the object lives"* — using it across launches joins on GObjects slot number.
+   ⚠ MED not HIGH: the mode IS visible (combo, status line, per-pick `SessionShort`).
+
+4. ⬜ **`[W1-PIVOT-SESSION]` Class Pivot row handoffs have no cross-session gate.**
+   `ClassPivotViewModel.cs:165/169` are `SelectedResult != null`; `_engineState` is assigned at
+   `:226` and **read nowhere**, while both siblings compare `state.GameSessionId`. Open in Live
+   Walker / Copy Address / the two Locates hand a dead process's `obj_addr` to the running game;
+   `NavigateToAddressAsync:2812` validates format only and `CopyAddressAsync` validates nothing.
+   Worse, `RefreshAsync:501-503` defaults to `Snapshots[0]`, so right after a reconnect the
+   default selection IS a previous-launch snapshot. **Historical omission, not a decision** —
+   `534314f4` (2026-06-16) added the gate to exactly four files, all Snapshot/SPC, and Class Pivot
+   had shipped in `e554639c` (2026-06-02).
+
+5. ⬜ **`[W1-DISCOVER-ARRAY]` "Use →" on a struct-array discovery candidate ticks nothing.**
+   `ClassPivotViewModel.cs:1122`. `BuildDiscoverSql` puts `array_field, elem_index` in the
+   identity key and renders `Array[N].Inner`, but `ListPivotFieldsAsync` is `… AND array_field IS
+   NULL`, so the name can never match; both lookups return null with no branch that reports it,
+   the class match still succeeds, and the pivot runs with 0–3 unrelated pre-ticked fields and a
+   status line that reads like success. Array rows rank HIGH by construction —
+   `SelectivityWeight = 3.0` rewards exactly the few-instance change an array element produces,
+   and `PivotDiscoveryEngine` contains no occurrence of "array" anywhere.
+
+6. ⬜ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
+   staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place
+   `CopyLiveValuesFrom` branch on every same-object Refresh (`LiveWalkerViewModel.cs:6524-6544`),
+   and `MapElements`/`SetElements` are `init`-only and absent from the copy list — they cannot
+   even be assigned there. The DLL re-emits both on every walk (`Fern.cpp:1621-1641`, `:1657-1669`)
+   and `DumpService` parses them; they are dropped. The class header states the broken invariant
+   itself (`:104-106`).
+   ⭐ **Two independent mechanisms, same symptom**: `ArrayElements` IS copied, but it is a bare
+   `{get;set;}` with no `[ObservableProperty]`, assigned AFTER `ArrayCount` — count unchanged
+   raises nothing at all, count changed raises while the OLD list is still in place.
+   ⛔ **Why this is MED and not a cosmetic LOW:** `UpdateSelectedFields` stores the surviving row
+   OBJECTS, and both exporters read those lists directly — `CeXmlExportService.cs:671/680/702/710/
+   3329/3347/3490`, `CsxExportService.cs:551/560/612/652/732/840`. **A CE table or CSX export
+   taken after a Refresh carries first-walk values**: wrong data leaving the app into another
+   tool. Mitigation: refreshing while already inside the container view is clean (`:5131-5144`).
+
+**LOW** — 7 rows: `[W1-GROUP-DENYLIST]` Group mode filters by a persisted denylist it gives no way
+to see or clear (the *applying* is documented design — `docs/snapshot-group-match-spec.md:255`;
+only the non-disclosure survives, and `GroupStatusText` already discloses the sibling
+`PerSlotCapHit` cause) · `[W1-ARRAYCOUNT]` the Class Pivot array-field picker's element count is a
+ROW count, inflated by inner numeric props, and `ArrayPivotStoreTests.cs:90` pins the wrong value
+with a one-inner-prop fixture · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
+(⛔ **the fix is a new marker, NOT `is_usable=0`** — see the refuted-fix note below) ·
+`[W1-PIVOT-LOADCTS]` one shared `_loadCts` lets a field load cancel an in-flight class load with
+no restart, leaving a stale picker · `[W1-DT-TRUNC]` DataTable pivot Run overwrites its own
+truncation notice with a bare row count, 17 lines above an array branch that gets it right ·
+`[W1-PIPEBUSY-LOG]` pipe-busy is logged as "Cheat Engine not running" (see below) ·
+`[W1-WINMM-LOADMODE]` `Fern.cpp:1408` omits `winmm.dll` from the proxy classifier so it never
+earns a confirmed-proxy record.
+
+#### ⛔ REFUTED — do not re-raise
+
+- **SNAP-3** "the grid shows UTC while pickers show local". The mechanism is exactly as filed, but
+  the column header is literally **"Captured (UTC)"** (`en.axaml:550`, mirrored for SPC at `:638`).
+  Someone knew and said so; a canonical UTC sort column beside local-time pickers is disclosed
+  design.
+- **PIV-5** "SPC Group mode has no noise picker". Deliberate and documented: commit `d01b5861`
+  (2026-06-23) says verbatim *"noise picker is diff-only"* and is the commit that added the
+  `IsVisible="{Binding !IsGroupMode}"`; the SPC twin `be21af16` allocated six rows against single
+  mode's seven, i.e. no row for a picker. A Single-mode denylist IS honoured by the group query
+  (one shared `_excludedClasses`). The unread `TopContributors` half is a **structure** (§1.w4) and
+  is symmetric across all three result models.
+- **CEB-2** "the bridge does not establish WHICH Cheat Engine it reached". The finding's own
+  load-bearing premise — *"nothing anywhere defines what available means"* — is **false**:
+  `Core/IAobMakerBridge.cs:9-10` defines it as *"true if the last pipe connect succeeded"*, and
+  `AobMakerBridgeService.cs:367` honours exactly that. AOBMaker's own client sends
+  `GetAttachedProcess` and gates nothing on it either. An enhancement request, not a defect.
+
+⛔ **AND ONE REFUTED FIX, which is rarer and more dangerous than a refuted finding.** SNAP-5's
+obvious repair — mark a cap/low-disk partial `is_usable=0` for parity with drift — is **actively
+harmful**: `DeleteUnusableSnapshotsAsync` (`SnapshotStore.cs:2419-2432`) auto-deletes unusable
+snapshots before the next capture, destroying the partial the design deliberately keeps, and
+`docs/audit-2026-07-14-findings.md:125` explicitly instructs that the partial-keep path
+*"legitimately finalizes usable"*. The row needs a NEW marker.
+
+#### Two gates this wave earned
+
+- ⬜ **`[W1-GATE-JSONDEFAULT]`** — fail any property under a `WhenWritingDefault` JSON context
+  whose initializer differs from `default(T)`. It would have caught `[W1-QUOTA-UNLIMITED]` at
+  commit time, the rule is already written down (`teleport-coord-library-spec.md:618`), and the
+  whole-tree population is **one file**, so the gate ships green after one fix.
+- ⬜ **`[W1-GATE-SESSIONGATE]`** — the three panels that hand a snapshot row's address to the live
+  game must all compare `GameSessionId`. Two do; `[W1-PIVOT-SESSION]` is the third. A gate pins
+  the symmetry the way `check_badge_prime_symmetry.py` does for badges.
+
+#### ⚠ A documentation defect the sweep found by tripping over it
+
+The **two-concurrent-Cheat-Engine hazard measured live on 2026-09-10** — CE is not
+single-instance, only one process can own `\\.\pipe\AOBMakerCEBridge`, the losers retry-spam
+`err=231` forever, and every CE window looks fine — **is in neither of the two documents a fresh
+session is told to read.** It lives in `tools/verify/front_window.py`'s docstring and
+`pipebusy_capacity.py`, plus scattered dev-log/register entries. `handover-2026-08-22.md:263`'s
+"single-instance" line is about **UE5DumpUI**, not CE.
+
+⭐ **This was not deduced, it was demonstrated**: a W1 refuter grepped both files for the hazard,
+found nothing, and argued from that gap that two concurrent CE instances are outside the supported
+state — the day after the maintainer hit exactly that, twice. An operational lesson that lives
+only in a tool docstring is one grep away from invisible. ⬜ Move it into
+`docs/working-lessons.md`, and reference it from the handover's CE section.
 
 ### What this sweep does NOT cover
 
