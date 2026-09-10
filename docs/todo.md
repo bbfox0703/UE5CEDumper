@@ -3151,6 +3151,75 @@ row 2 survived), `B17` (the `SetConnected(false)` list, whose mirror is row 3).
   builds. As with audit #3, the answer is *don't re-run the audit* — the value was in coverage and
   in the wire.
 
+#### ✅ FIX PASS ROUND 1 — 2026-09-10, builds 3513 → 3527. Rows 1, 2, 3, 5 + gates C and E
+
+| # | row | commit | what shipped |
+|---|---|---|---|
+| **1** | `[B30-REOPEN]` 🔴 | `22a95b91` | ownership flag `UE5_StartedByThisRecord` — the disable tears down only what this record started |
+| **5** | `[B33-SPELLING]` 🟡 | `22a95b91` | both mailbox spellings at the last two holdout emitters |
+| **2** | `[R3-SEETHRU]` 🟠 | `0fac36e9` | the idle wait moved out of `if (enable)`; **gate 17c** holds it |
+| **3** | `[BADGEPRIME]` 🟠 | `b388e925` | `PrimeHeldBadgesAsync` — 12 badges primed on connect; **gate 17d** holds it |
+
+`check_all.py` runs **20**. All C# tests pass. `dist/` republished AOT-trimmed:
+`UE5DumpUI.exe` 54.8 MB `D68849EF` · `UE5Dumper.dll` 2.8 MB `BCC68DC8` · `UE5CEDumper.CT`
+44.8 KB `C1239550`, build 3527.
+
+⭐ **THE B30 GUARD ASKED THE WRONG QUESTION, AND THAT IS THE WHOLE FIX.** *"Is a DLL
+loaded"* is not *"did we load it"* — all four proxy `.def` files export
+`UE5_StopPipeServer`, so in the exact case B30 was filed about the probe SUCCEEDED. The
+untick is kept (an un-owned record should not stay ticked) and is now harmless, because a
+flag decides the teardown rather than a symbol.
+
+⛔ **AND A HAZARD THE FIX ITSELF COULD HAVE CREATED, pinned in the autorun generator**: the
+flag is a CE Lua **global**, shared by every chunk. Had the autorun set it, the inject
+record would find the DLL serving, untick itself, and its disable would read a flag set by
+somebody else — B30 back through the side door. The autorun deliberately does not set it,
+and its own `ue5_shutdown()` keeps the plain probe because it is reached from the CE menu,
+i.e. with the user's consent rather than from an untick CE fired for them.
+
+⭐ **R3'S TEST CLOSES THE HOLE THAT LET IT SURVIVE.** Phase 1 measured that no test fed ANY
+toggle generator's `[DISABLE]` block through an idle-wait assertion. The new check is a
+Theory over the whole shared roster, green for all 11 generators — fixing one generator
+and leaving the hole open is how the class recurs.
+
+#### ⚠ Two checker bugs and one test bug, caught by their own controls
+
+Recorded because they are the reason to write controls at all:
+
+1. **Gate 17d walked exactly two levels** and reported EVERY badge unprimed. ⛔ **A checker
+   wrong in the RED direction is the dangerous kind — it looks like a finding.** It now
+   closes transitively to a fixpoint.
+2. **Its pattern required `(`** and so missed the primes passed to `PrimeOneAsync` as
+   **method groups**, losing God Mode and the time lanes.
+3. **The BADGEPRIME test first asserted badge TEXT** and failed on three cards that were
+   fake defaults, not defects — badge text conflates *"the VM never asked"* with *"the fake
+   had nothing to say"*. It asserts the call counters now, which separates them.
+
+#### ⚠ CORRECTION to phase 3, made before anyone acted on it
+
+That section quoted **"State: Unknown"** for all six cards, read off a 0.55-scale
+screenshot. `Apply*State(-1)` renders **"Unknown"** for Debug Camera, God Mode, Foreground
+Lock and Mouse Cursor, and **"Unavailable"** for Move Speed, Gravity, Super Jump, Fly,
+See-through and Gravity Direction. The finding is unaffected — both mean *never asked* —
+but four labels were wrong, and a wrong quoted string is how a later reader "fails to
+reproduce" a real defect. Caught by a unit test pinning the reset literal per card.
+
+⚠ **A counting note, so the gate and this file do not look like they disagree**: gate 17d
+reports **11**, because it counts `Apply*State` SYMBOLS and `ApplyLaneState` drives both
+time lanes. As CARDS it is twelve.
+
+#### ⬜ STILL OPEN from the fix list
+
+Rows **4** `[POSEATTACH]` 🟠 · **6** `[B21-DOCROW]` 🟡 · **7** `[TPREL-ZEROPOSE]` 🟡 ·
+**8** `[SOLIDE-REFUSAL]` 🟡 · **9** the 25 register rows · **10** gates A + B (command-name
+and request-param parity, both measured green today) · **13** phase 2's axis B re-run for
+the 4 helper-delegating commands.
+
+⛔ **None of the three fixes above has been re-verified on a running game.** They are held
+by unit tests, two new gates and code reading. `[B30-REOPEN]` in particular is a CE
+interaction — its acceptance needs a proxy-served game plus a real Cheat Engine tick, which
+is a manual row, and it belongs in the register rather than being assumed from green tests.
+
 ## ⬜ The bounded class cache sits BEHIND an unbounded one `[CLASSCACHE-FRONTED-2026-09-09]`
 
 Measured while building `sw6_stride_refusal.py`, on a COLD DumperTest 5.4 process:
