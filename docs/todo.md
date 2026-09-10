@@ -1721,7 +1721,7 @@ but it silently narrowed "fresh" to the members `CopyLiveValuesFrom` assigns. Th
 "exactly what the same-layout branch checks". What the branch at `LiveWalkerViewModel.cs:6524-6525`
 actually checks is the field **count** and **`Fields[0].Name`**, and nothing else.
 
-##### ⛔ `[P4-OTHER-INSTANCE]` HIGH — opening a second instance of the same class reuses the first one's rows
+##### ✅ `[P4-OTHER-INSTANCE]` HIGH — opening a second instance of the same class reuses the first one's rows (FIXED IN SOURCE 2026-09-10)
 
 `LiveWalkerViewModel.cs:6524`. The in-place branch never compares the address, and no navigation
 clears `Fields` first. This was re-checked by hand:
@@ -1743,6 +1743,19 @@ clears `Fields` first. This was re-checked by hand:
   field. Here even `Name`, `TypeName` and `Offset` are the other class's.
 - **Also reached** by a pointer drill from A to a B of A's exact class (`Owner`, `AttachParent`, a
   `Next` link).
+- ✅ **FIXED IN SOURCE 2026-09-10 — the fix pass's third row, in the refuter's shape.**
+  - **Change:** `UpdateDisplay` captures the on-screen `CurrentAddress` / `CurrentClassName` /
+    `_currentClassAddr` before it overwrites them. The in-place branch now needs
+    `IsSameObject` **and** `HasSameRowLayout` (below). `IsSameObject` means the same address,
+    compared numerically, plus the same class name, plus the same class address when both sides
+    have one.
+  - **Everything else rebuilds.**
+  - **Sibling-subclass variant:** closed as well, because the address differs.
+  - **Coupled row:** `[A4-EDIT-STALE-PENDING]`'s "A's text written into B" variant is closed too,
+    because B gets fresh rows.
+  - **Red before green:** `LiveWalkerSameObjectGateTests.OpeningASecondInstanceOfTheSameClass_…`
+    failed first with *"Expected 0x200020, Actual 0x100020"* (A's `StructDataAddr`), then passed.
+  - **Evidence and live check:** in the `[FIXPASS-2026-09-10]` ledger and backlog.
 - ✅ **Safe fix (the refuter's):** gate the branch on identity. Capture the previous `CurrentAddress`
   **before** `:6436` overwrites it. Require the same address **and** the same class, because a struct
   at offset 0 shares its owner's address. Anything else takes the existing Clear+Add rebuild. The
@@ -1758,7 +1771,7 @@ clears `Fields` first. This was re-checked by hand:
   screen, click 🌍 GWorld first; `PopulateFromWorld` clears the grid. At the very least, do not edit
   a struct or container sub-field right after switching instances.
 
-##### `[P4-GUESS-SHIFT]` MED — with Guess? on, a same-object refresh pairs rows by index after the guessed rows moved
+##### ✅ `[P4-GUESS-SHIFT]` MED — with Guess? on, a same-object refresh pairs rows by index after the guessed rows moved (FIXED IN SOURCE 2026-09-10, with `[P4-OTHER-INSTANCE]`)
 
 `LiveWalkerViewModel.cs:6543`. The guessed rows are re-derived from the bytes on every walk:
 padding-run length, pointer vs two int32s, a float at 0.0 turning into padding (`Ubel.cpp:3633`,
@@ -1778,6 +1791,24 @@ stays editable. An edit writes this row's type of bytes into the neighbour (`:53
   neighbour.
 - ⛔ **Unsafe:** making the structural members observable and copying them. `SelectedField` and
   `RestoreSelectedField` would then silently re-point to a different field under the user.
+- ✅ **FIXED IN SOURCE 2026-09-10, in the same commit as `[P4-OTHER-INSTANCE]`** (they share one
+  gate, as planned). `HasSameRowLayout` compares, row by row: `Name`, `Offset`, `TypeName`, `Size`
+  and `IsGuessed`. The cross-gap test (`Refresh_WhenGuessedRowsMoved_…`) failed first with
+  *"Expected 0x100014, Actual 0x100018"*, then passed.
+  - ⚠ **The gate's own adversarial review found a regression in the first draft,** confirmed by
+    two lenses independently and not refuted. The DLL sets a guessed float's or double's type
+    label from its VALUE (`Ubel.cpp` `IsLikelyFloat`: "Float" only for a clean .0/.5 value at or
+    below 1000, "Float?" otherwise). The Name (`?0x14_float`), Offset and Size stay the same.
+  - **The draft's failure:** it compared `TypeName` exactly, so Auto on a draining stat rebuilt
+    the grid on every label flip. That is the `[LWREFRESH-2026-08-21]` jump-to-top, with no layout
+    change at all.
+  - **The fix:** a guessed row's `TypeName` is compared without its trailing `?`. The kind is
+    already in the Name, and guessed rows are never editable or navigable, so the only cost is that
+    a reused row keeps the first walk's label (stated in `LiveFieldValue.TypeTooltip`'s remarks).
+  - **Tests for it:** `Refresh_GuessedRowOnlyChangesItsConfidenceLabel_KeepsTheRows` (3 cases)
+    failed first, then passed. The same review asked for one-fact-per-case pins of every check:
+    class name, class address, the lenient path, Name, Offset, TypeName, Size and IsGuessed. They
+    were added too (working-lessons §1.2a).
 
 ##### `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer
 
@@ -1859,7 +1890,8 @@ getter directly and only ever save into empty slots, so they cannot see it.
   `PropertySearchViewModel.cs:375`) as a write. These are false positives, which adjudication
   removes; they cannot hide a real row. The limit is recorded in the tool's header.
 - **Stale comment, not a finding:** `OnFieldsRebuilt` (`LiveWalkerViewModel.cs:763-775`) still
-  describes the in-place branch as `Fields[i] = newFields[i]` raising Replace.
+  describes the in-place branch as `Fields[i] = newFields[i]` raising Replace. ✅ *Corrected
+  2026-09-10 in the `[P4-OTHER-INSTANCE]` commit.*
 
 ##### Leads, not filed (unmeasured)
 
@@ -1878,7 +1910,8 @@ getter directly and only ever save into empty slots, so they cannot see it.
   awaits (`PointerPanelViewModel.cs:1480-1483 → :1458`). It is a confirmation, not a warning.
 
 ⬜ **For the fix pass:** `[P4-OTHER-INSTANCE]` and `[P4-GUESS-SHIFT]` share one gate and land
-together. After the gate, the copy path runs only for a same-object, same-layout refresh. Then
+together. ✅ *The gate landed 2026-09-10; the same-object staleness trio below is next in this
+group.* After the gate, the copy path runs only for a same-object, same-layout refresh. Then
 `[W1-CONTAINER-STALE]`, `[P4-CONTAINER-BASE]` (the six members above) and `[P4-PTRCLASS]` are
 same-object staleness, and they land as one change right after. `[P8-BOOKMARK-TIP]` is independent.
 
@@ -2989,7 +3022,8 @@ things:
 **Scenario:** type 250 into Health and commit; the game drops Health to 57; double-click the cell and
 press Enter without typing. 250 is written again, with *"Written: Health = 250"*. An older variant
 needs no refresh at all: Escape, then reopen and Enter. Under `[P4-OTHER-INSTANCE]`, instance A's text
-is written into instance B.
+is written into instance B. *(That cross-instance variant is closed by the `[P4-OTHER-INSTANCE]`
+gate, 2026-09-10: a different object now gets fresh rows. The same-object variants stand.)*
 - ✅ **Safe fix:** reset the pending value when an edit BEGINS. `FieldGrid_BeginningEdit` calls a
   `LiveFieldValue.ResetPendingEdit()` after its `!IsEditable` check. This also closes the Escape
   variant.
@@ -3254,6 +3288,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 |---|---|---|---|---|
 | 1 | `[W1-QUOTA-UNLIMITED]` | HIGH | e8e52a4f | red → green test; UI 4802/4802; gates 21/21; P2 detector registered |
 | 2 | `[W1-SNAP-FAULT]` | HIGH | `git log --grep W1-SNAP-FAULT` | red → green + clean control; UI 4804/4804; gates 21/21; `-Target DLL` builds |
+| 3 | `[P4-OTHER-INSTANCE]` | HIGH | `git log --grep P4-OTHER-INSTANCE` | red (3/4) → green; the gate's adversarial review found a jump-to-top regression in the draft; fixed red (4/15) → green 15/15; UI 4819/4819; gates 21/21 |
+| 4 | `[P4-GUESS-SHIFT]` | MED | same commit as 3 (one shared gate, as planned) | the cross-gap test red → green; the `?`-suffix refinement test red → green |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3261,6 +3297,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 |---|---|---|---|
 | L1 | `[W1-QUOTA-UNLIMITED]` | 1. On the AOT build, pick *Unlimited* and restart the UI. `experimental.json` must hold `"snapshotQuotaMb": 0`, and the combo must still read Unlimited. 2. Capture once: no snapshot may be FIFO-deleted. | UI + any game |
 | L2 | `[W1-SNAP-FAULT]` | Arm a faulting object-decryption stub during a snapshot capture. Adapt `tools/verify/sw1_worker_fault.py`, and note that the armed scan must be the process's FIRST parallel scan. Then check that the snapshot shows as ⚠ unusable, is excluded from SPC/Pivot, and that the status names a worker FAULT, not a deadline. | DumperTest + UI; no CE |
+| L3 | `[P4-OTHER-INSTANCE]` | Open two actors of one class through Instance Finder: A, then B, without clicking 🌍 GWorld in between. Drill a struct row on B. The breadcrumb address must equal B's base + the offset, not A's. Edit one struct field and read it back on B, and A must be unchanged. **Scroll check:** on one object with Auto on, scroll down, and the grid must NOT jump to the top on a tick. | DumperTest + UI; no CE |
+| L4 | `[P4-GUESS-SHIFT]` | Guess? on, and Auto on, on a DumperTest object whose gap holds a float that changes (e.g. a draining stat). Scroll down. On ticks where the value moves between clean (100.0) and non-clean (87.3), the grid must stay put. Where the guessed layout really moves, every row's Address must still be its own base + Offset. | DumperTest + UI; no CE |
 
 #### Live experiments recorded in the finding phase — each joins the backlog when its row is fixed
 

@@ -103,9 +103,19 @@ public sealed class ArrayElementsResult
 ///
 /// <para>So the refresh now copies values onto the EXISTING row via
 /// <see cref="CopyLiveValuesFrom"/>, and the members that can differ between two walks of the same
-/// object are observable so the cells still repaint. The structural ones — <c>Name</c>,
-/// <c>Offset</c>, <c>TypeName</c>, the navigability flags — stay <c>init</c> on purpose: they are
-/// exactly what the same-layout branch checks before deciding it may reuse the rows at all.</para>
+/// object are observable so the cells still repaint. The structural ones stay <c>init</c> on
+/// purpose. That is sound only because the in-place branch reuses the rows solely for the SAME
+/// object (address AND class) with the SAME row layout (<c>Name</c>, <c>Offset</c>,
+/// <c>TypeName</c>, <c>Size</c> and guessed-ness, row by row; a guessed row's <c>TypeName</c> is
+/// compared without its value-driven <c>?</c>). It used to check just the count and the first name,
+/// which let another instance of the same class — and moved Guess? rows — keep this row's
+/// <c>init</c> members, the absolute <c>StructDataAddr</c> among them.
+/// [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT]</para>
+///
+/// <para>⚠ A few <c>init</c> members CAN change on the same object with the same layout — the
+/// container data bases, the map/set element lists, <c>PtrClassAddr</c>. Those are recorded rows
+/// of their own (<c>[W1-CONTAINER-STALE]</c>, <c>[P4-CONTAINER-BASE]</c>, <c>[P4-PTRCLASS]</c>),
+/// not something this gate covers.</para>
 /// </remarks>
 public sealed partial class LiveFieldValue : ObservableObject
 {
@@ -376,9 +386,12 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// [LWREFRESH-2026-08-21]
     ///
     /// <para>Only the members that can differ between two walks of the SAME object are copied.
-    /// The caller has already established that the layout matches (same count, same first name),
-    /// so <c>Name</c>/<c>Offset</c>/<c>TypeName</c> are identical by construction and copying them
-    /// would be noise — and they are <c>init</c> precisely so that stays true.</para>
+    /// The caller has already established that it IS the same object (address and class) with the
+    /// same row layout (<c>Name</c>/<c>Offset</c>/<c>TypeName</c>/<c>Size</c>, row by row), so
+    /// those are identical by construction and copying them would be noise — and they are
+    /// <c>init</c> precisely so that stays true. ⚠ Calling this across two DIFFERENT objects is
+    /// <c>[P4-OTHER-INSTANCE]</c>: every member not copied here, the absolute
+    /// <c>StructDataAddr</c> among them, would stay the first object's.</para>
     ///
     /// <para>⚠ <c>IsSearchMatch</c> is deliberately NOT copied. The refresh path re-runs
     /// <c>MarkSearchMatches</c> over the NEW rows before this is called, so taking the flag from
@@ -473,7 +486,9 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <see cref="TypeName"/>, not an omission: it is <c>init</c>-only and structural —
     /// the same-layout branch of a refresh checks it before reusing rows at all, so it
     /// cannot change under a live row. <see cref="DisplayValue"/> is the opposite and
-    /// that is why its twin needs nine notifications.</para>
+    /// that is why its twin needs nine notifications. One exception, deliberate: that check
+    /// ignores a GUESSED row's value-driven confidence suffix ("Float" vs "Float?"), so a
+    /// reused guessed row keeps the first walk's label. [P4-GUESS-SHIFT]</para>
     /// </remarks>
     public string? TypeTooltip => string.IsNullOrEmpty(TypeName) ? null : TypeName;
 

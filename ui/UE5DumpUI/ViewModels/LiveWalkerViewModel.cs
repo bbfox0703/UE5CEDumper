@@ -763,11 +763,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void OnFieldsRebuilt(object? sender, NotifyCollectionChangedEventArgs e)
     {
         // Reset  == Clear() + re-Add, the full-rebuild branch of UpdateDisplay.
-        // Replace == `Fields[i] = newFields[i]`, its in-place branch (kept because it
-        //            preserves DataGrid scroll). It swaps the row OBJECT out from under
-        //            any open editor, so it kills the edit just as dead as a Clear does —
-        //            and it is the branch a same-object Refresh actually takes, i.e. the
-        //            common one. Missing it left the latch strandable on the hot path.
+        // Replace == an indexer assignment `Fields[i] = row`. UpdateDisplay's in-place
+        //            branch USED to be exactly that; since [LWREFRESH-2026-08-21] it copies
+        //            values onto the surviving rows, raises nothing, and clears the latch
+        //            itself. Replace stays here because any indexer assignment swaps the row
+        //            OBJECT out from under an open editor, which kills the edit just as dead
+        //            as a Clear does.
         // Add/Remove are deliberately NOT here: appending a row does not invalidate an
         // editor open on a different one.
         if (e.Action is NotifyCollectionChangedAction.Reset
@@ -6428,6 +6429,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// history (LRU) is flushed first, then the live text is cleared.</param>
     private void UpdateDisplay(InstanceWalkResult result, bool clearFieldSearch = true)
     {
+        // [P4-OTHER-INSTANCE] WHICH object is on screen now, captured before the header below is
+        // overwritten: the in-place branch further down may reuse the rows only for this same
+        // object. CurrentClassName is set by every populate site; _currentClassAddr only here.
+        var prevAddr      = ParseHexAddr(CurrentAddress);
+        var prevClassName = CurrentClassName;
+        var prevClassAddr = _currentClassAddr;
+
         if (clearFieldSearch)
             ClearFieldSearchForNavigation();
 
@@ -6490,9 +6498,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch { /* ignore parse failures */ }
 
-        // Update fields. When refreshing the same object (same field count and layout),
-        // replace items in-place to preserve DataGrid scroll position.
-        // When navigating to a different object, do a full clear+rebuild.
+        // Update fields. A refresh of the same object with the same row layout copies the fresh
+        // values onto the existing rows, which keeps the DataGrid's scroll position; anything
+        // else is a full clear+rebuild (the gate is below).
         var newFields = result.Fields;
         foreach (var f in newFields)
         {
@@ -6521,10 +6529,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         SearchMatchCount = searchMatches;
         HasSearchResults = searchMatches > 0;
 
-        if (Fields.Count == newFields.Count && Fields.Count > 0
-            && Fields[0].Name == newFields[0].Name)
+        // [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT] The rows may be reused ONLY for the same object
+        // with the same row layout. The copy below takes the values; every member it does not take
+        // is `init` and stays whatever the FIRST walk said -- StructDataAddr among them, which is
+        // absolute (instance + offset). This gate used to be "same count, same first name", so:
+        //   - opening instance B of a class already on screen kept A's rows, and drilling or
+        //     editing B's struct walked and WROTE A's memory in the running game;
+        //   - with Guess? on, guessed rows re-derived from the bytes could move at an equal count,
+        //     and every row between two gaps showed its neighbour's value and address, editable.
+        // The address alone does not identify the object: an inline struct at offset 0 shares its
+        // owner's address, and a freed slot can be reused by another class -- hence the class too.
+        // Everything else takes the rebuild below; a jump to the top when the object changes is
+        // the honest cost.
+        if (IsSameObject(prevAddr, prevClassName, prevClassAddr, baseAddr, result)
+            && HasSameRowLayout(Fields, newFields))
         {
-            // Same layout — copy the fresh values ONTO the existing rows.
+            // Same object, same layout — copy the fresh values ONTO the existing rows.
             //
             // ⚠ This used to be `Fields[i] = newFields[i]` under a comment claiming it
             // "preserves scroll position". Measured on DumperTest, it does the opposite: the
@@ -6563,7 +6583,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            // Different layout — full rebuild
+            // A different object, or a different layout — full rebuild
             Fields.Clear();
             foreach (var f in newFields)
                 Fields.Add(f);
@@ -6618,6 +6638,63 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _cachedDataTableRows = null;
         if (result.ClassName == "DataTable" && !string.IsNullOrEmpty(result.Address))
             _ = TryLoadDataTableRowsAsync(result.Address, Breadcrumbs.Count);
+    }
+
+    /// <summary>
+    /// The object <see cref="UpdateDisplay"/> is about to show is the one already on screen: the
+    /// same address AND the same class. [P4-OTHER-INSTANCE]
+    /// </summary>
+    /// <remarks>
+    /// Compared numerically, so two spellings of one address agree. An unparseable or empty address
+    /// on either side is "not the same" -- the safe answer, which costs a rebuild. The class address
+    /// is compared only when both sides have one; the class NAME always is, because the container,
+    /// DataTable and GWorld views set <c>CurrentClassName</c> but not <c>_currentClassAddr</c>.
+    /// </remarks>
+    private static bool IsSameObject(ulong prevAddr, string prevClassName, string prevClassAddr,
+                                     ulong newAddr, InstanceWalkResult result)
+    {
+        if (prevAddr == 0 || prevAddr != newAddr) return false;
+        if (!string.Equals(prevClassName, result.ClassName, StringComparison.Ordinal)) return false;
+        ulong prevClass = ParseHexAddr(prevClassAddr), newClass = ParseHexAddr(result.ClassAddr);
+        return prevClass == 0 || newClass == 0 || prevClass == newClass;
+    }
+
+    /// <summary>
+    /// Every row lines up: the same <c>Name</c>, <c>Offset</c>, <c>TypeName</c>, <c>Size</c> and
+    /// guessed-ness at every index -- not just the same count and first name. [P4-GUESS-SHIFT]
+    /// </summary>
+    /// <remarks>
+    /// <para>Guess? rows are re-derived from the bytes on every walk (padding-run length, a pointer
+    /// vs two int32s, a float at 0.0 turning into padding) and sorted in among the reflected rows by
+    /// offset, so an equal count does not mean the rows line up. On a noisy Guess? object with Auto
+    /// on, a real layout change now jumps the grid to the top; that is strictly better than an
+    /// editable row pointing at its neighbour.</para>
+    /// <para>⚠ A guessed row's <c>TypeName</c> is compared WITHOUT its trailing <c>?</c>. The DLL
+    /// sets that suffix from the VALUE (<c>Ubel.cpp</c> <c>IsLikelyFloat</c>: "Float" only for a
+    /// clean .0/.5 at or below 1000, "Float?" otherwise; the same for "Double"), while the row's
+    /// Name (<c>?0x14_float</c>), Offset and Size stay put. Compared exactly, a stat draining from
+    /// 100.0 to 87.3 rebuilt the grid -- and jumped it to the top -- on every Auto tick where the
+    /// label flipped: the [LWREFRESH-2026-08-21] defect back, with no layout change at all. The
+    /// kind is already in the Name, and a guessed row is never editable or navigable, so the only
+    /// cost is that a reused row keeps the first walk's label. Found by this gate's own
+    /// adversarial review.</para>
+    /// </remarks>
+    private static bool HasSameRowLayout(IList<LiveFieldValue> shown, IList<LiveFieldValue> fresh)
+    {
+        if (shown.Count == 0 || shown.Count != fresh.Count) return false;
+        for (int i = 0; i < shown.Count; i++)
+        {
+            var a = shown[i];
+            var b = fresh[i];
+            if (a.IsGuessed != b.IsGuessed || a.Offset != b.Offset || a.Size != b.Size
+                || !string.Equals(a.Name, b.Name, StringComparison.Ordinal))
+                return false;
+            var ta = a.IsGuessed ? a.TypeName.TrimEnd('?') : a.TypeName;
+            var tb = b.IsGuessed ? b.TypeName.TrimEnd('?') : b.TypeName;
+            if (!string.Equals(ta, tb, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>
