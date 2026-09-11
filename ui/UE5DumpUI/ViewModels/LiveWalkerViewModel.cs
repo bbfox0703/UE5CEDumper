@@ -971,6 +971,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterClassName = "";
 
         Fields.Clear();
+        _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
 
         // The actor list is a PAGE. Before build 2818 the reply carried only the page
         // size, so a 500-actor page and a 500-actor level were identical on the wire
@@ -1079,6 +1080,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task NavigateToFieldAsync(LiveFieldValue? field)
     {
         if (field == null || !field.IsNavigable) return;
+        // [A4-NAV-BACKFIRST-GRAFT] Before ANY write below (the scroll hint and view state land on
+        // the current crumb, which is not this row's level).
+        if (IsRowOfALevelAlreadyLeft(field)) { RefuseRowOfALevelAlreadyLeft(field, "Field"); return; }
 
         // Re-check AOBMaker CE Plugin availability (detects CE start/close, cooldown-throttled)
         TryCheckAobMaker();
@@ -1185,6 +1189,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task DrillContainerAsync(LiveFieldValue? field, bool rereadFirst)
     {
         if (field == null || !field.IsContainerNavigable) return;
+        // [A4-NAV-BACKFIRST-GRAFT] Same window as NavigateToFieldAsync, same place: before the
+        // scroll-hint and view-state writes.
+        if (IsRowOfALevelAlreadyLeft(field)) { RefuseRowOfALevelAlreadyLeft(field, "Container"); return; }
 
         // Drilling into a container shows different data (its elements) — the
         // field-search keyword no longer applies. (This path rebuilds Fields via
@@ -1514,6 +1521,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterClassName = "";
 
         Fields.Clear();
+        _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
         foreach (var row in dtResult.Rows)
         {
             // Build preview from first 2 scalar fields
@@ -1586,6 +1594,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             && !string.IsNullOrEmpty(sourceField.ArrayStructClassAddr);
 
         Fields.Clear();
+        _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
         foreach (var elem in elements)
         {
             // Compute element address for struct navigation
@@ -1651,6 +1660,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             && !string.IsNullOrEmpty(sourceField.MapValueStructAddr);
 
         Fields.Clear();
+        _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
         if (elements.Count == 0)
         {
             // Show metadata summary when element data couldn't be read
@@ -1801,6 +1811,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             && !string.IsNullOrEmpty(sourceField.SetElemStructAddr);
 
         Fields.Clear();
+        _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
         foreach (var elem in elements)
         {
             var display = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
@@ -5921,6 +5932,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Breadcrumbs.Clear();
         Fields.Clear();
+        _renderedCrumb = null;   // [A4-NAV-BACKFIRST-GRAFT]
         Functions.Clear();
         References.Clear();
         ClearForwardStack();
@@ -6213,6 +6225,34 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     private bool IsStillOnParent(BreadcrumbItem? expectedParent)
         => expectedParent is null || ReferenceEquals(CurrentCrumb, expectedParent);
+
+    /// <summary>
+    /// The crumb the rendered <see cref="Fields"/> belong to. [A4-NAV-BACKFIRST-GRAFT]
+    /// </summary>
+    /// <remarks>
+    /// <para>Back, a breadcrumb jump, Forward and Parent change the spine FIRST and then await their
+    /// walk, and the grid keeps showing the level just left until it lands. A drill of one of those
+    /// rows captured the NEW crumb as its parent (<see cref="CurrentCrumb"/> at gesture time), so
+    /// V4's gesture-time check passed and the old level's offset was grafted under the new parent —
+    /// into CE XML, CSX, the AA script and a saved bookmark.</para>
+    /// <para>Stamped by EVERY site that repopulates the grid — <see cref="UpdateDisplay"/>,
+    /// <see cref="PopulateFromWorld"/> and the DataTable / Array / Map / Set views, which bypass
+    /// it — and cleared with the grid. Compared by REFERENCE: crumbs are re-used by identity across
+    /// Back and Forward, so identity is exactly "the same level".</para>
+    /// </remarks>
+    private BreadcrumbItem? _renderedCrumb;
+
+    /// <summary>A row that is ON SCREEN but was rendered for a level the spine has already left. A
+    /// row that is not in <see cref="Fields"/> makes no claim about the grid (a programmatic drill
+    /// of a row it built itself), so only rendered rows are checked.</summary>
+    private bool IsRowOfALevelAlreadyLeft(LiveFieldValue field)
+        => !ReferenceEquals(_renderedCrumb, CurrentCrumb) && Fields.Contains(field);
+
+    private void RefuseRowOfALevelAlreadyLeft(LiveFieldValue field, string gesture)
+    {
+        StatusText = $"'{field.Name}' belongs to the view you just left — wait for the new view to load, then try again.";
+        _log.Info($"NAV✕{gesture} {field.Name} refused: its row was rendered for a level the spine already left | BC={FormatBreadcrumbTrace()}");
+    }
 
     private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName,
                                        bool isPointer, BreadcrumbItem? expectedParent)
@@ -6512,6 +6552,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void ClearDisplayedNode()
     {
         Fields.Clear();   // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
+        _renderedCrumb = null;   // [A4-NAV-BACKFIRST-GRAFT]
         Breadcrumbs.Clear();
         SelectedField = null;
         HasData = false;
@@ -6692,6 +6733,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             foreach (var f in newFields)
                 Fields.Add(f);
         }
+
+        // [A4-NAV-BACKFIRST-GRAFT] These rows now belong to the current crumb. Before the pending
+        // scroll hint below: its auto-drill (TryDrillIntoMatchedContainer) checks this stamp.
+        _renderedCrumb = CurrentCrumb;
 
         // Apply pending scroll-to-field hint (e.g. set by OpenReferenceOwner).
         // Setting SelectedField alone does NOT scroll the DataGrid — Avalonia's

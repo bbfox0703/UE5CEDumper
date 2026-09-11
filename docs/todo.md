@@ -3094,7 +3094,7 @@ rows below; they are CDOSCOPE, AB4, V4, e88190ba, e0dec505, X5, CEPATHS, audit #
 D4B-DELEGATEPAD, BADGEPRIME and AF5. Across Track B the count is **34 of 41**. See the close-out at the
 end of this section.
 
-##### ⛔ `[A4-NAV-BACKFIRST-GRAFT]` MED — a row clicked during Back's walk grafts the old level's field onto the new parent
+##### ✅ `[A4-NAV-BACKFIRST-GRAFT]` MED — a row clicked during Back's walk grafts the old level's field onto the new parent (FIXED IN SOURCE 2026-09-11)
 
 `LiveWalkerViewModel.cs:1090-1095`. V4's fix claims that capturing the parent "at gesture time" handles
 the reverse ordering. It does not:
@@ -3120,6 +3120,24 @@ same path.
     and `IsLoading` is one shared flag;
   - a global nav mutex;
   - clearing `Fields` on Back, where the Reset jumps the grid to the top.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (fix-pass batch B03).
+  - **The stamp:** `_renderedCrumb` is the crumb the rendered rows belong to. It is stamped by
+    every grid-population site: `UpdateDisplay`, placed BEFORE its pending-scroll auto-drill;
+    `PopulateFromWorld`; and the DataTable / Array / Map / Set views. It is cleared with the grid.
+  - **The check:** `NavigateToFieldAsync` and `DrillContainerAsync` refuse, at entry and before
+    any write, a drill of a row that is ON SCREEN and whose stamp is not `CurrentCrumb` (by
+    reference). The refusal carries a status line.
+  - **Rows that are not rendered are not checked** (`Fields.Contains`). A programmatic drill of a
+    row the caller built makes no claim about the grid. The V4 tests that drill detached fields
+    with hand-added crumbs still pass unchanged.
+  - **Red → green (the re-derivation's test #2, finally written):** Back (row drill and container
+    drill), a breadcrumb jump, Forward and Parent each hold their walk on a gate and click a row of
+    the level being left. All 5 were red on the old code (grafted), and all 5 are green now.
+  - **Negative controls, green before AND after:** a current-level row drills; a current-level
+    container opens; after Back lands, the new level's rows drill; an element row inside a
+    struct-array container view drills; after Back from a container view, the parent's rows drill.
+  - ⛔ **Not done, as recorded:** `IsEnabled="{Binding !IsLoading}"`, a nav mutex, clearing `Fields`
+    on Back.
 
 ##### ✅ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again (FIXED IN SOURCE 2026-09-11)
 
@@ -3419,6 +3437,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned |
+| 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3437,6 +3456,10 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 2. **Escape variant:** edit, press Escape, reopen, press Enter. Nothing is written.
 3. **Control:** typing the value the cell already shows DOES write.
 Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same session. | DumperTest + UI; no CE |
+| L7 | `[A4-NAV-BACKFIRST-GRAFT]` | On DumperTest, on a slow-to-walk object (a large actor, or several levels deep):
+1. **Back:** press Back and, before the grid changes, click → on a row of the level you just left. It must refuse with "belongs to the view you just left", and Copy CE XML afterwards must carry the RIGHT chain.
+2. **Repeat** for a breadcrumb jump, Forward and Parent.
+3. **Control:** ordinary drills, drills inside a container view, and the Find Refs owner auto-drill all still work. | DumperTest + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3461,7 +3484,7 @@ completeness critic.
 |---|---|---|
 | ✅ B01 same-object staleness | `[W1-CONTAINER-STALE]` `[P4-CONTAINER-BASE]` `[P4-PTRCLASS]` `[A3-PTR-NAV-REPAINT]` | |
 | ✅ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
-| ⬜ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
+| ✅ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
 | ⬜ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
 | ⬜ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
 | ⬜ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
