@@ -3786,7 +3786,7 @@ integrity.
     - both proxies' System32-path lines, which now keep `GetLastError()` before the conversion.
   - 4/4 mutants killed, one of them a wide format on the second line of a multi-line call; dll_core_test 304/304; UI 5213/5213.
 
-##### `[A2-HEAP-ANCHOR-TEXT]` LOW — a data-scan GObjects anchors to the heap, and later refusals print the "GObjects never validated" text
+##### ✅ `[A2-HEAP-ANCHOR-TEXT]` LOW — a data-scan GObjects anchors to the heap, and later refusals print the "GObjects never validated" text (FIXED IN SOURCE 2026-09-12)
 
 `Genau.cpp:1666`. `DataScanGObjectsCandidates` returns a HEAP `FUObjectArray` by design, so the module
 anchor has no module and collapses to `AnchorState::None`. The anchor line prints `'(unknown)'`. Every
@@ -3799,6 +3799,17 @@ Bitdefender's `atcuf64.dll`. **No published pointer moves:** both states refuse 
   - Keep the `None` wording byte-identical: an archived live check greps it.
 - ⛔ **Unsafe:** treating a heap anchor as modular / Accept, which re-admits the Bitdefender GWorld
   candidate.
+- ✅ **FIXED IN SOURCE 2026-09-12, in the enum form** (batch L12).
+  - `AnchorState::Heap` is a validated anchor in no module, and `ModuleAdmission::RefuseHeapAnchored`
+    refuses exactly where `None` refuses, with a text that says GObjects validated on the heap. The
+    anchor line says "set on the HEAP" instead of `'(unknown)'`.
+  - The mapping moved into the pure `Genau::ClassifyAnchor`. `CurrentAnchorState` only asks Windows.
+  - The switch's tail, which silently ACCEPTED a value without its case, now fails closed.
+  - The truth table is 16 rows. The `None` wording is byte-identical.
+  - **Test, red first:** dll_helpers_test. A no-module anchor classifies Heap. A heap anchor refuses a
+    foreign candidate with its own verdict and admits the producer. The main-module loop covers all four
+    states. The red made the silent Accept explicit. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213.
+  - ⚠ **Survivors by construction:** `CurrentAnchorState`'s three-line wiring and the two log texts.
 
 ##### `[A2-METHODE-MANUALMAP]` LOW — Methode reports a SUCCESSFUL CE force-load as "Injection failed", and blames CE's BOOL
 
@@ -5057,6 +5068,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 63 | `[A2-WALKCLASSEX-UNMAPPED]` (+ the `GetCachedStructFields` twin) | LOW | `git log --grep A2-WALKCLASSEX-UNMAPPED` (batch L09) | dll_core_test, red first: a decommitted page is refused by WalkClassEx and memoized by neither cache; re-committed, it walks. 3/3 mutants killed; dll_core_test 297/297; UI 5212/5212. The recorded safe fix: the read verdict threaded out, a once-per-address log guard |
 | 64 | `[A2-LAZY-LATCH-GUESS]` | LOW | `git log --grep A2-LAZY-LATCH-GUESS` (batch L10) | dll_core_test at a mis-resolved 504, red first: a real 0x1C is kept and latches +0x0C, `ResolveInnerSize` reads it, the reader latches nothing from the size it is handed; garbage still falls back, unlatched. 3/3 mutants killed; dll_core_test 304/304; UI 5212/5212. The recorded safe fix; the `InferScalarSize` entry kept |
 | 65 | `[A2-CRC-PATH-LS]` (+ its gate gap) | LOW | `git log --grep A2-CRC-PATH-LS` (batch L11) | A dll/src-wide gate test, red first: no `%ls` in a `Sein::` / `LOG_` call. It found eight sites (CrashReportClient ×2, the VERSIONINFO key, the pipe name, both proxies ×2), all converted. 4/4 mutants killed; dll_core_test 304/304; UI 5213/5213. Byte-identical for ASCII |
+| 66 | `[A2-HEAP-ANCHOR-TEXT]` | LOW | `git log --grep A2-HEAP-ANCHOR-TEXT` (batch L12) | dll_helpers_test, red first: a no-module anchor is Heap; a heap anchor refuses a foreign candidate with its own verdict and admits the producer; the truth table is 16 rows. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213. The enum form; the switch tail fails closed; None wording byte-identical |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5238,6 +5250,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L51 | `[A2-CRC-PATH-LS]` | A game installed under a folder with a non-ASCII name (a copy is enough), shipping a CrashReportClient:
 1. `scan.log`'s "DetectVersion: CrashReportClient at '…'" line shows the path, not an empty record.
 2. A proxy deploy there logs "Loaded real version.dll: …" with the path. | a game copy + UI or proxy |
+| L52 | `[A2-HEAP-ANCHOR-TEXT]` | This PC, where `GWLD_V3` matches inside Bitdefender's `atcuf64.dll`, on a game whose GObjects falls back to the data scan:
+1. `scan.log` says "Module anchor set on the HEAP".
+2. The atcuf64 refusal reads "GObjects validated on the HEAP", never "never validated this run".
+3. GWorld is still NOT taken from atcuf64. | a data-scan game + CE or proxy |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5307,7 +5323,7 @@ completeness critic.
 - ✅ **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
 - ✅ **L10:** `[A2-LAZY-LATCH-GUESS]`
 - ✅ **L11:** `[A2-CRC-PATH-LS]`
-- **L12:** `[A2-HEAP-ANCHOR-TEXT]`
+- ✅ **L12:** `[A2-HEAP-ANCHOR-TEXT]`
 - **L13:** `[A2-METHODE-MANUALMAP]` (CE)
 - **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)

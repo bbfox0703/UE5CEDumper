@@ -7452,12 +7452,32 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
     EXPECT("modular anchor admits the producer",
            admit(AnchorState::ForeignDll, false, true) == ModuleAdmission::Accept);
 
+    // --- [A2-HEAP-ANCHOR-TEXT] a HEAP anchor: validated, and in no module --------------
+    // A data-scan GObjects is a heap FUObjectArray by design, so it has no module. It classified as None, and every
+    // later refusal printed "GObjects never validated this run" on a run where it DID. Refused where None refuses -- a
+    // heap anchor is never modular, which would re-admit the Bitdefender GWorld candidate -- with its own verdict.
+    EXPECT("HEAPANCHOR: a validated anchor in no module is HEAP, not None",
+           Genau::ClassifyAnchor(/*haveAnchor=*/true, /*inAnyModule=*/false, /*inMainExe=*/false)
+               == AnchorState::Heap);
+    EXPECT("HEAPANCHOR control: no anchor at all is still None",
+           Genau::ClassifyAnchor(false, false, false) == AnchorState::None);
+    EXPECT("HEAPANCHOR control: an anchor in the exe is MainExe",
+           Genau::ClassifyAnchor(true, true, true) == AnchorState::MainExe);
+    EXPECT("HEAPANCHOR control: an anchor in a DLL is ForeignDll",
+           Genau::ClassifyAnchor(true, true, false) == AnchorState::ForeignDll);
+    EXPECT("HEAPANCHOR: a heap anchor refuses a foreign candidate, with its own verdict",
+           admit(AnchorState::Heap, false, false) == ModuleAdmission::RefuseHeapAnchored);
+    EXPECT("HEAPANCHOR: a heap anchor admits the producer, as None does",
+           admit(AnchorState::Heap, false, /*producesAnchor=*/true) == ModuleAdmission::Accept);
+    static_assert(Genau::ClassifyAnchor(true, true, true) == AnchorState::MainExe,
+                  "ClassifyAnchor must be constexpr-evaluable");
+
     // --- a MAIN-MODULE candidate is admitted in every state -------------------
     // This is what keeps the FORBIDDEN fix forbidden. GWLD_DI427_1/2 are UE4.27
     // write-site patterns that resolve &GWorld from a `GWorld = nullptr` store before
     // any world exists, so a main-module hit whose *GWorld reads 0 MUST be accepted —
     // tightening `world == 0` globally would delete two Tier-1 patterns.
-    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll }) {
+    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll, AnchorState::Heap }) {
         for (bool prod : { false, true }) {
             EXPECT("main-module candidate is always admitted",
                    admit(st, /*candIsMainExe=*/true, prod) == ModuleAdmission::Accept);

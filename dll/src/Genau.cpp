@@ -1068,11 +1068,11 @@ static std::string ModuleNameOf(HMODULE h) {
 /// run yet" and "GObjects ran and failed" — from a scan-admission point of view those
 /// are the same fact: nothing has confirmed this process is the UE process.
 static Genau::AnchorState CurrentAnchorState() {
-    if (!s_moduleAnchor) return Genau::AnchorState::None;
-    const HMODULE anchorMod = ModuleOfAddress(s_moduleAnchor);
-    if (!anchorMod) return Genau::AnchorState::None;
-    return (anchorMod == GetModuleHandleW(nullptr)) ? Genau::AnchorState::MainExe
-                                                    : Genau::AnchorState::ForeignDll;
+    // [A2-HEAP-ANCHOR-TEXT] The mapping is Genau::ClassifyAnchor, pinned by dll_helpers_test; only the questions to
+    // Windows are asked here. An anchor in NO module (the data-scan fallback's heap FUObjectArray) is Heap, not None.
+    const HMODULE anchorMod = s_moduleAnchor ? ModuleOfAddress(s_moduleAnchor) : nullptr;
+    return Genau::ClassifyAnchor(s_moduleAnchor != 0, anchorMod != nullptr,
+                                 anchorMod != nullptr && anchorMod == GetModuleHandleW(nullptr));
 }
 
 /// May the multi-module candidate at `resolved` be published? Delegates the RULE to the
@@ -1501,7 +1501,7 @@ static uintptr_t ScanForTarget(
                     }
                 }
                 if (refusedCount) {
-                    // Two refusal reasons, two messages. The monolithic one ASSERTS a fact
+                    // Three refusal reasons, three messages. The monolithic one ASSERTS a fact
                     // about the build that the unanchored one has not established — reporting
                     // the unanchored case with the monolithic text is a claim we cannot back.
                     if (refusedWhy == Genau::ModuleAdmission::RefuseUnanchored) {
@@ -1509,6 +1509,14 @@ static uintptr_t ScanForTarget(
                                    "— GObjects never validated this run, so nothing has confirmed "
                                    "this process is the UE process; a match in an arbitrary loaded "
                                    "module is not admissible",
+                                   report.targetName, sig->id, refusedCount,
+                                   (unsigned long long)refusedAddr, refusedModule.c_str());
+                    } else if (refusedWhy == Genau::ModuleAdmission::RefuseHeapAnchored) {
+                        // [A2-HEAP-ANCHOR-TEXT] GObjects DID validate -- on the heap, where the data-scan fallback's
+                        // FUObjectArray lives. The unanchored text above said it never validated.
+                        Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
+                                   "— GObjects validated on the HEAP (a data-scan FUObjectArray lives in no module), "
+                                   "so no module anchors this build; a match in a foreign module is not admissible",
                                    report.targetName, sig->id, refusedCount,
                                    (unsigned long long)refusedAddr, refusedModule.c_str());
                     } else {
@@ -1668,12 +1676,18 @@ uintptr_t FindGObjects(const char* hintPatternId) {
 
     // Anchor every LATER target's multi-module fallback to whichever module GObjects
     // came from. This is the only place that knows it, and it must be set however
-    // GObjects was found -- the data-scan fallback anchors just as well as the AOB.
+    // GObjects was found. [A2-HEAP-ANCHOR-TEXT] The data-scan fallback anchors too -- but to the HEAP: its
+    // FUObjectArray lives in no module (AnchorState::Heap), and later foreign matches are refused with that text.
     if (result) {
         SetModuleAnchor(result);
-        Sein::Info("SCAN:GObj", "Module anchor set to '%s' — later targets must resolve there "
-                   "unless this build is modular",
-                   ModuleNameOf(ModuleOfAddress(result)).c_str());
+        if (const HMODULE anchorMod = ModuleOfAddress(result)) {
+            Sein::Info("SCAN:GObj", "Module anchor set to '%s' — later targets must resolve there "
+                       "unless this build is modular",
+                       ModuleNameOf(anchorMod).c_str());
+        } else {
+            Sein::Info("SCAN:GObj", "Module anchor set on the HEAP (GObjects lives in no module) — a later "
+                       "target resolving into a foreign module will be refused");
+        }
     }
 
     if (!result) {
