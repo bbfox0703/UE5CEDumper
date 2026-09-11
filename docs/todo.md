@@ -1280,6 +1280,15 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    - **Tests, red first:** the flag survives the file; a file-shaped crumb re-walks its rows; a table
      that changed, or an address the DLL refuses, is reported honestly. The in-session control uses its
      cached rows and makes no walk.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21, finding `bmdt-refresh-bypass`,
+     MED, CONFIRMED).
+     - **The problem.** When the guard rejects, the file-shaped crumb (no rows) stays at the end of the
+       spine. Refresh's DataTable branch then re-walked that saved address with NO row-struct check.
+     - So "the unguarded re-walk is not what landed" held for the load path only: the wrong table was
+       one Refresh away (the button, an Array Limit nudge, or the auto-refresh).
+     - **The fix.** Refresh now refuses a DataTable crumb with no rows, in the bookmark's own words. An
+       in-session crumb always holds rows, and so does an accepted re-walk.
+     - **Tests.** A changed table and a refused address went red first. 2/2 mutants killed; UI 5085/5085.
 5. ✅ **`[W4-LOOKUP-FILTER]`** (FIXED IN SOURCE 2026-09-11, batch B18) `InstanceFinderViewModel.cs:620`. A reverse-address lookup empties
    `_allInstances` on purpose and adds its single result straight into the bound collection; the
    next `ApplyInstanceFilter` re-projects unconditionally from the now-empty backing list, so a

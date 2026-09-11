@@ -827,6 +827,28 @@ public class BookmarkTests
         Assert.NotEqual("DataTable<FOtherRow>", vm.CurrentClassName);   // the wrong table is not shown as the bookmark
     }
 
+    [Theory]
+    [InlineData(false)]   // a DIFFERENT DataTable now sits at the saved address
+    [InlineData(true)]    // the DLL refuses the address: it is not a DataTable any more
+    public async Task DataTableViewBookmark_WhoseTableIsGone_IsNotReWalkedByRefresh(bool refuse)
+    {
+        // Review of 34681166: the guard's reject left the file-shaped crumb (IsDataTableView, no rows) at the
+        // end of the spine, and Refresh's DataTable branch re-walked that address with NO row-struct check.
+        var dump = new DataTableDump { RowStruct = "FOtherRow", Refuse = refuse };
+        var vm = DataTableVm(dump);
+        SetupViewModelWithData(vm, objectName: "Prev", className: "Actor", address: "0xBEEF");   // a prior view, so Refresh runs
+        var slot = vm.BookmarkSlots[0];
+        FillDataTableSlot(slot);
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        Assert.Equal(1, dump.RowWalks);                         // the guarded re-walk, rejected
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, dump.RowWalks);                         // no second, unguarded walk
+        Assert.DoesNotContain(vm.Fields, f => f.Name.Contains("Sword"));
+        Assert.Contains("gone or has changed", vm.StatusText);
+    }
+
     [Fact]
     public async Task DataTableViewBookmark_InSession_UsesItsCachedRows()
     {

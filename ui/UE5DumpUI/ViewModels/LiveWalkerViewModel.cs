@@ -5383,6 +5383,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // DataTable container: re-fetch rows directly
                 if (containerBc.IsDataTableView)
                 {
+                    // [W4-BOOKMARK-DT] review follow-up: a DataTable crumb with NO rows is a bookmark whose
+                    // guarded re-walk was rejected. Re-walking its address here would skip the row-struct
+                    // guard and show whatever table sits there now. An in-session crumb always holds rows,
+                    // and so does a bookmark whose re-walk was accepted, so this refuses nothing else.
+                    if (containerBc.DataTableData == null)
+                    {
+                        StatusText = "This DataTable view did not restore: the DataTable at its saved address "
+                                   + "is gone or has changed — nothing to refresh.";
+                        return;
+                    }
                     var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address, ct: ct);
                     if (Superseded()) return;
                     containerBc.DataTableData = dtResult;
