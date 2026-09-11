@@ -475,6 +475,9 @@ end
 -- DLL the flag would be ignored and the freeze would hold the wrong pool while
 -- reporting success -- exactly the silent-wrong-scope failure being fixed -- so this
 -- refuses up front and says to update the DLL.
+-- 4: the teleport pose block's flags byte (paramsData[178]). This helper does not use CMD_TELEPORT; it
+-- bakes 4 because every emitted script bakes the same contract
+-- (FreezeHelper_BakesTheSameContractVersionAsTheGenerator).
 local UE5_SCRIPT_CONTRACT = 4
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the

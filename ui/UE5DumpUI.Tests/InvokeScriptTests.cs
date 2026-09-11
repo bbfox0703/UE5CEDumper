@@ -1893,6 +1893,32 @@ public class InvokeScriptTests
         var frieren = DllSource("Frieren.cpp");
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown)", frieren,
             StringComparison.Ordinal);
+
+        // Review 5 of 76f93b94: the pins above let one-line mutants of the core fix through -- a shared substring that
+        // matched any of three writes, and nothing on the GET_POSE / BUGIT_SAVE flags, the NaN landing or bit1.
+        static int CountOf(string s, string sub)
+        {
+            int n = 0;
+            for (int i = s.IndexOf(sub, StringComparison.Ordinal); i >= 0;
+                 i = s.IndexOf(sub, i + sub.Length, StringComparison.Ordinal)) n++;
+            return n;
+        }
+        Assert.Equal(2, CountOf(mimic, "writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);"));              // GET_POSE, BUGIT_SAVE
+        Assert.Equal(3, CountOf(mimic, "writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);"));    // SAVE, GET_MARKER, GET_LAST
+        Assert.Contains("if (rc == 0) writePoseBlock(p, nullptr, 0, tier, landingKnown ? 0 : 0x02);", mimic,
+            StringComparison.Ordinal);                                                                          // bit1
+        foreach (var (name, src) in new[] { ("Mimic.cpp", mimic), ("Frieren.cpp", frieren) })
+        {
+            int unknown = src.IndexOf("if (rc == 0 && !landingKnown) {", StringComparison.Ordinal);
+            int nan = src.IndexOf("const uint64_t nanBits = 0x7FF8000000000000ull;", Math.Max(unknown, 0),
+                StringComparison.Ordinal);
+            Assert.True(unknown >= 0 && nan > unknown && nan - unknown < 400,
+                name + ": an unknown landing must publish NaN, never the zero-initialised pose");
+        }
+        Assert.Contains("if (outParentRelative) *outParentRelative = m.ParentRelative;", DllSource("Wirbel.cpp"),
+            StringComparison.Ordinal);
+        Assert.Contains("if poseFlags % 2 == 1 then",
+            TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.Save, 0), StringComparison.Ordinal);
         Assert.True(CeMailboxLayout.ContractVersion >= 4,
             "a script that reads paramsData[178] must claim contract 4 -- a contract-3 DLL would accept it and leave "
             + "the byte nobody wrote at 0, i.e. no warning");

@@ -487,6 +487,8 @@ Pose block layout in `paramsData` (offsets relative to 0x328):
 [48..175] char  mapName[128] (null-terminated)
 [176]     u8    source (0=raw, 1=invoke)         // GET_POSE only
 [177]     u8    tier   (1=invoke, 2=raw fallback) // teleport ops
+[178]     u8    flags  (bit0 parent-relative: not world coordinates;
+                        bit1 landing unknown: X..Roll are NaN)   // contract 4, every pose op
 ```
 
 ⚠ Op 4 (CURSOR) reads its inputs **before** writing outputs into the same

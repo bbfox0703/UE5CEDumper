@@ -808,6 +808,16 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
     - The manual ↻'s status message stays as the fuller explanation; the chip is what survives.
     - **Tests, red first:** the quiet poll surfacing it, a directional TP keeping it, the disconnect
       clearing it, and the chip bound in the panel. A healthy read clearing it is the control.
+- ⬜ **`[A2-CABI-TELEPORT-PARENTREL]` LOW** (filed 2026-09-12 by review 5 of 76f93b94) — the C ABI pose getters carry no parent-relative flag.
+  - `UE5_TeleportGetPose` (`Frieren.cpp:1282`) passes `nullptr` for `outParentRelative`, and
+    `UE5_TeleportGetMarker` / `UE5_TeleportGetLast` copy `m.P` and drop `m.ParentRelative`. None has a parameter
+    that could report it.
+  - A `loadLibrary` / `callFunction` caller on an attached pawn whose world read failed gets rc 0 and
+    parent-relative numbers, with no way to tell them from world coordinates.
+  - Also: `BugItSave` records `s_bugItMarker.ParentRelative`, and nothing reads it (`BugItGo` uses only `m.P`).
+  - ⚠ **Fix shape:** new exports (a flag out-parameter, or an `...Ex` variant), never a change to the existing
+    signatures, which CE scripts call by position. The C ABI export count is pinned by `check_derived_counts`,
+    and `docs/dll-spec.md` lists the exports.
 - ✅ **`[W2-TPREL-TRANSPORTS]` LOW** (FIXED IN SOURCE 2026-09-12, batch B29b) — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
   - Both call `TeleportRelative` without `&landingKnown` and publish the zero-initialised
     `Pose p{}` as the landing. The pipe half was fixed in 5058e971.
@@ -896,7 +906,19 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
      A healthy save and a healthy marker are the controls. 5/5 mutants killed; UI 5139/5139.
    - ⚠ **Survivors by construction:** Wirbel.cpp's capture and Fern.cpp's publish, which no test target
      compiles. The real `UE5Dumper` build and the live check cover them.
-   ✅ **The mailbox and C ABI half, FIXED IN SOURCE 2026-09-12** (batch B29b, together with `[W2-TPREL-TRANSPORTS]`).
+   ✅ **The mailbox half, FIXED IN SOURCE 2026-09-12** (batch B29b, together with `[W2-TPREL-TRANSPORTS]`).
+   ⚠ Until review 5 this line said "the mailbox and C ABI half". The C ABI carries only RELATIVE's NaN landing. Its
+   three pose getters stay flagless, and are now their own row, `[A2-CABI-TELEPORT-PARENTREL]`.
+   - ✅ **Review 5 follow-up 2026-09-12** (of 76f93b94: four LOW, two of them filed MED).
+     - **The freeze-helper Lua rig broke.** The contract bump to 4 left `freeze_helper_test.lua` faking a
+       contract-3 DLL, so every case expecting a freeze was refused as "the DLL is older than this script".
+       The Lua suite is no gate, so "UI 5144/5144" never saw it. It fakes 4 now: 159/159 (measured on a
+       patched copy before the commit).
+     - **The pins let one-line mutants of the core fix through.** They now count each flag write per site,
+       and pin the NaN landing on both transports, bit1, Wirbel's copy and the CE records' `% 2 == 1`
+       predicate. 7/7 mutants killed; UI 5187/5187.
+     - **The pose-block spec** (`docs/teleport-spec.md` §8) lacked the `[178]` byte, and the freeze helper's
+       contract comment stopped at 3. Both are updated.
    - The pose block gains `paramsData[178]`, pose flags: bit0 parent-relative, bit1 RELATIVE's landing
      unknown. It is written by GET_POSE, SAVE, GET_MARKER, GET_LAST, BUGIT_SAVE and RELATIVE.
    - `BugItSave` gains an optional `outParentRelative`.
@@ -1662,7 +1684,8 @@ SCAN-CORE     1    0    1    0    0    0    0    0
 - ⛔ **The FP1 residual goes one hop further than W2 recorded.** `Mimic.cpp:1074`
   (`TP_OP_GET_POSE`) and `Frieren.cpp:1280` (`UE5_TeleportGetPose`) both pass `nullptr` for
   `outParentRelative` — the degraded-read flag is **unrequested at the transport level**, not only
-  inside `Wirbel`'s save paths. ⬜ Fold into `[W2-MARKER-PARENTREL]` and FP1's register row.
+  inside `Wirbel`'s save paths. ✅ The mailbox half folded into `[W2-MARKER-PARENTREL]` (B29b). ⬜ The C ABI
+  half is `[A2-CABI-TELEPORT-PARENTREL]` (review 5).
 - **P3 is W5's dominant confirmed shape** — three of five confirmed rows (EX-1, EX-2, SC-2), all
   *a prior fix that reached some of its consumers and not the rest*.
 - **P1: "the pipe is mostly GOOD at this."** `search_properties` publishes both `truncated` and
@@ -5138,7 +5161,7 @@ completeness critic.
 | ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
-| ✅ B29 pose parent-relative (B29a pipe + UI; B29b mailbox + C ABI) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
+| ✅ B29 pose parent-relative (B29a pipe + UI; B29b mailbox; the C ABI getters are `[A2-CABI-TELEPORT-PARENTREL]`) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ✅ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 | ✅ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
@@ -5187,6 +5210,7 @@ completeness critic.
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
+- **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

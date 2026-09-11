@@ -206,10 +206,13 @@ local function installMailbox(opts)
   LAST_SCOPE = nil   -- reset here, not in resetWorld(): this local is declared later
   SYMBOLS['g_invokeMailbox']   = MB
   SYMBOLS['g_mailboxContract'] = CONTRACT_MB
-  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=3
-  -- (contract 3 = the LI_IN_DERIVED scope flag + LI_OUT_TRUNCATED).
+  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=4
+  -- (3 = the LI_IN_DERIVED scope flag + LI_OUT_TRUNCATED; 4 = the teleport pose flags byte, which this
+  -- helper does not use -- it bakes 4 because every emitted script bakes one contract). Left at 3 after
+  -- the bump, every case expecting a freeze was refused as "the DLL is older than this script"
+  -- (review 5 of 76f93b94).
   MEM[CONTRACT_MB + 0x00] = 1127564629
-  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 3
+  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 4
   MEM[CONTRACT_MB + 0x08] = opts.contractMin or 1
 
   MAILBOX_ON_WRITE = function(addr, value)
