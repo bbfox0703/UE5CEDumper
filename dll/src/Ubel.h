@@ -1175,6 +1175,14 @@ ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+// Phase L: FString-family arrays (TArray<FString> / <FUtf8String> / <FAnsiString>). Each element is an
+// inline string header { Data*, int32 Num, int32 Max } -- 16 bytes -- decoded to UTF-8. An element whose
+// header cannot be read is "???", never "". [W5-STRARRAY-ELEMENTS]
+bool IsStringArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadStringArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 /// Render ONE FScriptDelegate binding, from the four things any reader can observe.
 ///
 /// ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM — it says a target WAS bound and has since been

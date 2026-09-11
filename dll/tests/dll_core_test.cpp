@@ -746,6 +746,72 @@ int main() {
     }
 
 
+    {   blk("W5-STRARRAY-ELEMENTS -- a string array's elements are read and decoded");
+        // IsScalarArrayType admits no string type and no other phase read one, so the walk sent a
+        // TArray<FString> with its count and NO elements. ⭐ The index is encoded in each string, so a
+        // stride drift reads the wrong text rather than merely "a" text.
+        struct FakeFString { uintptr_t Data; int32_t Num; int32_t Max; };
+        struct FakeTArray  { uintptr_t Data; int32_t Num; int32_t Max; };
+        static_assert(sizeof(FakeFString) == 16, "an FString header is 16 bytes on x64");
+
+        static const wchar_t* kWide[3] = { L"alpha0", L"beta1", L"gamma2" };
+        static FakeFString wide[3];
+        for (int i = 0; i < 3; ++i) {
+            const int32_t n = static_cast<int32_t>(wcslen(kWide[i])) + 1;   // UE counts the terminator
+            wide[i] = { reinterpret_cast<uintptr_t>(kWide[i]), n, n };
+        }
+        static FakeTArray wArr{ reinterpret_cast<uintptr_t>(wide), 3, 3 };
+        const uintptr_t wAddr = reinterpret_cast<uintptr_t>(&wArr);
+
+        auto ws = Ubel::ReadStringArrayElements(wAddr, 0, "StrProperty", 16, 0, 64);
+        check("STRARRAY: a TArray<FString> is read", ws.ok && ws.elements.size() == 3,
+              std::to_string(ws.elements.size()).c_str());
+        const bool wideRight = ws.elements.size() == 3 && ws.elements[0].value == "alpha0"
+                            && ws.elements[1].value == "beta1" && ws.elements[2].value == "gamma2";
+        check("STRARRAY ⭐: each FString element decodes at its own 16-byte stride (UTF-16 -> UTF-8)",
+              wideRight, ws.elements.empty() ? "(none)" : ws.elements[1].value.c_str());
+        check("STRARRAY: ...with its index", ws.elements.size() == 3 && ws.elements[2].index == 2);
+
+        // A garbage element size (a bad FPROPERTY_ELEMSIZE read) must not move the stride.
+        auto wg = Ubel::ReadStringArrayElements(wAddr, 0, "StrProperty", 524808, 0, 64);
+        check("STRARRAY ⭐: the stride is the header's, not a garbage element size",
+              wg.elements.size() == 3 && wg.elements[2].value == "gamma2",
+              wg.elements.size() == 3 ? wg.elements[2].value.c_str() : "(count)");
+
+        // The limit caps, and the total is still the true count.
+        auto wl = Ubel::ReadStringArrayElements(wAddr, 0, "StrProperty", 16, 0, 2);
+        check("STRARRAY: the limit caps the read, and the total stays the true count",
+              wl.elements.size() == 2 && wl.totalCount == 3);
+
+        static const char* kNarrow[2] = { "delta0", "eps1" };
+        static FakeFString narrow[2] = {
+            { reinterpret_cast<uintptr_t>(kNarrow[0]), 7, 7 },
+            { reinterpret_cast<uintptr_t>(kNarrow[1]), 5, 5 },
+        };
+        static FakeTArray nArr{ reinterpret_cast<uintptr_t>(narrow), 2, 2 };
+        for (const char* t : { "Utf8StrProperty", "AnsiStrProperty" }) {
+            auto ns = Ubel::ReadStringArrayElements(reinterpret_cast<uintptr_t>(&nArr), 0, t, 16, 0, 64);
+            check((std::string("STRARRAY ⭐: a TArray of ") + t + " decodes its 1-byte text").c_str(),
+                  ns.elements.size() == 2 && ns.elements[0].value == "delta0" && ns.elements[1].value == "eps1",
+                  ns.elements.size() == 2 ? ns.elements[1].value.c_str() : "(count)");
+        }
+
+        // Headers that cannot be read are UNREAD, not empty strings.
+        static FakeTArray dead{ 0x1000, 2, 2 };   // 0x1000 is never mapped
+        auto ds = Ubel::ReadStringArrayElements(reinterpret_cast<uintptr_t>(&dead), 0, "StrProperty", 16, 0, 64);
+        bool deadHonest = ds.elements.size() == 2;
+        for (const auto& e : ds.elements) deadHonest = deadHonest && e.value == "???";
+        check("STRARRAY ⭐: an unreadable element header renders \"???\", not \"\"", deadHonest,
+              ds.elements.empty() ? "(none)" : ds.elements[0].value.c_str());
+
+        check("STRARRAY: IsStringArrayType admits the whole family",
+              Ubel::IsStringArrayType("StrProperty") && Ubel::IsStringArrayType("Utf8StrProperty")
+              && Ubel::IsStringArrayType("AnsiStrProperty"));
+        check("STRARRAY control: ...and nothing else (FText has no string header to decode here)",
+              !Ubel::IsStringArrayType("TextProperty") && !Ubel::IsStringArrayType("NameProperty"));
+    }
+
+
     {   blk("D2 -- a scan worker that THROWS must not report the run as COMPLETE");
         // Blind-spot sweep, 2026-09-08. ParallelIndexRanges' catch(...) is the
         // terminate-guard (an exception escaping a std::thread callable calls
@@ -1870,6 +1936,75 @@ int main() {
         g_cachedUEVersion           = savedVerO;
         DynOff::bCasePreservingName = savedCpnO;
         DynOff::bUseFProperty       = savedFPropO;
+    }
+
+    // -- STRARRAYWALK-2026-09-11 -- WalkInstance hands a string array its elements -------------
+    //
+    // ⛔ POOL-FAKING, like BOOLNATIVE: the walker picks the ArrayProperty handler by `fi.TypeName` and
+    // the inner's type by its FFieldClass name, so both come out of a fake pool. Own pool, last.
+    // [W5-STRARRAY-ELEMENTS] The reader above is pinned directly; this pins that the FProperty-mode
+    // walk actually CALLS it.
+    {
+        blk("STRARRAYWALK - WalkInstance reads a TArray<FString>'s elements");
+
+        static uint8_t saEntry[4][0x40] = {};
+        const char* saNames[4] = { "", "ArrayProperty", "Names", "StrProperty" };
+        static uintptr_t saChunk[5] = {};
+        for (int i = 1; i <= 3; ++i) {
+            memcpy(saEntry[i] + 0x10, saNames[i], strlen(saNames[i]) + 1);
+            saChunk[i] = reinterpret_cast<uintptr_t>(saEntry[i]);
+        }
+        static uintptr_t saChunks[2] = { reinterpret_cast<uintptr_t>(saChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(saChunks), 0x10);
+        check("STRARRAYWALK setup: the pool resolves StrProperty",
+              Serie::GetString(3) == "StrProperty", Serie::GetString(3).c_str());
+
+        const bool savedFPropS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t saArrFC[0x20] = {}, saStrFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(saArrFC + DynOff::FFIELDCLASS_NAME) = 1;   // "ArrayProperty"
+        *reinterpret_cast<int32_t*>(saStrFC + DynOff::FFIELDCLASS_NAME) = 3;   // "StrProperty"
+
+        static uint8_t saInner[0x100] = {};   // the Inner FProperty
+        *reinterpret_cast<uintptr_t*>(saInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(saStrFC);
+        *reinterpret_cast<int32_t*>(saInner + DynOff::FPROPERTY_ELEMSIZE) = 16;
+
+        static uint8_t saProp[0x100] = {};    // the ArrayProperty itself
+        *reinterpret_cast<uintptr_t*>(saProp + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(saArrFC);
+        *reinterpret_cast<int32_t*>(saProp + DynOff::FFIELD_NAME)        = 2;   // "Names"
+        *reinterpret_cast<int32_t*>(saProp + DynOff::FPROPERTY_OFFSET)   = 0x40;
+        *reinterpret_cast<int32_t*>(saProp + DynOff::FPROPERTY_ELEMSIZE) = 16;
+        *reinterpret_cast<int32_t*>(saProp + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+        *reinterpret_cast<uintptr_t*>(saProp + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(saInner);
+
+        static uint8_t saCls[0x100] = {};
+        *reinterpret_cast<int32_t*>(saCls + DynOff::USTRUCT_PROPSSIZE)    = 0x100;
+        *reinterpret_cast<uintptr_t*>(saCls + DynOff::USTRUCT_CHILDPROPS) = reinterpret_cast<uintptr_t>(saProp);
+
+        struct FakeFStringW { uintptr_t Data; int32_t Num; int32_t Max; };
+        static const wchar_t* kW[2] = { L"one0", L"two1" };
+        static FakeFStringW hdrs[2] = {
+            { reinterpret_cast<uintptr_t>(kW[0]), 5, 5 },
+            { reinterpret_cast<uintptr_t>(kW[1]), 5, 5 },
+        };
+        static uint8_t saInst[0x100] = {};
+        *reinterpret_cast<uintptr_t*>(saInst + 0x40) = reinterpret_cast<uintptr_t>(hdrs);   // TArray.Data
+        *reinterpret_cast<int32_t*>(saInst + 0x48)   = 2;                                    // Num
+        *reinterpret_cast<int32_t*>(saInst + 0x4C)   = 2;                                    // Max
+
+        const auto r = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(saInst),
+                                          reinterpret_cast<uintptr_t>(saCls), 64, 2, false);
+        const Ubel::LiveFieldValue* f = r.fields.size() == 1 ? &r.fields[0] : nullptr;
+        check("STRARRAYWALK control: the fake class produced exactly one ArrayProperty of StrProperty",
+              f && f->typeName == "ArrayProperty" && f->arrayInnerType == "StrProperty",
+              f ? f->arrayInnerType.c_str() : std::to_string(r.fields.size()).c_str());
+        check("STRARRAYWALK ⭐: the walk hands the string array its elements, decoded",
+              f && f->arrayElements.size() == 2 && f->arrayElements[0].value == "one0"
+                && f->arrayElements[1].value == "two1",
+              f ? std::to_string(f->arrayElements.size()).c_str() : "(no field)");
+
+        DynOff::bUseFProperty = savedFPropS;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

@@ -928,6 +928,33 @@ public class CsxExportServiceTests
     }
 
     [Fact]
+    public async Task GenerateCsx_ArrayProperty_StringInner_ShowsElementsAsStrings()
+    {
+        // [W5-STRARRAY-ELEMENTS] The DLL now sends a TArray<FString>'s elements. CSX's scalar-element path
+        // already types each one as the string's Data pointer with a string child -- a pin, green both
+        // ways, because until now no string array ever reached it WITH elements.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Names", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "StrProperty", ArrayElemSize = 16,
+                     ArrayDataAddr = "0x6000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "Alice" },
+                         new() { Index = 1, Value = "Bob" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Alice\"", csx);
+        Assert.Contains("Description=\"[1] Bob\"", csx);
+        Assert.Contains("Offset=\"16\"", csx);                 // [1] at 1 * 16, the header's size
+        Assert.Contains("Vartype=\"Unicode String\"", csx);    // FString's child: the wide text behind Data
+    }
+
+    [Fact]
     public async Task GenerateCsx_ArrayProperty_ScalarInner_DrilldownOne_ShowsElements()
     {
         // ArrayProperty with FloatProperty inner type — each element is a simple scalar

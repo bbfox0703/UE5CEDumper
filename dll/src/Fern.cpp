@@ -2557,8 +2557,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "elem_size too large (max 256)").dump();
             }
 
-            auto result = Ubel::ReadArrayElements(
-                addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
+            // [W5-STRARRAY-ELEMENTS] A string inner is a 16-byte header per element, not a scalar:
+            // ReadArrayElements would publish the header's bytes as the value. The Live Walker fetches
+            // the elements past the walked ones through here.
+            auto result = Ubel::IsStringArrayType(innerType)
+                ? Ubel::ReadStringArrayElements(addr, fieldOffset, innerType, elemSize, offset, limit)
+                : Ubel::ReadArrayElements(addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
 
             if (!result.ok)
                 return Renge::MakeError(id, result.error).dump();

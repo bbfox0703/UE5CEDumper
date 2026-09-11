@@ -2237,6 +2237,82 @@ bool IsScalarArrayType(const std::string& innerTypeName) {
 }
 
 // ============================================================
+// Phase L: FString-family arrays -- TArray<FString> / <FUtf8String> / <FAnsiString>.
+// [W5-STRARRAY-ELEMENTS] IsScalarArrayType admits no string type and no other phase read one, so the
+// walk sent such an array with its count and NO elements -- the Live Walker showed none, and CE XML's
+// per-element String leaves had nothing to iterate. Not by widening IsScalarArrayType: its reader
+// decodes RAW element bytes, and a string's bytes are a header, not its text.
+// ============================================================
+bool IsStringArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "StrProperty"
+        || innerTypeName == "Utf8StrProperty"
+        || innerTypeName == "AnsiStrProperty";
+}
+
+ReadArrayResult ReadStringArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // Every member of the family is FString's { Data*, int32 Num, int32 Max } header: 16 bytes on x64.
+    // A different elemSize is a garbage FPROPERTY_ELEMSIZE read, so the stride is pinned -- as Phase D
+    // pins 8 for a pointer -- rather than trusted into an address walk.
+    (void)elemSize;
+    constexpr int32_t kHeader = 16;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;
+
+    const bool wide = (innerTypeName == "StrProperty");
+    result.elements.reserve(end - offset);
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+        const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * kHeader;
+
+        // An unreadable HEADER is unread, never "": the same rule D3/D5 settled for delegates and lazy
+        // pointers. (A readable header whose text does not read comes back "" from the shared decoders,
+        // exactly as a scalar FString field does.)
+        uint8_t hdr[kHeader];
+        if (!Macht::ReadBytesSafe(elemAddr, hdr, sizeof(hdr))) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        char hex[2 * kHeader + 1];
+        for (int b = 0; b < kHeader; ++b) snprintf(hex + 2 * b, 3, "%02X", hdr[b]);
+        elem.hex = hex;
+        elem.value = wide ? ReadFString(elemAddr, 0) : ReadFUtf8String(elemAddr, 0);
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // ReadArrayElements — read scalar elements from a TArray (Phase B).
 //
 // Reads up to `limit` elements starting at index `offset`.
@@ -4619,6 +4695,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // Phase L: TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
+                if (innerFound && IsStringArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto strResult = ReadStringArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayInnerType, fv.arrayElemSize, 0, arrayLimit);
+                    if (strResult.ok && !strResult.elements.empty()) {
+                        fv.arrayElements = std::move(strResult.elements);
+                        Sein::Debug("WALK:ArrayP", "String elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
                 if (!innerFound) {
                     // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
                     uint8_t dumpBuf[64] = {};
@@ -4764,6 +4852,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (mcastResult.ok && !mcastResult.elements.empty()) {
                         fv.arrayElements = std::move(mcastResult.elements);
+                    }
+                }
+                // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
+                if (innerFound && IsStringArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto strResult = ReadStringArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayInnerType, fv.arrayElemSize, 0, arrayLimit);
+                    if (strResult.ok && !strResult.elements.empty()) {
+                        fv.arrayElements = std::move(strResult.elements);
                     }
                 }
 
