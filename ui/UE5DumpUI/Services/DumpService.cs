@@ -3632,6 +3632,7 @@ public sealed class DumpService : IDumpService
                     Yaw   = m["yaw"]?.GetValue<double>() ?? 0,
                     Roll  = m["roll"]?.GetValue<double>() ?? 0,
                     Map   = m["map"]?.GetValue<string>() ?? "",
+                    ParentRelative = m["parent_relative"]?.GetValue<bool>() ?? false,   // [W2-MARKER-PARENTREL]
                 });
             }
         }

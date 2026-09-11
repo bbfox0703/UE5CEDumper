@@ -427,6 +427,11 @@ public sealed class TeleportMarker
     public double Yaw { get; init; }
     public double Roll { get; init; }
     public string Map { get; init; } = "";
+
+    /// <summary>[W2-MARKER-PARENTREL] The marker was saved from a PARENT-RELATIVE read (an attached pawn whose
+    /// world-space read failed): X/Y/Z are not world coordinates, and recalling it drives the pawn there as if
+    /// they were. The key is absent on a healthy marker and from an older DLL.</summary>
+    public bool ParentRelative { get; init; }
 }
 
 /// <summary>

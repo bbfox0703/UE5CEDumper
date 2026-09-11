@@ -828,6 +828,29 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task TeleportGetMarkersAsync_CarriesTheParentRelativeFlag()
+    {
+        // [W2-MARKER-PARENTREL] Each marker, and the "last" sentinel, say whether they were saved from a
+        // parent-relative read; the key is absent on a healthy one.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["markers"] = new JsonArray
+            {
+                new JsonObject { ["slot"] = 0, ["valid"] = true, ["x"] = 1.0, ["map"] = "M", ["parent_relative"] = true },
+                new JsonObject { ["slot"] = 1, ["valid"] = true, ["x"] = 2.0, ["map"] = "M" },
+                new JsonObject { ["slot"] = -1, ["valid"] = true, ["x"] = 3.0, ["map"] = "M", ["parent_relative"] = true },
+            },
+        });
+
+        var list = await CreateService().TeleportGetMarkersAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(list[0].ParentRelative);
+        Assert.False(list[1].ParentRelative);
+        Assert.True(list[2].ParentRelative);
+    }
+
+    [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {
         _pipe.SetHandler(req =>

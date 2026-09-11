@@ -864,7 +864,29 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
    - **Tests, red first:** the ParsePose key test, a directional teleport keeping the map and the
      source, the add-time read, the connect prime, and an unknown map. A reply that does report a
      map is the control.
-3. ⬜ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
+3. ◐ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
+   ✅ **The pipe half, FIXED IN SOURCE 2026-09-12** (batch B29a). ⬜ The mailbox half is batch B29b.
+   - `struct Marker` gains `ParentRelative`. `SaveMarker`, `SaveLastImpl` and `BugItSave` capture it
+     from `GetPoseImpl`, which already reported it. The save path used to pass `nullptr`, so it could
+     never know.
+   - Fern publishes `parent_relative` on `teleport_save_marker` and on every `teleport_get_markers` entry,
+     including the "last" sentinel. The key is absent on a healthy save, like `get_pose`'s own key.
+   - **UI.**
+     - `TeleportMarker` / `TeleportMarkerRow` carry the flag.
+     - The row summary and the Last summary read "⚠ parent-relative (not world)".
+     - The save status says the marker came from a PARENT-RELATIVE read, so recalling it drives the pawn
+       to those numbers as if they were world coordinates.
+   - **Tests, red first** against inert properties:
+     - a parent-relative save (the status and the row);
+     - a refresh that flags a marker and the Last slot;
+     - the parse.
+
+     A healthy save and a healthy marker are the controls. 5/5 mutants killed; UI 5139/5139.
+   - ⚠ **Survivors by construction:** Wirbel.cpp's capture and Fern.cpp's publish, which no test target
+     compiles. The real `UE5Dumper` build and the live check cover them.
+   - ⬜ **B29b:** TP_OP_SAVE / GET_POSE / GET_MARKER / GET_LAST / BUGIT_SAVE carrying the flag in the
+     pose block, with `[W2-TPREL-TRANSPORTS]`. That moves a byte's meaning and follows the
+     `MAILBOX_CONTRACT` rules.
 4. ✅ **`[W2-ORDEN-FINDENTRY]`** (FIXED IN SOURCE 2026-09-11, batch B13) `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
    **Smaller** silently skips every field of a width the target cannot be *encoded* at, even when
    every value of that width satisfies the comparison. Because a group candidate needs ALL slots at
@@ -4645,6 +4667,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 48 | `[A3-B30-STALE-FLAG]` | MED | `git log --grep A3-B30-STALE-FLAG` (batch B28) | one ordering pin per shipped artifact (generator + `.CT`), red first: the serving branch clears the flag before its untick. 2/2 mutants killed; UI 5134/5134. The recorded safe fix; no contract bump |
 | 49 | `[W3-DUNSTE-QUEUED]` | MED | `git log --grep W3-DUNSTE-QUEUED` (batch B31) | dll_helpers_test red first against the pre-fix mapping: -5 is Queued, and a queued request commits; the other codes stay Refused. 2/2 mutants killed; dll_helpers_test 2708/2708; UI 5134/5134 |
 | 50 | `[A3-ST1-SUPER-DRAIN]` | MED | `git log --grep A3-ST1-SUPER-DRAIN` (batch B30) | a source pin, red first: the fail-open branch goes through `Stark::CallAddressAsOwnSEH`, which holds the own-PE-call mark in an outer frame. 2/2 mutants killed; UI 5135/5135. The recorded safe fix; no contract bump |
+| 51 | `[W2-MARKER-PARENTREL]` (pipe half) | MED | `git log --grep W2-MARKER-PARENTREL` (batch B29a) | the UI, red first against inert properties: a parent-relative save (status and row), a refresh flagging a marker and the Last slot, and the parse. 5/5 mutants killed; UI 5139/5139. The mailbox half is B29b |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4769,6 +4792,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Queue a `SetActorHiddenInGame`.
 2. Make a mailbox static-native invoke on an actor, e.g. `APawn::GetMovementBaseActor`.
 3. **`bHidden` must NOT flip while the thread is frozen.** The queued request runs only when the game thread drains. | CE + a game |
+| L37 | `[W2-MARKER-PARENTREL]` | A game with an attached pawn (a vehicle, mount or moving platform) where the world-space read fails:
+1. The pose card shows "⚠ parent-relative".
+2. Save Marker 1. The status names the PARENT-RELATIVE read, and the row reads "⚠ parent-relative (not world)".
+3. Reconnect the UI: the flag survives in the row (it lives DLL-side).
+4. **Control:** a normal on-foot save gives a plain "Marker 1 saved.". | a game + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4821,7 +4849,7 @@ completeness critic.
 | ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
-| ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
+| ◐ B29 pose parent-relative (B29a pipe + UI ✅; B29b mailbox ⬜) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ✅ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 | ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |

@@ -1353,7 +1353,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPose(p);
             UpdateMarkerRow(slot, p);
-            StatusText = $"Marker {slot + 1} saved.";
+            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens.
+            StatusText = p.ParentRelative
+                ? $"Marker {slot + 1} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, "
+                  + "and recalling it drives the pawn there as if they were."
+                : $"Marker {slot + 1} saved.";
         }
         catch (Exception ex)
         {
@@ -1411,6 +1415,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             await _dump.TeleportClearMarkerAsync(slot);
             var row = Markers[slot];
             row.Valid = false;
+            row.ParentRelative = false;
             row.Summary = "(empty)";
             StatusText = $"Marker {slot + 1} cleared.";
         }
@@ -5017,17 +5022,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 {
                     LastValid = m.Valid;
                     LastSummary = m.Valid
-                        ? string.Format(CultureInfo.InvariantCulture,
-                            "({0:0.0}, {1:0.0}, {2:0.0})  {3}", m.X, m.Y, m.Z, m.Map)
+                        ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
                         : "(saved automatically before each teleport)";
                     continue;
                 }
                 if (m.Slot < 0 || m.Slot >= Markers.Count) continue;
                 var row = Markers[m.Slot];
                 row.Valid = m.Valid;
+                row.ParentRelative = m.Valid && m.ParentRelative;
                 row.Summary = m.Valid
-                    ? string.Format(CultureInfo.InvariantCulture,
-                        "({0:0.0}, {1:0.0}, {2:0.0})  {3}", m.X, m.Y, m.Z, m.Map)
+                    ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
                     : "(empty)";
             }
         }
@@ -5152,9 +5156,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (slot < 0 || slot >= Markers.Count) return;
         var row = Markers[slot];
         row.Valid = true;
-        row.Summary = string.Format(CultureInfo.InvariantCulture,
-            "({0:0.0}, {1:0.0}, {2:0.0})  {3}", p.X, p.Y, p.Z, p.Map);
+        row.ParentRelative = p.ParentRelative;
+        row.Summary = MarkerSummary(p.X, p.Y, p.Z, p.Map, p.ParentRelative);
     }
+
+    /// <summary>A marker row's summary. [W2-MARKER-PARENTREL] A parent-relative save says so in the row: its
+    /// numbers are not world coordinates, and recalling it drives the pawn there as if they were.</summary>
+    internal static string MarkerSummary(double x, double y, double z, string map, bool parentRelative)
+        => string.Format(CultureInfo.InvariantCulture, "({0:0.0}, {1:0.0}, {2:0.0})  {3}", x, y, z, map)
+           + (parentRelative ? "  ⚠ parent-relative (not world)" : "");
 
     public void Dispose()
     {
@@ -5244,6 +5254,10 @@ public partial class TeleportMarkerRow : ObservableObject
     [ObservableProperty] private int _slot;
     [ObservableProperty] private bool _valid;
     [ObservableProperty] private string _summary = "(empty)";
+
+    /// <summary>[W2-MARKER-PARENTREL] Saved from a parent-relative read: its numbers are not world
+    /// coordinates.</summary>
+    [ObservableProperty] private bool _parentRelative;
 
     /// <summary>1-based label for the UI ("Marker 1").</summary>
     public string Label => $"Marker {Slot + 1}";

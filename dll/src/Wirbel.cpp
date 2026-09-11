@@ -1349,7 +1349,7 @@ int32_t RecallTo(const Pose& p, bool restoreRot, uint8_t* tierOut) {
 // s_opMutex (uses the lock-free GetPoseImpl, not the public GetPose export).
 void SaveLastImpl() {
     Marker m{};
-    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr) != TP_OK) return;
+    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) != TP_OK) return;
     m.Valid = true;
     s_lastMarker = m;
     LOG_INFO("Teleport: last position auto-saved (%.1f, %.1f, %.1f) map='%s'",
@@ -1487,10 +1487,15 @@ int32_t SaveMarker(int32_t slot) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     if (slot < 0 || slot >= Grimoire::TELEPORT_SLOTS) return TP_ERR_EMPTY_MARKER;
     Marker m{};
-    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr);
+    // [W2-MARKER-PARENTREL] Capture the read's parent-relative flag with the pose: the pose card warns "do not
+    // save these as a marker", and the save path used to have no way to know.
+    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative);
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_markers[slot] = m;
+    if (m.ParentRelative)
+        LOG_WARN("Teleport: marker %d saved from a PARENT-RELATIVE read -- its pose is not world coordinates",
+                 slot);
     LOG_INFO("Teleport: marker %d saved (%.1f, %.1f, %.1f) map='%s'",
              slot, m.P.X, m.P.Y, m.P.Z, m.MapName);
     return TP_OK;
@@ -1754,7 +1759,8 @@ int32_t GetLast(Marker& out) {
 int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     Marker m{};
-    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), outSource);
+    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), outSource, nullptr,
+                             &m.ParentRelative);   // [W2-MARKER-PARENTREL]
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_bugItMarker = m;

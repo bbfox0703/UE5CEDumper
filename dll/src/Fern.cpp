@@ -6279,6 +6279,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["x"] = m.P.X;         data["y"] = m.P.Y;     data["z"] = m.P.Z;
                     data["pitch"] = m.P.Pitch; data["yaw"] = m.P.Yaw; data["roll"] = m.P.Roll;
                     data["map"] = m.MapName;
+                    // [W2-MARKER-PARENTREL] absent on a healthy save, like get_pose's own key
+                    if (m.ParentRelative) data["parent_relative"] = true;
                 }
             }
             return Renge::MakeResponse(id, data).dump();
@@ -6355,6 +6357,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     jm["x"] = m.P.X;         jm["y"] = m.P.Y;     jm["z"] = m.P.Z;
                     jm["pitch"] = m.P.Pitch; jm["yaw"] = m.P.Yaw; jm["roll"] = m.P.Roll;
                     jm["map"] = m.MapName;
+                    if (m.ParentRelative) jm["parent_relative"] = true;      // [W2-MARKER-PARENTREL]
                 } else {
                     jm["valid"] = false;
                 }
@@ -6373,6 +6376,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     jl["x"] = last.P.X;         jl["y"] = last.P.Y;     jl["z"] = last.P.Z;
                     jl["pitch"] = last.P.Pitch; jl["yaw"] = last.P.Yaw; jl["roll"] = last.P.Roll;
                     jl["map"] = last.MapName;
+                    if (last.ParentRelative) jl["parent_relative"] = true;   // [W2-MARKER-PARENTREL]
                 } else {
                     jl["valid"] = false;
                 }

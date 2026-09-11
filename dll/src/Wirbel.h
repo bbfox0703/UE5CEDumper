@@ -42,6 +42,9 @@ struct Marker {
     bool Valid = false;
     Pose P{};
     char MapName[Grimoire::TELEPORT_MAPNAME_CAP] = {};
+    // [W2-MARKER-PARENTREL] The pose was saved from the raw parent-relative fallback (an attached pawn whose
+    // world-space read failed): P is NOT world coordinates, and recalling it drives the pawn there as if it were.
+    bool ParentRelative = false;
 };
 
 // Camera point-of-view (read-only). The on-screen view is produced by

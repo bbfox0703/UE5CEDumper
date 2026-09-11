@@ -318,6 +318,67 @@ public class TeleportViewModelTests
         Assert.False(vm.Markers[1].Valid);
     }
 
+    // ---- [W2-MARKER-PARENTREL] a marker saved from a parent-relative read says so ----
+
+    [Fact]
+    public async Task SaveMarker_FromAParentRelativeRead_SaysSo_InTheStatusAndTheRow()
+    {
+        // The pose card warns "do not save these as a marker" -- and the save path had no way to know. A save
+        // from the degraded read now carries the flag, and the row and the status name it.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", Source = "raw", ParentRelative = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.True(vm.Markers[0].ParentRelative);
+        Assert.Contains("parent-relative", vm.Markers[0].Summary);
+        Assert.Contains("PARENT-RELATIVE", vm.StatusText);
+    }
+
+    [Fact]
+    public void RefreshMarkers_FlagsAParentRelativeMarker_AndTheLastSlot()
+    {
+        var fake = new FakeDumpService
+        {
+            NextMarkers = new()
+            {
+                new() { Slot = 0, Valid = true, X = 1, Y = 2, Z = 3, Map = "Act1", ParentRelative = true },
+                new() { Slot = 1, Valid = true, X = 4, Y = 5, Z = 6, Map = "Act1" },
+                new() { Slot = 2, Valid = false },
+                new() { Slot = -1, Valid = true, X = 7, Y = 8, Z = 9, Map = "Act1", ParentRelative = true },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        Assert.True(vm.Markers[0].ParentRelative);
+        Assert.Contains("parent-relative", vm.Markers[0].Summary);
+        Assert.False(vm.Markers[1].ParentRelative);                      // the control: a healthy marker
+        Assert.DoesNotContain("parent-relative", vm.Markers[1].Summary);
+        Assert.Contains("parent-relative", vm.LastSummary);
+    }
+
+    [Fact]
+    public async Task SaveMarker_FromAHealthyRead_KeepsItsPlainStatus()
+    {
+        // The control, green before and after.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, Map = "Act1", Source = "raw" },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal("Marker 1 saved.", vm.StatusText);
+        Assert.DoesNotContain("parent-relative", vm.Markers[0].Summary);
+    }
+
     [Fact]
     public async Task RefreshPose_populates_display_on_success()
     {
