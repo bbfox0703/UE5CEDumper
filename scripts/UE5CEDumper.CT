@@ -650,6 +650,11 @@ function ue5_inject()
                      .. "No injection needed — just launch UE5DumpUI.exe and click Connect.\n"
                      .. "Pipe: \\\\.\\pipe\\UE5DumpBfx"
             showMessage(msg)
+            -- [A3-B30-STALE-FLAG] This record owns nothing. The flag is ONE global in CE's Lua state and
+            -- outlives a File > Open, which frees the records WITHOUT running [DISABLE] -- so a record from the
+            -- previous table can have left it true, and the untick this return triggers would then pass
+            -- ue5_shutdown's guard and tear the pipe down. Cleared here; it fails safe, leaving the pipe up.
+            UE5_StartedByThisRecord = false
             return false
         end
 

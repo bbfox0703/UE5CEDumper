@@ -368,6 +368,22 @@ public class CeInjectScriptGeneratorTests
     }
 
     [Fact]
+    public void Serving_branch_clears_a_stale_ownership_flag_before_its_untick()
+    {
+        // [A3-B30-STALE-FLAG] The flag is ONE global in CE's Lua state, which outlives a File > Open: CE frees the
+        // records without running [DISABLE]. A reloaded record ticked while the old pipe still serves takes the
+        // serving branch -- and its deferred untick runs [DISABLE] with the PREVIOUS table's `true` still set.
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+        var serving = e.IndexOf("already loaded AND serving", StringComparison.Ordinal);
+        Assert.True(serving >= 0, "the already-serving branch must still exist");
+        var clear = e.IndexOf("UE5_StartedByThisRecord = false", serving, StringComparison.Ordinal);
+        var untick = e.IndexOf("memrec.Active = false", serving, StringComparison.Ordinal);
+        Assert.True(untick > serving, "the serving branch must still untick the record");
+        Assert.True(clear > serving && clear < untick,
+            "the serving branch must clear the flag BEFORE its deferred untick runs the disable block");
+    }
+
+    [Fact]
     public void Disable_releases_ownership_after_tearing_down()
     {
         var d = Disable(CeInjectScriptGenerator.Generate(Dll));

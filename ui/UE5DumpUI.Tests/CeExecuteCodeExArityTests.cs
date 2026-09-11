@@ -158,6 +158,24 @@ public class CeExecuteCodeExArityTests
         Assert.Contains("Nothing loaded — nothing to shut down.", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Shipped_cheat_table_clears_a_stale_ownership_flag_in_the_serving_branch()
+    {
+        // [A3-B30-STALE-FLAG] The same global, the same CE session, the same File > Open: ue5_inject's serving
+        // branch returns false, the [ENABLE] block defers an untick, and [DISABLE] runs ue5_shutdown -- whose
+        // guard a flag left true by the previous table would pass.
+        var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
+        Assert.NotNull(ct);
+        var text = File.ReadAllText(ct!);
+
+        var serving = text.IndexOf("already loaded and serving in this process as '", StringComparison.Ordinal);
+        Assert.True(serving >= 0, "the serving branch must still exist");
+        var ret = text.IndexOf("return false", serving, StringComparison.Ordinal);
+        var clear = text.IndexOf("UE5_StartedByThisRecord = false", serving, StringComparison.Ordinal);
+        Assert.True(clear > serving && clear < ret,
+            "ue5_inject's serving branch must clear the flag before it returns false");
+    }
+
     [Theory]
     [InlineData("inject")]
     [InlineData("autorun")]

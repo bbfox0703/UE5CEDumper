@@ -171,6 +171,11 @@ public static class CeInjectScriptGenerator
         Line(sb, "      'No injection needed -- just launch UE5DumpUI.exe and click Connect.')");
         // Untick: this record did not start that pipe, so its [DISABLE] must never
         // be allowed to run UE5_Shutdown against it (audit #4 B30).
+        // [A3-B30-STALE-FLAG] ...and the flag that guard reads must be FALSE here. It is one global in CE's Lua
+        // state, which outlives a File > Open (CE frees the records WITHOUT running [DISABLE]), so a record from the
+        // previous table can have left it true -- and this very untick would then pass the guard and tear the
+        // pipe down. Cleared BEFORE the untick is deferred; it fails safe, leaving the pipe up.
+        Line(sb, "    UE5_StartedByThisRecord = false   -- this record owns nothing; a reloaded table may have left it true");
         Line(sb, CeLuaHygiene.DeferredUntickLua("    "));
         Line(sb, "    return");
         Line(sb, "  end");

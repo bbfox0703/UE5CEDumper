@@ -3693,7 +3693,7 @@ refuses to swallow, and **the process dies**.
     other additions are pins on code that was already right, green before and after).
   - 4/4 mutants killed, the Remove catch refreshing with the cancelled token among them.
 
-##### ⛔ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down
+##### ✅ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down (FIXED IN SOURCE 2026-09-12)
 
 `CeInjectScriptGenerator.cs:264`, and identically `scripts/UE5CEDumper.CT:804`/`:832`.
 `UE5_StartedByThisRecord` is ONE global in CE's Lua state, and that state lives for the whole CE
@@ -3718,6 +3718,19 @@ fresh CE session, where the flag was nil.
     Lua can solve;
   - fixing the generator only;
   - going back to the symbol probe, which was the original B30.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix, in BOTH artifacts** (batch B28).
+  - The serving branch sets `UE5_StartedByThisRecord = false` before its deferred untick: in the
+    generator's `[ENABLE]`, and in the `.CT`'s `ue5_inject`, before the `return false` that makes
+    `[ENABLE]` untick.
+  - The untick still runs `[DISABLE]`, which now refuses on the cleared flag and leaves the pipe up.
+    That is the fail-safe direction.
+  - The stale-flag scenario always lands in the SERVING branch: after a File > Open the previous table's
+    pipe is still up, so the reloaded record reads READY/SKIPPED. The parked branch is reached only after
+    a real `[DISABLE]`, which already released the flag.
+  - None of the unsafe fixes landed: no per-ID keying, no mailbox owner token (so no contract bump), and
+    not the generator alone.
+  - **Tests, red first:** one ordering pin per artifact. The flag must be cleared inside the serving
+    branch, and before its untick (generator) or its `return false` (`.CT`). 2/2 mutants killed; UI 5134/5134.
 
 ##### ✅ `[A3-BOOL-NATIVE-NOWRITE]` MED — editing a native bool in Live Walker writes nothing and reports "Written" (FIXED IN SOURCE 2026-09-11)
 
@@ -4570,6 +4583,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 45 | `[W3-XREF-CAP]` | MED | `git log --grep W3-XREF-CAP` (batch B25) | dll_core_test (the merge helper, and FindPropertyXrefs over the fake pool) and the UI (cell, clause, dialog status, batch loops, the parse) red first against inert stubs. 11/11 mutants killed; dll_core_test 214/214; UI 5112/5112. Five UI sites, not four |
 | 46 | `[W4-RELATED-STOPS]` | MED | `git log --grep W4-RELATED-STOPS` (batch B26) | dll_core_test (a fake owned graph tripping each bound) and the UI (parse, clause, panel status) red first against an inert stats param. 15/15 mutants killed; dll_core_test 230/230; UI 5120/5120. Five flags, one per cause |
 | 47 | `[W4-STRIDE-TENTATIVE]` | MED | `git log --grep W4-STRIDE-TENTATIVE` (batch B27) | dll_core_test (re-inits over throwaway arrays: detected, tentative, undetected, forced, and the reset at entry) and the UI (parse, badge, dump stamp) red first against inert accessors. 12/12 mutants killed; dll_core_test 237/237; UI 5129/5129. Its own field, not a fourth layout mode |
+| 48 | `[A3-B30-STALE-FLAG]` | MED | `git log --grep A3-B30-STALE-FLAG` (batch B28) | one ordering pin per shipped artifact (generator + `.CT`), red first: the serving branch clears the flag before its untick. 2/2 mutants killed; UI 5134/5134. The recorded safe fix; no contract bump |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4679,6 +4693,12 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Normal game:** `get_pointers` carries `item_detect: "detected"` with a validated count near 200. No stride badge appears, and a Dump All meta line reads `"stride_untrusted":false`.
 2. **A game on the forced static-stride path** (Obsidian-style UE 5.3): `item_detect` is `"forced"` and there is no badge.
 3. A tentative or undetected game is rare. If one turns up, the orange "stride is a guess" badge names its validated count. | a game + UI |
+| L34 | `[A3-B30-STALE-FLAG]` | **CE: announce first.** On a game with the dumper loaded, for BOTH the UI-generated inject record and `scripts/UE5CEDumper.CT`:
+1. Tick the inject record and connect the UI.
+2. File > Open the same table without merging.
+3. Tick the reloaded record. It shows "already loaded and serving" and unticks itself.
+4. **The UI must stay connected:** no `UE5_Shutdown` in the DLL log.
+**Control:** a fresh CE session with the proxy serving, which gives the same message and no teardown. | CE + a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4730,7 +4750,7 @@ completeness critic.
 | ✅ B25 xref cap | `[W3-XREF-CAP]` | |
 | ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
-| ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
+| ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ⬜ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
