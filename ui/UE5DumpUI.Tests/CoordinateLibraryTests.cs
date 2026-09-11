@@ -371,6 +371,57 @@ public class CoordinateLibraryStoreTests : IDisposable
         _store.Delete("game");
 
         Assert.Empty(_store.Load("game").Entries);
+        // ...without the recorded-unsafe shortcut of deleting the rolling backup as well.
+        Assert.True(File.Exists(_store.FilePathFor("game") + ".bak"));
+    }
+
+    [Fact]
+    public void ClearAll_AfterATransientLockAtLoad_KeepsTheNewestRevision()
+    {
+        // (review of 2f8d36f8) A sharing violation at Load reads as "unreadable", so Load recovers
+        // the OLDER .bak while the main on disk is the newest good file. The pre-clear backup is
+        // written from that in-memory library, and Delete then removed the only copy of the newest.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Older" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newest" }));   // .bak = "Older"
+        var path = _store.FilePathFor("game");
+
+        CoordinateLibraryFile shown;
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            shown = _store.Load("game");                                   // locked: recovered from .bak
+        Assert.Equal("Older", Assert.Single(shown.Entries).Label);
+
+        _store.SavePreClearBackup("game", shown);
+        _store.Delete("game");
+
+        var kept = Directory.GetFiles(Path.GetDirectoryName(path)!).Select(File.ReadAllText).ToList();
+        Assert.Contains(kept, t => t.Contains("Newest"));
+    }
+
+    [Fact]
+    public void OneShotBackups_AreWrittenFromTheLibraryPassedIn_NotReReadFromDisk()
+    {
+        // (review of 2f8d36f8) Every backup test passed `current = Load(key)`, so a store that
+        // ignored `current` and re-read the disk passed them all.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "d", Label = "OnDisk" }));
+        var inMemory = FileWith(new CoordEntry { Uid = "m", Label = "InMemory" });
+
+        var clear  = File.ReadAllText(_store.SavePreClearBackup("game", inMemory));
+        var import = File.ReadAllText(_store.SavePreImportBackup("game", inMemory));
+
+        Assert.Contains("InMemory", clear);
+        Assert.DoesNotContain("OnDisk", clear);
+        Assert.Contains("InMemory", import);
+        Assert.DoesNotContain("OnDisk", import);
+    }
+
+    [Fact]
+    public void OneShotBackup_KeepsTheZTolerance()
+    {
+        // The one-shot backups are a hand-built copy now, not a byte copy, so every field is a line
+        // that can be forgotten. (review of 2f8d36f8)
+        var lib = FileWith(new CoordEntry { Uid = "z", Label = "Tol" });
+        lib.ZTolerance = 12.25;
+        Assert.Contains("12.25", File.ReadAllText(_store.SavePreClearBackup("game", lib)));
     }
 
     [Fact]
@@ -418,13 +469,36 @@ public class CoordinateLibraryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_OverAnUnparseableMain_MovesItAside_InsteadOfDestroyingIt()
+    {
+        // (review of 2f8d36f8) [A1-COORD-BACKUP] stopped rolling an unparseable main over the good
+        // .bak -- and the rename then destroyed it. Whatever it still held (a half-written save a
+        // user can repair by hand) is kept aside now, bounded, with the good .bak untouched.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
+        CorruptMain("game");
+
+        _store.Save("game", FileWith(new CoordEntry { Uid = "c", Label = "Replaced" }));
+
+        var path = _store.FilePathFor("game");
+        var aside = Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".corrupt-*");
+        Assert.Contains("this is not json", File.ReadAllText(Assert.Single(aside)));
+        Assert.Contains("Good", File.ReadAllText(path + ".bak"));
+        Assert.Equal("Replaced", Assert.Single(_store.Load("game").Entries).Label);
+    }
+
+    [Fact]
     public void Save_StillRollsAGoodMainToBak()
     {
-        // The control, green before and after: the rolling backup keeps working.
+        // The control, green before and after: the rolling backup keeps working. THREE saves, so
+        // a guard that rolls only once (or parses the wrong file) cannot pass. (review of 2f8d36f8)
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "First" }));
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Second" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "c", Label = "Third" }));
 
-        Assert.Contains("First", File.ReadAllText(_store.FilePathFor("game") + ".bak"));
+        var bak = File.ReadAllText(_store.FilePathFor("game") + ".bak");
+        Assert.Contains("Second", bak);
+        Assert.DoesNotContain("First", bak);
     }
 
     [Fact]

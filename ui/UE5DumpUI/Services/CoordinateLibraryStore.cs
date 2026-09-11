@@ -4,6 +4,7 @@ using System.Text;
 using System.Linq;
 using System.Text.Json;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Services;
@@ -45,7 +46,8 @@ public sealed class CoordinateLibraryStore
         _log = log;
         // Own subfolder, not the flat app-data root (audit #5 AF11). This is a
         // per-GAME family — up to four files per module (.json + .bak +
-        // .preimport.bak + .preclear.bak), one more set on every new game, forever —
+        // .preimport.bak + .preclear.bak, plus at most AtomicFileHygiene.MaxCorruptCopies
+        // quarantined .corrupt-* copies), one more set on every new game, forever —
         // and CLAUDE.md's App-data layout rule reserves the root for files that are
         // app-wide and fixed in number. Called from the CONSTRUCTOR for the same
         // reason BookmarkStore does: the store that reads the folder is the one that
@@ -180,8 +182,11 @@ public sealed class CoordinateLibraryStore
                 if (TryRead(path) != null)
                     TryRollToBackup(path, path + ".bak");
                 else if (File.Exists(path))
-                    _log?.Warn(Constants.LogCatView,
-                        $"CoordinateLibraryStore: {key} main file unreadable, NOT rolled over .bak");
+                    // Unparseable: not rolled over the good .bak, and not destroyed by the rename
+                    // below either -- moved aside, bounded, as AobUsageService does. A move that
+                    // fails throws into the catch, so this Save is refused rather than overwriting
+                    // the only copy of whatever that file still holds. (review of 2f8d36f8)
+                    QuarantineUnparseableMain(key, path);
                 File.Move(temp, path, overwrite: true);
             }
             catch (Exception ex)
@@ -239,6 +244,11 @@ public sealed class CoordinateLibraryStore
             try
             {
                 var path = PathFor(key);
+                // Roll a main that PARSES to .bak first, as Save does. Whenever Load had to recover
+                // from .bak (a sharing violation reads as unreadable) the in-memory library the
+                // pre-clear backup was written from is OLDER than this file, and the newest revision
+                // then ended up in no file at all. (review of 2f8d36f8)
+                if (TryRead(path) != null) TryRollToBackup(path, path + ".bak");
                 if (File.Exists(path)) File.Delete(path);
             }
             catch (Exception ex)
@@ -273,6 +283,35 @@ public sealed class CoordinateLibraryStore
             _log?.Warn(Constants.LogCatView,
                 $"CoordinateLibraryStore: backup to {Path.GetFileName(bak)} failed: {ex.Message}");
             return "";
+        }
+    }
+
+    /// <summary>Move an unparseable main file aside as <c>&lt;file&gt;.corrupt-&lt;stamp&gt;</c> and keep at
+    /// most <see cref="AtomicFileHygiene.MaxCorruptCopies"/> of them. The copy shares the game's key,
+    /// so it moves and expires with the game's group. The move is deliberately unguarded: see Save.</summary>
+    private void QuarantineUnparseableMain(string key, string path)
+    {
+        var dir   = Path.GetDirectoryName(path)!;
+        var name  = Path.GetFileName(path);
+        var aside = Path.Combine(dir, AtomicFileHygiene.QuarantineNameFor(name, DateTime.UtcNow));
+        File.Move(path, aside);
+        _log?.Warn(Constants.LogCatView,
+            $"CoordinateLibraryStore: {key} main file unreadable, moved aside to " +
+            $"{Path.GetFileName(aside)}; the .bak is untouched");
+        try
+        {
+            var names = Directory.EnumerateFiles(dir, AtomicFileHygiene.CorruptPrefixFor(name) + "*")
+                                 .Select(Path.GetFileName)
+                                 .Where(n => !string.IsNullOrEmpty(n))
+                                 .Select(n => n!);
+            foreach (var stale in AtomicFileHygiene.SelectCorruptCopiesToPrune(
+                         names, name, AtomicFileHygiene.MaxCorruptCopies))
+                File.Delete(Path.Combine(dir, stale));
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatView,
+                $"CoordinateLibraryStore: pruning old corrupt copies failed: {ex.Message}");
         }
     }
 
