@@ -1968,6 +1968,31 @@ public class InvokeScriptTests
         Assert.Equal(5, CeMailboxLayout.ContractVersion);   // baked into every emitted script
     }
 
+    [Fact]
+    public void MailboxWrappers_LatchTheMailboxWhenAWaitTimesOut()
+    {
+        // [A1-VERDICT-STALEMB] The CE helper is Lua, so its shape is pinned from source. A wrapper that clears the
+        // busy flag after a timeout without latching lets the NEXT invokeUFunction write over a command the DLL is
+        // still running -- audit #5 AA19, which invokeUFunction itself guards against.
+        string lua = HelperLuaResource.Read();
+
+        Assert.Contains("local function simpleMailboxCall(cmd, prepare)", lua);
+        // Both small wrappers go through it rather than hand-rolling a round trip.
+        Assert.Contains("simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)", lua);
+        Assert.Contains("simpleMailboxCall(CMD_OFFSETS_VERDICT)", lua);
+        // The latch, and a release that respects it. COUNTED, not merely present: invokeUFunction has
+        // carried this exact line since AA19, so a bare Contains stays green with the new helper's latch
+        // deleted -- the mutant that deletes it SURVIVED until this became a count.
+        Assert.Equal(2, lua.Split("_ue5_invoke_stale_mb = mb").Length - 1);
+        Assert.Contains("if not latched then", lua);
+        Assert.DoesNotContain("[ue5_invoke] busy -- another mailbox call is mid-flight')\n    end\n    _ue5_invoke_busy = true",
+                              lua.Replace("\r\n", "\n"));
+        // -10 (not initialised) is not -1 (unknown command): only one of them is about the DLL's age.
+        // The EXECUTABLE line, not the word: the wrapper's own doc comment says 'dll-not-initialised'
+        // too, so a bare Contains stayed green with the branch deleted -- that mutant SURVIVED.
+        Assert.Contains("if code == -10 then return false, 'dll-not-initialised' end", lua);
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

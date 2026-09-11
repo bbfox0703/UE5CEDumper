@@ -781,6 +781,66 @@ if not freeInvokeStringBuffers then
   registerLuaFunctionHighlight('freeInvokeStringBuffers')
 end
 
+
+-- ============================================================
+-- One mailbox round trip, with the AA19 guard -- [A1-VERDICT-STALEMB]
+-- ============================================================
+-- Every wrapper that owns the mailbox for one command needs the SAME three things, and the two small
+-- ones (Debug Camera, offsets verdict) had none of them: an entry re-test, a latch when the wait times
+-- out, and a release that only fires when the mailbox is ours again. Without the latch the next
+-- invokeUFunction sails past its own guard and writes className / funcName / params on top of a command
+-- the DLL is still running -- exactly the overwrite invokeUFunction latches against (audit #5 AA19).
+-- Found by review 6 on getOffsetsVerdict, which is the likeliest to time out: it exists to be asked
+-- while the game thread is wedged.
+--
+-- `prepare(mb)` writes the command's operands before the trigger; the status clear and the CMD write
+-- (LAST, it is what triggers the DLL) are here so no wrapper can forget the order.
+--- @return number result  the mailbox's signed result code
+--- @return number mb      the mailbox address, so the caller can read paramsData
+local function simpleMailboxCall(cmd, prepare)
+  -- The latch clears itself once the DLL says it is done -- ask it, rather than holding a Lua-local
+  -- boolean for the rest of the session (the shape invokeUFunction uses).
+  if _ue5_invoke_busy and _ue5_invoke_stale_mb then
+    local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
+    local cmd_ = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
+    if st == STATUS_DONE and cmd_ == CMD_IDLE then
+      _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
+    end
+  end
+  if _ue5_invoke_busy then
+    if _ue5_invoke_stale_mb then
+      error('[ue5_invoke] the previous mailbox call timed out and the DLL is STILL holding the ' ..
+            'mailbox -- sending now would overwrite a command that is mid-flight. Wait for the game ' ..
+            'thread to come back (this clears itself once the DLL reports done), or re-inject.')
+    end
+    error('[ue5_invoke] busy -- another mailbox call is mid-flight')
+  end
+
+  _ue5_invoke_busy = true
+  local latched = false
+  local pok, res, mb_out = pcall(function()
+    local mb = findMailbox()
+    if prepare then prepare(mb) end
+    writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure (audit #5 AA18)
+    writeInteger(mb + OFF_STATUS, 0)      -- clear status
+    writeInteger(mb + OFF_CMD, cmd)       -- trigger (write LAST)
+    local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
+    if not ok_w then
+      -- The DLL may still own the mailbox. Latch BEFORE raising, so the release below leaves the guard
+      -- up and the next caller is refused instead of corrupting an in-flight command.
+      _ue5_invoke_stale_mb = mb
+      latched = true
+      error(err_w)
+    end
+    return readInteger(mb + OFF_RESULT, true), mb   -- signed: result codes are negative
+  end)
+  if not latched then
+    _ue5_invoke_busy = false
+  end
+  if not pok then error(tostring(res)) end
+  return res, mb_out
+end
+
 -- ============================================================
 -- Public API: Debug Camera robust force on/off
 -- ============================================================
@@ -796,24 +856,14 @@ if not setDebugCamera then
   local CMD_SET_DEBUG_CAMERA = 7
 
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
-  -- Reuses the file-local mailbox helpers + reentrancy guard.
+  -- Reuses the file-local mailbox helpers + the shared AA19 guard.
   local function dbgCamMailbox(req)
-    if _ue5_invoke_busy then
-      error('[ue5_invoke] busy -- another mailbox call is mid-flight')
-    end
-    _ue5_invoke_busy = true
-    local pok, res = pcall(function()
-      local mb = findMailbox()
+    -- The state only: simpleMailboxCall also hands back the mailbox address, and this one's caller
+    -- (setDebugCamera) returns straight through to CE Lua, which expects a single number.
+    local state = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
       writeQword(mb + OFF_INSTANCE, req)   -- 0x010: request (0/1/2)
-      writeInteger(mb + OFF_STATUS, 0)     -- clear status
-      writeInteger(mb + OFF_CMD, CMD_SET_DEBUG_CAMERA)  -- trigger (write LAST)
-      local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
-      if not ok_w then error(err_w) end
-      return readInteger(mb + OFF_RESULT, true)  -- 0x008: resulting state (signed int32)
     end)
-    _ue5_invoke_busy = false
-    if not pok then error(tostring(res)) end
-    return res
+    return state
   end
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
@@ -843,26 +893,20 @@ end
 --- A DLL older than contract 5 does not know the command and answers "Unknown command" (result -1):
 --- reported as false, 'dll-too-old' -- never as measured. That is why this file still bakes
 --- UE5_SCRIPT_CONTRACT = 1: refusing to load against an older DLL would be the worse trade.
+--- [A1-VERDICT-STALEMB] On such a DLL the command is not init-exempt either, so an UNINITIALISED one
+--- answers -10 ("DLL not initialized") first -- reported as 'dll-not-initialised', because telling the
+--- user to update a current DLL is the wrong instruction.
 if not getOffsetsVerdict then
 
   function getOffsetsVerdict()
-    if _ue5_invoke_busy then
-      error('[ue5_invoke] busy -- another mailbox call is mid-flight')
-    end
-    _ue5_invoke_busy = true
-    local pok, measured, reason = pcall(function()
-      local mb = findMailbox()
-      writeInteger(mb + OFF_STATUS, 0)                     -- clear status
-      writeInteger(mb + OFF_CMD, CMD_OFFSETS_VERDICT)      -- trigger (write LAST)
-      local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
-      if not ok_w then error(err_w) end
-      local code = readInteger(mb + OFF_RESULT, true)      -- signed: -1 = Unknown command
-      if code < 0 then return false, 'dll-too-old' end
-      return code == 1, readString(mb + OFF_PARAMS, 127, false) or ''
-    end)
-    _ue5_invoke_busy = false
-    if not pok then error(tostring(measured)) end
-    return measured, reason
+    local code, mb = simpleMailboxCall(CMD_OFFSETS_VERDICT)
+    -- [A1-VERDICT-STALEMB] -1 and -10 are DIFFERENT answers and only one of them is about age:
+    -- -1 is "Unknown command" (a DLL older than contract 5), -10 is "DLL not initialized" (the right
+    -- DLL, no scan yet -- and on a pre-5 DLL this command is not init-exempt, so it is the answer that
+    -- arrives first). Reporting both as 'dll-too-old' told the user to update a DLL that is current.
+    if code == -10 then return false, 'dll-not-initialised' end
+    if code < 0 then return false, 'dll-too-old' end
+    return code == 1, readString(mb + OFF_PARAMS, 127, false) or ''
   end
   registerLuaFunctionHighlight('getOffsetsVerdict')
 

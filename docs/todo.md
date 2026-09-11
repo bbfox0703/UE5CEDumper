@@ -5321,7 +5321,7 @@ did not trace; review 6 traced it end to end and it is reachable from the UI's N
     to live on the DESCRIPTOR, the only per-field thing a refine is handed.
   - An InvokeScriptTests source pin covers the stamping in `ensureDescriptor`.
 
-##### ⬜ `[A1-VERDICT-STALEMB]` MED — `getOffsetsVerdict` drops the AA19 stale-mailbox latch (found 2026-09-12 by review 6)
+##### ✅ `[A1-VERDICT-STALEMB]` MED — `getOffsetsVerdict` drops the AA19 stale-mailbox latch (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
 
 `scripts/ue5_invoke_helper.lua`'s new wrapper (`[W5-OFFSETS-MAILBOX]`, batch L45) clears
 `_ue5_invoke_busy` unconditionally after a timeout and never sets `_ue5_invoke_stale_mb`. The next
@@ -5341,6 +5341,19 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 - ✅ **Safe fix:** mirror `invokeUFunction` — latch `_ue5_invoke_stale_mb` on a timeout, release
   `_ue5_invoke_busy` only when the mailbox is ours again, re-test the latch on entry, and tell `-10`
   apart from `-1`.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L48), taken as a fix to the SHAPE: one shared
+  `simpleMailboxCall` carries the entry re-test, the latch and the latch-aware release, and **both**
+  small wrappers go through it — the new verdict one and `dbgCamMailbox`, which had the same
+  pre-AA19 shape and predates the fix pass. It also clears `errorMsg` (AA18) and writes `cmd` LAST,
+  so no wrapper can get that order wrong.
+  - `-10` is now `dll-not-initialised`, distinct from `-1` `dll-too-old`: on a pre-contract-5 DLL the
+    command is not init-exempt, so `-10` is what arrives first, and telling the user to update a
+    current DLL is the wrong instruction.
+  - **Red first:** the CE helper is Lua, so InvokeScriptTests pins the shape — the shared helper, both
+    call sites, the latch, the latch-aware release and the `-10` branch.
+  - ⬜ **Left as it was:** `invokeUFunction` keeps its own inline copy of the guard. It also frees
+    string buffers and carries its own refusal text, so folding it in was out of scope for a LOW-risk
+    repair; the duplication is recorded rather than hidden.
 
 ##### ⬜ `[A1-REVIEW6-PINS]` LOW — two stale decision comments, and a scan gate with no guard-the-guard (found 2026-09-12 by review 6)
 
@@ -5483,6 +5496,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 99 | `[W5-OFFSETS-MAILBOX]` | LOW | `git log --grep W5-OFFSETS-MAILBOX` (batch L45) | Red first: dll_helpers_test pins `CMD_OFFSETS_VERDICT` = 16, the contract range 5 / 1, the new init exemption and the exemption COUNT (the test enumerates the whole command space on purpose). An InvokeScriptTests source pin covers Mimic.cpp's case + handler and the Lua wrapper, which no test target compiles. 4/4 mutants killed; dll_helpers_test 2748/2748, dll_core_test 327/327; UI 5296/5296. Contract 4 → 5, MIN stays 1: additive, so every saved `.CT` stays valid |
 | 100 | `[A2-SENTINEL-OVERREAD]` | LOW | `git log --grep A2-SENTINEL-OVERREAD` (batch L46) | Review 6's first confirmed finding. Red first in dll_helpers_test's V1C block: the FString / FName / FText / None spans (16 / 4 / 8 / 0) against an inert helper that claims 16 for every sentinel; the InvokeScriptTests source pin requires `SentinelBytesNeeded` at the gate and refuses the flat `sizeof(v16)` read. 3/3 mutants killed; dll_helpers_test 2752/2752, dll_core_test 327/327; UI 5296/5296 |
 | 101 | `[A2-TOPTIONAL-REFINE]` | MED | `git log --grep A2-TOPTIONAL-REFINE` (batch L47) | Review 6's MED, and the lead L41 recorded without tracing. Red first in dll_core_test **REFINEOPT**: a reset trailing-flag optional and an intrusive unset one are dropped by an Unchanged refine; a SET optional, an intrusive set one and an ordinary leaf survive (three controls). An InvokeScriptTests source pin covers the descriptor stamping. 4/4 mutants killed; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5296/5296. The verifier's two corrections are in the row |
+| 102 | `[A1-VERDICT-STALEMB]` | MED | `git log --grep A1-VERDICT-STALEMB` (batch L48) | Review 6's second MED. One shared `simpleMailboxCall` for both small wrappers, carrying the AA19 latch; `-10` told apart from `-1`. Red first: InvokeScriptTests pins the helper, both call sites, the latch, the latch-aware release and the `dll-not-initialised` branch (the CE helper is Lua, so no test can run it). 4/4 mutants killed; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5297/5297 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5771,6 +5785,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L85 | `[W5-OFFSETS-MAILBOX]` | **CE:** with the DLL injected into a game whose scan log says `validated=yes`, run `getOffsetsVerdict()` in CE's Lua Engine: `true, ""`. Then on a game whose offsets fall back (or before any scan, in proxy mode): `false` plus the reason, and `probe-not-run` when nothing has probed yet. Against a contract-4 DLL the same call says `dll-too-old`, never `measured`. | CE + a game + an old DLL build |
 | L86 | `[A2-SENTINEL-OVERREAD]` | Needs a 5.5+ game with an intrusive `TOptional<FName>` as an object's LAST field, which is rare enough that the offline pins may be the whole story. If one is found: Value Search, FName, Exact the held name — the SET optional is a hit on every instance of the class, not just on those whose allocation is far from a page edge. | a 5.5+ game + UI |
 | L87 | `[A2-TOPTIONAL-REFINE]` | A game with a trailing-flag `TOptional<int32>` (UE4 or pre-5.5 shapes are the common ones): First Scan the held value, then reset the optional in game and run **Next Scan → Unchanged**. The row disappears. Control: with the optional still set, the same Next Scan keeps it. | a game + UI |
+| L88 | `[A1-VERDICT-STALEMB]` | **CE: announce it first.** With the DLL injected, wedge the game thread (a loading screen, or a game that stops ticking unfocused) and call `getOffsetsVerdict()` in CE's Lua Engine until it times out. The NEXT `invokeUFunction(...)` must REFUSE with "the previous mailbox call timed out and the DLL is STILL holding the mailbox", not run. Once the game thread returns, the following call works without a re-inject. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5875,7 +5890,7 @@ completeness critic.
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 - ✅ **L46:** `[A2-SENTINEL-OVERREAD]` (found 2026-09-12 by review 6)
 - ✅ **L47:** `[A2-TOPTIONAL-REFINE]` (found 2026-09-12 by review 6)
-- **L48:** `[A1-VERDICT-STALEMB]` (found 2026-09-12 by review 6) (CE)
+- ✅ **L48:** `[A1-VERDICT-STALEMB]` (found 2026-09-12 by review 6) (CE)
 - **L49:** `[A1-REVIEW6-PINS]` (found 2026-09-12 by review 6)
 - ✅ **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
