@@ -932,6 +932,15 @@ while eviction runs at the hand-edited number.
      first: it counts invocations, checks the status, and checks that the pin survives.
      `StalePin_minus4_is_still_retried` is the control, green both ways; the existing `-2`
      self-heal test is unchanged.
+   ✅ **Review follow-up 2026-09-11** (the review of B09-B12; B11's share was 5).
+   - **A timeout on the self-heal RETRY got no note.** The flag was taken from the first result,
+     and the class-name retry goes through the same queued dispatch. So a stale pin (`-4`) followed
+     by a retry that timed out (`-5`) said nothing about the queued call. The note now reads the
+     FINAL result; the first one still only gates the retry. Red first:
+     `DispatchTimeout_on_the_self_heal_retry_is_reported_as_queued`.
+   - Pinned: the note stays off `-2` / `-4`, and an unpinned `-5` is reported and not re-sent.
+   - **Two DLL-side twins are filed as their own rows below**, both pre-existing and outside this
+     row's scope: `[W3-DUNSTE-QUEUED]` (MED) and `[W3-DEBUGCAM-QUEUED]` (LOW).
 2. ⬜ **`[W3-XREF-CAP]`** `PropertyXrefDialog.cs:433`. `Aura::FindPropertyXrefs` and
    `FindFunctionsByClassParam` self-cap each worker at `maxResults` then `ConcatTruncate`, and
    **neither folds the cap into any published flag** — both set only
@@ -967,6 +976,52 @@ passes DIP-sized `_pendW`/`_pendH` straight into `WindowPlacement.IsVisibleEnoug
 states *"All coordinates are PHYSICAL pixels"* — the audit-#5 **AF21** unit fix landed in
 `MainWindow` and never in this newer 100%-band twin. ⛔ The tempting mechanical fix is harmful; the
 safe form is to give `WindowRestoreState` a scale it does not currently have.
+
+#### Filed by the fix-pass review of 3561c93c (2026-09-11)
+
+##### ⬜ `[W3-DUNSTE-QUEUED]` MED — Fly / Noclip reads a queued collision-disable (`-5`) as refused, so it lands after the record says collision is ON
+
+`Dunste.cpp:231` (`InvokeSetCollision`). The DLL-side twin of `[W3-CONSOLE-REINVOKE]`, breaking the
+same contract.
+- Every `rc != 0` maps to `CollisionApply::Refused`, `-5` included. The log even says "-5
+  game-thread timeout … collision unchanged, will retry", and `Dunste.h:58-61` files `-5` under
+  "the dispatcher did not run it … must NOT commit".
+- But on `-5` the request is STILL QUEUED and will run (`Frieren.h:117-130`, `Stark.cpp:416-423`).
+  `s_state.collisionOff` does not move, so nothing tracks a `SetActorEnableCollision(false)` that
+  is going to execute.
+- **Scenario** (the review's, re-read at source), on an idle-when-unfocused game, which
+  `Dunste.cpp:606-612` itself calls the common case:
+  1. Clicking the UI's Noclip checkbox takes focus from the game. The next worker tick still passes
+     `IsGameThreadResponsive()`, because the last PE fire was under 500 ms ago.
+  2. The disable is enqueued, the game thread has stopped, and after 5000 ms it returns `-5`:
+     Refused, and `collisionOff` stays false.
+  3. Still in the UI, the user unticks Noclip or disables Fly. With `collisionOff == false`, no
+     restore is emitted.
+  4. Back in the game, the queued disable drains. Collision is OFF with Fly OFF and nothing
+     tracking it, and the pawn falls through the world.
+- **Origin:** fc83923e (D1, 2026-09-08) turned the discarded return into `CollisionApply` and put
+  every non-zero code, `-5` included, in the non-committing class. Before D1 the worker committed
+  whenever the setter was found, which happened to be right for `-5`.
+- ✅ **Probable fix:** a third outcome, "queued, will land", that commits the record, so the next
+  opposite toggle emits the undo. Keep Refused for `-8` / `-7` / `-3` / `-2` / `-4`, and make
+  `Dunste.h`'s doc agree with `Frieren.h`.
+
+##### ⬜ `[W3-DEBUGCAM-QUEUED]` LOW — `UE5_SetDebugCamera` folds a queued toggle (`-5`) into `-1`, and every caller invites a second toggle
+
+`Frieren.cpp:1248`. The stateful `ToggleDebugCamera` goes through the queued `UE5_CallProcessEvent`,
+and any `r != 0`, `-5` included, returns `-1`. Every consumer reads `-1` as "nothing happened":
+- both view models say "no live CheatManager / unreadable state (enter gameplay first)";
+- the CE Debug Camera record says the game refused the toggle, and UNTICKS itself.
+
+With the game stalled, Force ON queues a toggle and reports failure. A second Force ON still reads
+the state as OFF and queues another. On refocus both drain, ON then OFF, against an API documented
+as idempotent.
+- Pre-existing and outside B11's scope. The refuter judged it LOW: the re-send is prompted, not
+  automatic. The 2026-08-13 audit refuted "escalate to the swap on `-5`"; it did not address this.
+- ✅ **Probable fix:** return a distinct "queued" code, and have both view models and the CE script
+  say "queued; it will run when the game thread is free — do not re-send", without unticking. Or
+  refuse to enqueue while `Stark::IsGameThreadResponsive()` is false.
+  ⚠ A new return code reaches the CE script, so check `Mimic.h`'s contract rules first.
 
 ---
 
@@ -3995,7 +4050,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed. **Review follow-up:** the pin also refuses an `IsEnabled` on the foreign-overwrite checkbox and on the radios' panel; 2/2 mutants killed |
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981. **Review follow-up:** `Delete` rolls a parseable main to `.bak` first (a transient lock at Load had let Clear all lose the newest revision; red first), and the resurrect test pins that `.bak` survives |
 | 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only. **Review follow-up:** `Save` moves an unparseable main aside (bounded `.corrupt-*` copies) instead of destroying it (red first); pins for the passed-in library, `ZTolerance` and a three-save roll; 6/6 mutants killed across both rows; UI 5009/5009 |
-| 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
+| 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983. **Review follow-up:** the queued note reads the FINAL result, so a timed-out self-heal retry is reported (red first); pins for `-2` / `-4` and an unpinned `-5`; 3/3 mutants killed; UI 5011/5011. Filed `[W3-DUNSTE-QUEUED]` and `[W3-DEBUGCAM-QUEUED]` |
 | 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed. **Review:** snapshots captured before this build keep NULL enum values; recorded as a known limitation (recapture policy), not backfilled |
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
 | 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict |
@@ -4118,8 +4173,9 @@ completeness critic.
 | ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
+| ⬜ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 
-**LOW-only batches, after the MEDs** (42):
+**LOW-only batches, after the MEDs** (43):
 - **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - **L02:** `[P1-ENUMNAMES]`
 - **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
@@ -4162,6 +4218,7 @@ completeness critic.
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
+- **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

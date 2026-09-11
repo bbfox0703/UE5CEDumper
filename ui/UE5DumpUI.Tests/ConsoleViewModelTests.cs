@@ -620,6 +620,7 @@ public class ConsoleViewModelTests
         Assert.Null(fake.InstanceAddrHistory[0]);          // Fly: resolve
         Assert.Equal("0x1234", fake.InstanceAddrHistory[1]); // God: pinned attempt
         Assert.Null(fake.InstanceAddrHistory[2]);          // God: self-heal retry
+        Assert.DoesNotContain("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);   // -2 is not a timeout
     }
 
     [Fact]
@@ -679,6 +680,53 @@ public class ConsoleViewModelTests
 
         Assert.Equal(3, fake.InvokeCallCount);
         Assert.Null(fake.InstanceAddrHistory[2]);                                 // the self-heal re-resolve
+        Assert.DoesNotContain("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DispatchTimeout_on_the_self_heal_retry_is_reported_as_queued()
+    {
+        // (review of 3561c93c) A stale pin (-4) triggers the self-heal, and the class-name retry goes
+        // through the same queued dispatch, so it can time out too. That queued retry WILL run: it
+        // needs the note, and it must not be sent a third time.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0,  Message = "OK", InstanceAddr = "0x1234" }, // Fly: pins
+                new InvokeFunctionResult { Result = -4, Error = "exception during call" },          // God: stale pin
+                new InvokeFunctionResult { Result = -5, Error = "game-thread dispatch timeout" },   // God: the retry times out
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(3, fake.InvokeCallCount);                                    // one retry, no third send
+        Assert.Contains("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DispatchTimeout_on_an_unpinned_invoke_is_reported_and_not_resent()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult { Result = -5, Error = "game-thread dispatch timeout" },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Contains("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

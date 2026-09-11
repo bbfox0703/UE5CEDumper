@@ -514,7 +514,10 @@ public partial class ConsoleViewModel : ViewModelBase
                 : (string.IsNullOrEmpty(result.Error)
                     ? $"Result code {result.Result}"
                     : result.Error);
-            if (dispatchTimedOut)
+            // From the FINAL result, not `dispatchTimedOut`: the self-heal retry goes through the
+            // same queued dispatch and can time out too, and that queued retry needs the note just
+            // as much. `dispatchTimedOut` only gates the retry. (review of 3561c93c)
+            if (result.Result == Constants.InvokeDispatchTimeoutResult)
                 resultText += " — still queued: it will run when the game thread is free (not re-sent)";
 
             AppendHistory(entry, result.Success, resultText);
