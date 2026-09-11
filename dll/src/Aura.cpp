@@ -3095,6 +3095,7 @@ struct DirectPointerEntry {
     int32_t     offset;
     std::string name;
     std::string typeName;     // "ObjectProperty" / "ClassProperty" / "InterfaceProperty"
+    int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
 
 // FWeakObjectPtr-shaped single field: { int32 ObjectIndex, int32 Serial }
@@ -3106,7 +3107,17 @@ struct WeakLikePointerEntry {
     std::string name;
     std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
                               // / "SoftClassProperty" / "LazyObjectProperty"
+    int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
+
+// [A2-TOPTIONAL-INTRUSIVE] A trailing-flag TOptional keeps its old value bytes after Reset(): only
+// its bIsSet byte says whether they are live, so a reset optional's stale pointer is NOT a
+// reference. -1 = not an optional, or an intrusive one (whose null IS its unset state).
+static bool OptionalGateOpen(uintptr_t fieldAddr, int32_t setFlagOffset) {
+    if (setFlagOffset < 0) return true;
+    uint8_t isSet = 0;
+    return Macht::ReadSafe(fieldAddr + setFlagOffset, isSet) && isSet != 0;
+}
 
 struct ObjectArrayEntry {
     int32_t     offset;
@@ -3215,19 +3226,31 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
         }
         // --- TOptional<T> wrapping a pointer-shaped T ---
-        // For pointer-shaped T, FOptionalProperty stores T directly at
-        // field+0; "unset" is encoded as null/zero. So the comparison logic
-        // is identical to the bare pointer/weak-like field — only the
-        // type-name label changes (so the user can see it was reached via
-        // an Optional). innerType comes from WalkClassEx.
+        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but the old belief
+        // here -- "unset is encoded as null/zero" -- holds only for the INTRUSIVE one (a
+        // non-nullable object). A TRAILING-FLAG optional keeps its pointer after Reset(), so the
+        // entry carries its bIsSet offset and every scan checks it (OptionalGateOpen). A layout
+        // that fits neither, or an intrusive one with no null state (weak/soft/lazy, interface),
+        // is not bucketed: a reference we cannot prove is live is not reported.
         else if (f.TypeName == "OptionalProperty"
-              && (IsDirectObjectProp(f.innerType)
-                  || f.innerType == "InterfaceProperty")) {
-            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
-        }
-        else if (f.TypeName == "OptionalProperty"
-              && IsWeakLikeProp(f.innerType)) {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+              && (IsDirectObjectProp(f.innerType) || f.innerType == "InterfaceProperty"
+                  || IsWeakLikeProp(f.innerType))) {
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, f.innerType);
+            int32_t gate = -1;
+            bool keep = false;
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag) {
+                gate = ol.innerSize;
+                keep = true;
+            } else if (ol.layout == Ubel::OptionalLayout::Intrusive
+                       && (f.innerType == "ObjectProperty" || f.innerType == "ClassProperty")) {
+                keep = true;
+            }
+            if (keep) {
+                if (IsWeakLikeProp(f.innerType))
+                    out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, gate });
+                else
+                    out.directPointers.push_back({ absOffset, fullName, f.TypeName, gate });
+            }
         }
         // --- DelegateProperty (single FScriptDelegate) ---
         // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(8/12B) }.
@@ -3644,7 +3667,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
         for (const auto& pfe : meta.directPointers) {
             uintptr_t ptr = 0;
-            if (!Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
+            if (!OptionalGateOpen(obj + pfe.offset, pfe.setFlagOffset)
+                || !Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
             if (ptr != target) continue;
 
             ReferenceMatch m;
@@ -3665,7 +3689,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 
         // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
         for (const auto& wpe : meta.weakLikePointers) {
-            uintptr_t resolved = ResolveWeakAt(obj + wpe.offset);
+            uintptr_t resolved = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
+                ? ResolveWeakAt(obj + wpe.offset) : 0;
             if (resolved != target) continue;
 
             ReferenceMatch m;
@@ -4060,12 +4085,14 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
     for (const auto& pfe : meta.directPointers) {
         uintptr_t ptr = 0;
-        if (!Macht::ReadSafe(obj + pfe.offset, ptr) || !ptr) continue;
+        if (!OptionalGateOpen(obj + pfe.offset, pfe.setFlagOffset)
+            || !Macht::ReadSafe(obj + pfe.offset, ptr) || !ptr) continue;
         if (emit(ptr, pfe.offset, pfe.name, pfe.typeName, kEmpty, -1, 0, 0)) return;
     }
     // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
     for (const auto& wpe : meta.weakLikePointers) {
-        uintptr_t r = ResolveWeakAt(obj + wpe.offset);
+        uintptr_t r = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
+            ? ResolveWeakAt(obj + wpe.offset) : 0;
         if (!r) continue;
         if (emit(r, wpe.offset, wpe.name, wpe.typeName, kEmpty, -1, 0, 0)) return;
     }
@@ -4195,14 +4222,16 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
                 // Direct Object/Class/Interface pointers in the element struct.
                 for (const auto& pfe : emeta.directPointers) {
                     uintptr_t ptr = 0;
-                    if (!Macht::ReadSafe(structBase + pfe.offset, ptr) || !ptr) continue;
+                    if (!OptionalGateOpen(structBase + pfe.offset, pfe.setFlagOffset)
+                        || !Macht::ReadSafe(structBase + pfe.offset, ptr) || !ptr) continue;
                     if (emit(ptr, cfe.offset, cfe.name + sides[s].suffix,
                              fieldType, kStructProp, e, cfe.stride, sides[s].within + pfe.offset))
                         return;
                 }
                 // Weak/soft/lazy single pointers in the element struct.
                 for (const auto& wpe : emeta.weakLikePointers) {
-                    uintptr_t r = ResolveWeakAt(structBase + wpe.offset);
+                    uintptr_t r = OptionalGateOpen(structBase + wpe.offset, wpe.setFlagOffset)
+                        ? ResolveWeakAt(structBase + wpe.offset) : 0;
                     if (!r) continue;
                     if (emit(r, cfe.offset, cfe.name + sides[s].suffix,
                              fieldType, kStructProp, e, cfe.stride, sides[s].within + wpe.offset))

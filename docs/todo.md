@@ -2596,7 +2596,7 @@ the three reads therefore land one field late:
     at a fixed `UPROPERTY_OFFSET + 0x2C`. Their `{0, ±4, ±8, ±0x10}` spread already covers 0x28 and
     the CPN +8, so only the probe ORDER differs on 4.11-4.17. Left as is.
 
-##### ⛔ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty
+##### ✅ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty (FIXED IN SOURCE 2026-09-11)
 
 `Ubel.cpp:5770-5839`. UE decides "set" through `ValueProperty->HasIntrusiveUnsetOptionalState()`.
 Checked at every tag from 5.3 (where `FOptionalProperty` first appears; the comment's "5.2+" is off)
@@ -2632,6 +2632,45 @@ to 5.8.2:
   non-intrusive too. The build-530 sentinel arms were measured on a 5.5 title, so a default-constructed
   unset `TOptional<FString>` on 5.4 would read as set `""`. The DumperTest 5.4 fixture has
   `Opt_Str_Set` but no `Opt_Str_Unset`.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B08).
+  - **UE's CalcSize, matched exactly.** `Ubel::ClassifyOptionalLayout(fi.Size, sizeof(T), alignof(T))`:
+    - intrusive only when `fi.Size == sizeof(T)`;
+    - trailing flag only when `fi.Size == Align(sizeof(T)+1, alignof(T))`;
+    - anything else is refused with a reason.
+    - It uses no version gate and no loose "bigger than T". It was checked against UE 5.8's
+      `PropertyOptional.h` and the Array / Set / Map / Object property sources.
+  - **Shared resolver.** `Ubel::ResolveOptionalLayout` resolves the value property, its size and
+    its alignment. The walker and Find Refs both use it.
+  - **Walker.** It decides set / unset by the layout and decodes the value only when set.
+    - An intrusive optional uses its per-type sentinel: `ArrayMax == -1` at +12 for TArray /
+      FString, FName `~0u`, FText null, a non-nullable object null.
+    - An intrusive TSet / TMap / struct is refused, never guessed: UE 5.8's sparse and compact
+      sets store different unset states.
+    - A `TOptional<UObject*>` set to null shows `(set: null)`.
+    - The okProbe refusal still comes first.
+  - **Find Refs, in the same change.** The pointer entries carry `setFlagOffset`, and all six scans
+    over them check `OptionalGateOpen`. A layout it cannot prove is not bucketed.
+  - **The 🟡 lead above is closed by the same rule:** a 5.3 / 5.4 FString optional is sized as a
+    trailing flag (24 bytes) and read through its flag.
+  - `technical-notes.md` § OptionalProperty is rewritten.
+  - **Tests, red first.** `dll_core_test` OPTLAYOUT is a pool-faking block, and 9 checks started red:
+    - a reset object optional that published a stale name and pointer;
+    - an optional set to null that read `(unset)`;
+    - an intrusive TArray, unset and set, whose flag came from the neighbour's byte;
+    - the 5.4-shape FString that read `""`;
+    - an unrecognised size that was not refused;
+    - Find Refs' enumerator emitting the stale pointer.
+  - **Controls, green throughout:** the set pointer, the set-empty string, Find Refs on a set
+    optional, and the UNREADVAL TOptional cases (unchanged: an 8-byte optional of an 8-byte object
+    is the intrusive layout). `dll_helpers_test` pins `ClassifyOptionalLayout`.
+  - ⚠ **Coverage, stated honestly:** of the six Find Refs scan sites, only
+    `EnumerateOutgoingObjectPtrs`' direct-pointer site is driven by a test, because
+    `FindReferencesToUObject` needs a live object array. The other five carry the identical
+    one-line gate.
+  - 🟡 **Leads, not filed:**
+    - Value Scan V1c's `optionalFlagOffset` still assumes a trailing flag, so an intrusive 5.5+
+      FString optional gates on its neighbour's byte.
+    - Find Refs' descent into a `TOptional<FStruct>` still assumes an unset slot is zeroed.
 
 ##### ✅ `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask (FIXED IN SOURCE 2026-09-11)
 
@@ -2828,7 +2867,7 @@ be trusted"*.
 ⬜ **For the fix pass:**
 - ✅ `[A2-UFUNC-TAIL-4X]` + the `WalkFunctions` +0x2C lead form one "UE 4.11-4.17 layout" change: a
   version-keyed constexpr pinned at the 4.17 / 4.18 boundary. (Done 2026-09-11, batch B07.)
-- `[A2-TOPTIONAL-INTRUSIVE]` + the Find Refs twin + `technical-notes.md` land together.
+- ✅ `[A2-TOPTIONAL-INTRUSIVE]` + the Find Refs twin + `technical-notes.md` land together. (Done 2026-09-11, batch B08.)
 - `[A2-WALKCLASSEX-UNMAPPED]` + the `GetCachedStructFields` twin land together, with the `VirtualFree`
   test.
 - `[A2-GNAMES-PTRSCAN-ABORT]` joins `[P1-GENAU-ABORT]`.
@@ -3672,6 +3711,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip) |
 | 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0 |
 | 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957 |
+| 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3711,6 +3751,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **Invoke:** FIRE a function that has an out-param or a return value. It completes, and the game survives several repeats; the old buffer was undersized inside the game.
 3. **Param types:** in UProperty mode, the invoke dialog shows each Object param's class and each Struct param's struct name.
 4. **CE form:** use Copy CE Invoke Script on a function with an out FString. The script's zero-fill loop covers the whole param span. Run it twice after a Freeze rescan: no crash. | a 4.11-4.17 title + UI; **CE for step 4 — announce first** |
+| L12 | `[A2-TOPTIONAL-INTRUSIVE]` | On DumperTest **5.4** and **5.8** (the fixture's `Opt_*` fields; add `Opt_Str_Unset` if it is still missing), with the NEW DLL:
+1. **Object optional:** set it to an actor, and the row shows the actor. After `Reset()` it reads `(unset)` with no → navigation. Set it to null, and it reads `(set: null)`.
+2. **Container optional (5.8):** an unset `TOptional<TArray<…>>` reads `(unset)` whatever its neighbour holds, and a set one reads set.
+3. **String optional:** on 5.4, an unset `TOptional<FString>` reads `(unset)`, not `""`. On 5.8 the same holds through the intrusive sentinel.
+4. **Find Refs:** while the optional is reset, Find Refs to the actor finds no hit on it; once it is set, the hit is back. | DumperTest 5.4 + 5.8 + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3740,7 +3785,7 @@ completeness critic.
 | ✅ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
 | ✅ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
 | ✅ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
-| ⬜ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
+| ✅ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
 | ⬜ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
 | ⬜ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
 | ⬜ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |

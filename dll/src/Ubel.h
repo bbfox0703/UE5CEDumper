@@ -853,6 +853,41 @@ inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
     return BoolLayout::Unresolved;
 }
 
+/// Which of UE's two TOptional layouts an FOptionalProperty uses. [A2-TOPTIONAL-INTRUSIVE]
+/// INTRUSIVE: the value property has an intrusive unset state, the optional is exactly sizeof(T),
+/// and "unset" is a special value of T itself. TRAILING FLAG: `{ T value; bool bIsSet; }`, the flag
+/// at +sizeof(T). UNKNOWN: the size matches neither, so the set state is refused, never guessed.
+enum class OptionalLayout { Unknown, Intrusive, TrailingFlag };
+
+/// UE's own CalcSize (UE 5.8 PropertyOptional.h, FOptionalPropertyLayout::CalcSize): intrusive ->
+/// ValueProperty->GetSize(); otherwise Align(ValueProperty->GetSize() + 1, GetMinAlignment()).
+/// Matched EXACTLY. ⛔ Never a loose "optionalSize > innerSize means a trailing flag": a garbage
+/// innerSize would send an intrusive field back to reading its neighbour's first byte. And never a
+/// version gate: from 5.5 intrusiveness is per type and per CPF_NonNullable, so only the size says.
+inline OptionalLayout ClassifyOptionalLayout(int32_t optionalSize, int32_t innerSize,
+                                             int32_t innerAlign) {
+    if (optionalSize <= 0 || innerSize <= 0) return OptionalLayout::Unknown;
+    if (optionalSize == innerSize) return OptionalLayout::Intrusive;
+    if (innerAlign > 0 && (innerAlign & (innerAlign - 1)) == 0) {
+        const int64_t want = ((static_cast<int64_t>(innerSize) + innerAlign) / innerAlign) * innerAlign;
+        if (optionalSize == want) return OptionalLayout::TrailingFlag;
+    }
+    return OptionalLayout::Unknown;
+}
+
+/// An OptionalProperty's layout, resolved from the live property: the wrapped value property,
+/// its type, size and alignment, and the verdict of ClassifyOptionalLayout. Shared by the walker
+/// and Find Refs so the two cannot hold different beliefs again. [A2-TOPTIONAL-INTRUSIVE]
+struct OptionalLayoutInfo {
+    OptionalLayout layout = OptionalLayout::Unknown;
+    uintptr_t      innerProp = 0;
+    std::string    innerType;
+    int32_t        innerSize = 0;
+    int32_t        innerAlign = 0;
+};
+OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optionalSize,
+                                         const std::string& knownInnerType);
+
 /// True when the first 8 bytes look like a real vtable pointer: non-null,
 /// 8-byte aligned, and inside the x64 user-mode canonical range. A float pair
 /// (0x400000003F800000), a double (0x40934A0000000000) and an FLinearColor's

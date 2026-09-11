@@ -889,11 +889,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE and UFUNCWALK below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE and UFUNCWALK are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -1515,6 +1515,177 @@ int main() {
         DynOff::UPROPERTY_OFFSET    = savedOffW;
         DynOff::bCasePreservingName = savedCpnW;
         DynOff::bUseFProperty       = savedFPropW;
+    }
+
+    // -- OPTLAYOUT-2026-09-11 -- TOptional set/unset follows the LAYOUT, not the inner type's name --
+    //
+    // ⛔ POOL-FAKING, like IFACEREAD / UNREADVAL / BOOLNATIVE / UFUNCWALK: the walker and Find Refs
+    // pick their TOptional arm by type NAME out of the pool. Own pool, installed first.
+    //
+    // [A2-TOPTIONAL-INTRUSIVE]. UE decides "set" through ValueProperty->HasIntrusiveUnsetOptionalState()
+    // and sizes the property by FOptionalPropertyLayout::CalcSize (UE 5.8 PropertyOptional.h):
+    // intrusive -> sizeof(T); otherwise Align(sizeof(T) + 1, alignof(T)) with the bIsSet byte at
+    // +sizeof(T). The walker instead decided by the inner type's NAME: an object optional was
+    // "unset" when its pointer was null (a TOptional<AActor*> set to null showed (unset); after
+    // Reset(), which writes no bytes, the stale pointer was published), and a container optional read
+    // its bIsSet at field + sizeof(T) -- the NEXT property's first byte. Find Refs held the same belief.
+    {
+        blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
+
+        static uint8_t olEntry[7][0x40] = {};
+        const char* olNames[7] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+                                   "StrProperty", "Opt", "Inner" };
+        static uintptr_t olChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
+            olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
+        }
+        static uintptr_t olChunks[2] = { reinterpret_cast<uintptr_t>(olChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(olChunks), 0x10);
+        check("OPTLAYOUT setup: the pool resolves OptionalProperty",
+              Serie::GetString(1) == "OptionalProperty", Serie::GetString(1).c_str());
+
+        const bool     savedFPropO = DynOff::bUseFProperty;
+        const bool     savedCpnO   = DynOff::bCasePreservingName;
+        const uint32_t savedVerO   = g_cachedUEVersion;
+        DynOff::bUseFProperty       = true;
+        DynOff::bCasePreservingName = false;
+        g_cachedUEVersion           = 505;
+
+        static uint8_t olFC[5][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            *reinterpret_cast<int32_t*>(olFC[nameIdx] + DynOff::FFIELDCLASS_NAME) = nameIdx;
+            return reinterpret_cast<uintptr_t>(olFC[nameIdx]);
+        };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        // The wrapped value properties: ObjectProperty (8), ArrayProperty (16), StrProperty (16).
+        static uint8_t olInner[3][0x100] = {};
+        auto inner = [&](int k, int typeIdx, int32_t size) {
+            putP(olInner[k], DynOff::FFIELD_CLASS, fclass(typeIdx));
+            put32(olInner[k], DynOff::FFIELD_NAME, 6);
+            put32(olInner[k], DynOff::FPROPERTY_ELEMSIZE, size);
+            return reinterpret_cast<uintptr_t>(olInner[k]);
+        };
+        const uintptr_t innerObj = inner(0, 2, 8);
+        const uintptr_t innerArr = inner(1, 3, 16);
+        const uintptr_t innerStr = inner(2, 4, 16);
+
+        // ONE class + property + object per case (s_walkClassCache and the ref-meta cache are
+        // keyed by class address). The optional field sits at +0x40 of its object; the object's
+        // UClass pointer is at OFF_UOBJECT_CLASS so Find Refs can reach the class.
+        constexpr int32_t kField = 0x40;
+        static uint8_t olProp[9][0x100] = {}, olCls[9][0x100] = {}, olObj[9][0x200] = {};
+        static uint8_t olStale[0x100] = {};                 // a "UObject" a reset optional still points at
+        const uintptr_t stale = reinterpret_cast<uintptr_t>(olStale);
+        int olNext = 0;
+        auto makeCase = [&](int32_t optSize, uintptr_t innerProp) {
+            const int i = olNext++;
+            putP(olProp[i], DynOff::FFIELD_CLASS, fclass(1));
+            put32(olProp[i], DynOff::FFIELD_NAME, 5);
+            put32(olProp[i], DynOff::FPROPERTY_OFFSET, kField);
+            put32(olProp[i], DynOff::FPROPERTY_ELEMSIZE, optSize);
+            put32(olProp[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(olProp[i], DynOff::FARRAYPROP_INNER, innerProp);
+            put32(olCls[i], DynOff::USTRUCT_PROPSSIZE, 0x200);
+            putP(olCls[i], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(olProp[i]));
+            putP(olObj[i], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(olCls[i]));
+            return i;
+        };
+        auto walk = [&](const char* who, int i) -> Ubel::LiveFieldValue {
+            const auto r = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(olObj[i]),
+                                              reinterpret_cast<uintptr_t>(olCls[i]), 64, 2, false);
+            // Anti-vacuity: "(unset)" / "!= (unset)" would both be satisfied by a missing field.
+            check((std::string("OPTLAYOUT control: ") + who + " -- exactly one OptionalProperty field").c_str(),
+                  r.fields.size() == 1 && r.fields[0].typeName == "OptionalProperty",
+                  std::to_string(r.fields.size()).c_str());
+            return r.fields.empty() ? Ubel::LiveFieldValue{} : r.fields[0];
+        };
+        auto isRefusal = [](const std::string& s) {
+            return s.find("unreadable") != std::string::npos || s.find("not recognised") != std::string::npos
+                || s.find("not decoded") != std::string::npos;
+        };
+
+        // A. TOptional<UObject*>, NON-intrusive (16 = Align(8+1, 8)), after Reset(): the pointer bytes
+        //    are still there, bIsSet (+8) is 0. UE says UNSET, and the stale pointer must not escape.
+        const int cA = makeCase(16, innerObj);
+        putP(olObj[cA], kField, stale);
+        olObj[cA][kField + 8] = 0;
+        const auto fA = walk("reset object optional", cA);
+        check("OPTLAYOUT ⭐: a RESET non-intrusive object optional reads (unset)",
+              fA.typedValue == "(unset)", fA.typedValue.c_str());
+        check("OPTLAYOUT ⭐: ...and publishes NO stale, drillable pointer", fA.ptrValue == 0);
+
+        // B. The same optional SET to nullptr: bIsSet 1, pointer 0. UE says SET.
+        const int cB = makeCase(16, innerObj);
+        olObj[cB][kField + 8] = 1;
+        const auto fB = walk("object optional set to null", cB);
+        check("OPTLAYOUT ⭐: an object optional SET to null is not (unset)",
+              fB.typedValue != "(unset)" && !isRefusal(fB.typedValue), fB.typedValue.c_str());
+
+        // A2 (control, green both ways). Set, pointing at a live object.
+        const int cA2 = makeCase(16, innerObj);
+        putP(olObj[cA2], kField, stale);
+        olObj[cA2][kField + 8] = 1;
+        const auto fA2 = walk("set object optional", cA2);
+        check("OPTLAYOUT control: a SET object optional publishes its pointer", fA2.ptrValue == stale);
+
+        // C. TOptional<TArray>, INTRUSIVE (UE 5.5+: 16 == sizeof(TArray)): unset is ArrayMax == -1 at
+        //    +12. The byte at +16 belongs to the NEXT property and must decide nothing.
+        const int cC = makeCase(16, innerArr);
+        put32(olObj[cC], kField + 12, -1);
+        olObj[cC][kField + 16] = 1;
+        const auto fC = walk("unset intrusive array optional", cC);
+        check("OPTLAYOUT ⭐: an intrusive TArray optional with ArrayMax -1 reads (unset)",
+              fC.typedValue == "(unset)", fC.typedValue.c_str());
+
+        // D. The same, SET (ArrayMax 4), with a zero neighbour byte.
+        const int cD = makeCase(16, innerArr);
+        put32(olObj[cD], kField + 8, 0);
+        put32(olObj[cD], kField + 12, 4);
+        olObj[cD][kField + 16] = 0;
+        const auto fD = walk("set intrusive array optional", cD);
+        check("OPTLAYOUT ⭐: an intrusive TArray optional with a real ArrayMax is SET",
+              fD.typedValue != "(unset)" && !isRefusal(fD.typedValue), fD.typedValue.c_str());
+
+        // E. TOptional<FString>, NON-intrusive -- the UE 5.3 / 5.4 shape (24 = Align(16+1, 8)), bIsSet
+        //    at +16. Unset with an all-zero FString, whose ArrayMax is 0, not the 5.5+ sentinel -1.
+        const int cE = makeCase(24, innerStr);
+        olObj[cE][kField + 16] = 0;
+        const auto fE = walk("unset non-intrusive string optional", cE);
+        check("OPTLAYOUT ⭐: a 5.4-shape unset FString optional reads (unset), not set-and-empty",
+              fE.typedValue == "(unset)", fE.typedValue.c_str());
+
+        // E2 (control, green both ways). Set, empty.
+        const int cE2 = makeCase(24, innerStr);
+        olObj[cE2][kField + 16] = 1;
+        const auto fE2 = walk("set empty string optional", cE2);
+        check("OPTLAYOUT control: a set, empty FString optional reads \"\"",
+              fE2.typedValue == "\"\"", fE2.typedValue.c_str());
+
+        // F. A size that matches NEITHER layout (20 for an 8-byte pointer): refuse, never guess.
+        const int cF = makeCase(20, innerObj);
+        putP(olObj[cF], kField, stale);
+        const auto fF = walk("unrecognised optional layout", cF);
+        check("OPTLAYOUT ⭐: an optional whose size fits neither layout is REFUSED",
+              isRefusal(fF.typedValue), fF.typedValue.c_str());
+        check("OPTLAYOUT ⭐: ...and publishes no pointer", fF.ptrValue == 0);
+
+        // G. Find Refs' twin: the outgoing-pointer enumerator (the per-object read Find Refs mirrors)
+        //    must not report a RESET optional's stale pointer as a live reference.
+        auto hitsOf = [&](int i) {
+            int hits = 0;
+            Aura::EnumerateOutgoingObjectPtrs(reinterpret_cast<uintptr_t>(olObj[i]),
+                [&](uintptr_t child, auto&&...) -> bool { if (child == stale) ++hits; return false; });
+            return hits;
+        };
+        check("OPTLAYOUT control: Find Refs sees a SET optional's pointer", hitsOf(cA2) == 1);
+        check("OPTLAYOUT ⭐: Find Refs does NOT report a RESET optional's stale pointer", hitsOf(cA) == 0);
+
+        g_cachedUEVersion           = savedVerO;
+        DynOff::bCasePreservingName = savedCpnO;
+        DynOff::bUseFProperty       = savedFPropO;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

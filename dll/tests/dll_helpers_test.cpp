@@ -7420,6 +7420,34 @@ static void Test_Ubel_ClassifyBoolLayout() {
     EXPECT("FF mask at a non-zero byte offset is not native", Ubel::ClassifyBoolLayout(1, 2, 0xFF, 0xFF) == BoolLayout::Unresolved);
 }
 
+// ================================================================
+// Ubel::ClassifyOptionalLayout -- [A2-TOPTIONAL-INTRUSIVE]. UE's CalcSize, matched exactly:
+// intrusive == sizeof(T); trailing flag == Align(sizeof(T) + 1, alignof(T)); anything else refused.
+// ================================================================
+static void Test_Ubel_ClassifyOptionalLayout() {
+    std::printf("Test_Ubel_ClassifyOptionalLayout\n");
+    using Ubel::OptionalLayout;
+    using Ubel::ClassifyOptionalLayout;
+    // Intrusive: the optional IS sizeof(T).
+    EXPECT("intrusive TArray / FString (5.5+): 16 == 16", ClassifyOptionalLayout(16, 16, 8) == OptionalLayout::Intrusive);
+    EXPECT("intrusive non-nullable object: 8 == 8",      ClassifyOptionalLayout(8, 8, 8) == OptionalLayout::Intrusive);
+    // Trailing flag: Align(sizeof(T) + 1, alignof(T)).
+    EXPECT("TOptional<int32>: Align(5,4) = 8",           ClassifyOptionalLayout(8, 4, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<UObject*>: Align(9,8) = 16",       ClassifyOptionalLayout(16, 8, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FString> (5.3/5.4): Align(17,8) = 24", ClassifyOptionalLayout(24, 16, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FName> (5.3/5.4): Align(9,4) = 12", ClassifyOptionalLayout(12, 8, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<uint8>: Align(2,1) = 2",           ClassifyOptionalLayout(2, 1, 1) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FVector> UE5 (doubles): Align(25,8) = 32", ClassifyOptionalLayout(32, 24, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FVector> UE4 (floats): Align(13,4) = 16",  ClassifyOptionalLayout(16, 12, 4) == OptionalLayout::TrailingFlag);
+    // Refused.
+    EXPECT("a size fitting neither layout is Unknown",   ClassifyOptionalLayout(20, 8, 8) == OptionalLayout::Unknown);
+    EXPECT("a loose 'bigger than T' is NOT a trailing flag", ClassifyOptionalLayout(40, 16, 8) == OptionalLayout::Unknown);
+    EXPECT("an unknown alignment cannot prove a trailing flag", ClassifyOptionalLayout(24, 16, 0) == OptionalLayout::Unknown);
+    EXPECT("a non-power-of-two alignment is refused",    ClassifyOptionalLayout(24, 16, 3) == OptionalLayout::Unknown);
+    EXPECT("an unresolved value size is Unknown",        ClassifyOptionalLayout(16, 0, 8) == OptionalLayout::Unknown);
+    EXPECT("a zero optional size is Unknown",            ClassifyOptionalLayout(0, 8, 8) == OptionalLayout::Unknown);
+}
+
 static void Test_Ubel_PreviewScalarValue() {
     std::printf("Test_Ubel_PreviewScalarValue\n");
 
@@ -8220,6 +8248,7 @@ int main() {
     // Ubel — reflected struct preview: member width comes from the property (U17)
     RUN(Test_Ubel_PreviewScalarValue);
     RUN(Test_Ubel_ClassifyBoolLayout);
+    RUN(Test_Ubel_ClassifyOptionalLayout);
 
     // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
     RUN(Test_Ubel_InterpretStructBytes);

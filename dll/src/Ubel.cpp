@@ -1894,6 +1894,39 @@ static int32_t ResolveElementAlignment(const std::string& typeName, int32_t size
     return Scharf::RequiredAlignment(typeName, size, DynOff::bCasePreservingName);
 }
 
+// [A2-TOPTIONAL-INTRUSIVE] See OptionalLayoutInfo (Ubel.h). The wrapped value property sits where
+// FArrayProperty::Inner does (both are FProperty + FProperty*); its alignment is the same answer
+// the TMap geometry uses -- UScriptStruct::MinAlignment for a struct, Scharf's rule otherwise --
+// and an unknown alignment leaves the layout Unknown, which the callers refuse.
+OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optionalSize,
+                                         const std::string& knownInnerType) {
+    OptionalLayoutInfo out;
+    if (!optionalProp) return out;
+    auto [innerProp, probedTn] = ProbeInnerProperty(optionalProp, DynOff::FARRAYPROP_INNER);
+    out.innerProp = innerProp;
+    out.innerType = !knownInnerType.empty() ? knownInnerType : probedTn;
+    if (!innerProp) return out;
+    out.innerSize = ResolveInnerSize(innerProp, out.innerType);
+
+    uintptr_t structAddr = 0;
+    if (out.innerType == "StructProperty") {
+        static const int kDeltas[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
+        for (int d : kDeltas) {
+            const int off = DynOff::FSTRUCTPROP_STRUCT + d;
+            if (off < 0) continue;
+            uintptr_t c = 0;
+            if (!Macht::ReadSafe(innerProp + off, c) || !Grimoire::IsUserspacePointer(c)) continue;
+            const std::string n = GetName(c);
+            if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
+            structAddr = c;
+            break;
+        }
+    }
+    out.innerAlign = ResolveElementAlignment(out.innerType, out.innerSize, structAddr);
+    out.layout = ClassifyOptionalLayout(optionalSize, out.innerSize, out.innerAlign);
+    return out;
+}
+
 // ============================================================
 // GetContainerInnerStructAddr — resolve the inner-element UScriptStruct* of
 // an ArrayProperty / SetProperty whose element is a StructProperty. Both probe
@@ -5733,22 +5766,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle OptionalProperty (UE 5.2+): TOptional<T>.
-        // Two storage layouts:
-        //   - Intrusive (UE 5.4+ for pointer types): T occupies the field
-        //     directly; "unset" is encoded as null/zero. Inner size == fi.Size.
-        //   - Non-intrusive (older + non-pointer T): { T value; uint8 bIsSet; }.
-        //     Trailing flag byte lives at field + sizeof(T).
-        // Scalar/struct inner types use the trailing-flag form. Object/Class/
-        // Interface and the FWeakObjectPtr-shaped types (Weak/Soft/Lazy) treat
-        // null/zero as the unset sentinel.
+        // Handle OptionalProperty (UE 5.3+): TOptional<T>. [A2-TOPTIONAL-INTRUSIVE]
+        // UE's own rule (UE 5.8 PropertyOptional.h, FOptionalPropertyLayout::CalcSize): when the
+        // value property has an intrusive unset state the optional IS sizeof(T); otherwise it is
+        // Align(sizeof(T) + 1, alignof(T)) with the bIsSet byte at +sizeof(T). WHICH types are
+        // intrusive varies by version and by flag (containers and FString/FName/FText from 5.5,
+        // objects only under CPF_NonNullable), so it is read from the SIZE -- see
+        // Ubel::ClassifyOptionalLayout -- and never assumed from the inner type's name. The
+        // name-based belief published a reset TOptional<AActor*>'s stale pointer, showed one set
+        // to null as (unset), and read a container optional's flag from the NEXT property's byte.
         if (fi.TypeName == "OptionalProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            // Probe inner ValueProperty (same offset as ArrayProperty::Inner —
-            // both subclasses are FProperty + FProperty*).
-            auto [innerProp, probedTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
-            std::string innerTn = !fi.innerType.empty() ? fi.innerType : probedTn;
-            int32_t innerSize = innerProp ? ResolveInnerSize(innerProp, innerTn) : 0;
+            // The wrapped value property, its size and alignment, and the layout they imply.
+            const OptionalLayoutInfo ol = ResolveOptionalLayout(fi.Address, fi.Size, fi.innerType);
+            const uintptr_t   innerProp = ol.innerProp;
+            const std::string innerTn   = ol.innerType;
+            const int32_t     innerSize = ol.innerSize;
 
             const bool isObjectLike = innerTn == "ObjectProperty"
                                    || innerTn == "ClassProperty"
@@ -5796,75 +5829,80 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // bare `isSet = (...)` its tiers score as no use at all.
             bool okProbe = true;
 
-            if (isObjectLike) {
-                uintptr_t ptr = 0;
-                okProbe = Macht::ReadSafe(fieldAddr, ptr);
-                if (ptr) {
-                    isSet = true;
-                    fv.ptrValue = ptr;
-                    fv.ptrName  = GetName(ptr);
-                    uintptr_t cls = GetClass(ptr);
-                    if (cls) {
-                        fv.ptrClassName = GetName(cls);
-                        fv.ptrClassAddr = cls;
-                    }
-                }
-            } else if (isWeakLike) {
-                // Embedded FWeakObjectPtr at field+0; unset sentinel is { 0, 0 }.
-                int32_t objIdx = 0, serial = 0;
-                const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
-                const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
-                okProbe = okIdx && okSerial;
-                isSet = (objIdx != 0 || serial != 0);
-                uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
-                if (resolved) {
-                    fv.ptrValue = resolved;
-                    fv.ptrName  = GetName(resolved);
-                    uintptr_t cls = GetClass(resolved);
-                    if (cls) {
-                        fv.ptrClassName = GetName(cls);
-                        fv.ptrClassAddr = cls;
-                    }
-                }
-            } else if (isStrInner) {
+            // [A2-TOPTIONAL-INTRUSIVE] The discriminator is the LAYOUT's:
+            //   * TRAILING FLAG -- bIsSet at +sizeof(T). A reset optional keeps its old value bytes,
+            //     so the value is decoded below ONLY when the flag is set.
+            //   * INTRUSIVE -- T's own unset state: TArray / FString ArrayMax == -1 at +12, FName
+            //     ComparisonIndex == ~0u, FText TextData == null, a non-nullable object == null.
+            //     Any other intrusive type (TSet / TMap, whose unset state differs between UE 5.8's
+            //     sparse and compact sets; a struct; ...) is REFUSED, never guessed.
+            //   * a size that fits neither -- REFUSED.
+            std::string refusal;
+            if (ol.layout == OptionalLayout::Unknown) {
+                char why[112];
+                snprintf(why, sizeof(why), "(optional layout not recognised: size %d, value %d)",
+                         fi.Size, innerSize);
+                refusal = why;
+            } else if (ol.layout == OptionalLayout::TrailingFlag) {
+                uint8_t bIsSet = 0;
+                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
+                isSet = (bIsSet != 0);
+            } else if (isStrInner || innerTn == "ArrayProperty") {
                 int32_t arrayMax = 0;
-                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means
-                // SET. Without okProbe this arm published `""` — "set, but empty".
+                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means SET.
                 okProbe = Macht::ReadSafe(fieldAddr + 12, arrayMax);
                 isSet = (arrayMax != -1);
-                if (isSet) {
-                    std::string s = ReadFString(fieldAddr, 0);
-                    if (!s.empty()) fv.strValue = std::move(s);
-                }
             } else if (isNameInner) {
                 uint32_t compIdx = 0;
-                // ⚠ Same dangerous direction as isStrInner: sentinel 0xFFFFFFFF, so 0 = SET.
+                // ⚠ Same dangerous direction: the sentinel is 0xFFFFFFFF, so 0 = SET.
                 okProbe = Macht::ReadSafe(fieldAddr, compIdx);
                 isSet = (compIdx != 0xFFFFFFFFu);
-                if (isSet) {
-                    std::string n = ReadFName(fieldAddr);
-                    if (!n.empty()) fv.strValue = std::move(n);
-                }
             } else if (isTextInner) {
                 uintptr_t textData = 0;
                 okProbe = Macht::ReadSafe(fieldAddr, textData);
                 isSet = (textData != 0);
-                // FText display (audit #5 U11): decode via ReadFTextString, which follows
-                // the ITextData* at FText+0 and scans it for the display FString — the SAME
-                // decoder the plain TextProperty path uses. The old code read an inline
-                // FString at FText+0x10 -- the uint32 Flags on UE<=5.3, and past the END of the
-                // 16-byte FText on 5.4+ (the display string is NOT there either way), so it
-                // produced garbage or "" for a real value.
-                if (isSet) {
+            } else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty") {
+                // Intrusive only under CPF_NonNullable, where null IS the unset state.
+                uintptr_t ptr = 0;
+                okProbe = Macht::ReadSafe(fieldAddr, ptr);
+                isSet = (ptr != 0);
+            } else {
+                refusal = "(optional: the unset state of an intrusive " + innerTn + " is not decoded)";
+            }
+
+            // Decode the value only for a SET optional whose discriminator was read -- never a
+            // reset optional's leftover bytes.
+            if (refusal.empty() && okProbe && isSet) {
+                auto fillPtr = [&](uintptr_t p) {
+                    fv.ptrValue = p;
+                    fv.ptrName  = GetName(p);
+                    uintptr_t cls = GetClass(p);
+                    if (cls) {
+                        fv.ptrClassName = GetName(cls);
+                        fv.ptrClassAddr = cls;
+                    }
+                };
+                if (isObjectLike) {
+                    uintptr_t ptr = 0;
+                    if (Macht::ReadSafe(fieldAddr, ptr) && ptr) fillPtr(ptr);
+                } else if (isWeakLike) {
+                    // Embedded FWeakObjectPtr at field+0.
+                    int32_t objIdx = 0, serial = 0;
+                    if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
+                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) fillPtr(resolved);
+                    }
+                } else if (isStrInner) {
+                    std::string s = ReadFString(fieldAddr, 0);
+                    if (!s.empty()) fv.strValue = std::move(s);
+                } else if (isNameInner) {
+                    std::string n = ReadFName(fieldAddr);
+                    if (!n.empty()) fv.strValue = std::move(n);
+                } else if (isTextInner) {
+                    // FText display (audit #5 U11): ReadFTextString follows the ITextData* at
+                    // FText+0 -- the SAME decoder the plain TextProperty path uses.
                     std::string s = ReadFTextString(fieldAddr);
                     if (!s.empty()) fv.strValue = std::move(s);
                 }
-            } else if (innerSize > 0) {
-                // Scalar/struct (no intrusive specialization): trailing
-                // bIsSet at field + innerSize.
-                uint8_t bIsSet = 0;
-                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
-                isSet = (bIsSet != 0);
             }
 
             // Inner-struct surfacing: when the wrapped T is a StructProperty
@@ -5874,9 +5912,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // drill-down and CE XML / CSX export through the standard
             // struct path — no additional field on LiveFieldValue required.
             //
-            // Layout reminder: TOptional<T> for struct T is always
-            // non-intrusive — { T value; uint8 bIsSet; } — so the value
-            // lives at fieldAddr+0 (same as the bare struct case).
+            // Layout reminder: the value lives at fieldAddr+0 in BOTH layouts
+            // (same as the bare struct case). An intrusive struct optional is
+            // refused above, so only a set trailing-flag one reaches here.
             //
             // Address Finder + Find Refs descend through OptionalProperty
             // mirroring StructProperty (see Aura.cpp::CollectContainersRecursive
@@ -5946,7 +5984,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // ⛔ THE REFUSAL COMES FIRST, BEFORE BOTH "(unset)" AND "(set)". Whichever way
             // the sentinel test happened to fall, a discriminator we could not read decides
             // nothing -- see the block comment on okProbe above.
-            if (!okProbe) {
+            if (!refusal.empty()) {
+                fv.typedValue = refusal;   // the set state could not be decided; say why
+            } else if (!okProbe) {
                 fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
             } else if (!isSet) {
                 fv.typedValue = "(unset)";
@@ -5958,7 +5998,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 } else if (isWeakLike) {
                     fv.typedValue = "(stale)";
                 } else {
-                    fv.typedValue = "(set)";
+                    // A TOptional<UObject*> can be SET to null; that is not "(unset)".
+                    fv.typedValue = fv.ptrValue ? "(set)" : "(set: null)";
                 }
             } else if (gotStructPreview) {
                 // Struct preview already populated fv.typedValue above.
