@@ -2031,6 +2031,216 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // [W5-CEXML-FSTRING] FString-family container elements
+    // ========================================
+    //
+    // A TArray element, a TMap key or value, or a struct-array element's member of the FString family
+    // was DROPPED -- an empty element folder or a placeholder -- while the same type exports as a working
+    // CE String everywhere else. They must take the CE String encoding (Length / Unicode / CodePage /
+    // ZeroTerminate, one Data-pointer hop), never EmitLeaf, which cannot write those.
+
+    private static int CountOf(string xml, string needle) =>
+        System.Text.RegularExpressions.Regex.Matches(
+            xml, System.Text.RegularExpressions.Regex.Escape(needle)).Count;
+
+    [Theory]
+    [InlineData("StrProperty",     1, 0)]   // FString:     UTF-16
+    [InlineData("Utf8StrProperty", 0, 1)]   // FUtf8String: UTF-8 bytes (CodePage)
+    [InlineData("AnsiStrProperty", 0, 0)]   // FAnsiString: ANSI bytes
+    public void StringArray_elements_are_CE_Strings(string inner, int unicode, int codepage)
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Names", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = inner, ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "Alice" },
+                    new() { Index = 1, Value = "Bob" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Equal(2, CountOf(xml, "<VariableType>String</VariableType>"));
+        Assert.Equal(2, CountOf(xml, "<Length>"));
+        Assert.Equal(2, CountOf(xml, $"<Unicode>{unicode}</Unicode>"));
+        Assert.Equal(2, CountOf(xml, $"<CodePage>{codepage}</CodePage>"));
+        Assert.Equal(2, CountOf(xml, "<ZeroTerminate>1</ZeroTerminate>"));
+        // Element [1] at +10 (a 16-byte FString header), one Data-pointer hop to its characters.
+        Assert.Matches(@"<Address>\+10</Address>\s*<Offsets>\s*<Offset>0</Offset>\s*</Offsets>", xml);
+    }
+
+    [Fact]
+    public void StringArray_fabricated_tail_is_CE_Strings_too()
+    {
+        // Copy CE Field's fabricate: rows past Num at +i*ElemSize, by the generic path's rule -- they read
+        // past-the-end headers (CE shows unknowns) until the game grows the array.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Names", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "StrProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "Alice" },
+                    new() { Index = 1, Value = "Bob" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, fabricateArrayCount: 4);
+
+        Assert.Equal(4, CountOf(xml, "<VariableType>String</VariableType>"));
+        Assert.Matches(
+            @"""\[3\][^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*<VariableType>String</VariableType>"
+            + @"(?:(?!</CheatEntry>)[\s\S])*<Address>\+30</Address>", xml);   // [3] at 3 * 16
+    }
+
+    [Fact]
+    public void StringMap_key_and_value_are_CE_Strings()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Nicknames", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+                MapCount = 1, MapKeyType = "StrProperty", MapValueType = "Utf8StrProperty",
+                MapKeySize = 16, MapValueSize = 16,
+                MapElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "Alice", Value = "Ally" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Equal(2, CountOf(xml, "<VariableType>String</VariableType>"));
+        // The key (FString, UTF-16) at +0; the value (FUtf8String, CodePage) at +keySize = +10.
+        Assert.Matches(@"""Key[^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*<Unicode>1</Unicode>", xml);
+        Assert.Matches(
+            @"""Value[^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*<CodePage>1</CodePage>"
+            + @"(?:(?!</CheatEntry>)[\s\S])*<Address>\+10</Address>", xml);
+    }
+
+    [Fact]
+    public void StringKey_survives_the_record_flatten()
+    {
+        // The flatten branch has its own Key leaf -- the same drop, one branch over.
+        var map = new LiveFieldValue
+        {
+            Name = "ByPilot", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+            MapCount = 1, MapKeyType = "StrProperty", MapValueType = "StructProperty",
+            MapKeySize = 16, MapValueSize = 8, MapValueOffset = 16, MapDataAddr = "0x4000",
+            MapValueStructAddr = "0xABC", MapValueStructType = "Rec",
+            MapElements = new List<ContainerElementValue> { new() { Index = 0, Key = "Maverick" } },
+        };
+        // Element 0 value struct addr = MapDataAddr + 0*stride + valOffset = 0x4000 + 16 = 0x4010.
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
+        {
+            ["0x4010"] = new() { new() { Name = "Score", TypeName = "IntProperty", Offset = 0, Size = 4 } },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "Obj", "Cls",
+            new List<LiveFieldValue> { map }, resolvedStructs, flattenLeafRecords: true);
+
+        Assert.Contains("[0] Maverick ▸ Key", xml);
+        Assert.Equal(1, CountOf(xml, "<VariableType>String</VariableType>"));
+    }
+
+    [Fact]
+    public void StructArray_string_member_is_a_CE_String()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Crew", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "StructProperty", ArrayStructType = "CrewMember",
+                ArrayElemSize = 24,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new()
+                    {
+                        Index = 0, Value = "{...}",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "Level", TypeName = "IntProperty", Offset = 0, Size = 4, Value = "3" },
+                            new() { Name = "Callsign", TypeName = "StrProperty", Offset = 8, Size = 16, Value = "Maverick" },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Equal(1, CountOf(xml, "<VariableType>String</VariableType>"));
+        Assert.Matches(
+            @"""Callsign[^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*"
+            + @"<Address>\+8</Address>\s*<Offsets>\s*<Offset>0</Offset>\s*</Offsets>", xml);
+    }
+
+    [Fact]
+    public void TextArray_elements_are_8_byte_leaves_not_a_placeholder()
+    {
+        // FText has no clean CE String encoding (IsTerminalLeafField), so it takes the SCALAR path's
+        // encoding: its first 8 bytes, the ITextData pointer, as hex -- instead of a bare placeholder.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Lines", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "TextProperty", ArrayElemSize = 24,
+                ArrayElements = new List<ArrayElementValue> { new() { Index = 0 }, new() { Index = 1 } },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Per element, not a document-wide count: the export's ROOT entry is an 8-byte pointer too.
+        Assert.Matches(
+            @"""\[0\][^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*<VariableType>8 Bytes</VariableType>"
+            + @"(?:(?!</CheatEntry>)[\s\S])*<Address>\+0</Address>", xml);
+        Assert.Matches(
+            @"""\[1\][^""]*""</Description>(?:(?!</CheatEntry>)[\s\S])*<VariableType>8 Bytes</VariableType>"
+            + @"(?:(?!</CheatEntry>)[\s\S])*<Address>\+18</Address>", xml);   // element [1] at 24 bytes
+    }
+
+    [Fact]
+    public void StringSet_elements_were_already_CE_Strings()
+    {
+        // The control, green before and after: a TSet element reaches EmitFields, whose scalar path
+        // already wrote the CE String -- the encoding the other containers now share.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Tags", TypeName = "SetProperty", Offset = 0x100, Size = 0x50,
+                SetCount = 1, SetElemType = "StrProperty", SetElemSize = 16,
+                SetElements = new List<ContainerElementValue> { new() { Index = 0, Key = "red" } },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Equal(1, CountOf(xml, "<VariableType>String</VariableType>"));
+        Assert.Contains("<Unicode>1</Unicode>", xml);
+    }
+
+    // ========================================
     // CE DropDownList tests
     // ========================================
 

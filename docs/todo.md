@@ -1391,11 +1391,11 @@ SCAN-CORE     1    0    1    0    0    0    0    0
 
 ---
 
-#### The fix list — 5 rows, none repaired
+#### The fix list — 5 rows, +1 filed while fixing B23 (each carries its own ✅/⬜)
 
-**MED** — 1 row.
+**MED** — 2 rows.
 
-1. ⬜ **`[W5-CEXML-FSTRING]`** `CeXmlExportService.cs:3414`. CE XML **drops the whole FString
+1. ✅ **`[W5-CEXML-FSTRING]`** (FIXED IN SOURCE 2026-09-11, batch B23; its TArray half needs `[W5-STRARRAY-ELEMENTS]` to reach a live game) `CeXmlExportService.cs:3414`. CE XML **drops the whole FString
    family** — `StrProperty` / `Utf8StrProperty` / `AnsiStrProperty` — when it is a **TMap key or
    value or a TArray element**, while the same type exports as a working CE String everywhere else.
    `MapInnerTypeToCeField` has no arm for them and returns `null`; `EmitMapProperty`'s
@@ -1404,6 +1404,39 @@ SCAN-CORE     1    0    1    0    0    0    0    0
    container-element path.
    ⛔ **Obvious fix is unsafe**: adding the three arms routes them into `EmitLeaf`, which cannot
    write `Length` / `Unicode` / `CodePage` / `ZeroTerminate` — a CE String needs those.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B23), the safe way: NOT arms in `MapInnerTypeToCeField`.
+   - Every container path checks `IsStringProperty` first and calls `EmitContainerStringLeaf`, which
+     is `EmitStringLeaf` with `Offsets=[0]`: the scalar path's encoding, one Data-pointer hop.
+     `MapInnerTypeToCeField` now carries a ⛔ comment saying why the three types are absent.
+   - **Four entrances, not two:**
+     - the TArray element;
+     - the TMap key, in BOTH the element group and the record-flatten branch;
+     - the TMap value;
+     - a struct-array element's member (`:3211`), found while fixing: it became a placeholder folder.
+   - TSet already worked (its element reaches `EmitFields`) and is the control.
+   - **FText folded in**, as the note below asked: a `TextProperty` arm with the scalar path's 8-byte
+     hex (the ITextData pointer). No clean CE String encoding exists for it.
+   - Copy CE Field's fabricated tail reaches string arrays too, by the generic path's rule.
+   - **Tests, red first:**
+     - the array theory (all three string types, with their Unicode / CodePage flags and the
+       Offsets hop);
+     - the map key and value, the flatten key, the struct member;
+     - the FText array and the fabricated tail.
+     The TSet element is the control. ⚠ The FText test's first form counted `8 Bytes` across the
+     whole document and the export's root is 8 bytes too. It was red for the right reason (1, not
+     2); it now pins each element, and its red is shown by the mutation check.
+   - ⚠ **The TArray half is inert on a live game until `[W5-STRARRAY-ELEMENTS]`.** The exporter
+     emits one leaf per walked element, as for every other array type, and the DLL sends none for a
+     string array.
+1b. ⬜ **`[W5-STRARRAY-ELEMENTS]`** MED (filed 2026-09-11 while fixing B23) `Ubel.cpp:2223`.
+   `IsScalarArrayType` admits no string type, and no other walker phase reads a `TArray<FString>` /
+   `<FUtf8String>` / `<FAnsiString>`. So the walk sends such an array with its count and NO elements.
+   - The Live Walker shows no elements for it.
+   - CE XML's element leaves (B23) have nothing to iterate, so the export is still a placeholder.
+   - Fix: a string phase in the walker, like Phases D–J. It decodes each element with `ReadFString` /
+     `ReadFUtf8String` and is capped by the Array Limit, like every other phase.
+   - Rather than widening `IsScalarArrayType`: its reader (`ReadArrayElements`) decodes raw element
+     bytes, and a string's bytes are a header, not the text.
 
 **LOW** — 4 rows.
 
@@ -1860,7 +1893,7 @@ reason given above.
 #### Widenings to rows already recorded
 
 - ✅ **`[W2-GROUPMATCH-ENUM]`** — its root is `[P3-SNAPNUM-ENUM]`; fix that first. (Both done 2026-09-11, batch B12.)
-- **`[W5-CEXML-FSTRING]` should also carry `TextProperty`.** `MapInnerTypeToCeField` has no FText arm
+- ✅ (done in B23) **`[W5-CEXML-FSTRING]` should also carry `TextProperty`.** `MapInnerTypeToCeField` has no FText arm
   either: `TArray<FText>` becomes a group placeholder and an FText map value leaves an empty folder.
   Low value (`:2581` notes FText has no clean CE encoding) — fold into that row's fix.
 
@@ -4243,6 +4276,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 39 | `[W2-MS-PROMISE]` | LOW | same commit as row 38 (batch B21) | Move Speed without a pawn red first, plus the Hemmung twin (both time lanes, red first). The clause is deleted, not made true |
 | 40 | `[W2-TPREL-MAP]` | MED | `git log --grep W2-TPREL-MAP` (batch B22) | 5 tests red first (the ParsePose key, the directional TP keeping map and source, the add-time read, the connect prime, an unknown map); the reported-map control green both ways. 11/11 mutants killed; UI 5063/5063 |
 | 41 | `[W2-POSEATTACH-QUIETPOLL]` | MED | `git log --grep W2-POSEATTACH-QUIETPOLL` (batch B22b) | 4 tests red first (the quiet poll, a directional TP keeping the state, the disconnect clearing it, the chip bound in the panel); a healthy read clearing it is the control. 5/5 mutants killed; UI 5068/5068 |
+| 42 | `[W5-CEXML-FSTRING]` | MED | `git log --grep W5-CEXML-FSTRING` (batch B23) | 7 tests red first (the 3-row array theory, map key + value, flatten key, struct member, FText array, fabricated tail); the TSet control green both ways. 10/10 mutants killed; UI 5077/5077. ⚠ The TArray half waits on `[W5-STRARRAY-ELEMENTS]` |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4334,6 +4368,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L27 | `[W2-POSEATTACH-QUIETPOLL]` | The `[POSEATTACH-2026-09-10]` case: a pawn attached to a vehicle / mount / moving platform whose world-space read fails.
 1. **Auto only:** turn Auto (0.5s) on and do NOT press ↻. A "⚠ parent-relative" chip shows beside the source chip, and it stays while other status messages come and go.
 2. **Clears:** detach (or disconnect). The chip goes on the next read. | a game + UI |
+| L28 | `[W5-CEXML-FSTRING]` | ⚠ Needs CE. A game with a `TMap` keyed or valued by an FString, and a struct array with an FString member:
+1. **Map / member:** Copy CE XML and paste into CE. The key, value and member rows are CE Strings showing the live text (Unicode for FString; UTF-8 CodePage for FUtf8String).
+2. **TArray<FString>:** needs `[W5-STRARRAY-ELEMENTS]` first; until then it stays a placeholder. | a game + UI + CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4379,7 +4416,8 @@ completeness critic.
 | ✅ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
 | ✅ B22 teleport pose map | `[W2-TPREL-MAP]` | |
 | ✅ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
-| ⬜ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
+| ✅ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
+| ⬜ B23b string-array elements | `[W5-STRARRAY-ELEMENTS]` (filed 2026-09-11 while fixing B23) | |
 | ⬜ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
 | ⬜ B25 xref cap | `[W3-XREF-CAP]` | |
 | ⬜ B26 related stops | `[W4-RELATED-STOPS]` | |

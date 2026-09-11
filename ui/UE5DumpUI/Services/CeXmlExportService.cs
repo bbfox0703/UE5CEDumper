@@ -2774,6 +2774,37 @@ public static class CeXmlExportService
             return;
         }
 
+        // [W5-CEXML-FSTRING] FString-family elements: a CE String per element. They fell through to
+        // the bare placeholder below, because MapInnerTypeToCeField has no arm for them on purpose.
+        if (IsStringProperty(field.ArrayInnerType)
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0
+            && field.ArrayElements is { Count: > 0 })
+        {
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
+            var strIndent = indent + "  ";
+            foreach (var elem in field.ArrayElements)
+            {
+                int elemByteOffset = elem.Index * field.ArrayElemSize;
+                EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
+                    $"+{elemByteOffset:X}", field.ArrayInnerType);
+            }
+            // Copy CE Field's fabricated tail, by the generic path's rule below: rows for [Num .. target)
+            // read past-the-end headers (CE shows unknowns) until the game grows the array.
+            int walkedStr = field.ArrayElements.Count;
+            int targetStr = FabricateActive
+                ? Math.Min(Math.Max(_fabricateArrayCount, walkedStr), MaxFabricateElements)
+                : walkedStr;
+            for (int i = walkedStr; i < targetStr; i++)
+            {
+                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                int elemByteOffset = i * field.ArrayElemSize;
+                EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{i}]", elemByteOffset, null),
+                    $"+{elemByteOffset:X}", field.ArrayInnerType);
+            }
+            EmitGroupClose(sb, indent);
+            return;
+        }
+
         // Map inner type to CE type
         var ceElem = MapInnerTypeToCeField(field.ArrayInnerType, field.ArrayElemSize);
 
@@ -3208,6 +3239,13 @@ public static class CeXmlExportService
 
                 foreach (var sf in elem.StructFields)
                 {
+                    // [W5-CEXML-FSTRING] A string member is a CE String, not a placeholder folder.
+                    if (IsStringProperty(sf.TypeName))
+                    {
+                        EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc(sf.Name, sf.Offset, null),
+                            $"+{sf.Offset:X}", sf.TypeName);
+                        continue;
+                    }
                     var ceField = MapInnerTypeToCeField(sf.TypeName, sf.Size);
                     if (ceField != null)
                     {
@@ -3316,6 +3354,7 @@ public static class CeXmlExportService
         bool valScalar = !valStruct && !IsObjectPropertyType(field.MapValueType);
 
         var ceKey = MapInnerTypeToCeField(field.MapKeyType, field.MapKeySize);
+        bool keyString = IsStringProperty(field.MapKeyType);   // ceKey is null for these [W5-CEXML-FSTRING]
 
         // Shared value DropDownList (rawInt → name) for Name/Enum values.
         string? valueDropDown = null;
@@ -3370,6 +3409,10 @@ public static class CeXmlExportService
                     EmitLeaf(sb, elemIndent,
                         $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
                         ceKey, $"+{elemByteOffset:X}", null);
+                else if (keyString)
+                    EmitContainerStringLeaf(sb, elemIndent,
+                        $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
+                        $"+{elemByteOffset:X}", field.MapKeyType);
                 // Value record fields as flat "[i] key ▸ Field" siblings at the combined offset.
                 EmitFlattenedStruct(sb, elemIndent, new LiveFieldValue
                 {
@@ -3398,6 +3441,8 @@ public static class CeXmlExportService
             // Key leaf at +0 — label only, no baked-in dynamic value.
             if (ceKey != null)
                 EmitLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), ceKey, "+0", null);
+            else if (keyString)
+                EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0", field.MapKeyType);
 
             // Value at +valOffset.
             if (valStruct || IsObjectPropertyType(field.MapValueType))
@@ -3411,7 +3456,10 @@ public static class CeXmlExportService
             else
             {
                 var ceVal = MapInnerTypeToCeField(field.MapValueType, field.MapValueSize);
-                if (ceVal != null)
+                if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
+                    EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null),
+                        $"+{valOffset:X}", field.MapValueType);
+                else if (ceVal != null)
                     EmitLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null), ceVal,
                         $"+{valOffset:X}", null,
                         dropDownListLink: valueDropLink);
@@ -3753,6 +3801,19 @@ public static class CeXmlExportService
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
+
+    /// <summary>
+    /// [W5-CEXML-FSTRING] One FString-family ELEMENT of a container -- a TArray element, a TMap key or
+    /// value, a struct-array element's member. Its header is inline at <paramref name="address"/> and its
+    /// characters one Data-pointer hop away: the same Offsets=[0] encoding as a scalar string.
+    /// <para>⛔ These types are deliberately ABSENT from <see cref="MapInnerTypeToCeField"/>: routing
+    /// them through EmitLeaf would lose Length / Unicode / CodePage / ZeroTerminate, which a CE String
+    /// needs. Every container caller checks <see cref="IsStringProperty"/> first and comes here.</para>
+    /// </summary>
+    private static void EmitContainerStringLeaf(StringBuilder sb, string indent, string description,
+        string address, string typeName) =>
+        EmitStringLeaf(sb, indent, description, address, offsets: [0],
+            unicode: typeName == "StrProperty", codepage: typeName == "Utf8StrProperty");
 
     /// <summary>
     /// Emit a CE &lt;Color&gt; element for the entry currently being written, when an alternating
@@ -4146,6 +4207,14 @@ public static class CeXmlExportService
             "MulticastDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "MulticastInlineDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // FText: the scalar path's encoding (MapCeField) -- its first 8 bytes, the ITextData
+            // pointer, as hex. No clean CE String encoding exists for it (IsTerminalLeafField), but an
+            // 8-byte leaf beats the placeholder / empty folder it got here before. [W5-CEXML-FSTRING]
+            "TextProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // ⛔ NOT the FString family (Str / Utf8Str / AnsiStr): a CE String needs Length / Unicode /
+            // CodePage / ZeroTerminate, which EmitLeaf cannot write. Every container caller routes them
+            // to EmitContainerStringLeaf before asking here. [W5-CEXML-FSTRING]
             _ => null // Non-scalar (StructProperty, etc.)
         };
     }
