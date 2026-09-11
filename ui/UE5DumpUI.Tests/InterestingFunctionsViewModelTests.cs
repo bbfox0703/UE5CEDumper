@@ -481,6 +481,59 @@ public class InterestingFunctionsViewModelTests
         }
     }
 
+    /// <summary>
+    /// The multi-pass sibling of <see cref="GatedEntryList"/>: parks the Nth enumeration of the entry
+    /// list until the test releases that pass. [TESTFLAKE-2026-09-12]
+    ///
+    /// <para><b>Why one-shot parking is not enough here.</b> Parking the LOAD is all its siblings need —
+    /// they only require a toggle to land inside the load's window. This test's property is about two
+    /// re-scores being in flight AT ONCE and settling by REQUEST order rather than completion order, so
+    /// it has to park three separate scorings (the load's, the load reconciliation's, and the
+    /// untoggle's) and release the OLDER re-score LAST. Nothing else can force that ordering: with the
+    /// load merely parked, which scoring finishes first is still the scheduler's choice.</para>
+    ///
+    /// <para>⚠ Same invariants as its sibling, for the same reasons. Inherited <c>Count</c> must never
+    /// block — <c>LoadAsync</c>'s finally and <c>RescoreAsync</c>'s guard both read
+    /// <c>_entries.Count</c> from outside the window. Every park is bounded, so a wiring mistake fails
+    /// the test instead of hanging the suite. And each park happens on a pool thread, because every
+    /// enumeration this hooks is inside <c>Task.Run</c>.</para>
+    /// </summary>
+    private sealed class PhasedEntryList : List<AllFunctionEntry>, IEnumerable<AllFunctionEntry>
+    {
+        private readonly List<TaskCompletionSource<bool>> _reached = new();
+        private readonly List<ManualResetEventSlim> _release = new();
+        private int _pass;
+
+        public PhasedEntryList(IEnumerable<AllFunctionEntry> inner, int passes) : base(inner)
+        {
+            for (int i = 0; i < passes; i++)
+            {
+                _reached.Add(new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+                _release.Add(new ManualResetEventSlim(false));
+            }
+        }
+
+        /// <summary>Completes once scoring pass <paramref name="pass"/> (1-based) has begun.</summary>
+        public Task Reached(int pass) => _reached[pass - 1].Task;
+
+        /// <summary>Lets scoring pass <paramref name="pass"/> run to completion.</summary>
+        public void Release(int pass) => _release[pass - 1].Set();
+
+        IEnumerator<AllFunctionEntry> IEnumerable<AllFunctionEntry>.GetEnumerator()
+        {
+            int pass = Interlocked.Increment(ref _pass);
+            if (pass <= _reached.Count)
+            {
+                _reached[pass - 1].TrySetResult(true);
+                // Blocks a pool thread on purpose: ScoreEntries is synchronous, so there is nothing to
+                // await here. Bounded, so a wiring mistake fails the test instead of hanging the suite.
+                if (!_release[pass - 1].Wait(TimeSpan.FromSeconds(30)))
+                    throw new TimeoutException($"PhasedEntryList pass {pass} was never released");
+            }
+            return GetEnumerator();      // the struct enumerator from List<T>
+        }
+    }
+
     private sealed class FakeAobMakerBridge : IAobMakerBridge
     {
         public bool IsAvailable { get; set; }
@@ -628,6 +681,18 @@ public class InterestingFunctionsViewModelTests
     /// <para>Reproduced deterministically before the fix (<c>Assert.DoesNotContain() Failure:
     /// Filter matched in collection</c>), and it is the interleaving a user gets from a
     /// double-click on the CheckBox as a load lands.</para>
+    ///
+    /// <para>⚠ <b>It was still racing its own window until [TESTFLAKE-2026-09-12].</b> The original
+    /// version fired both toggles straight after <c>ExecuteAsync</c> — the very shape its siblings were
+    /// parked to avoid — so which of FOUR landing zones it hit was a thread race: the toggle could land
+    /// inside the load's window (the intended one), after <c>IsLoading = false</c> but before the
+    /// reconciliation's comparison, or after the whole load had finished, in which case
+    /// <c>PendingRescore</c> is null, the <c>if (… != null)</c> drains skip silently, and the test
+    /// asserts an end state it never actually set up. It also left the first toggle's re-score
+    /// ORPHANED — <c>PendingToggleRescore</c> is a single slot that the second toggle overwrites — so an
+    /// unawaited re-score could still be rebuilding <c>Results</c> while the assertion enumerated it.
+    /// The parks below force the one interleaving the name claims, and release the OLDER re-score LAST
+    /// so "newest mode wins" is a property under test rather than the scheduler's choice.</para>
     /// </summary>
     [Fact]
     public async Task ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish()
@@ -637,19 +702,47 @@ public class InterestingFunctionsViewModelTests
             new() { ClassName="ShopSubsystem", FuncName="OpenShop",
                     FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
         };
+        // Three scorings get parked: the load's own, the load reconciliation's (mode ON) and the
+        // untoggle's (mode OFF). ScoreEntries enumerates the list exactly once per call, so pass
+        // identity is the call order — and the test never lets two re-scores exist before it has seen
+        // the first one park, which is what keeps that mapping deterministic.
+        var gated = new PhasedEntryList(entries, passes: 3);
         var vm = new InterestingFunctionsViewModel(
-            new FakeDumpService { NextResult = BuildResult(entries) },
+            new FakeDumpService { NextResult = BuildResult(gated) },
             new NoopLogger(), new FakeAobMakerBridge { NextCheckResult = false });
 
         var load = vm.LoadCommand.ExecuteAsync(null);
-        vm.GameplayActions = true;
-        await load;                      // reconciliation runs HERE, while the flag is true
-        vm.GameplayActions = false;
+        await gated.Reached(1);                 // the load is parked INSIDE its window, deterministically
+        vm.GameplayActions = true;              // so this provably lands while IsLoading is true
+        Assert.True(vm.PendingToggleRescore!.IsCompleted,
+                    "the busy guard should have swallowed this toggle, leaving a completed no-op — " +
+                    "if it ran, the toggle landed outside the window and the scenario is not set up");
 
-        // Does the PRODUCT still converge under this interleaving, or is there a real bug here
-        // as well as a test one? Drain both reconciliation paths and look at the end state.
-        if (vm.PendingRescore != null) await vm.PendingRescore;
-        if (vm.PendingToggleRescore != null) await vm.PendingToggleRescore;
+        gated.Release(1);
+        var finished = await Task.WhenAny(
+            load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Same(load, finished);            // a hang is not a test result (working-lessons §2.7d)
+        await load;
+
+        // The reconciliation the VM itself decided to run, with the pack ON. Asserted, not `if`-ed:
+        // a null here means the window was missed and the rest of the test proves nothing.
+        var rLoad = vm.PendingRescore;
+        Assert.NotNull(rLoad);
+        await gated.Reached(2);                 // ...and it is parked inside ITS scoring
+
+        vm.GameplayActions = false;             // the NEWER request, with the pack OFF
+        var rOff = vm.PendingToggleRescore;     // captured immediately: the seam is single-slot
+        Assert.NotNull(rOff);
+        await gated.Reached(3);
+        Assert.False(rLoad!.IsCompleted);       // both re-scores genuinely in flight AT ONCE
+
+        // The newer request's scoring finishes FIRST, the older one's LAST. That is the inversion the
+        // generation token exists to survive, and releasing them in this order is the only way to
+        // demand it rather than hope for it.
+        gated.Release(3);
+        await DrainAsync(rOff, "toggle re-score");
+        gated.Release(2);
+        await DrainAsync(rLoad, "load reconciliation");
 
         Assert.False(vm.GameplayActions);
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");

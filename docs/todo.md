@@ -10012,12 +10012,31 @@ read of the log — which is how this was hit at all.
   Shipping column above is that path, but the claim "no regression on real titles" rests on the
   fixture, not on a re-run of a real game.
   ⭐ Now one command away — see `[D4B-PADSURVEY-2026-09-09]`.
-* ⚠ **`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` failed ONCE under load**
-  (2026-09-09), in a `-Target Test` run that shared the machine with `check_all.py`. It passes
-  3/3 in isolation and 4767/4767 in a quiet full run, and **zero C# files changed this**
-  **session** — so it is not a regression from this work. But it is a permanent race repro
-  (see `archive/todo-closed-2026-08-23-build-3337.md:835`) that can still lose the race when
-  the box is busy, which makes it a load-flaky gate rather than a clean one. Not investigated.
+* ✅ **`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` was load-flaky — INVESTIGATED
+  and FIXED 2026-09-12** (`[TESTFLAKE-2026-09-12]`). First seen 2026-09-09 in a `-Target Test` run
+  sharing the machine with `check_all.py`, then measured again 2026-09-12 at 1 failure in a 5204-test
+  run and 1 of 3 class-isolated runs.
+  - **The test raced the window it names, and always had.** `3ad4f524` parked its two siblings with
+    `GatedEntryList` and said it had parked this one too; it had not. Firing both toggles straight
+    after `ExecuteAsync` left FOUR landing zones — only one of which is the scenario the name
+    describes — so `PendingRescore` could be null, the two `if (… != null)` drains could skip
+    silently, and the single-slot `PendingToggleRescore` could orphan the first toggle's re-score,
+    leaving it rebuilding `Results` while the assertion enumerated it.
+  - **Not a product regression:** the OLD test passed 15/15 idle and 25/25 under deliberate CPU
+    contention; what varied was which zone it landed in, not the VM's end state.
+  - **Fixed by enforcing the interleaving**, not by retrying: a multi-pass `PhasedEntryList` parks
+    the load's scoring, the load reconciliation's re-score and the untoggle's re-score, releases the
+    NEWER request first and the OLDER one's scoring LAST, and pins both re-scores in flight at once
+    (`Assert.False(rLoad.IsCompleted)`), with `Assert.NotNull` replacing both silent skips and the
+    repo's bounded wait replacing the bare `await load`.
+  - **Shown able to fail:** deleting `RescoreAsync`'s generation check makes it red in 50 ms with the
+    original `Assert.DoesNotContain() Failure: Filter matched in collection` — deterministically now,
+    where the pre-2026-09-12 version needed luck.
+  - ⬜ **Lead, recorded rather than claimed:** `RescoreAsync`'s generation check (`:615`) is still not
+    atomic with its publish (`:621-623` + `ApplyFilter`), and `ApplyFilter` rebuilds the shared
+    `Results` collection unsynchronised. Avalonia's dispatcher serialises both in the shipped app, and
+    no test seam can suspend a run between its guard and its publish — so this window is **not
+    reproduced** and was NOT fixed here. It is a real check-then-act nonetheless.
 
 
 ## ✅ DumperTest fixture extension — SOURCE WRITTEN 2026-08-23, PACKAGED 2026-08-24
