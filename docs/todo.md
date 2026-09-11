@@ -3724,7 +3724,7 @@ to 5.8.2:
       which gains the Address Finder half, and `[A2-TOPTIONAL-VALUESCAN]`. Both need plumbing
       through every entry kind.
 
-##### ⬜ `[A2-TOPTIONAL-STRUCT-DESCENT]` LOW — Find Refs and the Address Finder walk into a reset `TOptional<FStruct>` (filed 2026-09-11)
+##### ✅ `[A2-TOPTIONAL-STRUCT-DESCENT]` LOW — Find Refs and the Address Finder walk into a reset `TOptional<FStruct>` (filed 2026-09-11; FIXED IN SOURCE 2026-09-12)
 
 `Aura.cpp` `CollectRefMetaRecursive` (the OptionalProperty/StructProperty branch) and
 `CollectContainersRecursive` (`:2318`) descend into a struct optional at the same offset. Nothing gates
@@ -3750,6 +3750,29 @@ positive.
   - Correct both comments.
 - ⛔ **Unsafe:** dropping the descent altogether. That loses every true reference inside a SET struct
   optional.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L40), the reviewer's safe fix:
+  - Both collectors resolve the struct optional with `Ubel::ResolveOptionalLayout`, and never descend
+    when it is Intrusive or Unknown.
+  - A TrailingFlag optional's flag offset (absolute) goes down the recursion as `gateAbs`. Every entry
+    underneath stores it relative to itself, the shape `DirectPointerEntry` already had. That covers
+    object / interface / weak arrays, maps, sets and `ContainerCacheEntry`, plus direct and weak-like
+    pointers.
+  - Every consumer checks `OptionalGateOpen` first: Find Refs' and the enumerator's loops for each
+    kind, and each container walk (the Address Finder, `MatchAddrInStructContainers`,
+    `WalkContainerLeaves`, the deep outgoing pass and deep raw).
+  - An optional inside a gated optional would need two flags ANDed, so it is **refused**: a
+    TrailingFlag optional under a gate is not bucketed; an intrusive object optional takes the outer
+    gate.
+  - Both comments are corrected.
+  - **Red first:** dll_core_test's OPTLAYOUT block builds a `{ UObject* }` and a `{ TArray<UObject*> }`
+    struct optional.
+    - A reset one reports neither its pointer nor its array; a set one reports both (controls).
+    - An Unknown-layout one is not descended.
+    - The container cache entry carries `setFlagOffset` 24.
+    - An InvokeScriptTests source pin covers Find Refs' own loops, which need a live GObjects.
+  - ⬜ **Lead, unverified (from mapping this row):** `CollectSchemaLeaves` (Property Search's deep
+    schema, Aura.cpp `OptionalProperty` + `StructProperty` branch) descends the same way. It reads no
+    instance itself; whether its leaves are later read per instance was not traced.
 
 ##### ✅ `[A2-TOPTIONAL-VALUESCAN]` LOW — Value Scan V1c still sizes the TOptional flag with the loose rule (filed 2026-09-11; FIXED IN SOURCE 2026-09-12)
 
@@ -5337,6 +5360,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 95 | `[A4-AB4-BETWEEN]` | LOW | `git log --grep A4-AB4-BETWEEN` (batch L42) | dll_helpers_test BETWEEN block, red first against the old two-build behaviour: unsigned and Int16 bounds are clamped per width, reversed bounds are normalised, 64-bit values are exact, a float bound beyond 64 bits still bounds, and only `Encoded` entries are emitted. GroupMatchTests carries the same rows, and an InvokeScriptTests source pin covers the four Fern sites. 6/6 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5289/5289 |
 | 96 | `[A2-TOPTIONAL-VALUESCAN]` | LOW | `git log --grep A2-TOPTIONAL-VALUESCAN` (batch L41) | dll_helpers_test V1C block, red first against inert helpers: a trailing flag gates at `sizeof(T)`; intrusive FString / FName / FText carry their sentinels; Unknown and sentinel-less intrusive optionals are skipped; the three sentinel byte tests each have a control. An InvokeScriptTests source pin covers the V1c wiring, and the loose rule is removed. 4/4 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5290/5290. Refine-path lead recorded |
 | 97 | `[W3-DEBUGCAM-QUEUED]` | LOW | `git log --grep W3-DEBUGCAM-QUEUED` (batch L43) | Red first: dll_helpers_test DBGCAMQ (the mapper, against an inert stub, with -4 / -7 controls); Console and Teleport VM tests for the Queued badge and text; DebugCameraScriptGeneratorTests (the queued branch is first, never unticks, never closes); an InvokeScriptTests source pin for Frieren and Mimic. 5/5 mutants killed; dll_helpers_test 2746/2746, dll_core_test 320/320; UI 5294/5294. Not a contract bump (MB3); the item-4 conflict is recorded |
+| 98 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | LOW | `git log --grep A2-TOPTIONAL-STRUCT-DESCENT` (batch L40) | Red first in dll_core_test OPTLAYOUT: a reset `{ UObject* }` / `{ TArray<UObject*> }` struct optional reports neither its pointer nor its array (controls: set ones report both); an Unknown layout is not descended; the container cache entry carries `setFlagOffset` 24. An InvokeScriptTests source pin covers Find Refs' loops (each kind gated twice). 5/5 mutants killed; dll_core_test 327/327, dll_helpers_test 2746/2746; UI 5295/5295. `CollectSchemaLeaves` lead recorded |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5621,6 +5645,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 3. Repeat both as a group slot, and as a snapshot Group match. | a game + UI |
 | L82 | `[A2-TOPTIONAL-VALUESCAN]` | A UE 5.5+ game with a `TOptional<FString>` field, if one can be found. Value Search, FString, Exact "": an UNSET intrusive optional is not a candidate. A set optional holding text is still found. | a 5.5+ game + UI |
 | L83 | `[W3-DEBUGCAM-QUEUED]` | Stall the game thread: unfocus a game that pauses its tick, with the foreground lock off. Console **Force ON** shows the amber Queued badge and "do not press Force ON again"; on refocus the camera turns ON **once** and stays ON. The CE Debug Camera record, ticked while stalled, shows the "queued" message and stays ticked; on refocus the camera is ON. | a game with ToggleDebugCamera + CE + UI |
+| L84 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | A UE 5.x game with a `TOptional<FStruct>` holding an actor pointer or array, if one can be found (the Property Search types filter shows `OptionalProperty`). **Find Refs** to that actor while the optional is SET: one hit. Reset it in game: no hit. **Address Finder** on an element of the array inside it: found while set, not after a reset. | a 5.x game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5718,7 +5743,7 @@ completeness critic.
 - ✅ **L37:** `[W2-CEGEN-MODAL]` (CE)
 - ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - ✅ **L39:** `[A3-COORD-NONFINITE]`
-- **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
+- ✅ **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - ✅ **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - ✅ **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)

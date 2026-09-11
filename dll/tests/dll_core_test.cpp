@@ -1951,6 +1951,62 @@ int main() {
         check("OPTLAYOUT ⭐: a 5.3+ TOptional<TLazyObjectPtr> (0x1C) is recognised -- an unset one reads (unset)",
               fLu.typedValue == "(unset)", fLu.typedValue.c_str());
 
+        // (#9) [A2-TOPTIONAL-STRUCT-DESCENT] A TOptional<FStruct> after Reset(): UE's MarkUnset destroys the value and
+        // clears bIsSet, and zeroes NO bytes -- a TArray even keeps its Data / Num. Find Refs and the Address Finder
+        // descended into the struct anyway ("an unset slot is zero"), so a reset optional's stale pointer, or its stale
+        // array, read as live. Two structs, each 24 bytes with MinAlignment 8 -> Align(25, 8) = 32, bIsSet at +24:
+        // { UObject* Inner; } and { TArray<UObject*> Inner; }.
+        static uint8_t olSR[2][0x100] = {}, olSRChild[2][0x100] = {}, olSRInner[2][0x100] = {};
+        auto structWithChild = [&](int k, int typeIdx, int32_t childSize, uintptr_t childInner) {
+            putP(olSRChild[k], DynOff::FFIELD_CLASS, fclass(typeIdx));
+            put32(olSRChild[k], DynOff::FFIELD_NAME, 6);
+            put32(olSRChild[k], DynOff::FPROPERTY_OFFSET, 0);
+            put32(olSRChild[k], DynOff::FPROPERTY_ELEMSIZE, childSize);
+            put32(olSRChild[k], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            if (childInner) putP(olSRChild[k], DynOff::FARRAYPROP_INNER, childInner);
+            *reinterpret_cast<int32_t*>(olSR[k] + Grimoire::OFF_UOBJECT_NAME) = 10;          // "MyStruct"
+            put32(olSR[k], DynOff::USTRUCT_PROPSSIZE, 24);
+            const int16_t align8 = 8;
+            memcpy(olSR[k] + DynOff::USTRUCT_PROPSSIZE + 4, &align8, sizeof(align8));
+            putP(olSR[k], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(olSRChild[k]));
+            putP(olSRInner[k], DynOff::FFIELD_CLASS, fclass(9));                              // "StructProperty"
+            put32(olSRInner[k], DynOff::FFIELD_NAME, 6);
+            put32(olSRInner[k], DynOff::FPROPERTY_ELEMSIZE, 24);
+            putP(olSRInner[k], DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(olSR[k]));
+            return reinterpret_cast<uintptr_t>(olSRInner[k]);
+        };
+        const uintptr_t optPtrStruct = structWithChild(0, 2, 8, 0);          // { UObject* }
+        const uintptr_t optArrStruct = structWithChild(1, 3, 16, innerObj);  // { TArray<UObject*> }
+
+        const int cSPu = makeCase(32, optPtrStruct); putP(olObj[cSPu], kField, stale); olObj[cSPu][kField + 24] = 0;
+        const int cSPs = makeCase(32, optPtrStruct); putP(olObj[cSPs], kField, stale); olObj[cSPs][kField + 24] = 1;
+        // 28 fits neither Align(25, 8) = 32 nor 24: a layout nobody can prove. Its would-be flag byte is SET, so a
+        // mutant treating Unknown as a trailing flag would find its gate open.
+        const int cSPk = makeCase(28, optPtrStruct); putP(olObj[cSPk], kField, stale); olObj[cSPk][kField + 24] = 1;
+        static uintptr_t olStaleArr[1] = {};
+        olStaleArr[0] = stale;    // the destroyed array's buffer still holds its old element
+        auto putArr = [&](int c) {
+            putP(olObj[c], kField, reinterpret_cast<uintptr_t>(olStaleArr));
+            put32(olObj[c], kField + 8, 1);
+            put32(olObj[c], kField + 12, 1);
+        };
+        const int cSAu = makeCase(32, optArrStruct); putArr(cSAu); olObj[cSAu][kField + 24] = 0;
+        const int cSAs = makeCase(32, optArrStruct); putArr(cSAs); olObj[cSAs][kField + 24] = 1;
+
+        check("OPTLAYOUT control: Find Refs descends into a SET struct optional", hitsOf(cSPs) == 1);
+        check("OPTLAYOUT ⭐: Find Refs does NOT report a RESET struct optional's stale pointer", hitsOf(cSPu) == 0);
+        check("OPTLAYOUT ⭐: Find Refs does not descend into a struct optional whose layout it cannot prove",
+              hitsOf(cSPk) == 0);
+        check("OPTLAYOUT control: Find Refs reads a SET struct optional's object array", hitsOf(cSAs) == 1);
+        check("OPTLAYOUT ⭐: Find Refs does NOT report a RESET struct optional's stale object array",
+              hitsOf(cSAu) == 0);
+        // The Address Finder half: the container cache carries the same gate, relative to the entry.
+        const auto& olConts = Aura::GetClassContainers(reinterpret_cast<uintptr_t>(olCls[cSAu]));
+        check("OPTLAYOUT control: the container cache sees the struct optional's array",
+              olConts.size() == 1 && olConts[0].offset == kField, std::to_string(olConts.size()).c_str());
+        check("OPTLAYOUT ⭐: ...and gates it on the optional's bIsSet (+24 from the array)",
+              olConts.size() == 1 && olConts[0].setFlagOffset == 24);
+
         g_cachedUEVersion           = savedVerO;
         DynOff::bCasePreservingName = savedCpnO;
         DynOff::bUseFProperty       = savedFPropO;

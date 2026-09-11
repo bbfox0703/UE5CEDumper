@@ -1924,6 +1924,23 @@ public class InvokeScriptTests
         Assert.Contains("state == Stark::kInvokeTimedOutStillQueued", DllSource("Mimic.cpp"));
     }
 
+    [Fact]
+    public void RefScans_GateEveryEntryKindOnTheEnclosingOptional()
+    {
+        // [A2-TOPTIONAL-STRUCT-DESCENT] dll_core_test drives the outgoing-pointer enumerator and the container cache;
+        // Find Refs' own per-object loops need a live GObjects, so they are pinned here -- every entry kind gated on an
+        // enclosing struct optional's bIsSet twice, once in Find Refs and once in the enumerator.
+        string aura = DllSource("Aura.cpp");
+        foreach (var (v, read) in new[] { ("oae", "ReadTArray"), ("iae", "ReadTArray"), ("wae", "ReadTArray"),
+                                          ("ome", "ReadTSparseArray"), ("ose", "ReadTSparseArray") })
+        {
+            string gated = $"!OptionalGateOpen(obj + {v}.offset, {v}.setFlagOffset) || !Macht::{read}(obj + {v}.offset";
+            Assert.True(aura.Split(gated).Length - 1 == 2, $"{v}: expected 2 gated reads (Find Refs + enumerator)");
+        }
+        Assert.DoesNotContain("an unset slot is zero", aura);   // the belief both comments held
+        Assert.DoesNotContain("just sees zeros", aura);
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

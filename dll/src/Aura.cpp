@@ -2288,6 +2288,9 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
 // DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
+// Defined with the ref-meta entries below; the container walks above them check the same gate.
+static bool OptionalGateOpen(uintptr_t fieldAddr, int32_t setFlagOffset);
+
 struct ContainerCacheEntry {
     int32_t       offset;       // Absolute byte offset within owner UObject
     std::string   name;         // Dotted name (e.g. "Stats.Levels")
@@ -2311,6 +2314,7 @@ struct ContainerCacheEntry {
     // values/keys as leaves — `innerType` is the "K -> V" label, NOT a leaf type.
     std::string   keyLeafType;       // P3 scalar-keyed maps
     std::string   valueLeafType;     // P3 scalar-valued maps
+    int32_t       setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
@@ -2325,7 +2329,8 @@ static void CollectContainersRecursive(
     int32_t baseOffset,
     const std::string& namePrefix,
     std::vector<ContainerCacheEntry>& out,
-    int depth)
+    int depth,
+    int32_t gateAbs = -1)   // [A2-TOPTIONAL-STRUCT-DESCENT] enclosing struct optional's bIsSet, ABSOLUTE; -1 = none
 {
     // Reasonable cap: most UE games nest at most 1–2 levels (UObject →
     // FStruct → TArray). Depth 3 covers struct-of-struct-of-struct.
@@ -2340,6 +2345,8 @@ static void CollectContainersRecursive(
             ? f.Name
             : (namePrefix + "." + f.Name);
         int32_t absOffset = baseOffset + f.Offset;
+        // [A2-TOPTIONAL-STRUCT-DESCENT] Inside a struct optional every entry carries its bIsSet, relative to the entry.
+        const int32_t underGate = (gateAbs >= 0) ? gateAbs - absOffset : -1;
 
         if (f.TypeName == "ArrayProperty") {
             int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
@@ -2347,6 +2354,7 @@ static void CollectContainersRecursive(
             ContainerCacheEntry e{ absOffset, fullName, f.innerType, es, ContainerKind::Array };
             if (f.innerType == "StructProperty")
                 e.elemStruct = Ubel::GetContainerInnerStructAddr(f.Address);
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "SetProperty") {
@@ -2355,6 +2363,7 @@ static void CollectContainersRecursive(
             ContainerCacheEntry e{ absOffset, fullName, f.elemType, st, ContainerKind::Set };
             if (f.elemType == "StructProperty")
                 e.elemStruct = Ubel::GetContainerInnerStructAddr(f.Address);
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "MapProperty") {
@@ -2370,6 +2379,7 @@ static void CollectContainersRecursive(
             // emit gate keys on *Struct == 0, and "StructProperty" is non-scalar.
             e.keyLeafType   = f.keyType;
             e.valueLeafType = f.valueType;
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "StructProperty") {
@@ -2380,26 +2390,24 @@ static void CollectContainersRecursive(
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectContainersRecursive(innerStruct, absOffset, fullName,
-                                           out, depth + 1);
+                                           out, depth + 1, gateAbs);
             }
         }
         else if (f.TypeName == "OptionalProperty"
                  && f.innerType == "StructProperty") {
-            // TOptional<FStruct> non-intrusive layout: { T value; uint8 bIsSet; }.
-            // Value lives at field+0, so offset accumulation is identical to
-            // a bare StructProperty. We can't tell at cache-build time which
-            // instances are set vs unset, but a container scan that hits an
-            // unset slot just sees zeros and naturally fails its address
-            // comparison.
-            uintptr_t innerProp = 0;
+            // [A2-TOPTIONAL-STRUCT-DESCENT] The value lives at field+0, but an unset slot is NOT zero:
+            // UE's MarkUnset destroys the value and clears bIsSet, and zeroes no bytes -- a TArray keeps
+            // its Data / Num after ~TArray, so the Address Finder read a destroyed array's header and freed
+            // buffer. Descend only into a TrailingFlag optional, handing every entry below its bIsSet
+            // (OptionalGateOpen). Intrusive / Unknown have no flag byte to test, and an optional inside a
+            // gated one would need two flags ANDed: both refused, like any layout we cannot prove.
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty");
             uintptr_t innerStruct = 0;
-            // Probe inner FProperty* (same offset as ArrayProperty::Inner).
-            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
-                && innerProp
-                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag && gateAbs < 0 && ol.innerProp
+                && Macht::ReadSafe(ol.innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectContainersRecursive(innerStruct, absOffset, fullName,
-                                           out, depth + 1);
+                                           out, depth + 1, absOffset + ol.innerSize);
             }
         }
     }
@@ -2562,6 +2570,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
     for (const auto& cfe : containers) {
         if (cfe.stride <= 0) continue;
         uintptr_t fieldAddr = structBase + cfe.offset;
+        if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
         uintptr_t bufData = 0;
         int32_t   capacity = 0;
@@ -2783,6 +2792,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
 
         for (const auto& cfe : containers) {
             uintptr_t fieldAddr = obj + cfe.offset;
+            if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
             if (cfe.kind == ContainerKind::Array) {
                 Macht::TArrayView arr;
@@ -2911,6 +2921,7 @@ static bool MatchAddrInStructContainers(
     for (const auto& cfe : containers) {
         if (cfe.stride <= 0) continue;
         uintptr_t fieldAddr = structBase + cfe.offset;
+        if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
         uintptr_t bufData = 0;
         int32_t   capacity = 0;       // Max (array) / MaxCapacity (sparse)
@@ -3191,12 +3202,14 @@ struct ObjectArrayEntry {
     int32_t     offset;
     std::string name;
     std::string innerType;    // "ObjectProperty" / "ClassProperty"
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TArray<FScriptInterface>: 16-byte elements, UObject* at elem+0.
 struct InterfaceArrayEntry {
     int32_t     offset;
     std::string name;
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TArray<FWeakObjectPtr>/<FSoftObjectPtr>/<FLazyObjectPtr>: variable
@@ -3210,6 +3223,7 @@ struct WeakLikeArrayEntry {
     // and the access-detector pad for TArray<FScriptDelegate> on a checked build — the one
     // inner type whose payload does not start at the element's own address.
     int32_t     elemWeakOffset = 0;
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
@@ -3224,6 +3238,7 @@ struct ObjectMapEntry {
     std::string keyTypeName;    // "ObjectProperty" / "ClassProperty" (for matched side)
     std::string valueTypeName;
     std::string innerLabel;     // "<keyType> → <valueType>" for UI
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TSet with Object/Class element type.
@@ -3232,6 +3247,7 @@ struct ObjectSetEntry {
     std::string name;
     int32_t     elemStride;
     std::string elemTypeName;   // "ObjectProperty" / "ClassProperty"
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 struct ClassReferenceMeta {
@@ -3269,7 +3285,8 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                                      int32_t baseOffset,
                                      const std::string& namePrefix,
                                      ClassReferenceMeta& out,
-                                     int depth)
+                                     int depth,
+                                     int32_t gateAbs = -1)   // [A2-TOPTIONAL-STRUCT-DESCENT] as CollectContainersRecursive
 {
     constexpr int kMaxDepth = 3;
     if (depth > kMaxDepth) return;
@@ -3282,16 +3299,18 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             ? f.Name
             : (namePrefix + "." + f.Name);
         int32_t absOffset = baseOffset + f.Offset;
+        // [A2-TOPTIONAL-STRUCT-DESCENT] Inside a struct optional every entry carries its bIsSet, relative to the entry.
+        const int32_t underGate = (gateAbs >= 0) ? gateAbs - absOffset : -1;
 
         // --- Single pointer fields ---
         if (IsDirectObjectProp(f.TypeName) || f.TypeName == "InterfaceProperty") {
             // All three layouts hold a UObject* at field+0 (FScriptInterface
             // also has ifacePtr at +8, but we ignore that — only objPtr is
             // the resolvable reference).
-            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         else if (IsWeakLikeProp(f.TypeName)) {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- TOptional<T> wrapping a pointer-shaped T ---
         // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but the old belief
@@ -3308,9 +3327,11 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             bool keep = false;
             if (ol.layout == Ubel::OptionalLayout::TrailingFlag) {
                 gate = ol.innerSize;
-                keep = true;
+                // [A2-TOPTIONAL-STRUCT-DESCENT] Under a gated struct optional this would need TWO flags: refused.
+                keep = underGate < 0;
             } else if (ol.layout == Ubel::OptionalLayout::Intrusive
                        && (f.innerType == "ObjectProperty" || f.innerType == "ClassProperty")) {
+                gate = underGate;   // its own unset state is null; an enclosing optional's flag still applies
                 keep = true;
             }
             if (keep) {
@@ -3327,7 +3348,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
         // typeName is preserved so the user sees this was reached via a
         // delegate (a "register on click" bind, not a property reference).
         else if (f.TypeName == "DelegateProperty") {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- MulticastInline / MulticastDelegate (single field) ---
         // FMulticastScriptDelegate := TArray<FScriptDelegate> at field+0.
@@ -3342,21 +3363,21 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             int32_t fnameSize = DynOff::SizeofFName();
             int32_t stride    = 8 + fnameSize;
             out.weakLikeArrays.push_back({ absOffset, fullName,
-                                            f.TypeName, stride });
+                                            f.TypeName, stride, 0, underGate });
         }
         // --- Array of pointer-shaped types ---
         else if (f.TypeName == "ArrayProperty") {
             if (IsDirectObjectProp(f.innerType)) {
-                out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+                out.objectArrays.push_back({ absOffset, fullName, f.innerType, underGate });
             }
             else if (f.innerType == "InterfaceProperty") {
-                out.interfaceArrays.push_back({ absOffset, fullName });
+                out.interfaceArrays.push_back({ absOffset, fullName, underGate });
             }
             else if (IsWeakLikeProp(f.innerType)) {
                 int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
                 if (es > 0) {
                     out.weakLikeArrays.push_back({ absOffset, fullName,
-                                                    f.innerType, es });
+                                                    f.innerType, es, 0, underGate });
                 }
             }
             else if (f.innerType == "DelegateProperty") {
@@ -3384,7 +3405,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 }
                 const int32_t elemPad = (pad < 0) ? 0 : pad;
                 out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
-                                               base + elemPad, elemPad });
+                                               base + elemPad, elemPad, underGate });
             }
         }
         // --- Map with pointer-shaped key and/or value ---
@@ -3405,6 +3426,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                     e.keyTypeName   = f.keyType;
                     e.valueTypeName = f.valueType;
                     e.innerLabel    = f.keyType + " → " + f.valueType;
+                    e.setFlagOffset = underGate;
                     out.objectMaps.push_back(std::move(e));
                 }
             }
@@ -3415,7 +3437,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 int32_t st = Ubel::GetSetElementStride(f.Address);
                 if (st > 0) {
                     out.objectSets.push_back({ absOffset, fullName,
-                                                st, f.elemType });
+                                                st, f.elemType, underGate });
                 }
             }
         }
@@ -3425,23 +3447,23 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectRefMetaRecursive(innerStruct, absOffset, fullName,
-                                         out, depth + 1);
+                                         out, depth + 1, gateAbs);
             }
         }
         else if (f.TypeName == "OptionalProperty"
                  && f.innerType == "StructProperty") {
-            // TOptional<FStruct>: { T value; uint8 bIsSet; } — value at field+0,
-            // so absOffset is unchanged for sub-fields. The bIsSet trailing
-            // byte doesn't matter for reverse scan: an unset slot is zero
-            // and naturally fails pointer comparisons.
-            uintptr_t innerProp = 0;
+            // [A2-TOPTIONAL-STRUCT-DESCENT] The value lives at field+0, but the bIsSet byte DOES matter:
+            // UE's MarkUnset destroys the value and clears the flag, and zeroes no bytes, so a reset
+            // TOptional<FMyStruct{ AActor* Target }> still holds its Target -- reported as a live reference.
+            // Descend only into a TrailingFlag optional, carrying its flag to every entry below; Intrusive /
+            // Unknown, or an optional already under a gate (two flags), are refused.
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty");
             uintptr_t innerStruct = 0;
-            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
-                && innerProp
-                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag && gateAbs < 0 && ol.innerProp
+                && Macht::ReadSafe(ol.innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectRefMetaRecursive(innerStruct, absOffset, fullName,
-                                         out, depth + 1);
+                                         out, depth + 1, absOffset + ol.innerSize);
             }
         }
     }
@@ -3780,7 +3802,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
         for (const auto& oae : meta.objectArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + oae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + oae.offset, oae.setFlagOffset) || !Macht::ReadTArray(obj + oae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data) continue;
 
             // Bulk-read the TArray's data buffer once and scan in-memory.
@@ -3815,7 +3837,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
         for (const auto& iae : meta.interfaceArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + iae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + iae.offset, iae.setFlagOffset) || !Macht::ReadTArray(obj + iae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data) continue;
 
             constexpr int32_t kElemBytes = 16;
@@ -3846,7 +3868,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
         for (const auto& wae : meta.weakLikeArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + wae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
 
             for (int32_t e = 0; e < arr.Count; ++e) {
@@ -3877,7 +3899,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
         for (const auto& ome : meta.objectMaps) {
             Macht::TSparseArrayView sa;
-            if (!Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
+            if (!OptionalGateOpen(obj + ome.offset, ome.setFlagOffset) || !Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
             if (sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
 
             for (int32_t e = 0; e < sa.MaxIndex; ++e) {
@@ -3928,7 +3950,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TSet<UObject*> (allocated slots only) ---
         for (const auto& ose : meta.objectSets) {
             Macht::TSparseArrayView sa;
-            if (!Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
+            if (!OptionalGateOpen(obj + ose.offset, ose.setFlagOffset) || !Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
             if (sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
 
             for (int32_t e = 0; e < sa.MaxIndex; ++e) {
@@ -4177,7 +4199,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
     for (const auto& oae : meta.objectArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + oae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
+        if (!OptionalGateOpen(obj + oae.offset, oae.setFlagOffset) || !Macht::ReadTArray(obj + oae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
         std::vector<uintptr_t> buf(static_cast<size_t>(arr.Count), 0);
         if (!Macht::ReadBytesSafe(arr.Data, buf.data(), static_cast<size_t>(arr.Count) * 8)) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
@@ -4190,7 +4212,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
     for (const auto& iae : meta.interfaceArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + iae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
+        if (!OptionalGateOpen(obj + iae.offset, iae.setFlagOffset) || !Macht::ReadTArray(obj + iae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
             uintptr_t ptr = 0;
             if (!Macht::ReadSafe(arr.Data + static_cast<int64_t>(e) * 16, ptr) || !ptr) continue;
@@ -4202,7 +4224,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
     for (const auto& wae : meta.weakLikeArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
+        if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
             uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride
                                         + wae.elemWeakOffset);
@@ -4213,7 +4235,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
     for (const auto& ome : meta.objectMaps) {
         Macht::TSparseArrayView sa;
-        if (!Macht::ReadTSparseArray(obj + ome.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
+        if (!OptionalGateOpen(obj + ome.offset, ome.setFlagOffset) || !Macht::ReadTSparseArray(obj + ome.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
         for (int32_t e = 0; e < sa.MaxIndex; ++e) {
             if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
             uintptr_t pair = sa.Data + static_cast<int64_t>(e) * ome.pairStride;
@@ -4232,7 +4254,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TSet<UObject*> (allocated slots only) ---
     for (const auto& ose : meta.objectSets) {
         Macht::TSparseArrayView sa;
-        if (!Macht::ReadTSparseArray(obj + ose.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
+        if (!OptionalGateOpen(obj + ose.offset, ose.setFlagOffset) || !Macht::ReadTSparseArray(obj + ose.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
         for (int32_t e = 0; e < sa.MaxIndex; ++e) {
             if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
             uintptr_t ptr = 0;
@@ -4257,7 +4279,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     //     container element cap; the BFS deadline / visited cap bound the rest. ---
     constexpr int32_t kDeepElemCap = 256;
     for (const auto& cfe : GetClassContainers(cls)) {
-        if (cfe.stride <= 0) continue;
+        if (cfe.stride <= 0 || !OptionalGateOpen(obj + cfe.offset, cfe.setFlagOffset)) continue;
 
         // The struct sides we can descend into for pointers, with the byte offset
         // of that side within the element/pair (0 for array/set element & map key;
@@ -8284,6 +8306,7 @@ ValueScanResult ScanForValue(
 
                 // Read the container header (mirror WalkContainerLeaves' guards).
                 uintptr_t fieldAddr = obj + cfe.offset;
+                if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
                 uintptr_t bufData = 0; int32_t capacity = 0;
                 Macht::TSparseArrayView sa{};
                 const bool isSparse = (cfe.kind != ContainerKind::Array);
