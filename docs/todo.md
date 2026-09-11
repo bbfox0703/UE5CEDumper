@@ -3329,7 +3329,7 @@ disconnect finishes anyway and republishes its rows at `:250-255`.
     result and once with a pipe failure. The rows and the reset status stay untouched. 7/7 mutants
     killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218.
 
-##### `[A1-SLOTSYM-FAILED]` LOW — a failed second "Get GWorld" record tears down a live record's symbol
+##### ✅ `[A1-SLOTSYM-FAILED]` LOW — a failed second "Get GWorld" record tears down a live record's symbol (FIXED IN SOURCE 2026-09-12)
 
 `CeLuaHygiene.cs:846`. `AppendSlotSymbolRelease` decrements the refcount unconditionally. But:
 - CE runs `[DISABLE]` on the deferred untick after every failed ENABLE (`MemoryRecordUnit.pas`
@@ -3352,8 +3352,15 @@ failed-ENABLE case.
   - Copying `[B30-REOPEN]`'s ownership flag. It is one global boolean, and two records share Lua
     globals, which is exactly the case SLOTSYM exists for.
   - A `getAddressSafe(sym)` guard. A's registration makes it true for B too.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L36, with `[A1-LUA-WAIT]`), the recorded safe fix, per-record ownership in
+  the shared emitters:
+  - `UE5_slotSymHolders[sym][memrec.ID]` is set on a successful register and cleared on release;
+  - the release decrements only for a record that registered, so a failed record's `[DISABLE]` releases nothing;
+  - the count stays the fallback without `memrec`.
+  - **Red first:** a shape pin, because this suite has no Lua runtime. The register records the holder, and the release
+    checks ownership before it decrements. The two-record failed-ENABLE run is a CE live check.
 
-##### `[A1-LUA-WAIT]` LOW — `_tick and (elapsed >= Ms) or (iters >= N)` keeps the iteration bound live
+##### ✅ `[A1-LUA-WAIT]` LOW — `_tick and (elapsed >= Ms) or (iters >= N)` keeps the iteration bound live (FIXED IN SOURCE 2026-09-12)
 
 `CeLuaHygiene.cs:192-194` and `:644-646`. In Lua, `a and b or c` evaluates `c` whenever `b` is false.
 So both mailbox deadlines are **min(real ms, N × sleep cost)**, not the real deadline that the comments
@@ -3377,6 +3384,13 @@ and commit 45eb7c2f promise.
   - any rewrite that keeps the `a and b or c` form;
   - retuning the constants;
   - changing only one of the two emitters.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L36), the recorded safe fix: both emitters now use the helpers'
+  `if st == nil … elseif tick … else iters … end` shape exactly. The iteration count is the fallback only without
+  `getTickCount`, and the constants are unchanged.
+  - **Red first:** a shape pin on both waits. The `a and b or c` form is absent, and the iteration arm must be the `else`
+    of the getTickCount branch. The substring test above passed both before and after, as recorded.
+  - ⚠ **The row asked for a test that RUNS the loop under Lua.** This repo has no Lua runtime, so that run is a CE live
+    check (backlog), not a unit test.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -5263,6 +5277,10 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 91 | `[W2-CEGEN-MODAL]` | LOW | `git log --grep W2-CEGEN-MODAL` (batch L37) | ProtectionScriptGeneratorTests + DebugCameraScriptGeneratorTests, red first: `[DISABLE]` contains no `showMessage` but still has a `dbg` reason, and `[ENABLE]` still announces and unticks (control). 6/6 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5276/5276. Scoped to the two named generators; no repo-wide `[DISABLE]` pin was added |
 | 92 | `[A2-CABI-TELEPORT-PARENTREL]` | LOW | `git log --grep A2-CABI-TELEPORT-PARENTREL` (batch L44) | InvokeScriptTests source pin, red first: three `...Ex` exports carry `int32_t* outParentRelative` from `GetPose`'s flag and `m.ParentRelative`; the original signatures are unchanged. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5277/5277. The export count is 60 → 63. Residual: BugItGo ignores the stored flag |
 | 93 | `[W4-HEXSORT]` | LOW | `git log --grep W4-HEXSORT` (batch L32) | DataGridSortWiringTests adds a fourth rule, red first: every address-like sortable column must have `DataGridSortComparers.Hex` wired, even when its Binding roots it. Two `HexValue` exemptions carry reasons, with a stale-exemption check. DataGridSortComparersTests pins the five new `ulong` accessors. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5279/5279. The pin found a tenth column outside the cluster (Class / Struct's field Address), fixed here too |
+| 94 | `[A1-SLOTSYM-FAILED]` + `[A1-LUA-WAIT]` | LOW | `git log --grep A1-LUA-WAIT` (batch L36) | CeLuaHygieneTests, red first:
+- both waits have one deadline, with the iteration count only in the `else` of the getTickCount branch;
+- the slot-symbol register records its holder, and the release checks ownership before it decrements.
+CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new shape. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5281/5281. Shape pins only: the Lua RUN is a CE live check |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5537,6 +5555,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L79 | `[W4-HEXSORT]` | A game and the UI:
 1. Sort each Address column (Instance Finder's instances, container matches and fields; Live Walker's field Address and Ptr, Find Refs' Owner Addr and Functions' Address; Class / Struct's field Address) on a result set that mixes 12- and 13-character addresses. The order is numeric.
 2. The Hex column still sorts as text, which is memory order. | a game + UI |
+| L80 | `[A1-SLOTSYM-FAILED]` + `[A1-LUA-WAIT]` | CE and a game. ⚠ Announce CE use first.
+1. Make two PointerQuery "Get GWorld" records. Tick A, which succeeds.
+2. Tick B while its ENABLE fails (for example, before the DLL is injected). B unticks, and A's `[UE_GWorld]+offset` records still resolve. Untick A, and `UE_GWorld` is unregistered.
+3. In CE's Lua Engine, run an emitted idle or status wait against a busy mailbox with `getTickCount` present. It gives up at the real millisecond deadline, not after N sleeps. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5630,7 +5652,7 @@ completeness critic.
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
 - ✅ **L34:** `[P8-BOOKMARK-TIP]`
 - ✅ **L35:** `[A1-LOG-RESUME]`
-- **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
+- ✅ **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
 - ✅ **L37:** `[W2-CEGEN-MODAL]` (CE)
 - ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - ✅ **L39:** `[A3-COORD-NONFINITE]`

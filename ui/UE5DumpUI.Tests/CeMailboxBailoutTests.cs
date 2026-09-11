@@ -496,7 +496,7 @@ public class CeMailboxBailoutTests
         // that already exited helps nobody. Found on Elliot 2026-08-07 by closing the game.
         Assert.Contains("if _st == nil then", enable, StringComparison.Ordinal);
         Assert.Contains("the mailbox could not be read", enable, StringComparison.Ordinal);
-        Assert.Contains("local _over = _st == nil or", enable, StringComparison.Ordinal);
+        Assert.Contains("if _st == nil then _over = true", enable, StringComparison.Ordinal);   // [A1-LUA-WAIT] shape
 
         // The contract check sits AHEAD of both wait loops, so its own unreadable case is
         // the first thing a user hits — and it had the same defect: `nil ~= MAGIC` is true,

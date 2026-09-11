@@ -188,10 +188,13 @@ public static class CeLuaHygiene
         // whole idle deadline is a frozen Cheat Engine window.
         Line(sb, indent, "  sleep(1); _idlePump(); _idleIters = _idleIters + 1");
         Line(sb, indent, $"  _idleCmd = readInteger({mbExpr} + {CeMailboxLayout.OffCmd})");
-        // Real elapsed time when getTickCount exists; iteration count only as fallback.
-        Line(sb, indent, $"  local _idleOver = _idleTick and (_idleTick() - _idleT0 >= " +
-                         $"{CeMailboxLayout.MailboxIdleWaitMs}) or (_idleIters >= " +
-                         $"{CeMailboxLayout.MailboxIdleWaitIters})");
+        // [A1-LUA-WAIT] EXACTLY one deadline -- the Lua helpers' shape (ue5_freeze_helper.lua / ue5_invoke_helper.lua,
+        // audit #5 AA29). `_idleTick and (elapsed >= Ms) or (iters >= N)` evaluated the iteration arm whenever the
+        // elapsed test was FALSE, so the deadline was min(real ms, N x sleep cost). The count is a fallback ONLY for a
+        // build without getTickCount.
+        Line(sb, indent, "  local _idleOver");
+        Line(sb, indent, $"  if _idleTick then _idleOver = (_idleTick() - _idleT0 >= {CeMailboxLayout.MailboxIdleWaitMs})");
+        Line(sb, indent, $"  else _idleOver = (_idleIters >= {CeMailboxLayout.MailboxIdleWaitIters}) end");
         Line(sb, indent, $"  if _idleOver then {onBusy} end");
         Line(sb, indent, "end");
     }
@@ -641,9 +644,14 @@ public static class CeLuaHygiene
         // `_st == nil` short-circuits the deadline: readInteger returns nil once the target
         // process is gone, and waiting the full timeout to say so helps nobody. It reaches
         // the caller's normal bail with the nil case named in _msg (AppendTimeoutReason).
-        sb.Append(indent).Append("  local _over = _st == nil or (_tick and (_tick() - _t0 >= ")
-          .Append(CeMailboxLayout.MailboxPollTimeoutMs).Append(") or (_iters >= ")
-          .Append(CeMailboxLayout.MailboxPollTimeoutIters).Append("))\n");
+        // [A1-LUA-WAIT] One deadline, the helpers' if / elseif shape (see AppendIdleWait): the old
+        // `_st == nil or (_tick and (...) or (_iters >= N))` kept the iteration arm LIVE beside getTickCount.
+        sb.Append(indent).Append("  local _over\n");
+        sb.Append(indent).Append("  if _st == nil then _over = true\n");
+        sb.Append(indent).Append("  elseif _tick then _over = (_tick() - _t0 >= ")
+          .Append(CeMailboxLayout.MailboxPollTimeoutMs).Append(")\n");
+        sb.Append(indent).Append("  else _over = (_iters >= ")
+          .Append(CeMailboxLayout.MailboxPollTimeoutIters).Append(") end\n");
         sb.Append(indent).Append("  if _st ~= ").Append(CeMailboxLayout.StatusDone)
           .Append(" and _over then\n");
 
@@ -805,6 +813,13 @@ public static class CeLuaHygiene
     /// </summary>
     private const string SlotSymRefTable = "UE5_slotSymRefcount";
 
+    /// <summary>[A1-SLOTSYM-FAILED] Per-RECORD ownership beside the count: <c>UE5_slotSymHolders[sym][memrec.ID]</c>. CE
+    /// runs a record's <c>[DISABLE]</c> on the deferred untick after every FAILED enable, and every enable bail returns
+    /// before the register step -- so a bare count let the failed record's release drop a live record's symbol. Not
+    /// <c>[B30-REOPEN]</c>'s one global boolean (records share Lua globals), and not a <c>getAddressSafe(sym)</c> guard
+    /// (A's registration makes it true for B too).</summary>
+    private const string SlotSymHolders = "UE5_slotSymHolders";
+
     /// <summary>
     /// Emit the ENABLE half of a SLOT-backed CE symbol: bump the per-symbol reference
     /// count, then (re)register <paramref name="sym"/> to <paramref name="addrExpr"/>
@@ -818,6 +833,10 @@ public static class CeLuaHygiene
     {
         Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
         Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = ({SlotSymRefTable}['{sym}'] or 0) + 1");
+        // [A1-SLOTSYM-FAILED] ...and which RECORD holds it. Only a successful enable reaches this step.
+        Line(sb, indent, $"{SlotSymHolders} = {SlotSymHolders} or {{}}");
+        Line(sb, indent, $"{SlotSymHolders}['{sym}'] = {SlotSymHolders}['{sym}'] or {{}}");
+        Line(sb, indent, $"if memrec then {SlotSymHolders}['{sym}'][memrec.ID] = true end");
         // Clear any prior registration before republishing so registerSymbol can never
         // stack a second entry for this name (the case AppendSlotSymbolRelease's loop
         // also defends against on the way out).
@@ -843,21 +862,32 @@ public static class CeLuaHygiene
         StringBuilder sb, string sym, string tag, string indent = "")
     {
         Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
-        Line(sb, indent, $"local _rc = ({SlotSymRefTable}['{sym}'] or 0) - 1");
-        Line(sb, indent, "if _rc < 0 then _rc = 0 end");
-        Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = _rc");
-        Line(sb, indent, "if _rc > 0 then");
-        Line(sb, indent, $"  dbg('[{tag}] {sym} still held by ' .. _rc .. ' other record(s) -- left registered')");
+        // [A1-SLOTSYM-FAILED] Release only what THIS record registered. A record whose enable failed never reached the
+        // register step, so it is not a holder -- and its [DISABLE] (CE runs it on the deferred untick) releases nothing.
+        // Without memrec (a hand-run chunk) the count alone decides, as before.
+        Line(sb, indent, $"{SlotSymHolders} = {SlotSymHolders} or {{}}");
+        Line(sb, indent, $"local _hs = {SlotSymHolders}['{sym}']");
+        Line(sb, indent, "local _mine = true");
+        Line(sb, indent, "if memrec then _mine = (_hs ~= nil and _hs[memrec.ID] == true); if _mine then _hs[memrec.ID] = nil end end");
+        Line(sb, indent, "if not _mine then");
+        Line(sb, indent, $"  dbg('[{tag}] {sym} was never registered by this record (its enable failed) -- nothing to release')");
         Line(sb, indent, "else");
-        Line(sb, indent, "  local _tries = 0");
-        Line(sb, indent, $"  while getAddressSafe('{sym}') and _tries < 8 do");
-        Line(sb, indent, $"    unregisterSymbol('{sym}')");
-        Line(sb, indent, "    _tries = _tries + 1");
-        Line(sb, indent, "  end");
-        Line(sb, indent, $"  if getAddressSafe('{sym}') then");
-        Line(sb, indent, $"    dbg('[{tag}] {sym} could NOT be unregistered after ' .. _tries .. ' attempt(s) -- it still resolves')");
+        Line(sb, indent, $"  local _rc = ({SlotSymRefTable}['{sym}'] or 0) - 1");
+        Line(sb, indent, "  if _rc < 0 then _rc = 0 end");
+        Line(sb, indent, $"  {SlotSymRefTable}['{sym}'] = _rc");
+        Line(sb, indent, "  if _rc > 0 then");
+        Line(sb, indent, $"    dbg('[{tag}] {sym} still held by ' .. _rc .. ' other record(s) -- left registered')");
         Line(sb, indent, "  else");
-        Line(sb, indent, $"    dbg('[{tag}] {sym} unregistered')");
+        Line(sb, indent, "    local _tries = 0");
+        Line(sb, indent, $"    while getAddressSafe('{sym}') and _tries < 8 do");
+        Line(sb, indent, $"      unregisterSymbol('{sym}')");
+        Line(sb, indent, "      _tries = _tries + 1");
+        Line(sb, indent, "    end");
+        Line(sb, indent, $"    if getAddressSafe('{sym}') then");
+        Line(sb, indent, $"      dbg('[{tag}] {sym} could NOT be unregistered after ' .. _tries .. ' attempt(s) -- it still resolves')");
+        Line(sb, indent, "    else");
+        Line(sb, indent, $"      dbg('[{tag}] {sym} unregistered')");
+        Line(sb, indent, "    end");
         Line(sb, indent, "  end");
         Line(sb, indent, "end");
     }
