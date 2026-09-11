@@ -91,6 +91,10 @@ int         g_cachedGEngineAobLen    = 0;
 // body so a second caller waits and returns the first caller's result. (B4/B5 audit #4)
 static std::atomic<bool> s_initialized{false};
 static std::mutex  s_initMutex;
+// [A3-MIMIC-INIT-FASTPATH] True, under s_initMutex, for the whole body of an init that is actually scanning -- from before
+// FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
+// the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
+std::atomic<bool> g_initInProgress{false};
 static Fern  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
@@ -150,6 +154,13 @@ bool UE5_Init() {
         LOG_WARN("UE5_Init: Already initialized");
         return true;
     }
+
+    // [A3-MIMIC-INIT-FASTPATH] From here to every return below, this thread is SCANNING under s_initMutex. The flag
+    // clears on every exit (RAII) -- before initLock releases, because it is declared after it.
+    struct InitInProgressScope {
+        InitInProgressScope()  { g_initInProgress.store(true,  std::memory_order_release); }
+        ~InitInProgressScope() { g_initInProgress.store(false, std::memory_order_release); }
+    } initInProgress;
 
     LOG_INFO("UE5_Init: Starting initialization...");
 

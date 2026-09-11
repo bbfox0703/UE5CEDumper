@@ -46,6 +46,7 @@ extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
 extern uintptr_t    g_cachedGEngine;  // &GEngine (the static slot holding UEngine*), 0 if unresolved
+extern std::atomic<bool> g_initInProgress;   // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp: an init is scanning
 
 // The UE FunctionFlags bits and the routing predicate that reads them now live in
 // Mimic.h (FUNC_FLAG_NATIVE / FUNC_FLAG_STATIC / ShouldRouteDirectInvoke) so a test
@@ -467,7 +468,11 @@ uintptr_t GetAddress() {
 static bool EnsureInitialized() {
     // UE5_Init is idempotent (checks internal s_initialized flag)
     // Note: extern declarations are at file scope (above namespace)
-    if (g_cachedGObjects && g_cachedGNames) {
+    // [A3-MIMIC-INIT-FASTPATH] The globals alone are not "initialized": UE5_Init publishes them right after FindAll,
+    // 190-445 ms before Serie / Aura init and ValidateAndFixOffsets finish. While an init is scanning, fall through to
+    // UE5_Init, which waits on s_initMutex (and logs that it is waiting) and returns the first caller's result.
+    if (Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,
+                              g_initInProgress.load(std::memory_order_acquire))) {
         return true;  // Already initialized
     }
 

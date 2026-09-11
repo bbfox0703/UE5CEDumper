@@ -4180,7 +4180,7 @@ fresh CE session, where the flag was nil.
   - **UI pins:** the masked read-back in both directions, and map-value and set-element rows that
     are native and write the value byte. Green pins; the mutation check kills each.
 
-##### `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init
+##### ✅ `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init (FIXED IN SOURCE 2026-09-12)
 
 `Mimic.cpp:470-471` returns "initialized" whenever `g_cachedGObjects && g_cachedGNames`. `UE5_Init`
 publishes those right after `FindAll`, **before** `Serie` / `Aura` init, decoy recovery and
@@ -4197,6 +4197,17 @@ publishes those right after `FindAll`, **before** `Serie` / `Aura` init, decoy r
     cancelled scan a full cancel-immune `UE5_Init` would run on the poller;
   - clearing the globals in `UE5_Shutdown`;
   - moving the publish to the end of init.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded narrowest fix** (batch L14).
+  - `g_initInProgress` is raised under `s_initMutex`, by an RAII scope that opens before `FindAll`
+    publishes the globals and closes on every exit.
+  - The mailbox's fast path is now `Mimic::InitFastPathOk(gobjects, gnames, inProgress)`. While an
+    init scans, it falls through to `UE5_Init`, which waits on the mutex, logs the "waiting" line, and
+    returns the first caller's result.
+  - None of the three unsafe shapes was taken.
+  - **Tests, red first:** the rule in dll_helpers_test, plus source pins for both ends of the wiring
+    (Frieren and Mimic reach no test target). 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215.
+  - ⚠ **Survivor by construction:** the scope's store semantics. No harness runs `UE5_Init`; the pin
+    fixes the scope's position.
 
 ##### ✅ `[A3-FIRE-STRUCT-BOOLMASK]` LOW — FIRE writes a packed-bool struct sub-field as a whole byte (FIXED IN SOURCE 2026-09-11)
 
@@ -5080,6 +5091,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 65 | `[A2-CRC-PATH-LS]` (+ its gate gap) | LOW | `git log --grep A2-CRC-PATH-LS` (batch L11) | A dll/src-wide gate test, red first: no `%ls` in a `Sein::` / `LOG_` call. It found eight sites (CrashReportClient ×2, the VERSIONINFO key, the pipe name, both proxies ×2), all converted. 4/4 mutants killed; dll_core_test 304/304; UI 5213/5213. Byte-identical for ASCII |
 | 66 | `[A2-HEAP-ANCHOR-TEXT]` | LOW | `git log --grep A2-HEAP-ANCHOR-TEXT` (batch L12) | dll_helpers_test, red first: a no-module anchor is Heap; a heap anchor refuses a foreign candidate with its own verdict and admits the producer; the truth table is 16 rows. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213. The enum form; the switch tail fails closed; None wording byte-identical |
 | 67 | `[A2-METHODE-MANUALMAP]` | LOW | `git log --grep A2-METHODE-MANUALMAP` (batch L13) | A Methode.cpp source pin, red first: the TRUE-but-absent text is ambiguous and names "Always force load modules"; the old verdict on CE's BOOL is gone. 2/2 mutants killed; dll_core_test 304/304, dll_helpers_test 2716/2716; UI 5214/5214. The recorded safe fix; comment and working-lessons corrected |
+| 68 | `[A3-MIMIC-INIT-FASTPATH]` | LOW | `git log --grep A3-MIMIC-INIT-FASTPATH` (batch L14) | dll_helpers_test (`Mimic::InitFastPathOk`: both globals set WHILE an init scans does not take the fast path) + source pins for both ends of the wiring, red first. 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215. The recorded narrowest fix; the contract hash is unmoved |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5268,6 +5280,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L53 | `[A2-METHODE-MANUALMAP]` | **CE: announce it first.** On a throwaway target (DumperTest), with CE's plugin loaded:
 1. Tick CE Settings -> "Always force load modules" and inject through the plugin. The message must be the new two-possibility text, naming the setting.
 2. Untick the setting, restart the target, inject again. The normal "DLL injected" message must appear. | CE + DumperTest |
+| L54 | `[A3-MIMIC-INIT-FASTPATH]` | **CE: announce it first.** A game with a CE mailbox hotkey (e.g. God Mode in the .CT):
+1. Fire it repeatedly while `UE5_Init` runs.
+2. A command landing after the "Module anchor set" line but before init's end must produce a "UE5_Init: init already in progress … waiting" line, then succeed first time.
+3. No one-off DynOff error that succeeds on retry. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5339,7 +5355,7 @@ completeness critic.
 - ✅ **L11:** `[A2-CRC-PATH-LS]`
 - ✅ **L12:** `[A2-HEAP-ANCHOR-TEXT]`
 - ✅ **L13:** `[A2-METHODE-MANUALMAP]` (CE)
-- **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
+- ✅ **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
 - **L16:** `[W5-DENKEN-DEADGUARD]`
 - **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`

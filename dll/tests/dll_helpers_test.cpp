@@ -1204,6 +1204,21 @@ static void Test_Mimic_CommandNumbering() {
 // MB1 runs a stateful UFunction on the wrong thread, MB2 refuses a command that
 // would have worked.
 
+// [A3-MIMIC-INIT-FASTPATH] The mailbox's init fast path. UE5_Init publishes GObjects/GNames right after FindAll, before
+// Serie / Aura init, decoy recovery and ValidateAndFixOffsets -- so "both set" skipped B5's serialization for the last
+// 30-45% of every init, and a CE hotkey in that tail ran on unprobed DynOff with no "waiting" line.
+static void Test_Mimic_InitFastPath() {
+    EXPECT("INITFAST: both globals set and no init running takes the fast path",
+           Mimic::InitFastPathOk(true, true, /*initInProgress=*/false));
+    EXPECT("INITFAST: both globals set WHILE an init runs does not -- it waits in UE5_Init",
+           !Mimic::InitFastPathOk(true, true, /*initInProgress=*/true));
+    EXPECT("INITFAST control: a missing global never takes it, init running or not",
+           !Mimic::InitFastPathOk(true, false, false) && !Mimic::InitFastPathOk(false, true, false)
+           && !Mimic::InitFastPathOk(false, false, false) && !Mimic::InitFastPathOk(true, false, true)
+           && !Mimic::InitFastPathOk(false, true, true) && !Mimic::InitFastPathOk(false, false, true));
+    static_assert(Mimic::InitFastPathOk(true, true, false), "InitFastPathOk must be constexpr-evaluable");
+}
+
 static void Test_Mimic_InvokeRouting() {
     constexpr uint32_t N = Mimic::FUNC_FLAG_NATIVE;   // 0x0400
     constexpr uint32_t S = Mimic::FUNC_FLAG_STATIC;   // 0x2000
@@ -8237,6 +8252,7 @@ int main() {
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_InitFastPath);
     RUN(Test_Mimic_CommandRequiresInit);
     RUN(Test_Flamme_AtomicPublishGate);
 

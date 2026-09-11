@@ -466,6 +466,17 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
                == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
 }
 
+/// [A3-MIMIC-INIT-FASTPATH] May a mailbox command skip EnsureInitialized's call into UE5_Init? UE5_Init publishes
+/// g_cachedGObjects / g_cachedGNames right after FindAll -- BEFORE Serie / Aura init, decoy recovery and
+/// ValidateAndFixOffsets -- so "both are set" is NOT "initialized" while an init is still scanning. Pure, so
+/// dll_helpers_test pins it.
+constexpr bool InitFastPathOk(bool haveGObjects, bool haveGNames, bool initInProgress) {
+    // While an init is scanning, the caller goes through UE5_Init, which waits on s_initMutex -- and says so -- and
+    // returns the first caller's result (Frieren.cpp's promise). Never "always call UE5_Init": a pathological rescan can
+    // pass the 10 s mailbox timeout.
+    return haveGObjects && haveGNames && !initInProgress;
+}
+
 /// Does `cmd` need the AOB scan (GObjects/GNames) to have succeeded?
 ///
 /// Everything that touches UE reflection does, so this is TRUE by default and the

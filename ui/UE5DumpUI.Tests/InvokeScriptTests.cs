@@ -1820,6 +1820,23 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void MailboxInitFastPath_WaitsWhileAnInitIsScanning()
+    {
+        // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp and Mimic.cpp reach no test target: the RULE is pinned in dll_helpers_test
+        // (Mimic::InitFastPathOk), and this pins both ends of its wiring. UE5_Init must raise the flag under s_initMutex
+        // BEFORE FindAll publishes the globals, and the mailbox's fast path must read it.
+        var frieren = DllSource("Frieren.cpp");
+        int lockAt    = frieren.IndexOf("std::unique_lock<std::mutex> initLock(s_initMutex", StringComparison.Ordinal);
+        int scopeAt   = frieren.IndexOf("} initInProgress;", StringComparison.Ordinal);
+        int findAllAt = frieren.IndexOf("Genau::FindAll(ptrs", StringComparison.Ordinal);
+        Assert.True(lockAt >= 0 && scopeAt > lockAt && findAllAt > scopeAt,
+                    "UE5_Init must raise g_initInProgress under s_initMutex, before FindAll publishes the globals");
+        var mimic = DllSource("Mimic.cpp");
+        Assert.Contains("Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,", mimic, StringComparison.Ordinal);
+        Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CePluginInject_TrueButAbsent_IsAmbiguous_AndNamesTheForceLoadSetting()
     {
         // [A2-METHODE-MANUALMAP] ce_InjectDLL TRUE after EInjectError means CE's forceLoadModule SUCCEEDED: a manual map
