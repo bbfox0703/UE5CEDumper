@@ -2,7 +2,7 @@
 
 // ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: 59 C ABI exports for CE Lua bridge
+// ExportAPI: 60 C ABI exports for CE Lua bridge
 //
 // ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
 // export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
@@ -26,6 +26,12 @@ extern "C" {
 __declspec(dllexport) bool     UE5_Init();
 __declspec(dllexport) void     UE5_Shutdown();
 __declspec(dllexport) uint32_t UE5_GetVersion();
+
+// [W5-OFFSETS-UNMEASURED] Were the UE property offsets MEASURED? 1 = yes; 0 = no, and reasonBuf (nullable) says why --
+// "probe-not-run" before detection, else the give-up / unmeasured reason (the pipe's get_offsets fallback_reason).
+// Everything built from the offsets (a CE structure dissect first of all) trusts them only as far as this says.
+// int32_t, not bool: executeCodeEx reads the whole of RAX, and a bool return defines only AL.
+__declspec(dllexport) int32_t  UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen);
 
 // Combined init + pipe server start — called by CEPlugin's InjectDLL
 // so that a single entry point activates everything in the game process.

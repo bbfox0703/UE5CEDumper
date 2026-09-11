@@ -1863,12 +1863,23 @@ SCAN-CORE     1    0    1    0    0    0    0    0
    - **Tests, red first:** a 61,000-field instance exports "Copied, but TRUNCATED…" naming this panel's
      levers. The control: a 3-field instance adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236.
    - ⚠ **Survivor by construction:** the read-before-await ordering. The stub completes on one thread.
-4. ⬜ **`[W5-OFFSETS-UNMEASURED]`** `Genau.cpp:4286`. `ValidateAndFixOffsets` computes `allMeasured`
+4. ✅ **`[W5-OFFSETS-UNMEASURED]`** (FIXED IN SOURCE 2026-09-12, batch L15, for the C ABI and the stale TRUE; ⬜ the MAILBOX half is split off as `[W5-OFFSETS-MAILBOX]`, L45) `Genau.cpp:4286`. `ValidateAndFixOffsets` computes `allMeasured`
    and a 16-entry reason and publishes them as `DynOff::bOffsetsValidated` /
    `g_offsetsFallbackReason` — and **only the pipe** (`Fern.cpp:5055-5057`) carries the verdict. The
    C ABI and the CE mailbox, **which build CE structures from those very offsets**, do not. P3.
    ⛔ Making `UE5_Init` return false on `!allMeasured` is harmful — `Grimoire.h`'s *"TWO flags,
    deliberately"* block explains why.
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch L15), for the C ABI and the stale TRUE. `UE5_Init` still returns true, as the
+   note above requires.
+   - A new export, `UE5_GetOffsetsVerdict(reasonBuf, bufLen)`, returns 1 when the offsets were measured and 0 when they
+     were not, with the reason (`probe-not-run` before any detection). It is `int32_t`, not `bool`, because `executeCodeEx`
+     reads all of RAX.
+   - `scripts/ue5_dissect.lua` warns once per distinct reason before building a structure on unmeasured offsets.
+   - Both early give-ups now store `validated=false` through one helper, `PublishOffsetsGiveUp`, and `UE5_Shutdown` forgets
+     the verdict (`DynOff::ResetOffsetsVerdict`). Together these close the widening below.
+   - ⬜ **`[W5-OFFSETS-MAILBOX]`** (L45): the CE **mailbox** still does not carry the verdict. Publishing it needs a new
+     field or a new status meaning, either of which is a `MAILBOX_CONTRACT` change. It waits for that decision rather than
+     riding in on a LOW fix.
 5. ✅ **`[W5-DENKEN-DEADGUARD]`** (FIXED IN SOURCE 2026-09-12, batch L16) `Denken.cpp:221`. The *"bail to save budget in a followed impl"*
    guard is **dead in every reachable state** — `TryFollow` increments `ctx.callsFollowed` before
    recursing, so the inner branch can never be taken.
@@ -2249,7 +2260,7 @@ is itself a useful rule for the fix pass.
 
 #### Widenings to rows already recorded
 
-- **`[W5-OFFSETS-UNMEASURED]` has a latent stale-TRUE.** The two early returns in
+- ✅ **`[W5-OFFSETS-UNMEASURED]` has a latent stale-TRUE.** (fixed with the row in batch L15: both give-ups store false, and `UE5_Shutdown` resets all three) The two early returns in
   `ValidateAndFixOffsets` (`:3459`, `:3859`) rely on `bOffsetsValidated`'s *initial* false and never
   store false, and `UE5_Shutdown` never resets `bOffsetsValidated`, `bOffsetsProbeRan` or
   `g_offsetsFallbackReason`. A second `UE5_Init` (CE Disable → Enable) taking an early return after a
@@ -5208,6 +5219,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 80 | `[W1-PARTIAL-MARK]` | LOW | `git log --grep W1-PARTIAL-MARK` (batch L25) | SnapshotStoreTests + SnapshotViewModelTests, red first: the reason round-trips and the partial survives `DeleteUnusableSnapshotsAsync`; a capped capture persists `cap` and stays usable; a mid-capture low-disk stop persists `disklow`, not `cap`; the grid label and the picker line both carry it; a clean capture carries none. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5244/5244. A NEW column, per the refuted-fix note: `is_usable=0` would auto-delete the partial |
 | 81 | `[P3-SCORING-MCDELEGATE]` | LOW | `git log --grep P3-SCORING-MCDELEGATE` (batch L33) | PropertyScoringTableTests, red first: a stat-named `MulticastDelegateProperty` gets `NonValueTypePenalty`; the three split spellings keep it (control). 1/1 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5248/5248. One name in a private predicate, one consumer |
 | 82 | `[W3-CAP-NOSAVE]` | LOW | `git log --grep W3-CAP-NOSAVE` (batch L30) | ClassListCapTests.cs `UiOptionsPersistSymmetryTests`, red first: every `BuildOptions` line copying from a tracked view model must name a property in that view model's persist set (one explicit alias, `Spc.JoinModeForOptions` → `SelectedJoinMode`). It failed on exactly the two caps and found no third. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5249/5249 |
+| 83 | `[W5-OFFSETS-UNMEASURED]` | LOW | `git log --grep W5-OFFSETS-UNMEASURED` (batch L15) | dll_core_test, red first: a give-up after a validated run stores validated=false (the first give-up is driven for real, over a pool with no Guid / Vector); the shutdown reset forgets all three; the verdict reason reads `probe-not-run` before detection, even beside a stale reason, and is never empty for an unmeasured run. InvokeScriptTests source pins cover the second give-up, the `UE5_Shutdown` call, the export's both-flags rule and the dissect warning. 8/8 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5251/5251. The export count is 59 → 60 at every derived site. The mailbox half is L45 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5444,6 +5456,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Raise Property Search's Max and change nothing else.
 2. Close the UI. `ui-options.json` holds the new value, and the value is back on relaunch.
 3. Repeat with the Classes tab's Max. | UI only |
+| L69 | `[W5-OFFSETS-UNMEASURED]` | CE and a game. ⚠ Announce CE use first.
+1. On a game whose scan log says `validated=yes`, `UE5_GetOffsetsVerdict` returns 1, and `dissect.createFromClass` prints no warning.
+2. On a build whose scan log says `validated=NO` (the UE 5.8 fixture), the first dissect prints exactly one `[UE5Dissect WARN] UE property offsets were NOT measured (…)` line. It names the same reason as `get_offsets`' `fallback_reason`, and a second dissect prints nothing.
+3. After CE Disable, the verdict reads `probe-not-run` until the next Enable's scan finishes. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5516,7 +5532,7 @@ completeness critic.
 - ✅ **L12:** `[A2-HEAP-ANCHOR-TEXT]`
 - ✅ **L13:** `[A2-METHODE-MANUALMAP]` (CE)
 - ✅ **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
-- **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
+- ✅ **L15:** `[W5-OFFSETS-UNMEASURED]` (CE). Its mailbox half is L45.
 - ✅ **L16:** `[W5-DENKEN-DEADGUARD]`
 - ✅ **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 - ✅ **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
@@ -5546,6 +5562,7 @@ completeness critic.
 - **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
+- **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

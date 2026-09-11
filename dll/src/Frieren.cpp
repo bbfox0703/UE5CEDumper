@@ -681,6 +681,9 @@ void UE5_Shutdown() {
     // Tot::RequestShutdown() above is the interlock — a scan still running past this
     // point sees it and refuses to latch (see UE5_Init).
     s_initialized.store(false, std::memory_order_release);
+    // [W5-OFFSETS-UNMEASURED] ...and forget the offsets verdict: the next init re-derives it, and until then nothing
+    // may read this run's "validated" (a give-up used to keep a previous TRUE, over default offsets).
+    DynOff::ResetOffsetsVerdict();
     // The pipe is gone, so stop advertising READY — a CE Lua re-enable after a
     // Disable must wait for the fresh auto-start rather than read a stale flag.
     g_invokeMailbox.initState = Mimic::INIT_IDLE;
@@ -706,6 +709,15 @@ uint32_t UE5_GetVersion() {
         }
     }
     return g_cachedUEVersion;
+}
+
+int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
+    // [W5-OFFSETS-UNMEASURED] The pipe's get_offsets carried this verdict and nothing CE reads did -- while
+    // ue5_dissect.lua builds CE structures from these very offsets. 1 = MEASURED; 0 = not, and reasonBuf says why.
+    const bool ran       = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
+    const bool validated = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
+    CopyToBuffer(DynOff::OffsetsVerdictReason(ran, validated, DynOff::g_offsetsFallbackReason), reasonBuf, bufLen);
+    return (ran && validated) ? 1 : 0;
 }
 
 uintptr_t UE5_GetGObjectsAddr() {

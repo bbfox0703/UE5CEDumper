@@ -25,7 +25,7 @@ narrative identity resonates with what the module *does*.
 
 | File | Frieren Name | 日文名 | Character | Poll # | Actual Function | Why This Name |
 |---|---|---|---|---|---|---|
-| **Frieren.cpp** | 芙莉蓮 | フリーレン | Protagonist | #4 (1v1: #1) | ExportAPI: 59 C ABI exports for CE Lua | Everyone meets her first — the sole gateway to the DLL |
+| **Frieren.cpp** | 芙莉蓮 | フリーレン | Protagonist | #4 (1v1: #1) | ExportAPI: 60 C ABI exports for CE Lua | Everyone meets her first — the sole gateway to the DLL |
 | **Genau.cpp** | 葛納烏 | ゲナウ | First-class mage examiner | **#1** | OffsetFinder: AOB signatures, GObjects/GNames/GWorld | The examiner who *screens* candidates — scans & validates every pattern |
 | **Macht.cpp** | 黃金鄉馬哈特 | マハト | Seven Sages, transmutation | #5 | Memory: AOBScan, SEH reads, RIP resolution, AVX2 SIMD | Raw elemental power — direct memory manipulation |
 | **Aura.cpp** | 斷頭台的阿烏拉 | アウラ | Obedience Scale demon | #3 | ObjectArray: FUObjectArray slot enumeration | Weighs every soul on her scale — validates each object slot |

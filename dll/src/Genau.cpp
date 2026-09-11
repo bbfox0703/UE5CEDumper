@@ -3441,6 +3441,16 @@ static void DetectUPropertyMode(uint32_t ueVersion) {
     }
 }
 
+// A give-up: DynOff is SETTLED (probeRan, which the &GEngine gates key on) but NOT measured, and says why.
+// [W5-OFFSETS-UNMEASURED] validated=false is stored EXPLICITLY. Both early returns used to rely on the flag's initial
+// false, so a re-init taking one after a validated run kept the old TRUE beside this very reason.
+static bool PublishOffsetsGiveUp(const char* reason) {
+    DynOff::g_offsetsFallbackReason = reason;
+    DynOff::bOffsetsValidated.store(false, std::memory_order_release);
+    DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
+    return false;
+}
+
 bool ValidateAndFixOffsets(uint32_t ueVersion) {
     Sein::Info("DYNO", "ValidateAndFixOffsets: Starting dynamic offset detection...");
 
@@ -3766,9 +3776,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
         // The probe RAN but gave up — DynOff holds unmeasured defaults. Say so, so the
         // summary cannot claim validated=yes (it used to, three lines after this warning).
-        DynOff::g_offsetsFallbackReason = "no-guid-or-vector-struct";
-        DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
-        return false;
+        return PublishOffsetsGiveUp("no-guid-or-vector-struct");
     }
 
     uintptr_t testStruct = guidStruct ? guidStruct : vectorStruct;
@@ -3887,9 +3895,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     if (!childProps) {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
-        DynOff::g_offsetsFallbackReason = "childprops-probe-failed";
-        DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
-        return false;
+        return PublishOffsetsGiveUp("childprops-probe-failed");
     }
 
     // Which probes below GAVE UP and kept an unmeasured default (audit #5 G1).

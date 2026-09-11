@@ -1808,6 +1808,63 @@ public class InvokeScriptTests
         Assert.Equal(CeMailboxLayout.ParamsDataBytes, int.Parse(m.Groups[1].Value));
     }
 
+    // ---- [W5-OFFSETS-UNMEASURED] the offsets verdict reaches the C ABI and CE's dissect; no give-up keeps a stale TRUE ----
+
+    [Fact]
+    public void OffsetsVerdict_ReachesTheCAbi_AndCeDissectSaysWhenUnmeasured()
+    {
+        // Only the pipe carried the verdict; the C ABI and ue5_dissect.lua -- which builds CE structures from those very
+        // offsets -- did not. int32_t, not bool: executeCodeEx reads the whole of RAX, and a bool return defines only AL.
+        string h = DllSource("Frieren.h");
+        Assert.Matches(@"int32_t\s+UE5_GetOffsetsVerdict\(char\*\s*\w+,\s*int32_t\s*\w+\);", h);
+
+        string cpp = DllSource("Frieren.cpp");
+        int at = cpp.IndexOf("int32_t UE5_GetOffsetsVerdict(", StringComparison.Ordinal);
+        Assert.True(at > 0, "UE5_GetOffsetsVerdict's definition not found in Frieren.cpp");
+        string impl = cpp.Substring(at, Math.Min(900, cpp.Length - at));
+        Assert.Contains("DynOff::OffsetsVerdictReason(", impl);
+        // "Measured" needs BOTH flags: a probe that never ran is not a measurement.
+        Assert.Contains("(ran && validated) ? 1 : 0", impl);
+
+        string lua = RepoScriptSource("ue5_dissect.lua");
+        int from = lua.IndexOf("function dissect.createFromClass(", StringComparison.Ordinal);
+        int to = lua.IndexOf("function dissect.createFromPath(", StringComparison.Ordinal);
+        Assert.True(from > 0 && to > from, "createFromClass not found in ue5_dissect.lua");
+        string build = lua.Substring(from, to - from);
+        Assert.Contains("\"UE5_GetOffsetsVerdict\"", build);
+        // A WARNING, ungated: it flags a genuine problem (CLAUDE.md, CE Lua output hygiene) -- not a log() line.
+        Assert.Matches(@"warn\(""UE property offsets were NOT measured", build);
+    }
+
+    [Fact]
+    public void OffsetsGiveUps_BothStoreValidatedFalse_AndShutdownForgetsTheVerdict()
+    {
+        // Both early give-ups relied on bOffsetsValidated's INITIAL false and never stored one. dll_core_test drives the
+        // first; the second needs a Guid struct with no child chain, so this pins that it goes through the same helper.
+        string genau = DllSource("Genau.cpp");
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(genau, @"return PublishOffsetsGiveUp\(""").Count);
+        // The helper and the success tail are the only two stores of probeRan=true: a give-up spelled by hand again
+        // (reason + probeRan, and no validated=false) would make three.
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(genau, @"bOffsetsProbeRan\.store\(true").Count);
+
+        string cpp = DllSource("Frieren.cpp");
+        int at = cpp.IndexOf("void UE5_Shutdown() {", StringComparison.Ordinal);
+        Assert.True(at > 0, "UE5_Shutdown not found");
+        int end = cpp.IndexOf("\n}\n", at, StringComparison.Ordinal);
+        Assert.Contains("DynOff::ResetOffsetsVerdict();", cpp.Substring(at, end - at));
+    }
+
+    private static string RepoScriptSource(string file)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "scripts", file);
+            if (File.Exists(c)) return File.ReadAllText(c);
+        }
+        throw new FileNotFoundException("scripts/" + file + " not found from " + AppContext.BaseDirectory);
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

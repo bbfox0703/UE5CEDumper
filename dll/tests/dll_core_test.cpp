@@ -3058,6 +3058,64 @@ int main() {
               cdRows[1].preview.c_str());
     }
 
+    // -- OFFSETS-UNMEASURED-2026-09-12 -- a give-up stores validated=false; the reset forgets; the verdict says why ------
+    {
+        blk("OFFSETS - a give-up stores validated=false; UE5_Shutdown's reset forgets the verdict; the reason text");
+        // [W5-OFFSETS-UNMEASURED] Both early returns relied on the flag's INITIAL false and never stored one, so a second
+        // UE5_Init (CE Disable -> Enable) taking one after a validated run kept the old TRUE -- "validated" beside a
+        // fallback reason, over default offsets. UE5_Shutdown reset none of the three either.
+        // A pool with no Guid / Vector struct, so the run takes the FIRST give-up. Every object points into zeroed bytes
+        // with room past the deepest probe offset (+0x70), so no probe reads beyond them. UE 501 skips the version-default
+        // block, so the only DynOff it writes are the three saved here (CPN / Outer, FProperty mode).
+        const auto svCpn   = DynOff::bCasePreservingName;
+        const auto svOuter = DynOff::UOBJECT_OUTER;
+        const auto svFProp = DynOff::bUseFProperty;
+        alignas(16) static uint8_t ofZero[0x400] = {};
+        FakePool ofPool;
+        ofPool.Build(2);
+        for (int i = 0; i < 2; ++i) {
+            const uintptr_t z = reinterpret_cast<uintptr_t>(ofZero) + static_cast<uintptr_t>(i) * 0x100;
+            memcpy(ofPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &z, sizeof(z));
+        }
+        Aura::InitWithExtendedLayout(ofPool.Addr(), FakePool::kItemSize);
+
+        DynOff::bOffsetsValidated.store(true);   // a PREVIOUS run measured everything
+        DynOff::bOffsetsProbeRan.store(true);
+        DynOff::g_offsetsFallbackReason = "";
+        const bool ofRet = Genau::ValidateAndFixOffsets(501);
+        check("OFFSETS setup: a pool with no Guid / Vector takes the no-guid-or-vector give-up",
+              !ofRet && std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct",
+              DynOff::g_offsetsFallbackReason);
+        check("OFFSETS ⭐: the give-up stores validated=false -- it never keeps a previous run's TRUE",
+              !DynOff::bOffsetsValidated.load());
+        check("OFFSETS control: the give-up still marks detection as run (the &GEngine gates key on it)",
+              DynOff::bOffsetsProbeRan.load());
+
+        DynOff::ResetOffsetsVerdict();
+        check("OFFSETS ⭐: the shutdown reset forgets all three",
+              !DynOff::bOffsetsValidated.load() && !DynOff::bOffsetsProbeRan.load()
+              && std::string(DynOff::g_offsetsFallbackReason).empty());
+
+        check("OFFSETS ⭐: before any detection the verdict says so",
+              std::string(DynOff::OffsetsVerdictReason(false, false, "")) == "probe-not-run");
+        check("OFFSETS ⭐: ...even beside a stale reason",
+              std::string(DynOff::OffsetsVerdictReason(false, true, "x")) == "probe-not-run");
+        check("OFFSETS control: a measured run has no reason",
+              std::string(DynOff::OffsetsVerdictReason(true, true, "")).empty());
+        check("OFFSETS control: an unmeasured run gives its reason",
+              std::string(DynOff::OffsetsVerdictReason(true, false, "unmeasured:elemsize")) == "unmeasured:elemsize");
+        check("OFFSETS ⭐: an unmeasured run with no recorded reason still reads as unmeasured, never as measured",
+              std::string(DynOff::OffsetsVerdictReason(true, false, "")) == "unmeasured");
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpn;
+        DynOff::UOBJECT_OUTER       = svOuter;
+        DynOff::bUseFProperty       = svFProp;
+        DynOff::bOffsetsValidated.store(false);
+        DynOff::bOffsetsProbeRan.store(false);
+        DynOff::g_offsetsFallbackReason = "";
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

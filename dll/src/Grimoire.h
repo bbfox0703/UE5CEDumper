@@ -760,6 +760,23 @@ inline std::atomic<bool> bOffsetsValidated{false};
 // only — never a heap string, so there is no lifetime question across threads.
 inline const char* g_offsetsFallbackReason = "";
 
+// [W5-OFFSETS-UNMEASURED] UE5_Shutdown forgets the verdict: a later init re-derives it, and until then nothing may read
+// a PREVIOUS run's "validated" -- the give-ups used to keep one, over default offsets.
+inline void ResetOffsetsVerdict() {
+    bOffsetsValidated.store(false, std::memory_order_release);
+    bOffsetsProbeRan.store(false, std::memory_order_release);
+    g_offsetsFallbackReason = "";
+}
+
+// [W5-OFFSETS-UNMEASURED] The reason UE5_GetOffsetsVerdict reports: "" when the offsets were MEASURED, else why not --
+// "probe-not-run" before any detection (even beside a stale reason), else the give-up / unmeasured reason, and never ""
+// for an unmeasured run. String literals only, like g_offsetsFallbackReason. Pure, so dll_core_test pins it.
+inline const char* OffsetsVerdictReason(bool probeRan, bool validated, const char* reason) {
+    if (!probeRan) return "probe-not-run";
+    if (validated) return "";
+    return (reason && *reason) ? reason : "unmeasured";
+}
+
 // Strip the FFieldVariant tag bit (LSB) from a pointer if we're on UE 5.3+.
 // On UE 5.3+, FFieldVariant stores type info in the LSB:
 //   bit 0 = 0 → FField*, bit 0 = 1 → UObject*

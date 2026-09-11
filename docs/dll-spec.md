@@ -497,7 +497,7 @@ the `bIsBound` flag only; binding enumeration is tracked in
 ## Frieren.h — C ABI Exports (legacy alias: ExportAPI)
 
 > ⚠ **Count is DERIVED, never hand-edited** — `grep -c '__declspec(dllexport)' dll/src/Frieren.h`
-> (**59** at the time of writing; this heading said *32* for months). The tables below cover the
+> (**60** at the time of writing; this heading said *32* for months). The tables below cover the
 > core set, not all of them.
 
 ```cpp
@@ -507,11 +507,14 @@ the `bIsBound` flag only; binding enumeration is tracked in
 
 extern "C" {
 
-    // === Initialization (4) ===
+    // === Initialization (5) ===
     __declspec(dllexport) bool     UE5_Init();          // AOB scan + subsystem init
     __declspec(dllexport) bool     UE5_AutoStart();     // Init + StartPipeServer (called by AutoStartThreadProc)
     __declspec(dllexport) void     UE5_Shutdown();
     __declspec(dllexport) uint32_t UE5_GetVersion();    // e.g. 507, 427, 422
+    // 1 = the UE property offsets were MEASURED; 0 = not, and reasonBuf says why ("probe-not-run" before detection).
+    // int32_t, not bool: executeCodeEx reads RAX. [W5-OFFSETS-UNMEASURED]
+    __declspec(dllexport) int32_t  UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen);
 
     // === Global Pointers (2) ===
     __declspec(dllexport) uintptr_t UE5_GetGObjectsAddr();

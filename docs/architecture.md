@@ -66,7 +66,7 @@ UE5CEDumper/
 │       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
-│       ├── Frieren.cpp / .h        ← ExportAPI — 59 C ABI exports for CE Lua bridge
+│       ├── Frieren.cpp / .h        ← ExportAPI — 60 C ABI exports for CE Lua bridge
 │       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (99 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
