@@ -3766,7 +3766,7 @@ reachable: a DumperTest D1 run resolved GNames by `pointer_scan`.
 - ✅ **FIXED IN SOURCE 2026-09-12, the safe fix** (batch L01, with `[P1-GENAU-ABORT]`): the bail sets
   `s_gnamesReport.cancelled` and now logs. `ExtraScanGWorld` is untouched. Pinned by the `GENAUABORT` block.
 
-##### `[A2-CRC-PATH-LS]` LOW — CrashReportClient version detection logs its path with `%ls`, which this file forbids
+##### ✅ `[A2-CRC-PATH-LS]` LOW — CrashReportClient version detection logs its path with `%ls`, which this file forbids (FIXED IN SOURCE 2026-09-12)
 
 `Genau.cpp:2849`/`:2853`, written by 6a74065a twelve days after `[NONASCIILS-2026-08-24]` and 2,700
 lines below the file's own *"CONVERT FIRST; NEVER %ls"* note (`:116`). On a non-ASCII install path the
@@ -3775,6 +3775,16 @@ still named by its ASCII label elsewhere, so the loss is only the resolved path 
 integrity.
 - ✅ **Safe fix:** `Utf8Helpers::EncodeUtf16`, then `%s`. It is byte-identical for ASCII paths.
 - **Gate gap:** nothing scans call sites for `%ls` in log calls.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix and the gate** (batch L11).
+  - The red is the gate: `InvokeScriptTests.DllLogCalls_NeverFormatAWideString` scans every dll/src
+    file for a `%ls` inside a `Sein::` / `LOG_` call. It skips comment lines and wide printfs.
+  - The gate found **eight** sites, not two, and all eight now `Utf8Helpers::EncodeUtf16` first, which
+    is byte-identical for ASCII:
+    - both CrashReportClient lines;
+    - the VERSIONINFO key;
+    - Fern's pipe-name line;
+    - both proxies' System32-path lines, which now keep `GetLastError()` before the conversion.
+  - 4/4 mutants killed, one of them a wide format on the second line of a multi-line call; dll_core_test 304/304; UI 5213/5213.
 
 ##### `[A2-HEAP-ANCHOR-TEXT]` LOW — a data-scan GObjects anchors to the heap, and later refusals print the "GObjects never validated" text
 
@@ -3887,6 +3897,7 @@ be trusted"*.
 - `[A2-GNAMES-PTRSCAN-ABORT]` joins `[P1-GENAU-ABORT]`.
 - `[A2-LAZY-LATCH-GUESS]` goes with the soft-path discriminator.
 - `[A2-CRC-PATH-LS]` is worth a `%ls`-in-log gate so the next instance is caught mechanically.
+  ✅ It has one (batch L11).
 
 ### ✅ A3 SWEPT 2026-09-10 `[TRACKB-A3-2026-09-10]` — the wire: 13 raised, 12 confirmed (4 MED · 8 LOW), 1 refuted
 
@@ -5045,6 +5056,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 62 | `[P1-SPARSEDELEGATE-REFS]` (+ the PATTERN-P5 widening) | LOW | `git log --grep P1-SPARSEDELEGATE-REFS` (batch L08) | dll_core_test (a planted sparse-delegate map: two unreadable delegates counted, the readable one not), the parse, a Fern pin, the status rule, and both Live Walker status lines, red first. 9/9 mutants killed; dll_core_test 291/291; UI 5212/5212. Aggregate channel only: no per-entry wire change |
 | 63 | `[A2-WALKCLASSEX-UNMAPPED]` (+ the `GetCachedStructFields` twin) | LOW | `git log --grep A2-WALKCLASSEX-UNMAPPED` (batch L09) | dll_core_test, red first: a decommitted page is refused by WalkClassEx and memoized by neither cache; re-committed, it walks. 3/3 mutants killed; dll_core_test 297/297; UI 5212/5212. The recorded safe fix: the read verdict threaded out, a once-per-address log guard |
 | 64 | `[A2-LAZY-LATCH-GUESS]` | LOW | `git log --grep A2-LAZY-LATCH-GUESS` (batch L10) | dll_core_test at a mis-resolved 504, red first: a real 0x1C is kept and latches +0x0C, `ResolveInnerSize` reads it, the reader latches nothing from the size it is handed; garbage still falls back, unlatched. 3/3 mutants killed; dll_core_test 304/304; UI 5212/5212. The recorded safe fix; the `InferScalarSize` entry kept |
+| 65 | `[A2-CRC-PATH-LS]` (+ its gate gap) | LOW | `git log --grep A2-CRC-PATH-LS` (batch L11) | A dll/src-wide gate test, red first: no `%ls` in a `Sein::` / `LOG_` call. It found eight sites (CrashReportClient ×2, the VERSIONINFO key, the pipe name, both proxies ×2), all converted. 4/4 mutants killed; dll_core_test 304/304; UI 5213/5213. Byte-identical for ASCII |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5223,6 +5235,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L50 | `[A2-LAZY-LATCH-GUESS]` | A UE 5.0-5.2 game with a `TArray<TLazyObjectPtr>` (rare, so any lazy array will do):
 1. Walk it in Live Walker. Every element's GUID is read, not only element 0.
 2. `offsets.log` has at most one "TLazyObjectPtr payload envelope measured" line, whose ElementSize is the engine's own (0x1C on 5.0-5.2, 0x18 from 5.3). | a UE5 game + UI |
+| L51 | `[A2-CRC-PATH-LS]` | A game installed under a folder with a non-ASCII name (a copy is enough), shipping a CrashReportClient:
+1. `scan.log`'s "DetectVersion: CrashReportClient at '…'" line shows the path, not an empty record.
+2. A proxy deploy there logs "Loaded real version.dll: …" with the path. | a game copy + UI or proxy |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5291,7 +5306,7 @@ completeness critic.
 - ✅ **L08:** `[P1-SPARSEDELEGATE-REFS]`
 - ✅ **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
 - ✅ **L10:** `[A2-LAZY-LATCH-GUESS]`
-- **L11:** `[A2-CRC-PATH-LS]`
+- ✅ **L11:** `[A2-CRC-PATH-LS]`
 - **L12:** `[A2-HEAP-ANCHOR-TEXT]`
 - **L13:** `[A2-METHODE-MANUALMAP]` (CE)
 - **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)

@@ -17,6 +17,7 @@
 #include "Renge.h"
 #include "Grimoire.h"
 #include "Sein.h"
+#include "Utf8Helpers.h"   // [A2-CRC-PATH-LS] a wide string is logged as UTF-8, never through a wide format
 #include "Macht.h"
 #include "Genau.h"
 #include "Aura.h"
@@ -503,7 +504,8 @@ bool Fern::Start() {
     m_acceptThread = std::thread(&Fern::AcceptLoop, this);
     m_monitorThread = std::thread(&Fern::MonitorLoop, this);
 
-    LOG_INFO("PipeServer: Started on %ls (maxInstances=%lu)", Grimoire::PIPE_NAME, kMaxPipeInstances);
+    LOG_INFO("PipeServer: Started on %s (maxInstances=%lu)",
+             Utf8Helpers::EncodeUtf16(Grimoire::PIPE_NAME, wcslen(Grimoire::PIPE_NAME)).c_str(), kMaxPipeInstances);
     return true;
 }
 

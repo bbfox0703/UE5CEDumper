@@ -2812,8 +2812,9 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
             unsigned maj = 0, min = 0;
             if (sscanf_s(s.c_str() + p, "%u.%u", &maj, &min) == 2) {
                 if (uint32_t code = Grimoire::UeVersionCode(maj, min)) {
-                    Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%ls' = '%s' -> %u",
-                               key, s.c_str(), code);
+                    // [A2-CRC-PATH-LS] convert first: Sein formats narrow.
+                    Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%s' = '%s' -> %u",
+                               Utf8Helpers::EncodeUtf16(key, wcslen(key)).c_str(), s.c_str(), code);
                     return code;
                 }
             }
@@ -2857,13 +2858,16 @@ static uint32_t DetectVersionFromCrashReportClient() {
         uint32_t v = ReadUeVersionFromFile(cand.c_str(),
                                            "CrashReportClient ProductVersion",
                                            "CrashReportClient FileVersion");
+        // [A2-CRC-PATH-LS] CONVERT FIRST, as this file's own note says: Sein formats narrow, and a wide install path
+        // with any character above 0xFF emptied the whole record. Byte-identical for an ASCII path.
+        const std::string candU8 = Utf8Helpers::EncodeUtf16(cand.c_str(), cand.size());
         if (v) {
-            Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' -> %u",
-                       cand.c_str(), v);
+            Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient at '%s' -> %u",
+                       candU8.c_str(), v);
             return v;
         }
-        Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' carries no usable "
-                   "version — ignoring it", cand.c_str());
+        Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient at '%s' carries no usable "
+                   "version — ignoring it", candU8.c_str());
     }
     return 0;
 }

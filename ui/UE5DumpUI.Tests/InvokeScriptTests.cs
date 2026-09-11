@@ -1819,6 +1819,51 @@ public class InvokeScriptTests
         throw new FileNotFoundException("dll/src/" + file + " not found from " + AppContext.BaseDirectory);
     }
 
+    private static string DllSrcDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) return c;
+        }
+        throw new DirectoryNotFoundException("dll/src not found from " + AppContext.BaseDirectory);
+    }
+
+    [Fact]
+    public void DllLogCalls_NeverFormatAWideString()
+    {
+        // [A2-CRC-PATH-LS] Sein formats NARROW, so a %ls argument goes through the CRT's wide-to-ANSI conversion, which
+        // fails on any character above 0xFF and leaves the WHOLE record empty (utf8_helpers_test pins the CRT
+        // behaviour). Five dll/src files carry the "CONVERT FIRST; NEVER %ls" note, and one of them broke it 2,700 lines
+        // below its own -- so it is a gate now, not a note. Comment lines are skipped, and so is a WIDE printf, where
+        // %ls is right. A format string belongs to the nearest call opened at or above it in the same statement.
+        var offenders = new System.Collections.Generic.List<string>();
+        foreach (var path in Directory.EnumerateFiles(DllSrcDir()))
+        {
+            var ext = Path.GetExtension(path);
+            if (ext != ".cpp" && ext != ".h") continue;
+            var lines = File.ReadAllLines(path);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (!lines[i].Contains("%ls", StringComparison.Ordinal)) continue;
+                if (lines[i].TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
+                for (int j = i; j >= Math.Max(0, i - 4); j--)
+                {
+                    var t = lines[j].TrimEnd();
+                    if (j < i && (t.EndsWith(';') || t.EndsWith('{') || t.EndsWith('}'))) break;   // an earlier statement
+                    if (t.Contains("printf", StringComparison.Ordinal)) break;                      // a wide printf
+                    if (t.Contains("Sein::", StringComparison.Ordinal) || t.Contains("LOG_", StringComparison.Ordinal))
+                    {
+                        offenders.Add($"{Path.GetFileName(path)}:{i + 1}");
+                        break;
+                    }
+                }
+            }
+        }
+        Assert.True(offenders.Count == 0, "log calls formatting a wide string: " + string.Join(", ", offenders));
+    }
+
     [Fact]
     public void FindRefsReply_CarriesSparseUnlocated()
     {
