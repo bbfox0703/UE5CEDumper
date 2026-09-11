@@ -137,6 +137,23 @@ public class SpcQueryViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoredStrict_IsNotAUserChoice()
+    {
+        // Review of de4a7e05: Strict is also what an AUTO In-session is written as, so restoring it through
+        // the setter latched the very fake override this fix removes -- latent only because the one call
+        // site runs while the combo already holds Strict. Pinned in the order that shows it.
+        await SeedInSessionAsync("a", "S", 100);
+        await SeedInSessionAsync("b", "S", 90);
+        var vm = NewVm();
+        await vm.RefreshAsync();                        // one session: auto-picks In-session
+        Assert.Equal("In-session", vm.SelectedJoinMode);
+
+        vm.RestoreJoinModeFromOptions("Strict");
+
+        Assert.Equal("In-session", vm.SelectedJoinMode);
+    }
+
+    [Fact]
     public void RestoredUnknownJoinMode_IsIgnored()
     {
         var vm = NewVm();

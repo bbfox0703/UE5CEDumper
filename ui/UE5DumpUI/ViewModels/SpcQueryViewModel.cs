@@ -546,12 +546,14 @@ public partial class SpcQueryViewModel : ViewModelBase
 
     /// <summary>[W1-SPC-JOINMODE] Restore a persisted join mode. In-session is dropped (an options file
     /// written before this fix can still hold it), and so is anything not in
-    /// <see cref="JoinModeOptions"/>. Any other value came from the user, because auto-selection only
-    /// ever picks In-session or Strict, so it restores through the public setter and latches the
-    /// override, exactly as a combo pick does.</summary>
+    /// <see cref="JoinModeOptions"/>. So is Strict: it is the default, what auto-selection falls back to,
+    /// AND what <see cref="JoinModeForOptions"/> writes for an auto In-session, so a persisted Strict
+    /// cannot be told from a pick nobody made -- restoring it through the setter would latch the very
+    /// fake override this fix removes (review of de4a7e05). Any other value only a user can have
+    /// chosen, so it restores through the public setter and latches, as a combo pick does.</summary>
     public void RestoreJoinModeFromOptions(string? persisted)
     {
-        if (string.IsNullOrEmpty(persisted) || persisted == "In-session") return;
+        if (string.IsNullOrEmpty(persisted) || persisted == "In-session" || persisted == "Strict") return;
         if (!JoinModeOptions.Contains(persisted)) return;
         SelectedJoinMode = persisted;   // a user choice: latches the override
     }

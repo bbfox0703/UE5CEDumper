@@ -528,6 +528,14 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
      - a restored In-session no longer blocks the cross-session fallback;
      - a restored Loose is kept;
      - an unknown value is ignored.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21, `spc-restore-doc-strict`, LOW).
+     - "The only fake override ever came from a persisted In-session" was incomplete. **Strict** is
+       also what an auto In-session is written as, and the default and the auto fallback besides, so a
+       persisted Strict cannot be told from a pick nobody made.
+     - Restoring it through the setter latched the override. That was latent only because the one
+       call site runs while the combo already holds Strict.
+     - `RestoreJoinModeFromOptions` now skips Strict like In-session, so the doc holds in every order.
+     - Restoring Strict after an auto In-session went red first. 1/1 mutants killed; UI 5088/5088.
 
 4. ✅ **`[W1-PIVOT-SESSION]` Class Pivot row handoffs have no cross-session gate.** (FIXED IN SOURCE 2026-09-11, batch B14)
    `ClassPivotViewModel.cs:165/169` are `SelectedResult != null`; `_engineState` is assigned at
@@ -1314,6 +1322,9 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
      result because the backing list was empty. The lookup still does NOT clear the keyword.
    - **Tests, red first:** the result survives a filter pass; hidden by a leftover keyword, it is
      reported, and it comes back when the keyword is cleared.
+   - ✅ **Review follow-up 2026-09-11** (`lookup-allinstances-doc-stale`, LOW): `_allInstances`' doc
+     still said only the class search fills it and the lookup clears it. It now says the lookup
+     REPLACES it, and names `_hasActiveClassSearch` as the "is a class search active" signal. Doc only.
 
 **LOW** — 1 row: `[W4-HEXSORT]` nine address/hex `DataGrid` columns in this cluster sort as **text**
 (`InstanceFinderPanel.axaml:226/:136/:388/:391`, `LiveWalkerPanel.axaml:651/:654/:657/:455/:930`).
@@ -1882,8 +1893,10 @@ against.
        (2026-08-19, when enums became capturable) and B12 keeps it NULL for its enum rows.
      - The grid shows their numbers, because `Render` decodes the stored hex. The NUMERIC readers
        still skip them: SPC's numeric predicates (Increased / Decreased / Exact / Between / ≥ / ≤),
-       Group Match's absolute and Increased / Decreased slots, and Diff direction. Changed /
-       Unchanged compare `hex` and are unaffected.
+       Group Match's absolute and Increased / Decreased slots, Diff direction, and Class Pivot's
+       change Discovery (its ↑/↓ arrow and its ranking read `numeric_value`; the row still appears,
+       because its HAVING clause compares hex). Changed / Unchanged compare `hex` and are unaffected.
+       (Discovery was missing from this list until the review of 31f79d66.)
      - Not backfilled, by choice. The hex IS present, so a one-time UPDATE, or a lazy decode where
        `numeric_value` is NULL at the load sites, would work; neither was done.
      - ⚠ The first version claimed "SPC runs in SQL, so a read-time fallback could not cover it"

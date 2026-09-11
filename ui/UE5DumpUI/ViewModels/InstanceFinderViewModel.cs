@@ -221,10 +221,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// separately-allocated containers). Set from the top Options flyout.</summary>
     [ObservableProperty] private int _deepScanElemCap = 256;
 
-    /// <summary>Full (capped) class-search result. <see cref="Instances"/> is a
-    /// class-noise-filtered projection of this; kept so the filter can re-project
-    /// without re-searching. Only the class-search path populates it — the
-    /// reverse-address lookup path clears it (its single result isn't a class set).</summary>
+    /// <summary>The backing list <see cref="Instances"/> is projected from (the class-noise and keyword
+    /// filters), kept so a filter can re-project without re-searching. A class search fills it with its
+    /// capped result; a reverse-address lookup REPLACES it with its single result, so the keyword filter
+    /// hides and restores that row like any other ([W4-LOOKUP-FILTER]). Whether a class search is active
+    /// is <c>_hasActiveClassSearch</c>, not whether this list is empty.</summary>
     private List<InstanceResult> _allInstances = new();
 
     /// <summary>Client-side class-noise filter: hides ticked classes (UI widgets,
