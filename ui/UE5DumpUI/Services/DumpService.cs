@@ -1435,6 +1435,9 @@ public sealed class DumpService : IDumpService
             BoolBitIndex = fo["bool_bit"]?.GetValue<int>() ?? -1,
             BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
             BoolByteOffset = fo["bool_byte_offset"]?.GetValue<int>() ?? 0,
+            // [A3-BOOL-NATIVE-NOWRITE] Additive: absent on an older DLL = false, which the edit
+            // path treats as UNRESOLVED (refuse), never as native.
+            BoolNative = fo["bool_native"]?.GetValue<bool>() ?? false,
             ArrayCount = fo["count"]?.GetValue<int>() ?? -1,
             ArrayInnerType = fo["array_inner_type"]?.GetValue<string>() ?? "",
             ArrayStructType = fo["array_struct_type"]?.GetValue<string>() ?? "",
@@ -1635,7 +1638,9 @@ public sealed class DumpService : IDumpService
                                     sfo["name"]?.GetValue<string>() ?? "",
                                     sfo["type"]?.GetValue<string>() ?? "",
                                     sfo["offset"]?.GetValue<int>() ?? 0,
-                                    sfo["size"]?.GetValue<int>() ?? 0));
+                                    sfo["size"]?.GetValue<int>() ?? 0,
+                                    // [A3-FIRE-STRUCT-BOOLMASK] additive; absent = 0 (whole-byte write)
+                                    sfo["bool_mask"]?.GetValue<int>() ?? 0));
                             }
                         }
 

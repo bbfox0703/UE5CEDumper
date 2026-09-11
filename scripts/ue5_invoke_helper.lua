@@ -291,7 +291,18 @@ local function writeParams(base, regionSize, params)
     if w then bound(off, w, p.name) end
 
     if t == 'bool' then
-      writeBytes(base + off, { (v ~= 0 and v ~= false) and 1 or 0 })
+      local on = (v ~= 0 and v ~= false)
+      local m = p.mask
+      -- [A3-FIRE-STRUCT-BOOLMASK] A PACKED bool (a struct sub-field sharing its byte with sibling
+      -- bools, e.g. FHitResult's bBlockingHit / bStartPenetrating) carries its single-bit mask:
+      -- set or clear only that bit. A whole-byte write zeroed the sibling or landed on bit 0.
+      -- No mask (native / unresolved) keeps the whole-byte 0x01 / 0x00 write.
+      if type(m) == 'number' and m > 0 and m < 0xFF and (m & (m - 1)) == 0 then
+        local cur = readBytes(base + off, 1, true)[1] or 0
+        writeBytes(base + off, { on and (cur | m) or (cur & (0xFF ~ m)) })
+      else
+        writeBytes(base + off, { on and 1 or 0 })
+      end
     elseif t == 'byte' then
       writeBytes(base + off, { math.floor(v) % 256 })
     elseif t == 'int16' or t == 'uint16' then

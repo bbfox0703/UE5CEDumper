@@ -68,6 +68,38 @@ public static class FieldValueConverter
             : (byte)(currentByte & ~mask);
     }
 
+    /// <summary>A FieldMask that names exactly ONE bit of a byte shared with sibling bools — the
+    /// only mask a read-modify-write is right for. 0 (unresolved / native) and 0xFF (native) are
+    /// not. Same predicate as <c>FreezeScriptGenerator.IsPackedBoolMask</c>.</summary>
+    public static bool IsSingleBitMask(int fieldMask)
+        => fieldMask > 0 && fieldMask < 0xFF && (fieldMask & (fieldMask - 1)) == 0;
+
+    /// <summary>How a BoolProperty edit may reach the game. [A3-BOOL-NATIVE-NOWRITE]</summary>
+    public enum BoolWriteMode
+    {
+        /// <summary>A native whole-byte bool: write 0x01 / 0x00.</summary>
+        NativeByte,
+        /// <summary>A packed bool with a single-bit mask: read-modify-write that bit.</summary>
+        MaskedBit,
+        /// <summary>Neither: the mask is unresolved (the probe missed — mask 0 does NOT mean
+        /// native), and the byte may hold up to 8 packed bools. A whole-byte write is the AA1
+        /// corruption of its siblings; ApplyBoolMask with mask 0 is a silent no-op. Refuse.</summary>
+        Refuse,
+    }
+
+    /// <summary>
+    /// Decide how to write a bool. [A3-BOOL-NATIVE-NOWRITE]
+    /// <para>This used to be implicit: every bool went through <see cref="ApplyBoolMask"/>, and a
+    /// native bool arrives with mask 0 (the DLL publishes a mask only for a single bit), so the
+    /// editor wrote back the byte it had just read and printed "Written". The DLL now marks the
+    /// native layout explicitly (<c>bool_native</c>); everything else without a single-bit mask is
+    /// refused, never guessed.</para>
+    /// </summary>
+    public static BoolWriteMode PlanBoolWrite(bool native, int fieldMask)
+        => native ? BoolWriteMode.NativeByte
+         : IsSingleBitMask(fieldMask) ? BoolWriteMode.MaskedBit
+         : BoolWriteMode.Refuse;
+
     /// <summary>
     /// Whether <paramref name="value"/> can be stored in a field of
     /// <paramref name="sizeBytes"/> bytes without losing information.

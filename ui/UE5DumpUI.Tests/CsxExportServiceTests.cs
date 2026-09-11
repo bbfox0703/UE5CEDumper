@@ -84,7 +84,7 @@ public class StubDumpService : IDumpService
     public virtual Task<IReadOnlyList<InstanceWalkResult>> WalkInstanceBatchAsync(IReadOnlyList<(string Addr, string? ClassAddr)> items, int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<DiagnosticsResult> GetDiagnosticsAsync(int limit = 25, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task ResetDiagnosticsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<byte[]> ReadMemAsync(string addr, int size, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<byte[]> ReadMemAsync(string addr, int size, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task WriteMemAsync(string addr, byte[] data, CancellationToken ct = default) => throw new NotImplementedException();
     public Task WatchAsync(string addr, int size, int intervalMs, CancellationToken ct = default) => throw new NotImplementedException();
     public Task UnwatchAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();

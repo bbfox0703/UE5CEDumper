@@ -40,6 +40,7 @@ struct FieldInfo {
     std::string elemStructType;  // SetProperty element struct name (if StructProperty)
     std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
     uint8_t     boolFieldMask = 0; // BoolProperty -> FieldMask byte (0 = not resolved)
+    bool        boolNative = false; // BoolProperty -> native whole-byte layout (FieldMask 0xFF) [A3-BOOL-NATIVE-NOWRITE]
 };
 
 struct ClassInfo {
@@ -93,6 +94,7 @@ struct FunctionParam {
         std::string typeName;
         int32_t     offset = 0;
         int32_t     size = 0;
+        uint8_t     boolFieldMask = 0;  // packed bool's single-bit mask, 0 otherwise [A3-FIRE-STRUCT-BOOLMASK]
     };
     std::vector<StructSubField> structFields;
 };
@@ -413,6 +415,7 @@ struct LiveFieldValue {
     int32_t     boolBitIndex = -1;  // Bit index (0-7) within the byte; -1 = not a bool
     uint8_t     boolFieldMask = 0;  // Raw FieldMask byte from FBoolProperty
     uint8_t     boolByteOffset = 0; // ByteOffset within the property offset
+    bool        boolNative = false; // native whole-byte bool (FieldMask 0xFF) [A3-BOOL-NATIVE-NOWRITE]
 
     // For ArrayProperty: TArray header info
     int32_t     arrayCount = -1;  // -1 = not an array
@@ -807,7 +810,8 @@ inline std::string FormatPreviewNumber(double v) {
 /// Returns "" for properties that need process state (Name / Object / Class) or
 /// are not previewable — the caller supplies those, which is what keeps this pure.
 inline std::string PreviewScalarValue(const std::string& typeName,
-                                      const uint8_t* p, int32_t size) {
+                                      const uint8_t* p, int32_t size,
+                                      uint8_t boolMask = 0) {
     if (!p || size <= 0) return "";
     if (typeName == "FloatProperty"  && size == 4) { float  v; memcpy(&v, p, 4); return FormatPreviewNumber(v); }
     if (typeName == "DoubleProperty" && size == 8) { double v; memcpy(&v, p, 8); return FormatPreviewNumber(v); }
@@ -817,9 +821,31 @@ inline std::string PreviewScalarValue(const std::string& typeName,
     if (typeName == "UInt64Property" && size == 8) { uint64_t v; memcpy(&v, p, 8); return std::to_string(v); }
     if (typeName == "Int16Property"  && size == 2) { int16_t v; memcpy(&v, p, 2); return std::to_string(v); }
     if (typeName == "UInt16Property" && size == 2) { uint16_t v; memcpy(&v, p, 2); return std::to_string(v); }
-    if (typeName == "BoolProperty")                 return p[0] ? "true" : "false";
+    // [A2-STRUCT-PREVIEW-BOOLMASK] A PACKED bool owns one bit of a byte its siblings share
+    // (AActor::ReplicatedMovement's bSimulatedPhysicSleep / bRepPhysics): read that bit. Mask 0
+    // means UNRESOLVED (the probe missed, e.g. DQ XI S) — fall back to the whole byte rather than
+    // read every bool as false. ⛔ Never a bare (p[0] & mask) != 0.
+    if (typeName == "BoolProperty")
+        return (boolMask != 0 ? (p[0] & boolMask) != 0 : p[0] != 0) ? "true" : "false";
     if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
     return "";   // needs process state, or not previewable
+}
+
+/// What an FBoolProperty / UBoolProperty's {FieldSize, ByteOffset, ByteMask, FieldMask} say.
+/// [A3-BOOL-NATIVE-NOWRITE]
+enum class BoolLayout { Unresolved, Packed, Native };
+
+/// Classify a bool property's layout bytes. NATIVE is UE's own `bIsNativeBool` layout
+/// (SetBoolSize: FieldSize 1, ByteOffset 0, ByteMask = FieldMask = 0xFF) — a whole-byte bool, the
+/// layout of every Blueprint bool and container element, written 0x01 / 0x00. PACKED is a
+/// bitfield bool that owns exactly one bit. Anything else — including all-zero, which is what a
+/// missed probe reads — is UNRESOLVED and must never be treated as either.
+inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
+                                     uint8_t byteMask, uint8_t fieldMask) {
+    if (fieldSize != 1) return BoolLayout::Unresolved;
+    if (fieldMask == 0xFF && byteMask == 0xFF && byteOffset == 0) return BoolLayout::Native;
+    if (fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) return BoolLayout::Packed;
+    return BoolLayout::Unresolved;
 }
 
 /// True when the first 8 bytes look like a real vtable pointer: non-null,

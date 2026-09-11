@@ -67,4 +67,7 @@ public sealed class FunctionParamModel
 /// Sub-field of a struct param discovered by the DLL walking the UScriptStruct's FField chain.
 /// Used as fallback when KnownStructLayouts has no hardcoded layout for the struct type.
 /// </summary>
-public sealed record DynamicStructField(string Name, string TypeName, int Offset, int Size);
+/// <param name="BoolFieldMask">For a BoolProperty sub-field: its single-bit FieldMask when the
+/// bool is PACKED into a byte shared with siblings (e.g. FHitResult's bBlockingHit /
+/// bStartPenetrating); 0 when native or unresolved. [A3-FIRE-STRUCT-BOOLMASK]</param>
+public sealed record DynamicStructField(string Name, string TypeName, int Offset, int Size, int BoolFieldMask = 0);

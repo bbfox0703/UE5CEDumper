@@ -721,6 +721,22 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
 }
 
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
+// [A2-STRUCT-PREVIEW-BOOLMASK] [A3-BOOL-NATIVE-NOWRITE] Probe an FBoolProperty's layout bytes on
+// the UE5 FField walk. It never did: only WalkClassEx's enrichment read the mask, so everything that
+// walks a struct with plain WalkClass — the struct previews, the invoke dialog's sub-fields — saw
+// mask 0 and treated every packed bool as its whole byte.
+static void ProbeBoolLayout(uintptr_t prop, FieldInfo& fi) {
+    uint8_t boolBytes[4] = {};
+    int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+    for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
+        if (tryOff < 0) continue;
+        if (!Macht::ReadBytesSafe(prop + tryOff, boolBytes, 4)) continue;
+        auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+        if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; return; }
+        if (layout == BoolLayout::Native) { fi.boolNative = true; return; }
+    }
+}
+
 static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
     // UE5.3+: ChildProperties may come from an FFieldVariant read — strip tag bit defensively
     uintptr_t current = DynOff::StripFFieldTag(firstField);
@@ -782,6 +798,9 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
             Sein::Warn("WALK", "Misaligned field '%s' (%s, size=%d) at offset 0x%X — possible wrong FPROPERTY_OFFSET",
                 fi.Name.c_str(), fi.TypeName.c_str(), fi.Size, fi.Offset);
         }
+
+        if (fi.TypeName == "BoolProperty")
+            ProbeBoolLayout(current, fi);
 
         if (!fi.Name.empty()) {
             fields.push_back(fi);
@@ -852,12 +871,9 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
                                 DynOff::UBOOLPROP_FIELDSIZE - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Macht::ReadBytesSafe(current + tryOff, boolBytes, 4)) continue;
-                uint8_t fieldSize = boolBytes[0];
-                uint8_t fieldMask = boolBytes[3];
-                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
-                    fi.boolFieldMask = fieldMask;
-                    break;
-                }
+                auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+                if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; break; }
+                if (layout == BoolLayout::Native) { fi.boolNative = true; break; }   // [A3-BOOL-NATIVE-NOWRITE]
             }
         }
 
@@ -1367,12 +1383,9 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
-                uint8_t fieldSize = boolBytes[0];
-                uint8_t fieldMask = boolBytes[3];
-                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
-                    fi.boolFieldMask = fieldMask;
-                    break;
-                }
+                auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+                if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; break; }
+                if (layout == BoolLayout::Native) { fi.boolNative = true; break; }   // [A3-BOOL-NATIVE-NOWRITE]
             }
         }
     }
@@ -1571,7 +1584,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
                             // Stage 1: Object/Class/Soft/Weak/Lazy/Interface params
@@ -1636,7 +1649,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                     // Phase B: walk the UScriptStruct to discover sub-fields
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
                             // Stage 1 (UE4 <4.25 path): same UProperty subclass
@@ -2012,7 +2025,7 @@ std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
         if (sf.Offset < 0 || sf.Offset + sfSize > size) continue;   // beyond the buffer
 
         const uint8_t* p = buf + sf.Offset;
-        std::string val = PreviewScalarValue(sf.TypeName, p, sfSize);
+        std::string val = PreviewScalarValue(sf.TypeName, p, sfSize, sf.boolFieldMask);
         if (val.empty()) {
             if (sf.TypeName == "NameProperty" && sfSize >= 4) {
                 val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
@@ -5438,6 +5451,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     boolInfoRead = true;
                     break;
                 }
+                // [A3-BOOL-NATIVE-NOWRITE] The native layout (FieldMask 0xFF) used to fall out of
+                // this loop unrecorded, indistinguishable from a missed probe — so the UI saw mask 0
+                // and its write was a no-op. Say it explicitly; Fern publishes `bool_native`.
+                if (ClassifyBoolLayout(fieldSize, byteOff, byteMask, fieldMask) == BoolLayout::Native) {
+                    fv.boolNative = true;
+                    break;
+                }
             }
 
             // Read actual value using FieldMask
@@ -5900,59 +5920,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                                      readSize);
                     }
 
-                    std::string preview;
-                    int shown = 0;
-                    const int kMaxScanFields = 20;
-                    for (size_t idx = 0;
-                         idx < si.Fields.size()
-                         && static_cast<int>(idx) < kMaxScanFields; ++idx) {
-                        const auto& sf = si.Fields[idx];
-                        if (shown >= previewLimit) {
-                            preview += ", ...";
-                            break;
-                        }
-                        int32_t sfSize = sf.Size;
-                        int32_t expected = InferScalarSize(sf.TypeName);
-                        if (expected > 0 && sfSize != expected)
-                            sfSize = expected;
-                        if (!hasBuf || sf.Offset < 0
-                            || sf.Offset + sfSize > readSize) continue;
-                        const uint8_t* p = structBuf.data() + sf.Offset;
-                        std::string val;
-                        if (sf.TypeName == "FloatProperty" && sfSize == 4) {
-                            float v; memcpy(&v, p, 4);
-                            val = FormatPreviewNumber(v);
-                        } else if (sf.TypeName == "DoubleProperty"
-                                   && sfSize == 8) {
-                            double v; memcpy(&v, p, 8);
-                            val = FormatPreviewNumber(v);
-                        } else if (sf.TypeName == "IntProperty"
-                                   && sfSize == 4) {
-                            int32_t v; memcpy(&v, p, 4);
-                            val = std::to_string(v);
-                        } else if (sf.TypeName == "BoolProperty") {
-                            val = p[0] ? "true" : "false";
-                        } else if (sf.TypeName == "ByteProperty"
-                                   || sf.TypeName == "Int8Property") {
-                            val = std::to_string(p[0]);
-                        } else if (sf.TypeName == "NameProperty"
-                                   && sfSize >= 4) {
-                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
-                            if (val.empty()) val = "None";
-                        } else if ((sf.TypeName == "ObjectProperty"
-                                    || sf.TypeName == "ClassProperty")
-                                   && sfSize >= 8) {
-                            uintptr_t ptr; memcpy(&ptr, p, 8);
-                            val = ptr ? GetName(ptr) : "null";
-                        } else {
-                            continue;
-                        }
-                        if (!preview.empty()) preview += ", ";
-                        preview += sf.Name + "=" + val;
-                        ++shown;
-                    }
+                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy. The copy
+                    // that stood here read a packed bool as its whole byte and knew fewer scalar
+                    // widths than InterpretStructByLayout — "now the ONLY one" was not true.
+                    std::string preview = hasBuf
+                        ? InterpretStructByLayout(structBuf.data(), readSize, si, previewLimit)
+                        : std::string();
                     if (!preview.empty()) {
-                        fv.typedValue = "{" + preview + "}";
+                        fv.typedValue = preview;   // already "{...}"
                         gotStructPreview = true;
                     }
                 }

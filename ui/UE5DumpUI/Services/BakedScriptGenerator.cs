@@ -220,10 +220,14 @@ public static class BakedScriptGenerator
             // fragile next-offset-difference heuristic (the params list is in
             // declaration order, not sorted by offset).
             var sizeField = helperType == "fstruct" ? $"size={v.Size}, " : "";
-            // Each row: { name='...', type='...', offset=N, [size=N,] value=LITERAL },  -- shortType
+            // [A3-FIRE-STRUCT-BOOLMASK] A packed bool struct sub-field carries its single-bit mask,
+            // so the helper read-modify-writes that bit instead of stamping the whole byte.
+            var maskField = helperType == "bool" && Core.FieldValueConverter.IsSingleBitMask(v.BoolFieldMask)
+                ? $"mask=0x{v.BoolFieldMask:X2}, " : "";
+            // Each row: { name='...', type='...', offset=N, [size=N,] [mask=0xNN,] value=LITERAL },  -- shortType
             Line(sb,
                 $"  {{ name='{EscapeLua(v.ParamName)}', type='{helperType}', " +
-                $"offset={v.Offset}, {sizeField}value={literal} }},  " +
+                $"offset={v.Offset}, {sizeField}{maskField}value={literal} }},  " +
                 $"-- {ShortTypeNameForComment(v.UeTypeName, v.Size)} {v.Size}B");
         }
         Line(sb, "}");

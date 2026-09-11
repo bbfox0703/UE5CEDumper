@@ -2572,7 +2572,7 @@ to 5.8.2:
   unset `TOptional<FString>` on 5.4 would read as set `""`. The DumperTest 5.4 fixture has
   `Opt_Str_Set` but no `Opt_Str_Unset`.
 
-##### `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask
+##### ✅ `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask (FIXED IN SOURCE 2026-09-11)
 
 `Ubel.cpp:2015` → `PreviewScalarValue` (`Ubel.h:820`), which returns `p[0] != 0`. So every packed bool
 in a byte previews the whole byte. `AActor::ReplicatedMovement`'s `bSimulatedPhysicSleep` and
@@ -2585,6 +2585,14 @@ repeats the defect, which contradicts "now the ONLY one" (`:1982`).
   copy through the shared decoder.
 - ⛔ **Unsafe:** a bare `(p[0] & mask) != 0`. Mask 0 means "unresolved", so every bool on a title
   where the probe misses (DQ XI S) would read `false`.
+- ✅ **FIXED IN SOURCE 2026-09-11, the safe shape** (batch B05).
+  - `PreviewScalarValue` takes the mask: `mask != 0 ? (b & mask) != 0 : b != 0`.
+    `InterpretStructByLayout` passes it.
+  - `WalkFFieldChain` now collects it on UE5 (`ProbeBoolLayout`).
+  - The hand-copied `TOptional<struct>` preview is gone and routes through the shared decoder, so
+    the claim "now the ONLY one" is true again.
+  - `dll_helpers_test` pins the packed bit set and clear, mask 0 falling back to the byte, and
+    native `0xFF`, plus `ClassifyBoolLayout`'s cases.
 
 ##### `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured"
 
@@ -2870,7 +2878,7 @@ fresh CE session, where the flag was nil.
   - fixing the generator only;
   - going back to the symbol probe, which was the original B30.
 
-##### ⛔ `[A3-BOOL-NATIVE-NOWRITE]` MED — editing a native bool in Live Walker writes nothing and reports "Written"
+##### ✅ `[A3-BOOL-NATIVE-NOWRITE]` MED — editing a native bool in Live Walker writes nothing and reports "Written" (FIXED IN SOURCE 2026-09-11)
 
 `FieldValueConverter.cs:63` + `LiveWalkerViewModel.cs:5388-5392`/`:5418`. Hand-verified at source:
 - The DLL publishes a bool mask only when FieldMask is a single bit (`Ubel.cpp:5427`).
@@ -2893,6 +2901,27 @@ fresh CE session, where the flag was nil.
     bitfield reads as mask 0), so that turns a harmless no-op into the AA1 corruption of up to 7
     sibling bools;
   - stamping `0xFF` for true, which C++ that XORs a bool reads as still true.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (fix-pass batch B05, "bool mask, end
+  to end", one commit with `[A3-FIRE-STRUCT-BOOLMASK]` and `[A2-STRUCT-PREVIEW-BOOLMASK]`).
+  - **DLL:** `Ubel::ClassifyBoolLayout` names the native layout (`FieldSize 1, ByteOffset 0,
+    ByteMask = FieldMask = 0xFF`).
+    - The field walk, the UE4 UProperty chain and `WalkClassEx`'s enrichment all record it.
+    - Fern publishes the additive `bool_native: true`: pipe-only, kept in lean mode, no contract
+      bump.
+  - **UI:** `FieldValueConverter.PlanBoolWrite` decides the write.
+    - A native bool writes `0x01` / `0x00`; a single-bit mask does a read-modify-write.
+    - Anything else is REFUSED with a reason: mask 0 means a missed probe, never native, and a
+      whole-byte write there is the AA1 corruption.
+    - Every write is READ BACK, and a mismatch is reported instead of "Written".
+    - The rows the VM builds itself for map values, array elements and set elements are native
+      bools (UE containers of bool always are).
+    - An older DLL, with no key, now refuses instead of silently no-opping.
+  - **Tests:** `LiveWalkerBoolWriteTests`, red first (5 of 6) on the recorded mechanism:
+    - native true and false, the unresolved refusal, the read-back mismatch, and container
+      element rows;
+    - the read-modify-write control, which was green before and after;
+    - planner cases.
+  - The DumpService parse of `bool_native` was also red first, then green.
 
 ##### `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init
 
@@ -2912,7 +2941,7 @@ publishes those right after `FindAll`, **before** `Serie` / `Aura` init, decoy r
   - clearing the globals in `UE5_Shutdown`;
   - moving the publish to the end of init.
 
-##### `[A3-FIRE-STRUCT-BOOLMASK]` LOW — FIRE writes a packed-bool struct sub-field as a whole byte
+##### ✅ `[A3-FIRE-STRUCT-BOOLMASK]` LOW — FIRE writes a packed-bool struct sub-field as a whole byte (FIXED IN SOURCE 2026-09-11)
 
 `ParamBufferBuilder.cs:381`. This is the write-side twin of `[A2-STRUCT-PREVIEW-BOOLMASK]`, and the AA1
 mask never reached it: no mask exists at any tier of the invoke wire.
@@ -2926,6 +2955,22 @@ mask never reached it: no mask exists at any tier of the invoke wire.
   - an additive key that defaults to 0;
   - changing the Copy AA Script path in the SAME commit.
 - ⛔ **Unsafe:** deduping rows by offset, or refusing such structs.
+- ✅ **FIXED IN SOURCE 2026-09-11, with ALL four recorded conditions** (batch B05, one commit).
+  - **Accept set:** a single-bit mask gets the read-modify-write; mask 0 / `0xFF` keep today's
+    whole-byte write.
+  - **Mask collection:** the mask is collected in the UE5 FField walk (`WalkFFieldChain` now probes
+    it). The invoke params' `struct_fields` carry it on the additive key `bool_mask`, which
+    defaults to 0.
+  - **Copy AA Script, in the SAME commit:**
+    - `BakedParamValue.BoolFieldMask` carries the mask, and `CollectBakedValues` flattens it into
+      the row;
+    - the generator emits `mask=0xNN`;
+    - `ue5_invoke_helper.lua`'s `bool` arm read-modify-writes that bit with CE's `readBytes`.
+  - **Rows are not deduped by offset, and such structs are not refused.**
+  - **Red → green:** `InvokeBoolMaskTests` (two packed bits sharing a byte; clearing only its own
+    bit; the baked row's mask; the dialog's flattening, pinned from the source) and
+    `scripts/tests/invoke_helper_test.lua`'s three new cases (2 red first, 97/97 now). The
+    whole-byte controls were green both ways.
 
 ##### `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row
 
@@ -3513,6 +3558,9 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green. **Review follow-up:** 9 survived / 4 refuted; the render discard, the refresh identity + no-restamp, the export / bookmark guards and the re-root ticket landed; 6 new tests red → green, 20/20; UI 4867/4867; gates 21/21 |
 | 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green. **Review follow-up:** 6 survived / 3 refuted; GWorld-root skip + option (b) clean-then-anchor; 2 defects red → green, 2 pins + Forward; 4/4 mutants killed |
+| 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21 |
+| 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262 |
+| 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout` |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3538,6 +3586,12 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L8 | `[A4-PARENT-CRUMB-VTABLE]` | On DumperTest:
 1. **Outer off the spine:** open an actor through Instance Finder, press Parent, then Copy CE XML. The table must be anchored on the parent's own address, with no `+0` dereference of the actor. Load it in CE: the records read the parent's real fields, not vtable garbage.
 2. **Outer on the spine:** from GWorld, drill Actor › RootComponent and press Parent. You land on the Actor crumb, and Forward returns to RootComponent. Copy CE XML stays GWorld-rooted (restart-stable). | DumperTest + UI + **CE to load the table — announce first** |
+| L9 | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | On DumperTest, with the NEW DLL:
+1. **Native bool:** edit a Blueprint bool in Live Walker. It flips in the game, the row reads the new value, and the status says "Written".
+2. **Packed bitfield:** edit a `uint8 b:1` bool. Only its bit changes; read the sibling bools back in CE or via a Refresh.
+3. **Unresolved:** a bool whose mask shows as 0 must be REFUSED with the reason.
+4. **Preview and invoke:** a struct holding two packed bools (e.g. `FHitResult`, or a DumperTest struct) previews each bit separately. FIRE with both ticked sets both bits. Copy AA Script run in CE sets both bits too.
+5. **Read-back:** a field the game recomputes each tick reports the read-back mismatch, not "Written". | DumperTest + UI; **CE for the Copy AA Script and bit read-back steps — announce first** |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3564,7 +3618,7 @@ completeness critic.
 | ✅ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
 | ✅ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
 | ✅ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
-| ⬜ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
+| ✅ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
 | ⬜ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
 | ⬜ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
 | ⬜ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |

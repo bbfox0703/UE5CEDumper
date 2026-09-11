@@ -204,6 +204,13 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>For BoolProperty: raw FieldMask byte.</summary>
     public int BoolFieldMask { get; init; }
 
+    /// <summary>For BoolProperty: the DLL recognised the NATIVE layout (FieldSize 1, FieldMask
+    /// 0xFF) — a whole-byte bool (every Blueprint bool, a plain <c>bool bFoo;</c>, every
+    /// container element) that is written as 0x01 / 0x00. False with <see cref="BoolFieldMask"/>
+    /// 0 means UNRESOLVED, not native: the probe missed, and the byte may hold up to 8 packed
+    /// bools. [A3-BOOL-NATIVE-NOWRITE]</summary>
+    public bool BoolNative { get; init; }
+
     /// <summary>For BoolProperty: byte offset within the field for bitfield reads/writes.</summary>
     public int BoolByteOffset { get; init; }
 

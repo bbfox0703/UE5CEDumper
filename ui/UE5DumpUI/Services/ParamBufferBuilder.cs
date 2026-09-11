@@ -186,6 +186,16 @@ public static class ParamBufferBuilder
             var sf = subFields[i];
             int absOffset = paramOffset + sf.Offset;
             if (absOffset < 0 || absOffset >= buf.Length) continue;
+            // [A3-FIRE-STRUCT-BOOLMASK] A PACKED bool shares its byte with siblings (FHitResult's
+            // bBlockingHit / bStartPenetrating): set or clear only its bit. A whole-byte write
+            // zeroed the sibling or landed on bit 0. Mask 0 / 0xFF keep the whole-byte write below.
+            // (The KnownStructLayouts overload above has no bool fields, so it needs no twin.)
+            if (sf.TypeName == "BoolProperty" && Core.FieldValueConverter.IsSingleBitMask(sf.BoolFieldMask))
+            {
+                bool on = BakedScriptGenerator.ParseBoolLiteral(subValues[i].Trim()) == true;
+                buf[absOffset] = Core.FieldValueConverter.ApplyBoolMask(buf[absOffset], sf.BoolFieldMask, on);
+                continue;
+            }
             WriteParam(buf, absOffset, sf.TypeName, sf.Size, subValues[i].Trim());
         }
     }

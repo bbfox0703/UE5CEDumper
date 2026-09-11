@@ -1301,6 +1301,79 @@ public class DumpServiceTests
         Assert.Equal(4, param.StructFields[1].Offset);
     }
 
+    // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,
+    // so FIRE and Copy AA Script can read-modify-write its bit instead of the whole byte.
+    [Fact]
+    public async Task WalkFunctionsAsync_ParsesAStructSubFieldsBoolMask()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "OnHit", ["full"] = "Function OnHit", ["addr"] = "0x100",
+                    ["flags"] = (uint)0, ["num_parms"] = (byte)1, ["parms_size"] = (ushort)8,
+                    ["ret_offset"] = (ushort)0xFFFF, ["ret"] = "",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["name"] = "Hit", ["type"] = "StructProperty", ["size"] = 8, ["offset"] = 0,
+                            ["out"] = false, ["ret"] = false, ["struct_type"] = "HitResult",
+                            ["struct_fields"] = new JsonArray
+                            {
+                                new JsonObject { ["name"] = "bBlockingHit", ["type"] = "BoolProperty", ["offset"] = 0, ["size"] = 1, ["bool_mask"] = 1 },
+                                new JsonObject { ["name"] = "bStartPenetrating", ["type"] = "BoolProperty", ["offset"] = 0, ["size"] = 1, ["bool_mask"] = 2 },
+                                new JsonObject { ["name"] = "Time", ["type"] = "FloatProperty", ["offset"] = 4, ["size"] = 4 },
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        var sf = funcs[0].Params[0].StructFields;
+        Assert.Equal(1, sf[0].BoolFieldMask);
+        Assert.Equal(2, sf[1].BoolFieldMask);
+        Assert.Equal(0, sf[2].BoolFieldMask);   // absent = 0: not a packed bool
+    }
+
+    // [A3-BOOL-NATIVE-NOWRITE] The DLL marks a native (whole-byte) bool with an additive key; the
+    // UI must parse it, or it cannot tell a native bool from an unresolved packed one.
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesBoolNative()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["name"] = "TestObj", ["class"] = "Actor",
+            ["class_addr"] = "0x200", ["outer"] = "0x0", ["outer_name"] = "", ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "bNative", ["type"] = "BoolProperty", ["offset"] = 16, ["size"] = 1,
+                                 ["hex"] = "01", ["value"] = "true", ["bool_native"] = true },
+                new JsonObject { ["name"] = "bPacked", ["type"] = "BoolProperty", ["offset"] = 17, ["size"] = 1,
+                                 ["hex"] = "04", ["value"] = "true", ["bool_bit"] = 2, ["bool_mask"] = 4, ["bool_byte_offset"] = 0 },
+                new JsonObject { ["name"] = "bUnresolved", ["type"] = "BoolProperty", ["offset"] = 18, ["size"] = 1,
+                                 ["hex"] = "01", ["value"] = "true" },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(result.Fields[0].BoolNative);
+        Assert.False(result.Fields[1].BoolNative);
+        Assert.Equal(4, result.Fields[1].BoolFieldMask);
+        Assert.False(result.Fields[2].BoolNative);   // no key: UNRESOLVED, not native
+        Assert.Equal(0, result.Fields[2].BoolFieldMask);
+    }
+
     [Fact]
     public async Task WalkFunctionsAsync_MissingStructFields_EmptyList()
     {

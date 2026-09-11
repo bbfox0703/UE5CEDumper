@@ -135,6 +135,15 @@ function writeBytes(a, t)
   for i = 1, #t do BYTES[base + i - 1] = t[i] end
 end
 
+-- CE's readBytes(address, count, returnAsTable). The helper reads a packed bool's byte before
+-- setting or clearing its bit ([A3-FIRE-STRUCT-BOOLMASK]).
+function readBytes(a, n, asTable)
+  local t = {}
+  for i = 0, (n or 1) - 1 do t[#t + 1] = BYTES[a + i] or 0 end
+  if asTable then return t end
+  return table.unpack(t)
+end
+
 function allocateMemory(size)
   if ALLOC_FAIL then return nil end
   local addr = ALLOC_NEXT
@@ -678,6 +687,45 @@ do
   eq(I32[MB + OFF_PARAMS + 8], 3, 'ArrayNum = #"Hi" + 1')
   local dataPtr = U64[MB + OFF_PARAMS]
   eq(BYTES[dataPtr], string.byte('H'), 'AA34: the real first char survives')
+end
+
+-- ============================================================
+-- [A3-FIRE-STRUCT-BOOLMASK] packed bools: read-modify-write of ONE bit
+-- ============================================================
+-- A struct param is flattened into one row per sub-field, so FHitResult's bBlockingHit and
+-- bStartPenetrating arrive as two 'bool' rows at the SAME offset. Written as whole bytes, the
+-- second zeroed the first (or landed on bit 0) and the invoke still said OK.
+
+case('A3-FIRE-STRUCT-BOOLMASK: two packed bools sharing a byte both survive')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 8, {
+    { name = 'Hit.bBlockingHit',      type = 'bool', offset = 0, mask = 0x01, value = 1 },
+    { name = 'Hit.bStartPenetrating', type = 'bool', offset = 0, mask = 0x02, value = 1 },
+  })
+  eq(ok, true, 'the invoke reports success')
+  eq(BYTES[MB + OFF_PARAMS], 3, 'both bits are set (0x03), not the last write alone')
+end
+
+case('A3-FIRE-STRUCT-BOOLMASK: a packed bool set to false clears only its own bit')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 8, {
+    { name = 'Hit.bBlockingHit',      type = 'bool', offset = 0, mask = 0x01, value = 1 },
+    { name = 'Hit.bStartPenetrating', type = 'bool', offset = 0, mask = 0x04, value = 0 },
+  })
+  eq(ok, true, 'the invoke reports success')
+  eq(BYTES[MB + OFF_PARAMS], 1, 'the sibling bit set by the first row survives the second')
+end
+
+case('A3-FIRE-STRUCT-BOOLMASK: a bool with no mask keeps the whole-byte write (native / unresolved)')
+do
+  resetWorld()
+  local ok = invokeUFunction('C', 'F', 8, {
+    { name = 'bNative', type = 'bool', offset = 0, value = 1 },
+  })
+  eq(ok, true, 'the invoke reports success')
+  eq(BYTES[MB + OFF_PARAMS], 1, 'a native bool is written as 0x01')
 end
 
 -- ============================================================

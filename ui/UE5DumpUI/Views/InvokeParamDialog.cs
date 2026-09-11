@@ -1026,7 +1026,9 @@ public sealed class InvokeParamDialog : Window
                         UeTypeName:  sf.TypeName,
                         Size:        sf.Size,
                         Offset:      p.Offset + sf.Offset,
-                        LiteralText: (edit.Text ?? "0").Trim()));
+                        LiteralText: (edit.Text ?? "0").Trim(),
+                        // [A3-FIRE-STRUCT-BOOLMASK] the flattened row keeps its packed-bool bit
+                        BoolFieldMask: sf.BoolFieldMask));
                 }
             }
             else

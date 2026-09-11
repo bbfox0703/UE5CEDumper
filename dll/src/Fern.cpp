@@ -1479,6 +1479,11 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["bool_byte_offset"] = fv.boolByteOffset;
         }
     }
+    // [A3-BOOL-NATIVE-NOWRITE] A native (whole-byte) bool. ADDITIVE and pipe-only, like bool_bit:
+    // emitted only when true, so older UIs and CSX are unaffected and no contract bump applies.
+    // Without it the UI cannot tell a native bool (write 0x01 / 0x00) from an unresolved packed
+    // one (must refuse) — both used to arrive as "no mask".
+    if (fv.boolNative) fj["bool_native"] = true;
 
     // UE 5.3+ access-detector pad. Emitted only when NON-ZERO, so a Shipping title's wire is
     // unchanged and an older UI simply never sees the key. ⛔ An exporter that ignores it emits
@@ -2369,6 +2374,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             sfj["type"]   = sf.typeName;
                             sfj["offset"] = sf.offset;
                             sfj["size"]   = sf.size;
+                            // [A3-FIRE-STRUCT-BOOLMASK] additive, only for a packed bool
+                            if (sf.boolFieldMask != 0) sfj["bool_mask"] = sf.boolFieldMask;
                             sfArr.push_back(sfj);
                         }
                         pj["struct_fields"] = sfArr;

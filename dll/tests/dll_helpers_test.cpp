@@ -7372,6 +7372,25 @@ static void Test_Macht_ParsePattern_Nibble() {
 // declared width, which is what this reads. Everything below is the case U3's
 // test 6 had to leave asserted-as-broken.
 // ================================================================
+// ================================================================
+// Ubel::ClassifyBoolLayout — [A3-BOOL-NATIVE-NOWRITE]. The DLL published a mask only for a single
+// bit, so a NATIVE bool (FieldMask 0xFF) arrived as "no mask", indistinguishable from a missed
+// probe, and the UI's write was a no-op that printed "Written".
+// ================================================================
+static void Test_Ubel_ClassifyBoolLayout() {
+    std::printf("Test_Ubel_ClassifyBoolLayout\n");
+    using Ubel::BoolLayout;
+    EXPECT("native: 1 / 0 / FF / FF", Ubel::ClassifyBoolLayout(1, 0, 0xFF, 0xFF) == BoolLayout::Native);
+    EXPECT("packed: one bit",         Ubel::ClassifyBoolLayout(1, 0, 0x04, 0x04) == BoolLayout::Packed);
+    EXPECT("packed: bit 7",           Ubel::ClassifyBoolLayout(1, 3, 0x80, 0x80) == BoolLayout::Packed);
+    EXPECT("all-zero (a missed probe) is UNRESOLVED, never native",
+           Ubel::ClassifyBoolLayout(0, 0, 0, 0) == BoolLayout::Unresolved);
+    EXPECT("FieldSize 1 but mask 0 is unresolved", Ubel::ClassifyBoolLayout(1, 0, 0, 0) == BoolLayout::Unresolved);
+    EXPECT("two bits is not a bool mask", Ubel::ClassifyBoolLayout(1, 0, 0x06, 0x06) == BoolLayout::Unresolved);
+    EXPECT("a wider native bool is not the 1-byte layout", Ubel::ClassifyBoolLayout(4, 0, 0xFF, 0xFF) == BoolLayout::Unresolved);
+    EXPECT("FF mask at a non-zero byte offset is not native", Ubel::ClassifyBoolLayout(1, 2, 0xFF, 0xFF) == BoolLayout::Unresolved);
+}
+
 static void Test_Ubel_PreviewScalarValue() {
     std::printf("Test_Ubel_PreviewScalarValue\n");
 
@@ -7422,6 +7441,20 @@ static void Test_Ubel_PreviewScalarValue() {
         EXPECT("BoolProperty true",  Ubel::PreviewScalarValue("BoolProperty", b, 1) == "true");
         b[0] = 200;
         EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
+    }
+
+    // --- [A2-STRUCT-PREVIEW-BOOLMASK] packed bools read THEIR bit, not the byte. A physics actor's
+    //     bSimulatedPhysicSleep (0x01) and bRepPhysics (0x02) share a byte; both previewed "true".
+    {
+        uint8_t b[1] = { 0x02 };                     // bit 1 set, bit 0 clear
+        EXPECT("packed bool, its bit set",   Ubel::PreviewScalarValue("BoolProperty", b, 1, 0x02) == "true");
+        EXPECT("packed bool, its bit clear", Ubel::PreviewScalarValue("BoolProperty", b, 1, 0x01) == "false");
+        // Mask 0 is UNRESOLVED, not "no bits": the whole byte, never a bare (p & 0) == false.
+        EXPECT("mask 0 falls back to the byte", Ubel::PreviewScalarValue("BoolProperty", b, 1, 0) == "true");
+        uint8_t z[1] = { 0x00 };
+        EXPECT("mask 0, zero byte",          Ubel::PreviewScalarValue("BoolProperty", z, 1, 0) == "false");
+        uint8_t one[1] = { 0x01 };
+        EXPECT("native mask 0xFF",           Ubel::PreviewScalarValue("BoolProperty", one, 1, 0xFF) == "true");
     }
 
     // --- Impure types return "" so the caller supplies them. This is the seam that
@@ -8157,6 +8190,7 @@ int main() {
 
     // Ubel — reflected struct preview: member width comes from the property (U17)
     RUN(Test_Ubel_PreviewScalarValue);
+    RUN(Test_Ubel_ClassifyBoolLayout);
 
     // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
     RUN(Test_Ubel_InterpretStructBytes);

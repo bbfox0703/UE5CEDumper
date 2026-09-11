@@ -1608,6 +1608,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 Name = $"[{elem.Index}]",
                 TypeName = sourceField.ArrayInnerType,
+                BoolNative = sourceField.ArrayInnerType == "BoolProperty",   // [A3-BOOL-NATIVE-NOWRITE] container bools are native
                 Offset = elem.Index * sourceField.ArrayElemSize,
                 Size = sourceField.ArrayElemSize,
                 HexValue = elem.Hex,
@@ -1682,6 +1683,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 Name = $"[{elem.Index}] {keyDisplay}",
                 TypeName = sourceField.MapValueType,
+                BoolNative = sourceField.MapValueType == "BoolProperty",     // [A3-BOOL-NATIVE-NOWRITE]
                 Offset = elem.Index * stride,
                 // The row DESCRIBES THE VALUE: TypeName is the value's type and FieldAddress below
                 // is the value's address, so Size must be the value's size too. It used to be the
@@ -1830,6 +1832,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 Name = $"[{elem.Index}]",
                 TypeName = sourceField.SetElemType,
+                BoolNative = sourceField.SetElemType == "BoolProperty",      // [A3-BOOL-NATIVE-NOWRITE]
                 Offset = elem.Index * stride,
                 Size = sourceField.SetElemSize,
                 HexValue = elem.KeyHex,
@@ -5578,8 +5581,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             ClearStatus();
+            string? readBackMismatch = null;
 
-            // BoolProperty: read-modify-write with bitmask
+            // BoolProperty [A3-BOOL-NATIVE-NOWRITE]: a NATIVE bool (every Blueprint bool, a plain
+            // `bool bFoo;`, a container element) arrives with mask 0, and ApplyBoolMask(cur, 0, v)
+            // returns `cur` — so this wrote back the byte it had just read and printed "Written".
+            // Native -> 0x01 / 0x00; a single-bit mask -> read-modify-write; anything else is an
+            // unresolved probe and is REFUSED (a whole-byte write there flips up to 7 siblings).
             if (field.TypeName == "BoolProperty")
             {
                 if (!FieldValueConverter.TryParseBool(newValue, out var boolVal))
@@ -5588,17 +5596,44 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
+                var mode = FieldValueConverter.PlanBoolWrite(field.BoolNative, field.BoolFieldMask);
+                if (mode == FieldValueConverter.BoolWriteMode.Refuse)
+                {
+                    StatusText = $"Not written: {field.Name}'s bit could not be resolved on this engine — "
+                               + "its byte may hold up to 8 packed bools, and writing it whole could flip its neighbours.";
+                    _log.Warn($"EDIT refused {field.Name} @ {field.FieldAddress}: bool neither native nor single-bit (mask 0x{field.BoolFieldMask:X2})");
+                    return;
+                }
+
                 // Write address = field address + boolByteOffset
                 var baseAddr = Convert.ToUInt64(
                     field.FieldAddress.Replace("0x", "").Replace("0X", ""), 16);
                 var writeAddr = $"0x{baseAddr + (ulong)field.BoolByteOffset:X}";
 
-                // Read current byte, apply mask, write back
-                var currentBytes = await _dump.ReadMemAsync(writeAddr, 1);
-                var modified = FieldValueConverter.ApplyBoolMask(
-                    currentBytes[0], field.BoolFieldMask, boolVal);
+                byte toWrite;
+                if (mode == FieldValueConverter.BoolWriteMode.NativeByte)
+                {
+                    toWrite = boolVal ? (byte)1 : (byte)0;
+                }
+                else
+                {
+                    var currentBytes = await _dump.ReadMemAsync(writeAddr, 1);
+                    toWrite = FieldValueConverter.ApplyBoolMask(currentBytes[0], field.BoolFieldMask, boolVal);
+                }
+                await _dump.WriteMemAsync(writeAddr, new[] { toWrite });
 
-                await _dump.WriteMemAsync(writeAddr, new[] { modified });
+                // Read it back: "Written" is a claim about the game, not about the call. A field
+                // the game recomputes every tick (or a wrong address) reads back unchanged.
+                var back = (await _dump.ReadMemAsync(writeAddr, 1))[0];
+                bool nowReads = mode == FieldValueConverter.BoolWriteMode.NativeByte
+                    ? back != 0
+                    : (back & field.BoolFieldMask) != 0;
+                if (nowReads != boolVal)
+                {
+                    readBackMismatch = $"⚠ Wrote {field.Name} = {newValue}, but the game now reads "
+                                     + $"{(nowReads ? "true" : "false")} (byte 0x{back:X2}) — it may be recomputing this field.";
+                    _log.Warn($"EDIT {field.Name} @ {writeAddr}: wrote 0x{toWrite:X2}, read back 0x{back:X2}");
+                }
             }
             else
             {
@@ -5624,7 +5659,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (restored != null)
                 SelectedField = restored;
 
-            StatusText = $"Written: {field.Name} = {newValue}";
+            StatusText = readBackMismatch ?? $"Written: {field.Name} = {newValue}";
             _log.Info($"EDIT {field.Name} ({field.TypeName}) @ {field.FieldAddress} = {newValue}");
         }
         catch (Exception ex)
