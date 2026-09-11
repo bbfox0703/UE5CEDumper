@@ -311,6 +311,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _poseMap = "";
     [ObservableProperty] private string _poseSource = "";
 
+    /// <summary>The pose on the card is PARENT-RELATIVE, not world coordinates: an attached pawn whose
+    /// world-space read failed. A state the card shows, not a status line a later message erases.
+    /// [W2-POSEATTACH-QUIETPOLL]</summary>
+    [ObservableProperty] private bool _poseParentRelative;
+
     /// <summary>Resolved pawn address shown on the Current Pose card ("" when
     /// unavailable) — this is the object the "Locate in GWorld" button targets.</summary>
     [ObservableProperty] private string _pawnAddrDisplay = "";
@@ -1010,7 +1015,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task RefreshPoseQuietAsync()
+    // internal: the test seam for the 0.5s poll, whose timer no test drives. [W2-POSEATTACH-QUIETPOLL]
+    internal async Task RefreshPoseQuietAsync()
     {
         try
         {
@@ -5044,6 +5050,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         bool mapChanged = !p.MapAbsent && !IsSameMap(PoseMap, p.Map);
         if (!p.MapAbsent) PoseMap = p.Map;
         if (!p.SourceAbsent) PoseSource = p.Source;
+        // [W2-POSEATTACH-QUIETPOLL] The degraded-read state, for EVERY pose path -- the 0.5s quiet
+        // poll included, which never said so. Kept, like the source label, when the reply carries no
+        // read metadata (teleport_relative).
+        if (!p.SourceAbsent) PoseParentRelative = p.ParentRelative;
 
         // A map change re-filters the coordinate library (the "current map only"
         // default); otherwise just refresh the distances in place.
@@ -5095,6 +5105,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PoseX = PoseY = PoseZ = "—";
         PosePitch = PoseYaw = PoseRoll = "—";
         PoseMap = PoseSource = "";
+        PoseParentRelative = false;   // [W2-POSEATTACH-QUIETPOLL]
         PawnAddrDisplay = "";
         MovementNote = "";
         VelX = VelY = VelZ = "—";

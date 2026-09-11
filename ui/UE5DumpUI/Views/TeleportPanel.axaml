@@ -56,6 +56,14 @@
               <TextBlock Text="{Binding PoseSource}" Foreground="#7FB6E8"
                          FontSize="11" VerticalAlignment="Center"/>
             </Border>
+            <!-- [W2-POSEATTACH-QUIETPOLL] A STATE, not a status line: the 0.5s auto-refresh never wrote
+                 one, and any later status erased the manual Refresh's warning. -->
+            <Border Background="#4A3A1E" CornerRadius="3" Padding="6,1"
+                    IsVisible="{Binding PoseParentRelative}"
+                    ToolTip.Tip="{StaticResource str.Tip.TP.ParentRelative}">
+              <TextBlock Text="{StaticResource str.TP.ParentRelative}" Foreground="#E8B04E"
+                         FontSize="11" VerticalAlignment="Center"/>
+            </Border>
           </StackPanel>
 
           <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" >

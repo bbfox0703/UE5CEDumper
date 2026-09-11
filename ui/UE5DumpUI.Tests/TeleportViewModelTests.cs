@@ -2655,6 +2655,78 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("different map", vm.SelectedCoordSummary);
     }
 
+    // ---- [W2-POSEATTACH-QUIETPOLL] a parent-relative read is a state on the card ----
+    //
+    // Only the manual Refresh said so, in the status line, which any later message erases. The 0.5s
+    // auto-refresh -- the mode this tab is left in -- applied parent-relative numbers and said nothing.
+
+    [Fact]
+    public async Task QuietPoll_surfaces_a_parent_relative_read()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshPoseQuietAsync();
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task A_healthy_read_clears_the_parent_relative_state()
+    {
+        // The control, green before and after (nothing set the state before the fix).
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+
+        fake.NextPose = new() { Code = 0, Source = "invoke" };
+        await vm.RefreshPoseQuietAsync();
+
+        Assert.False(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task A_directional_teleport_keeps_the_parent_relative_state()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+
+        // teleport_relative's reply carries no read metadata at all -- see [W2-TPREL-MAP].
+        fake.NextPose = new() { Code = 0, X = 5, MapAbsent = true, SourceAbsent = true };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task Disconnect_clears_the_parent_relative_state()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+        Assert.True(vm.PoseParentRelative);   // precondition
+
+        vm.SetConnected(false);
+
+        Assert.False(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public void The_Current_Pose_card_shows_the_parent_relative_state()
+    {
+        // No test renders the panel, so pin the markup. Compiled bindings (x:DataType) already make a
+        // misspelt property a build error; this pins that the chip EXISTS and is bound to the state.
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml"));
+        Assert.Contains("IsVisible=\"{Binding PoseParentRelative}\"", axaml);
+        Assert.Contains("{StaticResource str.TP.ParentRelative}", axaml);
+    }
+
     [Fact]
     public async Task CoordLibrary_noDll_export_refuses_without_AOBMaker()
     {

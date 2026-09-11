@@ -737,7 +737,7 @@ residuals above become their own rows. ⛔ Do **not** close FP1/FP2 on a pipe-on
 **Residual rows, filed 2026-09-11.** Only the save-path residual had become a row
 (`[W2-MARKER-PARENTREL]`). The fix-pass inventory's completeness critic found the other two never
 filed, so Track A's "P7: 0 new" counted a row that did not exist:
-- ⬜ **`[W2-POSEATTACH-QUIETPOLL]` MED** — `TeleportViewModel.cs:1013`/`:1017`.
+- ✅ **`[W2-POSEATTACH-QUIETPOLL]` MED** (FIXED IN SOURCE 2026-09-11, batch B22b) — `TeleportViewModel.cs:1013`/`:1017`.
   - `RefreshPoseQuietAsync`, the 500 ms auto path the tab is left in, calls `ApplyPoseAndMovement(p)`
     and never surfaces `ParentRelative`. Only the manual ↻ sets the ⚠ PARENT-RELATIVE status
     (`:1066`), and any later status erases it.
@@ -745,6 +745,14 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
     offline.
   - The severity is inherited from `[POSEATTACH]`; the record gave this residual none of its own.
   - This is the only recorded P7 instance.
+  - ✅ **FIXED IN SOURCE 2026-09-11** (batch B22b). The degraded read is now a STATE, not a message.
+    - `PoseParentRelative` is set in `ApplyPose`, so the quiet poll, the manual ↻ and every other
+      pose path share it. It shows as a persistent "⚠ parent-relative" chip beside the source chip.
+    - A reply with no read metadata (`teleport_relative`, see `[W2-TPREL-MAP]`) keeps the last
+      state instead of clearing it. The disconnect clears it with the rest of the pose.
+    - The manual ↻'s status message stays as the fuller explanation; the chip is what survives.
+    - **Tests, red first:** the quiet poll surfacing it, a directional TP keeping it, the disconnect
+      clearing it, and the chip bound in the panel. A healthy read clearing it is the control.
 - ⬜ **`[W2-TPREL-TRANSPORTS]` LOW** — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
   - Both call `TeleportRelative` without `&landingKnown` and publish the zero-initialised
     `Pose p{}` as the landing. The pipe half was fixed in 5058e971.
@@ -4234,6 +4242,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 38 | `[W2-GRAVDIR-VERDICT]` | MED | `git log --grep W2-GRAVDIR-VERDICT` (batch B21) | the readout and the apply without a pawn red first; the pre-5.4 apply the control. 9/9 mutants killed across both rows; UI 5057/5057 |
 | 39 | `[W2-MS-PROMISE]` | LOW | same commit as row 38 (batch B21) | Move Speed without a pawn red first, plus the Hemmung twin (both time lanes, red first). The clause is deleted, not made true |
 | 40 | `[W2-TPREL-MAP]` | MED | `git log --grep W2-TPREL-MAP` (batch B22) | 5 tests red first (the ParsePose key, the directional TP keeping map and source, the add-time read, the connect prime, an unknown map); the reported-map control green both ways. 11/11 mutants killed; UI 5063/5063 |
+| 41 | `[W2-POSEATTACH-QUIETPOLL]` | MED | `git log --grep W2-POSEATTACH-QUIETPOLL` (batch B22b) | 4 tests red first (the quiet poll, a directional TP keeping the state, the disconnect clearing it, the chip bound in the panel); a healthy read clearing it is the control. 5/5 mutants killed; UI 5068/5068 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4322,6 +4331,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Directional TP:** use TP facing. The Current Pose Map row keeps the map name, and the library rows keep their distances — no "⚠ different map (you are on '')".
 2. **Fresh connect:** reconnect the UI and do NOT press ↻. The map shows at once. *Add from fields* saves an entry carrying the map (its Map column).
 3. **Main menu:** connect with no pawn. The library rows are not flagged as another map's. | a game + UI |
+| L27 | `[W2-POSEATTACH-QUIETPOLL]` | The `[POSEATTACH-2026-09-10]` case: a pawn attached to a vehicle / mount / moving platform whose world-space read fails.
+1. **Auto only:** turn Auto (0.5s) on and do NOT press ↻. A "⚠ parent-relative" chip shows beside the source chip, and it stays while other status messages come and go.
+2. **Clears:** detach (or disconnect). The chip goes on the next read. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4366,7 +4378,7 @@ completeness critic.
 | ✅ B20 batch method | `[W3-BATCH-METHOD]` | |
 | ✅ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
 | ✅ B22 teleport pose map | `[W2-TPREL-MAP]` | |
-| ⬜ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
+| ✅ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
 | ⬜ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
 | ⬜ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
 | ⬜ B25 xref cap | `[W3-XREF-CAP]` | |
