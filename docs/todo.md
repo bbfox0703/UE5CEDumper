@@ -2833,7 +2833,7 @@ for it to bite:
   binds it, and the exporters keep the override. `Refresh_PointerRetargetsToAnotherClass_…` failed
   first with *"Expected 0x920000, Actual 0x910000"*.
 
-##### `[P8-BOOKMARK-TIP]` LOW — re-saving into an occupied bookmark slot leaves its tooltip naming the previous target
+##### ✅ `[P8-BOOKMARK-TIP]` LOW — re-saving into an occupied bookmark slot leaves its tooltip naming the previous target (FIXED IN SOURCE 2026-09-12)
 
 `LiveWalkerViewModel.cs:3641`. `SaveBookmarkToSlot` writes the plain members `SavedAddress`,
 `SavedObjectName` and `SavedClassName`, then sets `IsOccupied = true`. That setter raises
@@ -2847,6 +2847,11 @@ getter directly and only ever save into empty slots, so they cannot see it.
 - ⛔ **Unsafe:**
   - raising on a same-value `IsOccupied` set, which `BookmarkTests.cs:55-65` pins as not happening;
   - replacing the slot object.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L34), the recorded safe fix:
+  - `SaveBookmarkToSlot` ends with `slot.RefreshTooltip()`, a new slot method that raises `TooltipText`;
+  - the setter's comment now says it refreshes on a flip only;
+  - the same-value setter behaviour is unchanged.
+  - **Red first:** a VM-level re-save into slot 0 with a second object must raise `TooltipText` and name the new target.
 
 ##### Widenings of recorded rows
 
@@ -5223,6 +5228,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 84 | `[W2-BETWEEN-PREVIEW]` | LOW | `git log --grep W2-BETWEEN-PREVIEW` (batch L28) | RoundModePreviewTests, red first: `1,2,3~4,5,6`, `1,000~2,000`, `(5)~10` and `5-~10` preview nothing in every scope, because the DLL refuses each of them. Control: SPC's absolute window keeps `NumberStyles.Any`, because `SpcQueryViewModel` Lo()/Hi() parse it that way. The kit's first draft assumed SPC used `SnapshotStore.TryParseValue`, which is the snapshot GROUP matcher's parse, and a read of the real call site refuted that. Whether SPC itself should accept `(5)` is a separate question, not filed. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5256/5256 |
 | 85 | `[W2-DEADSCAN-LOADMORE]` | LOW | `git log --grep W2-DEADSCAN-LOADMORE` (batch L29) | ValueSearchTests, red first: a First Scan, and a Group First Scan, that fails after a live session keeps its row, offers no Load More, and says the rows are the previous scan's. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5258/5258. The grid is NOT cleared, per the refuted-fix table |
 | 86 | `[W3-DIP-PIXELS]` | LOW | `git log --grep W3-DIP-PIXELS` (batch L31) | WindowRestoreStateTests, red first, with AF21's 3840 px / 225% / x=-1707 geometry: a position reachable in physical pixels is kept, and a genuinely off-screen one (x=-2809) is still rejected (control). A source pin checks that ManagedDialogWindow pushes `SetScale(RenderScaling)` with every `SetScreens`. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5261/5261 |
+| 87 | `[P8-BOOKMARK-TIP]` | LOW | `git log --grep P8-BOOKMARK-TIP` (batch L34) | BookmarkTests, red first: re-saving into an occupied slot raises `TooltipText`, and the hover names the new target. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5262/5262. `BookmarkSlot_SetSameValue_DoesNotNotify` still holds |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5474,6 +5480,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L72 | `[W3-DIP-PIXELS]` | UI on a HiDPI monitor (the AF21 rig's 3840 px at 225%):
 1. Open a managed dialog (Find Func). Drag it until about a third hangs off the LEFT edge (x ≈ -1707). The right edge cannot show this, per AF21's correction.
 2. Maximize it, then restore it. It comes back to that position instead of snapping to the last fully visible one. | UI + HiDPI |
+| L73 | `[P8-BOOKMARK-TIP]` | A game and the UI, in Live Walker:
+1. Bookmark object A into slot 1.
+2. Navigate to object B, then ★ and slot 1 again.
+3. Hover slot 1. It names B, and a click goes to B. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5565,7 +5575,7 @@ completeness critic.
 - ✅ **L31:** `[W3-DIP-PIXELS]`
 - **L32:** `[W4-HEXSORT]`
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
-- **L34:** `[P8-BOOKMARK-TIP]`
+- ✅ **L34:** `[P8-BOOKMARK-TIP]`
 - **L35:** `[A1-LOG-RESUME]`
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
 - **L37:** `[W2-CEGEN-MODAL]` (CE)

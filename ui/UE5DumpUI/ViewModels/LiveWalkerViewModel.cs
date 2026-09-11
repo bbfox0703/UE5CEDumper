@@ -3862,7 +3862,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var label = !string.IsNullOrEmpty(CurrentObjectName) ? CurrentObjectName : CurrentClassName;
         if (label.Length > 14) label = label[..14] + "..";
         slot.Label = label;
-        slot.IsOccupied = true;  // also refreshes the computed TooltipText
+        slot.IsOccupied = true;
+        // [P8-BOOKMARK-TIP] ...which raises TooltipText only on a CHANGE. A re-save into an occupied slot is true -> true,
+        // so the hover kept the previous target while a click went to this one. Refresh it explicitly.
+        slot.RefreshTooltip();
 
         StatusText = $"Bookmark {slot.DisplayNumber} saved";
         var topName = slot.SavedTopRow?.Name ?? "-";
@@ -7398,10 +7401,13 @@ public sealed class BookmarkSlot : ObservableObject
     public bool IsOccupied
     {
         get => _isOccupied;
-        // TooltipText is computed from IsOccupied + the saved metadata (which is
-        // always assigned before IsOccupied flips true), so refresh the hint here.
+        // TooltipText is computed from IsOccupied + the saved metadata. This refreshes it on a FLIP only; a re-save
+        // into an occupied slot changes the metadata without one, so the save calls RefreshTooltip() [P8-BOOKMARK-TIP].
         set { if (SetProperty(ref _isOccupied, value)) OnPropertyChanged(nameof(TooltipText)); }
     }
+
+    /// <summary>[P8-BOOKMARK-TIP] Re-announce <see cref="TooltipText"/> after the saved metadata changed in place.</summary>
+    public void RefreshTooltip() => OnPropertyChanged(nameof(TooltipText));
 
     private string _label = "";
     public string Label { get => _label; set => SetProperty(ref _label, value); }

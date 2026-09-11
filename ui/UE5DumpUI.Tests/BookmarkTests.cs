@@ -130,6 +130,26 @@ public class BookmarkTests
     }
 
     [Fact]
+    public void SaveBookmarkToSlot_IntoAnOccupiedSlot_RefreshesTheTooltip()
+    {
+        // [P8-BOOKMARK-TIP] Save mode has no occupied-slot guard, so this is the normal re-save gesture. IsOccupied goes
+        // true -> true and raises nothing: the label repainted, the hover kept the PREVIOUS target, a click went to the new.
+        var vm = CreateViewModel();
+        SetupViewModelWithData(vm, objectName: "FirstObject", address: "0x11111111");
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        var raised = new List<string>();
+        slot.PropertyChanged += (_, e) => raised.Add(e.PropertyName!);
+
+        SetupViewModelWithData(vm, objectName: "SecondObject", address: "0x22222222");
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+
+        Assert.Contains(nameof(BookmarkSlot.TooltipText), raised);   // the hover repaints
+        Assert.Contains("SecondObject", slot.TooltipText);
+        Assert.Contains("0x22222222", slot.TooltipText);
+    }
+
+    [Fact]
     public void SaveBookmarkToSlot_TruncatesLongLabel()
     {
         var vm = CreateViewModel();
