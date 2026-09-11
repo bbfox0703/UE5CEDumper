@@ -792,7 +792,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0, partial = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0, cappedRows = 0, xrefCap = 0;
         try
         {
             foreach (var match in targets)
@@ -812,9 +812,11 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                     // written as a bare "0" reads as "no function touches this field, so
                     // freezing it is safe". (audit #5 Z9)
                     bool deadline = res.Scan?.DeadlineHit ?? false;
-                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
+                    bool capped = res.Scan?.CapHit ?? false;   // [W3-XREF-CAP] its own cause, never the deadline's
+                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     if (res.Xrefs.Count > 0) withFuncs++;
                     if (deadline) partial++;
+                    if (capped) { cappedRows++; xrefCap = res.Scan!.Cap; }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -827,7 +829,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             }
             StatusText = $"Find Funcs done: {withFuncs}/{targets.Count} referenced by a function"
                        + (cached > 0 ? $" ({cached} cached)." : ".")
-                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count)
+                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

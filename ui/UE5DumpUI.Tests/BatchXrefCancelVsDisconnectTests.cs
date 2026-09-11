@@ -503,4 +503,117 @@ public class BatchXrefCancelVsDisconnectTests
         Assert.Contains("cancelled", vm.StatusText);
         Assert.DoesNotContain("failed", vm.StatusText);
     }
+
+    // ==================================================================
+    // [W3-XREF-CAP] a row cut off at the result cap is a lower bound -- its own cause, not the deadline's --
+    // at all four batch loops (Property Search and Interesting Properties hit the same 200-result cap).
+    // ==================================================================
+
+    private static List<PropertyXrefMatch> Matches(int n)
+    {
+        var list = new List<PropertyXrefMatch>();
+        for (int i = 0; i < n; i++) list.Add(new PropertyXrefMatch { FunctionName = $"Fn{i}" });
+        return list;
+    }
+
+    private sealed class CappedDump : StubDumpService
+    {
+        private static FindPropertyXrefsResult Capped() => new()
+        {
+            Xrefs = Matches(200),
+            Scan = new PropertyXrefScanStats { CapHit = true, Cap = 200 },
+        };
+
+        public override Task<FindPropertyXrefsResult> FindPropertyXrefsAsync(
+            string propAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default)
+            => Task.FromResult(Capped());
+
+        public override Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(
+            string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default)
+            => Task.FromResult(Capped());
+    }
+
+    private static void AssertCappedCell(string cell, string status)
+    {
+        Assert.StartsWith("200+ ·", cell);
+        Assert.False(Helpers.XrefFormat.IsPartialCell(cell));   // a re-run asks for the same 200: not partial
+        Assert.Contains("result cap", status);
+        Assert.DoesNotContain("deadline", status);
+    }
+
+    [Fact]
+    public async Task Properties_batch_marks_a_capped_row_as_a_lower_bound_not_partial()
+    {
+        var rows = new List<ScoredPropertyRow> { PropRow("Health") };
+        var vm = new InterestingPropertiesViewModel(new CappedDump(), new NoopLog());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PropertySearch_batch_marks_a_capped_row_as_a_lower_bound()
+    {
+        var rows = new List<PropertySearchMatch>
+        {
+            new() { ClassName = "BP_Enemy_C", PropName = "Health", FieldAddr = "0xDEAD0000" },
+        };
+        var vm = new PropertySearchViewModel(new CappedDump(), new NoopLog());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_batch_marks_a_capped_class_as_a_lower_bound()
+    {
+        var rows = new List<InstanceResult>
+        {
+            new() { Address = "0x1000", Name = "E_0", ClassName = "BP_Enemy_C", ClassAddress = "0xC1A550" },
+        };
+        var vm = new InstanceFinderViewModel(new CappedDump(), new NoopLog(), new NoopPlatform());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ClassFilter_batch_marks_a_capped_cell_as_a_lower_bound()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        var vm = new GameClassFilterViewModel(new CappedDump(), new NoopLog(), new NoopPlatform());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Xref_scan_parse_carries_the_cap()
+    {
+        // cap_hit / cap are new wire keys; a DLL that sends them must be heard at both commands.
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(req => new System.Text.Json.Nodes.JsonObject
+        {
+            ["ok"] = true,
+            ["scan"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["functions_scanned"] = 1, ["cap_hit"] = true, ["cap"] = 200,
+            },
+            ["xrefs"] = new System.Text.Json.Nodes.JsonArray(),
+        });
+        var svc = new DumpService(pipe, new MockLoggingService());
+        var ct = TestContext.Current.CancellationToken;
+
+        var byProp  = await svc.FindPropertyXrefsAsync("0x1", true, 200, ct);
+        var byClass = await svc.FindFunctionsByClassAsync("0x2", true, 200, ct);
+
+        Assert.True(byProp.Scan!.CapHit);
+        Assert.Equal(200, byProp.Scan.Cap);
+        Assert.True(byClass.Scan!.CapHit);
+        Assert.Equal(200, byClass.Scan.Cap);
+    }
 }

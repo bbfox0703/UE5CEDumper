@@ -4782,6 +4782,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["objects_total"]         = res.stats.objectsTotal;
             scanInfo["duration_ms"]           = res.stats.durationMs;
             scanInfo["deadline_hit"]          = res.stats.deadlineHit;
+            // [W3-XREF-CAP] The cap, as its OWN field -- the begin_group_scan shape (deadline_hit /
+            // per_slot_cap_hit / per_slot_cap stay distinct): a capped page is a prefix, not a timeout.
+            scanInfo["cap_hit"]               = res.stats.capHit;
+            scanInfo["cap"]                   = res.stats.cap;
             data["scan"] = scanInfo;
 
             json arr = json::array();
@@ -4825,6 +4829,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["objects_total"]         = res.stats.objectsTotal;
             scanInfo["duration_ms"]           = res.stats.durationMs;
             scanInfo["deadline_hit"]          = res.stats.deadlineHit;
+            // [W3-XREF-CAP] The cap, as its OWN field -- the begin_group_scan shape (deadline_hit /
+            // per_slot_cap_hit / per_slot_cap stay distinct): a capped page is a prefix, not a timeout.
+            scanInfo["cap_hit"]               = res.stats.capHit;
+            scanInfo["cap"]                   = res.stats.cap;
             data["scan"] = scanInfo;
 
             json arr = json::array();

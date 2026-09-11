@@ -1188,6 +1188,10 @@ struct PropertyXrefStats {
     int32_t objectsTotal        = 0;   // GObjects count
     int64_t durationMs          = 0;
     bool    deadlineHit         = false;
+    // [W3-XREF-CAP] A worker stopped at maxResults, or the merged total passed it: `xrefs` is a PREFIX and more
+    // may exist. Its own flag -- never folded into deadlineHit (P5: a different cause, different advice).
+    bool    capHit              = false;
+    int32_t cap                 = 0;       // the effective maxResults
 };
 
 struct PropertyXrefResult {

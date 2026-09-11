@@ -1071,7 +1071,7 @@ while eviction runs at the hand-edited number.
    - Pinned: the note stays off `-2` / `-4`, and an unpinned `-5` is reported and not re-sent.
    - **Two DLL-side twins are filed as their own rows below**, both pre-existing and outside this
      row's scope: `[W3-DUNSTE-QUEUED]` (MED) and `[W3-DEBUGCAM-QUEUED]` (LOW).
-2. ⬜ **`[W3-XREF-CAP]`** `PropertyXrefDialog.cs:433`. `Aura::FindPropertyXrefs` and
+2. ✅ **`[W3-XREF-CAP]`** (FIXED IN SOURCE 2026-09-11, batch B25) `PropertyXrefDialog.cs:433`. `Aura::FindPropertyXrefs` and
    `FindFunctionsByClassParam` self-cap each worker at `maxResults` then `ConcatTruncate`, and
    **neither folds the cap into any published flag** — both set only
    `out.stats.deadlineHit = scan.incomplete()`, which covers the clock and worker faults but never
@@ -1089,6 +1089,39 @@ while eviction runs at the hand-edited number.
    `Fern.cpp:4809` reuses `functions_with_script` as "matched" and `Aura.cpp:6130` sums across
    workers that each self-cap, so a capped 8-thread scan can print *"(1,432 matched)"* beside 200
    rows. Do not mistake that for a disclosure when fixing this.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B25). The cap is its own published flag, never folded into
+   `deadlineHit`: the recorded unsafe fix, and the P5 conflation, are what did not land.
+   - **DLL.** `PropertyXrefStats` gains `capHit` and `cap`, the effective cap.
+     - A pure helper beside `ConcatTruncate`, `MergedScanCapHit`, sets it before the merge moves the
+       elements out.
+     - It is set when a worker reached `maxResults`, so its index range was not finished, or when the
+       workers together found more than `maxResults`. Exactly `maxResults` found by workers that each
+       finished is NOT capped.
+     - Both scans set it, and Fern publishes `cap_hit` / `cap` in both handlers' `scan` objects.
+     - An additive wire key: no contract bump, and the CE mailbox is untouched.
+   - **UI, FIVE sites, not four.** The dialog, plus four batch loops. Property Search and Interesting
+     Properties call `FindPropertyXrefsAsync(…, 200)` and hit the same cap; this row named two batch
+     sites.
+     - A capped cell shows its count as a lower bound (`200+ · …`). It is NOT a partial cell: a re-run
+       asks for the same 200, so it cannot find more, and treating it as partial would re-scan it forever.
+     - Its own status clause, `PartialResultNotice.BatchCapClause`, names the cap as the cause.
+       `BatchPartialClause`'s "hit the scan deadline … a 0 means not found YET" fits neither the cause
+       nor a capped row, which is never 0.
+     - The dialog's status comes from a pure `XrefFormat.XrefDialogStatus`: "200+ function(s)", and
+       "[CAP HIT — only the first 200 are listed; more may exist]".
+     - In class mode the "(N matched)" sum reads as a lower bound when capped, since it adds up
+       workers that each self-capped: the accidental "hint" this row warned about.
+   - **Tests, red first** against inert stubs:
+     - `dll_core_test`: the helper's cases, and a real `FindPropertyXrefs` over the fake object pool
+       (five matching UFunctions: cap 3 is capped, cap 10 is not);
+     - the cell, the clause and the dialog status as pure tests;
+     - the batch loops that have a harness;
+     - DumpService's parse over a mock pipe.
+
+     11/11 mutants killed; dll_core_test 214/214; UI 5112/5112.
+   - ⚠ **Documented survivors, by construction:** `FindFunctionsByClassParam`'s call site (it mirrors
+     `FindPropertyXrefs` line for line, and no test builds UFunction param chains), and Fern.cpp's two
+     serialisers (compiled by no test target). The real `UE5Dumper` build and the live check cover them.
 3. ✅ **`[W3-BATCH-METHOD]`** (FIXED IN SOURCE 2026-09-11, batch B20) `InterestingFunctionsViewModel.cs:331`. `BatchFindFuncPropsAsync`
    consumes `res.Props` and `res.BudgetHit` and **never reads `res.Method`**. The DLL publishes
    four method tags and **two of them mean nothing was analysed at all** — `"none"`
@@ -4437,6 +4470,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 42 | `[W5-CEXML-FSTRING]` | MED | `git log --grep W5-CEXML-FSTRING` (batch B23) | 7 tests red first (the 3-row array theory, map key + value, flatten key, struct member, FText array, fabricated tail); the TSet control green both ways. 10/10 mutants killed; UI 5077/5077. The walk's own TArray elements came with `[W5-STRARRAY-ELEMENTS]` (row 43, B23b); the review of 110cbb4e corrected "inert" |
 | 43 | `[W5-STRARRAY-ELEMENTS]` | MED | `git log --grep W5-STRARRAY-ELEMENTS` (batch B23b) | the dll_core_test reader block and the STRARRAYWALK walker block red first against inert stubs; a CSX pin green both ways. 5/5 mutants killed, 2 documented survivors (the UE4 UProperty-mode call site, and Fern.cpp, which no test target compiles); dll_core_test 204/204; UI 5091/5091 |
 | 44 | `[A4-USMAP-ENUM-UNDERLYING]` | MED | `git log --grep A4-USMAP-ENUM-UNDERLYING` (batch B24) | a Size theory (2/4/8 red first; 1 and the 3-byte fallback green both ways) and the TEnumAsByte shape red first; the plain-byte control green both ways; the round-trip reader now reads the underlying type. 4/4 mutants killed; UI 5098/5098 |
+| 45 | `[W3-XREF-CAP]` | MED | `git log --grep W3-XREF-CAP` (batch B25) | dll_core_test (the merge helper, and FindPropertyXrefs over the fake pool) and the UI (cell, clause, dialog status, batch loops, the parse) red first against inert stubs. 11/11 mutants killed; dll_core_test 214/214; UI 5112/5112. Five UI sites, not four |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4536,6 +4570,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **Copy CE XML** (⚠ needs CE): each element is a CE String showing its live text. This is `[W5-CEXML-FSTRING]`'s TArray half.
 3. **Export CSX:** each element is a pointer with a Unicode String child. | a game + UI (+ CE for 2) |
 | L30 | `[A4-USMAP-ENUM-UNDERLYING]` | In the throwaway CUE4Parse console: parse an asset whose object has a non-uint8 enum UPROPERTY (a `: uint32` enum such as `ENiagaraCoordinateSpace`), once with our `.usmap` and once with a Dumper-7 one. The property values must match, and the properties AFTER the enum must too (the misalignment was what the old Byte underlying type caused). A `TEnumAsByte` field shows its enumerator name, not a number. | a game + UI + CUE4Parse |
+| L31 | `[W3-XREF-CAP]` | A connected game with a hot field or class (a property most Blueprint functions touch, or a class many functions take):
+1. **Dialog:** Find Funcs on it. With more than 200 hits, the status reads "200+ function(s)" and "[CAP HIT — only the first 200 are listed; more may exist]"; a deadline, if one also hit, is reported separately.
+2. **Batch:** run Find Funcs in Property Search, Interesting Properties, Instance Finder and Game Class Filter over rows that include it. Its cell reads `200+ · …`, the status names the cap, and a re-run does not re-scan that row. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4584,7 +4621,7 @@ completeness critic.
 | ✅ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
 | ✅ B23b string-array elements | `[W5-STRARRAY-ELEMENTS]` (filed 2026-09-11 while fixing B23) | |
 | ✅ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
-| ⬜ B25 xref cap | `[W3-XREF-CAP]` | |
+| ✅ B25 xref cap | `[W3-XREF-CAP]` | |
 | ⬜ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ⬜ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |

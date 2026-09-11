@@ -64,6 +64,13 @@ public sealed class PropertyXrefScanStats
     public int ObjectsTotal { get; init; }
     public long DurationMs { get; init; }
     public bool DeadlineHit { get; init; }
+
+    /// <summary>[W3-XREF-CAP] The scan stopped at its result cap: the results are a PREFIX and more may exist.
+    /// Its own flag, never folded into <see cref="DeadlineHit"/> -- a different cause, different advice.</summary>
+    public bool CapHit { get; init; }
+
+    /// <summary>[W3-XREF-CAP] The effective cap the DLL applied (0 from a DLL that did not say).</summary>
+    public int Cap { get; init; }
 }
 
 /// <summary>Result of a find_property_xrefs scan.</summary>

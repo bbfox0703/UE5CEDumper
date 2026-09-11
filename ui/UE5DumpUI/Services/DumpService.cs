@@ -1189,6 +1189,8 @@ public sealed class DumpService : IDumpService
                 ObjectsTotal        = scanNode["objects_total"]?.GetValue<int>() ?? 0,
                 DurationMs          = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit         = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                CapHit              = scanNode["cap_hit"]?.GetValue<bool>() ?? false,   // [W3-XREF-CAP]
+                Cap                 = scanNode["cap"]?.GetValue<int>() ?? 0,
             };
         }
 
@@ -1245,6 +1247,8 @@ public sealed class DumpService : IDumpService
                 ObjectsTotal        = scanNode["objects_total"]?.GetValue<int>() ?? 0,
                 DurationMs          = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit         = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                CapHit              = scanNode["cap_hit"]?.GetValue<bool>() ?? false,   // [W3-XREF-CAP]
+                Cap                 = scanNode["cap"]?.GetValue<int>() ?? 0,
             };
         }
 

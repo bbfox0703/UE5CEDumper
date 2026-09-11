@@ -37,6 +37,62 @@ public class PartialResultNoticeTests
         Assert.True(s.Trim().Length > 40, "the note collapsed to nothing: " + s);
     }
 
+    // ---- [W3-XREF-CAP] a result cut off at the cap is a lower bound, with its own cause ----
+
+    [Fact]
+    public void BatchCapClause_NamesTheCapAsTheCause_AndCallsTheCountsLowerBounds()
+    {
+        var s = PartialResultNotice.BatchCapClause(2, 5, 200);
+        Assert.Contains("200-result cap", s, StringComparison.Ordinal);
+        Assert.Contains("lower bound", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadline", s, StringComparison.Ordinal);
+        Assert.Equal("", PartialResultNotice.BatchCapClause(0, 5, 200));   // nothing capped, nothing said
+    }
+
+    [Fact]
+    public void FunctionsSummary_CappedCell_ShowsALowerBound_AndIsNotAPartialCell()
+    {
+        var xrefs = new List<PropertyXrefMatch>
+        {
+            new() { FunctionName = "A" }, new() { FunctionName = "B" }, new() { FunctionName = "C" },
+        };
+        var cell = XrefFormat.FunctionsSummary(xrefs, deadlineHit: false, capHit: true);
+        Assert.StartsWith("3+ ·", cell, StringComparison.Ordinal);
+        Assert.False(XrefFormat.IsPartialCell(cell));   // a re-run asks for the same cap: it cannot find more
+    }
+
+    [Fact]
+    public void XrefDialogStatus_Capped_SaysOnlyTheFirstNAreListed()
+    {
+        var res = new FindPropertyXrefsResult
+        {
+            Xrefs = new List<PropertyXrefMatch> { new() { FunctionName = "A" } },
+            Scan = new PropertyXrefScanStats
+            {
+                FunctionsScanned = 10, FunctionsWithScript = 900, ObjectsTotal = 100, CapHit = true, Cap = 1,
+            },
+        };
+        var s = XrefFormat.XrefDialogStatus(res, classMode: true);
+        Assert.Contains("1+ function(s)", s, StringComparison.Ordinal);
+        Assert.Contains("CAP HIT", s, StringComparison.Ordinal);
+        Assert.Contains("900+ matched", s, StringComparison.Ordinal);   // summed over workers that each self-capped
+    }
+
+    [Fact]
+    public void XrefDialogStatus_DeadlineOnly_HasNoCapWording()
+    {
+        // The control, green before and after: the deadline keeps its own words, and a scan that was not
+        // capped says nothing about a cap.
+        var res = new FindPropertyXrefsResult
+        {
+            Xrefs = new List<PropertyXrefMatch>(),
+            Scan = new PropertyXrefScanStats { FunctionsScanned = 10, ObjectsTotal = 100, DeadlineHit = true },
+        };
+        var s = XrefFormat.XrefDialogStatus(res, classMode: false);
+        Assert.Contains("DEADLINE HIT", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("CAP", s, StringComparison.Ordinal);
+    }
+
     // ==================================================================
     // Z10 — the advice must name a lever the panel actually has.
     // ==================================================================

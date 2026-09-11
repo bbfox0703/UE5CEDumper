@@ -812,6 +812,24 @@ int main() {
     }
 
 
+    {   blk("W3-XREF-CAP -- MergedScanCapHit: is a capped parallel scan's merged result a prefix?");
+        // Each worker stops at maxResults, leaving the rest of its index range UNSCANNED, and ConcatTruncate then
+        // cuts the merge to maxResults. Neither was published: a capped page read as a complete answer.
+        struct CapTR { std::vector<int> items; };
+        std::vector<CapTR> fin(2);  fin[0].items.assign(100, 0);  fin[1].items.assign(100, 0);
+        check("XREFCAP control: two workers that each finished, exactly at the cap, are NOT capped",
+              !Aura::MergedScanCapHit(fin, &CapTR::items, 200));
+        std::vector<CapTR> one(2);  one[0].items.assign(200, 0);
+        check("XREFCAP ⭐: a worker that reached the cap stopped early -- capped",
+              Aura::MergedScanCapHit(one, &CapTR::items, 200));
+        std::vector<CapTR> sum(2);  sum[0].items.assign(150, 0);  sum[1].items.assign(100, 0);
+        check("XREFCAP ⭐: workers that together passed the cap -- capped",
+              Aura::MergedScanCapHit(sum, &CapTR::items, 200));
+        std::vector<CapTR> none(3);
+        check("XREFCAP control: an empty scan is not capped", !Aura::MergedScanCapHit(none, &CapTR::items, 200));
+    }
+
+
     {   blk("D2 -- a scan worker that THROWS must not report the run as COMPLETE");
         // Blind-spot sweep, 2026-09-08. ParallelIndexRanges' catch(...) is the
         // terminate-guard (an exception escaping a std::thread callable calls
@@ -2005,6 +2023,63 @@ int main() {
               f ? std::to_string(f->arrayElements.size()).c_str() : "(no field)");
 
         DynOff::bUseFProperty = savedFPropS;
+    }
+
+    // -- XREFCAPWALK-2026-09-11 -- FindPropertyXrefs publishes the cap it hit -------------------------------
+    //
+    // ⛔ POOL-FAKING, like the blocks above: FindPropertyXrefs keeps an object only if its class is NAMED
+    // "Function". Own name pool, last. The five fake UFunctions live in the MAIN object pool (Aura was initialised
+    // on it at the top), at indices 0..4 -- all inside worker 0's contiguous range, so cap 3 stops that worker
+    // early. [W3-XREF-CAP]
+    {
+        blk("XREFCAPWALK - FindPropertyXrefs publishes the cap it hit, and only when it hit it");
+        ResetCancel();
+
+        static uint8_t xcEntry[3][0x40] = {};
+        const char* xcNames[3] = { "", "Function", "Fn" };
+        static uintptr_t xcChunk[4] = {};
+        for (int i = 1; i <= 2; ++i) {
+            memcpy(xcEntry[i] + 0x10, xcNames[i], strlen(xcNames[i]) + 1);
+            xcChunk[i] = reinterpret_cast<uintptr_t>(xcEntry[i]);
+        }
+        static uintptr_t xcChunks[2] = { reinterpret_cast<uintptr_t>(xcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(xcChunks), 0x10);
+        check("XREFCAPWALK setup: the pool resolves Function", Serie::GetString(1) == "Function",
+              Serie::GetString(1).c_str());
+
+        const int savedScript = DynOff::USTRUCT_SCRIPT;
+        DynOff::USTRUCT_SCRIPT = 0x30;   // the pool's objects are 64 bytes: clear of class, name and outer
+
+        constexpr uintptr_t kNeedle = 0x1122334455667788ull;   // the "FProperty*" searched for; never dereferenced
+        alignas(8) static uint8_t xcScript[16];
+        memset(xcScript, 0x0B, sizeof(xcScript));
+        xcScript[0] = 0x01;                                    // EX_InstanceVariable, then the pointer
+        memcpy(xcScript + 1, &kNeedle, sizeof(kNeedle));
+        static uint8_t xcFnClass[0x40] = {};
+        *reinterpret_cast<int32_t*>(xcFnClass + Grimoire::OFF_UOBJECT_NAME) = 1;   // "Function"
+
+        for (int i = 0; i < 5; ++i) {
+            uint8_t* o = pool.objects.data() + static_cast<size_t>(i) * 64;
+            memset(o, 0, 64);   // no earlier block's leftovers (an Outer, a class) in the scan
+            *reinterpret_cast<uintptr_t*>(o + Grimoire::OFF_UOBJECT_CLASS) = reinterpret_cast<uintptr_t>(xcFnClass);
+            *reinterpret_cast<int32_t*>(o + Grimoire::OFF_UOBJECT_NAME)    = 2;   // "Fn"
+            *reinterpret_cast<uintptr_t*>(o + 0x30) = reinterpret_cast<uintptr_t>(xcScript);
+            *reinterpret_cast<int32_t*>(o + 0x38)   = static_cast<int32_t>(sizeof(xcScript));
+        }
+
+        const auto whole  = Aura::FindPropertyXrefs(kNeedle, false, 10);
+        const auto capped = Aura::FindPropertyXrefs(kNeedle, false, 3);
+        check("XREFCAPWALK control: all five fake UFunctions are found under a cap they fit in",
+              whole.xrefs.size() == 5, std::to_string(whole.xrefs.size()).c_str());
+        check("XREFCAPWALK control: ...and that scan is not capped", !whole.stats.capHit);
+        check("XREFCAPWALK: cap 3 returns the first three", capped.xrefs.size() == 3,
+              std::to_string(capped.xrefs.size()).c_str());
+        check("XREFCAPWALK ⭐: FindPropertyXrefs publishes the cap it hit, and the cap itself",
+              capped.stats.capHit && capped.stats.cap == 3);
+        check("XREFCAPWALK control: a cap is not a deadline", !capped.stats.deadlineHit);
+
+        for (int i = 0; i < 5; ++i) memset(pool.objects.data() + static_cast<size_t>(i) * 64, 0, 64);
+        DynOff::USTRUCT_SCRIPT = savedScript;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

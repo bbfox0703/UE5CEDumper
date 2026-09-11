@@ -967,7 +967,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
         var classCache = new Dictionary<string, string>();
-        int rows = 0, classesScanned = 0, reused = 0, partial = 0;
+        int rows = 0, classesScanned = 0, reused = 0, partial = 0, cappedClasses = 0, xrefCap = 0;
         try
         {
             foreach (var inst in targets)
@@ -984,11 +984,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 {
                     var res = await _dump.FindFunctionsByClassAsync(inst.ClassAddress, true, 200, ct);
                     bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
-                    var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
+                    bool capped = res.Scan?.CapHit ?? false;           // [W3-XREF-CAP] its own cause
+                    var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     classCache[inst.ClassAddress] = summary;
                     inst.XrefInfo = summary;
                     classesScanned++;
                     if (deadline) partial++;
+                    if (capped) { cappedClasses++; xrefCap = res.Scan!.Cap; }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -1003,7 +1005,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                        + (reused > 0 ? $" ({reused} reused/cached)." : ".")
                        // Counted per CLASS, not per row: one scan serves every row sharing
                        // a ClassAddress, so a partial verdict stamps all of them.
-                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class");
+                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class")
+                       + PartialResultNotice.BatchCapClause(cappedClasses, classesScanned, xrefCap, "class");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

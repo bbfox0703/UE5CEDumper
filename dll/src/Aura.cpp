@@ -316,6 +316,22 @@ std::vector<ElemT> ConcatTruncate(std::vector<PerThreadT>& perThread,
     return out;
 }
 
+// [W3-XREF-CAP] True when a capped parallel scan's merged result is a PREFIX: a worker stopped at its own
+// maxResults (its index range was not finished), or the workers together found more than maxResults and
+// ConcatTruncate dropped some. Exactly maxResults found by workers that each finished is NOT capped. Ask it
+// BEFORE ConcatTruncate, which moves the elements out.
+template <typename PerThreadT, typename ElemT>
+bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
+                      std::vector<ElemT> PerThreadT::* member, int32_t maxResults) {
+    size_t total = 0;
+    for (const auto& tr : perThread) {
+        const size_t n = (tr.*member).size();
+        if (n >= static_cast<size_t>(maxResults)) return true;   // this worker stopped early
+        total += n;
+    }
+    return total > static_cast<size_t>(maxResults);              // the merge dropped some
+}
+
 } // namespace
 
 uintptr_t Aura::DecryptObjectPtr(uintptr_t rawPtr) {
@@ -5966,6 +5982,9 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
         }
     });
 
+    // [W3-XREF-CAP] Asked BEFORE ConcatTruncate, which moves the elements out.
+    out.stats.capHit = MergedScanCapHit(scan.perThread, &ThreadResult::xrefs, maxResults);
+    out.stats.cap    = maxResults;
     out.xrefs = ConcatTruncate(scan.perThread, &ThreadResult::xrefs, maxResults);
     for (auto& tr : scan.perThread) {
         out.stats.functionsScanned    += tr.funcsScanned;
@@ -6159,6 +6178,9 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
         }
     });
 
+    // [W3-XREF-CAP] Asked BEFORE ConcatTruncate, which moves the elements out.
+    out.stats.capHit = MergedScanCapHit(scan.perThread, &ThreadResult::xrefs, maxResults);
+    out.stats.cap    = maxResults;
     out.xrefs = ConcatTruncate(scan.perThread, &ThreadResult::xrefs, maxResults);
     for (auto& tr : scan.perThread) {
         out.stats.functionsScanned    += tr.funcsScanned;

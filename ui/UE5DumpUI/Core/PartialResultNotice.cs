@@ -102,6 +102,18 @@ public static class PartialResultNotice
               + $"a 0 on those {unit}s means \"not found YET\", not \"none\".";
 
     /// <summary>
+    /// [W3-XREF-CAP] Roll-up clause for a batch in which <paramref name="cappedUnits"/> units hit the result cap.
+    /// Its own cause and its own consequence: a capped unit is never "0", and re-running it cannot find more
+    /// (the same cap is asked for again), so <see cref="BatchPartialClause"/>'s wording fits neither. Empty when
+    /// nothing was capped.
+    /// </summary>
+    public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row")
+        => cappedUnits <= 0
+            ? ""
+            : $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {unit}(s) matched more than the {cap:N0}-result cap — "
+              + $"their counts (shown as N+) are lower bounds, and only the first {cap:N0} are listed.";
+
+    /// <summary>
     /// [W3-BATCH-METHOD] Cell value for a row whose analysis never RAN, so it cannot read as a real
     /// <c>0</c> ("analysed, nothing touched"). The full explanation goes in the status line
     /// (<see cref="BatchNotAnalysedClause"/>).
