@@ -151,7 +151,11 @@ public static class CoordPrecision
     public static bool TryParse(string? s, out double value) =>
         double.TryParse((s ?? "").Trim(),
                         NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out value);
+                        CultureInfo.InvariantCulture, out value)
+        // [A3-COORD-NONFINITE] TryParse ACCEPTS "NaN", "Infinity" and an overflow like "1e400", and Round maps them to 0
+        // without a word -- a teleport to the world origin. A non-finite coordinate is a rejected, VISIBLE row. Round is
+        // left alone: it is also the pose-capture and writer path, where a NaN would reach generated Lua as a nil global.
+        && double.IsFinite(value);
 }
 
 /// <summary>

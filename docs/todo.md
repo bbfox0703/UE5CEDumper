@@ -4435,7 +4435,7 @@ while the UI says "moved to the Recycle Bin", which is the B13/B41 false claim. 
   - **Red first:** a failed lookup fails closed where the volume flag decides; under the global setting or a policy it
     changes nothing (control); a source pin checks the caller.
 
-##### `[A3-COORD-NONFINITE]` LOW — a coordinate CSV / Lua import stores `NaN` / `Infinity` / `1e400` as 0 without a word
+##### ✅ `[A3-COORD-NONFINITE]` LOW — a coordinate CSV / Lua import stores `NaN` / `Infinity` / `1e400` as 0 without a word (FIXED IN SOURCE 2026-09-12)
 
 `CoordinateLibraryFile.cs:151-154`. `double.TryParse` accepts non-finite values, and `Round` maps them to
 0 without recording an issue. So a teleport lands at the world origin, which is exactly the silent wrong
@@ -4444,6 +4444,10 @@ coordinate that B21's note says must be a visible rejected row. The Lua fence is
 - ✅ **Safe fix:** `&& double.IsFinite(value)` in `CoordPrecision.TryParse`, the in-tree idiom.
 - ⛔ **Unsafe:** changing `Round`, which is also the pose-capture and writer path; a NaN would reach
   generated Lua as a nil global.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L39), the recorded safe fix: `&& double.IsFinite(value)` in
+  `CoordPrecision.TryParse`. `Round` is untouched.
+  - **Red first:** a CSV row whose x is `NaN`, `Infinity`, `-Infinity` or `1e400` is a rejected row with an issue on
+    column x, and a Lua entry with `x=1e400` is reported, not imported.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -5247,6 +5251,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 87 | `[P8-BOOKMARK-TIP]` | LOW | `git log --grep P8-BOOKMARK-TIP` (batch L34) | BookmarkTests, red first: re-saving into an occupied slot raises `TooltipText`, and the hover names the new target. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5262/5262. `BookmarkSlot_SetSameValue_DoesNotNotify` still holds |
 | 88 | `[A1-LOG-RESUME]` | LOW | `git log --grep A1-LOG-RESUME` (batch L35) | LogRetentionTests, red first: rolled `-0_NNN.log` files beside a `-0.log`, or alone, are archived at startup oldest first; another category's are untouched. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5264/5264. Residual: the in-session compression rule, not built |
 | 89 | `[A3-RECYCLE-GUID-FAILOPEN]` | LOW | `git log --grep A3-RECYCLE-GUID-FAILOPEN` (batch L38) | RecycleBinPolicyTests, red first: a failed volume-GUID lookup fails closed where the per-volume flag would decide; `UseGlobalSettings` or a policy still decides on its own (control); a source pin checks the platform caller. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5267/5267 |
+| 90 | `[A3-COORD-NONFINITE]` | LOW | `git log --grep A3-COORD-NONFINITE` (batch L39) | CoordCsvCodecTests + CoordLuaParserTests, red first: `NaN`, `Infinity`, `-Infinity` and `1e400` in a CSV row, and `x=1e400` in a Lua entry, are rejected and visible, not stored as the origin. 1/1 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5272/5272 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5509,6 +5514,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. `subst X: <dir>`, and put a leftover proxy DLL there.
 2. Run Proxy Deploy's cleanup. It refuses to "recycle" the DLL, failing closed, instead of claiming "moved to the Recycle Bin".
 3. On a normal fixed volume, the DLL is still recycled. | UI + a SUBST volume |
+| L76 | `[A3-COORD-NONFINITE]` | UI only. In the Teleport card's coordinate library, import a CSV with a row whose x is `NaN`, and one whose x is `1e400`. The preview lists both as rejected rows on column x, and neither is imported. | UI only |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5605,7 +5611,7 @@ completeness critic.
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
 - **L37:** `[W2-CEGEN-MODAL]` (CE)
 - ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
-- **L39:** `[A3-COORD-NONFINITE]`
+- ✅ **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)

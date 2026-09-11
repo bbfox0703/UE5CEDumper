@@ -246,6 +246,21 @@ public class CoordCsvParseTests
         Assert.Contains("not a number", issue.Reason);
     }
 
+    // [A3-COORD-NONFINITE] double.TryParse ACCEPTS "NaN" / "Infinity" / an overflow like "1e400", and Round mapped them to
+    // 0 without an issue -- a teleport to the world origin, the silent wrong coordinate B21 says must be a visible row.
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    [InlineData("1e400")]   // overflows to +Infinity
+    public void Parse_NonFiniteCoordinate_IsARejectedRow_NotAnOriginTeleport(string x)
+    {
+        var r = P(Header + $"u1,Bad,G,M,{x},2,3,0,0,0\n");
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal("x", issue.Column);
+    }
+
     [Fact]
     public void Parse_EmptyLabel_IsReportedNotSilentlyImported()
     {
