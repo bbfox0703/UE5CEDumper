@@ -75,6 +75,11 @@ public class TeleportViewModelTests
         public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
         { FindStealthCalls++; return Task.FromResult(NextStealthCandidates); }
 
+        // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
+        public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
+        public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
+            => NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind, double value = 0, bool on = false, CancellationToken ct = default)
         { ForceFieldCalls++; LastForceClass = className; LastForceField = fieldName; LastForceKind = kind; LastForceValue = value; return Task.FromResult(NextForce); }
 
@@ -674,8 +679,64 @@ public class TeleportViewModelTests
 
         vm.SetConnected(false);
 
-        Assert.Equal("Off", vm.StealthState);
+        // [A4-STEALTH-PRIME] "Unknown", not "Off": the DLL's hold survives a PIPE drop for as long as the game lives, so
+        // "Off" was a claim nothing had checked. The connect prime settles it.
+        Assert.Equal("Unknown", vm.StealthState);
         Assert.Equal("—", vm.StealthFieldText);
+    }
+
+    // [A4-STEALTH-PRIME] BADGEPRIME's connect prime skipped the Stealth card, so after a reconnect it read "Off" while
+    // Solide kept holding the meter -- and the experimental gate-off, which keys on the badge, then released nothing.
+    [Fact]
+    public async Task Connect_primes_a_Stealth_hold_the_DLL_still_holds()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Holding @0", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
+    {
+        // A numeric 0-hold on a field the meter search does not name may be a Property Search Force -- and the
+        // experimental gate-off would release it if the card claimed it. Something IS held, so not "Off" either.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Enemy_C", FieldName = "Health", Kind = "numeric", Value = 0, Held = 4 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Unknown", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task Connect_with_nothing_forced_reads_the_Stealth_card_Off()
+    {
+        var fake = new FakeDumpService { NextForcedFields = new List<ForcedFieldInfo>() };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Off", vm.StealthState);
     }
 
     [Fact]

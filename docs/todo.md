@@ -4965,7 +4965,7 @@ type.
   - ⚠ **Survivors by construction:** Fern's key (no test target compiles Fern.cpp), the UProperty-mode walk
     site (no UProperty fixture), and the struct-flatten copy (no nested fixture).
 
-##### `[A4-STEALTH-PRIME]` LOW — BADGEPRIME's connect prime skips the Stealth card, and gate 17d cannot see it
+##### ✅ `[A4-STEALTH-PRIME]` LOW — BADGEPRIME's connect prime skips the Stealth card, and gate 17d cannot see it (FIXED IN SOURCE 2026-09-12)
 
 `TeleportViewModel.cs:2330-2331` / `:2373-2399`. The fix promises a *"read-back of EVERY badge the
 disconnect branch resets"*. Stealth is reset with a tuple assignment and never primed.
@@ -4978,6 +4978,20 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
   and gate-off would then release it.
 - ✅ **Safe fix:** intersect `find_stealth_meter`'s candidates with `get_forced_fields`, and fall back
   to an honest "Unknown". Teach gate 17d the tuple form.
+- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L20).
+  - `ApplyStealthState(-1/0/1)` gives the card the shape every other badge has. The disconnect branch
+    sets it Unknown, not "Off".
+  - `RefreshHeldStealthStateAsync` joins the connect prime:
+    - a numeric 0-hold on one of the meter's candidates reads Holding, and re-arms the card's candidate so
+      Reset and the gate-off release it;
+    - nothing forced at all reads Off;
+    - anything else stays Unknown — never "any numeric job at 0".
+  - Gate 17d now reads the tuple form too. Its `--selftest` gained a third control, a tuple reset nothing
+    primes.
+  - The adjacent Property Search comment is corrected: holds survive a pipe drop.
+  - **Tests, red first:** a still-held meter, a Property Search force that must not be claimed, and a
+    disconnect that says Unknown. A control: nothing forced reads Off. The old disconnect test's "Off"
+    was the defect, so it became the red. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -5135,6 +5149,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 69 | `[W5-DENKEN-DEADGUARD]` | LOW | `git log --grep W5-DENKEN-DEADGUARD` (batch L16) | dll_helpers_test pins the behaviour the obvious repair would break: a followed impl is decoded past the death of its this-alias. Red against that repair as a source mutant. 2/2 mutants killed; dll_helpers_test 2721/2721, dll_core_test 304/304; UI 5215/5215. The dead guard removed; behaviour unchanged |
 | 70 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | LOW | `git log --grep A4-CDOSCOPE-ANCESTOR` (batch L17) | dll_core_test, red first: `Aura::PreviewAncestorsOf` credits every preview class from the super up, and a nested row sharing a direct row's class is not previewed. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215. Both recorded safe fixes; the swap not restored |
 | 71 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | LOW | `git log --grep A4-LW-DISCONNECT-PARENT` (batch L19) | AuditL11HonestyTests, red first: a disconnected walker keeps no Parent, References header or function list; a Detect run in flight at the disconnect, resumed with a result or a failure, touches neither the rows nor the status. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218. Both recorded safe fixes; no CTS |
+| 72 | `[A4-STEALTH-PRIME]` | LOW | `git log --grep A4-STEALTH-PRIME` (batch L20) | TeleportViewModelTests, red first: a still-held meter primes Holding, a Property Search force is not claimed (Unknown), and a disconnect says Unknown; nothing forced reads Off. Gate 17d reads the tuple form (a third selftest control). 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221. The recorded safe fix |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5335,6 +5350,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L57 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | Two games (or one game restarted) and the UI:
 1. **Live Walker:** root on an actor with an Outer, so Parent is enabled, and open its functions. Kill the game; reconnect to the other. Parent is disabled, there is no References header, and the Functions list is empty, including after typing in its filter.
 2. **Detect Player Stats:** with the snapshot signal on, click Detect and kill the game mid-run. After the reconnect the panel shows the reset text and no rows. | two games + UI |
+| L58 | `[A4-STEALTH-PRIME]` | A game where the stealth meter auto-finds (experimental gate on):
+1. Detect, then Hold @0. Restart the UI with the game still running and reconnect. The Stealth card reads "Holding @0", and Reset releases it.
+2. With only a Property Search Force active, the card reads "Unknown", and turning the experimental gate off does not release that Force. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5412,7 +5430,7 @@ completeness critic.
 - ✅ **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 - **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 - ✅ **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
-- **L20:** `[A4-STEALTH-PRIME]`
+- ✅ **L20:** `[A4-STEALTH-PRIME]`
 - **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 - **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 - **L23:** `[W1-GROUP-DENYLIST]`

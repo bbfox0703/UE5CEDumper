@@ -39,6 +39,9 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 VM = REPO / 'ui/UE5DumpUI/ViewModels/TeleportViewModel.cs'
 
 RESET = re.compile(r'(Apply\w+State)\s*\(\s*(?:[A-Za-z.]+\s*,\s*)?-1\s*\)')
+# [A4-STEALTH-PRIME] The TUPLE form, `(XState, XBadgeColor) = (...)`. The Stealth card was reset that way, so this gate
+# printed CHECK OK over a badge nothing primed. A tuple reset of property `XState` counts as badge `ApplyXState`.
+TUPLE = re.compile(r'\(\s*(\w+)State\s*,\s*\w+\s*\)\s*=\s*\(')
 IDENT = re.compile(r'(\w+Async)')
 DECL = r'\b(?:private|public|internal)[^\r\n]*?\b%s\s*\('
 
@@ -76,6 +79,7 @@ def analyse(src: str) -> tuple[set, set, set]:
     """(reset_badges, primed_badges, unprimed)."""
     connect, disconnect = split_setconnected(src)
     reset = {m.group(1) for m in RESET.finditer(disconnect)}
+    reset |= {'Apply%sState' % m.group(1) for m in TUPLE.finditer(disconnect)}
 
     # ⚠ TRANSITIVE CLOSURE TO A FIXPOINT, not a hand-unrolled two levels. The first
     # version walked exactly two levels and reported EVERY badge unprimed -- a checker
@@ -106,7 +110,8 @@ def analyse(src: str) -> tuple[set, set, set]:
     for badge in reset:
         stem = badge[len('Apply'):-len('State')]
         pats = [r'Apply' + re.escape(stem) + r'State\s*\(\s*(?!-1)',
-                r'Apply' + re.escape(stem) + r'\w*Readout\s*\(']
+                r'Apply' + re.escape(stem) + r'\w*Readout\s*\(',
+                r'\(\s*' + re.escape(stem) + r'State\s*,\s*\w+\s*\)\s*=']   # a tuple SET on the connect path
         if stem == 'GodMode':
             pats.append(r'ApplyProtectState\s*\(')
         if stem == 'Lane':
@@ -133,15 +138,21 @@ def main() -> int:
         if broken == src:
             print('selftest: FAIL -- the control could not find the prime call to remove')
             return 1
+        # [A4-STEALTH-PRIME] The second control: a TUPLE reset nothing primes must be caught too.
+        tupled = src.replace('ApplyMouseCursorState(-1);',
+                             'ApplyMouseCursorState(-1); (ZzzState, ZzzBadgeColor) = ("Off", "#999999");', 1)
         _, _, un_ok = analyse(src)
         _, _, un_bad = analyse(broken)
-        ok1, ok2 = (not un_ok), bool(un_bad)
+        _, _, un_tup = analyse(tupled)
+        ok1, ok2, ok3 = (not un_ok), bool(un_bad), ('ApplyZzzState' in un_tup)
         print('  %-6s intact tree has 0 unprimed        (got %d)'
               % ('ok' if ok1 else 'FAIL', len(un_ok)))
         print('  %-6s prime removed -> unprimed appears (got %d)'
               % ('ok' if ok2 else 'FAIL', len(un_bad)))
-        print('selftest: %s' % ('PASS' if ok1 and ok2 else 'FAIL'))
-        return 0 if (ok1 and ok2) else 1
+        print('  %-6s a tuple reset is seen             (got %s)'
+              % ('ok' if ok3 else 'FAIL', sorted(un_tup)))
+        print('selftest: %s' % ('PASS' if ok1 and ok2 and ok3 else 'FAIL'))
+        return 0 if (ok1 and ok2 and ok3) else 1
 
     reset, primed, unprimed = analyse(src)
     if a.list:

@@ -923,7 +923,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // class::field. (L13)
             _stealthCandidate = null;
             StealthFieldText = "—";
-            (StealthState, StealthBadgeColor) = ("Off", "#999999");
+            ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
     }
 
@@ -1786,6 +1786,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// release it. (M9)</summary>
     private const string StealthHoldingState = "Holding @0";
 
+    /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
+    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
+    /// with a tuple -- a claim nothing had checked, while Solide kept holding -- and the gate could not see it.</summary>
+    private void ApplyStealthState(int state)
+        => (StealthState, StealthBadgeColor) = state switch
+        {
+            1 => (StealthHoldingState, "#4EC9B0"),
+            0 => ("Off", "#999999"),
+            _ => ("Unknown", "#999999"),
+        };
+
     /// <summary>The auto-found candidate held at 0 (null until Detect finds one).</summary>
     private UE5DumpUI.Models.StealthCandidate? _stealthCandidate;
 
@@ -2409,6 +2420,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ApplySeeThroughReadout(await _dump.SeeThroughGetStateAsync()), "seethrough");
         await PrimeOneAsync(async () =>
             ApplyMouseCursorState(await _dump.GetMouseCursorAsync()), "cursor");
+        // [A4-STEALTH-PRIME] The Stealth hold survives a UI reconnect like every other hold.
+        await PrimeOneAsync(RefreshHeldStealthStateAsync, "stealth");
 
         // Not a badge, but the same omission: nothing read the POSE on connect, so PoseMap stayed ""
         // until the user pressed Refresh -- and the library's map flags and "Add from fields" both
@@ -2432,6 +2445,36 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _log.Error($"Teleport prime '{what}' failed — its badge stays Unknown", ex);
         }
     }
+    /// <summary>[A4-STEALTH-PRIME] Quiet read-back of the Stealth hold (used on connect). The DLL has no "stealth"
+    /// record: the hold is a numeric force_field at 0, so it is recognised by intersecting the meter's candidates
+    /// (find_stealth_meter) with the DLL's live forced fields (get_forced_fields). ⛔ Never "any numeric job at 0": that
+    /// may be a Property Search Force, and the experimental gate-off would then release it. Nothing forced at all is a
+    /// definite Off; a forced field that is not a meter candidate leaves the honest Unknown.</summary>
+    private async Task RefreshHeldStealthStateAsync()
+    {
+        if (!IsConnected) return;
+        var forced = await _dump.GetForcedFieldsAsync();
+        if (forced.Count == 0) { ApplyStealthState(0); return; }
+        var cands = await _dump.FindStealthMeterAsync();
+        UE5DumpUI.Models.StealthCandidate? held = null;
+        foreach (var c in cands)
+        {
+            foreach (var f in forced)
+            {
+                if (f.Kind == "numeric" && f.Value == 0 && f.ClassName == c.ClassName && f.FieldName == c.FieldName)
+                {
+                    held = c;
+                    break;
+                }
+            }
+            if (held != null) break;
+        }
+        if (held == null) { ApplyStealthState(-1); return; }
+        _stealthCandidate = held;
+        StealthFieldText = $"{held.ClassName}::{held.FieldName} = 0 (held)";
+        ApplyStealthState(1);
+    }
+
     /// <summary>Quiet read-back of the God Mode hold (used on connect). The DLL's
     /// re-assert worker keeps driving <c>want</c> for as long as the game process
     /// lives, so a UI reconnect should show the badge that is actually in force
