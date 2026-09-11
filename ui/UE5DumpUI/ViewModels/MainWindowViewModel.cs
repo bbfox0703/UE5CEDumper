@@ -2529,7 +2529,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         if (Spc != null)
         {
-            Spc.SelectedJoinMode = o.Spc.SelectedJoinMode;
+            Spc.RestoreJoinModeFromOptions(o.Spc.SelectedJoinMode);   // [W1-SPC-JOINMODE] never replays In-session
             Spc.SelectedRoundingMode = o.Spc.RoundingMode;
         }
         if (Pivot != null)
@@ -2676,7 +2676,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         if (Spc != null)
         {
-            o.Spc.SelectedJoinMode = Spc.SelectedJoinMode;
+            o.Spc.SelectedJoinMode = Spc.JoinModeForOptions;          // [W1-SPC-JOINMODE] In-session is launch-scoped
             o.Spc.RoundingMode = Spc.SelectedRoundingMode;
         }
         if (Pivot != null)

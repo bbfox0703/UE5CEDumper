@@ -502,7 +502,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
 
 **MED**
 
-3. ⬜ **`[W1-SPC-JOINMODE]` SPC persists its own auto-chosen join mode and replays it as a fake
+3. ✅ **`[W1-SPC-JOINMODE]` SPC persists its own auto-chosen join mode and replays it as a fake
    user override.** `SpcQueryViewModel.cs:521`. Opening the SPC tab auto-ticks the two newest
    picks (`:472-478`) and calls `AutoSelectJoinMode` (`:481`), so `In-session` reaches
    `ui-options.json` with **zero user action**. On restart `ApplyOptions`
@@ -513,6 +513,21 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    Strict is dead. `docs/experimental-snapshot-spc-pivot.md:448` states the In-session key is only
    valid *"while the object lives"* — using it across launches joins on GObjects slot number.
    ⚠ MED not HIGH: the mode IS visible (combo, status line, per-pick `SessionShort`).
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B15).
+   - Auto-selection only ever picks In-session or Strict, so the only fake override ever came from a
+     persisted **In-session**, and In-session is launch-scoped by definition. It is now never written
+     (`JoinModeForOptions` writes Strict in its place) and never restored
+     (`RestoreJoinModeFromOptions` drops it, and anything outside `JoinModeOptions`).
+   - A persisted **Loose** can only be the user's, so it still restores as an override, exactly as a
+     combo pick does.
+   - `MainWindowViewModel`'s `ApplyOptions` / `BuildOptions` call the two members.
+   - **Tests.** The wiring lives in `MainWindowViewModel`, which no test constructs, so the red-first
+     test is a SOURCE pin (`JoinMode_OptionsWiring_GoesThroughTheSessionSafeMembers`). The members'
+     behaviour tests cannot compile before the fix, so their red is the mutation check:
+     - an auto-chosen In-session is persisted as Strict;
+     - a restored In-session no longer blocks the cross-session fallback;
+     - a restored Loose is kept;
+     - an unknown value is ignored.
 
 4. ✅ **`[W1-PIVOT-SESSION]` Class Pivot row handoffs have no cross-session gate.** (FIXED IN SOURCE 2026-09-11, batch B14)
    `ClassPivotViewModel.cs:165/169` are `SelectedResult != null`; `_engineState` is assigned at
@@ -4077,6 +4092,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 28 | `[W2-GROUPMATCH-WIDTH]` | MED | same commit as row 27 (batch B13) | 5 theory rows + the group fact red first; 3 controls. 3/3 mutants killed: the verdict, the two sides swapped, Exact admitted; UI 5003/5003 |
 | 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap |
 | 30 | `[W1-PIVOT-SESSION]` | MED | `git log --grep W1-PIVOT-SESSION` (batch B14) | 3 red first (no session, a previous launch, disconnect); 2 controls (the current launch, DataTable rows under an old pick). `check_session_gate` registered, 20/20 gated. 7/7 mutants killed, the two AXAML ones through the registered gate; UI 5016/5016 |
+| 31 | `[W1-SPC-JOINMODE]` | MED | `git log --grep W1-SPC-JOINMODE` (batch B15) | the source pin red first (the wiring is in `MainWindowViewModel`, which no test constructs); 4 behaviour tests whose red is the mutation check. 6/6 mutants killed; UI 5021/5021 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4145,6 +4161,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Reconnect:** restart the game, connect, open Class Pivot and run a pivot on the default snapshot (the old one). Open in Live Walker, Copy Address and both Locates are greyed out.
 2. **Current launch:** capture a new snapshot and pivot it. The four buttons are enabled, and Open in Live Walker lands on the object.
 3. **Disconnect:** close the game. The buttons grey out. | a game + UI |
+| L19 | `[W1-SPC-JOINMODE]` | SPC's join mode across a restart:
+1. **Auto In-session is not kept:** open the SPC tab with two snapshots from ONE launch (the combo shows In-session), close the app, and check `ui-options.json`: it holds `Strict`, not `In-session`.
+2. **The fallback works after a restart:** restart, capture a snapshot in a NEW launch, and tick one old and one new pick. The combo moves to Strict.
+3. **A user's Loose is kept:** pick Loose, restart: still Loose. | UI + a game (for the second launch) |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4181,7 +4201,7 @@ completeness critic.
 | ✅ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
 | ✅ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
 | ✅ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
-| ⬜ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
+| ✅ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
 | ⬜ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
 | ⬜ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
 | ⬜ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |

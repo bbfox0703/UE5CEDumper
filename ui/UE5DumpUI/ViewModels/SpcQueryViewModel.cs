@@ -513,6 +513,8 @@ public partial class SpcQueryViewModel : ViewModelBase
     // candidate and the predicate fails — the "materials don't show up" bug).
     // Cross-session snapshots have no stable index, so they fall back to Strict.
     // The user can still override the combo manually.
+    // [W1-SPC-JOINMODE] In-session is never persisted or restored (JoinModeForOptions /
+    // RestoreJoinModeFromOptions): replayed on the next launch it latched a fake user override.
     private bool _joinModeUserOverride;
     private bool _settingJoinModeProgrammatically;
 
@@ -534,6 +536,24 @@ public partial class SpcQueryViewModel : ViewModelBase
             SelectedJoinMode = target;
             _settingJoinModeProgrammatically = false;
         }
+    }
+
+    /// <summary>[W1-SPC-JOINMODE] The join mode to write to ui-options.json. In-session is never
+    /// written: it joins on GObjects slot numbers, which mean nothing in another launch, and an
+    /// AUTO-chosen In-session reached the options file with no user action and came back on the next
+    /// launch as a fake user override. Strict, the default, is written in its place.</summary>
+    public string JoinModeForOptions => SelectedJoinMode == "In-session" ? "Strict" : SelectedJoinMode;
+
+    /// <summary>[W1-SPC-JOINMODE] Restore a persisted join mode. In-session is dropped (an options file
+    /// written before this fix can still hold it), and so is anything not in
+    /// <see cref="JoinModeOptions"/>. Any other value came from the user, because auto-selection only
+    /// ever picks In-session or Strict, so it restores through the public setter and latches the
+    /// override, exactly as a combo pick does.</summary>
+    public void RestoreJoinModeFromOptions(string? persisted)
+    {
+        if (string.IsNullOrEmpty(persisted) || persisted == "In-session") return;
+        if (!JoinModeOptions.Contains(persisted)) return;
+        SelectedJoinMode = persisted;   // a user choice: latches the override
     }
 
     /// <summary>Mark the oldest CHECKED snapshot as the baseline (predicate forced

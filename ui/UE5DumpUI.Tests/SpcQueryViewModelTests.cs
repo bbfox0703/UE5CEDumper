@@ -70,6 +70,80 @@ public class SpcQueryViewModelTests : IDisposable
     private SpcQueryViewModel NewVm(IPlatformService? platform = null)
         => new SpcQueryViewModel(_store, new MockLoggingService(), platform);
 
+    // ---- [W1-SPC-JOINMODE] the join mode is persisted and restored through session-safe members ----
+    //
+    // Opening the tab auto-ticks the two newest picks and auto-selects the join mode, so an AUTO-chosen
+    // In-session reached ui-options.json with no user action. ApplyOptions then wrote it back through the
+    // public setter, which latched _joinModeUserOverride for good: AutoSelectJoinMode early-returned
+    // forever, and the documented cross-session fallback to Strict was dead. In-session joins on GObjects
+    // slot numbers, which mean nothing in another launch. The wiring lives in MainWindowViewModel, which
+    // no test constructs, so it is pinned from the source.
+    [Fact]
+    public void JoinMode_OptionsWiring_GoesThroughTheSessionSafeMembers()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
+        Assert.Contains("Spc.RestoreJoinModeFromOptions(o.Spc.SelectedJoinMode)", src);
+        Assert.Contains("o.Spc.SelectedJoinMode = Spc.JoinModeForOptions", src);
+        Assert.DoesNotContain("Spc.SelectedJoinMode = o.Spc.SelectedJoinMode", src);
+        Assert.DoesNotContain("o.Spc.SelectedJoinMode = Spc.SelectedJoinMode", src);
+    }
+
+    private async Task<long> SeedInSessionAsync(string label, string session, int hp)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = label, GameSessionId = session }, ct);
+        await _store.WriteChunkAsync(id, new[] { Obj(1, "0x7FF600001000", ("HP", hp)) }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 1, ct);
+        return id;
+    }
+
+    [Fact]
+    public async Task AutoChosenInSession_IsPersistedAsStrict()
+    {
+        await SeedInSessionAsync("a", "S", 100);
+        await SeedInSessionAsync("b", "S", 90);
+        var vm = NewVm();
+        await vm.RefreshAsync();                        // auto-ticks both: one session
+
+        Assert.Equal("In-session", vm.SelectedJoinMode);
+        Assert.Equal("Strict", vm.JoinModeForOptions);  // launch-scoped: never written
+    }
+
+    [Fact]
+    public async Task RestoredInSession_DoesNotLatchAFakeOverride()
+    {
+        // The recorded repro: an options file holding In-session, then picks from two launches.
+        await SeedInSessionAsync("old", "S-OLD", 100);
+        await SeedInSessionAsync("new", "S-NEW", 90);
+        var vm = NewVm();
+        vm.RestoreJoinModeFromOptions("In-session");
+        await vm.RefreshAsync();                        // auto-ticks both: they span launches
+
+        Assert.Equal("Strict", vm.SelectedJoinMode);    // the cross-session fallback still works
+    }
+
+    [Fact]
+    public async Task RestoredLoose_StaysAUserChoice()
+    {
+        // Auto-selection only ever picks In-session or Strict, so a persisted Loose came from the user.
+        await SeedInSessionAsync("a", "S", 100);
+        await SeedInSessionAsync("b", "S", 90);
+        var vm = NewVm();
+        vm.RestoreJoinModeFromOptions("Loose");
+        await vm.RefreshAsync();                        // one session would auto-pick In-session
+
+        Assert.Equal("Loose", vm.SelectedJoinMode);
+        Assert.Equal("Loose", vm.JoinModeForOptions);
+    }
+
+    [Fact]
+    public void RestoredUnknownJoinMode_IsIgnored()
+    {
+        var vm = NewVm();
+        vm.RestoreJoinModeFromOptions("Bogus");
+        Assert.Equal("Strict", vm.SelectedJoinMode);
+    }
+
     [Fact]
     public async Task Refresh_PopulatesPicks_AutoSelectsTwoNewest()
     {
