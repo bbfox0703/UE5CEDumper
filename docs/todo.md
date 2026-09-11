@@ -3248,6 +3248,25 @@ applied to it. A GWorld spine passes the AA script's `FieldOffset >= 0` gate too
     - GWorld › PersistentLevel › Hero › RootComponent › Parent lands back on the Hero crumb, with
       RootComponent on the forward history and every hop a real offset (restart-stable). It was
       red: the spine had grown an `Outer` crumb.
+  - ⚠ **The batch's adversarial review** (3 lenses, 12 agents): **6 survived, 3 refuted.** It was
+    repaired in a follow-up commit.
+    - **The Outer was the GWorld ROOT.** Parent from PersistentLevel on a GWorld spine jumped to
+      the synthetic root, whose view is the cached actor list, not the UWorld object. That lost the
+      UWorld's own fields and its further Parent. Now it skips the jump for that crumb and takes the
+      `-1` hop with a live instance walk.
+    - **A detour back onto the spine re-anchored a GWorld chain as session-only** (MED; the harm
+      the record called PARTLY HARMFUL, reached by a detour). Parent to an Outer off the spine,
+      then a drill back to Hero, makes a cycle, and both XML exports anchored at the `-1` BEFORE
+      collapsing cycles. **The record's option (b) now applies as well:** both exports clean
+      first, then anchor. The re-anchor note and log compare against the cleaned spine. BuildAaScript
+      already cleaned first, so the three paths now agree.
+    - **Pins added:** the container-view skip (Parent from an array element lands on the owner
+      object), last-match (an Outer on the spine twice jumps to the nearest), and Forward after
+      Parent returning to RootComponent. One test doc misattributed the `-1` history; it is
+      corrected.
+    - **Red → green:** the two defects (GWorld root, detour export) were red first, and the pins
+      passed both ways as pins should. Mutation-checked: 4 mutants were all killed, restored by
+      sha256.
 
 ##### ⛔ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty
 
@@ -3493,7 +3512,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green. **Review follow-up:** 9 survived / 4 refuted; the render discard, the refresh identity + no-restamp, the export / bookmark guards and the re-root ticket landed; 6 new tests red → green, 20/20; UI 4867/4867; gates 21/21 |
-| 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green |
+| 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green. **Review follow-up:** 6 survived / 3 refuted; GWorld-root skip + option (b) clean-then-anchor; 2 defects red → green, 2 pins + Forward; 4/4 mutants killed |
 
 #### Live-check backlog — run at the end of the pass
 

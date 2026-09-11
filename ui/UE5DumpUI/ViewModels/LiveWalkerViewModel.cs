@@ -2704,8 +2704,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // the Actor crumb, restart-stable). Otherwise the crumb below is an offset-less hop.
         // ⛔ Not -1 unconditionally: both XML exports re-anchor at the last -1 hop BEFORE their cycle
         // collapse, so the Actor › RootComponent › Parent case would lose its GWorld root.
+        // Not onto the synthetic GWorld root: its view is the cached actor list, not the UWorld
+        // object, and Parent asks to walk the Outer AS AN INSTANCE (IsGWorldActorListRoot's doc
+        // calls that swap a defect). That case takes the offset-less hop below. [review]
         var onSpine = LastObjectCrumbAt(CurrentOuterAddr);
-        if (onSpine != null)
+        if (onSpine != null && !IsGWorldActorListRoot(onSpine))
         {
             _log.Info($"NAV↑Parent {CurrentOuterAddr} is already on the spine — jumping to that crumb");
             await NavigateToBreadcrumbAsync(onSpine);
@@ -4428,9 +4431,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // — an actor's Outer, ULevel::OwningWorld — so no forward offset exists and the
             // chain that used to be emitted read [UWorld + 0], i.e. the world's vtable.
             // Re-rooting there costs restart-stability and buys a chain that is right.
-            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
-            var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
-            LogReanchor(breadcrumbsForXml, reanchoredForXml);
+            // [A4-PARENT-CRUMB-VTABLE] review — the record's option (b): collapse cycles FIRST,
+            // then anchor. A Parent detour to an Outer off the spine (a -1 hop) that drills back
+            // onto the spine makes a cycle; anchoring first cut at the -1 before the collapse could
+            // remove it, and a restart-stable GWorld chain became a session-only address. A cycle
+            // collapse is always sound (it keeps a real prefix to the first occurrence of an
+            // address), and the generators' own CleanBreadcrumbs is then a no-op. The note and the
+            // log compare against the CLEANED spine, or a plain cycle collapse would read as a
+            // re-anchor.
+            var cleanedForXml = CeXmlExportService.CleanBreadcrumbs(breadcrumbsForXml);
+            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(cleanedForXml);
+            var reanchorWarn = ReanchorNote(cleanedForXml, reanchoredForXml);
+            LogReanchor(cleanedForXml, reanchoredForXml);
             breadcrumbsForXml = reanchoredForXml;
 
             _log.Info($"CEXML export: containerView={isContainerView} bcCount={breadcrumbsForXml.Count} | BC={FormatBreadcrumbTrace()}");
@@ -4776,9 +4788,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Same re-anchor as Copy CE XML — see the comment there. Both entry points do
             // it because both feed the generator, and AnchorAtLastUnchainableHop is
             // idempotent, so a spine that is already anchored passes through untouched.
-            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(breadcrumbsForXml);
-            var reanchorWarn = ReanchorNote(breadcrumbsForXml, reanchoredForXml);
-            LogReanchor(breadcrumbsForXml, reanchoredForXml);
+            // [A4-PARENT-CRUMB-VTABLE] review — the record's option (b): collapse cycles FIRST,
+            // then anchor. A Parent detour to an Outer off the spine (a -1 hop) that drills back
+            // onto the spine makes a cycle; anchoring first cut at the -1 before the collapse could
+            // remove it, and a restart-stable GWorld chain became a session-only address. A cycle
+            // collapse is always sound (it keeps a real prefix to the first occurrence of an
+            // address), and the generators' own CleanBreadcrumbs is then a no-op. The note and the
+            // log compare against the CLEANED spine, or a plain cycle collapse would read as a
+            // re-anchor.
+            var cleanedForXml = CeXmlExportService.CleanBreadcrumbs(breadcrumbsForXml);
+            var reanchoredForXml = CeXmlExportService.AnchorAtLastUnchainableHop(cleanedForXml);
+            var reanchorWarn = ReanchorNote(cleanedForXml, reanchoredForXml);
+            LogReanchor(cleanedForXml, reanchoredForXml);
             breadcrumbsForXml = reanchoredForXml;
 
             var fieldSummary = selectedSnapshot.Count == 1
