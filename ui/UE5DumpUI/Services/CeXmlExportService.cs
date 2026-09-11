@@ -197,7 +197,7 @@ public static class CeXmlExportService
     /// Generous enough that any legitimate single-object export fits; only a runaway
     /// deep-drill on a dense graph trips it.
     /// </summary>
-    private const int MaxEmitEntries = 60_000;
+    internal const int MaxEmitEntries = 60_000;   // internal: Instance Finder's warning quotes it
 
     [ThreadStatic]
     private static int _emitEntryCount;

@@ -838,6 +838,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength);
+            // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
+            // the synchronous Generate* call"), and after an await this method may resume on another thread.
+            bool truncated = CeXmlExportService.LastExportTruncated;
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
             {
@@ -847,8 +850,14 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                           $"refused the write for instance {SelectedInstance.Name}");
                 return;
             }
-            StatusText = "";
-            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");
+            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms. Live
+            // Walker's text names its own levers (Drill Depth, Copy CE Field), which this panel does not have.
+            StatusText = truncated
+                ? $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — the CE table "
+                  + "is incomplete; tick Collapse Pointer Nodes or lower the DropDown Limit"
+                : "";
+            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
+                      + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
         catch (Exception ex)
         {

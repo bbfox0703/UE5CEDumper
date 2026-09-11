@@ -1846,13 +1846,23 @@ SCAN-CORE     1    0    1    0    0    0    0    0
      Shipping. 5/5 mutants killed (with `[A4-PUSHCE-UNPADDED]`); UI 5162/5162.
    - ✅ **A `TArray<FScriptDelegate>`'s ELEMENT leaves** were a separate row, `[A4-DELEGATE-ARRAY-PAD]`, now also
      fixed (L03b).
-3. ⬜ **`[W5-INSTEXPORT-TRUNC]`** `CeXmlExportService.cs:1311`. `GenerateInstanceXml` computes the
+3. ✅ **`[W5-INSTEXPORT-TRUNC]`** (FIXED IN SOURCE 2026-09-12, batch L24) `CeXmlExportService.cs:1311`. `GenerateInstanceXml` computes the
    60,000-entry truncation flag and publishes it as `LastExportTruncated` with an explicit contract
    (`:208-212`: *"The caller reads this right after the synchronous Generate\* call"*). Two of three
    production callers honour it (`LiveWalkerViewModel.cs:4380`, `:4729`); **Instance Finder's
    drops it**, so a truncated table is exported without a word. P1/P7.
    ⛔ Copying LiveWalker's handling verbatim **breaks in four ways**, starting with a warning text
    that is wrong at this call site.
+   ✅ **FIXED IN SOURCE 2026-09-12, not by copying** (batch L24). The four ways, and how each is handled:
+   - **The text:** Live Walker names its own levers (Drill Depth, Copy CE Field). This panel's are
+     Collapse Pointer Nodes and the DropDown Limit, so those are what it names.
+   - **The status:** this method blanked `StatusText` after the copy, so it now sets it instead.
+   - **The thread:** the flag is `[ThreadStatic]` and a clipboard await follows the Generate call, so it
+     is read before that await.
+   - **The failure path:** a refused clipboard copied nothing, and its message is unchanged.
+   - **Tests, red first:** a 61,000-field instance exports "Copied, but TRUNCATED…" naming this panel's
+     levers. The control: a 3-field instance adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236.
+   - ⚠ **Survivor by construction:** the read-before-await ordering. The stub completes on one thread.
 4. ⬜ **`[W5-OFFSETS-UNMEASURED]`** `Genau.cpp:4286`. `ValidateAndFixOffsets` computes `allMeasured`
    and a 16-entry reason and publishes them as `DynOff::bOffsetsValidated` /
    `g_offsetsFallbackReason` — and **only the pipe** (`Fern.cpp:5055-5057`) carries the verdict. The
@@ -5192,6 +5202,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 74 | `[A4-GAMEONLY-ADVICE]` + `[P5-GROUP-ADVICE]` + `[A3-CONTAINER-4096-ADVICE]` | LOW | `git log --grep A4-GAMEONLY-ADVICE` (batch L21) | Red first: the two Game Only pins inverted with controls, a group cap stop that must not advise "refine", and a scalar drill capped by the DLL that must not blame the slider. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229. Every advice names a lever the panel has and has not used |
 | 75 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | LOW | `git log --grep P5-PIVOT-FETCHCAP` (batch L22) | ClassPivotViewModelTests, red first: a capped DataTable Run keeps "(showing 2 of 500)"; `PivotRunStatus` gives the fetch cap its own sentence and "≥" counts, with both caps able to show; the group cap alone is the control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233. The fetch cap has its own flag, landed with the change that stopped folding it |
 | 76 | `[W1-WINMM-LOADMODE]` | LOW | `git log --grep W1-WINMM-LOADMODE` (batch L27) | A symmetry pin, red first: Fern's load_mode classifier must name every proxy file name Methode's `kProxyDllNames` lists (all four). 2/2 mutants killed, one of them a different proxy dropped; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5234/5234 |
+| 77 | `[W5-INSTEXPORT-TRUNC]` | LOW | `git log --grep W5-INSTEXPORT-TRUNC` (batch L24) | AuditL11HonestyTests, red first: a 61,000-field Instance Finder export says "Copied, but TRUNCATED…" with this panel's levers, never Live Walker's; a small one adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236. The four copy hazards handled, not copied |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5410,6 +5421,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L62 | `[W1-WINMM-LOADMODE]` | A game with the winmm proxy deployed (Proxy Deploy tab):
 1. Connect. The load mode reads `proxy:winmm.dll`.
 2. The per-game confirmed-proxy record now appears, as it does for version / dinput8 / dxgi. | a game + UI |
+| L63 | `[W5-INSTEXPORT-TRUNC]` | A game, Instance Finder, and an instance whose CE XML export is huge (a dense object with Collapse Pointer Nodes off):
+1. Copy CE XML. The status says "Copied, but TRUNCATED at the 60,000-entry export cap", naming Collapse Pointer Nodes and the DropDown Limit.
+2. A normal instance copies with no warning. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5491,7 +5505,7 @@ completeness critic.
 - ✅ **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 - ✅ **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 - **L23:** `[W1-GROUP-DENYLIST]`
-- **L24:** `[W5-INSTEXPORT-TRUNC]`
+- ✅ **L24:** `[W5-INSTEXPORT-TRUNC]`
 - **L25:** `[W1-PARTIAL-MARK]`
 - **L26:** `[W1-PIPEBUSY-LOG]` (CE)
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`

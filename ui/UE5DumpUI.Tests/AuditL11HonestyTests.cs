@@ -238,6 +238,52 @@ public class AuditL11HonestyTests
         Assert.Equal(reset, vm.StatusText);
     }
 
+    // ══ [W5-INSTEXPORT-TRUNC] -- Instance Finder's CE XML export says when it was truncated ══
+    //
+    // GenerateInstanceXml stops at its entry cap and says so through LastExportTruncated. Live Walker's two exports read
+    // it; Instance Finder's copied a truncated table without a word -- and then blanked its status.
+
+    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
+    {
+        var dump = new StubDumpService();
+        var fields = new List<LiveFieldValue>();
+        for (int i = 0; i < fieldCount; i++)
+            fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Big_0", ClassName = "Big", Fields = fields,
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Big_0", ClassName = "Big" };
+        return (vm, platform);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedAtTheEntryCap_SaysSo_WithThisPanelsLevers()
+    {
+        var (vm, platform) = FinderWith(61_000);   // past the 60,000-entry cap: one entry per int field
+        Assert.Equal(61_000, vm.Fields.Count);    // the walk landed
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);                     // it WAS copied...
+        Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
+        Assert.Contains("Collapse Pointer Nodes", vm.StatusText);   // a lever THIS panel has
+        Assert.DoesNotContain("Drill Depth", vm.StatusText);        // not Live Walker's
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_Complete_AddsNoWarning()
+    {
+        var (vm, platform) = FinderWith(3);
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Equal("", vm.StatusText);
+    }
+
     private static LiveWalkerViewModel MakeWalker()
     {
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
