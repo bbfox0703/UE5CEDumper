@@ -1885,6 +1885,27 @@ into freed heap and still prints `Written: …` (`:5406`, `:5418`).
     - the failed re-read path.
   - `ContainerTruncationTests`' stub now answers the parent re-read. Its own header already said "a
     real drill always has a walked parent instance".
+  - ⚠ **The batch's adversarial review** (3 lenses, 15 agents, refuters defaulting to REFUTED):
+    **7 survived, 5 refuted.** It was repaired in a follow-up commit.
+    - **Blanked address:** the re-read copied a raw walk row, and those are never address-stamped.
+      That blanked the grid row's Address, and with it Hex and +CE, whenever the row stayed on
+      screen: the container emptied, or the drill threw. The row now keeps its own address.
+    - **Find Refs owner auto-drill:** it is fire-and-forget. A re-read there repeated the walk
+      `UpdateDisplay` had just applied, and in a real pipe let the drill's truncation notice
+      overwrite the "← Back returns to" hint, the only way back out of a re-rooted spine. That path
+      now skips the re-read.
+    - **Deadline:** the re-read carries `RefreshAsync`'s deadline. It was refuted as a finding, and
+      adopted because it costs nothing.
+    - **Pins:** for the post-re-read parent check (a gated stub), the "empty now" branch, the
+      class / address / offset gates one fact at a time, and the array and set
+      `IsContainerNavigable` notifications. Two comments that overstated were corrected (when the
+      DLL publishes a data address).
+    - Each deleted check was **mutation-checked** against its pin, with each file restored
+      byte-exact.
+  - **Refuted, and recorded here so they are not re-raised as this change's defects** (both are
+    pre-existing, and the change does not worsen them):
+    - an unbound sparse delegate's `ArrayInnerType` / `ArrayElemSize`, which stay init-only;
+    - an unset→set `TOptional<Struct>`'s `Struct*` members, which stay init-only.
 
 ##### ✅ `[P4-PTRCLASS]` LOW — a retargeted pointer keeps its first-walk `PtrClassAddr`, and the exporters walk the new target with the old class (FIXED IN SOURCE 2026-09-11)
 
@@ -3355,7 +3376,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 2 | `[W1-SNAP-FAULT]` | HIGH | `git log --grep W1-SNAP-FAULT` | red → green + clean control; UI 4804/4804; gates 21/21; `-Target DLL` builds |
 | 3 | `[P4-OTHER-INSTANCE]` | HIGH | `git log --grep P4-OTHER-INSTANCE` | red (3/4) → green; the gate's adversarial review found a jump-to-top regression in the draft; fixed red (4/15) → green 15/15; UI 4819/4819; gates 21/21. A second review found the row-count check unpinned; a test was added and mutation-checked (17/17, follow-up commit) |
 | 4 | `[P4-GUESS-SHIFT]` | MED | same commit as 3 (one shared gate, as planned) | the cross-gap test red → green; the `?`-suffix refinement test red → green |
-| 5 | `[W1-CONTAINER-STALE]` | MED | `git log --grep W1-CONTAINER-STALE` | `LiveWalkerRefreshStalenessTests`: 9/9 red on the recorded mechanisms → 10/10 green (+ the failed-re-read path); UI 4831/4831; gates 21/21 |
+| 5 | `[W1-CONTAINER-STALE]` | MED | `git log --grep W1-CONTAINER-STALE` | `LiveWalkerRefreshStalenessTests`: 9/9 red on the recorded mechanisms → 10/10 green (+ the failed-re-read path); UI 4831/4831; gates 21/21. **Review follow-up:** 7 survived / 5 refuted; its 2 defects red → green, 7/7 mutants killed (restored by sha256); 18/18; UI 4839/4839; gates 21/21 |
 | 6 | `[P4-CONTAINER-BASE]` | MED | same commit as 5 (the six members travel with the lists) | refresh + drill-time re-read; `ContainerTruncationTests` 19/19 |
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 

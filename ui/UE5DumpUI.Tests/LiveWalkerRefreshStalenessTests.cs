@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
@@ -58,7 +59,9 @@ public class LiveWalkerRefreshStalenessTests
         Name = "Loot", TypeName = "MapProperty", Offset = 0x50, Size = 80,
         MapCount = count, MapKeyType = "IntProperty", MapValueType = "IntProperty",
         MapKeySize = 4, MapValueSize = 4,
-        // The DLL publishes the geometry and the data address only when the map had elements.
+        // The DLL publishes the stride and value offset only when the map has elements, and the
+        // data address only when its TSparseArray is allocated (Data != 0). This fixture's empty map
+        // is a never-allocated one, which publishes neither.
         MapDataAddr = count > 0 ? dataAddr : "",
         MapStride = count > 0 ? stride : 0,
         MapValueOffset = count > 0 ? valueOffset : 0,
@@ -71,17 +74,43 @@ public class LiveWalkerRefreshStalenessTests
             : null,
     };
 
-    private static LiveFieldValue SetRow(string e0) => new()
+    private static LiveFieldValue SetRow(string e0, int count = 2) => new()
     {
         Name = "Tags", TypeName = "SetProperty", Offset = 0x60, Size = 80,
-        SetCount = 2, SetElemType = "IntProperty", SetElemSize = 4, SetStride = 12,
-        SetDataAddr = "0x780000",
-        SetElements = new List<ContainerElementValue>
-        {
-            new() { Index = 0, Key = e0 },
-            new() { Index = 1, Key = "5" },
-        },
+        SetCount = count, SetElemType = "IntProperty", SetElemSize = 4,
+        SetStride = count > 0 ? 12 : 0,
+        SetDataAddr = count > 0 ? "0x780000" : "",
+        SetElements = count > 0
+            ? new List<ContainerElementValue>
+              {
+                  new() { Index = 0, Key = e0 },
+                  new() { Index = 1, Key = "5" },
+              }
+            : null,
     };
+
+    /// <summary>Counts walks per address, and can GATE the walks of <see cref="AddrA"/> so a test can
+    /// move the user while a re-read is in flight (the LiveWalkerNavRaceTests pattern).</summary>
+    private sealed class GatedStub : StubDumpService
+    {
+        public readonly Dictionary<string, int> Walks = new();
+        public TaskCompletionSource<InstanceWalkResult>? Gate;
+
+        public TaskCompletionSource<InstanceWalkResult> ArmGate()
+            // RunContinuationsAsynchronously: otherwise SetResult resumes the drill INLINE and the
+            // interleaving this exists to produce never happens.
+            => Gate = new TaskCompletionSource<InstanceWalkResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+        {
+            Walks[addr] = Walks.GetValueOrDefault(addr) + 1;
+            return Gate != null && addr == AddrA
+                ? Gate.Task
+                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+        }
+    }
 
     private static async Task<LiveWalkerViewModel> OnA(StubDumpService dump, InstanceWalkResult first)
     {
@@ -200,9 +229,10 @@ public class LiveWalkerRefreshStalenessTests
     [Fact]
     public async Task Refresh_MapGainsItsFirstEntries_TheGeometryAndBaseArriveWithThem()
     {
-        // The trap recorded under [W1-CONTAINER-STALE]: stride, value offset and data address are
-        // published only when the map HAS elements. Fresh elements paired with the first walk's
-        // zero stride fall back to the client-side guess audit #5 V2 retired.
+        // The trap recorded under [W1-CONTAINER-STALE]: stride and value offset are published only
+        // when the map HAS elements (and this never-allocated empty map has no data address either).
+        // Fresh elements paired with the first walk's zero stride fall back to the client-side guess
+        // audit #5 V2 retired.
         var dump = new StubDumpService();
         var vm = await OnA(dump, Walk(MapRow(0, "")));
         var row = vm.Fields[1];
@@ -275,7 +305,7 @@ public class LiveWalkerRefreshStalenessTests
         var dump = new StubDumpService();
         var vm = await OnA(dump, Walk(ArrayRow("0x500000", "1", "2", "3")));
 
-        // The address no longer answers with that object (freed, the slot reused by another class).
+        // The object no longer answers with that row at all.
         dump.RegisterStruct(AddrA, new InstanceWalkResult
         {
             Address = AddrA, ClassName = "BP_Other_C", Fields = new List<LiveFieldValue>(),
@@ -286,6 +316,162 @@ public class LiveWalkerRefreshStalenessTests
         var e2 = Assert.Single(vm.Fields, f => f.Name == "[2]");
         Assert.Equal("0x500008", e2.FieldAddress);   // what the row held: nothing fresher was copied
         Assert.Contains("Could not re-read 'Slots'", vm.StatusText);
+    }
+
+    /// <summary>The re-read's own gates, one fact per case: each answer matches the row in every
+    /// way but one, so only that one check can reject it. Rejected -> open what the row held, and
+    /// say so. A weakened gate would copy another object's container onto this row, silently.</summary>
+    [Theory]
+    [InlineData("class")]     // the slot reused by a sibling class that inherits the same container
+    [InlineData("address")]   // the walk answered for another address
+    [InlineData("offset")]    // a row of that name, but at another offset
+    public async Task Drill_WhenTheReReadAnswersForSomethingElse_OpensTheRowAsItWas(string differs)
+    {
+        var dump = new StubDumpService();
+        var vm = await OnA(dump, Walk(ArrayRow("0x500000", "1", "2", "3")));
+
+        var row = ArrayRow("0x600000", "1", "2", "9");
+        if (differs == "offset")
+            row = new LiveFieldValue
+            {
+                Name = "Slots", TypeName = "ArrayProperty", Offset = 0x48, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayDataAddr = "0x600000",
+                ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" },
+                                        new() { Index = 2, Value = "9" } },
+            };
+        dump.RegisterStruct(AddrA, new InstanceWalkResult
+        {
+            Address   = differs == "address" ? "0x200000" : AddrA,
+            ClassName = differs == "class" ? "BP_Barrel_C" : "BP_Chest_C",
+            ClassAddr = differs == "class" ? "0x950000" : "0x900000",
+            Fields = new List<LiveFieldValue> { row },
+        });
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields[1]);
+
+        var e2 = Assert.Single(vm.Fields, f => f.Name == "[2]");
+        Assert.Equal("0x500008", e2.FieldAddress);
+        Assert.NotEqual("9", e2.TypedValue);
+        Assert.Contains("Could not re-read 'Slots'", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Drill_ContainerEmptiedSinceTheWalk_SaysSo_AndTheRowKeepsItsAddress()
+    {
+        var dump = new StubDumpService();
+        var vm = await OnA(dump, Walk(ArrayRow("0x500000", "1", "2", "3")));
+        var row = vm.Fields[1];
+        Assert.Equal("0x100040", row.FieldAddress);
+        int crumbs = vm.Breadcrumbs.Count;
+
+        // Emptied in the game; a freshly parsed walk row carries NO FieldAddress (UpdateDisplay
+        // stamps it, the parser never does).
+        dump.RegisterStruct(AddrA, Walk(ArrayRow("0x600000")));
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(row);
+
+        Assert.Contains("is empty now", vm.StatusText);
+        Assert.Equal(crumbs, vm.Breadcrumbs.Count);
+        Assert.Same(row, vm.Fields[1]);   // still on the parent grid
+        // The re-read used to blank this, and with it the row's Hex and +CE buttons.
+        Assert.Equal("0x100040", row.FieldAddress);
+    }
+
+    [Fact]
+    public async Task Drill_UserMovesDuringTheReRead_IsSuperseded_NotGrafted()
+    {
+        var dump = new GatedStub();
+        var vm = await OnA(dump, Walk(MapRow(2, "10")));
+        var gate = dump.ArmGate();
+
+        var drill = vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields[1]);
+        // The user goes elsewhere while the re-read's round trip is in flight.
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x200000", Label = "Other", FieldName = "Other" });
+        gate.SetResult(Walk(MapRow(2, "10")));
+        await drill;
+
+        // Without the post-re-read parent check, the map crumb would be grafted onto "Other" with
+        // the old object's offset, and ship into CE XML, CSX and bookmarks.
+        Assert.DoesNotContain(vm.Breadcrumbs, b => b.IsContainerView && b.FieldName == "Loot");
+        Assert.Equal("Other", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("superseded", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Refresh_ArrayGainsItsFirstElements_ShowsTheDrillButton()
+    {
+        var dump = new StubDumpService();
+        var vm = await OnA(dump, Walk(ArrayRow("0x500000")));
+        var row = vm.Fields[1];
+        Assert.False(row.IsContainerNavigable);
+        var seen = Track(row);
+
+        dump.RegisterStruct(AddrA, Walk(ArrayRow("0x600000", "1", "2")));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Same(row, vm.Fields[1]);
+        Assert.True(row.IsContainerNavigable);
+        Assert.Contains(seen, s => s.Prop == nameof(LiveFieldValue.IsContainerNavigable));
+    }
+
+    [Fact]
+    public async Task Refresh_SetGainsItsFirstElements_ShowsTheDrillButton()
+    {
+        var dump = new StubDumpService();
+        var vm = await OnA(dump, Walk(SetRow("", count: 0)));
+        var row = vm.Fields[1];
+        Assert.False(row.IsContainerNavigable);
+        var seen = Track(row);
+
+        dump.RegisterStruct(AddrA, Walk(SetRow("3")));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Same(row, vm.Fields[1]);
+        Assert.True(row.IsContainerNavigable);
+        Assert.Contains(seen, s => s.Prop == nameof(LiveFieldValue.IsContainerNavigable));
+    }
+
+    /// <summary>The Find Refs owner drill: its container row comes from the walk UpdateDisplay is
+    /// applying, and the drill is fire-and-forget. A re-read there repeats that walk AND, in a real
+    /// pipe, lets the caller's "← Back returns to" hint land first and the drill's truncation notice
+    /// overwrite it. The stub answers synchronously, so the ordering itself cannot be observed
+    /// here; the walk count can.</summary>
+    [Fact]
+    public async Task OpenReferenceOwner_AutoDrill_DoesNotReReadTheRowItJustWalked()
+    {
+        var dump = new GatedStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Start", ClassName = "BP_Start_C",
+            Fields = new List<LiveFieldValue> { new() { Name = "X", TypeName = "IntProperty", Offset = 8, Size = 4 } },
+        });
+        dump.RegisterStruct(AddrA, new InstanceWalkResult
+        {
+            Address = AddrA, Name = "PlayerInventory", ClassName = "BP_Inv_C", ClassAddr = "0x900000",
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = "Items", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                    ArrayCount = 300, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8,
+                    ArrayDataAddr = "0x500000",
+                    ArrayElements = Enumerable.Range(0, 64)
+                        .Select(i => new ArrayElementValue { Index = i, PtrAddress = $"0x{0xA000 + i:X}", PtrName = $"Item{i}" })
+                        .ToList(),
+                },
+            },
+        });
+        var vm = MakeVm(dump);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");   // a spine to come back to
+
+        await vm.OpenReferenceOwnerCommand.ExecuteAsync(new ReferenceMatch
+        {
+            OwnerAddress = AddrA, OwnerName = "PlayerInventory", FieldName = "Items", ElementIndex = 3,
+        });
+
+        Assert.Contains(vm.Breadcrumbs, b => b.IsContainerView && b.FieldName == "Items");   // it drilled
+        Assert.Equal(1, dump.Walks[AddrA]);                                                  // once, not twice
+        Assert.Contains("Back returns to", vm.StatusText);
     }
 
     [Fact]

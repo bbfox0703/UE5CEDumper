@@ -112,11 +112,12 @@ public sealed class ArrayElementsResult
 /// <c>init</c> members, the absolute <c>StructDataAddr</c> among them.
 /// [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT]</para>
 ///
-/// <para>⚠ A few members CAN change on the same object with the same layout — the container
-/// element lists, the container data addresses with the map/set geometry published beside them,
-/// and <c>PtrClassAddr</c>. They are <c>init</c> to the outside but backed by plain fields that
+/// <para>⚠ A few members CAN change on the same object with the same layout — the map/set element
+/// lists, the container data addresses with the map/set geometry published beside them, and
+/// <c>PtrClassAddr</c>. They are <c>init</c> to the outside but backed by plain fields that
 /// <see cref="CopyLiveValuesFrom"/> refreshes, so a same-object refresh takes them too.
-/// [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS]</para>
+/// <c>ArrayElements</c> was already publicly settable (the array drill persists fetched elements
+/// onto it) and is refreshed there as well. [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS]</para>
 /// </remarks>
 public sealed partial class LiveFieldValue : ObservableObject
 {
@@ -437,8 +438,9 @@ public sealed partial class LiveFieldValue : ObservableObject
         // repaints from the NEW data. ArrayElements used to be assigned LAST: ArrayCount's repaint
         // rendered the new count over the old list, and the list itself raised nothing.
         // The geometry and the data address travel WITH the element lists, never alone: the DLL
-        // publishes them only when the container had elements, and a fresh base under old elements
-        // would pair old sparse indices with the live buffer.
+        // publishes the map/set stride and value offset only when the container had elements, and
+        // the data address whenever the allocation exists (Data != 0, even at count 0). A fresh
+        // base or stride under old elements would pair old sparse indices with the live buffer.
         bool listsChanged = !ReferenceEquals(ArrayElements, src.ArrayElements)
                          || !ReferenceEquals(_mapElements, src.MapElements)
                          || !ReferenceEquals(_setElements, src.SetElements);

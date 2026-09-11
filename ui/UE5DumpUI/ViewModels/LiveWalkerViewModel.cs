@@ -1177,7 +1177,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private async Task NavigateToContainerAsync(LiveFieldValue? field)
+    private Task NavigateToContainerAsync(LiveFieldValue? field) => DrillContainerAsync(field, rereadFirst: true);
+
+    /// <param name="rereadFirst">Re-read the container row from the live object before opening it
+    /// (<see cref="RereadContainerRowAsync"/>). False ONLY for a row the walk UpdateDisplay applied a
+    /// moment ago — see <see cref="TryDrillIntoMatchedContainer"/>.</param>
+    private async Task DrillContainerAsync(LiveFieldValue? field, bool rereadFirst)
     {
         if (field == null || !field.IsContainerNavigable) return;
 
@@ -1198,7 +1203,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             bool isDataTable = field.DataTableRowCount > 0 && _cachedDataTableRows != null;
             bool reread = true;
-            if (!isDataTable)
+            if (!isDataTable && rereadFirst)
             {
                 // [P4-CONTAINER-BASE] Re-read the container from the live object first: its data
                 // address may have moved since the grid was walked. See RereadContainerRowAsync.
@@ -1277,10 +1282,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrEmpty(addr)) return false;
         string? classAddr = Breadcrumbs.Count > 0 && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr)
             ? Breadcrumbs[^1].ClassAddr : null;
+        // The same hard deadline RefreshAsync puts on this walk: a recycled object can hang it, and
+        // a map/set drill made no pipe call at all before this re-read existed.
+        using var timeoutCts = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(Constants.LiveWalkerRefreshTimeoutMs));
         try
         {
             var result = await _dump.WalkInstanceAsync(addr, classAddr, arrayLimit: ArrayLimit,
-                                                       previewLimit: PreviewLimit, fillGaps: FillGaps);
+                                                       previewLimit: PreviewLimit, fillGaps: FillGaps,
+                                                       ct: timeoutCts.Token);
             bool sameObject = ParseHexAddr(result.Address) != 0
                 && ParseHexAddr(result.Address) == ParseHexAddr(addr)
                 && string.Equals(result.ClassName, CurrentClassName, StringComparison.Ordinal);
@@ -1291,10 +1301,20 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 : null;
             if (fresh != null)
             {
+                // A raw walk row carries no FieldAddress — only UpdateDisplay and the Populate*
+                // helpers stamp one — and CopyLiveValuesFrom takes it unconditionally, which blanked
+                // the grid row's Address (and its Hex / +CE) whenever the row stayed on screen: the
+                // container emptied, or the drill threw. Same object, same Offset: the row's own
+                // address is the right one by construction.
+                fresh.FieldAddress = field.FieldAddress;
                 field.CopyLiveValuesFrom(fresh);
                 return true;
             }
             _log.Warn($"Drill: could not re-read '{field.Name}' at {addr} — opening the last-read values");
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            _log.Warn($"Drill: re-read of '{field.Name}' at {addr} timed out — opening the last-read values");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1864,7 +1884,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // (called by NavigateToContainerAsync) picks it up.
             _pendingScrollFieldName = $"[{elemIndex}]";
             _log.Info($"UpdateDisplay: auto-drill into container '{hit.Name}' element [{elemIndex}]");
-            _ = NavigateToContainerAsync(hit);
+            // No re-read: this row comes from the walk UpdateDisplay is applying right now, so a
+            // second walk would only repeat it. And it would cost the ORDERING: this call is not
+            // awaited, so a pipe round trip here lets the caller's "Opened … · ← Back returns to"
+            // line land first and the drill's truncation notice overwrite it — and that hint is the
+            // only way back out of a re-rooted spine. [P4-CONTAINER-BASE] review
+            _ = DrillContainerAsync(hit, rereadFirst: false);
         }
         else
         {
