@@ -2717,6 +2717,15 @@ because the load runs with persistence suppressed.
     another machine) outranked it, so the fresh one was pruned; it is excluded and counted, as in
     `AobUsageService` (red first).
   - 3/3 expected mutants killed; the 4th (move instead of copy) is the documented survivor. UI 5033/5033 (one suite run over the three second-round follow-ups together).
+- ✅ **Third review follow-up 2026-09-11** (adversarial review of B14–B21: `coord-delete-destroys-corrupt-main`
+  LOW/PLAUSIBLE, `coord-quarantine-says-moved` LOW/CONFIRMED).
+  - **`Delete` was the second door.** After a `.bak` recovery, "Clear all" deleted the unparseable
+    main outright: the destruction the first follow-up removed from `Save`. It now copies such a main
+    aside first, exactly as `Save` does, and a copy that fails refuses the Delete.
+  - The quarantine's Warn log and `Save`'s comment still said "moved aside" / "a move that fails"
+    after the switch to copy. Both say copy now.
+  - Red first: `Delete_OfAnUnparseableMain_CopiesItAsideFirst` (no main left, one `.corrupt` copy
+    holding the old bytes, the `.bak` untouched). 1/1 mutants killed; UI 5089/5089.
 
 ##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
 

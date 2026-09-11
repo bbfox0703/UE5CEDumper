@@ -509,6 +509,25 @@ public class CoordinateLibraryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Delete_OfAnUnparseableMain_CopiesItAsideFirst()
+    {
+        // (review of c002f6bf) Save stopped destroying an unparseable main; Delete -- "Clear all" after a
+        // .bak recovery -- still deleted it outright, the same loss through the second door.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
+        CorruptMain("game");
+        _store.Load("game");                                                      // recovered from .bak
+
+        _store.Delete("game");
+
+        var path = _store.FilePathFor("game");
+        Assert.False(File.Exists(path));                                          // still a Clear all
+        var aside = Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".corrupt-*");
+        Assert.Contains("this is not json", File.ReadAllText(Assert.Single(aside)));
+        Assert.Contains("Good", File.ReadAllText(path + ".bak"));                 // and the .bak untouched
+    }
+
+    [Fact]
     public void Delete_AfterABakRecovery_DoesNotRollTheCorruptMainOverTheGoodBak()
     {
         // (review of 70f9d372) Delete's roll is guarded on the main PARSING, exactly as Save's is; an

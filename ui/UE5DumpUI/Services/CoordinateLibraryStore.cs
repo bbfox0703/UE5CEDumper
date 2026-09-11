@@ -183,9 +183,9 @@ public sealed class CoordinateLibraryStore
                     TryRollToBackup(path, path + ".bak");
                 else if (File.Exists(path))
                     // Unparseable: not rolled over the good .bak, and not destroyed by the rename
-                    // below either -- moved aside, bounded, as AobUsageService does. A move that
+                    // below either -- COPIED aside, bounded, as AobUsageService does. A copy that
                     // fails throws into the catch, so this Save is refused rather than overwriting
-                    // the only copy of whatever that file still holds. (review of 2f8d36f8)
+                    // the only copy of whatever that file still holds. (reviews of 2f8d36f8, c002f6bf)
                     QuarantineUnparseableMain(key, path);
                 File.Move(temp, path, overwrite: true);
             }
@@ -256,7 +256,15 @@ public sealed class CoordinateLibraryStore
                         $"CoordinateLibraryStore: {key} could not be backed up to .bak, NOT deleted");
                     return;
                 }
-                if (File.Exists(path)) File.Delete(path);
+                if (File.Exists(path))
+                {
+                    // An unparseable main is not rolled (that would put garbage over the good .bak), and
+                    // deleting it outright lost whatever it still held -- the destruction Save stopped
+                    // doing. Copied aside first, as Save does; a copy that fails throws into the catch and
+                    // refuses the Delete. (review of c002f6bf)
+                    if (TryRead(path) == null) QuarantineUnparseableMain(key, path);
+                    File.Delete(path);
+                }
             }
             catch (Exception ex)
             {
@@ -305,7 +313,7 @@ public sealed class CoordinateLibraryStore
         var aside = Path.Combine(dir, AtomicFileHygiene.QuarantineNameFor(name, DateTime.UtcNow));
         File.Copy(path, aside, overwrite: false);
         _log?.Warn(Constants.LogCatView,
-            $"CoordinateLibraryStore: {key} main file unreadable, moved aside to " +
+            $"CoordinateLibraryStore: {key} main file unreadable, copied aside to " +
             $"{Path.GetFileName(aside)}; the .bak is untouched");
         try
         {
