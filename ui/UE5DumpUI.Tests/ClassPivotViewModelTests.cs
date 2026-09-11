@@ -605,6 +605,48 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("Snapshot Array", vm.StatusText);
     }
 
+    // ---- review 3 of c294e314: two routes the struct-array redirect still missed ----
+
+    private async Task SeedCargoAsync(string cls, bool withScalar)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "cargo" }, ct);
+        var o = withScalar ? Obj(9, cls, $"/G.M:L.{cls}_0", ("Gold", 100)) : Obj(9, cls, $"/G.M:L.{cls}_0");
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        arr.Elements.Add(MakeSlot(0, "Fuel", 100));
+        o.Arrays.Add(arr);
+        await _store.WriteChunkAsync(id, new[] { o }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_AStructArrayElementHandoff_PointsAtItsArray()
+    {
+        // Value Search hands off a struct-array inner value by its display name ("Cargo[0].Fuel", Radar's
+        // FieldDisplayName), which matched no array -- so the handoff still said "not a pivotable field".
+        await SeedCargoAsync("PlayerState", withScalar: true);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("PlayerState", "Cargo[0].Fuel");
+
+        Assert.Contains("Snapshot Array", vm.StatusText);
+        Assert.Contains("PlayerState → Cargo", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_AClassWithOnlyStructArrays_IsNotCalledMissing()
+    {
+        // No scalar field means no row in the class list, so the helper said the class "is not in the selected
+        // snapshot" -- while its array pivots under Snapshot Array.
+        await SeedCargoAsync("CargoHold", withScalar: false);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Cargo");
+
+        Assert.DoesNotContain("not in the selected snapshot", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);
+    }
+
     // ---- C3: change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.

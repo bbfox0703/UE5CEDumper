@@ -618,6 +618,17 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
      - **Tests, red first:** an Identity-mode handoff of the key pick, and a struct-array handoff. A
        separate control pins that the keyless fixture really opens in Identity mode on "Amount", so a
        fixture drift fails there rather than passing the red test for free. 2/2 mutants killed; UI 5103/5103.
+   - ✅ **Third review follow-up 2026-09-12** (review 3, of c294e314: two LOW, both CONFIRMED. A third
+     finding, about the field-list pre-tick, was refuted as outside this row).
+     - **An element handoff missed the redirect.** Value Search hands off a struct-array inner value by
+       its display name (`Cargo[3].Quantity`, Radar's `FieldDisplayName`). That name matched no array, so
+       the handoff still said "not a pivotable field". The part before the `[` now names its array
+       (`ArrayFieldOf`).
+     - **A class with only struct arrays was called missing.** With no scalar field it has no row in the
+       class list, so the helper said it "is not in the selected snapshot". `PivotForAsync` now asks the
+       store for its arrays and points them at the Snapshot Array source.
+     - **Tests, red first:** an element-named handoff, and a class with no scalar field. 2/2 mutants
+       killed; UI 5132/5132.
 
 6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place

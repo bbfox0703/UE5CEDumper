@@ -429,7 +429,18 @@ public partial class ClassPivotViewModel : ViewModelBase
                 return;
             }
 
-            if (await SelectClassAndTickPropAsync(className, propName) && !string.IsNullOrEmpty(propName))
+            if (!await SelectClassAndTickPropAsync(className, propName))
+            {
+                // Review 3 of c294e314: a class whose captured objects hold ONLY struct arrays has no scalar row,
+                // so it is missing from the class list -- and the helper's "not in the selected snapshot" was
+                // false for it. Its arrays pivot under the Snapshot Array source.
+                var onlyArrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
+                if (onlyArrays.Count > 0)
+                    StatusText = $"{className} has only struct arrays in this snapshot: pivot them under the "
+                                 + $"Snapshot Array source ({className} → {onlyArrays[0].ArrayField}).";
+                return;
+            }
+            if (!string.IsNullOrEmpty(propName))
             {
                 // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
                 // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
@@ -439,11 +450,15 @@ public partial class ClassPivotViewModel : ViewModelBase
                 else
                 {
                     // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
-                    // Array source -- the scalar field list just never shows it.
+                    // Array source -- the scalar field list just never shows it. Review 3 of c294e314: Value
+                    // Search hands off a struct-array inner value by its display name ("Cargo[3].Quantity"),
+                    // which names its array before the '['.
                     var arrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
-                    StatusText = arrays.Any(a => a.ArrayField == propName)
-                        ? $"'{propName}' is a struct array of {className}: pivot it under the Snapshot Array source "
-                          + $"({className} → {propName})."
+                    var arrayName = ArrayFieldOf(propName);
+                    var what = arrayName == propName ? "a struct array" : "an element of the struct array " + arrayName;
+                    StatusText = arrays.Any(a => a.ArrayField == arrayName)
+                        ? $"'{propName}' is {what} of {className}: pivot it under the Snapshot Array source "
+                          + $"({className} → {arrayName})."
                         : $"'{propName}' is not a pivotable field of {className} in this snapshot "
                           + "— only captured numeric fields and struct arrays can be pivoted.";
                 }
@@ -454,6 +469,14 @@ public partial class ClassPivotViewModel : ViewModelBase
             _log.Error(Constants.LogCatView, $"Pivot: handoff for {className}.{propName} failed", ex);
             SetError(ex);
         }
+    }
+
+    /// <summary>The struct-array field a handoff prop belongs to: "Cargo" for "Cargo", "Cargo[3].Quantity" or
+    /// "Cargo[].Quantity" -- Value Search names an array element's inner value that way. Review 3 of c294e314.</summary>
+    internal static string ArrayFieldOf(string propName)
+    {
+        int i = propName.IndexOf('[');
+        return i > 0 ? propName[..i] : propName;
     }
 
     /// <summary>Select <paramref name="className"/> in the CURRENTLY selected
