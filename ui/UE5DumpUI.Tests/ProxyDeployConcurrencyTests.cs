@@ -259,6 +259,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Null(ex);
         Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
         Assert.Contains("deployed: 1", vm.LastOperationResult ?? "");
+        // The grid was brought back in line WITHOUT the cancelled token: a refresh landed after the
+        // throwing one, and nothing was reported as an error. (review of b8d09045)
+        Assert.NotEmpty(svc.Applied);
+        Assert.Null(vm.ErrorMessage);
     }
 
     [Fact]
@@ -266,6 +270,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
     {
         var (vm, svc) = Ready();
         svc.Gate.SetResult();
+        svc.ThrowOnCancelledRefresh = true;   // the catch's own refresh must avoid the cancelled token
         svc.DuringUndeploy = () => vm.CancelOperationCommand.Execute(null);
 
         var ex = await Record.ExceptionAsync(() => Refused(vm.UndeploySelectedCommand.ExecuteAsync(null)));
@@ -274,6 +279,49 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("undeploy:B", svc.Calls);
         Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
         Assert.Contains("removed: 1", vm.LastOperationResult ?? "");
+        Assert.NotEmpty(svc.Applied);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Undeploy_OneGame_CancelReachingTheFinalRefresh_DoesNotEscape()
+    {
+        // The Remove twin of the one-game Deploy case (review of b8d09045): the real UndeployAsync
+        // never checks its token inside the worker, so a one-game Remove cancelled mid-run finishes
+        // that game and reaches the post-loop refresh with the cancelled token.
+        var (vm, svc) = Ready();
+        vm.Games[1].IsSelected = false;
+        svc.Gate.SetResult();
+        svc.ThrowOnCancelledRefresh = true;
+        svc.DuringUndeploy = () => vm.CancelOperationCommand.Execute(null);
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.UndeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("removed: 1", vm.LastOperationResult ?? "");
+        Assert.NotEmpty(svc.Applied);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task UpdateAll_Cancelled_BringsTheGridBackInLine()
+    {
+        // Update All's cancel path -- the model Deploy's was copied from -- reported its partial
+        // tally but never refreshed, so the grid kept the old versions for the games it HAD
+        // written. (review of b8d09045)
+        var (vm, svc) = Ready(deployed: true);
+        svc.Gate.SetResult();
+        svc.ThrowOnCancelledRefresh = true;
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);   // cancel during game A
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.UpdateAllCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("updated: 1", vm.LastOperationResult ?? "");
+        Assert.NotEmpty(svc.Applied);                 // a refresh landed after the cancel
+        Assert.Null(vm.ErrorMessage);
     }
 
     [Fact]
@@ -292,6 +340,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("failed", (vm.StatusText ?? "").ToLowerInvariant());
         Assert.Contains("cancel", (vm.StatusText ?? "").ToLowerInvariant());
         Assert.Null(vm.ErrorMessage);
+        Assert.Equal("#888888", vm.StatusColor);        // neutral, not the red of a failure
     }
 
     [Fact]
@@ -337,6 +386,17 @@ public class ProxyDeployConcurrencyTests : IDisposable
         var lkg = System.Text.RegularExpressions.Regex.Match(xaml, @"<CheckBox[^>]*LkgSuggestEnabled[^>]*>");
         Assert.True(lkg.Success, "the LKG checkbox is gone -- re-point this pin");
         Assert.DoesNotContain("IsEnabled", lkg.Value);
+
+        // The recorded-unsafe variants: disabling the foreign-overwrite checkbox, or the panel that
+        // holds the radios (it also holds the LKG checkbox). (review of b8d09045)
+        var foreign = System.Text.RegularExpressions.Regex.Match(xaml, @"<CheckBox[^>]*AllowForeignOverwrite[^>]*>");
+        Assert.True(foreign.Success, "the foreign-overwrite checkbox is gone -- re-point this pin");
+        Assert.DoesNotContain("IsEnabled", foreign.Value);
+        int firstRadio = xaml.IndexOf(@"GroupName=""ProxyType""", StringComparison.Ordinal);
+        int panelOpen = xaml.LastIndexOf("<StackPanel", firstRadio, StringComparison.Ordinal);
+        Assert.True(panelOpen >= 0, "the radios' panel is gone -- re-point this pin");
+        string panelTag = xaml.Substring(panelOpen, xaml.IndexOf('>', panelOpen) - panelOpen + 1);
+        Assert.DoesNotContain("IsEnabled", panelTag);
     }
 
     // ── AE6: two DIFFERENT commands over the same folder ─────────────────────

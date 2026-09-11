@@ -1614,6 +1614,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             // Report what DID get updated. Cancelling is not a reason to hide that N games were
             // already written to — the user needs to know the folders are no longer uniform.
+            // [A3-DEPLOY-CANCEL] And bring the grid back in line with the disk, as Deploy / Remove
+            // do: without it the rows kept the old versions for the games this run HAD written.
+            await RefreshAfterCancelAsync(failedDirs);
             SetOperationResult($"Update All cancelled — updated: {updated}, failed: {fail}", fail);
         }
         catch (Exception ex)

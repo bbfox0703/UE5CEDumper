@@ -3122,6 +3122,23 @@ refuses to swallow, and **the process dies**.
   - The no-cancel control was green throughout.
   - The harness gained an opt-in `ThrowOnCancelledRefresh`, modelling the real service honouring its
     token. It is off by default, so the existing tests keep the stub that does not.
+- ✅ **Review follow-up 2026-09-11** (the adversarial review of B09-B12: 18 survived, 4 refuted; B09's
+  share was 5, all LOW).
+  - **The shipped Deploy / Remove code was correct. The pins were weaker than ledger row 20 said.**
+    "The recorded-unsafe re-run with the cancelled token" was killed for Deploy only:
+    - every Undeploy test left `ThrowOnCancelledRefresh` off, so a Remove catch that refreshed with
+      the cancelled token stayed green;
+    - no test checked that the post-cancel refresh actually LANDED, so a `RefreshAfterCancelAsync`
+      that skipped it stayed green too.
+  - Now pinned:
+    - the mid-run Remove turns the flag on, and a one-game Remove twin mirrors the one-game Deploy;
+    - every cancel test asserts that a refresh landed (`svc.Applied`) and that `ErrorMessage` is null;
+    - Refresh's cancel is asserted neutral (`#888888`), not only "not failed".
+  - **Update All**, the model this fix was copied from, reported its partial tally on a cancel but
+    never refreshed. The rows kept the old versions for the games it HAD written. Its catch now calls
+    `RefreshAfterCancelAsync` too (`UpdateAll_Cancelled_BringsTheGridBackInLine`, red first; the
+    other additions are pins on code that was already right, green before and after).
+  - 4/4 mutants killed, the Remove catch refreshing with the cancelled token among them.
 
 ##### ⛔ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down
 
@@ -3330,6 +3347,9 @@ result line never says so.
   - The LKG checkbox and the foreign-overwrite checkbox stay live.
   - Pinned from the AXAML (`ProxyTypeRadios_AreDisabledWhileBusy_TheLkgCheckboxIsNot`, red first).
     The binding compiles in the UI build.
+  - ✅ **Review follow-up 2026-09-11:** the pin checked only that the LKG checkbox stays live. It now
+    also refuses both recorded-unsafe shapes: an `IsEnabled` on the foreign-overwrite checkbox, and
+    one on the radios' panel. 2/2 mutants killed.
 
 ##### `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern
 
@@ -3934,8 +3954,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** `ParamTargetType` (FindFunctionsByClassParam) twin fixed, UFUNCWALK `CountClassParams` red first; 1/1 mutant killed; the CPN x 4.11-4.17 delta is recorded as an unmeasured lead |
 | 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** a param past the slab now refuses the whole script (2 red first); the DEBUG return prints are slab-bounded; 2/2 mutants killed; UI 4969/4969. **Review follow-up 2 (cc430176 + cd73ec38):** the untick is pinned to the refusal itself, and a small-ParmsSize row pins the walked span |
 | 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0. **Review follow-up 2 (cc430176 + cd73ec38):** the Lazy alignment regression fixed (2 red first) and 5 missing pins added; 8 DLL + 4 UI mutants killed; UI 4984/4984 |
-| 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976 |
-| 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed |
+| 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976. **Review follow-up:** that re-run was killed for Deploy only (every Undeploy test ran with `ThrowOnCancelledRefresh` off, and nothing checked that the post-cancel refresh landed). The Remove flag, a one-game Remove twin, landed-refresh + `ErrorMessage` asserts and the neutral colour are now pinned; Update All's cancel refreshes too (red first); 4/4 mutants killed; UI 5005/5005 |
+| 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed. **Review follow-up:** the pin also refuses an `IsEnabled` on the foreign-overwrite checkbox and on the radios' panel; 2/2 mutants killed |
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981 |
 | 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only |
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
@@ -3992,7 +4012,8 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Cancel during Deploy:** select the games, Deploy, and click "Cancel operation" at once. The app stays up; the result reads `Deploy cancelled — deployed: N, failed: M`; the grid shows the games that WERE written as deployed.
 2. **One game:** repeat with ONE game selected. Still no crash.
 3. **Cancel during Remove and Refresh:** Remove reads `Remove cancelled — …`; a cancelled Refresh reads `Refresh cancelled` in neutral colour, not a red "Refresh failed".
-4. **Radios:** during a Deploy, the four proxy-type radios are greyed out, while the LKG and foreign-overwrite checkboxes are not. | UI only, no game running |
+4. **Radios:** during a Deploy, the four proxy-type radios are greyed out, while the LKG and foreign-overwrite checkboxes are not.
+5. **Update All:** cancel an Update All mid-run. The rows of the games it had already written show the new version without a manual Refresh. | UI only, no game running |
 | L14 | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | Teleport's coordinate library on any connected game:
 1. **Clear all stays cleared:** save two or three entries (so a `.bak` exists), then Clear all. Reconnect, and restart the app: the library is still empty, and `…preclear.bak` holds the cleared entries.
 2. **Corrupt main:** with the app closed, overwrite `teleport-coords.<game>.json` with garbage and start it. The library loads from `.bak`. Now Clear all: `…preclear.bak` holds the recovered entries, not garbage. | any connected game + UI |
