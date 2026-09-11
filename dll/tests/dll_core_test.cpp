@@ -1511,6 +1511,17 @@ int main() {
                   p418[1].structType == "HitResult", p418[1].structType.c_str());
         }
 
+        // Review of 9abc03c8: FindFunctionsByClassParam's ParamTargetType is WalkFunctions' mirror
+        // ("Mirrors the param-type enrichment in Ubel::WalkFunctions") and kept the flat +0x2C, so
+        // at 4.15 it could not match a param's PropertyClass. The same fakes, asked through it.
+        bool retMatch = false;
+        g_cachedUEVersion = 415; DynOff::UPROPERTY_OFFSET = 0x50;
+        check("UFUNCWALK ⭐: FindFunctionsByClassParam matches the 4.15 ObjectProperty param",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[0]), named(4), retMatch) == 1);
+        g_cachedUEVersion = 418; DynOff::UPROPERTY_OFFSET = 0x44;
+        check("UFUNCWALK control: ...and the 4.18 one, as before",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
+
         g_cachedUEVersion           = savedVerW;
         DynOff::UPROPERTY_OFFSET    = savedOffW;
         DynOff::bCasePreservingName = savedCpnW;

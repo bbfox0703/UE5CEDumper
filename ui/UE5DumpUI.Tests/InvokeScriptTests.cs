@@ -1695,11 +1695,74 @@ public class InvokeScriptTests
     public void ZeroFill_IsClampedToTheMailboxSlab()
     {
         // Mimic.h: `uint8_t paramsData[1024]`. A span past it would write over what follows.
-        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(2000,
-            ("Big", "StructProperty", 0, 2000, false, false)));
+        // Generate itself now REFUSES such a function (ParamsPastTheSlab_*), so the clamp -- the
+        // defence behind that refusal -- is pinned on the span helper directly.
+        Assert.Equal(1024, InvokeScriptGenerator.ZeroFillSpan(SpanFunc(2000,
+            ("Big", "StructProperty", 0, 2000, false, false))));
+    }
 
-        Assert.Contains("for i = 0, 1023 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("for i = 0, 1999", script, StringComparison.Ordinal);
+    public static TheoryData<ushort, int, int> PastTheSlab => new()
+    {
+        { 2000, 0, 2000 },     // one param running past the slab
+        { 1028, 1024, 4 },     // a param that STARTS at the slab's end
+    };
+
+    [Theory]
+    [MemberData(nameof(PastTheSlab))]
+    public void ParamsPastTheSlab_AreRefused_NothingIsSent(ushort parmsSize, int tailOffset, int tailSize)
+    {
+        // Review of 9abc03c8: the 1024 clamp covered only the zero-fill. A param at or past +1024
+        // was still WRITTEN past Mimic's paramsData and the call fired. Refuse the whole script,
+        // before any mailbox round-trip, and untick (nothing was applied).
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(parmsSize,
+            ("Head", "IntProperty", 0, 4, false, false),
+            ("Tail", "IntProperty", tailOffset, tailSize, false, false)));
+
+        Assert.DoesNotContain($"(PD + {tailOffset},", script, StringComparison.Ordinal);
+        Assert.DoesNotContain($"writeInteger(mb + {CeMailboxLayout.OffCmd}, 1)", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("btnFire", script, StringComparison.Ordinal);
+        Assert.Contains($"{CeMailboxLayout.ParamsDataBytes}", script, StringComparison.Ordinal);
+        Assert.Contains("nothing was sent", script, StringComparison.Ordinal);
+        Assert.Contains("memrec.Active = false", script, StringComparison.Ordinal);   // the untick
+    }
+
+    [Fact]
+    public void ParamsInsideTheSlab_AreNotRefused()
+    {
+        // The control: a function that ends exactly at the slab's end still gets its form.
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(1024,
+            ("Head", "IntProperty", 0, 4, false, false),
+            ("Last", "IntProperty", 1020, 4, false, false)));
+
+        Assert.Contains("btnFire", script, StringComparison.Ordinal);
+        Assert.Contains("(PD + 1020,", script, StringComparison.Ordinal);
+    }
+
+    // Review of d8a7f44f: the gate was pinned only by substrings, so a Lua syntax break inside it
+    // (a missing `end`, a statement after `return`) passed every CeForm_* test. Pin its SHAPE.
+    [Theory]
+    [InlineData("ArrayProperty", 16)]
+    [InlineData("StructProperty", 24)]
+    public void CeForm_TheEmptyOnlyGate_IsWellFormedLua(string typeName, int size)
+    {
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size))));
+        var lines = pre.Split('\n').Select(l => l.Trim()).ToList();
+
+        int i = lines.FindIndex(l => l == "if not _isZeroDefault(edits[1]) then");
+        Assert.True(i >= 0, "the gate's `if` line is gone");
+        Assert.StartsWith("showMessage('", lines[i + 1], StringComparison.Ordinal);
+        Assert.EndsWith("')", lines[i + 1], StringComparison.Ordinal);
+        Assert.Equal("return", lines[i + 2]);
+        Assert.Equal("end", lines[i + 3]);
+    }
+
+    [Fact]
+    public void CeForm_TheFTextRefusal_IsOneWellFormedStatement()
+    {
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
+
+        Assert.Matches(new System.Text.RegularExpressions.Regex(
+            @"(?m)^\s*do showMessage\('[^'\n]*'\); return end\s*$"), pre);
     }
 
     [Fact]
@@ -1732,5 +1795,29 @@ public class InvokeScriptTests
             File.ReadAllText(path!), @"uint8_t\s+paramsData\[(\d+)\]");
         Assert.True(m.Success, "Mimic.h's paramsData declaration not found — re-point this pin");
         Assert.Equal(CeMailboxLayout.ParamsDataBytes, int.Parse(m.Groups[1].Value));
+    }
+
+    [Fact]
+    public void BakedScript_DebugReturnPrint_NeverReadsPastTheSlab()
+    {
+        // Review of 9abc03c8: Copy AA Script's DEBUG return decode was bounded by ParmsSize only,
+        // and ParmsSize 0 (unknown) bounds nothing -- a return slot past Mimic.h's 1024-byte
+        // paramsData decoded whatever follows MailboxData as "the return value".
+        var script = BakedScriptGenerator.Generate("C", "F", 0, new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 2000, ""),
+            verifyReturn: false);
+
+        Assert.DoesNotContain("_PDret", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BakedScript_DebugReturnPrint_InsideTheSlab_StillPrints()
+    {
+        // The control, green before and after.
+        var script = BakedScriptGenerator.Generate("C", "F", 8, new List<BakedParamValue>(),
+            returnParam: new BakedParamValue("ReturnValue", "IntProperty", 4, 4, ""),
+            verifyReturn: false);
+
+        Assert.Contains("_PDret", script, StringComparison.Ordinal);
     }
 }

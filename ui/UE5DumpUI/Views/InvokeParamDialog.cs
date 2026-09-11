@@ -865,6 +865,15 @@ public sealed class InvokeParamDialog : Window
 
         try
         {
+            // Review of d8a7f44f: the gate FIRE runs, before anything is generated. Copy AA Script
+            // used to bake whatever the boxes held -- a typed TFieldPath / TOptional value as a raw
+            // int32, text in a struct's FString member -- all of which FIRE refuses.
+            if (!TryValidateInputsForInvoke(out var gateError))
+            {
+                _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                _resultLabel.Text = $"ERROR: {gateError}";
+                return;
+            }
             var bakedValues = CollectBakedValues();
             // Pull the return-value param (if any) from _allParams. The
             // generator's verify mode uses Offset + UeTypeName to emit
@@ -1024,6 +1033,12 @@ public sealed class InvokeParamDialog : Window
                 // Struct param: emit one BakedParamValue per sub-field
                 foreach (var (sf, edit) in subEdits)
                 {
+                    // [P3-INVOKE-STRUCT-FSTRING] review follow-up: a string MEMBER stays zeroed -- the
+                    // valid empty FString -- exactly as FIRE's WriteStructParam leaves it. Baking it
+                    // made the helper build a CE-allocated FString, into an OUT struct too, where the
+                    // callee's assignment frees memory UE never allocated. Typed text is refused
+                    // before this runs (TryValidateInputsForInvoke).
+                    if (ParamBufferBuilder.IsStringType(sf.TypeName)) continue;
                     list.Add(new BakedParamValue(
                         ParamName:   $"{p.Name}.{sf.Name}",
                         UeTypeName:  sf.TypeName,
@@ -1053,6 +1068,44 @@ public sealed class InvokeParamDialog : Window
             }
         }
         return list;
+    }
+
+    /// <summary>
+    /// The gate FIRE runs (OnFireClicked), as its own pass so Copy AA Script runs it too: an
+    /// expanded struct through <see cref="ParamBufferBuilder.TryValidateStructSubFields"/>, a
+    /// top-level string skipped (it is built for real), everything else through
+    /// <see cref="ParamBufferBuilder.TryValidateScalar"/> -- the shared predicates, never a copied
+    /// type list. [P3-INVOKE-Y11-CEFORM] review follow-up.
+    /// </summary>
+    private bool TryValidateInputsForInvoke(out string error)
+    {
+        error = "";
+        for (int i = 0; i < _inputParams.Count; i++)
+        {
+            var param = _inputParams[i];
+            if (param.Offset < 0 || param.Offset >= _parmsSize) continue;
+            if (_structEdits.TryGetValue(i, out var subEdits))
+            {
+                var subFields = subEdits.Select(se => se.sf).ToArray();
+                var subValues = subEdits.Select(se => se.edit.Text
+                    ?? (ParamBufferBuilder.IsStringType(se.sf.TypeName) ? "" : "0")).ToArray();
+                if (!ParamBufferBuilder.TryValidateStructSubFields(subFields, subValues, out var badField, out var subErr))
+                {
+                    error = $"{param.Name}.{badField}: {subErr}";
+                    return false;
+                }
+            }
+            else if (!ParamBufferBuilder.IsStringType(param.TypeName))
+            {
+                var text = (_edits[i]?.Text ?? "0").Trim();
+                if (!ParamBufferBuilder.TryValidateScalar(param.TypeName, param.Size, text, out var err))
+                {
+                    error = $"{param.Name}: {err}";
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /// <summary>Decode a single param value from the post-call buffer bytes.</summary>

@@ -74,30 +74,40 @@ public static class InvokeScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Invoke", MailboxTimeout.UntickAndReturn);
         Line(sb);
 
-        // Mailbox helpers
-        AppendMailboxHelpers(sb);
-
-        // Instance resolver via CMD_FIND_INSTANCE
-        AppendInstanceResolver(sb);
-
-        // Function resolver via CMD_FIND_FUNCTION
-        AppendFunctionResolver(sb);
-
-        // Print resolved info
-        Line(sb, "dbg(string.format('  Resolved: %s::%s', OWNER_CLASS, FUNC_NAME))");
-        Line(sb, "dbg(string.format('  Instance: 0x%X  |  UFunction: 0x%X', instanceAddr, ufuncPtr))");
-        Line(sb);
-
-        // [A3-CEFORM-4X-STALESLAB] Zero-fill the span every param occupies, not just the reported
-        // ParmsSize -- see ZeroFillSpan. PARMS_SIZE above still reports the DLL's own number.
-        int zeroFill = ZeroFillSpan(func);
-        if (hasParams)
+        // [A3-CEFORM-4X-STALESLAB] review follow-up: a param at or past the slab's end cannot
+        // be written through the mailbox. Refuse before the first round-trip; nothing is applied.
+        long required = RequiredSpan(func);
+        if (required > CeMailboxLayout.ParamsDataBytes)
         {
-            AppendParamForm(sb, className, funcName, func, inputParams, zeroFill);
+            AppendSlabRefusal(sb, className, funcName, required);
         }
         else
         {
-            AppendDirectInvoke(sb, className, funcName, func, zeroFill);
+            // Mailbox helpers
+            AppendMailboxHelpers(sb);
+
+            // Instance resolver via CMD_FIND_INSTANCE
+            AppendInstanceResolver(sb);
+
+            // Function resolver via CMD_FIND_FUNCTION
+            AppendFunctionResolver(sb);
+
+            // Print resolved info
+            Line(sb, "dbg(string.format('  Resolved: %s::%s', OWNER_CLASS, FUNC_NAME))");
+            Line(sb, "dbg(string.format('  Instance: 0x%X  |  UFunction: 0x%X', instanceAddr, ufuncPtr))");
+            Line(sb);
+
+            // [A3-CEFORM-4X-STALESLAB] Zero-fill the span every param occupies, not just the reported
+            // ParmsSize -- see ZeroFillSpan. PARMS_SIZE above still reports the DLL's own number.
+            int zeroFill = ZeroFillSpan(func);
+            if (hasParams)
+            {
+                AppendParamForm(sb, className, funcName, func, inputParams, zeroFill);
+            }
+            else
+            {
+                AppendDirectInvoke(sb, className, funcName, func, zeroFill);
+            }
         }
 
         Line(sb, "{$asm}");
@@ -265,12 +275,38 @@ public static class InvokeScriptGenerator
     /// the sum is taken in <c>long</c> so a garbage Offset cannot overflow into a small number.</para>
     /// </summary>
     internal static int ZeroFillSpan(FunctionInfoModel func)
+        => (int)Math.Min(RequiredSpan(func), CeMailboxLayout.ParamsDataBytes);
+
+    /// <summary>
+    /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
+    /// param, the return slot included, UNclamped. More than
+    /// <see cref="CeMailboxLayout.ParamsDataBytes"/> cannot go through the mailbox at all -- see
+    /// <see cref="AppendSlabRefusal"/>. (Review of 9abc03c8: the clamp alone covered only the
+    /// zero-fill, and a param past the slab was still written and the call fired.)
+    /// </summary>
+    internal static long RequiredSpan(FunctionInfoModel func)
     {
         long span = func.ParmsSize;
         foreach (var p in func.Params)
             if (p.Offset >= 0 && p.Size > 0)
                 span = Math.Max(span, (long)p.Offset + p.Size);
-        return (int)Math.Min(span, CeMailboxLayout.ParamsDataBytes);
+        return span;
+    }
+
+    /// <summary>
+    /// [A3-CEFORM-4X-STALESLAB] review follow-up: the function's params do not fit Mimic's
+    /// paramsData slab, so the call cannot be made through the mailbox. Say so -- a real failure,
+    /// so the print is ungated and nothing auto-closes -- and untick through the deferred cleanup:
+    /// nothing was sent, and a ticked record would claim otherwise.
+    /// </summary>
+    private static void AppendSlabRefusal(StringBuilder sb, string className, string funcName, long required)
+    {
+        var what = $"{EscapeLua(className)}::{EscapeLua(funcName)} needs {required} bytes of parameters, " +
+                   $"but the mailbox holds {CeMailboxLayout.ParamsDataBytes}";
+        Line(sb, $"print('ERROR: {what} -- nothing was sent')");
+        Line(sb, $"showMessage('[Invoke] {what}.\\n\\nnothing was sent.')");
+        AppendCleanupTimer(sb, 0);
+        Line(sb, "return");
     }
 
     private static void AppendDirectInvoke(StringBuilder sb, string className, string funcName,
@@ -508,6 +544,8 @@ public static class InvokeScriptGenerator
         // Guard the offset against the params buffer bounds (a bogus return
         // offset would otherwise read outside the mailbox's params_data).
         if (ret.Offset < 0 || (func.ParmsSize > 0 && ret.Offset >= func.ParmsSize)) return;
+        // ...and never past Mimic's paramsData slab, which ParmsSize 0 (unknown) does not bound.
+        if ((long)ret.Offset + Math.Max(ret.Size, 1) > CeMailboxLayout.ParamsDataBytes) return;
 
         Line(sb, $"{indent}if result == 0 and DEBUG ~= 0 then");
         Line(sb, $"{indent}    local _PDret = mb + {OffParamsData}");

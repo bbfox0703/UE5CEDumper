@@ -1546,6 +1546,12 @@ against.
        with 10 red (every non-struct unwritable type).
      - The gate, the FText refusal and the predicate spelling: 8 red.
      - The controls (scalars, pointer, in/out FString not gated) were green throughout.
+   - ✅ **Review follow-up 2026-09-11 (adversarial review of d8a7f44f + d5e9148d + 9abc03c8: 8 survived, 1 refuted).**
+     - **Copy AA Script, the third path, had no gate:** a typed TFieldPath / TOptional value was
+       baked as a raw int32, and this row's doc claimed the helper refused them. The dialog now runs
+       `TryValidateInputsForInvoke` (FIRE's shared predicates) before generating.
+     - **The gate's Lua was pinned by substrings only.** `CeForm_TheEmptyOnlyGate_IsWellFormedLua`
+       and `CeForm_TheFTextRefusal_IsOneWellFormedStatement` now pin its shape.
 2. ⬜ **`[P3-SNAPNUM-ENUM]`** `SnapshotNumeric.cs:17` (+ `Render` `:169`). No `EnumProperty` arm, so
    every enum field captured since **AB14** made enums scannable gets `numeric_value NULL`: every SPC
    numeric predicate and every Group Match slot skips it, and the grid shows raw hex. The DLL side
@@ -1579,6 +1585,10 @@ against.
    - **Tests:** `AuditL11HonestyTests.StructFString_*`.
      - All three string types, the texts `42` / `0` / space, and the write-never pin: 7 red first.
      - The empty-member control was green before and after.
+   - ✅ **Review follow-up 2026-09-11 (adversarial review of d8a7f44f + d5e9148d + 9abc03c8: 8 survived, 1 refuted).** Copy AA Script still baked a struct's string members as CE-allocated FStrings,
+     including inside an OUT struct, where the callee's assignment frees memory UE never allocated.
+     `CollectBakedValues` now skips them (the zeroed slot is the empty FString, as FIRE leaves it),
+     and typed text is refused by the gate above. Pinned from the source (red first).
 4. ⬜ **`[P3-SCORING-MCDELEGATE]`** `PropertyScoringTable.cs:397`. `IsNonValueType` holds
    `DelegateProperty`, `MulticastInlineDelegateProperty` and `MulticastSparseDelegateProperty` and
    misses the **UE4 ≤ 4.22** name `MulticastDelegateProperty`, so old-UE4 delegates escape the
@@ -2595,6 +2605,20 @@ the three reads therefore land one field late:
   - 🟡 **Lead, not filed:** the Array / Map / Set UProperty-mode probes in WalkInstance also start
     at a fixed `UPROPERTY_OFFSET + 0x2C`. Their `{0, ±4, ±8, ±0x10}` spread already covers 0x28 and
     the CPN +8, so only the probe ORDER differs on 4.11-4.17. Left as is.
+- ✅ **Review follow-up 2026-09-11 (adversarial review of d8a7f44f + d5e9148d + 9abc03c8: 8 survived, 1 refuted).**
+  - **Missed twin:** `Aura.cpp` `ParamTargetType` (FindFunctionsByClassParam), which calls itself
+    WalkFunctions' mirror, kept the flat `UPROPERTY_OFFSET + 0x2C`. It now uses
+    `UPropertySubclassStartFor`. `dll_core_test` UFUNCWALK asks `CountClassParams` over the same
+    fakes: 4.15 was red first, 4.18 the control.
+  - 🟡 **Lead, recorded and NOT changed:** a reviewer argues the CPN +8 does not apply on 4.11-4.17.
+    RE-UE4SS ships no CasePreserving template below 4.27, so nothing measured settles it, and two
+    derivations disagree:
+    - the reviewer's: the delta stays 0x28;
+    - a field-by-field layout: RepNotifyFunc grows by 4 and moves Offset_Internal, and FieldSize
+      moves +8 absolute, so the delta is 0x24.
+
+    `UBoolPropFieldSizeFor` has always applied +8, and its compound-miss pins encode that. It needs
+    a 4.11-4.17 CPN build or template, not a guess.
 
 ##### ✅ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty (FIXED IN SOURCE 2026-09-11)
 
@@ -3103,6 +3127,9 @@ mask never reached it: no mask exists at any tier of the invoke wire.
     bit, and mask 0 / 0xFF keep the byte, like `PreviewScalarValue`.
   - Tests: `InvokeParamDialogTests` / `StructReturnDecoderTests` `*_PackedBools_ReadTheirOwnBit`,
     red first.
+  - ✅ **Review follow-up 2026-09-11 (adversarial review of d8a7f44f + d5e9148d + 9abc03c8: 8 survived, 1 refuted):** those cases sat at buffer offset 0, so reading `buf[sf.Offset]` instead of the
+    absolute offset survived. `*_PackedBools_AtANonZeroOffset` pins the absolute offset in both
+    decoders; they are green pins, killed by a mutant.
 
 ##### ✅ `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row (FIXED IN SOURCE 2026-09-11)
 
@@ -3132,6 +3159,15 @@ A2's root fix cures it. The hardening is safe only as `max(PARMS_SIZE, max(Offse
     - The right-ParmsSize control was green both ways.
   - The 🟡 lead above is half closed. The CE form now clamps to the slab on every version; the
     DLL side still never refuses `ParmsSize > 1024`, which stays a lead, not filed.
+  - ✅ **Review follow-up 2026-09-11 (adversarial review of d8a7f44f + d5e9148d + 9abc03c8: 8 survived, 1 refuted).**
+    - **The clamp covered only the zero-fill.** A param at or past +1024 was still WRITTEN past the
+      slab, and the call fired. `InvokeScriptGenerator` now computes the unclamped `RequiredSpan`
+      and, past the slab, emits a refusal before the first round-trip: it says so and unticks.
+      `ParamsPastTheSlab_*` was red first, and `ParamsInsideTheSlab_*` is the control.
+    - **The DEBUG return decode was bounded by ParmsSize only**, which is 0 when unknown. It is now
+      bounded by the slab in both the form and Copy AA Script (`BakedScript_DebugReturnPrint_*`).
+      ⚠ That test was added with the fix, not before it, so it was never observed red; the
+      mutation check is what shows it bites.
 
 ##### `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy
 
@@ -3705,12 +3741,12 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green. **Review follow-up:** 9 survived / 4 refuted; the render discard, the refresh identity + no-restamp, the export / bookmark guards and the re-root ticket landed; 6 new tests red → green, 20/20; UI 4867/4867; gates 21/21 |
 | 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green. **Review follow-up:** 6 survived / 3 refuted; GWorld-root skip + option (b) clean-then-anchor; 2 defects red → green, 2 pins + Forward; 4/4 mutants killed |
 | 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21. **Review follow-up:** 10 survived / 1 refuted. The HIGH was that native is SetBoolSize's {1,0,01,FF}, not {1,0,FF,FF}, so no real bool classified native. It is fixed; helpers + `dll_core_test` BOOLLAYOUT / BOOLNATIVE were red first (2 + 3). The read side and the masked read-back / map / set pins also landed. 4/4 DLL + 6/6 UI mutants killed; UI 4952/4952 |
-| 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262. **Review follow-up:** the read side (post-call readout + return grid) now decodes the bit; 2 red first; 2/2 mutants killed |
+| 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262. **Review follow-up:** the read side (post-call readout + return grid) now decodes the bit; 2 red first; 2/2 mutants killed. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** packed bools at a non-zero offset pinned in both decoders; 1/1 mutant killed |
 | 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout`. **Review follow-up:** the call site is pinned in `dll_core_test` BOOLLAYOUT; its mutant was killed |
-| 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946 |
-| 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip) |
-| 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0 |
-| 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957 |
+| 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** Copy AA Script now runs FIRE's gate (source pin, red first); the gate's Lua shape is pinned; 2/2 mutants killed |
+| 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip). **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** Copy AA Script skips struct string members (source pin, red first); 1/1 mutant killed |
+| 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** `ParamTargetType` (FindFunctionsByClassParam) twin fixed, UFUNCWALK `CountClassParams` red first; 1/1 mutant killed; the CPN x 4.11-4.17 delta is recorded as an unmeasured lead |
+| 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** a param past the slab now refuses the whole script (2 red first); the DEBUG return prints are slab-bounded; 2/2 mutants killed; UI 4969/4969 |
 | 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0 |
 
 #### Live-check backlog — run at the end of the pass

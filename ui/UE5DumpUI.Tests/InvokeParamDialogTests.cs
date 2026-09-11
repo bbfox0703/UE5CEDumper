@@ -215,6 +215,25 @@ public class InvokeParamDialogTests
     }
 
     [Fact]
+    public void DecodeDynamicStructParamValue_PackedBools_AtANonZeroOffset()
+    {
+        // Review of d5e9148d: every packed-bool case sat at buffer offset 0, so reading buf[sf.Offset]
+        // instead of buf[p.Offset + sf.Offset] survived. Here the two bytes differ.
+        var buf = new byte[] { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02 };
+        var p = new FunctionParamModel
+        {
+            Name = "Hit", TypeName = "StructProperty", Size = 2, Offset = 4,
+            StructFields = new List<DynamicStructField>
+            {
+                new("bA", "BoolProperty", 1, 1, 0x01),
+                new("bB", "BoolProperty", 1, 1, 0x02),
+            },
+        };
+
+        Assert.Equal("bA=false, bB=true", InvokeParamDialog.DecodeDynamicStructParamValue(buf, p));
+    }
+
+    [Fact]
     public void DecodeDynamicStructParamValue_EmptyFields_FallsBackToScalar()
     {
         var buf = new byte[] { 0x2A, 0x00, 0x00, 0x00 };

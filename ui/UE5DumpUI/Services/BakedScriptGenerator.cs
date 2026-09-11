@@ -404,9 +404,12 @@ public static class BakedScriptGenerator
             // window is kept open (the success-close is DEBUG==0-gated). The
             // helper's mailbox is resolved here (getAddressSafe + module-prefixed
             // fallback, mirroring findMailbox) so the raw slot can be read.
+            // Bounded by the mailbox's paramsData slab too: ParmsSize 0 (unknown) bounds nothing,
+            // and a slot past the slab would decode whatever follows MailboxData (review of 9abc03c8).
             if (returnParam != null &&
                 returnParam.Offset >= 0 &&
-                (parmsSize <= 0 || returnParam.Offset < parmsSize))
+                (parmsSize <= 0 || returnParam.Offset < parmsSize) &&
+                (long)returnParam.Offset + Math.Max(returnParam.Size, 1) <= CeMailboxLayout.ParamsDataBytes)
             {
                 Line(sb, "if ok and DEBUG ~= 0 then");
                 Line(sb, "  local _mbret = getAddressSafe('g_invokeMailbox')");

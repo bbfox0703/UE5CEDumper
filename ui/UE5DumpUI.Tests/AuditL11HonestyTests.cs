@@ -740,6 +740,57 @@ public class AuditL11HonestyTests
         Assert.True(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["7", ""], out _, out _));
     }
 
+    // Review of d8a7f44f: FIRE now leaves a string member zeroed and refuses typed text, but Copy AA
+    // Script still baked it as an 'fstring' row, and the helper built a CE-allocated FString -- into
+    // an OUT struct too, where the callee's assignment frees memory UE never allocated. And Copy AA
+    // ran no gate at all, so a typed TFieldPath / TOptional value was baked as a raw int32. Both
+    // live on the Avalonia window, so they are pinned by reading the source back (the
+    // InvokeBoolMaskTests pattern).
+    private static string DialogSource()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Views", "InvokeParamDialog.cs");
+            if (File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        return File.ReadAllText(path!);
+    }
+
+    [Fact]
+    public void StructFString_CopyAAScript_SkipsStringMembersToo()
+    {
+        var src = DialogSource();
+        int at = src.IndexOf("internal IReadOnlyList<BakedParamValue> CollectBakedValues()", StringComparison.Ordinal);
+        Assert.True(at > 0, "CollectBakedValues not found — re-point this pin");
+        int add = src.IndexOf("list.Add(new BakedParamValue(", at, StringComparison.Ordinal);
+        Assert.True(add > at);
+
+        // The struct branch's first row add must be preceded by the string-member skip.
+        Assert.Contains("ParamBufferBuilder.IsStringType(sf.TypeName)", src[at..add], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CopyAAScript_RunsFiresGate_BeforeGenerating()
+    {
+        var src = DialogSource();
+        int h = src.IndexOf("private async void OnCopyBakedScriptClicked(", StringComparison.Ordinal);
+        Assert.True(h > 0, "OnCopyBakedScriptClicked not found — re-point this pin");
+        int gen = src.IndexOf("BakedScriptGenerator.Generate(", h, StringComparison.Ordinal);
+        Assert.True(gen > h);
+        Assert.Contains("TryValidateInputsForInvoke(", src[h..gen], StringComparison.Ordinal);
+
+        // ...and the gate is FIRE's shared predicates, not a copied type list.
+        int g = src.IndexOf("private bool TryValidateInputsForInvoke(", StringComparison.Ordinal);
+        Assert.True(g > 0, "TryValidateInputsForInvoke not found");
+        int gEnd = src.IndexOf("\n    }", g, StringComparison.Ordinal);
+        var gate = src[g..gEnd];
+        Assert.Contains("ParamBufferBuilder.TryValidateStructSubFields(", gate, StringComparison.Ordinal);
+        Assert.Contains("ParamBufferBuilder.TryValidateScalar(", gate, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void StructFString_WriteNeverStampsTheTextOverData()
     {
