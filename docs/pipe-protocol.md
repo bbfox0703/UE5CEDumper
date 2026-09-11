@@ -797,7 +797,8 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
       "bool_mask":     4,
       "bool_bit_idx":  2
     },
-    // --- BoolProperty, NATIVE (a whole byte: FieldSize 1, ByteOffset 0, ByteMask = FieldMask = 0xFF) ---
+    // --- BoolProperty, NATIVE (a whole byte: FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF,
+    //     which is what every engine's SetBoolSize writes: `ByteMask = true; FieldMask = 255;`) ---
     // [A3-BOOL-NATIVE-NOWRITE] "bool_native": true is emitted ONLY when the DLL read UE's native
     // layout — every Blueprint bool, a plain `UPROPERTY() bool bFoo;`. Absent means PACKED (it then
     // carries bool_mask) or UNRESOLVED (no bool_mask: the probe missed) — NEVER native. The UI writes

@@ -192,6 +192,29 @@ public class InvokeParamDialogTests
     }
 
     [Fact]
+    public void DecodeDynamicStructParamValue_PackedBools_ReadTheirOwnBit()
+    {
+        // [A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): the mask reaches the UI, but the
+        // post-call readout decoded every packed bool as its whole byte, so FHitResult's
+        // bBlockingHit (bit 0) set made bStartPenetrating (bit 1) read true as well. Mask 0 is
+        // unresolved and keeps the whole-byte read, as PreviewScalarValue does DLL-side.
+        var buf = new byte[] { 0x01 };
+        var p = new FunctionParamModel
+        {
+            Name = "Hit", TypeName = "StructProperty", Size = 1, Offset = 0,
+            StructFields = new List<DynamicStructField>
+            {
+                new("bBlockingHit", "BoolProperty", 0, 1, 0x01),
+                new("bStartPenetrating", "BoolProperty", 0, 1, 0x02),
+                new("bUnresolved", "BoolProperty", 0, 1, 0),
+            },
+        };
+
+        Assert.Equal("bBlockingHit=true, bStartPenetrating=false, bUnresolved=true",
+                     InvokeParamDialog.DecodeDynamicStructParamValue(buf, p));
+    }
+
+    [Fact]
     public void DecodeDynamicStructParamValue_EmptyFields_FallsBackToScalar()
     {
         var buf = new byte[] { 0x2A, 0x00, 0x00, 0x00 };

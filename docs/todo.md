@@ -2625,6 +2625,10 @@ repeats the defect, which contradicts "now the ONLY one" (`:1982`).
     the claim "now the ONLY one" is true again.
   - `dll_helpers_test` pins the packed bit set and clear, mask 0 falling back to the byte, and
     native `0xFF`, plus `ClassifyBoolLayout`'s cases.
+- ✅ **Review follow-up 2026-09-11:** the call site is now pinned too.
+  - `dll_core_test` BOOLLAYOUT: two packed bits in one byte, plus a mask-0 field, previewed through
+    `InterpretStructByLayout`.
+  - Dropping the mask argument turns it red (mutation check).
 
 ##### `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured"
 
@@ -2936,7 +2940,9 @@ fresh CE session, where the flag was nil.
 - ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (fix-pass batch B05, "bool mask, end
   to end", one commit with `[A3-FIRE-STRUCT-BOOLMASK]` and `[A2-STRUCT-PREVIEW-BOOLMASK]`).
   - **DLL:** `Ubel::ClassifyBoolLayout` names the native layout (`FieldSize 1, ByteOffset 0,
-    ByteMask = FieldMask = 0xFF`).
+    ByteMask 0x01, FieldMask 0xFF`, i.e. SetBoolSize's `ByteMask = true; FieldMask = 255`).
+    ⚠ The first version required ByteMask 0xFF, which no engine writes, and was green only
+    because its test pinned the same tuple. The review follow-up below corrected it.
     - The field walk, the UE4 UProperty chain and `WalkClassEx`'s enrichment all record it.
     - Fern publishes the additive `bool_native: true`: pipe-only, kept in lean mode, no contract
       bump.
@@ -2954,6 +2960,25 @@ fresh CE session, where the flag was nil.
     - the read-modify-write control, which was green before and after;
     - planner cases.
   - The DumpService parse of `bool_native` was also red first, then green.
+- ✅ **Review follow-up 2026-09-11** (adversarial review of 68a404d6: 10 survived, 1 refuted).
+  - ⭐ **The HIGH survivor, reported by three lenses: the fix did not work on any real game.**
+    - `ClassifyBoolLayout` required ByteMask 0xFF for native. Every engine's `SetBoolSize` (the
+      reviewers read PropertyBool.cpp for 4.11 → 5.8) writes `ByteMask = true; FieldMask = 255`,
+      i.e. 0x01.
+    - So NO bool classified native, and every native-bool edit was REFUSED.
+    - It went green because the unit test pinned the same wrong tuple, and every UI test injected
+      `BoolNative` directly.
+    - **Fixed:** native = {1, 0, 0x01, 0xFF}, with ByteMask held strict so an all-0xFF read is not
+      taken for one.
+  - **The missing pins, which are why the defect could hide, now drive the real bytes:**
+    - `dll_helpers_test`: the real tuple, with all-FF as Unresolved.
+    - `dll_core_test` BOOLLAYOUT: `ProbeBoolLayout` fed SetBoolSize's bytes, plus
+      `InterpretStructByLayout`'s per-field mask.
+    - `dll_core_test` BOOLNATIVE: a pool-faking block that drives `WalkInstance`, Live Walker's
+      own probe loop, for native, packed and unresolved.
+    - Red first: helpers 2, core 3.
+  - **UI pins:** the masked read-back in both directions, and map-value and set-element rows that
+    are native and write the value byte. Green pins; the mutation check kills each.
 
 ##### `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init
 
@@ -3003,6 +3028,13 @@ mask never reached it: no mask exists at any tier of the invoke wire.
     bit; the baked row's mask; the dialog's flattening, pinned from the source) and
     `scripts/tests/invoke_helper_test.lua`'s three new cases (2 red first, 97/97 now). The
     whole-byte controls were green both ways.
+- ✅ **Review follow-up 2026-09-11, the READ side.**
+  - The mask reached the UI, but FIRE's post-call readout and the struct-return grid still decoded
+    a packed bool as its whole byte.
+  - Both now go through `InvokeParamDialog.DecodeStructSubField`: a single-bit mask reads its own
+    bit, and mask 0 / 0xFF keep the byte, like `PreviewScalarValue`.
+  - Tests: `InvokeParamDialogTests` / `StructReturnDecoderTests` `*_PackedBools_ReadTheirOwnBit`,
+    red first.
 
 ##### `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row
 
@@ -3590,9 +3622,9 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green. **Review follow-up:** 9 survived / 4 refuted; the render discard, the refresh identity + no-restamp, the export / bookmark guards and the re-root ticket landed; 6 new tests red → green, 20/20; UI 4867/4867; gates 21/21 |
 | 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green. **Review follow-up:** 6 survived / 3 refuted; GWorld-root skip + option (b) clean-then-anchor; 2 defects red → green, 2 pins + Forward; 4/4 mutants killed |
-| 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21 |
-| 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262 |
-| 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout` |
+| 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21. **Review follow-up:** 10 survived / 1 refuted. The HIGH was that native is SetBoolSize's {1,0,01,FF}, not {1,0,FF,FF}, so no real bool classified native. It is fixed; helpers + `dll_core_test` BOOLLAYOUT / BOOLNATIVE were red first (2 + 3). The read side and the masked read-back / map / set pins also landed. 4/4 DLL + 6/6 UI mutants killed; UI 4952/4952 |
+| 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262. **Review follow-up:** the read side (post-call readout + return grid) now decodes the bit; 2 red first; 2/2 mutants killed |
+| 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout`. **Review follow-up:** the call site is pinned in `dll_core_test` BOOLLAYOUT; its mutant was killed |
 | 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946 |
 | 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip) |
 

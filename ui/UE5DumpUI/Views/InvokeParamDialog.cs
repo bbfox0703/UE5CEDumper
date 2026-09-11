@@ -1124,17 +1124,36 @@ public sealed class InvokeParamDialog : Window
         var parts = new List<string>(p.StructFields.Count);
         foreach (var sf in p.StructFields)
         {
-            var subParam = new FunctionParamModel
-            {
-                Name = sf.Name,
-                TypeName = sf.TypeName,
-                Size = sf.Size,
-                Offset = p.Offset + sf.Offset,
-            };
-            var val = DecodeParamValue(buf, subParam);
+            var val = DecodeStructSubField(buf, p.Offset + sf.Offset, sf);
             parts.Add($"{sf.Name}={val}");
         }
         return string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// Decode one DLL-discovered struct sub-field at an absolute buffer offset — shared by the
+    /// post-call readout above and <see cref="Services.StructReturnDecoder"/>'s return grid, so
+    /// the two cannot drift.
+    ///
+    /// <para>[A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): a PACKED bool shares its
+    /// byte with sibling bools (FHitResult's bBlockingHit / bStartPenetrating), so it reads only
+    /// its own bit. A mask that is not a single bit — 0 (unresolved) or 0xFF — keeps the
+    /// whole-byte read, the same fallback <c>Ubel::PreviewScalarValue</c> uses DLL-side; a bare
+    /// <c>(b &amp; mask) != 0</c> would read every unresolved bool as false.</para>
+    /// </summary>
+    internal static string DecodeStructSubField(byte[] buf, int absOffset, DynamicStructField sf)
+    {
+        if (sf.TypeName == "BoolProperty" && Core.FieldValueConverter.IsSingleBitMask(sf.BoolFieldMask)
+            && absOffset >= 0 && absOffset < buf.Length)
+            return (buf[absOffset] & sf.BoolFieldMask) != 0 ? "true" : "false";
+
+        return DecodeParamValue(buf, new FunctionParamModel
+        {
+            Name = sf.Name,
+            TypeName = sf.TypeName,
+            Size = sf.Size,
+            Offset = absOffset,
+        });
     }
 
     /// <summary>Decode a struct param using known sub-field layout. Returns "X=1.0, Y=2.0, Z=3.0" style.</summary>

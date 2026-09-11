@@ -130,14 +130,11 @@ public static class StructReturnDecoder
         foreach (var sf in returnParam.StructFields)
         {
             int absOffset = returnParam.Offset + sf.Offset;
-            var subParam = new FunctionParamModel
-            {
-                Name     = sf.Name,
-                TypeName = sf.TypeName,
-                Size     = sf.Size,
-                Offset   = absOffset,
-            };
-            string value = SafeDecode(buf, subParam);
+            // The dialog's shared sub-field decoder: a packed bool reads only its own bit
+            // ([A3-FIRE-STRUCT-BOOLMASK], the read side). Guarded like SafeDecode below.
+            string value;
+            try { value = InvokeParamDialog.DecodeStructSubField(buf, absOffset, sf); }
+            catch { value = "?"; }
             rows.Add(new StructFieldValue(sf.Name, sf.TypeName, value, absOffset));
         }
         return rows;

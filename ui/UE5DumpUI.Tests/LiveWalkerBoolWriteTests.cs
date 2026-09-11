@@ -166,6 +166,100 @@ public class LiveWalkerBoolWriteTests
         Assert.All(vm.Fields, f => Assert.True(f.BoolNative, $"{f.Name} must be a native bool"));
     }
 
+    // --- B05 review follow-up: the masked read-back, and the map / set row builders -------------
+
+    [Fact]
+    public async Task PackedMask_ReadBackMismatch_IsReported()
+    {
+        // The read-back covers the MASKED write too. A sibling bit is set and the game reverts ours:
+        // comparing the whole byte, or `back != 0`, would call this "Written".
+        var dump = new MemStub { GameIgnoresWrites = true };
+        dump.Mem[Addr] = 0x01;
+        var vm = Vm(dump);
+
+        await vm.CommitFieldEditAsync(Bool(mask: 0x04), "true");
+
+        Assert.Contains("but the game now reads", vm.StatusText);
+        Assert.DoesNotContain("Written:", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PackedMask_ClearWithASiblingSet_IsWrittenAndVerified()
+    {
+        // The other direction: clearing our bit leaves the sibling set, so the byte reads back
+        // non-zero -- a `back != 0` read-back would report a mismatch that did not happen.
+        var dump = new MemStub();
+        dump.Mem[Addr] = 0x05;
+        var vm = Vm(dump);
+
+        await vm.CommitFieldEditAsync(Bool(mask: 0x04), "false");
+
+        Assert.Equal(new byte[] { 0x01 }, Assert.Single(dump.Writes).Data);
+        Assert.Contains("Written: bFlag = false", vm.StatusText);
+        Assert.DoesNotContain("game now reads", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task MapOfBool_ValueRows_AreNativeBools_AndWriteTheValueByte()
+    {
+        const string A = "0x100000";
+        var dump = new MemStub();
+        dump.RegisterStruct(A, new InstanceWalkResult
+        {
+            Address = A, Name = "Obj", ClassName = "BP_Obj_C", ClassAddr = "0x900000",
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = "Unlocked", TypeName = "MapProperty", Offset = 0x40, Size = 80,
+                    MapCount = 1, MapKeyType = "IntProperty", MapValueType = "BoolProperty",
+                    MapKeySize = 4, MapValueSize = 1, MapDataAddr = "0x500000",
+                    MapValueOffset = 4, MapStride = 16,
+                    MapElements = new() { new() { Index = 0, Key = "7", Value = "false", KeyHex = "07000000", ValueHex = "00" } },
+                },
+            },
+        });
+        var vm = Vm(dump);
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Unlocked"));
+
+        var row = Assert.Single(vm.Fields);
+        Assert.True(row.BoolNative, "a map's bool VALUE is a native bool");
+
+        await vm.CommitFieldEditAsync(row, "true");
+        var w = Assert.Single(dump.Writes);
+        Assert.Equal(0x500004UL, w.Addr);                // the value, not the key
+        Assert.Equal(new byte[] { 0x01 }, w.Data);
+    }
+
+    [Fact]
+    public async Task SetOfBool_ElementRows_AreNativeBools()
+    {
+        const string A = "0x100000";
+        var dump = new MemStub();
+        dump.RegisterStruct(A, new InstanceWalkResult
+        {
+            Address = A, Name = "Obj", ClassName = "BP_Obj_C", ClassAddr = "0x900000",
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = "Seen", TypeName = "SetProperty", Offset = 0x40, Size = 80,
+                    SetCount = 2, SetElemType = "BoolProperty", SetElemSize = 1,
+                    SetDataAddr = "0x500000", SetStride = 12,
+                    SetElements = new() { new() { Index = 0, Value = "true", ValueHex = "01" },
+                                          new() { Index = 1, Value = "false", ValueHex = "00" } },
+                },
+            },
+        });
+        var vm = Vm(dump);
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Seen"));
+
+        Assert.Equal(2, vm.Fields.Count);
+        Assert.All(vm.Fields, f => Assert.True(f.BoolNative, $"{f.Name} must be a native bool"));
+    }
+
     [Theory]
     [InlineData(true,  0,    UE5DumpUI.Core.FieldValueConverter.BoolWriteMode.NativeByte)]
     [InlineData(false, 0x04, UE5DumpUI.Core.FieldValueConverter.BoolWriteMode.MaskedBit)]

@@ -7380,7 +7380,17 @@ static void Test_Macht_ParsePattern_Nibble() {
 static void Test_Ubel_ClassifyBoolLayout() {
     std::printf("Test_Ubel_ClassifyBoolLayout\n");
     using Ubel::BoolLayout;
-    EXPECT("native: 1 / 0 / FF / FF", Ubel::ClassifyBoolLayout(1, 0, 0xFF, 0xFF) == BoolLayout::Native);
+    // The REAL native layout. Every engine's SetBoolSize (PropertyBool.cpp, 4.11 → 5.8, and the
+    // UE4-era UBoolProperty) does `if (bIsNativeBool) { ByteMask = true; FieldMask = 255; }`, so
+    // ByteMask is 0x01, NOT 0xFF. The first version of this test pinned {1,0,FF,FF}, a tuple no
+    // engine writes, and the classifier then refused every native bool on a real game (B05 review).
+    EXPECT("native: 1 / 0 / 01 / FF (SetBoolSize)", Ubel::ClassifyBoolLayout(1, 0, 0x01, 0xFF) == BoolLayout::Native);
+    // ByteMask is held strict: an all-FF read is what a probe landing on 0xFF fill presents,
+    // and no engine writes it for a bool.
+    EXPECT("1 / 0 / FF / FF is NOT native (no engine writes it)",
+           Ubel::ClassifyBoolLayout(1, 0, 0xFF, 0xFF) == BoolLayout::Unresolved);
+    EXPECT("native layout at a non-zero byte offset is not native",
+           Ubel::ClassifyBoolLayout(1, 2, 0x01, 0xFF) == BoolLayout::Unresolved);
     EXPECT("packed: one bit",         Ubel::ClassifyBoolLayout(1, 0, 0x04, 0x04) == BoolLayout::Packed);
     EXPECT("packed: bit 7",           Ubel::ClassifyBoolLayout(1, 3, 0x80, 0x80) == BoolLayout::Packed);
     EXPECT("all-zero (a missed probe) is UNRESOLVED, never native",

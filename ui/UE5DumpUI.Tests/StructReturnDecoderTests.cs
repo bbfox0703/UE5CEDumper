@@ -150,6 +150,28 @@ public class StructReturnDecoderTests
         Assert.False(StructReturnDecoder.CanDecode(p, ueVersion: 505));
     }
 
+    [Fact]
+    public void Decode_DynamicFields_PackedBools_ReadTheirOwnBit()
+    {
+        // [A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): the struct-return grid decoded a
+        // packed bool as its whole byte. Two bits share one byte; only bit 1 is set.
+        var p = new FunctionParamModel
+        {
+            Name = "ReturnValue", TypeName = "StructProperty", StructName = "Mystery",
+            Size = 1, Offset = 0,
+            StructFields = new List<DynamicStructField>
+            {
+                new("bA", "BoolProperty", 0, 1, 0x01),
+                new("bB", "BoolProperty", 0, 1, 0x02),
+                new("bU", "BoolProperty", 0, 1, 0),   // unresolved: the whole byte
+            },
+        };
+
+        var rows = StructReturnDecoder.Decode(new byte[] { 0x02 }, p, ueVersion: 505);
+
+        Assert.Equal(new[] { "false", "true", "true" }, rows.Select(r => r.Value).ToArray());
+    }
+
     // ------------------------------------------------------------------
     // FVector decode — the canonical "Geri PlayerCameraManager::
     // GetCameraLocation" verification target from todo.md pick #5.

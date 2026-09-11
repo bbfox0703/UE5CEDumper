@@ -835,15 +835,20 @@ inline std::string PreviewScalarValue(const std::string& typeName,
 /// [A3-BOOL-NATIVE-NOWRITE]
 enum class BoolLayout { Unresolved, Packed, Native };
 
-/// Classify a bool property's layout bytes. NATIVE is UE's own `bIsNativeBool` layout
-/// (SetBoolSize: FieldSize 1, ByteOffset 0, ByteMask = FieldMask = 0xFF) — a whole-byte bool, the
-/// layout of every Blueprint bool and container element, written 0x01 / 0x00. PACKED is a
-/// bitfield bool that owns exactly one bit. Anything else — including all-zero, which is what a
-/// missed probe reads — is UNRESOLVED and must never be treated as either.
+/// Classify a bool property's layout bytes. NATIVE is UE's own `bIsNativeBool` layout: every
+/// engine's SetBoolSize (PropertyBool.cpp, 4.11 -> 5.8, and the UE4-era UBoolProperty) does
+/// `ByteOffset = 0; if (bIsNativeBool) { ByteMask = true; FieldMask = 255; }`, so the bytes are
+/// {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} — a whole-byte bool, the layout of
+/// every Blueprint bool and container element, written 0x01 / 0x00. UE's own IsNativeBool() tests
+/// FieldMask alone; ByteMask 0x01 is held as well, so an all-0xFF read (a probe landing on fill)
+/// is not taken for one. ⚠ The first version required ByteMask 0xFF, which no engine writes, and
+/// so refused every native bool on a real game (B05 review). PACKED is a bitfield bool that owns
+/// exactly one bit. Anything else — including all-zero, which is what a missed probe reads — is
+/// UNRESOLVED and must never be treated as either.
 inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
                                      uint8_t byteMask, uint8_t fieldMask) {
     if (fieldSize != 1) return BoolLayout::Unresolved;
-    if (fieldMask == 0xFF && byteMask == 0xFF && byteOffset == 0) return BoolLayout::Native;
+    if (fieldMask == 0xFF && byteMask == 0x01 && byteOffset == 0) return BoolLayout::Native;
     if (fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) return BoolLayout::Packed;
     return BoolLayout::Unresolved;
 }

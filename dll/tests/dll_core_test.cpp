@@ -768,14 +768,66 @@ int main() {
         check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
     }
 
+    // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------
+    //
+    // [A3-BOOL-NATIVE-NOWRITE] / [A2-STRUCT-PREVIEW-BOOLMASK], the B05 review follow-up. B05's
+    // classifier required ByteMask 0xFF for a native bool, but every engine's SetBoolSize writes
+    // `ByteMask = true` (0x01) -- so on a real game NO bool classified native, every native-bool
+    // edit was refused, and the only test fed the classifier the same wrong tuple it was written
+    // from. These drive the PROBE with the bytes a real FBoolProperty presents at
+    // FBOOLPROP_FIELDSIZE, not the classifier's arguments. Pure (no name pool), so it sits above
+    // the pool-faking tail.
+    {
+        blk("BOOLLAYOUT - the probe reads SetBoolSize's real bytes; the preview honours each mask");
+
+        const bool savedFProp = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto probe = [](uint8_t fs, uint8_t bo, uint8_t bm, uint8_t fm) {
+            static uint8_t blob[0x100];
+            memset(blob, 0, sizeof(blob));
+            uint8_t* b = blob + DynOff::FBOOLPROP_FIELDSIZE;
+            b[0] = fs; b[1] = bo; b[2] = bm; b[3] = fm;
+            FieldInfo fi{};   // GLOBAL: Ubel.h declares FieldInfo / ClassInfo above `namespace Ubel`
+            Ubel::ProbeBoolLayout(reinterpret_cast<uintptr_t>(blob), fi);
+            return fi;
+        };
+        const auto nat = probe(1, 0, 0x01, 0xFF);
+        check("BOOLLAYOUT ⭐: SetBoolSize's native bytes {1,0,01,FF} probe NATIVE", nat.boolNative);
+        check("BOOLLAYOUT: ...and carry no mask", nat.boolFieldMask == 0);
+        const auto packed = probe(1, 0, 0x04, 0x04);
+        check("BOOLLAYOUT control: a packed bit probes its own mask, not native",
+              !packed.boolNative && packed.boolFieldMask == 0x04);
+        const auto miss = probe(0, 0, 0, 0);
+        check("BOOLLAYOUT control: all-zero (a missed probe) is neither",
+              !miss.boolNative && miss.boolFieldMask == 0);
+        const auto allFF = probe(1, 0, 0xFF, 0xFF);
+        check("BOOLLAYOUT: {1,0,FF,FF} is not native -- no engine writes it", !allFF.boolNative);
+        DynOff::bUseFProperty = savedFProp;
+
+        // The struct preview passes EACH field's own mask; mask 0 (unresolved) reads the byte.
+        ClassInfo si{};
+        const char* bNames[3] = { "bA", "bB", "bU" };
+        const uint8_t bMasks[3] = { 0x01, 0x02, 0x00 };
+        for (int k = 0; k < 3; ++k) {
+            FieldInfo bf{};
+            bf.Name = bNames[k]; bf.TypeName = "BoolProperty"; bf.Offset = 0; bf.Size = 1;
+            bf.boolFieldMask = bMasks[k];
+            si.Fields.push_back(bf);
+        }
+        const uint8_t sbuf[1] = { 0x02 };
+        const std::string pv = Ubel::InterpretStructByLayout(sbuf, 1, si, 8);
+        check("BOOLLAYOUT ⭐: two packed bits in one byte preview separately; mask 0 reads the byte",
+              pv == "{bA=false, bB=true, bU=true}", pv.c_str());
+    }
+
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL below it and NOTHING ELSE after any of the three. It calls Serie::InitUE4,
+    // UNREADVAL and BOOLNATIVE below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD and UNREADVAL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL and BOOLNATIVE are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -1218,6 +1270,84 @@ int main() {
               (opNull.typedValue + " vs " + opDead.typedValue).c_str());
 
         VirtualFree(upage, 0, MEM_RELEASE);
+    }
+
+    // -- BOOLNATIVE-2026-09-11 -- WalkInstance publishes a native bool as native -------------
+    //
+    // ⛔ POOL-FAKING, like IFACEREAD and UNREADVAL: WalkInstance picks the bool handler by
+    // `fi.TypeName`, so the walker must answer "BoolProperty" out of a fake pool. Own chunks and
+    // own pool, installed first; nothing needing the real pool may follow.
+    //
+    // [A3-BOOL-NATIVE-NOWRITE], the B05 review follow-up. Live Walker's rows come from
+    // WalkInstance's OWN probe loop, not ProbeBoolLayout, so BOOLLAYOUT above does not reach
+    // them. B05 shipped with every UI test injecting BoolNative directly and nothing asking the
+    // DLL whether it detects one -- which is how a classifier that recognised no real engine's
+    // native bool went green. One class blob per case (s_walkClassCache is keyed by address).
+    {
+        blk("BOOLNATIVE - WalkInstance marks SetBoolSize's native layout native, and only it");
+
+        static uint8_t bnEntry[3][0x40] = {};
+        const char* bnNames[3] = { "", "BoolProperty", "bFlag" };
+        static uintptr_t bnChunk[4] = {};
+        for (int i = 1; i <= 2; ++i) {
+            memcpy(bnEntry[i] + 0x10, bnNames[i], strlen(bnNames[i]) + 1);
+            bnChunk[i] = reinterpret_cast<uintptr_t>(bnEntry[i]);
+        }
+        static uintptr_t bnChunks[2] = { reinterpret_cast<uintptr_t>(bnChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(bnChunks), 0x10);
+        check("BOOLNATIVE setup: the pool resolves BoolProperty",
+              Serie::GetString(1) == "BoolProperty", Serie::GetString(1).c_str());
+
+        static uint8_t bnFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(bnFC + DynOff::FFIELDCLASS_NAME) = 1;
+
+        const bool savedFProp = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t bnInst[0x200] = {};
+        static uint8_t bnProp[3][0x100] = {};
+        static uint8_t bnCls[3][0x100] = {};
+        int bnNext = 0;
+        auto walkOne = [&](uint8_t fs, uint8_t bo, uint8_t bm, uint8_t fm, int32_t fieldOffset) {
+            const int i = bnNext++;
+            *reinterpret_cast<uintptr_t*>(bnProp[i] + DynOff::FFIELD_CLASS) =
+                reinterpret_cast<uintptr_t>(bnFC);
+            *reinterpret_cast<int32_t*>(bnProp[i] + DynOff::FFIELD_NAME)        = 2;
+            *reinterpret_cast<int32_t*>(bnProp[i] + DynOff::FPROPERTY_OFFSET)   = fieldOffset;
+            *reinterpret_cast<int32_t*>(bnProp[i] + DynOff::FPROPERTY_ELEMSIZE) = 1;
+            *reinterpret_cast<int32_t*>(bnProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            uint8_t* b = bnProp[i] + DynOff::FBOOLPROP_FIELDSIZE;
+            b[0] = fs; b[1] = bo; b[2] = bm; b[3] = fm;
+            *reinterpret_cast<int32_t*>(bnCls[i] + DynOff::USTRUCT_PROPSSIZE)    = 0x200;
+            *reinterpret_cast<uintptr_t*>(bnCls[i] + DynOff::USTRUCT_CHILDPROPS) =
+                reinterpret_cast<uintptr_t>(bnProp[i]);
+            const auto r = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(bnInst),
+                                              reinterpret_cast<uintptr_t>(bnCls[i]), 64, 2, false);
+            // Anti-vacuity: every ⭐ below is a boolean a missing field would satisfy for free.
+            check("BOOLNATIVE control: the fake class produced exactly one BoolProperty field",
+                  r.fields.size() == 1 && r.fields[0].typeName == "BoolProperty",
+                  std::to_string(r.fields.size()).c_str());
+            return r.fields.empty() ? Ubel::LiveFieldValue{} : r.fields[0];
+        };
+
+        bnInst[0x10] = 0x01;
+        const auto nat = walkOne(1, 0, 0x01, 0xFF, 0x10);
+        check("BOOLNATIVE ⭐: SetBoolSize's native bytes {1,0,01,FF} publish boolNative", nat.boolNative);
+        check("BOOLNATIVE: ...with no mask (Fern sends bool_native, not bool_mask)",
+              nat.boolFieldMask == 0);
+        check("BOOLNATIVE: ...and read as the whole byte", nat.typedValue == "true",
+              nat.typedValue.c_str());
+
+        bnInst[0x20] = 0x04;
+        const auto packed = walkOne(1, 0, 0x04, 0x04, 0x20);
+        check("BOOLNATIVE control: a packed bit is NOT native", !packed.boolNative);
+        check("BOOLNATIVE control: ...and carries its own mask", packed.boolFieldMask == 0x04);
+
+        const auto miss = walkOne(0, 0, 0, 0, 0x30);
+        check("BOOLNATIVE control: an unresolved probe is neither -- the UI then refuses",
+              !miss.boolNative && miss.boolFieldMask == 0);
+
+        DynOff::bUseFProperty = savedFProp;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
