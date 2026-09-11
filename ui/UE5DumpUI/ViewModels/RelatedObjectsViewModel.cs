@@ -38,6 +38,12 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     // selection-changed handler doesn't double-load what DetectTarget already loaded.
     private bool _suppressCandidateLoad;
 
+    // [W4-RELATED-RACE] Generation ticket, as ObjectTreeViewModel / InstanceFinderViewModel keep one.
+    // LoadAsync clears before its await and appends after, and a handoff or candidate pick can start a
+    // load while one is in flight: without the ticket both passed their Clear() and both appended.
+    // ⛔ Not `if (IsBusy) return;` -- DetectTargetAsync sets IsBusy and then awaits this very load.
+    private int _loadGen;
+
     /// <summary>Navigate the selected row's object into the Live Walker.</summary>
     public event Action<string>? NavigateToLiveWalker;
 
@@ -67,6 +73,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     /// selection-changed pipe walk while we null the selection.</summary>
     public void ClearOnDisconnect()
     {
+        _loadGen++;   // [W4-RELATED-RACE] a load still in flight must not repopulate the cleared grid
         _suppressCandidateLoad = true;
         try
         {
@@ -98,6 +105,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             StatusText = "Enter or hand off a UObject address.";
             return;
         }
+        int gen = ++_loadGen;
         try
         {
             IsBusy = true;
@@ -106,6 +114,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             Related.Clear();
             QueryClassName = "";
             var result = await _dump.GetRelatedObjectsAsync(addr);
+            if (gen != _loadGen) return;   // superseded: a newer load owns the grid, the header and the status
             foreach (var r in result.Related)
             {
                 Related.Add(r);
@@ -121,12 +130,12 @@ public partial class RelatedObjectsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = $"Error: {ex.Message}";
             _log.Error($"GetRelatedObjects failed for {addr}", ex);
+            if (gen == _loadGen) StatusText = $"Error: {ex.Message}";   // a superseded failure is not news
         }
         finally
         {
-            IsBusy = false;
+            if (gen == _loadGen) IsBusy = false;   // never clear the newer load's busy state
         }
     }
 

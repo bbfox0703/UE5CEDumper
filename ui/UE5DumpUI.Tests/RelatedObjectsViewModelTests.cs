@@ -139,4 +139,111 @@ public class RelatedObjectsViewModelTests
         Assert.Equal(0, dump.RelatedCallCount);          // but NOT auto-loaded
         Assert.Null(vm.SelectedCandidate);
     }
+
+    // ---- [W4-RELATED-RACE] two overlapping loads must not concatenate their graphs ----
+    //
+    // LoadAsync cleared before its await and appended after, with no generation ticket -- the only VM in
+    // its cluster without one. A handoff or a candidate pick landing while a load was in flight made both
+    // pass their Clear() and both Add(): object A's graph concatenated with B's under one header.
+    // ⛔ `if (IsBusy) return;` is not the fix: DetectTargetAsync sets IsBusy, then awaits this very load.
+
+    /// <summary>Each call parks on its own gate, so a test decides the order the loads finish in.</summary>
+    private sealed class GatedDumpService : StubDumpService
+    {
+        public readonly Dictionary<string, TaskCompletionSource<RelatedObjectsResult>> Gates = new();
+
+        public override Task<RelatedObjectsResult> GetRelatedObjectsAsync(
+            string addr, int maxResults = 128, CancellationToken ct = default)
+        {
+            var tcs = new TaskCompletionSource<RelatedObjectsResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Gates[addr] = tcs;
+            return tcs.Task;
+        }
+    }
+
+    private static RelatedObjectsResult Graph(string addr, string cls) => new()
+    {
+        QueryAddress = addr,
+        Related = new List<RelatedObject>
+        {
+            new() { Address = addr,       Relation = "Self",      ClassName = cls },
+            new() { Address = addr + "0", Relation = "Component", ClassName = cls + "Comp" },
+        },
+    };
+
+    private static RelatedObjectsViewModel CreateVm(GatedDumpService dump)
+        => new(dump, new NoopLogger(), new MockPlatformService(System.IO.Path.GetTempPath()));
+
+    [Fact]
+    public async Task OverlappingLoads_ShowOnlyTheNewestGraph()
+    {
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var first  = vm.LoadForAddressAsync("0xA");   // parks on its gate
+        var second = vm.LoadForAddressAsync("0xB");   // a handoff while the first is in flight
+        dump.Gates["0xB"].SetResult(Graph("0xB", "BP_B_C"));
+        await second;
+        dump.Gates["0xA"].SetResult(Graph("0xA", "BP_A_C"));   // the stale one lands LAST
+        await first;
+
+        Assert.Equal(2, vm.Related.Count);
+        Assert.All(vm.Related, r => Assert.StartsWith("0xB", r.Address));
+        Assert.Equal("BP_B_C", vm.QueryClassName);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task ASupersededLoad_DoesNotClearBusyUnderTheNewerOne()
+    {
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var first  = vm.LoadForAddressAsync("0xA");
+        var second = vm.LoadForAddressAsync("0xB");
+        dump.Gates["0xA"].SetResult(Graph("0xA", "BP_A_C"));   // the stale one lands FIRST
+        await first;
+        Assert.True(vm.IsBusy);                                  // B is still in flight
+        Assert.Empty(vm.Related);                                // and A drew nothing
+
+        dump.Gates["0xB"].SetResult(Graph("0xB", "BP_B_C"));
+        await second;
+        Assert.False(vm.IsBusy);
+        Assert.All(vm.Related, r => Assert.StartsWith("0xB", r.Address));
+    }
+
+    [Fact]
+    public async Task ASupersededLoadThatFails_DoesNotOverwriteTheNewerStatus()
+    {
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var first  = vm.LoadForAddressAsync("0xA");
+        var second = vm.LoadForAddressAsync("0xB");
+        dump.Gates["0xB"].SetResult(Graph("0xB", "BP_B_C"));
+        await second;
+        string newest = vm.StatusText;
+        dump.Gates["0xA"].SetException(new InvalidOperationException("pipe gone"));
+        await first;
+
+        Assert.Equal(newest, vm.StatusText);
+        Assert.DoesNotContain("Error", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ALoadLandingAfterADisconnect_IsDropped()
+    {
+        // X5 promises a reconnect never shows the previous game's addresses; a load in flight at
+        // disconnect repopulated the grid with them.
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var load = vm.LoadForAddressAsync("0xA");
+        vm.ClearOnDisconnect();
+        dump.Gates["0xA"].SetResult(Graph("0xA", "BP_A_C"));
+        await load;
+
+        Assert.Empty(vm.Related);
+        Assert.Equal("", vm.QueryClassName);
+    }
 }

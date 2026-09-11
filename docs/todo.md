@@ -1174,10 +1174,19 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
    no stats struct and no member to carry one. The Related Objects panel renders a cut-off
    enumeration as the complete one.
-3. ⬜ **`[W4-RELATED-RACE]`** `RelatedObjectsViewModel.cs:106`. `LoadAsync` clears before its
+3. ✅ **`[W4-RELATED-RACE]`** (FIXED IN SOURCE 2026-09-11, batch B17) `RelatedObjectsViewModel.cs:106`. `LoadAsync` clears before its
    `await` and appends after, with **no generation ticket** — the only VM in the cluster without
    one. Two overlapping loads both pass their `Clear()` and both `Add()`, so the grid holds object
    A's related graph concatenated with object B's under one header.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B17).
+   - `LoadAsync` takes a generation ticket (`_loadGen`), as `ObjectTreeViewModel` and
+     `InstanceFinderViewModel` do. A superseded load drops its result, never overwrites the newer
+     load's status with its own failure, and never clears the newer load's `IsBusy`.
+   - `ClearOnDisconnect` bumps the ticket too, so a load in flight at disconnect cannot bring the
+     previous game's graph back (X5's promise, in the same VM).
+   - ⛔ Not `if (IsBusy) return;`, as the unsafe-fix table says.
+   - **Tests, red first:** four, over a gated fake that lets two loads finish out of order: the stale
+     one lands last; lands first; fails; lands after a disconnect.
 4. ⬜ **`[W4-BOOKMARK-DT]`** `LiveWalkerViewModel.cs:4173`. `PersistedCrumb` carries
    `IsContainerView` and **not** `IsDataTableView`, so a bookmark saved on a DataTable row view can
    never be restored — and the failure is reported as *"the game may have restarted"*, blaming the
@@ -1201,7 +1210,7 @@ confirmed rows across three waves carry a harmful or partly-harmful obvious repa
 |---|---|---|
 | `[W4-STRIDE-TENTATIVE]` | add a `"tentative"` value to `item_layout_mode` | ⛔ wrong shape — that field is a 3-value **layout** descriptor and tentativeness is **orthogonal**; a tentative detection is still classed |
 | `[W4-RELATED-STOPS]` | one boolean for "we stopped early" | ⛔ that is **P5**, the conflation `docs/todo.md:1314` is already open about and `[W3-XREF-CAP]` flags — **four** conditions fire here and `Tot::Requested()` is one of them |
-| `[W4-RELATED-RACE]` | `if (IsBusy) return;` | ⛔ `DetectTargetAsync` sets `IsBusy = true` **then** awaits `LoadForAddress`, so that guard deadlocks the legitimate path |
+| `[W4-RELATED-RACE]` ✅ B17 | `if (IsBusy) return;` | ⛔ `DetectTargetAsync` sets `IsBusy = true` **then** awaits `LoadForAddress`, so that guard deadlocks the legitimate path |
 | `[W4-BOOKMARK-DT]` | the finding's own recommended second half | ⛔ dangerous — only the `PersistedCrumb` half is safe |
 | `[W4-LOOKUP-FILTER]` | clear `InstanceFilterText` inside the lookup | ⛔ actively harmful — it is an `[ObservableProperty]`, so the assignment re-enters the filter |
 | `[W4-HEXSORT]` | wire `DataGridSortComparers.Hex` onto `HexValue` | ⛔ unsound — `ulong.TryParse` with `NumberStyles.HexNumber` fails on the dump formats actually present |
@@ -4153,6 +4162,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 31 | `[W1-SPC-JOINMODE]` | MED | `git log --grep W1-SPC-JOINMODE` (batch B15) | the source pin red first (the wiring is in `MainWindowViewModel`, which no test constructs); 4 behaviour tests whose red is the mutation check. 6/6 mutants killed; UI 5021/5021 |
 | 32 | `[W1-DISCOVER-ARRAY]` | MED | `git log --grep W1-DISCOVER-ARRAY` (batch B16) | "Use →" on an array element and the scalar "Ghost" prop red first; the two array refusals take their red from the mutation check. 7/7 (one first tried in a form that did not compile; its compiling form went red) mutants killed across both rows; UI 5026/5026 |
 | 33 | `[W1-ARRAYCOUNT]` | LOW | same commit as row 32 (batch B16) | `ListArrayFields_CountsElements_NotInnerPropRows` red first (6 rows, 3 elements); the old one-prop test kept, its comment corrected |
+| 34 | `[W4-RELATED-RACE]` | MED | `git log --grep W4-RELATED-RACE` (batch B17) | 4 red first over a gated fake (the stale load lands last / first / fails / lands after a disconnect). 4/4 mutants killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4228,6 +4238,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L20 | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | Class Pivot on a game with a struct array that changes (an inventory, cargo, a party list):
 1. **Discover:** capture before and after an action that changes one array element, run Suggest Targets, pick the `Array[N].Inner` row and press Use →. The source switches to Snapshot Array, the right array is selected, and the pivot shows the changed element's key.
 2. **Element count:** the array-field picker's count equals the array's element count, not elements × inner props. | a game + UI |
+| L21 | `[W4-RELATED-RACE]` | Related Objects on a connected game: hand off one object from Instance Finder and, while it loads, hand off a second one (or pick another detected candidate). The grid shows only the second object's graph under its header, and the busy indicator stays on until the second load finishes. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4266,7 +4277,7 @@ completeness critic.
 | ✅ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
 | ✅ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
 | ✅ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
-| ⬜ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
+| ✅ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
 | ⬜ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
 | ⬜ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
 | ⬜ B20 batch method | `[W3-BATCH-METHOD]` | |
