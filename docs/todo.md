@@ -2523,7 +2523,7 @@ the same shape as A1:
 | `[A2-HEAP-ANCHOR-TEXT]` | "the data-scan fallback anchors just as well as the AOB" | `Genau.cpp:1666`, `verification-register.md:7940` |
 | `[A2-METHODE-MANUALMAP]` | CE's `InjectDLL` TRUE "can be true on a real failure" | commit b491b1dc (AB2), `working-lessons.md:2408-2417` |
 
-##### ⛔ `[A2-UFUNC-TAIL-4X]` MED — on UE 4.11-4.17, `ParmsSize` is really `NumParms`, and invoke buffers are undersized inside the game
+##### ✅ `[A2-UFUNC-TAIL-4X]` MED — on UE 4.11-4.17, `ParmsSize` is really `NumParms`, and invoke buffers are undersized inside the game (FIXED IN SOURCE 2026-09-11)
 
 `Ubel.cpp:1472-1474`. `FunctionFlags` itself is measured (`DynOff::FunctionFlagsOffsetFor`, which is
 correct for these versions). But the three fields behind it are read at a hardcoded `+4/+6/+8`, under a
@@ -2566,6 +2566,35 @@ the three reads therefore land one field late:
 - **Same family, a lead:** the UProperty-mode param `StructProperty` / `PropertyClass` reads in
   `WalkFunctions` use a fixed `UPROPERTY_OFFSET+0x2C` (`:1632`, `:1651`). For 4.11-4.17, c0b4e709's
   own measured table says 0x28. Fix the two together.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B07). It is one commit with
+  `[A3-CEFORM-4X-STALESLAB]` and the lead above.
+  - **The shift.** `DynOff::FunctionTailShiftFor(ueVersion)` sits in Grimoire.h beside
+    `FunctionFlagsOffsetFor`.
+    - It is 2 on 4.11-4.17 and 0 otherwise.
+    - It is keyed on the VERSION, never on `funcFlagsOff == 0x88`.
+    - An unknown version (0) keeps the old reads.
+  - **The reader.** `ReadFuncFlagsAndParams` shifts its tail by it. It is the one reader
+    WalkFunctions and `ResolveFunctionInfo` share, so everything that lists or invokes functions
+    gets the real `ParmsSize`, Fern's invoke sizing included.
+  - **The lead.** WalkFunctions' two UProperty-mode subclass reads use
+    `DynOff::UPropertySubclassStartFor`.
+    - For a known version it is exactly `UBoolPropFieldSizeFor`'s measured delta: 0x28 on
+      4.11-4.17, 0x2C from 4.18, plus the CPN slot.
+    - An unknown version keeps +0x2C.
+  - **Tests, red first.**
+    - `dll_core_test` UFUNCTAIL: a 4.15 UFunction read back numParms 52 / parmsSize 3 /
+      rvo 0x30, exactly the table above. 3 red.
+    - `dll_core_test` UFUNCWALK: a pool-faking WalkFunctions walk. Both subclass reads came back
+      empty at 4.15. 2 red.
+    - The 4.18 and UE 5.5 controls were green throughout.
+    - `dll_helpers_test` pins the 4.17/4.18 boundary, the unknown and below-floor versions, and the
+      subclass start against `UBoolPropFieldSizeFor` at every known version, CPN both ways.
+  - ⬜ **Not done (the row calls it optional):** Fern's invoke sizing does not also take the max
+    with the walked params' `max(offset+size)`. The root fix makes `ParmsSize` right, and the CE
+    form (below) carries the walked-max hardening.
+  - 🟡 **Lead, not filed:** the Array / Map / Set UProperty-mode probes in WalkInstance also start
+    at a fixed `UPROPERTY_OFFSET + 0x2C`. Their `{0, ±4, ±8, ±0x10}` spread already covers 0x28 and
+    the CPN +8, so only the probe ORDER differs on 4.11-4.17. Left as is.
 
 ##### ⛔ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty
 
@@ -2797,8 +2826,8 @@ be trusted"*.
   - `GetCachedStructFields :2580-2587`.
 
 ⬜ **For the fix pass:**
-- `[A2-UFUNC-TAIL-4X]` + the `WalkFunctions` +0x2C lead form one "UE 4.11-4.17 layout" change: a
-  version-keyed constexpr pinned at the 4.17 / 4.18 boundary.
+- ✅ `[A2-UFUNC-TAIL-4X]` + the `WalkFunctions` +0x2C lead form one "UE 4.11-4.17 layout" change: a
+  version-keyed constexpr pinned at the 4.17 / 4.18 boundary. (Done 2026-09-11, batch B07.)
 - `[A2-TOPTIONAL-INTRUSIVE]` + the Find Refs twin + `technical-notes.md` land together.
 - `[A2-WALKCLASSEX-UNMAPPED]` + the `GetCachedStructFields` twin land together, with the `VirtualFree`
   test.
@@ -3036,7 +3065,7 @@ mask never reached it: no mask exists at any tier of the invoke wire.
   - Tests: `InvokeParamDialogTests` / `StructReturnDecoderTests` `*_PackedBools_ReadTheirOwnBit`,
     red first.
 
-##### `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row
+##### ✅ `[A3-CEFORM-4X-STALESLAB]` LOW — an ADDENDUM to `[A2-UFUNC-TAIL-4X]`, correcting that row (FIXED IN SOURCE 2026-09-11)
 
 `InvokeScriptGenerator.cs:396`/`:420`. The A2 row said the CE mailbox path "only reports a wrong
 `parmsSize`". But the CE invoke form bakes that wrong `parmsSize` as its zero-fill span, and `Mimic`
@@ -3050,6 +3079,20 @@ A2's root fix cures it. The hardening is safe only as `max(PARMS_SIZE, max(Offse
 
 - 🟡 **Unfiled lead:** the CE form has **no 1024 clamp on any version**, and `Mimic` never refuses
   `ParmsSize > 1024` on the DLL side.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded hardening** (batch B07).
+  - The CE form's zero-fill span is now `InvokeScriptGenerator.ZeroFillSpan`:
+    `max(ParmsSize, max(Offset+Size))` over every param, the return slot INCLUDED.
+  - It is clamped to `CeMailboxLayout.ParamsDataBytes`, 1024. That is Mimic.h's
+    `paramsData[1024]`, read back by `InvokeScriptTests.ParamsDataBytes_MatchesMimicH`.
+  - It is never the walked size alone.
+  - Both call sites use it. That includes the direct no-input path: a return FString slot is the
+    same stale-free hazard.
+  - `PARMS_SIZE` still reports the DLL's number.
+  - **Tests:** `InvokeScriptTests.ZeroFill_*`.
+    - Red first (3): a wrong ParmsSize, the direct path's return slot, and the clamp.
+    - The right-ParmsSize control was green both ways.
+  - The 🟡 lead above is half closed. The CE form now clamps to the slab on every version; the
+    DLL side still never refuses `ParmsSize > 1024`, which stays a lead, not filed.
 
 ##### `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy
 
@@ -3627,6 +3670,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout`. **Review follow-up:** the call site is pinned in `dll_core_test` BOOLLAYOUT; its mutant was killed |
 | 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946 |
 | 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip) |
+| 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0 |
+| 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3661,6 +3706,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L10 | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | On DumperTest:
 1. **CE invoke form:** generate it for a UFunction that takes a `TArray` (or a delegate) and one that takes an `FText`. The labels read `EMPTY ONLY` / `CANNOT BE SENT`. Type `5` into the TArray box and press FIRE: the form says "nothing was sent", stays open, and the game logs no call. Clear it to `0`, press FIRE, and the call goes out with an empty array. The FText function refuses every FIRE.
 2. **App FIRE:** on a struct param that has an `FString` member, typing text into that member refuses with its name. Leaving it empty fires, and the callee sees an empty string, not a garbage pointer. | DumperTest + UI; **CE for step 1 — announce first** |
+| L11 | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | On a **4.11-4.17** title (NEKOPALIVE 4.11 or Extinction 4.15, per `test-games.md`), with the NEW DLL:
+1. **ParmsSize:** list a class's functions. A UFunction with params reports a `parms_size` of at least its last param's offset + size, not a small number equal to its param count, and `num_parms` matches the param list.
+2. **Invoke:** FIRE a function that has an out-param or a return value. It completes, and the game survives several repeats; the old buffer was undersized inside the game.
+3. **Param types:** in UProperty mode, the invoke dialog shows each Object param's class and each Struct param's struct name.
+4. **CE form:** use Copy CE Invoke Script on a function with an out FString. The script's zero-fill loop covers the whole param span. Run it twice after a Freeze rescan: no crash. | a 4.11-4.17 title + UI; **CE for step 4 — announce first** |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3689,7 +3739,7 @@ completeness critic.
 | ✅ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
 | ✅ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
 | ✅ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
-| ⬜ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
+| ✅ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
 | ⬜ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
 | ⬜ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
 | ⬜ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |

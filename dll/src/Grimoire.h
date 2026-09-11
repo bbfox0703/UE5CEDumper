@@ -479,6 +479,21 @@ constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName
 // old sweep tried and which matches no version of anything.
 inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
 
+// === UFunction's tail behind FunctionFlags: NumParms (u8) / ParmsSize (u16) / ReturnValueOffset ===
+//
+// [A2-UFUNC-TAIL-4X] These three were read at a flat +4/+6/+8 under a comment calling that
+// "stable across all UE versions". It is not: RE-UE4SS's MemberVariableLayout templates put a
+// `uint16 RepOffset` FIRST on every version from 4.11 to 4.17 (4.11: FunctionFlags 0x88,
+// RepOffset 0x8C, NumParms 0x8E) and drop it at 4.18 (NumParms 0x8C) -- re-checked in the
+// 4_11 / 4_17 / 4_18 templates. On 4.11-4.17 the reads landed one field late: `parmsSize` was
+// really NumParms, so every invoke buffer sized from it was undersized INSIDE the game.
+// Returns the bytes to add to +4/+6/+8.
+// ⛔ Keyed on the VERSION, never on `funcFlagsOff == 0x88`: 0x88 is also 4.18-4.21, which have no
+// RepOffset (OCTOPATH, DQ XI S). An unknown version (0) keeps the reads it always had.
+constexpr int FunctionTailShiftFor(unsigned ueVersion) {
+    return (ueVersion >= 411 && ueVersion < 418) ? 2 : 0;
+}
+
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
 //
 // ⛔ This was the ONE UProperty-mode offset nothing calibrated. UBOOLPROP_FIELDSIZE had
@@ -528,6 +543,18 @@ constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
                     : (ueVersion >= 411) ? 0x28
                     : 0x24;                       // 4.07-4.10, below the floor
     return offsetInternal + delta + (casePreservingName ? 8 : 0);
+}
+
+// The FIRST field of a UProperty subclass -- UStructProperty::Struct, UObjectPropertyBase::
+// PropertyClass, UBoolProperty::FieldSize: every one sits right behind the UProperty base, so the
+// measured delta above applies to all of them. [A2-UFUNC-TAIL-4X]'s lead: WalkFunctions read the
+// first two at a flat +0x2C, wrong on 4.11-4.17. For a KNOWN version this IS
+// UBoolPropFieldSizeFor; an unknown version (0) keeps the +0x2C those readers always used (plus
+// the CPN slot), never the below-floor 0x24.
+constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
+                                        bool casePreservingName) {
+    return ueVersion >= 411 ? UBoolPropFieldSizeFor(offsetInternal, ueVersion, casePreservingName)
+                            : offsetInternal + 0x2C + (casePreservingName ? 8 : 0);
 }
 
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===

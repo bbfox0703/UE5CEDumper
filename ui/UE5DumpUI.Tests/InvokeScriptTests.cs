@@ -1648,4 +1648,89 @@ public class InvokeScriptTests
         Assert.DoesNotContain("_isZeroDefault", script, StringComparison.Ordinal);
         Assert.DoesNotContain("nothing was sent", BeforeTheMailbox(FireHandler(script)), StringComparison.Ordinal);
     }
+
+    // --- [A3-CEFORM-4X-STALESLAB] the zero-fill covers every param, and never passes the slab ---
+    //
+    // Mimic runs ProcessEvent on the PERSISTENT 1024-byte paramsData slab, which other commands
+    // dirty: LIST_INSTANCES on every Freeze rescan, the pose handlers, the pointer query. The CE
+    // form zero-filled only `ParmsSize` bytes. On UE 4.11-4.17 the DLL read NumParms INTO ParmsSize
+    // ([A2-UFUNC-TAIL-4X]), so struct and out-FString slots past it carried the previous command's
+    // bytes, and an out-FString assignment then freed a stale pointer inside the game. The recorded
+    // hardening: max(ParmsSize, max(Offset+Size)) clamped to the slab, never the walked size alone.
+
+    private static FunctionInfoModel SpanFunc(ushort parmsSize,
+        params (string Name, string Type, int Off, int Size, bool Out, bool Ret)[] ps) => new()
+    {
+        Name = "F", NumParms = (byte)ps.Length, ParmsSize = parmsSize,
+        Params = ps.Select(p => new FunctionParamModel
+        {
+            Name = p.Name, TypeName = p.Type, Offset = p.Off, Size = p.Size, IsOut = p.Out, IsReturn = p.Ret,
+        }).ToList(),
+    };
+
+    [Fact]
+    public void ZeroFill_CoversParamsPastAWrongParmsSize()
+    {
+        // The 4.11-4.17 shape: ParmsSize is really NumParms (2); the params reach byte 32.
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(2,
+            ("Count", "IntProperty", 0, 4, false, false),
+            ("Label", "StrProperty", 16, 16, true, false)));
+
+        Assert.Contains("for i = 0, 31 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("for i = 0, 1 do writeByte", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ZeroFill_DirectInvoke_CoversTheReturnSlot()
+    {
+        // No inputs, so the direct path. A return FString must start zeroed as well: the callee's
+        // assignment frees whatever Data pointer it finds there.
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(1,
+            ("ReturnValue", "StrProperty", 0, 16, true, true)));
+
+        Assert.Contains("for i = 0, 15 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ZeroFill_IsClampedToTheMailboxSlab()
+    {
+        // Mimic.h: `uint8_t paramsData[1024]`. A span past it would write over what follows.
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(2000,
+            ("Big", "StructProperty", 0, 2000, false, false)));
+
+        Assert.Contains("for i = 0, 1023 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("for i = 0, 1999", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ZeroFill_ARightParmsSize_IsUnchanged()
+    {
+        // The control, green before and after: params inside ParmsSize change nothing, and the
+        // DLL's own number is still the one reported.
+        var script = InvokeScriptGenerator.Generate("C_C", "F", SpanFunc(42,
+            ("Amount", "IntProperty", 0, 4, false, false),
+            ("ReturnValue", "BoolProperty", 40, 1, true, true)));
+
+        Assert.Contains("for i = 0, 41 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+        Assert.Contains("PARMS_SIZE   = 42", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParamsDataBytes_MatchesMimicH()
+    {
+        // The clamp is only as right as this number, so read Mimic.h's own declaration back
+        // (the source-reading pattern of InvokeBoolMaskTests / ClassListCapTests).
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src", "Mimic.h");
+            if (File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        var m = System.Text.RegularExpressions.Regex.Match(
+            File.ReadAllText(path!), @"uint8_t\s+paramsData\[(\d+)\]");
+        Assert.True(m.Success, "Mimic.h's paramsData declaration not found — re-point this pin");
+        Assert.Equal(CeMailboxLayout.ParamsDataBytes, int.Parse(m.Groups[1].Value));
+    }
 }

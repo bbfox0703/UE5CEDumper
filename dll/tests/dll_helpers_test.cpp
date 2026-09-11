@@ -5683,6 +5683,25 @@ static void Test_SoftObjectPathSize() {
 }
 
 static void Test_FunctionFlagsOffset() {
+    // [A2-UFUNC-TAIL-4X] the tail behind FunctionFlags: a uint16 RepOffset on 4.11-4.17 ONLY.
+    for (unsigned v = 411; v <= 417; ++v)
+        EXPECT("UFUNC-TAIL: 4.11-4.17 carry RepOffset -> shift 2", DynOff::FunctionTailShiftFor(v) == 2);
+    for (unsigned v : { 418u, 419u, 421u, 422u, 424u, 425u, 427u, 500u, 505u, 508u })
+        EXPECT("UFUNC-TAIL: 4.18+ has no RepOffset -> shift 0", DynOff::FunctionTailShiftFor(v) == 0);
+    EXPECT("UFUNC-TAIL: an UNKNOWN version (0) keeps the old reads", DynOff::FunctionTailShiftFor(0) == 0);
+    EXPECT("UFUNC-TAIL: below the 4.11 floor is not guessed", DynOff::FunctionTailShiftFor(410) == 0);
+    // ...and the UProperty subclass start WalkFunctions' Struct / PropertyClass reads use.
+    EXPECT("UFUNC-TAIL: 4.15 subclass start 0x50 -> 0x78",
+           DynOff::UPropertySubclassStartFor(0x50, 415, false) == 0x78);
+    EXPECT("UFUNC-TAIL: 4.18 subclass start 0x44 -> 0x70",
+           DynOff::UPropertySubclassStartFor(0x44, 418, false) == 0x70);
+    EXPECT("UFUNC-TAIL: an unknown version keeps the old +0x2C",
+           DynOff::UPropertySubclassStartFor(0x44, 0, false) == 0x70);
+    for (unsigned v = 411; v <= 509; ++v)
+        for (bool cpn : { false, true })
+            EXPECT("UFUNC-TAIL: the subclass start IS UBoolPropFieldSizeFor at every known version",
+                   DynOff::UPropertySubclassStartFor(0x50, v, cpn) == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
+
     // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
     // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
     // not retargeted, because 0xC0 is FirstPropertyToInit (an FProperty*) from UE 5.x.

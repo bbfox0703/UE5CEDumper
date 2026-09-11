@@ -820,14 +820,80 @@ int main() {
               pv == "{bA=false, bB=true, bU=true}", pv.c_str());
     }
 
+    // -- UFUNCTAIL-2026-09-11 -- NumParms / ParmsSize / ReturnValueOffset on UE 4.11-4.17 ----
+    //
+    // [A2-UFUNC-TAIL-4X]. FunctionFlags is measured per version, but the three fields behind it
+    // were read at a flat +4/+6/+8, under a comment calling that "stable across all UE versions".
+    // It is not: RE-UE4SS's MemberVariableLayout templates put a uint16 RepOffset first on every
+    // version from 4.11 to 4.17 (4.11: FunctionFlags 0x88, RepOffset 0x8C, NumParms 0x8E) and drop
+    // it at 4.18 (NumParms 0x8C). So on 4.11-4.17 `parmsSize` was really NumParms, and every
+    // invoke buffer sized from it was undersized inside the game. Pure (no name pool), so it sits
+    // above the pool-faking tail.
+    {
+        blk("UFUNCTAIL - the UFunction tail follows the version's RepOffset");
+
+        const uint32_t savedVer = g_cachedUEVersion;
+        const bool     savedCpn = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+        static uint8_t fn[0x100];
+        auto put16 = [](uint8_t* p, uint16_t v) { memcpy(p, &v, 2); };
+        auto readAt = [&](unsigned ver) {
+            g_cachedUEVersion = ver;
+            FunctionInfo fi{};   // GLOBAL, like FieldInfo
+            Ubel::ReadFuncFlagsAndParams(reinterpret_cast<uintptr_t>(fn), fi);
+            return fi;
+        };
+        const uint32_t flags = 0x00080401;
+        char buf[96];
+
+        // 4.15 (4.11-4.17): FunctionFlags 0x88, RepOffset 0x8C, NumParms 0x8E, ParmsSize 0x90, RVO 0x92.
+        memset(fn, 0, sizeof(fn));
+        memcpy(fn + 0x88, &flags, 4);
+        put16(fn + 0x8C, 0x1234);   // RepOffset
+        fn[0x8E] = 3;               // NumParms
+        put16(fn + 0x90, 0x30);     // ParmsSize
+        put16(fn + 0x92, 0x28);     // ReturnValueOffset
+        const auto f415 = readAt(415);
+        snprintf(buf, sizeof(buf), "numParms %u parmsSize 0x%X rvo 0x%X",
+                 f415.numParms, f415.parmsSize, f415.returnValueOffset);
+        check("UFUNCTAIL ⭐: 4.15 reads the real ParmsSize (0x30), not NumParms", f415.parmsSize == 0x30, buf);
+        check("UFUNCTAIL ⭐: ...the real NumParms (3), not RepOffset's low byte", f415.numParms == 3, buf);
+        check("UFUNCTAIL ⭐: ...and the real ReturnValueOffset (0x28)", f415.returnValueOffset == 0x28, buf);
+
+        // 4.18: no RepOffset -- NumParms 0x8C, ParmsSize 0x8E, RVO 0x90. The boundary's other side.
+        memset(fn, 0, sizeof(fn));
+        memcpy(fn + 0x88, &flags, 4);
+        fn[0x8C] = 2;
+        put16(fn + 0x8E, 0x18);
+        put16(fn + 0x90, 0x10);
+        const auto f418 = readAt(418);
+        snprintf(buf, sizeof(buf), "numParms %u parmsSize 0x%X rvo 0x%X",
+                 f418.numParms, f418.parmsSize, f418.returnValueOffset);
+        check("UFUNCTAIL control: 4.18 has no RepOffset and reads as before",
+              f418.numParms == 2 && f418.parmsSize == 0x18 && f418.returnValueOffset == 0x10, buf);
+
+        // UE 5.5: FunctionFlags 0xB0 with the tail right behind it. Unchanged.
+        memset(fn, 0, sizeof(fn));
+        memcpy(fn + 0xB0, &flags, 4);
+        fn[0xB4] = 4;
+        put16(fn + 0xB6, 0x40);
+        put16(fn + 0xB8, 0x38);
+        const auto f505 = readAt(505);
+        check("UFUNCTAIL control: UE 5.5 reads as before",
+              f505.numParms == 4 && f505.parmsSize == 0x40 && f505.returnValueOffset == 0x38);
+
+        g_cachedUEVersion           = savedVer;
+        DynOff::bCasePreservingName = savedCpn;
+    }
+
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL and BOOLNATIVE below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE and UFUNCWALK below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL and BOOLNATIVE are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE and UFUNCWALK are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -1348,6 +1414,107 @@ int main() {
               !miss.boolNative && miss.boolFieldMask == 0);
 
         DynOff::bUseFProperty = savedFProp;
+    }
+
+    // -- UFUNCWALK-2026-09-11 -- WalkFunctions' UProperty-mode subclass reads on 4.11-4.17 ----
+    //
+    // ⛔ POOL-FAKING, like IFACEREAD / UNREADVAL / BOOLNATIVE: WalkFunctions keeps a child only if
+    // its class is NAMED "Function", and types each param by its class's NAME. Own pool, first.
+    //
+    // [A2-UFUNC-TAIL-4X]'s lead. In UProperty mode (UE4 < 4.25) WalkFunctions read a param's
+    // UStructProperty::Struct / UObjectPropertyBase::PropertyClass at a flat
+    // UPROPERTY_OFFSET + 0x2C. That is the 4.18+ delta: on 4.11-4.17 Offset_Internal and
+    // RepNotifyFunc sit the other way round and the first subclass field is at +0x28 (the measured
+    // table on DynOff::UBoolPropFieldSizeFor). The pointer is planted ONLY at the real slot, so a
+    // read at the other one gets a misaligned half-pointer that names nothing.
+    {
+        blk("UFUNCWALK - WalkFunctions reads a UProperty param's subclass field at the version's delta");
+
+        static uint8_t wfEntry[9][0x40] = {};
+        const char* wfNames[9] = { "", "Function", "ObjectProperty", "Target", "Actor",
+                                   "StructProperty", "Hit", "HitResult", "DoIt" };
+        static uintptr_t wfChunk[10] = {};
+        for (int i = 1; i <= 8; ++i) {
+            memcpy(wfEntry[i] + 0x10, wfNames[i], strlen(wfNames[i]) + 1);
+            wfChunk[i] = reinterpret_cast<uintptr_t>(wfEntry[i]);
+        }
+        static uintptr_t wfChunks[2] = { reinterpret_cast<uintptr_t>(wfChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(wfChunks), 0x10);
+        check("UFUNCWALK setup: the pool resolves Function", Serie::GetString(1) == "Function",
+              Serie::GetString(1).c_str());
+
+        const bool     savedFPropW = DynOff::bUseFProperty;
+        const bool     savedCpnW   = DynOff::bCasePreservingName;
+        const int      savedOffW   = DynOff::UPROPERTY_OFFSET;
+        const uint32_t savedVerW   = g_cachedUEVersion;
+        DynOff::bUseFProperty       = false;
+        DynOff::bCasePreservingName = false;
+
+        // Named objects: a zeroed UObject whose FName is the given pool index. 0x100 bytes, so a
+        // WalkClass of the fake struct reads zeros, not a neighbour.
+        static uint8_t wfNamed[9][0x100] = {};
+        auto named = [&](int idx) {
+            *reinterpret_cast<int32_t*>(wfNamed[idx] + Grimoire::OFF_UOBJECT_NAME) = idx;
+            return reinterpret_cast<uintptr_t>(wfNamed[idx]);
+        };
+        auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+
+        // ONE set of blobs per case: a class, its UFunction, two UProperty params.
+        static uint8_t wfCls[2][0x100] = {}, wfFn[2][0x100] = {};
+        static uint8_t wfObjP[2][0x100] = {}, wfStrP[2][0x100] = {};
+        auto walkAt = [&](int c, unsigned ver, int offsetInternal, int subclassStart) {
+            g_cachedUEVersion        = ver;
+            DynOff::UPROPERTY_OFFSET = offsetInternal;
+            put(wfCls[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfFn[c]));
+            put(wfFn[c], Grimoire::OFF_UOBJECT_CLASS, named(1));                 // "Function"
+            put32(wfFn[c], Grimoire::OFF_UOBJECT_NAME, 8);                       // "DoIt"
+            put32(wfFn[c], DynOff::FunctionFlagsOffsetFor(ver, false), 0x00080401);
+            put(wfFn[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfObjP[c]));
+            // param 1: ObjectProperty "Target" -> PropertyClass "Actor" at the REAL subclass start
+            put(wfObjP[c], Grimoire::OFF_UOBJECT_CLASS, named(2));
+            put32(wfObjP[c], Grimoire::OFF_UOBJECT_NAME, 3);
+            put32(wfObjP[c], DynOff::UPROPERTY_ELEMSIZE, 8);
+            put32(wfObjP[c], offsetInternal, 0);
+            put(wfObjP[c], subclassStart, named(4));
+            put(wfObjP[c], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfStrP[c]));
+            // param 2: StructProperty "Hit" -> Struct "HitResult" at the REAL subclass start
+            put(wfStrP[c], Grimoire::OFF_UOBJECT_CLASS, named(5));
+            put32(wfStrP[c], Grimoire::OFF_UOBJECT_NAME, 6);
+            put32(wfStrP[c], DynOff::UPROPERTY_ELEMSIZE, 0x88);
+            put32(wfStrP[c], offsetInternal, 8);
+            put(wfStrP[c], subclassStart, named(7));
+            return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(wfCls[c]));
+        };
+        // Anti-vacuity: every ⭐ is a string compare an empty walk would fail -- but say which.
+        auto paramsOf = [&](const char* who, const std::vector<FunctionInfo>& fs) {
+            const bool shaped = fs.size() == 1 && fs[0].params.size() == 2;
+            check((std::string("UFUNCWALK control: ") + who + " -- one function, two params").c_str(),
+                  shaped, std::to_string(fs.size()).c_str());
+            return shaped ? fs[0].params : std::vector<FunctionParam>{};
+        };
+
+        // 4.15 (4.11-4.17): Offset_Internal 0x50 -> first subclass field 0x78 (+0x28).
+        const auto p415 = paramsOf("4.15", walkAt(0, 415, 0x50, 0x78));
+        if (p415.size() == 2) {
+            check("UFUNCWALK ⭐: 4.15 reads the ObjectProperty's PropertyClass at +0x28",
+                  p415[0].objClassName == "Actor", p415[0].objClassName.c_str());
+            check("UFUNCWALK ⭐: ...and the StructProperty's Struct at +0x28",
+                  p415[1].structType == "HitResult", p415[1].structType.c_str());
+        }
+        // 4.18: Offset_Internal 0x44 -> first subclass field 0x70 (+0x2C). The control.
+        const auto p418 = paramsOf("4.18", walkAt(1, 418, 0x44, 0x70));
+        if (p418.size() == 2) {
+            check("UFUNCWALK control: 4.18 reads PropertyClass at +0x2C as before",
+                  p418[0].objClassName == "Actor", p418[0].objClassName.c_str());
+            check("UFUNCWALK control: ...and Struct at +0x2C as before",
+                  p418[1].structType == "HitResult", p418[1].structType.c_str());
+        }
+
+        g_cachedUEVersion           = savedVerW;
+        DynOff::UPROPERTY_OFFSET    = savedOffW;
+        DynOff::bCasePreservingName = savedCpnW;
+        DynOff::bUseFProperty       = savedFPropW;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

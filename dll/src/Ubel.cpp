@@ -1478,13 +1478,17 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     }
     fi.functionFlags = funcFlags;
 
-    // NumParms/ParmsSize/ReturnValueOffset are at fixed offsets relative to
-    // FunctionFlags (stable across all UE versions):
-    //   +0x04 = NumParms (uint8)  +0x06 = ParmsSize (uint16)  +0x08 = ReturnValueOffset (uint16)
+    // NumParms/ParmsSize/ReturnValueOffset follow FunctionFlags at +0x04 (uint8) / +0x06
+    // (uint16) / +0x08 (uint16) -- EXCEPT on 4.11-4.17, where a uint16 RepOffset sits first and
+    // shifts all three by 2. This comment used to call the flat offsets "stable across all UE
+    // versions"; on 4.11-4.17 that read NumParms as ParmsSize and undersized every invoke buffer
+    // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
+    // on DynOff::FunctionTailShiftFor.
     if (funcFlagsOff >= 0) {
-        Macht::ReadSafe<uint8_t> (funcAddr + funcFlagsOff + 0x04, fi.numParms);
-        Macht::ReadSafe<uint16_t>(funcAddr + funcFlagsOff + 0x06, fi.parmsSize);
-        Macht::ReadSafe<uint16_t>(funcAddr + funcFlagsOff + 0x08, fi.returnValueOffset);
+        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion);
+        Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
+        Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
+        Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);
     }
 }
 
@@ -1615,6 +1619,11 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     uintptr_t paramChain = 0;
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
                         uintptr_t cur = paramChain;
+                        // [A2-UFUNC-TAIL-4X]'s lead: the first subclass field (Struct /
+                        // PropertyClass) sits at the version's MEASURED delta, not a flat +0x2C
+                        // (+0x28 on 4.11-4.17). See DynOff::UPropertySubclassStartFor.
+                        const int subclassStart = DynOff::UPropertySubclassStartFor(
+                            DynOff::UPROPERTY_OFFSET, g_cachedUEVersion, DynOff::bCasePreservingName);
                         int paramLimit = 256;
                         std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {
@@ -1642,7 +1651,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
                                 // UStructProperty::Struct is at UPROPERTY subclass extension offset
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, structPtr) && structPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && structPtr) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
@@ -1661,7 +1670,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
                                 uintptr_t classPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, classPtr) && classPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && classPtr) {
                                     std::string cn = GetName(classPtr);
                                     if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
                                         param.objClassName = cn;

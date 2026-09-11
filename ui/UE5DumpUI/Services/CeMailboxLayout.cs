@@ -34,6 +34,10 @@ internal static class CeMailboxLayout
     // byte-identical, which CeMailboxLayoutOffsetTests pins.
     public const string OffParamsData1  = "0x330";  // params_data[1]
     public const string OffParamsData2  = "0x338";  // params_data[2]
+    // The params slab's size: Mimic.h `uint8_t paramsData[1024]`. A zero-fill (or any write)
+    // past it lands on whatever follows the struct. [A3-CEFORM-4X-STALESLAB]
+    // InvokeScriptTests.ParamsDataBytes_MatchesMimicH reads Mimic.h's declaration back.
+    public const int    ParamsDataBytes = 1024;
 
     // Auto-start readiness values written to OffInitState (must match Mimic.h
     // InitState). Unlike every other field here this one is NOT part of a

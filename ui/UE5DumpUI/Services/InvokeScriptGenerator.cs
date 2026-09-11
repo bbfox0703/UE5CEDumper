@@ -88,13 +88,16 @@ public static class InvokeScriptGenerator
         Line(sb, "dbg(string.format('  Instance: 0x%X  |  UFunction: 0x%X', instanceAddr, ufuncPtr))");
         Line(sb);
 
+        // [A3-CEFORM-4X-STALESLAB] Zero-fill the span every param occupies, not just the reported
+        // ParmsSize -- see ZeroFillSpan. PARMS_SIZE above still reports the DLL's own number.
+        int zeroFill = ZeroFillSpan(func);
         if (hasParams)
         {
-            AppendParamForm(sb, className, funcName, func, inputParams, func.ParmsSize);
+            AppendParamForm(sb, className, funcName, func, inputParams, zeroFill);
         }
         else
         {
-            AppendDirectInvoke(sb, className, funcName, func, func.ParmsSize);
+            AppendDirectInvoke(sb, className, funcName, func, zeroFill);
         }
 
         Line(sb, "{$asm}");
@@ -244,6 +247,30 @@ public static class InvokeScriptGenerator
         Line(sb, "    return");
         Line(sb, "end");
         Line(sb);
+    }
+
+    /// <summary>
+    /// [A3-CEFORM-4X-STALESLAB] How many bytes of the mailbox's params slab the script zero-fills
+    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every param INCLUDING the
+    /// return value, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
+    ///
+    /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
+    /// clears only the return slot itself. So every byte the callee reads, and every out-param
+    /// slot it assigns into, must be zeroed here: an out-FString assignment frees whatever Data
+    /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
+    /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
+    ///
+    /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
+    /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
+    /// the sum is taken in <c>long</c> so a garbage Offset cannot overflow into a small number.</para>
+    /// </summary>
+    internal static int ZeroFillSpan(FunctionInfoModel func)
+    {
+        long span = func.ParmsSize;
+        foreach (var p in func.Params)
+            if (p.Offset >= 0 && p.Size > 0)
+                span = Math.Max(span, (long)p.Offset + p.Size);
+        return (int)Math.Min(span, CeMailboxLayout.ParamsDataBytes);
     }
 
     private static void AppendDirectInvoke(StringBuilder sb, string className, string funcName,
