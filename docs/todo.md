@@ -1803,8 +1803,8 @@ SCAN-CORE     1    0    1    0    0    0    0    0
      - It is now its own Pointer element on `InvocationList.Data`, at `Offset + DelegatePad`.
    - **Tests, red first:** a unicast leaf at +0 and +8, and a multicast drill on a checked build and on
      Shipping. 5/5 mutants killed (with `[A4-PUSHCE-UNPADDED]`); UI 5162/5162.
-   - ⬜ **Not in this row:** a `TArray<FScriptDelegate>`'s ELEMENT leaves. That is
-     `[A4-DELEGATE-ARRAY-PAD]` (L03b).
+   - ✅ **A `TArray<FScriptDelegate>`'s ELEMENT leaves** were a separate row, `[A4-DELEGATE-ARRAY-PAD]`, now also
+     fixed (L03b).
 3. ⬜ **`[W5-INSTEXPORT-TRUNC]`** `CeXmlExportService.cs:1311`. `GenerateInstanceXml` computes the
    60,000-entry truncation flag and publishes it as `LastExportTruncated` with an explicit contract
    (`:208-212`: *"The caller reads this right after the synchronous Generate\* call"*). Two of three
@@ -4665,7 +4665,7 @@ Two tests PIN the wrong text. The panels' checkbox actually reads "Game Only".
 - ✅ **Safe fix:** carry the scan-time GameOnly in `LoadScanFacts`, capture Console's before its
   await, and invert the two tests. Never read the live checkbox.
 
-##### `[A4-DELEGATE-ARRAY-PAD]` LOW — CE XML / CSX element leaves of a `TArray<FScriptDelegate>` read the checked-build access detector
+##### ✅ `[A4-DELEGATE-ARRAY-PAD]` LOW — CE XML / CSX element leaves of a `TArray<FScriptDelegate>` read the checked-build access detector (FIXED IN SOURCE 2026-09-12)
 
 `CeXmlExportService.cs:2890-2912`, `:4133-4140`, and CSX `ConvertArrayPointerElementsToFields :706`. The
 band comment says the field projection folds `DelegatePad`, "so nothing here needs to know". That is
@@ -4677,6 +4677,30 @@ type.
   - gating on `ArrayInnerType == "DelegateProperty"` alone, which breaks the correct multicast path.
 - ✅ **Safe fix:** a DLL-sent per-element pad, applied only when `TypeName == ArrayProperty`, to the
   live loop, the fabricate tail and CSX.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L03b).
+  - **DLL.** Both walk modes publish `arrayElemDelegatePad` for every `TArray<FScriptDelegate>`, through
+    `Ubel::DelegateArrayElemPad`.
+    - It is the same `DelegatePadFromElementSize(elemSize, 8 + SizeofFName())` the reader's stride uses,
+      clamped to 0.
+    - It is published even when no element was read: an empty array still gets fabricated rows.
+    - It is never folded into `delegatePad`.
+    - Fern sends it as `array_elem_delegate_pad`: additive, and only when non-zero.
+  - **UI.** `LiveFieldValue.ArrayElemDelegatePad` is applied only when `TypeName == ArrayProperty`, in
+    three places: CE XML's element leaves, its fabricated tail (both through `ElemDelegatePad`), and CSX's
+    `ConvertArrayPointerElementsToFields`.
+    - The array group header stays on the field offset.
+    - The CE XML struct-flatten projection copies the new pad.
+    - The band comment's "nothing here needs to know" now says "for a FIELD".
+  - **Tests, red first:**
+    - dll_core_test: the helper at 24 / 16 / 20 and under CasePreservingName, and a fake walk over a 24-byte
+      and a 16-byte delegate array;
+    - the parse;
+    - CE XML leaves, the fabricated tail, and a multicast control;
+    - CSX leaves and a multicast control.
+
+    10/10 mutants killed; dll_core_test 275/275; UI 5169/5169.
+  - ⚠ **Survivors by construction:** Fern's key (no test target compiles Fern.cpp), the UProperty-mode walk
+    site (no UProperty fixture), and the struct-flatten copy (no nested fixture).
 
 ##### `[A4-STEALTH-PRIME]` LOW — BADGEPRIME's connect prime skips the Stealth card, and gate 17d cannot see it
 
@@ -4833,6 +4857,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 54 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | LOW | `git log --grep P1-GENAU-ABORT` (batch L01) | dll_core_test (each sweep with a pending cancel records its abort at the bail) and a Frieren source pin, red first against inert out-flags. 6/6 mutants killed; dll_core_test 249/249; UI 5149/5149 |
 | 55 | `[P1-ENUMNAMES]` | LOW | `git log --grep P1-ENUMNAMES` (batch L02) | dll_core_test (a cancelled ForEach says so; a cancelled search latches nothing) and the UI (parse, export note), red first. 5/5 mutants killed; dll_core_test 253/253; UI 5152/5152. The harmful half as filed (publish the latch as-is) did not land |
 | 56 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | LOW | `git log --grep A4-PUSHCE-UNPADDED` (batch L03a) | the UI: a caller-level batch-push test, and CSX offsets for a unicast leaf and a multicast drill, red first. 5/5 mutants killed; UI 5162/5162. Not a blanket `+ DelegatePad`: the multicast raw block stays at the field offset |
+| 57 | `[A4-DELEGATE-ARRAY-PAD]` | LOW | `git log --grep A4-DELEGATE-ARRAY-PAD` (batch L03b) | dll_core_test (the helper, and a fake walk over a padded and an unpadded delegate array) and the UI (parse, CE XML leaves and tail, CSX leaves, multicast controls), red first against an inert member / helper / property. 10/10 mutants killed; dll_core_test 275/275; UI 5169/5169. The pad is per ELEMENT and ArrayProperty-only, never on the array field |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4984,6 +5009,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Batch push:** select the delegate row and press "+CE Field (flat)". The record's address equals the per-row +CE's (the field address + 8), and it reads the InvocationList data pointer, not 0.
 2. **CSX:** export the instance's CSX with drilldown 1 and load it in CE's Structure Dissect. A unicast delegate's leaf sits at its field offset + 8. A multicast's raw block sits at the field offset, and its "/ InvocationList" pointer at + 8 expands.
 **Control:** a Shipping build, where both sit at the field offset. | CE + a game + UI |
+| L43 | `[A4-DELEGATE-ARRAY-PAD]` | **CE: announce first.** A UE 5.3+ CHECKED build with a `TArray<FScriptDelegate>` field holding a bound delegate (DumperTest `dev`, if its fixture has one; otherwise record the check as not reachable):
+1. `walk_instance` carries `array_elem_delegate_pad: 8` on that ArrayProperty, and no `delegate_pad` on it.
+2. Copy CE XML of the instance. Each element leaf sits at `index * 24 + 8` from the dereferenced Data, and CE reads the bound object's FWeakObjectPtr there, not 0. A Copy CE Field with a fabricate count pads the extra rows the same way.
+3. The CSX export's element leaves sit at the same offsets.
+**Control:** a Shipping build, where the key is absent and nothing moves. | CE + a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5044,7 +5074,7 @@ completeness critic.
 **LOW-only batches, after the MEDs** (43):
 - ✅ **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - ✅ **L02:** `[P1-ENUMNAMES]`
-- ◐ **L03:** `[W5-CSX-DELEGATEPAD]` ✅ `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` ✅ (CE). L03a landed; L03b, the per-element array pad, is next.
+- ✅ **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE), in two batches: L03a and L03b.
 - **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - **L06:** `[P1-UPROP-DELEGATE]`

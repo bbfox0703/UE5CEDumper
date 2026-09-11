@@ -1049,6 +1049,7 @@ public static class CeXmlExportService
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
                     DelegatePad = f.DelegatePad,
+                    ArrayElemDelegatePad = f.ArrayElemDelegatePad,   // [A4-DELEGATE-ARRAY-PAD]
                     SoftArrayFNameSize = f.SoftArrayFNameSize,
                     SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
                     SoftArrayPathOffset = f.SoftArrayPathOffset,
@@ -1122,6 +1123,13 @@ public static class CeXmlExportService
     /// <c>FProperty::ElementSize</c> and sent as <c>delegate_pad</c>; do not re-derive the rule
     /// here, or there are two implementations to keep right.</summary>
     private static int CeOffset(LiveFieldValue field) => field.Offset + field.DelegatePad;
+
+    /// <summary>[A4-DELEGATE-ARRAY-PAD] The detector pad of each ELEMENT of a <c>TArray&lt;FScriptDelegate&gt;</c>,
+    /// added to an element leaf's offset from the dereferenced <c>TArray.Data</c>. Only an ArrayProperty has one: a
+    /// multicast's invocation-list elements are the NotChecked variant, never padded, and the array FIELD's own
+    /// group header stays on <see cref="CeOffset"/>.</summary>
+    private static int ElemDelegatePad(LiveFieldValue field) =>
+        field.TypeName == "ArrayProperty" ? field.ArrayElemDelegatePad : 0;
 
     public static string GenerateHierarchicalXml(
         string rootAddress,
@@ -2918,6 +2926,9 @@ public static class CeXmlExportService
             ? Math.Min(Math.Max(_fabricateArrayCount, walkedLeaf), MaxFabricateElements)
             : walkedLeaf;
 
+        // [A4-DELEGATE-ARRAY-PAD] 0 but for a TArray<FScriptDelegate> on a checked build: its element leaf (the
+        // FWeakObjectPtr) starts past the detector. The description keeps the element's own offset.
+        int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
             // Element: simple offset from the already-dereferenced Data pointer.
@@ -2934,13 +2945,13 @@ public static class CeXmlExportService
             {
                 // All children link to the parent (or first occurrence's parent) Description
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
-                    $"+{elemByteOffset:X}", null,
+                    $"+{elemByteOffset + elemPad:X}", null,
                     dropDownListLink: dropDownLinkTarget);
             }
             else
             {
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
-                    $"+{elemByteOffset:X}", null);
+                    $"+{elemByteOffset + elemPad:X}", null);
             }
         }
 
@@ -2953,10 +2964,10 @@ public static class CeXmlExportService
             int elemByteOffset = i * field.ArrayElemSize;
             var elemDesc = DecorateDesc($"[{i}]", elemByteOffset, null);
             if (dropDownLinkTarget != null)
-                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null,
+                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset + elemPad:X}", null,
                     dropDownListLink: dropDownLinkTarget);
             else
-                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null);
+                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset + elemPad:X}", null);
         }
 
         EmitGroupClose(sb, indent);
@@ -4196,8 +4207,9 @@ public static class CeXmlExportService
             // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
             // ⚠ "first 8 bytes" is relative to the PAYLOAD, not to the field: a checked build
             // (UE 5.3+, DO_CHECK on) puts an 8-byte access detector in front. The exporter's
-            // field projection folds LiveFieldValue.DelegatePad into Offset for exactly this,
-            // so nothing here needs to know -- but do not re-bake the assumption elsewhere.
+            // field projection folds LiveFieldValue.DelegatePad into Offset for exactly this -- for a FIELD. A
+            // TArray<FScriptDelegate>'s ELEMENTS carry their own pad (ArrayElemDelegatePad), which EmitArrayProperty
+            // adds per element through ElemDelegatePad. [A4-DELEGATE-ARRAY-PAD]
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase K: FMulticastScriptDelegate — the inner TArray<FScriptDelegate>::Data

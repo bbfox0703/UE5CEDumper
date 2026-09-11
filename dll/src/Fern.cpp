@@ -1513,8 +1513,8 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     // DelegateProperty, which is precisely the "record pointing at address 0" above.
     // ⛔ Do NOT also set this for an ARRAY of delegates (or a sparse one): the pad is
     // per-ELEMENT, inside the array data, while a CE offset built from it is added to the FIELD
-    // offset (the TArray header). Array consumers derive it from `array_elem_size`, as the
-    // readers do; a sparse delegate's storage is not at the field offset at all.
+    // offset (the TArray header). Array consumers get the per-ELEMENT `array_elem_delegate_pad`
+    // below instead [A4-DELEGATE-ARRAY-PAD]; a sparse delegate's storage is not at the field offset at all.
     if (fv.delegatePad > 0)
         fj["delegate_pad"] = fv.delegatePad;
 
@@ -1527,6 +1527,10 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["array_inner_type"] = fv.arrayInnerType;
             if (fv.arrayElemSize > 0)
                 fj["array_elem_size"] = fv.arrayElemSize;
+            // [A4-DELEGATE-ARRAY-PAD] The per-ELEMENT detector pad of a TArray<FScriptDelegate>. Additive, and only
+            // when non-zero, so a Shipping title's wire is unchanged.
+            if (fv.arrayElemDelegatePad > 0)
+                fj["array_elem_delegate_pad"] = fv.arrayElemDelegatePad;
             if (!fv.arrayInnerStructType.empty())
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)

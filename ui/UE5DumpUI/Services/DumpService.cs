@@ -1478,6 +1478,7 @@ public sealed class DumpService : IDumpService
             ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
             ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
             DelegatePad = fo["delegate_pad"]?.GetValue<int>() ?? 0,
+            ArrayElemDelegatePad = fo["array_elem_delegate_pad"]?.GetValue<int>() ?? 0,   // [A4-DELEGATE-ARRAY-PAD] additive
             SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
             SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
             // Absent from a pre-fix DLL. 0x10 is the pre-fix behaviour, so it is the

@@ -3395,6 +3395,15 @@ bool IsDelegateArrayType(const std::string& innerTypeName) {
     return innerTypeName == "DelegateProperty";
 }
 
+int32_t DelegateArrayElemPad(int32_t elemSize) {
+    // The element is the STANDALONE unicast type, TScriptDelegate<FNotThreadSafeDelegateMode> -- padded on a checked
+    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same derivation
+    // as ReadDelegateArrayElements' stride, so the published pad and the reader's stride cannot disagree. A size that
+    // matches neither (-1) publishes 0: the reader refused those elements, and the field's value says so.
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, 8 + DynOff::SizeofFName());
+    return pad < 0 ? 0 : pad;
+}
+
 // ============================================================
 // Phase J: ReadDelegateArrayElements — read FScriptDelegate elements.
 // Each element exposes the bound UObject* + FName (function), and the
@@ -4683,6 +4692,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // [A4-DELEGATE-ARRAY-PAD] Publish the per-ELEMENT pad whether or not the elements are read (an empty
+                // array still gets fabricated rows in a CE export). Never into fv.delegatePad: see Ubel.h.
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
+                    fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
                 // Phase J: TArray<FScriptDelegate>
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
@@ -4865,6 +4878,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(ifaceResult.elements);
                     }
                 }
+                // [A4-DELEGATE-ARRAY-PAD] as the FProperty path: the per-element pad, read or not
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
+                    fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
                 // Phase J: Delegate arrays (UProperty mode)
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {

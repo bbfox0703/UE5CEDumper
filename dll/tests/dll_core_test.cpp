@@ -2619,6 +2619,92 @@ int main() {
         DynOff::bUEnumNamesFailed.store(false);
     }
 
+    // -- DELEGATEARRAYPAD-2026-09-12 -- a TArray<FScriptDelegate> publishes its PER-ELEMENT detector pad -----------
+    //
+    // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. [A4-DELEGATE-ARRAY-PAD] The elements of a TArray<FScriptDelegate>
+    // are the standalone unicast delegate, padded on a checked build. The reader always knew (its stride); the wire
+    // never said, so CE XML / CSX element leaves read the detector.
+    {
+        blk("DELEGATEARRAYPAD - the helper and the walk publish a delegate array's per-element pad");
+        ResetCancel();
+
+        const bool savedCpnD = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+        check("DELEGATEARRAYPAD ⭐: DelegateArrayElemPad reads 8 off a padded 24-byte element",
+              Ubel::DelegateArrayElemPad(24) == 8, std::to_string(Ubel::DelegateArrayElemPad(24)).c_str());
+        check("DELEGATEARRAYPAD control: ...and 0 off an unpadded 16-byte one", Ubel::DelegateArrayElemPad(16) == 0);
+        check("DELEGATEARRAYPAD control: ...and 0, never negative, off a size that matches neither",
+              Ubel::DelegateArrayElemPad(20) == 0, std::to_string(Ubel::DelegateArrayElemPad(20)).c_str());
+        DynOff::bCasePreservingName = true;
+        check("DELEGATEARRAYPAD ⭐: with CasePreservingName (12-byte FName) a 28-byte element is padded 8",
+              Ubel::DelegateArrayElemPad(28) == 8, std::to_string(Ubel::DelegateArrayElemPad(28)).c_str());
+        DynOff::bCasePreservingName = false;
+
+        static uint8_t daEntry[4][0x40] = {};
+        const char* daNames[4] = { "", "ArrayProperty", "Handlers", "DelegateProperty" };
+        static uintptr_t daChunk[5] = {};
+        for (int i = 1; i <= 3; ++i) {
+            memcpy(daEntry[i] + 0x10, daNames[i], strlen(daNames[i]) + 1);
+            daChunk[i] = reinterpret_cast<uintptr_t>(daEntry[i]);
+        }
+        static uintptr_t daChunks[2] = { reinterpret_cast<uintptr_t>(daChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(daChunks), 0x10);
+        check("DELEGATEARRAYPAD setup: the pool resolves DelegateProperty",
+              Serie::GetString(3) == "DelegateProperty", Serie::GetString(3).c_str());
+
+        const bool savedFPropD = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t daArrFC[0x20] = {}, daDelFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(daArrFC + DynOff::FFIELDCLASS_NAME) = 1;   // "ArrayProperty"
+        *reinterpret_cast<int32_t*>(daDelFC + DynOff::FFIELDCLASS_NAME) = 3;   // "DelegateProperty"
+
+        // Two arrays in one class: a checked build's 24-byte element, then a Shipping build's 16-byte one.
+        static uint8_t daInner[2][0x100] = {}, daProp[2][0x100] = {};
+        const int32_t daElem[2] = { 24, 16 };
+        for (int k = 0; k < 2; ++k) {
+            *reinterpret_cast<uintptr_t*>(daInner[k] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(daDelFC);
+            *reinterpret_cast<int32_t*>(daInner[k] + DynOff::FPROPERTY_ELEMSIZE) = daElem[k];
+            *reinterpret_cast<uintptr_t*>(daProp[k] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(daArrFC);
+            *reinterpret_cast<int32_t*>(daProp[k] + DynOff::FFIELD_NAME)        = 2;   // "Handlers"
+            *reinterpret_cast<int32_t*>(daProp[k] + DynOff::FPROPERTY_OFFSET)   = 0x40 + k * 0x10;
+            *reinterpret_cast<int32_t*>(daProp[k] + DynOff::FPROPERTY_ELEMSIZE) = 16;
+            *reinterpret_cast<int32_t*>(daProp[k] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            *reinterpret_cast<uintptr_t*>(daProp[k] + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(daInner[k]);
+        }
+        *reinterpret_cast<uintptr_t*>(daProp[0] + DynOff::FFIELD_NEXT) = reinterpret_cast<uintptr_t>(daProp[1]);
+
+        static uint8_t daCls[0x100] = {};
+        *reinterpret_cast<int32_t*>(daCls + DynOff::USTRUCT_PROPSSIZE)    = 0x100;
+        *reinterpret_cast<uintptr_t*>(daCls + DynOff::USTRUCT_CHILDPROPS) = reinterpret_cast<uintptr_t>(daProp[0]);
+
+        static uint8_t daData[2][2 * 24] = {};   // two zeroed elements per array: unbound delegates
+        static uint8_t daInst[0x100] = {};
+        for (int k = 0; k < 2; ++k) {
+            *reinterpret_cast<uintptr_t*>(daInst + 0x40 + k * 0x10) = reinterpret_cast<uintptr_t>(daData[k]);   // Data
+            *reinterpret_cast<int32_t*>(daInst + 0x48 + k * 0x10)   = 2;                                         // Num
+            *reinterpret_cast<int32_t*>(daInst + 0x4C + k * 0x10)   = 2;                                         // Max
+        }
+
+        const auto dr = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(daInst),
+                                           reinterpret_cast<uintptr_t>(daCls), 64, 2, false);
+        const Ubel::LiveFieldValue* d24 = dr.fields.size() == 2 ? &dr.fields[0] : nullptr;
+        const Ubel::LiveFieldValue* d16 = dr.fields.size() == 2 ? &dr.fields[1] : nullptr;
+        check("DELEGATEARRAYPAD setup: two ArrayProperty fields of DelegateProperty, strides 24 and 16",
+              d24 && d16 && d24->arrayInnerType == "DelegateProperty" && d24->arrayElemSize == 24
+              && d16->arrayElemSize == 16,
+              d24 ? std::to_string(d24->arrayElemSize).c_str() : std::to_string(dr.fields.size()).c_str());
+        check("DELEGATEARRAYPAD ⭐: the walk publishes the 24-byte array's per-element pad (8)",
+              d24 && d24->arrayElemDelegatePad == 8, d24 ? std::to_string(d24->arrayElemDelegatePad).c_str() : "-");
+        check("DELEGATEARRAYPAD guard: ...and never folds it into the array FIELD's own delegatePad",
+              d24 && d24->delegatePad == 0);
+        check("DELEGATEARRAYPAD control: the 16-byte array's elements carry no pad",
+              d16 && d16->arrayElemDelegatePad == 0);
+
+        DynOff::bUseFProperty       = savedFPropD;
+        DynOff::bCasePreservingName = savedCpnD;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

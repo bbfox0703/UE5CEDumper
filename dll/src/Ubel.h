@@ -455,6 +455,11 @@ struct LiveFieldValue {
     // another language is a second thing to get wrong (measured: the first pad survey
     // re-implemented it in Python and therefore verified the copy, not the shipped rule).
     int32_t     delegatePad = 0;
+    // [A4-DELEGATE-ARRAY-PAD] The SAME detector, per ELEMENT of a TArray<FScriptDelegate>: its elements are the
+    // standalone unicast delegate, which carries the pad on a checked build. ⛔ Never folded into delegatePad above --
+    // that one is added to the FIELD offset, and an array field's own bytes are its TArray header. 0 for every other
+    // array, and always for a multicast (its invocation-list elements are the NotChecked variant, never padded).
+    int32_t     arrayElemDelegatePad = 0;
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
@@ -1256,6 +1261,9 @@ inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
+// [A4-DELEGATE-ARRAY-PAD] The access-detector pad of ONE element of a TArray<FScriptDelegate>, from the inner's own
+// ElementSize: 8 on a checked UE 5.3+ build, else 0 -- and 0, never negative, for a size that matches neither.
+int32_t DelegateArrayElemPad(int32_t elemSize);
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);

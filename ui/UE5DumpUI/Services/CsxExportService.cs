@@ -723,7 +723,11 @@ public static class CsxExportService
             var name = !string.IsNullOrEmpty(elem.PtrName)
                 ? $"[{elem.Index}] {elem.PtrName}"
                 : $"[{elem.Index}]";
-            int offset = elem.Index * elemSize;
+            // [A4-DELEGATE-ARRAY-PAD] A TArray<FScriptDelegate>'s element is the padded standalone delegate: its leaf
+            // (the FWeakObjectPtr) starts past the detector. Only an ArrayProperty -- a multicast's invocation list
+            // converts here too, and its elements are never padded.
+            int offset = elem.Index * elemSize
+                         + (arrField.TypeName == "ArrayProperty" ? arrField.ArrayElemDelegatePad : 0);
 
             fields.Add(new LiveFieldValue
             {

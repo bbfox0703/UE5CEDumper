@@ -196,4 +196,70 @@ public class CeXmlDelegatePadTests
 
         Assert.Equal(new[] { expected }, bridge.Addresses);
     }
+
+    // ---------------------------------------------------------------------------------
+    // [A4-DELEGATE-ARRAY-PAD] A TArray<FScriptDelegate>'s ELEMENTS: the pad is per element.
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>A TArray of the standalone unicast delegate, shaped the way the DLL sends it: the pad on the ELEMENTS
+    /// (<c>array_elem_delegate_pad</c>), never on the array field, whose own bytes are its TArray header.</summary>
+    private static LiveFieldValue DelegateArray(int elemPad) => new()
+    {
+        Name = "Handlers",
+        TypeName = "ArrayProperty",
+        Offset = 0xA0,
+        Size = 16,
+        ArrayCount = 2,
+        ArrayInnerType = "DelegateProperty",
+        ArrayElemSize = 16 + elemPad,
+        ArrayElemDelegatePad = elemPad,
+        ArrayElements = new List<ArrayElementValue> { new() { Index = 0 }, new() { Index = 1 } },
+    };
+
+    [Fact]
+    public void DelegateArray_CheckedBuild_EachElementLeafSitsOnItsPayload()
+    {
+        var xml = Xml(DelegateArray(elemPad: 8));
+
+        Assert.Contains("<Address>+A0</Address>", xml);          // the array group: the FIELD, never moved
+        Assert.Contains("<Address>+8</Address>", xml);           // [0]: 0*24 + 8
+        Assert.Contains("<Address>+20</Address>", xml);          // [1]: 1*24 + 8
+        Assert.DoesNotContain("<Address>+18</Address>", xml);    // [1] unpadded: the detector
+    }
+
+    [Fact]
+    public void DelegateArray_ShippingBuild_NothingMoves()
+    {
+        var xml = Xml(DelegateArray(elemPad: 0));
+
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);          // [1]: 1*16
+    }
+
+    [Fact]
+    public void DelegateArray_FabricatedTail_IsPaddedToo()
+    {
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "Inst", "TestClass", new[] { DelegateArray(elemPad: 8) }, fabricateArrayCount: 4);
+
+        Assert.Contains("<Address>+38</Address>", xml);          // [2]: 2*24 + 8
+        Assert.Contains("<Address>+50</Address>", xml);          // [3]: 3*24 + 8
+    }
+
+    [Fact]
+    public void MulticastInvocationListElements_AreNeverPadded()
+    {
+        // ⛔ Gating on ArrayInnerType == "DelegateProperty" alone would break this: a multicast's invocation list has
+        // that inner too, and its elements are the NotChecked variant, never padded. Only an ArrayProperty's are.
+        var mc = new LiveFieldValue
+        {
+            Name = "OnClicked", TypeName = "MulticastInlineDelegateProperty", Offset = 0x2C0, Size = 16,
+            ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16, ArrayElemDelegatePad = 8,
+            ArrayElements = new List<ArrayElementValue> { new() { Index = 0 }, new() { Index = 1 } },
+        };
+        var xml = Xml(mc);
+
+        Assert.Contains("<Address>+10</Address>", xml);          // [1]: 1*16, unpadded
+        Assert.DoesNotContain("<Address>+18</Address>", xml);
+    }
 }

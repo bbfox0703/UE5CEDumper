@@ -1468,6 +1468,45 @@ public class CsxExportServiceTests
         Assert.Contains("<Element Offset=\"704\" Vartype=\"Pointer\"", csx);
     }
 
+    // ---- [A4-DELEGATE-ARRAY-PAD] a TArray<FScriptDelegate>'s element leaves carry the per-element pad ----
+
+    private static LiveFieldValue DelegateArrayWithTwoBindings(string type, int elemSize, int elemPad) => new()
+    {
+        Name = "Handlers", TypeName = type, Offset = 0xA0, Size = 16,
+        ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = elemSize, ArrayElemDelegatePad = elemPad,
+        ArrayDataAddr = "0xC000",
+        ArrayElements = new List<ArrayElementValue>
+        {
+            new() { Index = 0, PtrAddress = "0xE01", PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+            new() { Index = 1, PtrAddress = "0xE02", PtrName = "EnemyActor", PtrClassName = "BP_Enemy_C" },
+        },
+    };
+
+    [Fact]
+    public async Task GenerateCsx_DelegateArray_CheckedBuild_ElementLeavesSitOnEachPayload()
+    {
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { DelegateArrayWithTwoBindings("ArrayProperty", 24, 8) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"8\" Vartype=\"8 Bytes\"", csx);     // [0]: 0*24 + 8
+        Assert.Contains("<Element Offset=\"32\" Vartype=\"8 Bytes\"", csx);    // [1]: 1*24 + 8
+        Assert.DoesNotContain("<Element Offset=\"24\" Vartype=\"8 Bytes\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_MulticastInvocationList_ElementsAreNeverPadded()
+    {
+        // A multicast's invocation list converts through the same element path, and its elements are never padded:
+        // the pad applies to an ArrayProperty only.
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { DelegateArrayWithTwoBindings("MulticastInlineDelegateProperty", 16, 8) },
+            drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"16\" Vartype=\"8 Bytes\"", csx);    // [1]: 1*16, unpadded
+        Assert.DoesNotContain("<Element Offset=\"24\" Vartype=\"8 Bytes\"", csx);
+    }
+
     [Fact]
     public async Task GenerateCsx_ArrayProperty_InterfaceInner_DrilldownOne_ShowsPointerElements()
     {

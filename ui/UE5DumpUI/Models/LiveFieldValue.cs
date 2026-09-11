@@ -252,6 +252,13 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// re-derive it here.</summary>
     public int DelegatePad { get; init; }
 
+    /// <summary>[A4-DELEGATE-ARRAY-PAD] The same pad, per ELEMENT of a <c>TArray&lt;FScriptDelegate&gt;</c>
+    /// (<c>array_elem_delegate_pad</c>): its elements are the standalone unicast delegate, which carries the
+    /// detector on a checked build. ⛔ Never part of <see cref="DelegatePad"/>, which moves the FIELD, whose own
+    /// bytes are the TArray header. Exporters add it to each element's offset, and only for an ArrayProperty:
+    /// a multicast's invocation-list elements are never padded.</summary>
+    public int ArrayElemDelegatePad { get; init; }
+
     public int SoftArrayFNameSize { get; init; }
 
     /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at PathOffset / PathOffset+fnameSize. False = single FName AssetPathName at PathOffset (UE4 / UE5.0).</summary>

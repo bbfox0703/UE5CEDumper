@@ -1278,6 +1278,37 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesTheDelegateArrayElementPad()
+    {
+        // [A4-DELEGATE-ARRAY-PAD] An additive key: absent from an older DLL (0), and never the field's own delegate_pad.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "Actor",
+            ["class_addr"] = "0x200",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Handlers", ["type"] = "ArrayProperty", ["offset"] = 0xA0, ["size"] = 16,
+                    ["count"] = 2, ["array_inner_type"] = "DelegateProperty", ["array_elem_size"] = 24,
+                    ["array_elem_delegate_pad"] = 8,
+                },
+            },
+        });
+
+        var result = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(8, result.Fields[0].ArrayElemDelegatePad);
+        Assert.Equal(0, result.Fields[0].DelegatePad);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject
