@@ -3518,13 +3518,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (_coordStore == null || _suppressCoordPersist) return;
         if (string.IsNullOrEmpty(_activeCoordKey)) return;
-        _coordStore.Save(_activeCoordKey, new CoordinateLibraryFile
-        {
-            Module = _activeCoordKey,
-            Entries = _coordAll.ToList(),
-            ZTolerance = CoordZTolerance,
-        });
+        _coordStore.Save(_activeCoordKey, CurrentCoordFile());
     }
+
+    /// <summary>The library the user is looking at, as a file. The one-shot backups are written
+    /// from this, not copied from disk: after a <c>.bak</c> recovery the file on disk is still the
+    /// corrupt one. [A1-COORD-BACKUP]</summary>
+    private CoordinateLibraryFile CurrentCoordFile() => new()
+    {
+        Module = _activeCoordKey,
+        Entries = _coordAll.ToList(),
+        ZTolerance = CoordZTolerance,
+    };
 
     /// <summary>All entries, newest-first insertion order preserved. Exposed for the
     /// export/import codecs (P2+) and for tests.</summary>
@@ -3882,7 +3887,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         // Back up BEFORE anything is dropped, and only clear in-memory state once the
         // on-disk copy is safe to lose.
-        var bak = _coordStore?.SavePreClearBackup(_activeCoordKey) ?? "";
+        var bak = _coordStore?.SavePreClearBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
         _coordAll.Clear();
         SelectedCoord = null;
@@ -4119,7 +4124,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (_pendingImport == null || _pendingChanges == null) return;
 
-        var bak = _coordStore?.SavePreImportBackup(_activeCoordKey) ?? "";
+        var bak = _coordStore?.SavePreImportBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
         if (CoordImportReplace)
         {

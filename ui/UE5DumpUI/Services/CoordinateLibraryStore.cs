@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Linq;
 using System.Text.Json;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
@@ -107,7 +108,9 @@ public sealed class CoordinateLibraryStore
     /// Returns an empty file (no-op) when <paramref name="key"/> is empty.
     ///
     /// On a corrupt main file the <c>.bak</c> is tried before giving up — the whole
-    /// point of keeping it.
+    /// point of keeping it. ONLY on a corrupt one: a MISSING main file is "Clear all" (which
+    /// deletes it and deliberately keeps the backups), and falling back there resurrected the
+    /// cleared library on every connect and restart. [A1-COORD-RESURRECT]
     /// </summary>
     public CoordinateLibraryFile Load(string key)
     {
@@ -120,7 +123,8 @@ public sealed class CoordinateLibraryStore
             var loaded = TryRead(path);
             if (loaded != null) return loaded;
 
-            var fromBak = TryRead(path + ".bak");
+            // [A1-COORD-RESURRECT] Missing is not unreadable -- see the summary.
+            var fromBak = File.Exists(path) ? TryRead(path + ".bak") : null;
             if (fromBak != null)
             {
                 _log?.Warn(Constants.LogCatView,
@@ -170,8 +174,14 @@ public sealed class CoordinateLibraryStore
 
                 File.WriteAllText(temp, json);
                 // Roll the previous good file aside BEFORE the rename, so a torn write
-                // never leaves us with neither.
-                TryRollToBackup(path, path + ".bak");
+                // never leaves us with neither -- but only a main file that PARSES. After a
+                // .bak recovery the main on disk is still the corrupt one, and rolling it would
+                // overwrite the only good copy with garbage. [A1-COORD-BACKUP]
+                if (TryRead(path) != null)
+                    TryRollToBackup(path, path + ".bak");
+                else if (File.Exists(path))
+                    _log?.Warn(Constants.LogCatView,
+                        $"CoordinateLibraryStore: {key} main file unreadable, NOT rolled over .bak");
                 File.Move(temp, path, overwrite: true);
             }
             catch (Exception ex)
@@ -182,19 +192,21 @@ public sealed class CoordinateLibraryStore
     }
 
     /// <summary>
-    /// Snapshot the current on-disk library to <c>.preimport.bak</c>. Called
-    /// immediately before an import commits so a botched Replace is recoverable —
-    /// distinct from the rolling <c>.bak</c>, which the very next Save would overwrite.
-    /// Returns the backup path, or "" when nothing was backed up.
+    /// Snapshot the library to <c>.preimport.bak</c>. Called immediately before an import
+    /// commits so a botched Replace is recoverable — distinct from the rolling <c>.bak</c>,
+    /// which the very next Save would overwrite. Returns the backup path, or "" when nothing
+    /// was backed up.
+    ///
+    /// <para>Written from <paramref name="current"/> -- the library the user is looking at --
+    /// not copied from disk: after a <c>.bak</c> recovery the file on disk is still the corrupt
+    /// one, and the copy backed up garbage. [A1-COORD-BACKUP]</para>
     /// </summary>
-    public string SavePreImportBackup(string key)
+    public string SavePreImportBackup(string key, CoordinateLibraryFile current)
     {
         if (string.IsNullOrEmpty(key)) return "";
         lock (_ioLock)
         {
-            var path = PathFor(key);
-            var bak = path + ".preimport.bak";
-            return TryRollToBackup(path, bak) ? bak : "";
+            return TryWriteOneShotBackup(key, current, PathFor(key) + ".preimport.bak");
         }
     }
 
@@ -208,14 +220,13 @@ public sealed class CoordinateLibraryStore
     /// <c>OnCoordZToleranceChanged</c> saves on every spinner nudge — so after a clear
     /// it survives about two clicks. This one is only ever written by a clear.
     /// </summary>
-    public string SavePreClearBackup(string key)
+    public string SavePreClearBackup(string key, CoordinateLibraryFile current)
     {
         if (string.IsNullOrEmpty(key)) return "";
         lock (_ioLock)
         {
-            var path = PathFor(key);
-            var bak = path + ".preclear.bak";
-            return TryRollToBackup(path, bak) ? bak : "";
+            // From the IN-MEMORY library, like SavePreImportBackup. [A1-COORD-BACKUP]
+            return TryWriteOneShotBackup(key, current, PathFor(key) + ".preclear.bak");
         }
     }
 
@@ -234,6 +245,34 @@ public sealed class CoordinateLibraryStore
             {
                 _log?.Error(Constants.LogCatView, "CoordinateLibraryStore: failed to delete", ex);
             }
+        }
+    }
+
+    /// <summary>
+    /// Write <paramref name="current"/> to a one-shot backup, atomically (temp + rename). An empty
+    /// library has nothing to protect, so it writes nothing and returns "". [A1-COORD-BACKUP]
+    /// </summary>
+    private string TryWriteOneShotBackup(string key, CoordinateLibraryFile? current, string bak)
+    {
+        if (current == null || current.Entries.Count == 0) return "";
+        try
+        {
+            var copy = new CoordinateLibraryFile
+            {
+                Module = key,
+                Entries = current.Entries.ToList(),
+                ZTolerance = current.ZTolerance,
+            };
+            var temp = bak + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(copy, s_jsonCtx.CoordinateLibraryFile));
+            File.Move(temp, bak, overwrite: true);
+            return bak;
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatView,
+                $"CoordinateLibraryStore: backup to {Path.GetFileName(bak)} failed: {ex.Message}");
+            return "";
         }
     }
 

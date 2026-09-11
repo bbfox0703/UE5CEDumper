@@ -2272,7 +2272,7 @@ predicted this: the band is August/September fix-pass code, and no audit has eve
 The sixth, `[A1-DETECT-REPUBLISH]`, is a fix (X5) that an older, still-open gap (L18) undoes; the fix
 never accounted for it.
 
-##### ⛔ `[A1-COORD-RESURRECT]` MED — Teleport's coordinate library "Clear all" comes back after reconnect or restart
+##### ✅ `[A1-COORD-RESURRECT]` MED — Teleport's coordinate library "Clear all" comes back after reconnect or restart (FIXED IN SOURCE 2026-09-11)
 
 `CoordinateLibraryStore.cs:123`. `TryRead` returns null for a **missing** main file (`:140`) as well as
 a corrupt one, and in both cases `Load` falls back to the rolling `.bak` (`:123`). Clear all deletes only
@@ -2291,8 +2291,15 @@ this is the normal case, not an edge case. Hand-verified at source.
   `Delete` even when the pre-clear copy FAILED, because the copy swallows its own exception. In that
   case `.bak` is the only surviving copy, and deleting it turns a resurrection into exactly the
   unrecoverable loss B6 fixed.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B10, one commit with
+  `[A1-COORD-BACKUP]`).
+  - `Load` tries the `.bak` only when the main file EXISTS but cannot be read. A missing main file
+    means "Clear all" happened, and that loads as empty.
+  - `Delete` still keeps every backup, and `Load_CorruptMainFile_RecoversFromBackup` still passes.
+  - **Test, red first:** `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` (Save, Save,
+    SavePreClearBackup, Delete, Load → empty).
 
-##### `[A1-COORD-BACKUP]` LOW — after a `.bak` recovery, the one-shot backups copy the corrupt file
+##### ✅ `[A1-COORD-BACKUP]` LOW — after a `.bak` recovery, the one-shot backups copy the corrupt file (FIXED IN SOURCE 2026-09-11)
 
 `CoordinateLibraryStore.cs:218` (+ `:197`). `SavePreClearBackup` and `SavePreImportBackup` copy
 whatever main file is on disk. After a `.bak` recovery, the file on disk is still the corrupt one,
@@ -2312,6 +2319,18 @@ because the load runs with persistence suppressed.
     the newest revision into `.bak` with no user action.
 - ⚠ **Fix these two rows together.** They are in the same file, and each one's safe fix assumes the
   other's.
+- ✅ **FIXED IN SOURCE 2026-09-11, both recorded safe shapes** (batch B10, with `[A1-COORD-RESURRECT]`).
+  - `SavePreClearBackup` / `SavePreImportBackup` take the IN-MEMORY library, and write it by temp
+    file and rename. `TeleportViewModel` passes the snapshot `PersistCoordLibrary` saves
+    (`CurrentCoordFile()`). An empty library writes nothing.
+  - `Save` rolls the main file to `.bak` only when it PARSES, so a corrupt main never overwrites the
+    good copy.
+  - There is no automatic re-persist after a recovery, which is the recorded unsafe shape.
+  - **Tests, red first:** both backups after a `.bak` recovery, and a Save over a corrupt main
+    (3 red). The rolling-backup control was green both ways. They were written against the old
+    one-argument API, so they failed on behaviour; the green then passes the library.
+  - ⚠ **The view model's side is covered by compilation only:** it now passes `CurrentCoordFile()`
+    to both backups, but no test drives "Clear all" through the view model.
 
 ##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
 
@@ -3776,6 +3795,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0 |
 | 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976 |
 | 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed |
+| 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981 |
+| 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3825,6 +3846,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **One game:** repeat with ONE game selected. Still no crash.
 3. **Cancel during Remove and Refresh:** Remove reads `Remove cancelled — …`; a cancelled Refresh reads `Refresh cancelled` in neutral colour, not a red "Refresh failed".
 4. **Radios:** during a Deploy, the four proxy-type radios are greyed out, while the LKG and foreign-overwrite checkboxes are not. | UI only, no game running |
+| L14 | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | Teleport's coordinate library on any connected game:
+1. **Clear all stays cleared:** save two or three entries (so a `.bak` exists), then Clear all. Reconnect, and restart the app: the library is still empty, and `…preclear.bak` holds the cleared entries.
+2. **Corrupt main:** with the app closed, overwrite `teleport-coords.<game>.json` with garbage and start it. The library loads from `.bak`. Now Clear all: `…preclear.bak` holds the recovered entries, not garbage. | any connected game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3856,7 +3880,7 @@ completeness critic.
 | ✅ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
 | ✅ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
 | ✅ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
-| ⬜ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
+| ✅ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
 | ⬜ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
 | ⬜ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
 | ⬜ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |

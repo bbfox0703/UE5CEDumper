@@ -279,7 +279,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     public void SavePreImportBackup_SnapshotsSeparatelyFromTheRollingBackup()
     {
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Before import" }));
-        var bak = _store.SavePreImportBackup("game");
+        var bak = _store.SavePreImportBackup("game", _store.Load("game"));
         Assert.True(File.Exists(bak));
 
         // Two further saves would overwrite the rolling .bak; the preimport copy
@@ -292,7 +292,7 @@ public class CoordinateLibraryStoreTests : IDisposable
 
     [Fact]
     public void SavePreImportBackup_NoFileYet_ReturnsEmpty()
-        => Assert.Equal("", _store.SavePreImportBackup("game"));
+        => Assert.Equal("", _store.SavePreImportBackup("game", _store.Load("game")));
 
     [Fact]
     public void Delete_RemovesTheFile()
@@ -308,7 +308,7 @@ public class CoordinateLibraryStoreTests : IDisposable
     {
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Hand-curated" }));
 
-        var bak = _store.SavePreClearBackup("game");
+        var bak = _store.SavePreClearBackup("game", _store.Load("game"));
         _store.Delete("game");
 
         Assert.False(File.Exists(_store.FilePathFor("game")));
@@ -322,10 +322,10 @@ public class CoordinateLibraryStoreTests : IDisposable
         // Audit #4 B6: the rolling .bak cannot stand in for either one-shot backup, and
         // a clear must not eat an import's rollback copy (or vice versa).
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Before import" }));
-        var preImport = _store.SavePreImportBackup("game");
+        var preImport = _store.SavePreImportBackup("game", _store.Load("game"));
 
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Before clear" }));
-        var preClear = _store.SavePreClearBackup("game");
+        var preClear = _store.SavePreClearBackup("game", _store.Load("game"));
 
         Assert.NotEqual(preImport, preClear);
         Assert.Contains("Before import", File.ReadAllText(preImport));
@@ -338,7 +338,7 @@ public class CoordinateLibraryStoreTests : IDisposable
         // OnCoordZToleranceChanged persists on every spinner nudge, so two clicks of a
         // NumericUpDown used to destroy the last copy of a cleared library.
         _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Only copy" }));
-        var bak = _store.SavePreClearBackup("game");
+        var bak = _store.SavePreClearBackup("game", _store.Load("game"));
         _store.Delete("game");
 
         _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "After 1" }));
@@ -349,7 +349,83 @@ public class CoordinateLibraryStoreTests : IDisposable
 
     [Fact]
     public void SavePreClearBackup_NoFileYet_ReturnsEmpty()
-        => Assert.Equal("", _store.SavePreClearBackup("game"));
+        => Assert.Equal("", _store.SavePreClearBackup("game", _store.Load("game")));
+
+    // ── [A1-COORD-RESURRECT] + [A1-COORD-BACKUP] ─────────────────────────────────────────────
+    //
+    // Load fell back to the rolling .bak when the main file was MISSING as well as corrupt, so a
+    // "Clear all" -- which deletes the main file and deliberately keeps the backups -- came back
+    // on the next connect or restart. And after a .bak recovery the file on disk is still the
+    // corrupt one (the load runs with persistence suppressed), so the one-shot backups copied
+    // garbage, and a Replace-import's Save then rolled the corrupt main over the only good .bak.
+
+    private void CorruptMain(string key) => File.WriteAllText(_store.FilePathFor(key), "{ this is not json");
+
+    [Fact]
+    public void ClearAll_ThenLoad_DoesNotResurrectTheLibrary()
+    {
+        // The recorded repro: Save, Save, SavePreClearBackup, Delete, Load -> empty.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "One" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Two" }));   // .bak = "One"
+        _store.SavePreClearBackup("game", _store.Load("game"));
+        _store.Delete("game");
+
+        Assert.Empty(_store.Load("game").Entries);
+    }
+
+    [Fact]
+    public void PreClearBackup_AfterABakRecovery_KeepsTheGoodLibrary()
+    {
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));
+        CorruptMain("game");
+        var recovered = _store.Load("game");                              // from .bak: "Good"
+        Assert.Equal("Good", Assert.Single(recovered.Entries).Label);
+
+        var bak = _store.SavePreClearBackup("game", _store.Load("game"));
+
+        Assert.True(File.Exists(bak));
+        Assert.Contains("Good", File.ReadAllText(bak));                     // not the corrupt main
+    }
+
+    [Fact]
+    public void PreImportBackup_AfterABakRecovery_KeepsTheGoodLibrary()
+    {
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));
+        CorruptMain("game");
+        var recovered = _store.Load("game");
+
+        var bak = _store.SavePreImportBackup("game", _store.Load("game"));
+
+        Assert.True(File.Exists(bak));
+        Assert.Contains("Good", File.ReadAllText(bak));
+    }
+
+    [Fact]
+    public void Save_DoesNotRollAnUnparseableMainOverTheGoodBak()
+    {
+        // The import twin's second half: the Replace's Save rolled the corrupt main over .bak, so
+        // the pre-import library ended up in no file at all.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
+        CorruptMain("game");
+
+        _store.Save("game", FileWith(new CoordEntry { Uid = "c", Label = "Replaced" }));
+
+        Assert.Contains("Good", File.ReadAllText(_store.FilePathFor("game") + ".bak"));
+        Assert.Equal("Replaced", Assert.Single(_store.Load("game").Entries).Label);
+    }
+
+    [Fact]
+    public void Save_StillRollsAGoodMainToBak()
+    {
+        // The control, green before and after: the rolling backup keeps working.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "First" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Second" }));
+
+        Assert.Contains("First", File.ReadAllText(_store.FilePathFor("game") + ".bak"));
+    }
 
     [Fact]
     public void Save_IsAtomic_NoTempFileLeftBehind()
