@@ -112,10 +112,11 @@ public sealed class ArrayElementsResult
 /// <c>init</c> members, the absolute <c>StructDataAddr</c> among them.
 /// [P4-OTHER-INSTANCE] [P4-GUESS-SHIFT]</para>
 ///
-/// <para>⚠ A few <c>init</c> members CAN change on the same object with the same layout — the
-/// container data bases, the map/set element lists, <c>PtrClassAddr</c>. Those are recorded rows
-/// of their own (<c>[W1-CONTAINER-STALE]</c>, <c>[P4-CONTAINER-BASE]</c>, <c>[P4-PTRCLASS]</c>),
-/// not something this gate covers.</para>
+/// <para>⚠ A few members CAN change on the same object with the same layout — the container
+/// element lists, the container data addresses with the map/set geometry published beside them,
+/// and <c>PtrClassAddr</c>. They are <c>init</c> to the outside but backed by plain fields that
+/// <see cref="CopyLiveValuesFrom"/> refreshes, so a same-object refresh takes them too.
+/// [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS]</para>
 /// </remarks>
 public sealed partial class LiveFieldValue : ObservableObject
 {
@@ -183,7 +184,12 @@ public sealed partial class LiveFieldValue : ObservableObject
     [ObservableProperty] private string _ptrClassName = "";
 
     /// <summary>For ObjectProperty: UClass* address of the pointed-to object (for CSX drilldown).</summary>
-    public string PtrClassAddr { get; init; } = "";
+    /// <remarks>A VALUE, not layout: a retargeted pointer (the Pawn going from hero to car) changes
+    /// it, and both exporters pass it to <c>walk_instance</c> as the class override — so a stale one
+    /// walked the car with the hero's class. Init-only to the outside, refreshed by
+    /// <see cref="CopyLiveValuesFrom"/>. [P4-PTRCLASS]</remarks>
+    public string PtrClassAddr { get => _ptrClassAddr; init => _ptrClassAddr = value; }
+    private string _ptrClassAddr = "";
 
     /// <summary>For BoolProperty: bit index (0-7) within the byte; -1 = not a bool.</summary>
     public int BoolBitIndex { get; init; } = -1;
@@ -198,6 +204,7 @@ public sealed partial class LiveFieldValue : ObservableObject
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
     [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [NotifyPropertyChangedFor(nameof(IsContainerNavigable))]   // [P4-CONTAINER-BASE]: 0 -> N must show []
     [ObservableProperty] private int _arrayCount = -1;
 
     /// <summary>For ArrayProperty: inner element type name (e.g., "FloatProperty", "StructProperty").</summary>
@@ -213,7 +220,10 @@ public sealed partial class LiveFieldValue : ObservableObject
     public string ArrayInnerAddr { get; init; } = "";
 
     /// <summary>For ArrayProperty: TArray::Data base address (for computing element addresses in container view).</summary>
-    public string ArrayDataAddr { get; init; } = "";
+    /// <remarks>Moves when the array reallocates, so it is refreshed by
+    /// <see cref="CopyLiveValuesFrom"/> together with <see cref="ArrayElements"/>. [P4-CONTAINER-BASE]</remarks>
+    public string ArrayDataAddr { get => _arrayDataAddr; init => _arrayDataAddr = value; }
+    private string _arrayDataAddr = "";
 
     /// <summary>For ArrayProperty (struct arrays): UScriptStruct* address for struct element navigation.</summary>
     public string ArrayStructClassAddr { get; init; } = "";
@@ -255,6 +265,7 @@ public sealed partial class LiveFieldValue : ObservableObject
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
     [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [NotifyPropertyChangedFor(nameof(IsContainerNavigable))]   // [P4-CONTAINER-BASE]: 0 -> N must show []
     [ObservableProperty] private int _mapCount = -1;
 
     /// <summary>For MapProperty: key type name (e.g. "StrProperty").</summary>
@@ -270,7 +281,12 @@ public sealed partial class LiveFieldValue : ObservableObject
     public int MapValueSize { get; init; }
 
     /// <summary>For MapProperty: TSparseArray::Data base address.</summary>
-    public string MapDataAddr { get; init; } = "";
+    /// <remarks>Refreshed by <see cref="CopyLiveValuesFrom"/> ONLY together with
+    /// <see cref="MapElements"/>, <see cref="MapStride"/> and <see cref="MapValueOffset"/>: a fresh
+    /// base under first-walk elements would pair old sparse indices with the live buffer, and edits
+    /// would then corrupt a live entry. [P4-CONTAINER-BASE]</remarks>
+    public string MapDataAddr { get => _mapDataAddr; init => _mapDataAddr = value; }
+    private string _mapDataAddr = "";
 
     /// <summary>For MapProperty: UScriptStruct* if key is StructProperty.</summary>
     public string MapKeyStructAddr { get; init; } = "";
@@ -285,7 +301,9 @@ public sealed partial class LiveFieldValue : ObservableObject
     public string MapValueStructType { get; init; } = "";
 
     /// <summary>For MapProperty: aligned byte offset of value within TPair (may differ from MapKeySize due to alignment).</summary>
-    public int MapValueOffset { get; init; }
+    /// <remarks>Published only when the map had elements, so it travels with them. [W1-CONTAINER-STALE]</remarks>
+    public int MapValueOffset { get => _mapValueOffset; init => _mapValueOffset = value; }
+    private int _mapValueOffset;
 
     /// <summary>
     /// For MapProperty: the TSparseArray slot stride the DLL actually used to read these elements.
@@ -297,16 +315,24 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// C# copies silently went stale when the DLL's own formula was corrected (audit #5 V2).
     /// Go through <see cref="ContainerGeometry.MapStrideOf"/>.
     /// </para>
+    /// <para>Published only when the map had elements, so <see cref="CopyLiveValuesFrom"/> takes it
+    /// WITH the element list: fresh elements under a first-walk zero stride would fall back to the
+    /// very client-side guess this comment forbids. [W1-CONTAINER-STALE]</para>
     /// </summary>
-    public int MapStride { get; init; }
+    public int MapStride { get => _mapStride; init => _mapStride = value; }
+    private int _mapStride;
 
     /// <summary>For MapProperty: inline element preview.</summary>
-    public List<ContainerElementValue>? MapElements { get; init; }
+    /// <remarks>Re-emitted by the DLL on every walk and read straight off the row by both
+    /// exporters, so a same-object refresh must take it. [W1-CONTAINER-STALE]</remarks>
+    public List<ContainerElementValue>? MapElements { get => _mapElements; init => _mapElements = value; }
+    private List<ContainerElementValue>? _mapElements;
 
     /// <summary>For SetProperty: entry count (-1 = not a set).</summary>
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
     [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
+    [NotifyPropertyChangedFor(nameof(IsContainerNavigable))]   // [P4-CONTAINER-BASE]: 0 -> N must show []
     [ObservableProperty] private int _setCount = -1;
 
     /// <summary>For SetProperty: element type name.</summary>
@@ -318,11 +344,15 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>
     /// For SetProperty: the TSparseArray slot stride the DLL actually used. 0 = not supplied.
     /// Same rule as <see cref="MapStride"/> — go through <see cref="ContainerGeometry.SetStrideOf"/>.
+    /// Travels with <see cref="SetElements"/> for the same reason. [W1-CONTAINER-STALE]
     /// </summary>
-    public int SetStride { get; init; }
+    public int SetStride { get => _setStride; init => _setStride = value; }
+    private int _setStride;
 
     /// <summary>For SetProperty: TSparseArray::Data base address.</summary>
-    public string SetDataAddr { get; init; } = "";
+    /// <remarks>Same rule as <see cref="MapDataAddr"/>. [P4-CONTAINER-BASE]</remarks>
+    public string SetDataAddr { get => _setDataAddr; init => _setDataAddr = value; }
+    private string _setDataAddr = "";
 
     /// <summary>For SetProperty: UScriptStruct* if element is StructProperty.</summary>
     public string SetElemStructAddr { get; init; } = "";
@@ -331,7 +361,9 @@ public sealed partial class LiveFieldValue : ObservableObject
     public string SetElemStructType { get; init; } = "";
 
     /// <summary>For SetProperty: inline element preview.</summary>
-    public List<ContainerElementValue>? SetElements { get; init; }
+    /// <remarks>Same rule as <see cref="MapElements"/>. [W1-CONTAINER-STALE]</remarks>
+    public List<ContainerElementValue>? SetElements { get => _setElements; init => _setElements = value; }
+    private List<ContainerElementValue>? _setElements;
 
     /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
     public string StructDataAddr { get; init; } = "";
@@ -400,6 +432,27 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// </summary>
     public void CopyLiveValuesFrom(LiveFieldValue src)
     {
+        // [W1-CONTAINER-STALE] [P4-CONTAINER-BASE] [P4-PTRCLASS] The container data and the
+        // pointer's class go in FIRST, and silently (plain fields), so every notification below
+        // repaints from the NEW data. ArrayElements used to be assigned LAST: ArrayCount's repaint
+        // rendered the new count over the old list, and the list itself raised nothing.
+        // The geometry and the data address travel WITH the element lists, never alone: the DLL
+        // publishes them only when the container had elements, and a fresh base under old elements
+        // would pair old sparse indices with the live buffer.
+        bool listsChanged = !ReferenceEquals(ArrayElements, src.ArrayElements)
+                         || !ReferenceEquals(_mapElements, src.MapElements)
+                         || !ReferenceEquals(_setElements, src.SetElements);
+        ArrayElements   = src.ArrayElements;
+        _arrayDataAddr  = src.ArrayDataAddr;
+        _mapElements    = src.MapElements;
+        _mapDataAddr    = src.MapDataAddr;
+        _mapStride      = src.MapStride;
+        _mapValueOffset = src.MapValueOffset;
+        _setElements    = src.SetElements;
+        _setDataAddr    = src.SetDataAddr;
+        _setStride      = src.SetStride;
+        _ptrClassAddr   = src.PtrClassAddr;
+
         HexValue     = src.HexValue;
         TypedValue   = src.TypedValue;
         PtrAddress   = src.PtrAddress;
@@ -410,7 +463,14 @@ public sealed partial class LiveFieldValue : ObservableObject
         SetCount     = src.SetCount;
         EnumName     = src.EnumName;
         FieldAddress = src.FieldAddress;
-        ArrayElements = src.ArrayElements;
+
+        // A list whose CONTENT changed at an unchanged count raised nothing above. Repaint the cell
+        // AND its hover: ValueTooltip is the 200 px cell's overflow, so both or neither.
+        if (listsChanged)
+        {
+            OnPropertyChanged(nameof(DisplayValue));
+            OnPropertyChanged(nameof(ValueTooltip));
+        }
     }
 
     /// <summary>Display-friendly value string.</summary>

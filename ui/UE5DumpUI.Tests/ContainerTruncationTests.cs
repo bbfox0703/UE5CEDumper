@@ -87,12 +87,20 @@ public class ContainerTruncationTests
 
     // ── Part B: real Live Walker drill, per container kind ───────────────────
 
-    private static LiveWalkerViewModel MakeVm()
+    private static LiveWalkerViewModel MakeVm(LiveFieldValue field)
     {
-        var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
-                                         new MockPlatformService(Path.GetTempPath()));
         // A real drill always has a walked parent instance; give it one so the container crumb
         // carries a genuine address (the log helper FormatBreadcrumbTrace reads Address[^4..]).
+        // Since [P4-CONTAINER-BASE] the drill also RE-READS that parent before opening the
+        // container, so the stub answers that walk with the same row.
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000",
+            Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
         vm.CurrentAddress = "0x10000000";
         return vm;
     }
@@ -142,8 +150,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedSet_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(SetField(total: 199, loaded: 128));
+        var field = SetField(total: 199, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 199", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 199", vm.CurrentObjectName);
@@ -153,8 +162,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_FullSet_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(SetField(total: 3, loaded: 3));
+        var field = SetField(total: 3, loaded: 3);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
@@ -164,8 +174,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedMap_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(MapField(total: 500, loaded: 128));
+        var field = MapField(total: 500, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 500", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 500", vm.CurrentObjectName);
@@ -175,8 +186,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_FullMap_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(MapField(total: 2, loaded: 2));
+        var field = MapField(total: 2, loaded: 2);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
@@ -186,8 +198,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedPointerArray_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(PtrArrayField(total: 199, loaded: 128));
+        var field = PtrArrayField(total: 199, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 199", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 199", vm.CurrentObjectName);
@@ -197,8 +210,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_FullPointerArray_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(PtrArrayField(total: 4, loaded: 4));
+        var field = PtrArrayField(total: 4, loaded: 4);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);

@@ -1196,9 +1196,30 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 Breadcrumbs[^1].ScrollHintFieldName = field.Name;
             CaptureCrumbViewState(field);
 
-            if (field.DataTableRowCount > 0 && _cachedDataTableRows != null)
+            bool isDataTable = field.DataTableRowCount > 0 && _cachedDataTableRows != null;
+            bool reread = true;
+            if (!isDataTable)
             {
-                NavigateToDataTableContainer(field, _cachedDataTableRows);
+                // [P4-CONTAINER-BASE] Re-read the container from the live object first: its data
+                // address may have moved since the grid was walked. See RereadContainerRowAsync.
+                var gestureCrumb = CurrentCrumb;
+                reread = await RereadContainerRowAsync(field);
+                if (!IsStillOnParent(gestureCrumb))
+                {
+                    StatusText = $"Navigation superseded — '{field.Name}' was discarded (you moved while it loaded).";
+                    _log.Info($"NAV✕Container {field.Name} discarded: parent changed during the re-read");
+                    return;
+                }
+                if (!field.IsContainerNavigable)
+                {
+                    StatusText = $"'{field.Name}' is empty now — nothing to open.";
+                    return;
+                }
+            }
+
+            if (isDataTable)
+            {
+                NavigateToDataTableContainer(field, _cachedDataTableRows!);
             }
             else if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
             {
@@ -1212,6 +1233,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 NavigateToSetContainer(field);
             }
+
+            // Said AFTER the drill, and appended: the drill's own truncation notice would otherwise
+            // overwrite it, and the user would never learn these are the last-read values.
+            if (!reread)
+            {
+                var warn = $"⚠ Could not re-read '{field.Name}' before opening it — showing the values from the last refresh.";
+                StatusText = string.IsNullOrEmpty(StatusText) ? warn : $"{StatusText} — {warn}";
+            }
         }
         catch (Exception ex)
         {
@@ -1222,6 +1251,56 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>
+    /// Re-read a container row from the live object just before drilling into it, and copy the
+    /// fresh values ONTO the row. [P4-CONTAINER-BASE]
+    /// </summary>
+    /// <remarks>
+    /// <para>A container's DATA pointer moves when it reallocates, and every element address the
+    /// drill builds comes from it — for a map or a set, also from the stride and value offset
+    /// published beside it. The row holds whatever the grid's last walk said, which with Auto off
+    /// can be long ago. So the drill showed current values (a scalar array's elements are
+    /// re-fetched DLL-side) next to addresses in the freed allocation, and an inline edit wrote into
+    /// freed heap and still printed "Written".</para>
+    /// <para>This is the re-walk <see cref="RefreshAsync"/>'s container branch already does. Copying
+    /// onto the row (rather than drilling a detached copy) keeps the grid row, the crumb's
+    /// <c>ContainerField</c> and the element view on ONE reading. The walk must answer for the
+    /// same object (address and class) and the same row (Name, Offset, TypeName, Size); otherwise,
+    /// or if the walk fails, this returns false and the caller opens what the row already held and
+    /// SAYS so.</para>
+    /// </remarks>
+    private async Task<bool> RereadContainerRowAsync(LiveFieldValue field)
+    {
+        var addr = CurrentAddress;
+        if (string.IsNullOrEmpty(addr)) return false;
+        string? classAddr = Breadcrumbs.Count > 0 && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr)
+            ? Breadcrumbs[^1].ClassAddr : null;
+        try
+        {
+            var result = await _dump.WalkInstanceAsync(addr, classAddr, arrayLimit: ArrayLimit,
+                                                       previewLimit: PreviewLimit, fillGaps: FillGaps);
+            bool sameObject = ParseHexAddr(result.Address) != 0
+                && ParseHexAddr(result.Address) == ParseHexAddr(addr)
+                && string.Equals(result.ClassName, CurrentClassName, StringComparison.Ordinal);
+            var fresh = sameObject
+                ? result.Fields.FirstOrDefault(f => f.Offset == field.Offset && f.Size == field.Size
+                      && string.Equals(f.Name, field.Name, StringComparison.Ordinal)
+                      && string.Equals(f.TypeName, field.TypeName, StringComparison.Ordinal))
+                : null;
+            if (fresh != null)
+            {
+                field.CopyLiveValuesFrom(fresh);
+                return true;
+            }
+            _log.Warn($"Drill: could not re-read '{field.Name}' at {addr} — opening the last-read values");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warn($"Drill: re-read of '{field.Name}' at {addr} failed ({ex.Message}) — opening the last-read values");
+        }
+        return false;
     }
 
     private async Task NavigateToArrayContainerAsync(LiveFieldValue field)

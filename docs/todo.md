@@ -533,7 +533,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    `SelectivityWeight = 3.0` rewards exactly the few-instance change an array element produces,
    and `PivotDiscoveryEngine` contains no occurrence of "array" anywhere.
 
-6. ⬜ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
+6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place
    `CopyLiveValuesFrom` branch on every same-object Refresh (`LiveWalkerViewModel.cs:6524-6544`),
    and `MapElements`/`SetElements` are `init`-only and absent from the copy list — they cannot
@@ -548,6 +548,17 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    3329/3347/3490`, `CsxExportService.cs:551/560/612/652/732/840`. **A CE table or CSX export
    taken after a Refresh carries first-walk values**: wrong data leaving the app into another
    tool. Mitigation: refreshing while already inside the container view is clean (`:5131-5144`).
+   ✅ **FIXED IN SOURCE 2026-09-11**, in one commit with `[P4-CONTAINER-BASE]` and `[P4-PTRCLASS]`,
+   as planned.
+   - **Plain-field backing:** `MapElements` / `SetElements` (and the six geometry and base members,
+     see the fix trap under "Widenings") are init-only to the outside, backed by plain fields that
+     `CopyLiveValuesFrom` refreshes.
+   - **Order:** they are assigned FIRST and silently, then the observable members. After that, one
+     explicit `DisplayValue` + `ValueTooltip` notification fires whenever an element list was
+     replaced.
+   - **Red → green:** map, set, array at the same count, and array that grows (4 tests), each red on
+     the recorded mechanism first.
+   - **Evidence and live check:** in the `[FIXPASS-2026-09-10]` ledger and backlog.
 
 **LOW** — 7 rows: `[W1-GROUP-DENYLIST]` Group mode filters by a persisted denylist it gives no way
 to see or clear (the *applying* is documented design — `docs/snapshot-group-match-spec.md:255`;
@@ -1828,7 +1839,7 @@ stays editable. An edit writes this row's type of bytes into the neighbour (`:53
       differs from the fresh one, and only for a search term containing the `?`.
     - **Fix shape:** take the count from the second `MarkSearchMatches` call.
 
-##### `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer
+##### ✅ `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer (FIXED IN SOURCE 2026-09-11)
 
 `LiveFieldValue.cs:206/263/315`. A container's DATA pointer moves when the container reallocates,
 and is omitted while it is unallocated (`Fern.cpp:1515/1611/1651`). A refresh copies `ArrayCount`
@@ -1851,8 +1862,31 @@ into freed heap and still prints `Written: …` (`:5406`, `:5418`).
 - **Also needed:** `ArrayCount`, `MapCount` and `SetCount` need
   `[NotifyPropertyChangedFor(nameof(IsContainerNavigable))]`. Without it, a realized row that goes
   from 0 to N elements never shows its `[]` button.
+- ✅ **FIXED IN SOURCE 2026-09-11, BOTH safe shapes, with `[W1-CONTAINER-STALE]`:**
+  - **(1) Refresh:** the three data addresses are refreshed by `CopyLiveValuesFrom`, but only
+    together with the element lists and the map/set stride and value offset. The ⛔ note above is
+    honoured: never a base on its own.
+  - **(2) Drill:** `NavigateToContainerAsync` now calls `RereadContainerRowAsync` before opening a
+    non-DataTable container.
+    - It re-walks `CurrentAddress` with the crumb's `ClassAddr`, the same walk as `RefreshAsync`'s
+      container branch.
+    - It requires the same address, the same class and a row with the same Name / Offset /
+      TypeName / Size, and copies the fresh values onto the row.
+    - It then re-checks `IsStillOnParent`, and that the container is still non-empty.
+    - On failure it opens what the row held and **appends** a "could not re-read" warning after
+      the drill, so the drill's own truncation notice cannot overwrite it.
+  - This closes the **no-refresh variant** as well: the game reallocates after the walk, and the
+    user drills without a Refresh.
+  - The three counts gained the `IsContainerNavigable` notification.
+  - **Red → green:**
+    - the array reallocated on a refresh, then drilled;
+    - a map gaining its first entries (geometry, base, `IsContainerNavigable`);
+    - an array and a map reallocated since the walk, then drilled with no refresh;
+    - the failed re-read path.
+  - `ContainerTruncationTests`' stub now answers the parent re-read. Its own header already said "a
+    real drill always has a walked parent instance".
 
-##### `[P4-PTRCLASS]` LOW — a retargeted pointer keeps its first-walk `PtrClassAddr`, and the exporters walk the new target with the old class
+##### ✅ `[P4-PTRCLASS]` LOW — a retargeted pointer keeps its first-walk `PtrClassAddr`, and the exporters walk the new target with the old class (FIXED IN SOURCE 2026-09-11)
 
 `LiveFieldValue.cs:176`. `PtrClassAddr` is `GetClass(target)`, which is a value (`Ubel.cpp:4165-4168`).
 `PtrAddress`, `PtrName` and `PtrClassName` are copied; `PtrClassAddr` is not. Both exporters pass it
@@ -1867,6 +1901,9 @@ for it to bite:
 - ⛔ **Unsafe:** dropping the override in the exporters. The CSX DataTable drilldown relies on it for
   row data that is raw struct memory (`CsxExportService.cs:871-881`), and the synthetic sub-field
   pointers carry it on purpose.
+- ✅ **FIXED IN SOURCE 2026-09-11, the safe shape.** `CopyLiveValuesFrom` now copies it; nothing
+  binds it, and the exporters keep the override. `Refresh_PointerRetargetsToAnotherClass_…` failed
+  first with *"Expected 0x920000, Actual 0x910000"*.
 
 ##### `[P8-BOOKMARK-TIP]` LOW — re-saving into an occupied bookmark slot leaves its tooltip naming the previous target
 
@@ -1889,11 +1926,15 @@ getter directly and only ever save into empty slots, so they cannot see it.
   `LiveWalkerPanel.axaml:624`). That hover exists because the 200 px cell clips long array previews.
   A fix must raise **both** `DisplayValue` and `ValueTooltip`. `LiveFieldValueTooltipTests` pins the
   pair only at the attribute level, so a hand-written `OnPropertyChanged` must pair them by hand.
+  ✅ *Done 2026-09-11: the hand-written notification raises both, and every staleness test asserts
+  both.*
 - **`[W1-CONTAINER-STALE]` fix trap:** `MapStride`, `MapValueOffset` and `SetStride` are published
   only when the container had elements, and the three data addresses only when non-null. Suppose a
   W1 fix makes `MapElements` / `SetElements` copyable but leaves these `init`. The fresh elements are
   then paired with a **zero stride**, which falls back to the client-side guess that audit #5 V2
-  retired. **Six members must travel with the element lists.**
+  retired. **Six members must travel with the element lists.** ✅ *Done 2026-09-11: all six travel
+  together in `CopyLiveValuesFrom`. `Refresh_MapGainsItsFirstEntries_…` pins the zero-stride trap
+  (it failed first with "Expected 24, Actual 0").*
 
 ##### What the sweep did not cover, and the tools' limits
 
@@ -1928,8 +1969,14 @@ getter directly and only ever save into empty slots, so they cannot see it.
   awaits (`PointerPanelViewModel.cs:1480-1483 → :1458`). It is a confirmation, not a warning.
 
 ⬜ **For the fix pass:** `[P4-OTHER-INSTANCE]` and `[P4-GUESS-SHIFT]` share one gate and land
-together. ✅ *The gate landed 2026-09-10; the same-object staleness trio below is next in this
-group.* After the gate, the copy path runs only for a same-object, same-layout refresh. Then
+together. ✅ *The gate landed 2026-09-10, and the same-object staleness trio on 2026-09-11.
+`[P8-BOOKMARK-TIP]` remains, independent.*
+🟡 **Lead, LOW, not filed (unmeasured):** Back / Forward / a breadcrumb jump into a container view
+re-renders from the crumb's cached `ContainerField` (`RepopulateContainerView`). That is the grid
+row object, as last read at drill time or at a refresh of the parent grid. A Refresh from INSIDE
+the container view re-walks, but hands `RepopulateContainerView` a fresh field object and leaves the
+crumb's `ContainerField` as it was. So a later Back into that view can show element addresses from
+before a reallocation. Fix shape: the `RereadContainerRowAsync` treatment on those re-entry paths. After the gate, the copy path runs only for a same-object, same-layout refresh. Then
 `[W1-CONTAINER-STALE]`, `[P4-CONTAINER-BASE]` (the six members above) and `[P4-PTRCLASS]` are
 same-object staleness, and they land as one change right after. `[P8-BOOKMARK-TIP]` is independent.
 
@@ -3308,6 +3355,9 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 2 | `[W1-SNAP-FAULT]` | HIGH | `git log --grep W1-SNAP-FAULT` | red → green + clean control; UI 4804/4804; gates 21/21; `-Target DLL` builds |
 | 3 | `[P4-OTHER-INSTANCE]` | HIGH | `git log --grep P4-OTHER-INSTANCE` | red (3/4) → green; the gate's adversarial review found a jump-to-top regression in the draft; fixed red (4/15) → green 15/15; UI 4819/4819; gates 21/21. A second review found the row-count check unpinned; a test was added and mutation-checked (17/17, follow-up commit) |
 | 4 | `[P4-GUESS-SHIFT]` | MED | same commit as 3 (one shared gate, as planned) | the cross-gap test red → green; the `?`-suffix refinement test red → green |
+| 5 | `[W1-CONTAINER-STALE]` | MED | `git log --grep W1-CONTAINER-STALE` | `LiveWalkerRefreshStalenessTests`: 9/9 red on the recorded mechanisms → 10/10 green (+ the failed-re-read path); UI 4831/4831; gates 21/21 |
+| 6 | `[P4-CONTAINER-BASE]` | MED | same commit as 5 (the six members travel with the lists) | refresh + drill-time re-read; `ContainerTruncationTests` 19/19 |
+| 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3317,6 +3367,10 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | L2 | `[W1-SNAP-FAULT]` | Arm a faulting object-decryption stub during a snapshot capture. Adapt `tools/verify/sw1_worker_fault.py`, and note that the armed scan must be the process's FIRST parallel scan. Then check that the snapshot shows as ⚠ unusable, is excluded from SPC/Pivot, and that the status names a worker FAULT, not a deadline. | DumperTest + UI; no CE |
 | L3 | `[P4-OTHER-INSTANCE]` | Open two actors of one class through Instance Finder: A, then B, without clicking 🌍 GWorld in between. Drill a struct row on B. The breadcrumb address must equal B's base + the offset, not A's. Edit one struct field and read it back on B, and A must be unchanged. **Scroll check:** on one object with Auto on, scroll down, and the grid must NOT jump to the top on a tick. | DumperTest + UI; no CE |
 | L4 | `[P4-GUESS-SHIFT]` | Guess? on, and Auto on, on a DumperTest object whose gap holds a float that changes (e.g. a draining stat). Scroll down. On ticks where the value moves between clean (100.0) and non-clean (87.3), the grid must stay put. Where the guessed layout really moves, every row's Address must still be its own base + Offset. | DumperTest + UI; no CE |
+| L5 | `[W1-CONTAINER-STALE]` `[P4-CONTAINER-BASE]` `[P4-PTRCLASS]` | On a DumperTest actor with a TArray, a TMap and a TSet that change at runtime (e.g. an inventory):
+1. **Refresh:** the previews and hovers update; a CE XML and a CSX export taken after the refresh carry the NEW values.
+2. **Drill without a Refresh:** grow the array past its capacity so it reallocates, then drill it with NO Refresh. Element addresses must sit in the new buffer: compare with CE's view of the array's data pointer. Edit one element and read it back.
+3. **Pointer retarget:** retarget a pointer to another class and export with drilldown ≥ 1; the target must be walked with its own class. | DumperTest + UI; CE only to cross-check the data pointer — announce first |
 
 #### Live experiments recorded in the finding phase — each joins the backlog when its row is fixed
 
