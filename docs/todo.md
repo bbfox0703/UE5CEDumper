@@ -4615,8 +4615,16 @@ inner's type, struct and object class, never its enum: nothing named `inner_enum
 
     A plain byte array, and a Map value with no enum, are the controls. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148.
   - ⚠ **Survivor by construction:** Fern.cpp's four keys, which no test target compiles.
-  - ⬜ **Not in this row:** the offline Dump All JSONL does not yet carry the inner enums, so a USMAP built
-    from an offline dump still lacks them.
+  - ~~⬜ The offline Dump All JSONL lacks the inner enums, so a USMAP built from an offline dump lacks them.~~
+    False (review 5): no USMAP is ever built from an offline dump. `GenerateUsmapAsync` reads live `walk_class`
+    replies only, so extending the JSONL would change no USMAP output.
+  - ✅ **Review 5 follow-up 2026-09-12** (of 53baca47: three LOW, one refuted by one skeptic).
+    - **The Set and Optional arms were unpinned.** Reverting either to its exact pre-fix code passed every
+      test. Byte-exact tests for both now. 2/2 mutants killed; UI 5195/5195.
+    - ⚠ **Still unpinned, and said so:** the DLL's Map-value and Optional-inner enum reads. The CONTAINERENUM
+      fixture has an IntProperty value and no OptionalProperty; a later fixture should add both.
+    - **L39's example was wrong.** No collision component declares a `TArray<TEnumAsByte<E>>`; it now names one
+      that exists.
 
 ##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
 
@@ -5101,7 +5109,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. A contract-3 .CT still runs against the new DLL (MIN 1).
 3. A new record against an OLD DLL refuses with "update the DLL".
 4. **Control:** an on-foot save closes cleanly. | CE + a game |
-| L39 | `[A4-USMAP-CONTAINER-ENUM]` | A game with a `TArray<TEnumAsByte<E>>` UPROPERTY (e.g. `EObjectTypeQuery` arrays on collision components):
+| L39 | `[A4-USMAP-CONTAINER-ENUM]` | A game with a `TArray<TEnumAsByte<E>>` UPROPERTY. Not on collision components, which declare none (review 5): the Engine's `FPredictProjectilePathParams.ObjectTypes` (GameplayStaticsTypes.h) is one, or a game's own:
 1. Export USMAP and load it in FModel.
 2. The array's elements show enum NAMES, and the properties after it in the same object stay aligned.
 3. **Control:** a plain `TArray<uint8>` stays a byte array. | a game + UI + FModel; no CE |

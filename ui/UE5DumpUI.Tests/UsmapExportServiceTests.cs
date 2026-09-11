@@ -335,6 +335,44 @@ public class UsmapExportServiceTests
         Assert.Equal(new byte[] { 26, 0, 0, 0, 0, 0, 26, 0, 1, 0, 0, 0 }, bytes[1..]);
     }
 
+    // ---- review 5 of 53baca47: the Set and Optional arms of the fix were unpinned ----
+
+    [Fact]
+    public void WritePropertyType_SetOfTEnumAsByte_WritesTheCanonicalEnumShape()
+    {
+        var nameTable = new UsmapExportService.NameTable();
+        nameTable.GetOrAdd("EObjectTypeQuery");   // idx 0
+        var field = new FieldInfoModel
+        {
+            TypeName = "SetProperty", ElemType = "ByteProperty", ElemEnumName = "EObjectTypeQuery",
+        };
+
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        UsmapExportService.WritePropertyType(w, field, nameTable);
+        w.Flush();
+
+        Assert.Equal(new byte[] { 25, 26, 0, 0, 0, 0, 0 }, ms.ToArray());   // [Set][Enum][Byte][E]
+    }
+
+    [Fact]
+    public void WritePropertyType_OptionalOfTEnumAsByte_WritesTheCanonicalEnumShape()
+    {
+        var nameTable = new UsmapExportService.NameTable();
+        nameTable.GetOrAdd("EObjectTypeQuery");   // idx 0
+        var field = new FieldInfoModel
+        {
+            TypeName = "OptionalProperty", InnerType = "ByteProperty", InnerEnumName = "EObjectTypeQuery",
+        };
+
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        UsmapExportService.WritePropertyType(w, field, nameTable);
+        w.Flush();
+
+        Assert.Equal(new byte[] { 28, 26, 0, 0, 0, 0, 0 }, ms.ToArray());   // [Optional][Enum][Byte][E]
+    }
+
     [Fact]
     public void WritePropertyType_ArrayOfPlainBytes_StaysAByteArray()
     {
