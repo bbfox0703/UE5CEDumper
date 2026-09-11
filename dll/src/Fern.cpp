@@ -6133,6 +6133,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["hidden_actors"] = addrs;
             }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
+            // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
+            // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
+            data["restore_pending"]   = st.restorePending;
+            data["restore_abandoned"] = st.restoreAbandoned;
             return data;
         };
         if (cmd == Renge::CMD_SEE_THROUGH_SET) {

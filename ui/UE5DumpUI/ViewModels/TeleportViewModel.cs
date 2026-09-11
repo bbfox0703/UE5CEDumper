@@ -2835,6 +2835,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// have had to run off the game thread.</summary>
     private const int SeeThroughNoHookCode = -5;
 
+    /// <summary>Schlacht::STR_ERR_REFLECTION — refused at enable: this build lacks LineTraceSingle or
+    /// SetActorHiddenInGame, so nothing could ever be hidden. [P1-SEETHRU-NOPRODUCER]</summary>
+    private const int SeeThroughReflectionCode = -3;
+
     private void ApplySeeThroughReadout(SeeThroughStatus st)
     {
         ApplySeeThroughState(st.Active ? 1 : 0);
@@ -2860,13 +2864,30 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // [P1-SEETHRU-NOPRODUCER] Refused at enable because the build cannot hide anything. Unlike the hook refusal
+        // above this is a property of the build, so it offers no retry.
+        if (!st.Active && st.Code == SeeThroughReflectionCode)
+        {
+            SeeThroughState = "Unavailable";
+            SeeThroughBadgeColor = "#C9A04E";
+            SeeThroughCurrentText =
+                "Not supported on this game build — LineTraceSingle or SetActorHiddenInGame is missing "
+                + "(cooked out), so See-through cannot hide anything.";
+            return;
+        }
+
         // Leftover-hidden: must be tested BEFORE the plain-off early-return below,
         // and kept on the card rather than only in the one-shot status line.
         if (!st.Active && st.HiddenCount > 0)
         {
-            SeeThroughCurrentText =
-                $"Off — {st.HiddenCount} actor(s) still hidden (the game thread was paused). "
-                + "Click back into the game and they reappear; Keep Foreground avoids this.";
+            // [P1-SEETHRU-GIVEUP] ...but "they reappear" only while the DLL is still waiting. After the restore window
+            // it gives up, and the card now carries the log's remedy instead of a promise nothing keeps.
+            SeeThroughCurrentText = st.RestoreAbandoned
+                ? $"Off — {st.HiddenCount} actor(s) still hidden: the game thread stayed paused past the restore "
+                  + "window, so the automatic restore gave up. Turn See-through on and off again with the game "
+                  + "running to restore them."
+                : $"Off — {st.HiddenCount} actor(s) still hidden (the game thread was paused). "
+                  + "Click back into the game and they reappear; Keep Foreground avoids this.";
             return;
         }
 
@@ -2897,7 +2918,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 : st.Code == SeeThroughNoHookCode
                     ? "See-through refused: the game-thread hook is not available. "
                       + "Press Apply again to retry — this failure is often transient."
-                    : "See-through could not be enabled.";
+                    : st.Code == SeeThroughReflectionCode
+                        ? "See-through refused: this game build cannot hide actors "
+                          + "(LineTraceSingle / SetActorHiddenInGame is missing)."
+                        : "See-through could not be enabled.";
         }
         catch (Exception ex) { ApplySeeThroughState(-1); SetError(ex); _log.Error("Teleport ApplySeeThrough failed", ex); }
         finally { IsBusy = false; }

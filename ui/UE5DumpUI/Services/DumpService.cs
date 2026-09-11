@@ -3562,6 +3562,9 @@ public sealed class DumpService : IDumpService
         State       = res?["state"]?.GetValue<int>() ?? -1,
         // Older DLLs don't send it; assume healthy so their behaviour is unchanged.
         HookActive  = res?["hook_active"]?.GetValue<bool>() ?? true,
+        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the old "still waiting" card.
+        RestorePending   = res?["restore_pending"]?.GetValue<bool>() ?? false,
+        RestoreAbandoned = res?["restore_abandoned"]?.GetValue<bool>() ?? false,
     };
 
     // === Teleport (Wirbel) — docs/teleport-spec.md §7 ===

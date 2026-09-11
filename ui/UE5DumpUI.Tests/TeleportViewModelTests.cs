@@ -2144,6 +2144,56 @@ public class TeleportViewModelTests
         Assert.Contains("Keep Foreground", vm.SeeThroughCurrentText);
     }
 
+    // [P1-SEETHRU-NOPRODUCER] A build without LineTraceSingle or SetActorHiddenInGame can hide nothing, so the DLL
+    // refuses at enable (-3). The card must say so -- and, unlike the hook refusal, offer no retry: it is the build.
+    [Fact]
+    public async Task ApplySeeThrough_refused_for_missing_producers_says_the_build_cannot()
+    {
+        var fake = new FakeDumpService { NextSeeThroughStatus = new() { Active = false, Code = -3, State = -3 } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.ApplySeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unavailable", vm.SeeThroughState);
+        Assert.Contains("SetActorHiddenInGame", vm.SeeThroughCurrentText);
+        Assert.DoesNotContain("retry", vm.SeeThroughCurrentText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cannot hide", vm.StatusText);
+    }
+
+    // [P1-SEETHRU-GIVEUP] After the restore window the DLL gives up, and "click back and they reappear" is then false.
+    [Fact]
+    public async Task RefreshSeeThrough_after_the_restore_gave_up_names_the_real_remedy()
+    {
+        var fake = new FakeDumpService
+        {
+            NextSeeThroughStatus = new() { Active = false, HiddenCount = 1, RestoreAbandoned = true }
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshSeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Contains("gave up", vm.SeeThroughCurrentText);
+        Assert.Contains("on and off again", vm.SeeThroughCurrentText);
+        Assert.DoesNotContain("Click back into the game", vm.SeeThroughCurrentText);
+    }
+
+    [Fact]
+    public async Task RefreshSeeThrough_while_the_restore_still_waits_keeps_the_promise()
+    {
+        var fake = new FakeDumpService
+        {
+            NextSeeThroughStatus = new() { Active = false, HiddenCount = 1, RestorePending = true }
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshSeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Contains("Click back into the game", vm.SeeThroughCurrentText);
+    }
+
     [Fact]
     public async Task Changing_pierce_depth_while_active_pushes_it_live()
     {

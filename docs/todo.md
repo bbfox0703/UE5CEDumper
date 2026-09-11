@@ -2092,17 +2092,41 @@ code**, which is the behaviour the brief asked for.
    ⚠ *Widened 2026-09-10 (`[PATTERN-P5-2026-09-10]`): the same hint also prints on a PARTIAL scan,
    i.e. `deadline_hit=true` from a deadline or a worker fault (`LiveWalkerViewModel.cs:2694`). One fix
    covers both: never blame the game unless the scan was complete.*
-6. ⬜ **`[P1-SEETHRU-NOPRODUCER]`** `Schlacht.cpp:361` (+ `:443`). On a build missing
+6. ✅ **`[P1-SEETHRU-NOPRODUCER]`** (FIXED IN SOURCE 2026-09-12, batch L05) `Schlacht.cpp:361` (+ `:443`). On a build missing
    `SetActorHiddenInGame`, `LineTraceSingle` or `KismetSystemLibrary`, or when a hit cannot be
    resolved to an actor, See-through does **nothing at all** — and Tick still ends `STR_OK` with
    `hasTarget = true`, so the card reads **"Active — nothing blocking the view"**. The header already
    defines `STR_ERR_REFLECTION` for exactly this case. ⛔ Partly harmful as sketched; the right shape
    is to refuse at enable (`-3` from `SetEnabled`), which reaches all three exits through the return
    code.
-7. ⬜ **`[P1-SEETHRU-GIVEUP]`** `Schlacht.cpp:626`. After the 5-minute restore give-up
+   ✅ **FIXED IN SOURCE 2026-09-12, in the recorded shape** (batch L05).
+   - `SetEnabled(true)` asks `ProbeProducers` whether the build can hide anything: `LineTraceSingle` on
+     the KismetSystemLibrary CDO (with its `OutHit`), and `AActor::SetActorHiddenInGame`.
+   - If either is missing it returns `STR_ERR_REFLECTION` (-3) BEFORE a worker starts. The pipe's `state`,
+     the mailbox result (the CE script shows the error and unticks) and the `code` on every later poll all
+     carry it.
+   - The card reads "Unavailable — not supported on this game build", with no retry offer (unlike the hook
+     refusal: this one is the build).
+   - ⬜ **Not in this row:** a hit that resolves to no actor is per-tick. It keeps its one-shot warning in
+     `CollectOccluders` (`[SEETHRUNOOP]`).
+7. ✅ **`[P1-SEETHRU-GIVEUP]`** (FIXED IN SOURCE 2026-09-12, batch L05) `Schlacht.cpp:626`. After the 5-minute restore give-up
    (`PENDING_RESTORE_MAX_MS`) the card still promises *"Click back into the game and they
    reappear"* — `hidden_count > 0` with `active = false` means both "restore pending" and "restore
    abandoned", and the pipe cannot tell them apart. The log names the real remedy; the card does not.
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch L05).
+   - The give-up branch records `restoreAbandoned`, and every `SetEnabled` clears it (either direction
+     re-decides).
+   - `GetStatus` and the pipe publish `restore_pending` (the waiter is running) and `restore_abandoned`,
+     both additive.
+   - The card keeps "click back into the game and they reappear" for a pending restore. For an abandoned
+     one it gives the log's remedy: turn See-through on and off again with the game running.
+   - **Tests, red first:**
+     - the VM: the -3 refusal, the abandoned card, and a pending control;
+     - the parse;
+     - source pins for `Schlacht.cpp` and `Fern.cpp`, which no test target compiles.
+
+     With `[P1-SEETHRU-NOPRODUCER]`: 9/9 mutants killed; UI 5183/5183. The real `UE5Dumper` build compiles both
+     DLL halves.
 
 `implied_fix_safe`: **5 of 7** unsafe or incomplete; one fully safe (#3), one mostly safe (#7).
 ⭐ **The one fully safe fix is the one that copies an already-shipped, already-verified fix** — which
@@ -4869,6 +4893,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 56 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | LOW | `git log --grep A4-PUSHCE-UNPADDED` (batch L03a) | the UI: a caller-level batch-push test, and CSX offsets for a unicast leaf and a multicast drill, red first. 5/5 mutants killed; UI 5162/5162. Not a blanket `+ DelegatePad`: the multicast raw block stays at the field offset |
 | 57 | `[A4-DELEGATE-ARRAY-PAD]` | LOW | `git log --grep A4-DELEGATE-ARRAY-PAD` (batch L03b) | dll_core_test (the helper, and a fake walk over a padded and an unpadded delegate array) and the UI (parse, CE XML leaves and tail, CSX leaves, multicast controls), red first against an inert member / helper / property. 10/10 mutants killed; dll_core_test 275/275; UI 5169/5169. The pad is per ELEMENT and ArrayProperty-only, never on the array field |
 | 58 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | LOW | `git log --grep P3-SDK-INNERS` (batch L04) | the UI: each copied inner spelling (Array, with its class, Map, Set) and a header over a guessed row, red first. 5/5 mutants killed; UI 5176/5176. Only the four scalar arms: the rest of the INNERS sketch was not safe |
+| 59 | `[P1-SEETHRU-NOPRODUCER]` + `[P1-SEETHRU-GIVEUP]` | LOW | `git log --grep P1-SEETHRU-NOPRODUCER` (batch L05) | the UI (the VM card for a -3 refusal, an abandoned and a pending restore; the parse) and source pins for Schlacht.cpp / Fern.cpp, red first. 9/9 mutants killed; UI 5183/5183. Refused at ENABLE, the recorded shape; the per-hit case stays out |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5028,6 +5053,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L44 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | A connected game and the UI:
 1. **Guessed rows:** in Live Walker, open an instance whose class shows "Guess?" rows and export its C++ header. No `?0x` name appears, and those bytes are `Pad_` members.
 2. **Container inners:** export the SDK on a game with a `TArray<TSoftClassPtr<…>>`, `TArray<TLazyObjectPtr<…>>` or `TArray<FScriptDelegate>` field (find one in a class dump). The declaration spells the element type, not `uint8_t`. | a game + UI |
+| L45 | `[P1-SEETHRU-NOPRODUCER]` + `[P1-SEETHRU-GIVEUP]` | A connected game with See-through:
+1. **Enable** on a normal game. It turns ON (the producer probe passes), and the DLL log has no "refusing to enable".
+2. **Give-up:** with an occluder hidden, pause the game (background it without Keep Foreground), turn See-through off in the UI, and keep the game paused over 5 minutes. Refresh: the card says the restore gave up and to turn See-through on and off again. Do that with the game running: the actor reappears, and the card reads plain OFF.
+3. The -3 refusal is not reachable on a stock build; the source pin covers it. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5090,7 +5119,7 @@ completeness critic.
 - ✅ **L02:** `[P1-ENUMNAMES]`
 - ✅ **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE), in two batches: L03a and L03b.
 - ✅ **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
-- **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
+- ✅ **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - **L06:** `[P1-UPROP-DELEGATE]`
 - **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 - **L08:** `[P1-SPARSEDELEGATE-REFS]`

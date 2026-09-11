@@ -1277,6 +1277,24 @@ public class DumpServiceTests
         Assert.Equal("2", field.ArrayElements[1].Value);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task SeeThroughGetStateAsync_ParsesTheRestoreVerdict(bool pending, bool abandoned)
+    {
+        // [P1-SEETHRU-GIVEUP] Additive keys: absent from an older DLL, both false.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["active"] = false, ["hidden_count"] = 1,
+            ["restore_pending"] = pending, ["restore_abandoned"] = abandoned,
+        });
+
+        var st = await CreateService().SeeThroughGetStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(pending, st.RestorePending);
+        Assert.Equal(abandoned, st.RestoreAbandoned);
+    }
+
     [Fact]
     public async Task WalkInstanceAsync_ParsesTheDelegateArrayElementPad()
     {

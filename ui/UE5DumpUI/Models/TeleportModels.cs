@@ -392,6 +392,15 @@ public sealed class SeeThroughStatus
     /// install can fail transiently (MinHook trampoline allocation) and recover on
     /// a later attempt, so this is polled rather than remembered.</summary>
     public bool HookActive { get; init; } = true;
+
+    /// <summary>[P1-SEETHRU-GIVEUP] A leftover-hidden restore is still WAITING for the game thread
+    /// (<c>restore_pending</c>): clicking back into the game restores the actors.</summary>
+    public bool RestorePending { get; init; }
+
+    /// <summary>[P1-SEETHRU-GIVEUP] The restore GAVE UP after the restore window (<c>restore_abandoned</c>): those
+    /// actors stay hidden until See-through is turned on and off again with the game running. False from an older
+    /// DLL.</summary>
+    public bool RestoreAbandoned { get; init; }
 }
 
 /// <summary>Result of a teleport action (recall / cursor).</summary>

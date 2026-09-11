@@ -1819,6 +1819,42 @@ public class InvokeScriptTests
         throw new FileNotFoundException("dll/src/" + file + " not found from " + AppContext.BaseDirectory);
     }
 
+    // ---- [P1-SEETHRU-NOPRODUCER] / [P1-SEETHRU-GIVEUP]: Schlacht.cpp and Fern.cpp, which no test target compiles ----
+
+    [Fact]
+    public void SeeThrough_RefusesAtEnable_WhenTheBuildCannotHide()
+    {
+        // SetEnabled(true) probes both producers and returns STR_ERR_REFLECTION BEFORE it activates, so the refusal
+        // reaches the pipe's state, the mailbox result and the CE script alike through its return code.
+        var src = DllSource("Schlacht.cpp");
+        int fn = src.IndexOf("bool ProbeProducers(const char** missing)", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "the producer probe must exist");
+        int fnEnd = src.IndexOf("\n}", fn, StringComparison.Ordinal);
+        var body = src[fn..fnEnd];
+        Assert.Contains("\"LineTraceSingle\"", body);
+        Assert.Contains("\"SetActorHiddenInGame\"", body);
+        int probe = src.IndexOf("if (!ProbeProducers(&missing))", StringComparison.Ordinal);
+        int refuse = src.IndexOf("return STR_ERR_REFLECTION;", Math.Max(probe, 0), StringComparison.Ordinal);
+        int activate = src.IndexOf("s_state.active = true;", StringComparison.Ordinal);
+        Assert.True(probe > 0 && refuse > probe && activate > refuse,
+            "SetEnabled must refuse with STR_ERR_REFLECTION before it activates the worker");
+    }
+
+    [Fact]
+    public void SeeThrough_PublishesARestoreThatGaveUp()
+    {
+        var src = DllSource("Schlacht.cpp");
+        int giveUp = src.IndexOf("gave up waiting for the game thread", StringComparison.Ordinal);
+        int mark = src.IndexOf("s_state.restoreAbandoned = true;", Math.Max(giveUp, 0), StringComparison.Ordinal);
+        Assert.True(giveUp > 0 && mark > giveUp && mark - giveUp < 600, "the give-up branch must record the abandon");
+        Assert.Contains("s_state.restoreAbandoned = false; }   // either direction re-decides", src);
+        Assert.Contains("out.restorePending   = s_pendingRunning.load();", src);
+        Assert.Contains("out.restoreAbandoned = s_state.restoreAbandoned;", src);
+        var fern = DllSource("Fern.cpp");
+        Assert.Contains("data[\"restore_pending\"]", fern);
+        Assert.Contains("data[\"restore_abandoned\"]", fern);
+    }
+
     [Fact]
     public void DirectCall_FailOpenBranch_HoldsTheOwnPeCallMark()
     {
