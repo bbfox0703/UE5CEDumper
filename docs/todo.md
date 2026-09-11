@@ -580,6 +580,19 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
      the auto-pick is the wrong one) and the scalar "Ghost" prop. The two array refusals construct a
      candidate with the new fields, so they cannot compile before the fix; their red is the mutation
      check.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21: `discover-array-keyless` MED and
+     `pivotfor-silent-miss-twin` LOW, both CONFIRMED).
+     - **Keyless elements collapsed into ONE group.** `PivotArrayAsync` gave every element with no inner
+       key (no FName / integer key, or a leaf container) the constant key `"(no key)"`. All elements of
+       all owners fell together, under a status line saying "elem index group(s)". B16's Use → sent that
+       population into it.
+     - A keyless element now groups by its own index (`[N]`), which is what the status line and the
+       array picker ("key = (elem index)") already said. The collapse itself dated from 0b2abf1f (C6).
+     - **The C5 right-click handoff was the same silent miss, one caller over.** `PivotForAsync` said
+       "Ready: … press Run Pivot" for a prop the shared helper never ticked (right-click hands off ANY
+       field). It now says the prop is not pivotable. A prop that is the key field still reads Ready.
+     - **Tests, red first:** a keyless two-owner array, and a handoff of an uncaptured prop.
+       2/2 mutants killed; UI 5087/5087.
 
 6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place

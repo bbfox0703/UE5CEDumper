@@ -162,6 +162,49 @@ public class ArrayPivotStoreTests : IDisposable
         Assert.Equal("Quantity=50", ore.ValuesDisplay);
     }
 
+    // One owner with a Cargo array whose elements carry NO inner key (SelectArrayInnerKey found none, or a
+    // leaf container): the population the review of 4920cb89 found collapsing into one "(no key)" group.
+    private static SnapshotCapturedObject Keyless(int idx, params int[] qtys)
+    {
+        var o = new SnapshotCapturedObject
+        {
+            Index = idx, Addr = $"0x{0x3000 + idx:X}", Name = $"PS_{idx}",
+            ClassName = "PlayerState", OuterClassName = "World", Path = $"/G.M:L.PlayerState_{idx}",
+        };
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        for (int e = 0; e < qtys.Length; e++)
+        {
+            var el = new SnapshotCapturedArrayElement { Index = e };   // no KeyName / KeyValue
+            el.Fields.Add(new SnapshotCapturedField { Name = "Quantity", Type = "IntProperty", Hex = IntHex(qtys[e]), Offset = 0x8 });
+            arr.Elements.Add(el);
+        }
+        o.Arrays.Add(arr);
+        return o;
+    }
+
+    [Fact]
+    public async Task PivotArray_KeylessElements_GroupByTheirIndex()
+    {
+        // Every keyless element of every owner got the constant key "(no key)" -- ONE group -- while the
+        // status line said "elem index group(s)". Element 3, the one that changed, could not be singled out.
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "keyless" }, ct);
+        await _store.WriteChunkAsync(id, new[] { Keyless(1, 10, 20, 30), Keyless(2, 11, 21) }, ct);
+        await _store.FinalizeSnapshotAsync(id, 2, 5, ct);
+
+        var res = await _store.PivotArrayAsync(new ArrayPivotQuery
+        {
+            SnapshotId = id, ClassName = "PlayerState", ArrayField = "Cargo",
+            ValueProps = new() { "Quantity" },
+        }, ct);
+
+        Assert.Equal(3, res.GroupCount);                                  // [0], [1], [2]
+        Assert.Equal(5, res.InstanceCount);
+        Assert.DoesNotContain(res.Rows, r => r.KeyValue == "(no key)");
+        Assert.Equal(2, res.Rows.Single(r => r.KeyValue == "[0]").Count); // index 0 of both owners
+        Assert.Equal(1, res.Rows.Single(r => r.KeyValue == "[2]").Count);
+    }
+
     [Fact]
     public async Task PivotArray_ScalarPivotIgnoresArrayRows()
     {

@@ -2392,7 +2392,11 @@ public sealed class SnapshotStore : ISnapshotStore
                 rows.Add(new PivotInputRow
                 {
                     ObjectIndex  = sid,
-                    NormPath     = r.IsDBNull(3) ? "(no key)" : r.GetString(3),  // inner-key value = group key
+                    // Inner-key value = group key. A KEYLESS element (no FName / integer inner key, or a leaf
+                    // container) groups by its own index, which is what the status line and the picker already
+                    // said ("elem index"). The constant "(no key)" put every element of every owner into ONE
+                    // group. (Review of 4920cb89, [W1-DISCOVER-ARRAY].)
+                    NormPath     = r.IsDBNull(3) ? $"[{elem}]" : r.GetString(3),
                     ObjAddr      = r.IsDBNull(2) ? "" : r.GetString(2),
                     PropName     = r.IsDBNull(4) ? "" : r.GetString(4),
                     DeclaredType = r.IsDBNull(5) ? "" : r.GetString(5),

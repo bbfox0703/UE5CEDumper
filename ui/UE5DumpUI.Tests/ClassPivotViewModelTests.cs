@@ -524,6 +524,22 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("not in the selected snapshot", vm.StatusText);
     }
 
+    [Fact]
+    public async Task PivotForAsync_UnpivotableProperty_SaysSo_NotReady()
+    {
+        // Review of 4920cb89: the shared helper ticks nothing for a prop that is not a captured numeric field
+        // (right-click hands off ANY field: an object, a string, an array), and "Ready" read like the handoff
+        // had worked -- Run then pivoted the unrelated pre-ticked fields.
+        await SeedInventoryAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Item_C", "NotACapturedField");
+
+        Assert.Equal("BP_Item_C", vm.SelectedClass?.ClassName);
+        Assert.DoesNotContain("Ready", vm.StatusText);
+        Assert.Contains("not a pivotable field", vm.StatusText);
+    }
+
     // ---- C3: change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.

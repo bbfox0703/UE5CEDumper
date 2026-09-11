@@ -430,7 +430,15 @@ public partial class ClassPivotViewModel : ViewModelBase
             }
 
             if (await SelectClassAndTickPropAsync(className, propName) && !string.IsNullOrEmpty(propName))
-                StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+            {
+                // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
+                // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
+                // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
+                StatusText = Fields.Any(f => f.Name == propName)
+                    ? $"Ready: {className} · {propName} — press Run Pivot."
+                    : $"'{propName}' is not a pivotable field of {className} in this snapshot "
+                      + "— only captured numeric fields can be pivoted.";
+            }
         }
         catch (Exception ex)
         {
