@@ -900,6 +900,23 @@ public class DumpServiceTests
         Assert.True(r.Truncated);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ListEnumsDetailedAsync_ReadsEachFlagFromItsOwnKey(bool failed, bool truncated)
+    {
+        // Review 5 of 7e5a71fc: the test above sets both keys, so a swapped or duplicated key passed it.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true, ["enums"] = new JsonArray(), ["enum_names_failed"] = failed, ["truncated"] = truncated,
+        });
+
+        var r = await CreateService().ListEnumsDetailedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(failed, r.EnumNamesFailed);
+        Assert.Equal(truncated, r.Truncated);
+    }
+
     [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {

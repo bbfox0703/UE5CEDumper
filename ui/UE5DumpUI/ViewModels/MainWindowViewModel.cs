@@ -3672,11 +3672,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // Cancellation linked to the connection so a mid-export disconnect aborts
             // the service's walk (its ct checks were dead code before) (X6).
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
-            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token);
+            var warnings = new List<string>();
+            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token, warnings);
             await File.WriteAllBytesAsync(filePath, bytes, cts.Token);
 
-            StatusText = "USMAP exported";
+            // [P1-ENUMNAMES] review 5: the enum warning was a progress line, overwritten one round-trip later, so the
+            // export ended on a bare "USMAP exported" over a file whose enums were all empty. Keep it on the final
+            // status, and in the log.
+            StatusText = warnings.Count == 0 ? "USMAP exported" : "USMAP exported — " + string.Join(" — ", warnings);
             _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
+            foreach (var w in warnings) _log.Warn($"USMAP export: {w}");
         }
         catch (OperationCanceledException)
         {

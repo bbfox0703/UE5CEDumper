@@ -132,6 +132,11 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         Genau::DetectUEnumNames();
     if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
         return "";  // Detection failed — show raw int values instead
+    // [P1-ENUMNAMES] review 5: a CANCELLED detection sets neither flag. The Names offset and format are then still the
+    // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this
+    // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.
+    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return "";
 
     // Fast path: already cached. Hold the lock only for the lookup; the
     // returned name is copied out so we read lock-free thereafter.
@@ -233,6 +238,10 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
         // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes
         // that. The line below claimed "retry pending" here, falsely, once per enum field per walk.
         if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+            return {};
+        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call
+        // retries it. Not a truncated table either.
+        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
             return {};
         // ResolveEnumValue above ran and still published nothing, which since the
         // truncation fix means exactly one thing: a mid-table read failed, so there

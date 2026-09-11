@@ -93,27 +93,38 @@ public static class UsmapExportService
         Unknown = 0xFF,
     }
 
+    /// <summary>[P1-ENUMNAMES] What the enum list alone does not say, or null when it says it all: UEnum::Names was not
+    /// located (every enum in the .usmap is empty), or the list was cut short.</summary>
+    internal static string? EnumWarning(EnumListResult r)
+    {
+        var parts = new List<string>(2);
+        if (r.EnumNamesFailed)
+            parts.Add("⚠ enum member names are unavailable on this build (UEnum::Names was not located), "
+                      + "so every enum in the .usmap is empty");
+        if (r.Truncated)
+            parts.Add("⚠ the enum list was cut short (the scan was cancelled); re-export for a complete file");
+        return parts.Count == 0 ? null : string.Join(" — ", parts);
+    }
+
     /// <summary>[P1-ENUMNAMES] The export's enum progress line, naming what the list alone does not say.</summary>
     internal static string EnumCollectionNote(EnumListResult r)
-        => $"Collected {r.Enums.Count} enums"
-           + (r.EnumNamesFailed
-               ? " — ⚠ enum member names are unavailable on this build (UEnum::Names was not located), "
-                 + "so every enum in the .usmap is empty"
-               : "")
-           + (r.Truncated ? " — ⚠ the enum list was cut short (the scan was cancelled); re-export for a complete file" : "");
+        => EnumWarning(r) is { } w ? $"Collected {r.Enums.Count} enums — {w}" : $"Collected {r.Enums.Count} enums";
 
     /// <summary>
     /// Generate a complete USMAP binary file from the connected game's data.
     /// </summary>
+    /// <param name="warnings">[P1-ENUMNAMES] review 5: collects what the finished export must still say -- the enum
+    /// warning, which a progress line alone lost one pipe round-trip later. Null to ignore.</param>
     public static async Task<byte[]> GenerateUsmapAsync(
         IDumpService dump, IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, ICollection<string>? warnings = null)
     {
         // 1. Collect enums
         progress?.Report("Collecting enums...");
         var enumList = await dump.ListEnumsDetailedAsync(ct);   // [P1-ENUMNAMES]
         var enums = enumList.Enums;
         progress?.Report(EnumCollectionNote(enumList));
+        if (EnumWarning(enumList) is { } enumWarning) warnings?.Add(enumWarning);   // for the final status, not just progress
 
         // 2. Collect all Class/ScriptStruct objects
         var structTargets = new List<(string addr, string name)>();

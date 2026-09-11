@@ -2615,6 +2615,30 @@ int main() {
         const bool enDet2 = Genau::DetectUEnumNames();
         check("ENUMNAMESCANCEL ⭐: ...so the next, uncancelled search really runs -- and, finding nothing, latches FAILED",
               !enDet2 && DynOff::bUEnumNamesFailed.load());
+
+        // Review 5 of 7e5a71fc: a CANCELLED detection sets neither flag, and ResolveEnumValue read on regardless -- with
+        // the DEFAULT Names offset / format -- and cached that answer for the process. It must read and cache nothing.
+        static uint8_t enFake[0x100] = {};                       // readable, and nothing at the default Names offset
+        const uintptr_t enAddr = reinterpret_cast<uintptr_t>(enFake);
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        Tot::g_perCommand.store(true);
+        const std::string enV = Ubel::ResolveEnumValue(enAddr, 0);
+        ResetCancel();
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            check("ENUMNAMESCANCEL ⭐: a cancelled detection caches nothing for the enum it was asked about",
+                  enV.empty() && Ubel::s_enumCache.count(enAddr) == 0);
+        }
+        // Control: with detection done, the same lookup reads and caches -- so the observation above can see a cache.
+        DynOff::bUEnumNamesDetected.store(true);
+        Ubel::ResolveEnumValue(enAddr, 0);
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            check("ENUMNAMESCANCEL control: a completed detection caches the table it read",
+                  Ubel::s_enumCache.count(enAddr) == 1);
+            Ubel::s_enumCache.erase(enAddr);
+        }
         DynOff::bUEnumNamesDetected.store(false);
         DynOff::bUEnumNamesFailed.store(false);
     }

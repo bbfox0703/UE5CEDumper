@@ -2073,6 +2073,28 @@ code**, which is the behaviour the brief asked for.
      warning, which is log-only.
    - ⬜ **Not in this row:** the CE exports' per-field enum dropdowns still come back empty under the latch
      with no note. They read the entries from the walk, not from `list_enums`.
+   - ✅ **Review 5 follow-up 2026-09-12** (of 7e5a71fc: one MED, CONFIRMED by both skeptics, and four LOW).
+     - **MED, a regression L02 introduced.** A cancelled `DetectUEnumNames` sets neither flag, and
+       `ResolveEnumValue` ignored its return. It read on with the DEFAULT Names offset and format, and cached
+       that answer, which nothing erases. On a UE5.6+ game every enum the cancelled walk touched kept an empty
+       table for the process, and `enum_names_failed` stayed false. Before L02 the cancel latched FAILED,
+       which cached nothing. Now `ResolveEnumValue` reads and caches nothing until detection has run to
+       completion, and `GetEnumEntries` treats that as the retry it is.
+     - **The USMAP warning was a passing progress line,** overwritten one round-trip later. The export ended
+       on a bare "USMAP exported". `GenerateUsmapAsync` now collects it (`EnumWarning`), and the final status
+       and the log carry it.
+     - **Test gaps:** the parse test set both flags (a swapped key passed), and nothing pinned the export's
+       use of them. The survivors list above was wrong to omit it.
+     - **Live check L41** asked one game for both halves, which need opposite games. It is split.
+     - **Tests, red first:**
+       - dll_core_test: a cancelled lookup caches nothing, against a control where a completed detection
+         does cache;
+       - the export's warning, through a stub that reports a FAILED latch, and a healthy control;
+       - a per-flag parse theory.
+
+       5/5 mutants killed; dll_core_test 277/277; UI 5187/5187.
+     - ⚠ **Survivors by construction:** `GetEnumEntries`' quiet branch (log-only), and the
+       MainWindowViewModel status line (no export harness).
 3. ⬜ **`[P1-UPROP-DELEGATE]`** `Ubel.cpp:4697`. The UProperty-mode (UE4 < 4.25) delegate-array arms
    still **drop the readers' refusal `error`** — commit `e16d2052` fixed exactly this on the FProperty
    arm, and that arm's comment calls the old behaviour a defect in so many words. ⭐ **P3 at the
@@ -5038,9 +5060,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. The DLL log shows the tier's "aborted" line and "NOT latching initialized".
 3. The next connect re-scans and resolves GNames.
 4. **Control:** an uninterrupted scan latches normally. | a game + UI; no CE |
-| L41 | `[P1-ENUMNAMES]` | On a game where UEnum::Names is not located (the DLL log reads "DetectUEnumNames: FAILED"):
-1. Export USMAP. The progress names "enum member names are unavailable on this build".
-2. Disconnect the UI during the first enum-bearing walk. The log reads "search cancelled … not latching FAILED", and the next connect resolves enum names normally. | a game + UI; no CE |
+| L41 | `[P1-ENUMNAMES]` | Two games, because the halves need opposite ones (review 5):
+1. **A game where UEnum::Names is not located** (the DLL log reads "DetectUEnumNames: FAILED"). Export USMAP. The FINAL status reads "USMAP exported — ⚠ enum member names are unavailable on this build …", and the log carries the same warning.
+2. **A game where it IS located.** Disconnect the UI during the first enum-bearing walk (a class with many enum fields). The log reads "search cancelled … not latching FAILED". Reconnect: enum values resolve to names again, including the enums the cancelled walk touched. | a game + UI; no CE |
 | L42 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | **CE: announce first.** A UE 5.3+ CHECKED build (Development, e.g. DumperTest `dev`), on an instance with a multicast delegate field:
 1. **Batch push:** select the delegate row and press "+CE Field (flat)". The record's address equals the per-row +CE's (the field address + 8), and it reads the InvocationList data pointer, not 0.
 2. **CSX:** export the instance's CSX with drilldown 1 and load it in CE's Structure Dissect. A unicast delegate's leaf sits at its field offset + 8. A multicast's raw block sits at the field offset, and its "/ InvocationList" pointer at + 8 expands.

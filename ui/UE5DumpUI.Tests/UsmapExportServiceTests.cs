@@ -1,4 +1,5 @@
 using System.Linq;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -371,6 +372,48 @@ public class UsmapExportServiceTests
         // The control, green before and after.
         Assert.Equal("Collected 2 enums", UsmapExportService.EnumCollectionNote(
             new EnumListResult { Enums = new() { new EnumDefinition(), new EnumDefinition() } }));
+    }
+
+    // ---- review 5 of 7e5a71fc: the note was a progress line only, overwritten one pipe round-trip later ----
+
+    private class EmptyObjectsStub : StubDumpService
+    {
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());
+
+        public override Task<ObjectListResult> GetObjectListAsync(
+            int offset, int limit, CancellationToken ct = default, bool includePath = false)
+            => Task.FromResult(new ObjectListResult { Total = 0, Scanned = 0, Objects = new List<UObjectNode>() });
+    }
+
+    /// <summary>Re-implements the default interface member, so the export sees a FAILED latch.</summary>
+    private sealed class FailedEnumNamesStub : EmptyObjectsStub, IDumpService
+    {
+        Task<EnumListResult> IDumpService.ListEnumsDetailedAsync(CancellationToken ct)
+            => Task.FromResult(new EnumListResult { Enums = new(), EnumNamesFailed = true });
+    }
+
+    [Fact]
+    public async Task GenerateUsmapAsync_KeepsTheEnumWarningForTheFinalStatus()
+    {
+        var warnings = new List<string>();
+
+        await UsmapExportService.GenerateUsmapAsync(new FailedEnumNamesStub(),
+            ct: TestContext.Current.CancellationToken, warnings: warnings);
+
+        var w = Assert.Single(warnings);
+        Assert.Contains("enum member names are unavailable", w, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenerateUsmapAsync_AHealthyEnumList_LeavesNoWarning()
+    {
+        var warnings = new List<string>();
+
+        await UsmapExportService.GenerateUsmapAsync(new EmptyObjectsStub(),
+            ct: TestContext.Current.CancellationToken, warnings: warnings);
+
+        Assert.Empty(warnings);
     }
 
     [Fact]
