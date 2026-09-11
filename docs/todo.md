@@ -2772,6 +2772,17 @@ because the load runs with persistence suppressed.
     after the switch to copy. Both say copy now.
   - Red first: `Delete_OfAnUnparseableMain_CopiesItAsideFirst` (no main left, one `.corrupt` copy
     holding the old bytes, the `.bak` untouched). 1/1 mutants killed; UI 5089/5089.
+- ✅ **Fourth review follow-up 2026-09-11** (the second adversarial review, of b496c866: three LOW, all CONFIRMED).
+  - **Two claims were pinned by nothing**, and now are, as pins (the code already did both; their red is
+    the mutation check):
+    - "A copy that fails refuses the Delete" (`Delete_RefusesWhenTheCorruptMainCannotBeCopiedAside`). A
+      handle sharing DELETE but not READ makes the main unreadable AND the copy fail while a delete would
+      succeed. A Delete that swallowed the failure would remove a main nobody copied.
+    - Only an UNPARSEABLE main is copied aside (`Delete_OfAHealthyMain_LeavesNoCorruptCopy`). Copying
+      every main would fill the bounded `.corrupt` set with good files and evict a real half-written save.
+  - Save's comment credited the COPY to `AobUsageService`, which MOVES its file: the unsafe shape the
+    quarantine was changed away from. Only the bound follows it; the comment now says so.
+  - 2/2 mutants killed; UI 5100/5100.
 
 ##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
 

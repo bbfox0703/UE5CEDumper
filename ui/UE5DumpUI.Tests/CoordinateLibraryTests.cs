@@ -528,6 +528,37 @@ public class CoordinateLibraryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Delete_RefusesWhenTheCorruptMainCannotBeCopiedAside()
+    {
+        // (review of b496c866) "A copy that fails refuses the Delete" was pinned by nothing, so a Delete that
+        // swallowed the failure would delete a main nobody copied. A handle that shares DELETE but not READ
+        // makes the main unreadable (so it is quarantined, not rolled) AND the copy fail, while a delete would
+        // still succeed -- the one state where the refusal is all that keeps the file.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        CorruptMain("game");
+        var path = _store.FilePathFor("game");
+
+        using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete))
+            _store.Delete("game");
+
+        Assert.True(File.Exists(path));   // refused: the only copy of what it held is still there
+    }
+
+    [Fact]
+    public void Delete_OfAHealthyMain_LeavesNoCorruptCopy()
+    {
+        // (review of b496c866) Only an UNPARSEABLE main is quarantined. A Delete that copied every main aside
+        // would fill the bounded .corrupt set with good files and evict a real half-written save.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));
+        var path = _store.FilePathFor("game");
+
+        _store.Delete("game");
+
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".corrupt-*"));
+    }
+
+    [Fact]
     public void Delete_AfterABakRecovery_DoesNotRollTheCorruptMainOverTheGoodBak()
     {
         // (review of 70f9d372) Delete's roll is guarded on the main PARSING, exactly as Save's is; an

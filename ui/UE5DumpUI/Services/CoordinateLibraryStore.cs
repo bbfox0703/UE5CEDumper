@@ -183,9 +183,11 @@ public sealed class CoordinateLibraryStore
                     TryRollToBackup(path, path + ".bak");
                 else if (File.Exists(path))
                     // Unparseable: not rolled over the good .bak, and not destroyed by the rename
-                    // below either -- COPIED aside, bounded, as AobUsageService does. A copy that
-                    // fails throws into the catch, so this Save is refused rather than overwriting
-                    // the only copy of whatever that file still holds. (reviews of 2f8d36f8, c002f6bf)
+                    // below either -- COPIED aside, and bounded. The bound follows AobUsageService's;
+                    // the copy does not: AobUsageService MOVES its file, and this store copies for the
+                    // reason QuarantineUnparseableMain gives. A copy that fails throws into the catch,
+                    // so this Save is refused rather than overwriting the only copy of whatever that
+                    // file still holds. (reviews of 2f8d36f8, c002f6bf, b496c866)
                     QuarantineUnparseableMain(key, path);
                 File.Move(temp, path, overwrite: true);
             }
