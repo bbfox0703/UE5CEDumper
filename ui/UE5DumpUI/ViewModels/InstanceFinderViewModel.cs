@@ -660,6 +660,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                     ClassName = result.ClassName,
                     OuterAddr = result.OuterAddr,
                 };
+                // [W4-LOOKUP-FILTER] Into the BACKING list too. It was emptied just above, and every
+                // later ApplyInstanceFilter re-projects from it -- so a leftover keyword, or clearing it,
+                // erased the lookup result for good while the status line still reported a match.
+                // ⛔ The keyword is NOT cleared here: it is an [ObservableProperty], and the assignment
+                // re-enters the filter (harmless now that the backing list holds the row, but still
+                // not the lookup's call to make).
+                _allInstances.Add(instance);
                 Instances.Add(instance);
                 HasInstances = true;
 

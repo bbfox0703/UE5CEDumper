@@ -1191,10 +1191,18 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    `IsContainerView` and **not** `IsDataTableView`, so a bookmark saved on a DataTable row view can
    never be restored — and the failure is reported as *"the game may have restarted"*, blaming the
    user's session for a serialisation gap.
-5. ⬜ **`[W4-LOOKUP-FILTER]`** `InstanceFinderViewModel.cs:620`. A reverse-address lookup empties
+5. ✅ **`[W4-LOOKUP-FILTER]`** (FIXED IN SOURCE 2026-09-11, batch B18) `InstanceFinderViewModel.cs:620`. A reverse-address lookup empties
    `_allInstances` on purpose and adds its single result straight into the bound collection; the
    next `ApplyInstanceFilter` re-projects unconditionally from the now-empty backing list, so a
    leftover keyword **permanently erases the result while the status line still reports a match**.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B18).
+   - The lookup result goes into the BACKING list (`_allInstances`) as well as the bound one, so every
+     later re-projection sees it. A leftover keyword that does not match now hides it with the usual
+     "1 hidden by filter" note, and clearing the keyword brings it back.
+   - That also takes the harm out of the recorded unsafe fix: re-entering the filter only erased the
+     result because the backing list was empty. The lookup still does NOT clear the keyword.
+   - **Tests, red first:** the result survives a filter pass; hidden by a leftover keyword, it is
+     reported, and it comes back when the keyword is cleared.
 
 **LOW** — 1 row: `[W4-HEXSORT]` nine address/hex `DataGrid` columns in this cluster sort as **text**
 (`InstanceFinderPanel.axaml:226/:136/:388/:391`, `LiveWalkerPanel.axaml:651/:654/:657/:455/:930`).
@@ -1212,7 +1220,7 @@ confirmed rows across three waves carry a harmful or partly-harmful obvious repa
 | `[W4-RELATED-STOPS]` | one boolean for "we stopped early" | ⛔ that is **P5**, the conflation `docs/todo.md:1314` is already open about and `[W3-XREF-CAP]` flags — **four** conditions fire here and `Tot::Requested()` is one of them |
 | `[W4-RELATED-RACE]` ✅ B17 | `if (IsBusy) return;` | ⛔ `DetectTargetAsync` sets `IsBusy = true` **then** awaits `LoadForAddress`, so that guard deadlocks the legitimate path |
 | `[W4-BOOKMARK-DT]` | the finding's own recommended second half | ⛔ dangerous — only the `PersistedCrumb` half is safe |
-| `[W4-LOOKUP-FILTER]` | clear `InstanceFilterText` inside the lookup | ⛔ actively harmful — it is an `[ObservableProperty]`, so the assignment re-enters the filter |
+| `[W4-LOOKUP-FILTER]` ✅ B18 | clear `InstanceFilterText` inside the lookup | ⛔ actively harmful — it is an `[ObservableProperty]`, so the assignment re-enters the filter |
 | `[W4-HEXSORT]` | wire `DataGridSortComparers.Hex` onto `HexValue` | ⛔ unsound — `ulong.TryParse` with `NumberStyles.HexNumber` fails on the dump formats actually present |
 
 ⭐ **This is now the single most important input to the coming fix pass**: on current evidence the
@@ -4163,6 +4171,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 32 | `[W1-DISCOVER-ARRAY]` | MED | `git log --grep W1-DISCOVER-ARRAY` (batch B16) | "Use →" on an array element and the scalar "Ghost" prop red first; the two array refusals take their red from the mutation check. 7/7 (one first tried in a form that did not compile; its compiling form went red) mutants killed across both rows; UI 5026/5026 |
 | 33 | `[W1-ARRAYCOUNT]` | LOW | same commit as row 32 (batch B16) | `ListArrayFields_CountsElements_NotInnerPropRows` red first (6 rows, 3 elements); the old one-prop test kept, its comment corrected |
 | 34 | `[W4-RELATED-RACE]` | MED | `git log --grep W4-RELATED-RACE` (batch B17) | 4 red first over a gated fake (the stale load lands last / first / fails / lands after a disconnect). 4/4 mutants killed; UI 5039/5039 (one suite run over B17 and B18 together) |
+| 35 | `[W4-LOOKUP-FILTER]` | MED | `git log --grep W4-LOOKUP-FILTER` (batch B18) | 2 red first (a filter pass; a leftover keyword, then cleared). 1/1 mutant killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4239,6 +4248,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Discover:** capture before and after an action that changes one array element, run Suggest Targets, pick the `Array[N].Inner` row and press Use →. The source switches to Snapshot Array, the right array is selected, and the pivot shows the changed element's key.
 2. **Element count:** the array-field picker's count equals the array's element count, not elements × inner props. | a game + UI |
 | L21 | `[W4-RELATED-RACE]` | Related Objects on a connected game: hand off one object from Instance Finder and, while it loads, hand off a second one (or pick another detected candidate). The grid shows only the second object's graph under its header, and the busy indicator stays on until the second load finishes. | a game + UI |
+| L22 | `[W4-LOOKUP-FILTER]` | Instance Finder on a connected game: search a class, type a keyword, then Look Up the address of an object the keyword does not match. The result shows; editing the keyword hides it with "1 hidden by filter", and clearing the keyword brings it back. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4278,7 +4288,7 @@ completeness critic.
 | ✅ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
 | ✅ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
 | ✅ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
-| ⬜ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
+| ✅ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
 | ⬜ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
 | ⬜ B20 batch method | `[W3-BATCH-METHOD]` | |
 | ⬜ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
