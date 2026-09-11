@@ -787,6 +787,47 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task GetRelatedObjectsAsync_CarriesEachStopCause()
+    {
+        // [W4-RELATED-STOPS] One key per cause on the wire; each must reach the model on its own.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["related"] = new JsonArray(),
+            ["stops"] = new JsonObject
+            {
+                ["result_cap_hit"] = true, ["owned_cap_hit"] = false, ["visit_cap_hit"] = true,
+                ["deadline_hit"] = false, ["cancelled"] = true,
+                ["max_results"] = 128, ["max_owned"] = 64, ["max_visited"] = 200000L, ["deadline_ms"] = 8000L,
+            },
+        });
+
+        var result = await CreateService().GetRelatedObjectsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        var s = Assert.IsType<RelatedObjectsStops>(result.Stops);
+        Assert.True(s.ResultCapHit);
+        Assert.False(s.OwnedCapHit);
+        Assert.True(s.VisitCapHit);
+        Assert.False(s.DeadlineHit);
+        Assert.True(s.Cancelled);
+        Assert.Equal(128, s.MaxResults);
+        Assert.Equal(64, s.MaxOwned);
+        Assert.Equal(200000L, s.MaxVisited);
+        Assert.Equal(8000L, s.DeadlineMs);
+    }
+
+    [Fact]
+    public async Task GetRelatedObjectsAsync_AnOlderDllWithoutStops_LeavesThemNull()
+    {
+        // The control, green before and after: no "stops" key reads as "not said", never as "complete".
+        _pipe.SetHandler(req => new JsonObject { ["ok"] = true, ["related"] = new JsonArray() });
+
+        var result = await CreateService().GetRelatedObjectsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Stops);
+    }
+
+    [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {
         _pipe.SetHandler(req =>

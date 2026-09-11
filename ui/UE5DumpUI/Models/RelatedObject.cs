@@ -61,4 +61,25 @@ public sealed class RelatedObjectsResult
 {
     public string QueryAddress { get; init; } = "";
     public List<RelatedObject> Related { get; init; } = new();
+
+    /// <summary>[W4-RELATED-STOPS] Why the list stopped short; null from a DLL that did not say.</summary>
+    public RelatedObjectsStops? Stops { get; init; }
+}
+
+/// <summary>
+/// [W4-RELATED-STOPS] Why a related-object walk stopped short -- one flag per cause, never one "stopped early"
+/// bool, because each needs its own advice. A cap flag means an object was actually refused, so more EXIST;
+/// the pointer budget, the deadline and a cancel mean more MAY exist.
+/// </summary>
+public sealed class RelatedObjectsStops
+{
+    public bool ResultCapHit { get; init; }
+    public bool OwnedCapHit  { get; init; }
+    public bool VisitCapHit  { get; init; }
+    public bool DeadlineHit  { get; init; }
+    public bool Cancelled    { get; init; }
+    public int  MaxResults   { get; init; }
+    public int  MaxOwned     { get; init; }
+    public long MaxVisited   { get; init; }
+    public long DeadlineMs   { get; init; }
 }

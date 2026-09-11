@@ -1030,10 +1030,29 @@ public sealed class DumpService : IDumpService
             }
         }
 
+        // [W4-RELATED-STOPS] One key per cause; absent from an older DLL, so Stops stays null ("not said").
+        RelatedObjectsStops? stops = null;
+        if (res["stops"] is JsonObject stopsNode)
+        {
+            stops = new RelatedObjectsStops
+            {
+                ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
+                OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
+                VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
+                DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
+                MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
+                MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
+                MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
+                DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
+            };
+        }
+
         return new RelatedObjectsResult
         {
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
             Related = related,
+            Stops = stops,
         };
     }
 

@@ -4518,7 +4518,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Invalid addr").dump();
             int32_t maxResults = request.value("max_results", 128);
 
-            auto rels = Aura::GetRelatedObjects(target, maxResults);
+            Aura::RelatedObjectsStats stops;   // [W4-RELATED-STOPS]
+            auto rels = Aura::GetRelatedObjects(target, maxResults, &stops);
 
             json arr = json::array();
             for (const auto& r : rels) {
@@ -4537,6 +4538,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"] = addrStr;
             data["related"]    = arr;
+            // [W4-RELATED-STOPS] Why the list stopped short, one key per cause (additive: no contract bump).
+            json stopsJ;
+            stopsJ["result_cap_hit"] = stops.resultCapHit;
+            stopsJ["owned_cap_hit"]  = stops.ownedCapHit;
+            stopsJ["visit_cap_hit"]  = stops.visitCapHit;
+            stopsJ["deadline_hit"]   = stops.deadlineHit;
+            stopsJ["cancelled"]      = stops.cancelled;
+            stopsJ["max_results"]    = stops.maxResults;
+            stopsJ["max_owned"]      = stops.maxOwnedSubs;
+            stopsJ["max_visited"]    = stops.maxVisited;
+            stopsJ["deadline_ms"]    = stops.deadlineMs;
+            data["stops"] = stopsJ;
             return Renge::MakeResponse(id, data).dump();
         }
 

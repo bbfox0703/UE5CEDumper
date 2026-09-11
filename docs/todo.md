@@ -1304,11 +1304,38 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    publishes **one**. The packed verdict reaches the wire, the UI badge and every dump's
    `packed_unverified` stamp — but the **tentative** and **could-not-detect** verdicts are spent on
    log lines. A user cannot tell a confident detection from a guess.
-2. ⬜ **`[W4-RELATED-STOPS]`** `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
+2. ✅ **`[W4-RELATED-STOPS]`** (FIXED IN SOURCE 2026-09-11, batch B26) `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
    (`maxResults` 128, `kMaxOwnedSubs` 128, `kMaxVisited` 200000, and an 8 s deadline *or*
    `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
    no stats struct and no member to carry one. The Related Objects panel renders a cut-off
    enumeration as the complete one.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B26). One flag PER CAUSE, five of them; not the recorded unsafe
+   fix of one "stopped early" boolean (P5).
+   - **DLL.** `GetRelatedObjects` takes an optional `RelatedObjectsStats*`, so Solide's caller is unchanged.
+     - The flags are `resultCapHit`, `ownedCapHit`, `visitCapHit` and `deadlineHit`, plus `cancelled`:
+       `Tot::Requested()` is split from the deadline it shared one `aborted()` with. The effective bounds
+       travel with them.
+     - A cap flag means a qualifying object was actually REFUSED. The caps are now asked only of an object
+       that passed the ownership and class filters. The frontier loop no longer stops merely because the
+       list is full, so a list that exactly fills its cap is reported complete.
+     - Fern publishes them as `stops`, one key per cause. An additive wire key: no contract bump, and the CE
+       mailbox is untouched.
+     - A `RelatedObjectsLimits` seam carries the three bounds. Its defaults are the shipped 128 / 200000 /
+       8000 ms, and only dll_core_test passes it.
+   - **UI.** `RelatedObjectsResult.Stops`, null from an older DLL. The panel's status appends
+     `PartialResultNotice.RelatedStopsClause`, which names each cause in its own words: a refused object
+     means more EXIST, while a spent budget or a cancel means more MAY exist.
+   - **Tests, red first** against the inert stats param:
+     - dll_core_test walks a fake owned graph and trips each bound: the row cap (on an owned part and on the
+       Class row), the owned cap, the pointer budget, the deadline, a cancel. Controls: a finished walk, and a
+       list that exactly fills its cap.
+     - The parse, the clause and the panel's status.
+
+     15/15 mutants killed; dll_core_test 230/230; UI 5120/5120.
+   - ⚠ **Documented survivor:** Fern.cpp's serialiser, which no test target compiles. The real `UE5Dumper`
+     build and the live check cover it.
+   - ⬜ **Not in this row:** Solide's `FindStealthMeter` still ignores the stats. A stealth meter on a
+     129th owned object goes unscored, silently; that is a separate scope call.
 3. ✅ **`[W4-RELATED-RACE]`** (FIXED IN SOURCE 2026-09-11, batch B17) `RelatedObjectsViewModel.cs:106`. `LoadAsync` clears before its
    `await` and appends after, with **no generation ticket** — the only VM in the cluster without
    one. Two overlapping loads both pass their `Clear()` and both `Add()`, so the grid holds object
@@ -4471,6 +4498,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 43 | `[W5-STRARRAY-ELEMENTS]` | MED | `git log --grep W5-STRARRAY-ELEMENTS` (batch B23b) | the dll_core_test reader block and the STRARRAYWALK walker block red first against inert stubs; a CSX pin green both ways. 5/5 mutants killed, 2 documented survivors (the UE4 UProperty-mode call site, and Fern.cpp, which no test target compiles); dll_core_test 204/204; UI 5091/5091 |
 | 44 | `[A4-USMAP-ENUM-UNDERLYING]` | MED | `git log --grep A4-USMAP-ENUM-UNDERLYING` (batch B24) | a Size theory (2/4/8 red first; 1 and the 3-byte fallback green both ways) and the TEnumAsByte shape red first; the plain-byte control green both ways; the round-trip reader now reads the underlying type. 4/4 mutants killed; UI 5098/5098 |
 | 45 | `[W3-XREF-CAP]` | MED | `git log --grep W3-XREF-CAP` (batch B25) | dll_core_test (the merge helper, and FindPropertyXrefs over the fake pool) and the UI (cell, clause, dialog status, batch loops, the parse) red first against inert stubs. 11/11 mutants killed; dll_core_test 214/214; UI 5112/5112. Five UI sites, not four |
+| 46 | `[W4-RELATED-STOPS]` | MED | `git log --grep W4-RELATED-STOPS` (batch B26) | dll_core_test (a fake owned graph tripping each bound) and the UI (parse, clause, panel status) red first against an inert stats param. 15/15 mutants killed; dll_core_test 230/230; UI 5120/5120. Five flags, one per cause |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4573,6 +4601,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L31 | `[W3-XREF-CAP]` | A connected game with a hot field or class (a property most Blueprint functions touch, or a class many functions take):
 1. **Dialog:** Find Funcs on it. With more than 200 hits, the status reads "200+ function(s)" and "[CAP HIT — only the first 200 are listed; more may exist]"; a deadline, if one also hit, is reported separately.
 2. **Batch:** run Find Funcs in Property Search, Interesting Properties, Instance Finder and Game Class Filter over rows that include it. Its cell reads `200+ · …`, the status names the cap, and a re-run does not re-scan that row. | a game + UI |
+| L32 | `[W4-RELATED-STOPS]` | A connected game, the Related Objects panel:
+1. **A normal actor:** the status is "N related object(s)." with no ⚠ clause.
+2. **The PersistentLevel** (any actor's Outer; it owns every actor): the list fills its 128 rows, and the status says "full at its 128-row limit and more related objects exist", with no time budget named unless the walk also timed out. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4622,7 +4653,7 @@ completeness critic.
 | ✅ B23b string-array elements | `[W5-STRARRAY-ELEMENTS]` (filed 2026-09-11 while fixing B23) | |
 | ✅ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
 | ✅ B25 xref cap | `[W3-XREF-CAP]` | |
-| ⬜ B26 related stops | `[W4-RELATED-STOPS]` | |
+| ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ⬜ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |

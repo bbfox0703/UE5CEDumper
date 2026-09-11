@@ -2082,6 +2082,142 @@ int main() {
         DynOff::USTRUCT_SCRIPT = savedScript;
     }
 
+    // -- RELSTOPS-2026-09-11 -- GetRelatedObjects says why it stopped short -----------------------------------
+    //
+    // ⛔ POOL-FAKING, like OPTLAYOUT: the owned walk reaches children through EnumerateOutgoingObjectPtrs, whose
+    // ref-meta comes from the class walker, which names property types out of a fake name pool. Own pool, last.
+    // One target whose class holds a TArray<UObject*> "Parts" of four children; each child is Outer'd to the
+    // target (so IsOwnedBy keeps it) and has a field-less class. [W4-RELATED-STOPS]
+    {
+        blk("RELSTOPS - GetRelatedObjects records each cause it stopped for, and only when it refused something");
+        ResetCancel();
+
+        static uint8_t rsEntry[7][0x40] = {};
+        const char* rsNames[7] = { "", "ArrayProperty", "ObjectProperty", "Parts", "Inner",
+                                   "BP_Holder_C", "PartComponent" };
+        static uintptr_t rsChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(rsEntry[i] + 0x10, rsNames[i], strlen(rsNames[i]) + 1);
+            rsChunk[i] = reinterpret_cast<uintptr_t>(rsEntry[i]);
+        }
+        static uintptr_t rsChunks[2] = { reinterpret_cast<uintptr_t>(rsChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(rsChunks), 0x10);
+        check("RELSTOPS setup: the pool resolves ObjectProperty", Serie::GetString(2) == "ObjectProperty",
+              Serie::GetString(2).c_str());
+
+        const bool     savedFPropR = DynOff::bUseFProperty;
+        const bool     savedCpnR   = DynOff::bCasePreservingName;
+        const uint32_t savedVerR   = g_cachedUEVersion;
+        DynOff::bUseFProperty       = true;
+        DynOff::bCasePreservingName = false;
+        g_cachedUEVersion           = 505;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        static uint8_t rsArrFC[0x20] = {}, rsObjFC[0x20] = {};
+        put32(rsArrFC, DynOff::FFIELDCLASS_NAME, 1);   // "ArrayProperty"
+        put32(rsObjFC, DynOff::FFIELDCLASS_NAME, 2);   // "ObjectProperty"
+
+        static uint8_t rsInner[0x100] = {};            // the array's Inner: an 8-byte ObjectProperty
+        putP(rsInner, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(rsObjFC));
+        put32(rsInner, DynOff::FFIELD_NAME, 4);
+        put32(rsInner, DynOff::FPROPERTY_ELEMSIZE, 8);
+
+        constexpr int32_t kParts = 0x40;
+        static uint8_t rsProp[0x100] = {};             // TArray<UObject*> Parts @ +0x40
+        putP(rsProp, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(rsArrFC));
+        put32(rsProp, DynOff::FFIELD_NAME, 3);
+        put32(rsProp, DynOff::FPROPERTY_OFFSET, kParts);
+        put32(rsProp, DynOff::FPROPERTY_ELEMSIZE, 16);
+        put32(rsProp, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+        putP(rsProp, DynOff::FARRAYPROP_INNER, reinterpret_cast<uintptr_t>(rsInner));
+
+        static uint8_t rsHolderCls[0x100] = {}, rsPartCls[0x100] = {};
+        put32(rsHolderCls, DynOff::USTRUCT_PROPSSIZE, 0x100);
+        putP(rsHolderCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(rsProp));
+        put32(rsHolderCls, Grimoire::OFF_UOBJECT_NAME, 5);   // "BP_Holder_C"
+        put32(rsPartCls, Grimoire::OFF_UOBJECT_NAME, 6);     // "PartComponent"
+
+        static uint8_t rsTarget[0x100] = {};
+        static uint8_t rsPart[4][0x100] = {};
+        static uintptr_t rsParts[4] = {};
+        putP(rsTarget, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(rsHolderCls));
+        for (int i = 0; i < 4; ++i) {
+            putP(rsPart[i], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(rsPartCls));
+            putP(rsPart[i], DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(rsTarget));
+            rsParts[i] = reinterpret_cast<uintptr_t>(rsPart[i]);
+        }
+        putP(rsTarget, kParts, reinterpret_cast<uintptr_t>(rsParts));   // TArray.Data
+        put32(rsTarget, kParts + 8, 4);                                   // Num
+        put32(rsTarget, kParts + 12, 4);                                  // Max
+        const uintptr_t rsT = reinterpret_cast<uintptr_t>(rsTarget);
+        const Aura::RelatedObjectsLimits dflt;
+
+        Aura::RelatedObjectsStats s0;
+        const auto all = Aura::GetRelatedObjects(rsT, 128, &s0, dflt);
+        check("RELSTOPS control: Self, Class and the four owned parts", all.size() == 6,
+              std::to_string(all.size()).c_str());
+        check("RELSTOPS control: a walk that finished records no stop",
+              !s0.resultCapHit && !s0.ownedCapHit && !s0.visitCapHit && !s0.deadlineHit && !s0.cancelled);
+
+        Aura::RelatedObjectsStats sFit;
+        const auto fit = Aura::GetRelatedObjects(rsT, 6, &sFit, dflt);
+        check("RELSTOPS control: a list that exactly fills its cap is complete, not cut off",
+              fit.size() == 6 && !sFit.resultCapHit, std::to_string(fit.size()).c_str());
+
+        Aura::RelatedObjectsStats sCap;
+        const auto cap = Aura::GetRelatedObjects(rsT, 3, &sCap, dflt);
+        check("RELSTOPS: cap 3 keeps Self, Class and one part", cap.size() == 3,
+              std::to_string(cap.size()).c_str());
+        check("RELSTOPS ⭐: a refused part records the row cap, and the cap itself",
+              sCap.resultCapHit && sCap.maxResults == 3);
+        check("RELSTOPS control: ...and no other cause",
+              !sCap.ownedCapHit && !sCap.visitCapHit && !sCap.deadlineHit && !sCap.cancelled);
+
+        // A PART as the target: its class has no fields, so it owns nothing, and the Class row refused at cap 1
+        // is the ONLY refusal -- add() alone must record it. (With the Parts target the owned walk refuses a
+        // part too and sets the same flag, which hid a broken add(): the review mutant survived that way.)
+        Aura::RelatedObjectsStats sOne;
+        const auto one = Aura::GetRelatedObjects(reinterpret_cast<uintptr_t>(rsPart[0]), 1, &sOne, dflt);
+        check("RELSTOPS ⭐: a refused hierarchy row (the Class) records the row cap too",
+              one.size() == 1 && sOne.resultCapHit, std::to_string(one.size()).c_str());
+
+        Aura::RelatedObjectsLimits ownLim;  ownLim.maxOwnedSubs = 2;
+        Aura::RelatedObjectsStats sOwn;
+        const auto own = Aura::GetRelatedObjects(rsT, 128, &sOwn, ownLim);
+        check("RELSTOPS: two parts under an owned cap of 2", own.size() == 4, std::to_string(own.size()).c_str());
+        check("RELSTOPS ⭐: the owned-object cap is its own cause",
+              sOwn.ownedCapHit && !sOwn.resultCapHit && sOwn.maxOwnedSubs == 2);
+
+        Aura::RelatedObjectsLimits visLim;  visLim.maxVisited = 2;
+        Aura::RelatedObjectsStats sVis;
+        const auto vis = Aura::GetRelatedObjects(rsT, 128, &sVis, visLim);
+        check("RELSTOPS: two pointers followed under a visit budget of 2", vis.size() == 4,
+              std::to_string(vis.size()).c_str());
+        check("RELSTOPS ⭐: the pointer budget is its own cause",
+              sVis.visitCapHit && !sVis.ownedCapHit && !sVis.resultCapHit);
+
+        Aura::RelatedObjectsLimits dlLim;  dlLim.deadlineMs = -1;   // already past it at the first check
+        Aura::RelatedObjectsStats sDl;
+        const auto dl = Aura::GetRelatedObjects(rsT, 128, &sDl, dlLim);
+        check("RELSTOPS: a spent deadline keeps only the hierarchy rows", dl.size() == 2,
+              std::to_string(dl.size()).c_str());
+        check("RELSTOPS ⭐: the deadline is its own cause, not a cancel", sDl.deadlineHit && !sDl.cancelled);
+
+        Aura::RelatedObjectsStats sCx;
+        Tot::g_perCommand.store(true);
+        const auto cx = Aura::GetRelatedObjects(rsT, 128, &sCx, dflt);
+        ResetCancel();
+        check("RELSTOPS: a cancelled walk keeps only the hierarchy rows", cx.size() == 2,
+              std::to_string(cx.size()).c_str());
+        check("RELSTOPS ⭐: a cancel is its own cause, not a deadline", sCx.cancelled && !sCx.deadlineHit);
+
+        DynOff::bUseFProperty       = savedFPropR;
+        DynOff::bCasePreservingName = savedCpnR;
+        g_cachedUEVersion           = savedVerR;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

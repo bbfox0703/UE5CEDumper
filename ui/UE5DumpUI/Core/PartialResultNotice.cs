@@ -114,6 +114,30 @@ public static class PartialResultNotice
               + $"their counts (shown as N+) are lower bounds, and only the first {cap:N0} are listed.";
 
     /// <summary>
+    /// [W4-RELATED-STOPS] The Related Objects status clause: each cause the walk stopped for, in its own words.
+    /// A refused object means more EXIST; a budget that ran out, or a cancel, means more MAY exist. Empty when
+    /// the walk finished, or when an older DLL did not say.
+    /// </summary>
+    public static string RelatedStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s)
+    {
+        if (s == null) return "";
+        var parts = new System.Collections.Generic.List<string>();
+        if (s.ResultCapHit)
+            parts.Add($"the list is full at its {s.MaxResults:N0}-row limit and more related objects exist");
+        if (s.OwnedCapHit)
+            parts.Add($"it stopped after {s.MaxOwned:N0} owned sub-objects and more exist");
+        if (s.VisitCapHit)
+            parts.Add($"it stopped after following {s.MaxVisited:N0} pointers (a very large container), "
+                      + "so owned objects past that point were not examined");
+        if (s.DeadlineHit)
+            parts.Add($"it ran out of its {s.DeadlineMs / 1000.0:0.#} s time budget, "
+                      + "so owned objects past that point were not examined");
+        if (s.Cancelled)
+            parts.Add("it was cancelled, so the list is incomplete");
+        return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
+    }
+
+    /// <summary>
     /// [W3-BATCH-METHOD] Cell value for a row whose analysis never RAN, so it cannot read as a real
     /// <c>0</c> ("analysed, nothing touched"). The full explanation goes in the status line
     /// (<see cref="BatchNotAnalysedClause"/>).

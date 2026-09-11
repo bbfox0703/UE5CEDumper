@@ -9019,10 +9019,17 @@ bool GroupCandidateFeasible(const Radar::GroupCandidate& gc) {
 // Reuses EnumerateOutgoingObjectPtrs (the outgoing-pointer adapter) + IsOwnedBy
 // (the Outer-chain ownership gate) — the SAME pieces the P4 cross-object group
 // scan uses, here collecting OBJECTS instead of numeric leaves. Bounded + fast.
-std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults) {
+std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults,
+                                             RelatedObjectsStats* stats, const RelatedObjectsLimits& limits) {
     std::vector<RelatedObject> out;
-    if (!target) return out;
     if (maxResults <= 0) maxResults = 128;
+    // [W4-RELATED-STOPS] Every stop records its OWN cause (P5), into a local published once at the end.
+    RelatedObjectsStats st;
+    st.maxResults   = maxResults;
+    st.maxOwnedSubs = limits.maxOwnedSubs;
+    st.maxVisited   = limits.maxVisited;
+    st.deadlineMs   = limits.deadlineMs;
+    if (!target) { if (stats) *stats = st; return out; }
 
     // Bound the owned walk: a wall-clock deadline + cooperative cancel + a hard
     // emit-iteration cap, so a target exposing a huge reflected object-pointer
@@ -9031,13 +9038,18 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
     // FindObjectGraphPath's abort pattern (rejected elements never advance the
     // add-caps, so without this the loop is unbounded).
     auto t0 = std::chrono::steady_clock::now();
-    constexpr int64_t kDeadlineMs = 8000;
-    constexpr int64_t kMaxVisited = 200000;
+    const int64_t kDeadlineMs = limits.deadlineMs;   // [W4-RELATED-STOPS] seam: the shipped 8000 by default
+    const int64_t kMaxVisited = limits.maxVisited;   // ...and the shipped 200000
     int64_t visited = 0;
     auto aborted = [&]() -> bool {
-        if (Tot::Requested()) return true;
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now() - t0).count() > kDeadlineMs;
+        // Two causes, two flags: a cancel is not a timeout, and the advice differs.
+        if (Tot::Requested()) { st.cancelled = true; return true; }
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count() > kDeadlineMs) {
+            st.deadlineHit = true;
+            return true;
+        }
+        return false;
     };
 
     // Dedup across the WHOLE result. Seeding `seen` from add() means a
@@ -9048,7 +9060,8 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
     std::unordered_set<uintptr_t> seen;
     auto add = [&](uintptr_t obj, const char* relation, const std::string& fieldName,
                    int32_t fieldOffset, int32_t depth, uintptr_t parent) {
-        if (!obj || out.size() >= static_cast<size_t>(maxResults)) return;
+        if (!obj) return;
+        if (out.size() >= static_cast<size_t>(maxResults)) { st.resultCapHit = true; return; }   // one refused
         RelatedObject r;
         r.addr        = obj;
         int32_t idx   = -1;
@@ -9104,7 +9117,7 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
         return "Owned Object";
     };
 
-    constexpr int kMaxOwnedSubs = 128;
+    const int kMaxOwnedSubs = limits.maxOwnedSubs;   // [W4-RELATED-STOPS] seam: the shipped 128 by default
     // Depth 3 so a GAS AttributeSet nested behind a stats/ability component is
     // reached when entering from the PAWN: pawn -> stats component -> ASC ->
     // AttributeSet (some games — e.g. TQ2 — don't hang the ASC directly off the
@@ -9122,7 +9135,9 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
         Frontier cur = frontier.back();
         frontier.pop_back();
         if (cur.depth >= kMaxOwnDepth) continue;
-        if (out.size() >= static_cast<size_t>(maxResults) || subCount >= kMaxOwnedSubs) break;
+        // [W4-RELATED-STOPS] A FULL list is not a reason to stop here: only an object actually refused makes it
+        // incomplete, and the enumerator below finds that out -- so a list that exactly fills its cap is whole.
+        if (st.resultCapHit || st.ownedCapHit || st.visitCapHit) break;
         if (aborted()) break;
         EnumerateOutgoingObjectPtrs(cur.obj,
             [&](uintptr_t child, int32_t ptrOff, const std::string& ptrName,
@@ -9130,13 +9145,16 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
                 int32_t elemIdx, int32_t /*elemStride*/, int32_t /*elemValueOffset*/) -> bool {
                 // Bound REJECTED iterations too (a huge non-owned container would
                 // otherwise spin without ever advancing the add-caps).
-                if (++visited > kMaxVisited || aborted()) return true;  // stop enumerating
-                if (out.size() >= static_cast<size_t>(maxResults) || subCount >= kMaxOwnedSubs)
-                    return true;  // stop enumerating
+                if (++visited > kMaxVisited) { st.visitCapHit = true; return true; }   // stop enumerating
+                if (aborted()) return true;                                            // (it records why)
                 if (!child || seen.count(child)) return false;
                 if (!IsOwnedBy(child, target, kMaxOwnDepth)) return false;
                 uintptr_t childCls = Ubel::GetClass(child);
                 if (!childCls) return false;
+                // [W4-RELATED-STOPS] The caps are asked only of an object that QUALIFIES, so each flag means one
+                // was actually refused -- never "the list happened to be full".
+                if (out.size() >= static_cast<size_t>(maxResults)) { st.resultCapHit = true; return true; }
+                if (subCount >= kMaxOwnedSubs)                      { st.ownedCapHit  = true; return true; }
                 seen.insert(child);
                 ++subCount;
                 std::string fname = ptrName;
@@ -9151,6 +9169,7 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
                 return false;  // keep enumerating this parent's other owned children
             });
     }
+    if (stats) *stats = st;
     return out;
 }
 

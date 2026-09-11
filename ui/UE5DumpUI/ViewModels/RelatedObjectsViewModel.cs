@@ -127,9 +127,11 @@ public partial class RelatedObjectsViewModel : ViewModelBase
                 if (QueryClassName.Length == 0 && r.Relation == "Self")
                     QueryClassName = r.ClassName;
             }
-            StatusText = Related.Count > 0
-                ? $"{Related.Count} related object(s)."
-                : "No related objects found (is the address a live UObject?).";
+            StatusText = (Related.Count > 0
+                    ? $"{Related.Count} related object(s)."
+                    : "No related objects found (is the address a live UObject?).")
+                // [W4-RELATED-STOPS] a cut-off graph says so, and why -- never read as the whole one
+                + UE5DumpUI.Core.PartialResultNotice.RelatedStopsClause(result.Stops);
             _log.Info($"GetRelatedObjects: {addr} -> {Related.Count}");
         }
         catch (Exception ex)

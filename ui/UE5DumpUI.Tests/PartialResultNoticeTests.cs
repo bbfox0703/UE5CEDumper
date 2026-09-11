@@ -93,6 +93,41 @@ public class PartialResultNoticeTests
         Assert.DoesNotContain("CAP", s, StringComparison.Ordinal);
     }
 
+    // ---- [W4-RELATED-STOPS] each cause the related-object walk stopped for, in its own words ----
+
+    [Fact]
+    public void RelatedStopsClause_NamesEachCauseSeparately()
+    {
+        var all = PartialResultNotice.RelatedStopsClause(new RelatedObjectsStops
+        {
+            ResultCapHit = true, OwnedCapHit = true, VisitCapHit = true, DeadlineHit = true, Cancelled = true,
+            MaxResults = 128, MaxOwned = 64, MaxVisited = 200000, DeadlineMs = 8000,
+        });
+        Assert.Contains("128-row limit", all, StringComparison.Ordinal);
+        Assert.Contains("64 owned sub-objects", all, StringComparison.Ordinal);
+        Assert.Matches(@"following 200\D?000 pointers", all);   // the group separator is the culture's
+        Assert.Contains("8 s time budget", all, StringComparison.Ordinal);
+        Assert.Contains("cancelled", all, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RelatedStopsClause_OneCauseSaysOnlyThatCause()
+    {
+        var capOnly = PartialResultNotice.RelatedStopsClause(
+            new RelatedObjectsStops { ResultCapHit = true, MaxResults = 128, DeadlineMs = 8000 });
+        Assert.Contains("128-row limit", capOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("time budget", capOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("cancelled", capOnly, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RelatedStopsClause_AFinishedWalk_OrAnOlderDll_SaysNothing()
+    {
+        // The control, green before and after.
+        Assert.Equal("", PartialResultNotice.RelatedStopsClause(null));
+        Assert.Equal("", PartialResultNotice.RelatedStopsClause(new RelatedObjectsStops { MaxResults = 128 }));
+    }
+
     // ==================================================================
     // Z10 — the advice must name a lever the panel actually has.
     // ==================================================================

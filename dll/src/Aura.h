@@ -448,10 +448,36 @@ struct RelatedObject {
     uintptr_t   parentAddr  = 0;      // object holding the pointer to this one
 };
 
+// [W4-RELATED-STOPS] Why a related-object walk stopped short -- one flag PER CAUSE, never one "stopped early"
+// bool (P5: four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
+// A cap flag means a qualifying object was actually REFUSED: a list that exactly fills its cap is complete.
+struct RelatedObjectsStats {
+    bool    resultCapHit = false;   // a related object was found with the list already at maxResults
+    bool    ownedCapHit  = false;   // an owned sub-object was found past maxOwnedSubs
+    bool    visitCapHit  = false;   // the pointer-edge budget ran out (a huge container): more MAY exist
+    bool    deadlineHit  = false;   // the wall-clock budget ran out: more MAY exist
+    bool    cancelled    = false;   // Tot::Requested(): the client went away, or shutdown
+    int32_t maxResults   = 0;       // the effective bounds, so the UI can name them
+    int32_t maxOwnedSubs = 0;
+    int64_t maxVisited   = 0;
+    int64_t deadlineMs   = 0;
+};
+
+// The walk's bounds. The defaults ARE the shipped values, and no caller but a test passes this: it is the
+// seam that lets dll_core_test trip each bound with a handful of fake objects. [W4-RELATED-STOPS]
+struct RelatedObjectsLimits {
+    int32_t maxOwnedSubs = 128;
+    int64_t maxVisited   = 200000;
+    int64_t deadlineMs   = 8000;
+};
+
 // See the section comment above. `maxResults` caps the list (default 128 — far
 // above any real actor's owned-object count). Returns Self first, then
-// Class/Outer/counterpart, then owned sub-objects in BFS order.
-std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults = 128);
+// Class/Outer/counterpart, then owned sub-objects in BFS order. `stats`, when
+// given, says whether -- and why -- the list stopped short.
+std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults = 128,
+                                             RelatedObjectsStats* stats = nullptr,
+                                             const RelatedObjectsLimits& limits = RelatedObjectsLimits{});
 
 // === Outgoing object-pointer enumeration (public façade) ===
 //

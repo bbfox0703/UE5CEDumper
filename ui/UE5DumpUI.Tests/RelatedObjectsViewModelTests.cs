@@ -342,4 +342,62 @@ public class RelatedObjectsViewModelTests
         Assert.Single(vm.TargetCandidates);
         Assert.False(vm.IsBusy);
     }
+
+    // ---- [W4-RELATED-STOPS] a cut-off graph must not read as the whole one ----
+
+    private sealed class StoppedDumpService : StubDumpService
+    {
+        public RelatedObjectsStops? Stops { get; init; }
+
+        public override Task<RelatedObjectsResult> GetRelatedObjectsAsync(
+            string addr, int maxResults = 128, CancellationToken ct = default)
+            => Task.FromResult(new RelatedObjectsResult
+            {
+                QueryAddress = addr,
+                Related = Graph(addr, "BP_A_C").Related,
+                Stops = Stops,
+            });
+    }
+
+    private static RelatedObjectsViewModel CreateVm(StoppedDumpService dump)
+        => new(dump, new NoopLogger(), new MockPlatformService(System.IO.Path.GetTempPath()));
+
+    [Fact]
+    public async Task ALoadCutOffAtTheRowLimit_SaysSoInTheStatus()
+    {
+        var vm = CreateVm(new StoppedDumpService
+        {
+            Stops = new RelatedObjectsStops { ResultCapHit = true, MaxResults = 128, DeadlineMs = 8000 },
+        });
+
+        await vm.LoadForAddressAsync("0xA");
+
+        Assert.StartsWith("2 related object(s).", vm.StatusText);
+        Assert.Contains("128-row limit", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ALoadThatTimedOut_SaysSo_AndNotThatTheListIsFull()
+    {
+        var vm = CreateVm(new StoppedDumpService
+        {
+            Stops = new RelatedObjectsStops { DeadlineHit = true, MaxResults = 128, DeadlineMs = 8000 },
+        });
+
+        await vm.LoadForAddressAsync("0xA");
+
+        Assert.Contains("time budget", vm.StatusText);
+        Assert.DoesNotContain("row limit", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task AFinishedLoad_KeepsItsPlainStatus()
+    {
+        // The control, green before and after: a walk that finished adds nothing to the status.
+        var vm = CreateVm(new StoppedDumpService { Stops = new RelatedObjectsStops { MaxResults = 128 } });
+
+        await vm.LoadForAddressAsync("0xA");
+
+        Assert.Equal("2 related object(s).", vm.StatusText);
+    }
 }
