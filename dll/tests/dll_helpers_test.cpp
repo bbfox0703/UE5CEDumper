@@ -2691,30 +2691,52 @@ static void Test_ValueScan_FieldDisplayName() {
            FieldDisplayName(structArrNested, 1) == "SaveSlotList[1].MsTuneData.GP2");
 }
 
-// V1c — TOptional<T> bIsSet flag offset. A non-intrusive optional is laid out
-// { T value; bool bIsSet; } padded to alignof(T), so the flag sits at
-// offset == sizeof(T). OptionalFlagOffset returns that offset when the optional
-// is larger than its value (room for the bool), else -1 (intrusive / unknown).
-static void Test_ValueScan_OptionalFlagOffset() {
-    using namespace Radar;
-    // Non-intrusive numerics: flag at sizeof(T).
-    EXPECT("TOptional<int8>  -> flag at 1", OptionalFlagOffset(2, 1)  == 1);
-    EXPECT("TOptional<int16> -> flag at 2", OptionalFlagOffset(4, 2)  == 2);
-    EXPECT("TOptional<int32> -> flag at 4", OptionalFlagOffset(8, 4)  == 4);
-    EXPECT("TOptional<int64> -> flag at 8", OptionalFlagOffset(16, 8) == 8);
-    EXPECT("TOptional<float> -> flag at 4", OptionalFlagOffset(8, 4)  == 4);
-    EXPECT("TOptional<double>-> flag at 8", OptionalFlagOffset(16, 8) == 8);
-    // FVector (double, 24B) -> 24 value + bool padded to 32.
-    EXPECT("TOptional<FVector>-> flag at 24", OptionalFlagOffset(32, 24) == 24);
-    // FString (16B) -> 16 value + bool padded to 24.
-    EXPECT("TOptional<FString>-> flag at 16", OptionalFlagOffset(24, 16) == 16);
-    // Intrusive / pointer-shaped: optional size == value size, no flag.
-    EXPECT("Intrusive (size==inner) -> -1", OptionalFlagOffset(8, 8) == -1);
-    // Unknown / unresolved inner size -> no gate.
-    EXPECT("Zero inner size -> -1",     OptionalFlagOffset(8, 0)  == -1);
-    EXPECT("Negative inner size -> -1", OptionalFlagOffset(8, -1) == -1);
-    // Defensive: a value somehow larger than the optional -> no gate.
-    EXPECT("inner > optional -> -1", OptionalFlagOffset(4, 8) == -1);
+// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c sized the TOptional flag with Radar::OptionalFlagOffset's loose "bigger than
+// T" rule and never gated an intrusive optional: on 5.5+ an unset FString / FName / FText optional was scanned as a
+// value, and its "flag" read from the neighbour's byte. The decision is now the resolved layout's.
+static void Test_ValueScan_V1cOptionalGate() {
+    using Ubel::OptionalLayout;
+    using Ubel::OptionalUnsetSentinel;
+    int32_t off = 0;
+    OptionalUnsetSentinel sen = OptionalUnsetSentinel::None;
+
+    EXPECT("V1C trailing-flag optional gates on the byte at sizeof(T)",
+           Ubel::V1cOptionalGate(OptionalLayout::TrailingFlag, "IntProperty", 4, off, sen)
+           && off == 4 && sen == OptionalUnsetSentinel::None);
+    EXPECT("V1C intrusive FString gates on its ArrayMax sentinel",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "StrProperty", 16, off, sen)
+           && off == -1 && sen == OptionalUnsetSentinel::FStringMaxNone);
+    EXPECT("V1C intrusive FName gates on its ComparisonIndex sentinel",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "NameProperty", 8, off, sen)
+           && sen == OptionalUnsetSentinel::FNameIndexNone);
+    EXPECT("V1C intrusive FText gates on its null TextData",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "TextProperty", 24, off, sen)
+           && sen == OptionalUnsetSentinel::FTextNull);
+    EXPECT("V1C an Unknown layout is skipped, never guessed",
+           !Ubel::V1cOptionalGate(OptionalLayout::Unknown, "IntProperty", 4, off, sen));
+    EXPECT("V1C an intrusive T with no known sentinel is skipped",
+           !Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "IntProperty", 4, off, sen));
+
+    uint8_t s16[16] = {};
+    s16[12] = s16[13] = s16[14] = s16[15] = 0xFF;                 // ArrayMax = -1
+    EXPECT("V1C an FString with ArrayMax -1 reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FStringMaxNone, s16));
+    s16[12] = 16; s16[13] = s16[14] = s16[15] = 0;                 // ArrayMax = 16
+    EXPECT("V1C control: an FString with ArrayMax 16 is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FStringMaxNone, s16));
+    uint8_t n16[16] = {};
+    n16[0] = n16[1] = n16[2] = n16[3] = 0xFF;                      // ComparisonIndex = ~0u
+    EXPECT("V1C an FName with ComparisonIndex ~0 reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FNameIndexNone, n16));
+    n16[0] = 7; n16[1] = n16[2] = n16[3] = 0;
+    EXPECT("V1C control: an FName with ComparisonIndex 7 is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FNameIndexNone, n16));
+    uint8_t t16[16] = {};                                          // TextData = null
+    EXPECT("V1C an FText with null TextData reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
+    t16[5] = 0x12;
+    EXPECT("V1C control: an FText with TextData is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
 }
 
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
@@ -8422,7 +8444,7 @@ int main() {
 
     RUN(Test_ValueScan_SessionLifecycle);
     RUN(Test_ValueScan_FieldDisplayName);
-    RUN(Test_ValueScan_OptionalFlagOffset);
+    RUN(Test_ValueScan_V1cOptionalGate);
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);

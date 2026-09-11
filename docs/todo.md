@@ -3727,7 +3727,7 @@ positive.
 - ⛔ **Unsafe:** dropping the descent altogether. That loses every true reference inside a SET struct
   optional.
 
-##### ⬜ `[A2-TOPTIONAL-VALUESCAN]` LOW — Value Scan V1c still sizes the TOptional flag with the loose rule (filed 2026-09-11)
+##### ✅ `[A2-TOPTIONAL-VALUESCAN]` LOW — Value Scan V1c still sizes the TOptional flag with the loose rule (filed 2026-09-11; FIXED IN SOURCE 2026-09-12)
 
 `Aura.cpp` V1c (~`:7143-7163`) takes the flag offset from `Radar::OptionalFlagOffset(f.Size, innerSize)`:
 a loose "bigger than T" rule that `[A2-TOPTIONAL-INTRUSIVE]` names as unsafe. It never gates an
@@ -3742,6 +3742,17 @@ and its "flag" is read from the neighbour's byte.
   - Drop `Radar::OptionalFlagOffset`'s loose rule.
 - ⛔ **Unsafe:** skipping every intrusive optional. That silently drops 5.5+ string optionals from
   every scan.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L41), the reviewer's safe fix:
+  - V1c takes the layout from `Ubel::ResolveOptionalLayout`, and a pure `Ubel::V1cOptionalGate` decides from it.
+    - TrailingFlag: gate on the byte at `sizeof(T)`.
+    - Intrusive FString / FName / FText: carry that type's sentinel. `ScanField.optionalSentinel` is tested on the value
+      bytes by `IntrusiveOptionalIsUnset` before the read.
+    - Unknown, or an intrusive T with no known sentinel: skip the field.
+  - `Radar::OptionalFlagOffset` and its pin test are removed.
+  - **Red first:** dll_helpers_test's V1C block pins the decision and all three sentinels, against inert helpers. An
+    InvokeScriptTests source pin covers the Aura wiring, because no test drives `ScanForValue`.
+  - ⬜ **Lead, unverified (from mapping this row):** the value-scan REFINE path appears to re-read V1c candidates with no
+    optional gate at all, since Radar's `FieldDescriptor` has no optional member. It was not traced end to end.
 
 ##### ✅ `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask (FIXED IN SOURCE 2026-09-11)
 
@@ -5300,6 +5311,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 - the slot-symbol register records its holder, and the release checks ownership before it decrements.
 CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new shape. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5281/5281. Shape pins only: the Lua RUN is a CE live check |
 | 95 | `[A4-AB4-BETWEEN]` | LOW | `git log --grep A4-AB4-BETWEEN` (batch L42) | dll_helpers_test BETWEEN block, red first against the old two-build behaviour: unsigned and Int16 bounds are clamped per width, reversed bounds are normalised, 64-bit values are exact, a float bound beyond 64 bits still bounds, and only `Encoded` entries are emitted. GroupMatchTests carries the same rows, and an InvokeScriptTests source pin covers the four Fern sites. 6/6 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5289/5289 |
+| 96 | `[A2-TOPTIONAL-VALUESCAN]` | LOW | `git log --grep A2-TOPTIONAL-VALUESCAN` (batch L41) | dll_helpers_test V1C block, red first against inert helpers: a trailing flag gates at `sizeof(T)`; intrusive FString / FName / FText carry their sentinels; Unknown and sentinel-less intrusive optionals are skipped; the three sentinel byte tests each have a control. An InvokeScriptTests source pin covers the V1c wiring, and the loose rule is removed. 4/4 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5290/5290. Refine-path lead recorded |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5582,6 +5594,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Value Search, NumericNoByte, Between -5 10 finds a UInt16 field holding a small value. It used to skip it.
 2. Between 10 70000 finds an Int16 field near 32767.
 3. Repeat both as a group slot, and as a snapshot Group match. | a game + UI |
+| L82 | `[A2-TOPTIONAL-VALUESCAN]` | A UE 5.5+ game with a `TOptional<FString>` field, if one can be found. Value Search, FString, Exact "": an UNSET intrusive optional is not a candidate. A set optional holding text is still found. | a 5.5+ game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5680,7 +5693,7 @@ completeness critic.
 - ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - ✅ **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
-- **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
+- ✅ **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)

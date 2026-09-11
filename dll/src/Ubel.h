@@ -902,6 +902,49 @@ struct OptionalLayoutInfo {
 OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optionalSize,
                                          const std::string& knownInnerType);
 
+/// [A2-TOPTIONAL-VALUESCAN] How an INTRUSIVE optional's unset state is spelled in its value bytes, per wrapped type.
+/// None = no known sentinel: Value Scan cannot read that optional's set state and skips it.
+enum class OptionalUnsetSentinel : int8_t {
+    None,
+    FStringMaxNone,   // FString (TArray<TCHAR>): ArrayMax == INDEX_NONE (-1) at +12
+    FNameIndexNone,   // FName: ComparisonIndex == ~0u at +0
+    FTextNull,        // FText: the TextData pointer null at +0
+};
+
+inline uint32_t OptionalLoadLe32(const uint8_t* p) {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+
+/// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c's decision for one TOptional<T> leaf, from its RESOLVED layout (never the
+/// loose "bigger than T means a trailing flag" rule). TrailingFlag: gate on the byte at sizeof(T). Intrusive: gate on
+/// the wrapped type's unset sentinel -- FString / FName / FText. Anything else -- Unknown, or an intrusive T with no
+/// known sentinel -- has an unreadable set state, so its bytes are not a value: false = SKIP the field.
+/// ⛔ Not "skip every intrusive optional": that would drop 5.5+ string optionals from every scan.
+inline bool V1cOptionalGate(OptionalLayout layout, const std::string& innerType, int32_t innerSize,
+                            int32_t& flagOffset, OptionalUnsetSentinel& sentinel) {
+    flagOffset = -1;
+    sentinel = OptionalUnsetSentinel::None;
+    if (layout == OptionalLayout::TrailingFlag && innerSize > 0) { flagOffset = innerSize; return true; }
+    if (layout == OptionalLayout::Intrusive) {
+        if (innerType == "StrProperty")  { sentinel = OptionalUnsetSentinel::FStringMaxNone; return true; }
+        if (innerType == "NameProperty") { sentinel = OptionalUnsetSentinel::FNameIndexNone; return true; }
+        if (innerType == "TextProperty") { sentinel = OptionalUnsetSentinel::FTextNull;      return true; }
+    }
+    return false;   // Unknown, or intrusive with no sentinel: skip
+}
+
+/// [A2-TOPTIONAL-VALUESCAN] True when an intrusive optional's value bytes (at least 16, from the value start) spell
+/// "unset" for its sentinel. Little-endian loads spelled out, so no header is needed and no alignment assumed.
+inline bool IntrusiveOptionalIsUnset(OptionalUnsetSentinel s, const uint8_t* value16) {
+    switch (s) {
+        case OptionalUnsetSentinel::FStringMaxNone: return OptionalLoadLe32(value16 + 12) == 0xFFFFFFFFu;
+        case OptionalUnsetSentinel::FNameIndexNone: return OptionalLoadLe32(value16) == 0xFFFFFFFFu;
+        case OptionalUnsetSentinel::FTextNull:
+            return OptionalLoadLe32(value16) == 0 && OptionalLoadLe32(value16 + 4) == 0;
+        default: return false;
+    }
+}
+
 /// True when the first 8 bytes look like a real vtable pointer: non-null,
 /// 8-byte aligned, and inside the x64 user-mode canonical range. A float pair
 /// (0x400000003F800000), a double (0x40934A0000000000) and an FLinearColor's

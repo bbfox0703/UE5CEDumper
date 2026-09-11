@@ -6865,6 +6865,9 @@ ValueScanResult ScanForValue(
         // offset+optionalFlagOffset; the per-instance read skips slots whose
         // flag is 0 (unset). -1 = ordinary leaf / container (no gate).
         int32_t       optionalFlagOffset = -1;
+        // [A2-TOPTIONAL-VALUESCAN] ...or, for an INTRUSIVE optional (no flag byte), the wrapped type's unset sentinel,
+        // tested on the value bytes before they are read as a value. None = no sentinel gate.
+        Ubel::OptionalUnsetSentinel optionalSentinel = Ubel::OptionalUnsetSentinel::None;
         std::string   elemTypeName;       // Inner/elem/key/value type name (e.g. "IntProperty")
         // Vector scans only: the REFLECTED width of the value this ScanField
         // reads — 12 (3xfloat) or 24 (3xdouble LWC). Sourced from the property
@@ -7247,8 +7250,17 @@ ValueScanResult ScanForValue(
                         ? f.Name : (namePrefix + "." + f.Name);
                     sf.typeName      = f.innerType;             // read as the inner leaf type
                     sf.boolFieldMask = 0xFF;                    // optionals never bitfield-pack
-                    sf.optionalFlagOffset =
-                        Radar::OptionalFlagOffset(f.Size, innerSize);
+                    // [A2-TOPTIONAL-VALUESCAN] The optional's RESOLVED layout, not "bigger than T means a trailing
+                    // flag" (the loose rule [A2-TOPTIONAL-INTRUSIVE] names unsafe). A trailing-flag optional gates on
+                    // the byte at sizeof(T); an intrusive FString / FName / FText on its type's unset sentinel;
+                    // anything else has an unreadable set state, so its bytes are not a value -- skip the field.
+                    const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, f.innerType);
+                    int32_t gateOffset = -1;
+                    Ubel::OptionalUnsetSentinel gateSentinel = Ubel::OptionalUnsetSentinel::None;
+                    if (!Ubel::V1cOptionalGate(ol.layout, f.innerType, ol.innerSize, gateOffset, gateSentinel))
+                        continue;
+                    sf.optionalFlagOffset = gateOffset;
+                    sf.optionalSentinel   = gateSentinel;
                     sf.vectorWidth   = optVecWidth;
                     out.push_back(std::move(sf));
                     continue;
@@ -8013,6 +8025,14 @@ ValueScanResult ScanForValue(
                 uint8_t isSet = 0;
                 if (!readBody(sf.offset + sf.optionalFlagOffset, &isSet, 1)
                     || isSet == 0)
+                    continue;
+            }
+            // [A2-TOPTIONAL-VALUESCAN] An INTRUSIVE optional has no flag byte: "unset" is a special value of T itself,
+            // so test that sentinel before the bytes are read as a value. An unreadable slot is skipped too.
+            if (sf.optionalSentinel != Ubel::OptionalUnsetSentinel::None) {
+                uint8_t v16[16] = {};
+                if (!readBody(sf.offset, v16, sizeof(v16))
+                    || Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel, v16))
                     continue;
             }
 

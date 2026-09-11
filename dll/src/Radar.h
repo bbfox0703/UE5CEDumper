@@ -785,14 +785,9 @@ struct Session {
 // for a TArray/container element. Pure / std-only (unit-tested).
 std::string FieldDisplayName(const FieldDescriptor& desc, int32_t elementIndex);
 
-// V1c: byte offset of the bIsSet flag inside a non-intrusive TOptional<T>.
-// A non-intrusive optional is laid out `{ T value; bool bIsSet; }` (padded to
-// alignof(T)), so the flag sits at offset == sizeof(T) and the wrapped value
-// is at offset 0. Returns innerSize when the optional is larger than its value
-// (i.e. there's room for the trailing bool), else -1 — meaning "no separate
-// flag to gate on" (intrusive/pointer optionals encode unset in the value
-// itself, and an unknown/zero innerSize can't be gated). Pure (unit-tested).
-int32_t OptionalFlagOffset(int32_t optionalSize, int32_t innerSize);
+// [A2-TOPTIONAL-VALUESCAN] V1c's TOptional gate is Ubel::V1cOptionalGate now, from the RESOLVED layout. The loose
+// "optionalSize > innerSize means a trailing flag at innerSize" rule that lived here (OptionalFlagOffset) is gone: it
+// never gated an intrusive optional, and read a neighbour's byte as a flag whenever the sizes merely differed.
 
 // --- V3-C: server-side value rendering / filter / sort over a candidate pool ---
 //

@@ -1141,14 +1141,6 @@ std::string FieldDisplayName(const FieldDescriptor& desc, int32_t elementIndex) 
     return desc.fieldName + "[" + std::to_string(elementIndex) + "]";
 }
 
-int32_t OptionalFlagOffset(int32_t optionalSize, int32_t innerSize) {
-    // Need a known inner size and room past it for the trailing bool. When
-    // optionalSize == innerSize the optional is intrusive (the value's own bit
-    // pattern marks unset — pointer-shaped Ts), so there's no flag to gate on.
-    if (innerSize <= 0 || optionalSize <= innerSize) return -1;
-    return innerSize;
-}
-
 // --- V3-C: value rendering / filter / sort over a candidate pool ---
 
 namespace {

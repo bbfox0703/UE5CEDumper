@@ -1903,6 +1903,18 @@ public class InvokeScriptTests
         Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(fern, @"Radar::BuildNumericBetweenTargets\(").Count);
     }
 
+    [Fact]
+    public void ValueScanV1c_GatesOptionalsByTheirResolvedLayout()
+    {
+        // [A2-TOPTIONAL-VALUESCAN] No test drives ScanForValue, so its V1c wiring is pinned from source; the gate decision
+        // and the sentinel test themselves are dll_helpers_test's V1C block.
+        string aura = DllSource("Aura.cpp");
+        Assert.Contains("Ubel::V1cOptionalGate(ol.layout, f.innerType, ol.innerSize", aura);
+        Assert.Contains("Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel", aura);
+        Assert.DoesNotContain("OptionalFlagOffset(", aura);
+        Assert.DoesNotContain("OptionalFlagOffset(", DllSource("Radar.h"));   // the loose rule is gone, not bypassed
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
