@@ -1259,7 +1259,7 @@ while eviction runs at the hand-edited number.
 **LOW** — 2 rows: ✅ `[W3-CAP-NOSAVE]` (FIXED IN SOURCE 2026-09-12, batch L30: both caps added to their persist sets, plus a symmetry pin over every BuildOptions line so the next instance fails a test; red first) `PropertySearchCap` and `ClassListCap` round-trip through
 `ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls
 `ScheduleOptionSave()` — raising a cap and touching nothing else writes nothing to disk (**found
-independently by both APP-SHELL lenses**) · `[W3-DIP-PIXELS]` `WindowRestoreState.PositionAcceptable`
+independently by both APP-SHELL lenses**) · ✅ `[W3-DIP-PIXELS]` (FIXED IN SOURCE 2026-09-12, batch L31: the state machine is given the window's RenderScaling through `SetScale`, pushed with every `SetScreens`; the stash stays in DIPs and only the visibility test converts; red first with the AF21 geometry) `WindowRestoreState.PositionAcceptable`
 passes DIP-sized `_pendW`/`_pendH` straight into `WindowPlacement.IsVisibleEnough`, whose header
 states *"All coordinates are PHYSICAL pixels"* — the audit-#5 **AF21** unit fix landed in
 `MainWindow` and never in this newer 100%-band twin. ⛔ The tempting mechanical fix is harmful; the
@@ -5222,6 +5222,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 83 | `[W5-OFFSETS-UNMEASURED]` | LOW | `git log --grep W5-OFFSETS-UNMEASURED` (batch L15) | dll_core_test, red first: a give-up after a validated run stores validated=false (the first give-up is driven for real, over a pool with no Guid / Vector); the shutdown reset forgets all three; the verdict reason reads `probe-not-run` before detection, even beside a stale reason, and is never empty for an unmeasured run. InvokeScriptTests source pins cover the second give-up, the `UE5_Shutdown` call, the export's both-flags rule and the dissect warning. 8/8 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5251/5251. The export count is 59 → 60 at every derived site. The mailbox half is L45 |
 | 84 | `[W2-BETWEEN-PREVIEW]` | LOW | `git log --grep W2-BETWEEN-PREVIEW` (batch L28) | RoundModePreviewTests, red first: `1,2,3~4,5,6`, `1,000~2,000`, `(5)~10` and `5-~10` preview nothing in every scope, because the DLL refuses each of them. Control: SPC's absolute window keeps `NumberStyles.Any`, because `SpcQueryViewModel` Lo()/Hi() parse it that way. The kit's first draft assumed SPC used `SnapshotStore.TryParseValue`, which is the snapshot GROUP matcher's parse, and a read of the real call site refuted that. Whether SPC itself should accept `(5)` is a separate question, not filed. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5256/5256 |
 | 85 | `[W2-DEADSCAN-LOADMORE]` | LOW | `git log --grep W2-DEADSCAN-LOADMORE` (batch L29) | ValueSearchTests, red first: a First Scan, and a Group First Scan, that fails after a live session keeps its row, offers no Load More, and says the rows are the previous scan's. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5258/5258. The grid is NOT cleared, per the refuted-fix table |
+| 86 | `[W3-DIP-PIXELS]` | LOW | `git log --grep W3-DIP-PIXELS` (batch L31) | WindowRestoreStateTests, red first, with AF21's 3840 px / 225% / x=-1707 geometry: a position reachable in physical pixels is kept, and a genuinely off-screen one (x=-2809) is still rejected (control). A source pin checks that ManagedDialogWindow pushes `SetScale(RenderScaling)` with every `SetScreens`. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5261/5261 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5470,6 +5471,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. First Scan something with more than one page of results, so Load More shows.
 2. Start another First Scan and Cancel it. The rows stay, Load More disappears, and the window status says they are the previous scan's.
 3. Repeat in Group mode. | a game + UI |
+| L72 | `[W3-DIP-PIXELS]` | UI on a HiDPI monitor (the AF21 rig's 3840 px at 225%):
+1. Open a managed dialog (Find Func). Drag it until about a third hangs off the LEFT edge (x ≈ -1707). The right edge cannot show this, per AF21's correction.
+2. Maximize it, then restore it. It comes back to that position instead of snapping to the last fully visible one. | UI + HiDPI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5558,7 +5562,7 @@ completeness critic.
 - ✅ **L28:** `[W2-BETWEEN-PREVIEW]`
 - ✅ **L29:** `[W2-DEADSCAN-LOADMORE]`
 - ✅ **L30:** `[W3-CAP-NOSAVE]`
-- **L31:** `[W3-DIP-PIXELS]`
+- ✅ **L31:** `[W3-DIP-PIXELS]`
 - **L32:** `[W4-HEXSORT]`
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
 - **L34:** `[P8-BOOKMARK-TIP]`
