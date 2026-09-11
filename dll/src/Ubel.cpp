@@ -2243,6 +2243,12 @@ bool IsScalarArrayType(const std::string& innerTypeName) {
 // per-element String leaves had nothing to iterate. Not by widening IsScalarArrayType: its reader
 // decodes RAW element bytes, and a string's bytes are a header, not its text.
 // ============================================================
+// The stride of every string-array element: the 16-byte FString / FUtf8String / FAnsiString header
+// { Data*, Num, Max }. Pinned -- never the inner's ELEMSIZE, which can read as garbage -- by the reader AND by
+// what the walk publishes, because the UI lays element rows out by the published size (Offset = i * size)
+// and hands it back to read_array_elements. Review 3 of 6b48e776: only the reader had it.
+constexpr int32_t kStringArrayStride = 16;
+
 bool IsStringArrayType(const std::string& innerTypeName) {
     return innerTypeName == "StrProperty"
         || innerTypeName == "Utf8StrProperty"
@@ -2260,7 +2266,7 @@ ReadArrayResult ReadStringArrayElements(
     // A different elemSize is a garbage FPROPERTY_ELEMSIZE read, so the stride is pinned -- as Phase D
     // pins 8 for a pointer -- rather than trusted into an address walk.
     (void)elemSize;
-    constexpr int32_t kHeader = 16;
+    constexpr int32_t kHeader = kStringArrayStride;
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -4696,6 +4702,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 // Phase L: TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                if (innerFound && IsStringArrayType(fv.arrayInnerType))
+                    fv.arrayElemSize = kStringArrayStride;
                 if (innerFound && IsStringArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto strResult = ReadStringArrayElements(
@@ -4855,6 +4864,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
                 // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                if (innerFound && IsStringArrayType(fv.arrayInnerType))
+                    fv.arrayElemSize = kStringArrayStride;
                 if (innerFound && IsStringArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
                     auto strResult = ReadStringArrayElements(

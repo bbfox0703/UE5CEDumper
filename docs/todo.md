@@ -1652,8 +1652,10 @@ SCAN-CORE     1    0    1    0    0    0    0    0
    - **Fern's `read_array_elements` dispatches string inners to it.** That is the half a user saw: the
      Live Walker's drill fetches the elements through this command, and before the fix `ReadArrayElements`
      decoded every element's header bytes as a scalar, showing hex and an empty value.
-   - `InferScalarSize` has no string arm, so the walker keeps the engine's own element size: 16 for an
-     FString inner. No change was needed there.
+   - ~~`InferScalarSize` has no string arm, so the walker keeps the engine's own element size: 16 for an
+     FString inner. No change was needed there.~~ *Wrong, found by review 3. That holds only when the
+     engine's value is right, which is the case the pinned stride exists NOT to rely on. See the follow-up
+     below.*
    - **No UI change was needed.** CE XML's element leaves (B23), CSX's scalar-element path (a Data
      pointer with a string child) and the Live Walker's inline-vs-fetch routing all handle decoded string
      elements.
@@ -1670,6 +1672,21 @@ SCAN-CORE     1    0    1    0    0    0    0    0
      - Fern's dispatch, because Fern.cpp is compiled by no test target.
 
      Both are covered by building `UE5Dumper` and by the live check.
+   - ✅ **Review follow-up 2026-09-12** (review 3, of 6b48e776: two LOW, both CONFIRMED).
+     - **The stride was pinned inside the reader only.** The walk still PUBLISHED the inner's raw
+       ELEMSIZE, and the UI lays element rows out by it: `Offset = i * ArrayElemSize`, CE XML's
+       per-element leaves, CSX.
+       - An in-range garbage value put every element after [0] at the wrong address.
+       - A zeroed one made CSX place [1] at +1.
+
+       Phase L now publishes the fixed 16-byte stride (`kStringArrayStride`) in both walker branches.
+     - **Fern refused the drill fetch before its string dispatch.** `read_array_elements` checked
+       `elem_size` (> 0, ≤ 256) first, so a zeroed or oversized value never reached the pinned reader.
+       The string dispatch is now decided first, and those checks guard only a scalar stride.
+     - **Test, red first:** a pool-faking `STRARRAYSTRIDE` block whose inner ELEMSIZE reads 0x18. The walk
+       still decodes both elements, and now publishes 16. 1/1 mutants killed; dll_core_test 239/239; UI 5132/5132.
+     - ⚠ Survivors, as before: the UProperty-mode publish (no test drives that branch) and Fern (no test
+       target compiles it).
 
 **LOW** — 4 rows.
 

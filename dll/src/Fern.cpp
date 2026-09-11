@@ -2550,21 +2550,24 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int32_t offset = request.value("offset", 0);
             int32_t limit = request.value("limit", 64);
 
-            if (innerType.empty() || elemSize <= 0)
+            // [W5-STRARRAY-ELEMENTS] A string inner is a 16-byte header per element, not a scalar:
+            // ReadArrayElements would publish the header's bytes as the value. The Live Walker fetches
+            // the elements past the walked ones through here. Review 3 of 6b48e776: decided FIRST, because
+            // the elem_size checks below guard a SCALAR stride -- a string's is the fixed header, and a
+            // zeroed or garbage elem_size is exactly what that pinned stride exists to survive.
+            const bool stringInner = Ubel::IsStringArrayType(innerType);
+            if (innerType.empty() || (!stringInner && elemSize <= 0))
                 return Renge::MakeError(id, "missing inner_type or invalid elem_size").dump();
 
             // Validate elemSize from UI — may have cached garbage from older sessions.
             // ReadArrayElements already caps at 256, but validate explicitly here too.
-            if (elemSize > 256) {
+            if (!stringInner && elemSize > 256) {
                 Sein::Warn("PIPE:cmd", "read_array_elements: elemSize=%d too large for '%s', rejecting",
                     elemSize, innerType.c_str());
                 return Renge::MakeError(id, "elem_size too large (max 256)").dump();
             }
 
-            // [W5-STRARRAY-ELEMENTS] A string inner is a 16-byte header per element, not a scalar:
-            // ReadArrayElements would publish the header's bytes as the value. The Live Walker fetches
-            // the elements past the walked ones through here.
-            auto result = Ubel::IsStringArrayType(innerType)
+            auto result = stringInner
                 ? Ubel::ReadStringArrayElements(addr, fieldOffset, innerType, elemSize, offset, limit)
                 : Ubel::ReadArrayElements(addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
 

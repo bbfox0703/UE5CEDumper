@@ -2285,6 +2285,70 @@ int main() {
         check("STRIDEVERDICT control: the main pool is back, classic", !Aura::IsPacked() && Aura::GetCount() == kCount);
     }
 
+    // -- STRARRAYSTRIDE-2026-09-12 -- a string array PUBLISHES the 16-byte stride its reader uses --------------
+    //
+    // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. Review 3 of 6b48e776: the reader pinned the header
+    // stride, but the walk still published the inner's raw ELEMSIZE -- and the UI lays element rows out by
+    // that (Offset = i * ArrayElemSize) and hands it back to read_array_elements. [W5-STRARRAY-ELEMENTS]
+    {
+        blk("STRARRAYSTRIDE - WalkInstance publishes a string array's 16-byte stride, whatever the inner says");
+
+        static uint8_t ssEntry[4][0x40] = {};
+        const char* ssNames[4] = { "", "ArrayProperty", "Names", "StrProperty" };
+        static uintptr_t ssChunk[5] = {};
+        for (int i = 1; i <= 3; ++i) {
+            memcpy(ssEntry[i] + 0x10, ssNames[i], strlen(ssNames[i]) + 1);
+            ssChunk[i] = reinterpret_cast<uintptr_t>(ssEntry[i]);
+        }
+        static uintptr_t ssChunks[2] = { reinterpret_cast<uintptr_t>(ssChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ssChunks), 0x10);
+
+        const bool savedFPropSS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t ssArrFC[0x20] = {}, ssStrFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(ssArrFC + DynOff::FFIELDCLASS_NAME) = 1;   // "ArrayProperty"
+        *reinterpret_cast<int32_t*>(ssStrFC + DynOff::FFIELDCLASS_NAME) = 3;   // "StrProperty"
+
+        static uint8_t ssInner[0x100] = {};   // the Inner FProperty, whose ELEMSIZE reads as garbage
+        *reinterpret_cast<uintptr_t*>(ssInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(ssStrFC);
+        *reinterpret_cast<int32_t*>(ssInner + DynOff::FPROPERTY_ELEMSIZE) = 0x18;   // in range, so not zeroed
+
+        static uint8_t ssProp[0x100] = {};    // the ArrayProperty itself
+        *reinterpret_cast<uintptr_t*>(ssProp + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(ssArrFC);
+        *reinterpret_cast<int32_t*>(ssProp + DynOff::FFIELD_NAME)        = 2;   // "Names"
+        *reinterpret_cast<int32_t*>(ssProp + DynOff::FPROPERTY_OFFSET)   = 0x40;
+        *reinterpret_cast<int32_t*>(ssProp + DynOff::FPROPERTY_ELEMSIZE) = 16;
+        *reinterpret_cast<int32_t*>(ssProp + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+        *reinterpret_cast<uintptr_t*>(ssProp + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(ssInner);
+
+        static uint8_t ssCls[0x100] = {};
+        *reinterpret_cast<int32_t*>(ssCls + DynOff::USTRUCT_PROPSSIZE)    = 0x100;
+        *reinterpret_cast<uintptr_t*>(ssCls + DynOff::USTRUCT_CHILDPROPS) = reinterpret_cast<uintptr_t>(ssProp);
+
+        struct FakeFStringW { uintptr_t Data; int32_t Num; int32_t Max; };
+        static const wchar_t* kSW[2] = { L"one0", L"two1" };
+        static FakeFStringW ssHdrs[2] = {
+            { reinterpret_cast<uintptr_t>(kSW[0]), 5, 5 },
+            { reinterpret_cast<uintptr_t>(kSW[1]), 5, 5 },
+        };
+        static uint8_t ssInst[0x100] = {};
+        *reinterpret_cast<uintptr_t*>(ssInst + 0x40) = reinterpret_cast<uintptr_t>(ssHdrs);   // TArray.Data
+        *reinterpret_cast<int32_t*>(ssInst + 0x48)   = 2;                                      // Num
+        *reinterpret_cast<int32_t*>(ssInst + 0x4C)   = 2;                                      // Max
+
+        const auto r = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(ssInst),
+                                          reinterpret_cast<uintptr_t>(ssCls), 64, 2, false);
+        const Ubel::LiveFieldValue* f = r.fields.size() == 1 ? &r.fields[0] : nullptr;
+        check("STRARRAYSTRIDE control: the pinned reader still decodes both elements",
+              f && f->arrayElements.size() == 2 && f->arrayElements[1].value == "two1",
+              f ? std::to_string(f->arrayElements.size()).c_str() : "(no field)");
+        check("STRARRAYSTRIDE ⭐: the published element size is the 16-byte header, not the inner's 0x18",
+              f && f->arrayElemSize == 16, f ? std::to_string(f->arrayElemSize).c_str() : "(no field)");
+
+        DynOff::bUseFProperty = savedFPropSS;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
