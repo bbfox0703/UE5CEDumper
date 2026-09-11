@@ -732,10 +732,22 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
 5. ⬜ **`[W2-GROUPMATCH-WIDTH]`** `GroupMatch.cs:167`. The same defect in the C# mirror, for
    Snapshot Group Match: *"no objects matched"* over a corpus that does contain the group,
    indistinguishable from a correct empty answer.
-6. ⬜ **`[W2-GROUPMATCH-ENUM]`** `GroupMatch.cs:84`. `WidthBytes` has no `EnumProperty` case, so an
+6. ✅ **`[W2-GROUPMATCH-ENUM]`** (FIXED IN SOURCE 2026-09-11, batch B12) `GroupMatch.cs:84`. `WidthBytes` has no `EnumProperty` case, so an
    enum-backed state field (weapon type, quest stage, class) that IS a matchable leaf in the live
    group scan can **never** satisfy any slot in Snapshot Group Match. A user reproducing a live
    group across the corpus gets an empty result and no hint that a field was ineligible.
+   ✅ **FIXED IN SOURCE 2026-09-11, after its root `[P3-SNAPNUM-ENUM]` and in the same commit.**
+   - `EnumProperty` joins ALL THREE predicates together, mirroring the live matcher (Radar maps
+     EnumProperty → UInt8 and admits it under `kNumericAll`, not `kNumericNoByte`):
+     - `WidthBytes` (1);
+     - `IsOneByte`, so `NumericNoByte` still excludes it;
+     - `IsUnsigned` (0..255).
+   - The recorded harmful fix, `WidthBytes` alone, is what the `NumericNoByte` control kills.
+   - ⚠ **The first version of the Group Match tests was VACUOUS.** `Run()` rejects fewer than two
+     slots, so a single-slot `Run` was false whatever the leaf, and the "control" passed for the
+     wrong reason. They were rewritten on `LeafSatisfiesSlot`, with an anti-vacuity partner (an
+     IntProperty leaf satisfying the same NoByte slot) and a real two-slot group. Their red is
+     shown by the mutation check, not by a pre-fix run.
 
 **LOW** — 4 rows: `[W2-MS-PROMISE]` Move Speed Apply promises *"the override applies once a pawn
 exists"* when `Laufen` returned before storing anything, so the queued override silently does not
@@ -1562,7 +1574,7 @@ against.
        `TryValidateInputsForInvoke` (FIRE's shared predicates) before generating.
      - **The gate's Lua was pinned by substrings only.** `CeForm_TheEmptyOnlyGate_IsWellFormedLua`
        and `CeForm_TheFTextRefusal_IsOneWellFormedStatement` now pin its shape.
-2. ⬜ **`[P3-SNAPNUM-ENUM]`** `SnapshotNumeric.cs:17` (+ `Render` `:169`). No `EnumProperty` arm, so
+2. ✅ **`[P3-SNAPNUM-ENUM]`** (FIXED IN SOURCE 2026-09-11, batch B12) `SnapshotNumeric.cs:17` (+ `Render` `:169`). No `EnumProperty` arm, so
    every enum field captured since **AB14** made enums scannable gets `numeric_value NULL`: every SPC
    numeric predicate and every Group Match slot skips it, and the grid shows raw hex. The DLL side
    (`Radar.cpp:287` `kNumericAll`, `:407` EnumProperty→UInt8) and snapshot *capture* both have it; the
@@ -1573,6 +1585,11 @@ against.
    broken. ⬜ **Fix order: SnapshotNumeric first**, then the Group Match mirror.
    ✅ Safe on its own: an `EnumProperty` arm in `TryFromHex` **and** `Render`, decoding unsigned at the
    captured `byteLen` (the DLL always stores 1 byte, `Radar.cpp:407`).
+   ✅ **FIXED IN SOURCE 2026-09-11, exactly that shape** (batch B12, one commit with `[W2-GROUPMATCH-ENUM]`).
+   - Both `TryFromHex` and `Render` gained an `EnumProperty` arm. It reads the zero-extended
+     little-endian value at the captured length, so an enum is never `-1`.
+   - **Tests, red first:** `TryFromHex_DecodesAnEnumUnsigned` (3) and
+     `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2).
 
 **LOW**
 
@@ -1619,7 +1636,7 @@ reason given above.
 
 #### Widenings to rows already recorded
 
-- **`[W2-GROUPMATCH-ENUM]`** — its root is `[P3-SNAPNUM-ENUM]`; fix that first.
+- ✅ **`[W2-GROUPMATCH-ENUM]`** — its root is `[P3-SNAPNUM-ENUM]`; fix that first. (Both done 2026-09-11, batch B12.)
 - **`[W5-CEXML-FSTRING]` should also carry `TextProperty`.** `MapInnerTypeToCeField` has no FText arm
   either: `TArray<FText>` becomes a group placeholder and an FText map value leaves an empty folder.
   Low value (`:2581` notes FText has no clean CE encoding) — fold into that row's fix.
@@ -3866,6 +3883,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981 |
 | 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only |
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
+| 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed |
+| 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3921,6 +3940,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L15 | `[W3-CONSOLE-REINVOKE]` | On a game whose game thread can be stalled (a loading screen, or a pause long enough to exceed the invoke timeout):
 1. **Timeout:** run a STATEFUL exec command from the Console tab (one that adds an item or spawns something) while the thread is stalled, so it reports the dispatch timeout. The status says "still queued … not re-sent", and when the game resumes the effect happens ONCE, not twice.
 2. **Stale pin:** after a level change, a pinned command still self-heals (`re-resolved …`). | a game + UI |
+| L16 | `[P3-SNAPNUM-ENUM]` `[W2-GROUPMATCH-ENUM]` | On a game with an enum-backed state field (weapon type, quest stage):
+1. **Capture:** take two snapshots under the NumericAll capture scope. The diff grid shows the enum as a number, not raw hex, and SPC `Increased` / `Exact` find it.
+2. **Group Match:** a Snapshot Group Match with the enum's value in one slot (NumericAll) plus a neighbouring int in another finds the object. Under NumericNoByte the enum slot finds nothing, exactly as the live Group Scan does. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3954,7 +3976,7 @@ completeness critic.
 | ✅ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
 | ✅ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
 | ✅ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
-| ⬜ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
+| ✅ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
 | ⬜ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
 | ⬜ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
 | ⬜ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |

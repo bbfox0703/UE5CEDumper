@@ -49,6 +49,52 @@ public class GroupMatchTests
         new() { Predicate = p, Scope = sc };
 
     // ============================================================
+    // [W2-GROUPMATCH-ENUM] an enum leaf is a 1-byte UNSIGNED leaf, exactly as the live matcher
+    // treats it (Radar: EnumProperty -> UInt8, in kNumericAll, NOT in kNumericNoByte). WidthBytes
+    // had no EnumProperty case, so an enum state field (weapon type, quest stage) could never
+    // satisfy any slot. ⛔ Adding it to WidthBytes ALONE is the recorded harmful fix: IsOneByte keys
+    // on the same set, and without it NumericNoByte would admit enums the live scan excludes.
+    // ============================================================
+
+    // ⚠ Run() rejects fewer than two slots ("a group needs >= 2 values"), so a single-slot Run is
+    // false whatever the leaf is -- the first version of these tests was vacuous for exactly that
+    // reason. Each fact asks LeafSatisfiesSlot directly, with an anti-vacuity partner, and one runs
+    // a real two-slot group.
+
+    [Fact]
+    public void EnumLeaf_MatchesUnderNumericAll()
+    {
+        Assert.True(GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", 3),
+            Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericAll)));
+
+        // ...and inside a real group: an enum stage plus an int counter.
+        var leaves = new[] { L(0x20, "EnumProperty", 3), L(0x24, "IntProperty", 70) };
+        var slots = new[]
+        {
+            Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericAll),
+            Abs(GroupMatch.Predicate.Exact, 70, sc: GroupMatch.Scope.NumericAll),
+        };
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
+    }
+
+    [Fact]
+    public void EnumLeaf_StaysOutOfNumericNoByte_LikeTheLiveScan()
+    {
+        // The control that kills the WidthBytes-only fix.
+        var noByte = Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericNoByte);
+        Assert.False(GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", 3), noByte));
+        Assert.True(GroupMatch.LeafSatisfiesSlot(L(0x20, "IntProperty", 3), noByte));   // anti-vacuity: the slot works
+    }
+
+    [Theory]
+    [InlineData(255, true)]     // the widest 1-byte unsigned value
+    [InlineData(256, false)]    // does not fit one byte
+    [InlineData(-1, false)]     // an enum is unsigned
+    public void EnumLeaf_TargetFitsOneUnsignedByte(double target, bool fits)
+        => Assert.Equal(fits, GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", target),
+               Abs(GroupMatch.Predicate.Exact, target, sc: GroupMatch.Scope.NumericAll)));
+
+    // ============================================================
     // Mode A — single-snapshot absolute (the degenerate path)
     // ============================================================
 

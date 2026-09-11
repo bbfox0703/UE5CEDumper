@@ -80,20 +80,26 @@ public static class GroupMatch
     }
 
     // ---- width / type helpers (mirror SnapshotNumeric's declared-type set) ----
+    //
+    // [W2-GROUPMATCH-ENUM] EnumProperty is a 1-byte UNSIGNED leaf, exactly as the live matcher sees
+    // it: Radar maps EnumProperty -> UInt8 and admits it under kNumericAll but NOT kNumericNoByte.
+    // So it joins ALL THREE predicates below together. ⛔ Adding it to WidthBytes alone was the
+    // recorded harmful fix: IsOneByte keys on the same set, and NumericNoByte would then admit enums
+    // the live scan excludes.
 
     private static int WidthBytes(string t) => t switch
     {
-        "Int8Property" or "ByteProperty" => 1,
+        "Int8Property" or "ByteProperty" or "EnumProperty" => 1,
         "Int16Property" or "UInt16Property" => 2,
         "IntProperty" or "UInt32Property" or "FloatProperty" => 4,
         "Int64Property" or "UInt64Property" or "DoubleProperty" => 8,
         _ => 0, // non-numeric — never a group leaf
     };
 
-    private static bool IsOneByte(string t) => t is "Int8Property" or "ByteProperty";
+    private static bool IsOneByte(string t) => t is "Int8Property" or "ByteProperty" or "EnumProperty";
     private static bool IsFloat(string t) => t is "FloatProperty" or "DoubleProperty";
     private static bool IsUnsigned(string t) =>
-        t is "ByteProperty" or "UInt16Property" or "UInt32Property" or "UInt64Property";
+        t is "ByteProperty" or "EnumProperty" or "UInt16Property" or "UInt32Property" or "UInt64Property";
 
     /// <summary>Is <paramref name="t"/> a numeric field eligible under <paramref name="scope"/>?
     /// Public so source-agnostic callers (e.g. the SPC group matcher, which evaluates
