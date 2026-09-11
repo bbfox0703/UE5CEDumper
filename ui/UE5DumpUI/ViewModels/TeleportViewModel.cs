@@ -2166,7 +2166,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1   => string.Format(CultureInfo.InvariantCulture,
                          "✓ Walk speed held at {0:0}% ({1:0.#} cm/s). Drag + Apply to change; Reset to restore.",
                          mult * 100.0, mp.WalkSpeed.Current),
-                < 0 => "No pawn / no CharacterMovement — enter gameplay first; the override applies once a pawn exists.",
+                // [W2-MS-PROMISE] Laufen returned before storing anything, so nothing is queued to
+                // "apply once a pawn exists" -- worded like its Gravity and Super Jump siblings.
+                < 0 => "No pawn / no CharacterMovement — enter gameplay first.",
                 _   => "Walk speed override is off.",
             };
         }
@@ -2454,9 +2456,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1   => string.Format(CultureInfo.InvariantCulture,
                          "✓ {0} time held at {1:0.###}× ({2:0}%). Drag + Apply to change; Reset to restore.",
                          scope, value, value * 100.0),
+                // [W2-MS-PROMISE] twin: Hemmung::SetDilation returns before storing anything when the
+                // owner does not resolve, so nothing is queued to "apply once" it exists either.
                 < 0 => lane == TimeLane.Pawn
-                         ? "No player pawn — enter gameplay first; the override applies once a pawn exists."
-                         : "No WorldSettings — enter a level first; the override applies once a world is loaded.",
+                         ? "No player pawn — enter gameplay first."
+                         : "No WorldSettings — enter a level first.",
                 _   => $"{scope} time override is off.",
             };
         }
@@ -3113,24 +3117,39 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
 
+    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.4).
+    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
+    // which is what the connect/disconnect reset's own comment always said it did.
+    private const int GravDirUnavailable = -2;
+
     private void ApplyGravDirState(int state)
     {
         _gravDirActive = state == 1;
         (GravDirState, GravDirBadgeColor) = state switch
         {
-            1 => ("ON",          "#4EC9B0"),
-            0 => ("OFF",         "#999999"),
-            _ => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            1                  => ("ON",          "#4EC9B0"),
+            0                  => ("OFF",         "#999999"),
+            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            _                  => ("Unknown",     "#888888"),   // no pawn right now / reset / failed read
         };
     }
 
     private void ApplyGravDirReadout(MovementParams mp)
     {
         var g = mp.GravityDirection;
-        if (!mp.HasCmc || !g.Resolved)
+        // [W2-GRAVDIR-VERDICT] Two different answers, and only one is about the engine. No CMC at this
+        // instant (menu, loading, cutscene, spectator, vehicle pawn) is transient; a CMC WITHOUT a
+        // reflected GravityDirection is the pre-5.4 verdict.
+        if (!mp.HasCmc)
+        {
+            GravDirCurrentText = "Current: — (no pawn / no CharacterMovement right now; enter gameplay).";
+            ApplyGravDirState(-1);
+            return;
+        }
+        if (!g.Resolved)
         {
             GravDirCurrentText = "Current: unavailable (needs UE5.4+ with a reflected GravityDirection).";
-            ApplyGravDirState(-1);
+            ApplyGravDirState(GravDirUnavailable);
             return;
         }
         GravDirCurrentText = string.Format(CultureInfo.InvariantCulture,
@@ -3149,9 +3168,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             var mp = await _dump.GetMovementParamsAsync();
             ApplyGravDirReadout(mp);
-            StatusText = (mp.HasCmc && mp.GravityDirection.Resolved)
-                ? "Read gravity direction."
-                : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";
+            StatusText = !mp.HasCmc
+                ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
+                : mp.GravityDirection.Resolved
+                    ? "Read gravity direction."
+                    : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
         }
         catch (Exception ex)
         {
@@ -3181,7 +3202,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1 => string.Format(CultureInfo.InvariantCulture,
                        "✓ Gravity direction held at ({0:0.00}, {1:0.00}, {2:0.00}).", g.X, g.Y, g.Z),
                 0 => "Gravity direction off (a zero vector = off).",
-                _ when !r.Resolved => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
+                // [W2-GRAVDIR-VERDICT] The verdict needs BOTH signals. `resolved` alone comes from a fresh
+                // read and is false with no pawn as well as on a pre-5.4 engine; -4 alone is also returned
+                // when the pawn / CMC class lookup or the vector read fails (Laufen.cpp ResolveCtx,
+                // SetGravityDirection). So: the set refused on reflection AND a live CMC lacks the field.
+                _ when r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved
+                    => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
                 _ => "Gravity direction: no pawn / no CharacterMovement (enter gameplay first).",
             };
         }

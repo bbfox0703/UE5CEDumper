@@ -756,13 +756,30 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
 
 **MED** — 6 rows.
 
-1. ⬜ **`[W2-GRAVDIR-VERDICT]`** `TeleportViewModel.cs:3184`. On a UE5.4+ game that fully supports
+1. ✅ **`[W2-GRAVDIR-VERDICT]`** (FIXED IN SOURCE 2026-09-11, batch B21) `TeleportViewModel.cs:3184`. On a UE5.4+ game that fully supports
    arbitrary gravity, the Gravity Direction card states *"needs UE5.4+ (no reflected
    GravityDirection)"* and paints an amber **Unavailable** badge whenever a pawn/CMC does not
    resolve **at that instant** — main menu, loading, cutscene, spectator, vehicle pawn. A
    transient absence is reported as a permanent verdict about the user's engine.
    **Fix is display-side and the data is already on the wire**: split `!mp.HasCmc` from
    `mp.HasCmc && !g.Resolved`, and discriminate on `r.State`.
+   ✅ **FIXED IN SOURCE 2026-09-11, the recorded display-side shape** (batch B21).
+   - The readout splits `!mp.HasCmc` (no pawn / CMC at this instant: the badge stays Unknown and the
+     text says to enter gameplay) from `mp.HasCmc && !g.Resolved` (the pre-5.4 verdict: Unavailable,
+     "needs UE5.4+"). The ↻ status splits the same way.
+   - The apply status states the pre-5.4 verdict only when BOTH signals agree: the set refused with
+     -4 (`MR_ERR_REFLECT`, `Constants.LaufenErrReflect`) AND the fresh read shows a live CMC without
+     the field. Neither is enough alone. `resolved` is false with no pawn as well. -4 is also returned
+     when `ResolveCtx`'s pawn/CMC class lookup fails, or `SetGravityDirection`'s vector read does.
+     That second half was caught by reading the DLL after a first cut keyed on -4 alone.
+   - The badge gained a real Unknown state. The connect/disconnect reset's comment always said "back to
+     Unknown", while the code painted the amber Unavailable.
+   - **Tests, red first:** the readout without a pawn, and an apply without a pawn. Then a
+     both-signals theory, red against the first cut: -4 with no live CMC, and -4 from a failed read.
+     Its third row (-3, then a pre-5.4 CMC by the read) pins the code half. The pre-5.4 apply is the
+     control, green both ways, beside the existing not-reflected readout test.
+   - ⚠ Residual, not this row: any other refusal (`MR_ERR_WRITE` -10, a transient read failure) still
+     lands on the generic "no pawn / no CharacterMovement" text. That wording predates B21.
 2. ⬜ **`[W2-TPREL-MAP]`** `TeleportViewModel.cs:3281`. After a directional teleport the Current
    Pose Map row goes blank, because `teleport_relative`'s reply carries no `map` key. Every
    Coordinate Library row is then re-flagged as belonging to another map (`Dist` collapses to `—`,
@@ -818,7 +835,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
 
 **LOW** — 4 rows: `[W2-MS-PROMISE]` Move Speed Apply promises *"the override applies once a pawn
 exists"* when `Laufen` returned before storing anything, so the queued override silently does not
-exist (`TeleportViewModel.cs:2169`; its two siblings at `:2588`/`:3053` word it correctly) ·
+exist (`TeleportViewModel.cs:2169`; its two siblings at `:2588`/`:3053` word it correctly) — ✅ FIXED IN SOURCE 2026-09-11 (batch B21): the clause is deleted, the recorded safe fix. **A twin was found and fixed with it:** the time-dilation status promised the same for both levers, and `Hemmung::SetDilation` also returns before storing anything when its owner does not resolve ·
 `[W2-CEGEN-MODAL]` the GodMode and Debug-Camera `[DISABLE]` blocks bail with `showMessage` instead
 of the documented `SilentReturn`, so unticking pops a modal over a fullscreen game — **twice** on
 the contract-check path (`ProtectionScriptGenerator.cs:64`) · `[W2-BETWEEN-PREVIEW]` the Between
@@ -841,7 +858,7 @@ only surfaced by accident. It fired on **half the confirmed rows** — read thes
 | `[W2-GROUPMATCH-ENUM]` ✅ B12 | add `"EnumProperty" => 1` to `WidthBytes` | ⛔ **actively harmful** — two sibling predicates key on the same string set; `IsOneByte` (`:93`) changes meaning with it |
 | `[W2-GROUPMATCH-WIDTH]` ✅ B13 | fix the C# side | ⛔ `snapshot-group-match-spec.md` §9 says *"Do not fork per-feature SDR logic"*, and `GroupMatch.cs:109-112` declares itself a **mirror** — fix both sides or neither |
 | `[W2-ORDEN-FINDENTRY]` ✅ B13 | mechanical `Find` → `FindEntry` | ⚠ safe at `Orden.h:102` and `Aura.cpp:9609`, **not** at `Aura.cpp:9155`, where `Find()` is a deliberate **noise filter** |
-| `[W2-MS-PROMISE]` | make `Laufen` arm on failure so the promise becomes true | ⛔ harmful — the safe fix is to delete the clause, matching its two siblings |
+| `[W2-MS-PROMISE]` ✅ B21 | make `Laufen` arm on failure so the promise becomes true | ⛔ harmful — the safe fix is to delete the clause, matching its two siblings |
 | `[W2-DEADSCAN-LOADMORE]` | clear the grid in the catch blocks | ⛔ would blank a 1,000-row result because the user mistyped or hit Cancel; those rows are still valid |
 | `[W2-MARKER-PARENTREL]` | make `SaveMarker` refuse | ⚠ the **reporting** fix is safe (pass `&parentRel`, carry a bool on `struct Marker`, emit the key); a **refusing** fix is not |
 
@@ -4107,7 +4124,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
   ArrayLimit rows. `[P4-CONTAINER-BASE]` calls that branch correct only below the limit.
 - **Solide SOLIDE-REFUSAL:** a refused re-arm has already changed the job's value. Unreachable from the
   UI today.
-- **Laufen's B22 refusal** lands on the "no pawn" message, widening `[W2-MS-PROMISE]`.
+- **Laufen's B22 refusal** lands on the "no pawn" message, widening `[W2-MS-PROMISE]`. (✅ Covered by B21: that message no longer promises anything.)
 - **`UsmapExportService.GenerateUsmapAsync`** drops classes whose walk throws, without counting them
   (P1).
 - **Interesting Functions / Properties / Console / Property Search `ClearOnDisconnect`** do not
@@ -4200,6 +4217,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 35 | `[W4-LOOKUP-FILTER]` | MED | `git log --grep W4-LOOKUP-FILTER` (batch B18) | 2 red first (a filter pass; a leftover keyword, then cleared). 1/1 mutant killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 | 36 | `[W4-BOOKMARK-DT]` | MED | `git log --grep W4-BOOKMARK-DT` (batch B19) | 4 red first (the flag through the file, the re-walk, a changed table, a refused address); the in-session control green both ways. 6/6 (one first tried in a form that did not compile; its compiling form went red) mutants killed, the unguarded re-walk among them; UI 5044/5044 |
 | 37 | `[W3-BATCH-METHOD]` | MED | `git log --grep W3-BATCH-METHOD` (batch B20) | a theory over the two not-analysed tags red first; the analysed control green both ways. 3/3 mutants killed; UI 5048/5048 |
+| 38 | `[W2-GRAVDIR-VERDICT]` | MED | `git log --grep W2-GRAVDIR-VERDICT` (batch B21) | the readout and the apply without a pawn red first; the pre-5.4 apply the control. 9/9 mutants killed across both rows; UI 5057/5057 |
+| 39 | `[W2-MS-PROMISE]` | LOW | same commit as row 38 (batch B21) | Move Speed without a pawn red first, plus the Hemmung twin (both time lanes, red first). The clause is deleted, not made true |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4281,6 +4300,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Same game session:** open the DataTable, drill into its RowMap, save a bookmark, restart the APP (not the game) and load the bookmark. The row list comes back, and Refresh keeps it.
 2. **After a game restart:** load the same bookmark. The status says the DataTable at its saved address is gone or has changed, not "the game may have restarted". | a game + UI |
 | L24 | `[W3-BATCH-METHOD]` | Interesting Functions on a connected game: run the batch "Props" over a mix of native functions and Blueprint functions. A function the DLL could not analyse shows `n/a` in the Uses column, not `0`, and the status line counts them as NOT analysed. | a game + UI |
+| L25 | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | On a UE5.4+ game, in the main menu or a loading screen (no pawn):
+1. **Gravity Direction:** press ↻ and Apply. The badge stays Unknown and the text says to enter gameplay, never "needs UE5.4+". In gameplay the card works; on a pre-5.4 game it says Unavailable.
+2. **No promises:** Apply Move Speed and both time levers. None says the override "applies once" a pawn or world exists. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4323,7 +4345,7 @@ completeness critic.
 | ✅ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
 | ✅ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
 | ✅ B20 batch method | `[W3-BATCH-METHOD]` | |
-| ⬜ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
+| ✅ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
 | ⬜ B22 teleport pose map | `[W2-TPREL-MAP]` | |
 | ⬜ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
 | ⬜ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |

@@ -1485,6 +1485,126 @@ public class TeleportViewModelTests
         Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.4 / not reflected
     }
 
+    // ---- [W2-GRAVDIR-VERDICT] a transient absence is not a verdict about the engine ----
+    //
+    // The card said "needs UE5.4+ (no reflected GravityDirection)" and painted an amber Unavailable badge
+    // whenever a pawn / CMC did not resolve AT THAT INSTANT -- main menu, loading, cutscene, spectator,
+    // vehicle pawn -- on engines that fully support it. The apply status checked `resolved` first, and
+    // that comes from a fresh read which is false with no pawn as well.
+
+    [Fact]
+    public async Task GravDir_readout_without_a_pawn_is_Unknown_not_a_version_verdict()
+    {
+        var fake = new FakeDumpService { NextMovementParams = new MovementParams { HasCmc = false } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGravDirCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.GravDirState);
+        Assert.DoesNotContain("UE5.4", vm.GravDirCurrentText);
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE54()
+    {
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = -3, Resolved = false },   // MR_ERR_NO_PAWN
+            NextMovementParams = new MovementParams { HasCmc = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.Contains("enter gameplay", vm.StatusText);
+        Assert.Equal("Unknown", vm.GravDirState);
+    }
+
+    [Fact]
+    public async Task ApplyGravDir_on_a_pre_UE54_engine_still_says_so()
+    {
+        // The control, green before and after: a CMC without a reflected GravityDirection.
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = -4, Resolved = false },   // MR_ERR_REFLECT
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = true, GravityDirection = new MovementVectorKnob { Resolved = false },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Equal("Unavailable", vm.GravDirState);
+    }
+
+    [Theory]
+    [InlineData(-4, false, false)]   // MR_ERR_REFLECT, but the fresh read finds no live CMC: ResolveCtx also
+                                     // returns -4 when the pawn / CMC class lookup fails
+    [InlineData(-4, true,  true)]    // MR_ERR_REFLECT from a failed vector read: the field IS reflected
+    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.4) pawn spawned before the read
+    public async Task ApplyGravDir_says_needs_UE54_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
+    {
+        // -4 alone is not the pre-5.4 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
+        // too), and the fresh read alone reports a later instant than the set. The verdict needs both.
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = state, Resolved = resolved },
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = hasCmc, GravityDirection = new MovementVectorKnob { Resolved = resolved },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+    }
+
+    // ---- [W2-MS-PROMISE] a refused apply must not promise a queued override ----
+
+    [Fact]
+    public async Task ApplyMoveSpeed_without_a_pawn_promises_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextMovementSet = new MovementSetResult { State = -3 },   // MR_ERR_NO_PAWN: Laufen stored nothing
+            NextMovementParams = new MovementParams { HasCmc = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyMoveSpeedCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("applies once", vm.StatusText);
+        Assert.Contains("enter gameplay first", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData(true)]    // the pawn lane
+    [InlineData(false)]   // the world lane
+    public async Task ApplyTime_without_its_owner_promises_nothing(bool pawnLane)
+    {
+        // The twin found while fixing [W2-MS-PROMISE]: Hemmung::SetDilation also returns before storing
+        // anything when its owner does not resolve, so nothing is queued to "apply once" it exists.
+        var fake = new FakeDumpService { NextTimeSet = new TimeDilationSetResult { State = -3 } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await (pawnLane ? vm.ApplyPawnTimeCommand : vm.ApplyWorldTimeCommand).ExecuteAsync(null);
+
+        Assert.DoesNotContain("applies once", vm.StatusText);
+    }
+
     [Fact]
     public async Task ForceDebugCamera_does_nothing_when_disconnected()
     {
