@@ -9640,15 +9640,22 @@ ValueScanStats RefineGroupCandidates(
 
                 uint8_t buf[8] = {};
                 if (!Macht::ReadBytesSafe(sm.leafAddr, buf, sz)) { ++dRead; continue; }
-                const uint8_t* cmp = usePrev ? sm.prevValue : slots[s].targets.Find(width);
-                if (!cmp) { ++dNoTarget; continue; }          // value can't fit this width
+                // [W2-ORDEN-FINDENTRY] Two shapes, as in the single-value refine: a prev-value
+                // refine compares against the stored bytes, a targeted one against a target
+                // ENTRY whose verdict may be "every value of this width matches" (audit #5 AB4).
+                // Find() hid that verdict, so `Bigger -5` pruned every unsigned leaf.
+                const Radar::NumericTargetSet::Entry* cmpEntry =
+                    usePrev ? nullptr : slots[s].targets.FindEntry(width);
+                if (!usePrev && !cmpEntry) { ++dNoTarget; continue; }   // no value of this width can satisfy it
                 const uint8_t* cmp2 = nullptr;
                 if (st == Radar::ScanType::Between) {
                     cmp2 = slots[s].targets2.Find(width);
                     if (!cmp2) { ++dNoTarget; continue; }    // upper bound can't fit this width
                 }
-                if (!Radar::ComparePredicate(width, st, buf, cmp, cmp2, slots[s].roundMode))
-                    { ++dPredicate; continue; }
+                const bool pass = usePrev
+                    ? Radar::ComparePredicate(width, st, buf, sm.prevValue, cmp2, slots[s].roundMode)
+                    : Radar::ComparePredicate(width, st, buf, cmpEntry, cmp2, slots[s].roundMode);
+                if (!pass) { ++dPredicate; continue; }
                 std::memcpy(sm.prevValue, buf, sz);
                 ++dKept;
                 keep.push_back(sm);

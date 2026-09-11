@@ -724,14 +724,33 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
    (`SetConnected` calls only `RefreshMarkersAsync` + `PrimeHeldBadgesAsync`), so `PoseMap` is `""`
    until the user presses ↻ — *Add from fields* persists the same empty-map entry then too.
 3. ⬜ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
-4. ⬜ **`[W2-ORDEN-FINDENTRY]`** `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
+4. ✅ **`[W2-ORDEN-FINDENTRY]`** (FIXED IN SOURCE 2026-09-11, batch B13) `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
    **Smaller** silently skips every field of a width the target cannot be *encoded* at, even when
    every value of that width satisfies the comparison. Because a group candidate needs ALL slots at
    distinct leaves, one lost width class drops the whole object. The user sees zero or far fewer
    matches with no warning, no error and no log line.
-5. ⬜ **`[W2-GROUPMATCH-WIDTH]`** `GroupMatch.cs:167`. The same defect in the C# mirror, for
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B13, one commit with `[W2-GROUPMATCH-WIDTH]` and `[A4-AB4-UINT64]`).
+   - `Orden::LeafSatisfiesSlot` looks the target up with `FindEntry` and hands the ENTRY to
+     `ComparePredicate`, so an AlwaysTrue verdict is honoured. Between still needs a real encoding.
+   - The group REFINE had the same `Find` (`Aura.cpp` `RefineGroupCandidates`). It now uses the
+     single-value refine's two-shape compare.
+   - ⛔ The raw-hole pre-filter (`AppendRawHoleLeaves`) keeps `Find` on purpose. It is the noise
+     filter the unsafe-fix table names: a verdict there would turn every hole probe of that width
+     into a leaf.
+   - Fern already built group targets with the slot's own predicate, at first scan and at refine,
+     so the verdict was always in the set. Only the lookup hid it.
+   - **Tests, red first:** `Test_Orden_OrderedVerdictWidths` (3 ⭐, plus the Bigger 70000 and
+     Between controls) and dll_core_test `GROUPREFINE` (2 ⭐, one control). The refine's leaves are
+     the block's own statics, read through `ReadBytesSafe`, so the block is pure.
+5. ✅ **`[W2-GROUPMATCH-WIDTH]`** (FIXED IN SOURCE 2026-09-11, batch B13) `GroupMatch.cs:167`. The same defect in the C# mirror, for
    Snapshot Group Match: *"no objects matched"* over a corpus that does contain the group,
    indistinguishable from a correct empty answer.
+   ✅ **FIXED IN SOURCE 2026-09-11, in the same commit as its DLL twin** (both sides, as §9 requires).
+   - When an ordered target has no encoding at an integer leaf's width, `LeafSatisfiesSlot` now
+     returns `EveryValueSatisfies`: Smaller above the max, or Bigger below the min, holds for every
+     value. That is the mirror of Radar's `Fit::AlwaysTrue`. Exact and Between keep the gate.
+   - **Tests, red first:** `OrderedSlot_UnencodableTarget_*`: 5 theory rows and the group fact went
+     red. The Bigger 70000, Smaller -5 and Exact rows are the controls.
 6. ✅ **`[W2-GROUPMATCH-ENUM]`** (FIXED IN SOURCE 2026-09-11, batch B12) `GroupMatch.cs:84`. `WidthBytes` has no `EnumProperty` case, so an
    enum-backed state field (weapon type, quest stage, class) that IS a matchable leaf in the live
    group scan can **never** satisfy any slot in Snapshot Group Match. A user reproducing a live
@@ -771,9 +790,9 @@ only surfaced by accident. It fired on **half the confirmed rows** — read thes
 
 | row | the obvious fix | why not |
 |---|---|---|
-| `[W2-GROUPMATCH-ENUM]` | add `"EnumProperty" => 1` to `WidthBytes` | ⛔ **actively harmful** — two sibling predicates key on the same string set; `IsOneByte` (`:93`) changes meaning with it |
-| `[W2-GROUPMATCH-WIDTH]` | fix the C# side | ⛔ `snapshot-group-match-spec.md` §9 says *"Do not fork per-feature SDR logic"*, and `GroupMatch.cs:109-112` declares itself a **mirror** — fix both sides or neither |
-| `[W2-ORDEN-FINDENTRY]` | mechanical `Find` → `FindEntry` | ⚠ safe at `Orden.h:102` and `Aura.cpp:9609`, **not** at `Aura.cpp:9155`, where `Find()` is a deliberate **noise filter** |
+| `[W2-GROUPMATCH-ENUM]` ✅ B12 | add `"EnumProperty" => 1` to `WidthBytes` | ⛔ **actively harmful** — two sibling predicates key on the same string set; `IsOneByte` (`:93`) changes meaning with it |
+| `[W2-GROUPMATCH-WIDTH]` ✅ B13 | fix the C# side | ⛔ `snapshot-group-match-spec.md` §9 says *"Do not fork per-feature SDR logic"*, and `GroupMatch.cs:109-112` declares itself a **mirror** — fix both sides or neither |
+| `[W2-ORDEN-FINDENTRY]` ✅ B13 | mechanical `Find` → `FindEntry` | ⚠ safe at `Orden.h:102` and `Aura.cpp:9609`, **not** at `Aura.cpp:9155`, where `Find()` is a deliberate **noise filter** |
 | `[W2-MS-PROMISE]` | make `Laufen` arm on failure so the promise becomes true | ⛔ harmful — the safe fix is to delete the clause, matching its two siblings |
 | `[W2-DEADSCAN-LOADMORE]` | clear the grid in the catch blocks | ⛔ would blank a 1,000-row result because the user mistyped or hit Cancel; those rows are still valid |
 | `[W2-MARKER-PARENTREL]` | make `SaveMarker` refuse | ⚠ the **reporting** fix is safe (pass `&parentRel`, carry a bool on `struct Marker`, emit the key); a **refusing** fix is not |
@@ -3691,7 +3710,7 @@ and `SpcQueryViewModel.RefreshAsync :453-467`.
   - clearing inside `SetEngineState`: it also runs on a same-game Extra Scan, which reopens AF5;
   - a clear alone: an in-flight load re-inserts A's list after it.
 
-##### `[A4-AB4-UINT64]` LOW — AB4's ordered-predicate verdict never covers the 64-bit members, so `Bigger -5` still drops every UInt64Property field
+##### ✅ `[A4-AB4-UINT64]` LOW — AB4's ordered-predicate verdict never covers the 64-bit members, so `Bigger -5` still drops every UInt64Property field (FIXED IN SOURCE 2026-09-11, batch B13)
 
 `Radar.cpp:494-513`. `IntegerMemberRange` has no UInt64 or Int64 arm, and its premise ("one that
 parsed as unsigned fits UInt64") is false for a negative target. So:
@@ -3705,6 +3724,43 @@ it"*. Modelled in Python. `dll_helpers_test` asserts only UInt16/32.
   exact `>= 2^63` test. Rewrite the false comment, and pin `FindEntry(UInt64)`.
 - 🟡 **Records gap:** the AB4 "Between" residual is cited as "recorded in todo.md" by three sources
   and is NOT there. It survives only in `working-lessons.md:2805-2807`.
+- ✅ **FIXED IN SOURCE 2026-09-11, the safe fix as written.**
+  - `IntegerMemberRange` returns an EXCLUSIVE max (max + 1) and now lists Int64 (2^63) and UInt64
+    (2^64). The verdict is `scalar >= hiEx`.
+  - Why exclusive: INT64_MAX and UINT64_MAX have no double. Both round UP to exactly those values,
+    so `scalar > (double)max` would miss the target 2^63 itself. For the narrow members `>= max + 1`
+    is the old test unchanged, because `scalar` is always integral there.
+  - The false comment is rewritten, and `FindEntry(UInt64)` / `FindEntry(Int64)` are pinned.
+  - **Tests, red first:** 5 ⭐ in the AB4 block:
+    - Bigger -5 → UInt64, and its predicate;
+    - Smaller 2^63 → Int64;
+    - Smaller 2^64 → UInt64 and Int64.
+    Controls: Smaller -5, Bigger 2^63, Exact -5, and the narrow boundary Smaller 32768 → Int16,
+    which also kills a `>` mutant.
+  - The records gap is closed: the Between residual is its own row now, `[A4-AB4-BETWEEN]` below.
+
+##### `[A4-AB4-BETWEEN]` LOW — `Between` still drops a width either bound cannot encode, in both group matchers and the single-value scan
+
+Filed 2026-09-11 (batch B13), to close `[A4-AB4-UINT64]`'s records gap. `Radar.h`'s
+`BuildNumericTargets` comment and `working-lessons.md` §5 cause 3 both say "see todo.md" for it, and
+until now it was not here.
+- **Shape:**
+  - `Between -5 10` has no unsigned encoding for its lower bound, so every UInt16/UInt32 field
+    holding 0..10 is skipped.
+  - `Between 10 70000` has no Int16 encoding for its upper bound, so every Int16 field ≥ 10 is
+    skipped.
+  - Nothing says so.
+- **Where:**
+  - The two bounds are built by independent `BuildNumericTargets` calls at four `Fern.cpp` sites:
+    single-value first scan and refine, group first scan and refine.
+  - Every consumer requires BOTH bounds to encode: `Orden.h` and `Aura.cpp`'s scans and refines.
+  - The snapshot mirror does the same in `GroupMatch.LeafSatisfiesSlot`'s Between arm, which calls
+    `TargetFitsWidth` on both bounds.
+- ✅ **Probably safe, unlike Smaller/Bigger:** clamp each bound into the width's range.
+  - Between is INCLUSIVE, so a clamped bound loses no row: every uint16 ≥ -5 is every uint16 ≥ 0.
+  - Skip the width only when the range misses it entirely.
+  - It needs the two bounds built jointly, with reversed bounds normalised first.
+  - ⛔ Fix both matchers or neither (`snapshot-group-match-spec.md` §9).
 
 ##### `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint
 
@@ -3885,6 +3941,9 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
 | 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed |
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
+| 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict |
+| 28 | `[W2-GROUPMATCH-WIDTH]` | MED | same commit as row 27 (batch B13) | 5 theory rows + the group fact red first; 3 controls. 3/3 mutants killed: the verdict, the two sides swapped, Exact admitted; UI 5003/5003 |
+| 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3943,6 +4002,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L16 | `[P3-SNAPNUM-ENUM]` `[W2-GROUPMATCH-ENUM]` | On a game with an enum-backed state field (weapon type, quest stage):
 1. **Capture:** take two snapshots under the NumericAll capture scope. The diff grid shows the enum as a number, not raw hex, and SPC `Increased` / `Exact` find it.
 2. **Group Match:** a Snapshot Group Match with the enum's value in one slot (NumericAll) plus a neighbouring int in another finds the object. Under NumericNoByte the enum slot finds nothing, exactly as the live Group Scan does. | a game + UI |
+| L17 | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | On a game with an actor that holds unsigned numeric fields (UInt16/UInt32/UInt64Property):
+1. **Live Group Scan:** a two-slot group, `Bigger -5` plus the value of a known int on the same actor, finds it. The Bigger slot's **All fields** list includes the unsigned fields, and a Refine with the same values keeps the actor.
+2. **Snapshot Group Match:** the same group over a NumericAll snapshot finds the same actor.
+3. **Single-value scan:** `Bigger -5` over NumericNoByte now returns UInt64Property fields as well as UInt16/UInt32. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3977,7 +4040,7 @@ completeness critic.
 | ✅ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
 | ✅ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
 | ✅ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
-| ⬜ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
+| ✅ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
 | ⬜ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
 | ⬜ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
 | ⬜ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
@@ -3997,7 +4060,7 @@ completeness critic.
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 
-**LOW-only batches, after the MEDs** (41):
+**LOW-only batches, after the MEDs** (42):
 - **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - **L02:** `[P1-ENUMNAMES]`
 - **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
@@ -4039,6 +4102,7 @@ completeness critic.
 - **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
+- **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

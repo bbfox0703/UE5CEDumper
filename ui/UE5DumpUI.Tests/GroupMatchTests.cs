@@ -172,6 +172,35 @@ public class GroupMatchTests
         Assert.Equal(new[] { 1 }, per[0]); // 3.5 -> Float leaf only
     }
 
+    // [W2-GROUPMATCH-WIDTH] the C# mirror of [W2-ORDEN-FINDENTRY]. The width gate is right for
+    // Exact and wrong for ordering: every Int16 is smaller than 70000 and every unsigned field is
+    // bigger than -5, yet neither target has an encoding at that width, so the leaf was skipped --
+    // and one lost width drops the whole group. The live matcher keeps the width through Radar's
+    // Fit::AlwaysTrue verdict (audit #5 AB4); the snapshot matcher must give the same answer.
+    [Theory]
+    [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Bigger,  -5,     true)]   // every unsigned > -5
+    [InlineData("UInt32Property", 0,     GroupMatch.Predicate.Bigger,  -5,     true)]
+    [InlineData("UInt64Property", 7,     GroupMatch.Predicate.Bigger,  -5,     true)]   // [A4-AB4-UINT64]'s twin
+    [InlineData("Int16Property",  32767, GroupMatch.Predicate.Smaller, 70000,  true)]   // the edge clamping drops
+    [InlineData("Int16Property",  -3,    GroupMatch.Predicate.Bigger,  -70000, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  70000,  false)]  // no int16 exceeds it
+    [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Smaller, -5,     false)]  // no unsigned is below it
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Exact,   70000,  false)]  // Exact keeps the gate
+    public void OrderedSlot_UnencodableTarget_KeepsTheWidthWhenEveryValueSatisfies(
+        string type, double value, GroupMatch.Predicate p, double target, bool satisfies)
+        => Assert.Equal(satisfies, GroupMatch.LeafSatisfiesSlot(L(0x10, type, value), Abs(p, target)));
+
+    [Fact]
+    public void OrderedSlot_UnencodableTarget_DoesNotDropTheGroup()
+    {
+        // What the user saw: slot 2 (Exact 24) can only take the int, and before the fix the
+        // Bigger(-5) slot could only take the int too -> "no objects matched".
+        var leaves = new[] { L(0x10, "UInt16Property", 3), L(0x14, "IntProperty", 24) };
+        var slots = new[] { Abs(GroupMatch.Predicate.Bigger, -5), Abs(GroupMatch.Predicate.Exact, 24) };
+        Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
+        Assert.Equal(new[] { 0, 1 }, per[0]);
+    }
+
     [Fact]
     public void Scope_OneByteExcludedUnderNoByte_ButIncludedUnderAll()
     {

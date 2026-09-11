@@ -491,24 +491,32 @@ double ReduceRounded(double x, RoundMode m) {
 
 namespace {
 
-// Inclusive value range of an INTEGER member, as exact doubles.
+// Inclusive minimum and EXCLUSIVE maximum (max + 1) of an INTEGER member, as
+// exact doubles, for the ordered-predicate verdict below.
 //
-// Only the 8/16/32-bit members are listed, and that is the whole point: those
-// are the ONLY ones whose fit test can reject a value that parsed at all. A
-// string that parsed as signed already fits Int64 by construction, one that
-// parsed as unsigned fits UInt64, and Float/Double accept anything that parsed
-// as a float — so those four can never reach the "doesn't fit" branch, and there
-// is no case where a double would have to represent a 64-bit bound imprecisely.
-// Returning false means "no verdict is possible here", which keeps today's
-// behaviour rather than guessing.
-bool IntegerMemberRange(DataType dt, double& lo, double& hi) {
+// Exclusive, because that is the only form the 64-bit members have: INT64_MAX and
+// UINT64_MAX are not doubles (both round UP, to 2^63 and 2^64) while max + 1 is.
+// So `scalar >= hiEx` is exact where `scalar > (double)INT64_MAX` is `2^63 > 2^63`
+// and misses the target 2^63 itself. `scalar` is always integral here -- an integer
+// reading, a coerced float, or a float beyond 2^63, where every double is one -- so
+// for the narrow members `>= max + 1` and `> max` are the same test.
+//
+// [A4-AB4-UINT64] This used to list only the 8/16/32-bit members, on the premise
+// that a string which parsed at all fits the 64-bit ones. False both ways: a
+// negative string is never parsed as unsigned (`Bigger -5` left UInt64 with no
+// entry), and one above INT64_MAX has no signed reading (`Smaller 2^63` left Int64
+// with none). Float/Double accept anything that parsed, so they never get here.
+// Returning false means "no verdict is possible here", which keeps the old skip.
+bool IntegerMemberRange(DataType dt, double& lo, double& hiEx) {
     switch (dt) {
-        case DataType::Int8:   lo = INT8_MIN;  hi = INT8_MAX;   return true;
-        case DataType::UInt8:  lo = 0;         hi = UINT8_MAX;  return true;
-        case DataType::Int16:  lo = INT16_MIN; hi = INT16_MAX;  return true;
-        case DataType::UInt16: lo = 0;         hi = UINT16_MAX; return true;
-        case DataType::Int32:  lo = INT32_MIN; hi = INT32_MAX;  return true;
-        case DataType::UInt32: lo = 0;         hi = UINT32_MAX; return true;
+        case DataType::Int8:   lo = INT8_MIN;  hiEx = INT8_MAX   + 1.0; return true;
+        case DataType::UInt8:  lo = 0;         hiEx = UINT8_MAX  + 1.0; return true;
+        case DataType::Int16:  lo = INT16_MIN; hiEx = INT16_MAX  + 1.0; return true;
+        case DataType::UInt16: lo = 0;         hiEx = UINT16_MAX + 1.0; return true;
+        case DataType::Int32:  lo = INT32_MIN; hiEx = INT32_MAX  + 1.0; return true;
+        case DataType::UInt32: lo = 0;         hiEx = UINT32_MAX + 1.0; return true;
+        case DataType::Int64:  lo = -9223372036854775808.0; hiEx = 9223372036854775808.0;  return true;
+        case DataType::UInt64: lo = 0;                      hiEx = 18446744073709551616.0; return true;
         default:               return false;
     }
 }
@@ -672,16 +680,17 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
         //
         // This also covers the sign leak the finding did not mention: a negative
         // string suppresses the unsigned parse entirely (see `if (!isNeg)` above),
-        // so `Bigger -5` used to drop every UInt8/UInt16/UInt32 field. Here the
+        // so `Bigger -5` used to drop every UInt8/UInt16/UInt32/UInt64 field (UInt64
+        // only since [A4-AB4-UINT64]; the range table did not list it). Here the
         // member's own minimum is 0, the target is below it, and the verdict is
         // AlwaysTrue — which is exactly right.
         if (out.entries.size() == beforeCount && haveScalar) {
-            // memLo/memHi, not lo/hi: the whitespace trim above already owns those
+            // memLo/memHiEx, not lo/hi: the whitespace trim above already owns those
             // names in this scope and shadowing them is a C4456.
-            double memLo = 0.0, memHi = 0.0;
-            if (IntegerMemberRange(m, memLo, memHi)) {
-                const bool always = (st == ScanType::Smaller && scalar > memHi)
-                                 || (st == ScanType::Bigger  && scalar < memLo);
+            double memLo = 0.0, memHiEx = 0.0;
+            if (IntegerMemberRange(m, memLo, memHiEx)) {
+                const bool always = (st == ScanType::Smaller && scalar >= memHiEx)
+                                 || (st == ScanType::Bigger  && scalar <  memLo);
                 if (always) {
                     NumericTargetSet::Entry e;
                     e.dt  = m;

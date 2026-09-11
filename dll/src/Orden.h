@@ -93,22 +93,29 @@ struct SlotMatches {
 // True when `leaf` satisfies `slot` under the slot's first-scan predicate
 // (Exact / Bigger / Smaller / Between). Prev-value predicates have no baseline
 // on the first scan, so they never match here (the refine path handles them).
-// The width-fit gate is unchanged: a value that can't be represented at the
-// leaf's width is skipped. Exact reduces to byte-equality via ComparePredicate;
-// Between additionally needs the upper bound (`targets2`) to fit the width.
+// The width gate asks the target SET, not "does the value fit": for Exact a width
+// with no encoding is skipped, but for Smaller/Bigger the set may instead hold an
+// AlwaysTrue verdict -- every value of the width satisfies (audit #5 AB4) -- and
+// that is honoured. Exact reduces to byte-equality via ComparePredicate; Between
+// additionally needs the upper bound (`targets2`) to fit the width.
 inline bool LeafSatisfiesSlot(const Leaf& leaf, const SlotTarget& slot) {
     if (!slot.targets) return false;
     if (Radar::IsPrevValueScanType(slot.st)) return false;  // refine-only; no first-scan baseline
-    const uint8_t* tb = slot.targets->Find(leaf.width);
-    if (!tb) return false;                                  // value can't fit this width
+    // [W2-ORDEN-FINDENTRY] FindEntry, not Find: Find() hides an AlwaysTrue entry, so a
+    // `Bigger -5` slot skipped every unsigned leaf and one lost width dropped the group.
+    const Radar::NumericTargetSet::Entry* te = slot.targets->FindEntry(leaf.width);
+    if (!te) return false;                                  // no value of this width can satisfy it
     const size_t n = Radar::SizeOf(leaf.width);
     if (n == 0 || n > sizeof(leaf.bytes)) return false;     // non-fixed-width (string/etc.)
     const uint8_t* tb2 = nullptr;
     if (slot.st == Radar::ScanType::Between) {
+        // Between needs BOTH bounds and is never given a verdict (BuildNumericTargets emits
+        // AlwaysTrue for Smaller/Bigger only), so only a real encoding counts here.
+        if (te->fit != Radar::NumericTargetSet::Fit::Encoded) return false;
         tb2 = slot.targets2 ? slot.targets2->Find(leaf.width) : nullptr;
         if (!tb2) return false;                             // upper bound can't fit this width
     }
-    return Radar::ComparePredicate(leaf.width, slot.st, leaf.bytes, tb, tb2, slot.roundMode);
+    return Radar::ComparePredicate(leaf.width, slot.st, leaf.bytes, te, tb2, slot.roundMode);
 }
 
 // Internal: Kuhn's augmenting path — try to assign `slot` a distinct leaf,

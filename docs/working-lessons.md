@@ -2840,9 +2840,11 @@ both read as a healthy scan.
    every `Int16` field is smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was
    emitted and every 2-byte field was skipped. **The tell is that the loss is by TYPE, not by object**
    — all byte fields gone, or all unsigned fields gone, while the same scan finds 32-bit fields on the
-   same objects. Two live gaps of the same shape remain: **`Between`** still drops widths its upper
-   bound cannot encode (its two bounds are built independently — see todo.md), and a **hex** input
-   (`0x1F4`) still emits no Float/Double entries.
+   same objects. Two live gaps of the same shape remain: **`Between`** still drops widths either
+   bound cannot encode (its two bounds are built independently — `[A4-AB4-BETWEEN]` in todo.md), and
+   a **hex** input (`0x1F4`) still emits no Float/Double entries. The group matchers (live and
+   snapshot) and the 64-bit members only got the verdict on 2026-09-11 (`[W2-ORDEN-FINDENTRY]`,
+   `[A4-AB4-UINT64]`).
    The lesson underneath: **a range gate that is correct for equality is usually wrong for ordering,
    and it is invisible because it is right half the time** — pruning `Bigger 70000` off Int16 is a
    genuine optimisation produced by the very same line, so the code reads as working.

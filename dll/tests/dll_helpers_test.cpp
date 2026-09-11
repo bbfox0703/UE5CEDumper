@@ -1747,6 +1747,58 @@ static void Test_ValueScan_BuildNumericTargets() {
                Radar::ComparePredicate(DT::Int32, ST::Smaller,
                                        reinterpret_cast<const uint8_t*>(&v32),
                                        lo.FindEntry(DT::Int32)));
+
+        // The exact boundary of a small width: every int16 is smaller than 32768.
+        Radar::NumericTargetSet b16;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "32768", b16,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4 Smaller(32768) keeps Int16 as AlwaysTrue (the boundary itself)",
+               b16.FindEntry(DT::Int16) &&
+               b16.FindEntry(DT::Int16)->fit == Fit::AlwaysTrue);
+
+        // [A4-AB4-UINT64] The 64-bit members got no verdict at all. The range table listed only
+        // 8/16/32-bit, on the premise that a string which parsed fits the 64-bit ones -- false for
+        // a negative string (never parsed as unsigned) and for one above INT64_MAX.
+        EXPECT("AB4-U64 ⭐ Bigger(-5) keeps UInt64 as AlwaysTrue",
+               neg.FindEntry(DT::UInt64) &&
+               neg.FindEntry(DT::UInt64)->fit == Fit::AlwaysTrue);
+        uint64_t u64max = UINT64_MAX;
+        EXPECT("AB4-U64 ⭐ predicate: UINT64_MAX > -5 via AlwaysTrue",
+               Radar::ComparePredicate(DT::UInt64, ST::Bigger,
+                                       reinterpret_cast<const uint8_t*>(&u64max),
+                                       neg.FindEntry(DT::UInt64)));
+        EXPECT("AB4-U64 control: Smaller(-5) still drops UInt64", neg2.FindEntry(DT::UInt64) == nullptr);
+
+        // 2^63 is the first value above INT64_MAX, and INT64_MAX has no double: it rounds UP to
+        // 2^63. So `scalar > (double)INT64_MAX` is `2^63 > 2^63` and misses exactly this target.
+        Radar::NumericTargetSet i63;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "9223372036854775808", i63,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4-U64 ⭐ Smaller(2^63) keeps Int64 as AlwaysTrue",
+               i63.FindEntry(DT::Int64) &&
+               i63.FindEntry(DT::Int64)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4-U64 control: Smaller(2^63) is a real Encoded target for UInt64",
+               i63.FindEntry(DT::UInt64) &&
+               i63.FindEntry(DT::UInt64)->fit == Fit::Encoded);
+        Radar::NumericTargetSet i63b;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "9223372036854775808", i63b,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4-U64 control: Bigger(2^63) still drops Int64", i63b.FindEntry(DT::Int64) == nullptr);
+
+        // The same boundary one width up: UINT64_MAX rounds up to 2^64.
+        Radar::NumericTargetSet u64;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "18446744073709551616", u64,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4-U64 ⭐ Smaller(2^64) keeps UInt64 as AlwaysTrue",
+               u64.FindEntry(DT::UInt64) &&
+               u64.FindEntry(DT::UInt64)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4-U64 ⭐ Smaller(2^64) keeps Int64 as AlwaysTrue",
+               u64.FindEntry(DT::Int64) &&
+               u64.FindEntry(DT::Int64)->fit == Fit::AlwaysTrue);
+        // Exact never carries a verdict, whatever the width.
+        Radar::NumericTargetSet exNeg;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", exNeg);
+        EXPECT("AB4-U64 control: Exact(-5) still has no UInt64", exNeg.FindEntry(DT::UInt64) == nullptr);
     }
 
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
@@ -4966,6 +5018,70 @@ static void Test_Orden_BetweenFirstScan() {
         std::vector<Orden::SlotMatches> out;
         EXPECT("group Between missing upper bound rejected",
                !Orden::MatchGroup(leaves, slots, out));
+    }
+}
+
+static void Test_Orden_OrderedVerdictWidths() {
+    // [W2-ORDEN-FINDENTRY] LeafSatisfiesSlot looked the slot's target up with Find(), which hides
+    // an AlwaysTrue entry (audit #5 AB4: EVERY value of this width satisfies the predicate). So a
+    // Bigger/Smaller group slot skipped a whole width class the single-value scan keeps -- and a
+    // group needs ALL slots at DISTINCT leaves, so one lost width drops the object. Fern builds a
+    // group slot's targets with the slot's own predicate, so the verdict is there to read.
+    using ST = Radar::ScanType;
+    Radar::NumericTargetSet neg5, t24, lt70k, gt70k;
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "-5", neg5,
+                               Radar::RoundMode::Round, ST::Bigger);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "24", t24);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "70000", lt70k,
+                               Radar::RoundMode::Round, ST::Smaller);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "70000", gt70k,
+                               Radar::RoundMode::Round, ST::Bigger);
+
+    // Slot 1 (Exact 24) can only take the Int32 leaf, so slot 0 must take the other one.
+    uint16_t u16 = 3;
+    std::vector<Orden::Leaf> unsignedPair = {
+        OrdenLeaf(Radar::DataType::UInt16, 0x10, &u16, 2), OrdenLeafI32(0x14, 24),
+    };
+    {
+        std::vector<Orden::SlotTarget> slots = {
+            { &neg5, ST::Bigger, Radar::RoundMode::Round },
+            { &t24,  ST::Exact,  Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY ⭐ Bigger(-5) takes an unsigned leaf (3 > -5), so the group matches",
+               Orden::MatchGroup(unsignedPair, slots, out));
+        EXPECT("ORDEN-FINDENTRY ⭐ ...slot 0 lists BOTH leaves",
+               out.size() == 2 && out[0].leafIdx.size() == 2);
+    }
+    // Smaller 70000 over Int16: every int16 is smaller, including the edge 32767 clamping drops.
+    std::vector<Orden::Leaf> int16Pair = { OrdenLeafI16(0x10, 32767), OrdenLeafI32(0x14, 24) };
+    {
+        std::vector<Orden::SlotTarget> slots = {
+            { &lt70k, ST::Smaller, Radar::RoundMode::Round },
+            { &t24,   ST::Exact,   Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY ⭐ Smaller(70000) takes the Int16 edge 32767",
+               Orden::MatchGroup(int16Pair, slots, out));
+    }
+    {   // control: nothing 16-bit exceeds 70000, so skipping the width is still right
+        std::vector<Orden::SlotTarget> slots = {
+            { &gt70k, ST::Bigger, Radar::RoundMode::Round },
+            { &t24,   ST::Exact,  Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY control: Bigger(70000) still skips the Int16 leaf",
+               !Orden::MatchGroup(int16Pair, slots, out));
+    }
+    {   // control: Between needs BOTH bounds, so a verdict entry must never satisfy it on its own
+        Radar::NumericTargetSet always;
+        Radar::NumericTargetSet::Entry e{};
+        e.dt  = Radar::DataType::UInt16;
+        e.fit = Radar::NumericTargetSet::Fit::AlwaysTrue;
+        always.entries.push_back(e);
+        Orden::SlotTarget slot{ &always, ST::Between, Radar::RoundMode::Round, &t24 };
+        EXPECT("ORDEN-FINDENTRY control: an AlwaysTrue entry never satisfies Between",
+               !Orden::LeafSatisfiesSlot(unsignedPair[0], slot));
     }
 }
 
@@ -8189,6 +8305,7 @@ int main() {
     RUN(Test_Orden_ConvergenceAndAssignment);
     RUN(Test_Orden_OrderedFirstScan);
     RUN(Test_Orden_BetweenFirstScan);
+    RUN(Test_Orden_OrderedVerdictWidths);
     RUN(Test_Orden_RoundedFloatExact);
     RUN(Test_Orden_PrevValueRejectedOnFirstScan);
 

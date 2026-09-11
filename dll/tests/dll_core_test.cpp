@@ -886,6 +886,60 @@ int main() {
         DynOff::bCasePreservingName = savedCpn;
     }
 
+    // -- GROUPREFINE-2026-09-11 -- a group refine keeps a width whose every value satisfies ----
+    //
+    // [W2-ORDEN-FINDENTRY]. RefineGroupCandidates looked each targeted slot up with Find(), which
+    // hides audit #5 AB4's AlwaysTrue verdict, so a `Bigger -5` refine pruned every unsigned leaf
+    // -- and with it every candidate whose slot needed one. The single-value refine has used
+    // FindEntry since AB4. Pure: the leaves are this block's own statics, read through the same
+    // SEH-safe path as game memory, so it sits above the pool-faking tail.
+    {
+        blk("GROUPREFINE - a group refine honours the AlwaysTrue verdict");
+        using ST = Radar::ScanType;
+        static uint16_t leafU16 = 3;
+        static int16_t  leafI16 = 5;
+        static int32_t  leafI32 = 24;
+        std::vector<Radar::FieldDescriptor> descs(3);
+        descs[0].fieldType = "UInt16Property"; descs[0].fieldName = "Counter";
+        descs[1].fieldType = "IntProperty";    descs[1].fieldName = "Level";
+        descs[2].fieldType = "Int16Property";  descs[2].fieldName = "Small";
+        std::vector<Radar::InstanceRecord> insts(1);
+        insts[0].instanceAddr = 0x1000;
+        insts[0].instanceName = "Fake";
+        auto match = [](uint32_t desc, const void* at) {
+            Radar::GroupSlotMatch m;
+            m.descriptorIdx = desc;
+            m.leafAddr      = reinterpret_cast<uintptr_t>(at);
+            return m;
+        };
+        auto slot = [](ST st, const char* v) {
+            Radar::SlotSpec sp;
+            sp.st    = st;
+            sp.value = v;
+            Radar::BuildNumericTargets(sp.dt, v, sp.targets, sp.roundMode, st);   // as Fern does
+            return sp;
+        };
+        char buf[96];
+
+        // Slot 0 holds the UInt16 leaf and the Int32 one; slot 1 (Exact 24) needs the Int32 one.
+        const std::vector<Radar::SlotSpec> slots = { slot(ST::Bigger, "-5"), slot(ST::Exact, "24") };
+        std::vector<Radar::GroupCandidate> cands(1);
+        cands[0].slotMatches = { { match(0, &leafU16), match(1, &leafI32) }, { match(1, &leafI32) } };
+        Aura::RefineGroupCandidates(slots, cands, descs, insts);
+        snprintf(buf, sizeof(buf), "candidates %zu, slot0 leaves %zu", cands.size(),
+                 cands.empty() ? size_t{0} : cands[0].slotMatches[0].size());
+        check("GROUPREFINE ⭐: Refine(Bigger -5) keeps the candidate", cands.size() == 1, buf);
+        check("GROUPREFINE ⭐: ...and its unsigned leaf (3 > -5)",
+              cands.size() == 1 && cands[0].slotMatches[0].size() == 2, buf);
+
+        // Control: nothing 16-bit exceeds 70000, so an Int16-only slot empties and the candidate goes.
+        const std::vector<Radar::SlotSpec> slots2 = { slot(ST::Bigger, "70000"), slot(ST::Exact, "24") };
+        std::vector<Radar::GroupCandidate> c2(1);
+        c2[0].slotMatches = { { match(2, &leafI16) }, { match(1, &leafI32) } };
+        Aura::RefineGroupCandidates(slots2, c2, descs, insts);
+        check("GROUPREFINE control: Refine(Bigger 70000) still drops an Int16-only slot", c2.empty());
+    }
+
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
