@@ -1308,6 +1308,13 @@ same contract.
   - ⚠ **Survivor by construction:** Dunste.cpp's use of the mapping, which no test target compiles.
     The real `UE5Dumper` build and the live check cover it.
   - ⬜ The debug-camera twin `[W3-DEBUGCAM-QUEUED]` (LOW, next) is separate.
+  - ✅ **Review 5 follow-up 2026-09-12** (of 9805fea8: two LOW, both CONFIRMED).
+    - **The D1 live rig would have reported a false regression.** `d1_collision_refusal.py` forces its
+      "refused" arm with a -5 timeout, and -5 is now Queued. So the record commits, and the rig's arm 1
+      printed "the record was DROPPED, which is the D1 defect itself" on exactly what B31 intends. Arm 1 now
+      asserts the QUEUED path: the QUEUED line, and no kept record. D1's refused arm has no live trigger
+      left (-8 cannot occur on the pipe thread), so `Test_Dunste_ShouldCommitCollision` alone pins it.
+    - **A dll_helpers_test comment** in the function B31 edited still listed -5 among the refusals. Fixed.
 
 ##### ⬜ `[W3-DEBUGCAM-QUEUED]` LOW — `UE5_SetDebugCamera` folds a queued toggle (`-5`) into `-1`, and every caller invites a second toggle
 
@@ -9192,6 +9199,10 @@ route PEHOOK 3b documents.
 |---|---|---|---|---|
 | **1 — D1** (issue immediately) | 265 ms | `(the dispatcher REFUSED the restore)` | kept | landed on its own |
 | **2 — control** (issue after 1 s frozen) | 1161 ms | `(game thread unresponsive)` | kept | landed on its own |
+
+⚠ **Superseded for arm 1 by B31** (`[W3-DUNSTE-QUEUED]`, 2026-09-12). A -5 timeout is now QUEUED and commits, so
+arm 1 reads "QUEUED" with no kept record. The rig asserts that since review 5, and the refused arm has no live
+trigger left. Arm 2 is unchanged.
 
 ⭐ **The rig runs both and requires them to DIFFER.** With only arm 1 it would pass just as
 happily while matching any "keeping the record" line, on either path — the discriminator would

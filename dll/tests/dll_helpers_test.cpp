@@ -6624,9 +6624,10 @@ static void Test_Dunste_ShouldCommitCollision() {
            Dunste::ShouldCommitCollision(CA::Absent));
 
     // The D1 half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
-    // -5 game-thread timeout, -3 no usable PE offset): NOTHING reached the game, so
-    // committing records a disable that never happened -- and on the restore path it
-    // wipes the record that keeps a ghosted pawn tracked.
+    // -3 no usable PE offset -- and, since [W3-DUNSTE-QUEUED], NOT -5, which stays queued
+    // and lands; see below): NOTHING reached the game, so committing records a disable
+    // that never happened -- and on the restore path it wipes the record that keeps a
+    // ghosted pawn tracked.
     EXPECT("D1 *: a REFUSED invoke does NOT commit",
            !Dunste::ShouldCommitCollision(CA::Refused));
 
