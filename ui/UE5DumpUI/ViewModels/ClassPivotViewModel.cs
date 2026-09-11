@@ -436,8 +436,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // false for it. Its arrays pivot under the Snapshot Array source.
                 var onlyArrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
                 if (onlyArrays.Count > 0)
-                    StatusText = $"{className} has only struct arrays in this snapshot: pivot them under the "
-                                 + $"Snapshot Array source ({className} → {onlyArrays[0].ArrayField}).";
+                    StatusText = ArraysOnlyStatus(className, propName, onlyArrays.Select(a => a.ArrayField).ToList());
                 return;
             }
             if (!string.IsNullOrEmpty(propName))
@@ -477,6 +476,26 @@ public partial class ClassPivotViewModel : ViewModelBase
     {
         int i = propName.IndexOf('[');
         return i > 0 ? propName[..i] : propName;
+    }
+
+    /// <summary>The hint for a class whose captured objects hold ONLY struct arrays (<paramref name="arrays"/>, by
+    /// name). Review 4 of c5511519: it named the first array whatever was handed off, so "Cargo[3].Quantity" was sent
+    /// to "Ammo", and a prop that is no array at all was never told it is not pivotable. It now reads the prop the
+    /// way the class-found branch does.</summary>
+    internal static string ArraysOnlyStatus(string className, string? propName, IReadOnlyList<string> arrays)
+    {
+        if (string.IsNullOrEmpty(propName))
+            return $"{className} has only struct arrays in this snapshot: pivot them under the "
+                   + $"Snapshot Array source ({className} → {arrays[0]}).";
+        var arrayName = ArrayFieldOf(propName);
+        if (arrays.Contains(arrayName))
+        {
+            var what = arrayName == propName ? "a struct array" : "an element of the struct array " + arrayName;
+            return $"'{propName}' is {what} of {className}, which has only struct arrays in this snapshot: pivot it "
+                   + $"under the Snapshot Array source ({className} → {arrayName}).";
+        }
+        return $"'{propName}' is not a pivotable field of {className} in this snapshot — it has only struct arrays, "
+               + $"which pivot under the Snapshot Array source ({className} → {arrays[0]}).";
     }
 
     /// <summary>Select <paramref name="className"/> in the CURRENTLY selected

@@ -647,6 +647,51 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("Snapshot Array", vm.StatusText);
     }
 
+    // ---- review 4 of c5511519: the arrays-only branch ignored the handed-off prop ----
+
+    private async Task SeedHoldAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "hold" }, ct);
+        var o = Obj(9, "CargoHold", "/G.M:L.CargoHold_0");
+        foreach (var field in new[] { "Ammo", "Cargo" })   // the store lists arrays by name: Ammo first
+        {
+            var arr = new SnapshotCapturedArray { Field = field };
+            arr.Elements.Add(MakeSlot(0, "Quantity", 100));
+            o.Arrays.Add(arr);
+        }
+        await _store.WriteChunkAsync(id, new[] { o }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_ArraysOnlyClass_NamesTheHandedOffArray_NotTheFirst()
+    {
+        // Value Search hands off ("CargoHold", "Cargo[3].Quantity"). The branch named the first array by name,
+        // "Ammo", and sent the user to the wrong one.
+        await SeedHoldAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Cargo[3].Quantity");
+
+        Assert.Contains("CargoHold → Cargo)", vm.StatusText);
+        Assert.DoesNotContain("Ammo", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_ArraysOnlyClass_APropThatIsNoArray_IsCalledNotPivotable()
+    {
+        // A handed-off scalar that was never captured got the same "pivot them" line, and was never told that it
+        // is not pivotable itself.
+        await SeedHoldAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Gold");
+
+        Assert.Contains("'Gold' is not a pivotable field of CargoHold", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);   // ...and the class's arrays are still pointed at
+    }
+
     // ---- C3: change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.

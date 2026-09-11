@@ -629,6 +629,12 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
        store for its arrays and points them at the Snapshot Array source.
      - **Tests, red first:** an element-named handoff, and a class with no scalar field. 2/2 mutants
        killed; UI 5132/5132.
+   - ✅ **Review 4 follow-up 2026-09-12** (of c5511519: LOW, CONFIRMED). The arrays-only branch ignored the
+     handed-off prop. It named the first array BY NAME (the store orders by `array_field`), so
+     ("CargoHold", "Cargo[3].Quantity") was sent to "Ammo". A prop that is no array at all got the same
+     line, and was never told it is not pivotable. `ArraysOnlyStatus` now reads the prop as the class-found
+     branch does: its own array when it names one; otherwise "not a pivotable field", with the class's
+     arrays still pointed at. Red first with a two-array class; 4/4 mutants killed; UI 5154/5154.
 
 6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place
