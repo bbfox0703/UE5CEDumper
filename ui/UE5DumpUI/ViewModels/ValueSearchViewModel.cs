@@ -395,7 +395,9 @@ public partial class ValueSearchViewModel : ViewModelBase
 
     /// <summary>True while the loaded window is smaller than the (filtered)
     /// total — drives the Load More button.</summary>
-    public bool HasMore => Candidates.Count < FilteredTotal;
+    // [W2-DEADSCAN-LOADMORE] Load More needs a LIVE session: its load returns on !HasSession, so rows a retired session
+    // left on screen (a First Scan that failed or was cancelled ended it first) must not offer it.
+    public bool HasMore => HasSession && Candidates.Count < FilteredTotal;
 
     partial void OnCandidatesChanged(ObservableCollection<ValueCandidate> value)
         => OnPropertyChanged(nameof(HasMore));
@@ -692,14 +694,23 @@ public partial class ValueSearchViewModel : ViewModelBase
         string filt = (FilteredTotal != Total) ? $" (filtered from {Total})" : "";
         WindowStatus = HasMore
             ? $"Showing {Candidates.Count} of {FilteredTotal}{filt} — Load More for the rest"
-            : $"Showing all {FilteredTotal}{filt}";
+            : Candidates.Count < FilteredTotal
+                // [W2-DEADSCAN-LOADMORE] More exists but its session has ended (a First Scan that failed or was
+                // cancelled retired it first). The rows are still valid; the rest is out of reach -- say so.
+                ? $"Showing {Candidates.Count} of {FilteredTotal}{filt} from the previous scan — its session has ended; run First Scan again for the rest"
+                : $"Showing all {FilteredTotal}{filt}";
     }
 
     /// <summary>True when a scan session is active (between First Scan
     /// and New Scan / End). Drives the enablement of the Next Scan
     /// button and the visibility of the New Scan reset button.</summary>
     public bool HasSession => SessionId != 0;
-    partial void OnSessionIdChanged(ulong value) => OnPropertyChanged(nameof(HasSession));
+    partial void OnSessionIdChanged(ulong value)
+    {
+        OnPropertyChanged(nameof(HasSession));
+        OnPropertyChanged(nameof(HasMore));   // [W2-DEADSCAN-LOADMORE] gated on the session now
+        UpdateWindowStatus();
+    }
 
     /// <summary>True when the selected ScanType compares against a
     /// previously-observed value (Changed / Unchanged / Increased /
@@ -1324,13 +1335,19 @@ public partial class ValueSearchViewModel : ViewModelBase
 
     [ObservableProperty] private ulong _groupSessionId;
     public bool HasGroupSession => GroupSessionId != 0;
-    partial void OnGroupSessionIdChanged(ulong value) => OnPropertyChanged(nameof(HasGroupSession));
+    partial void OnGroupSessionIdChanged(ulong value)
+    {
+        OnPropertyChanged(nameof(HasGroupSession));
+        OnPropertyChanged(nameof(GroupHasMore));   // [W2-DEADSCAN-LOADMORE] gated on the session now
+        UpdateGroupWindowStatus();
+    }
 
     [ObservableProperty] private int _groupTotal;
     [ObservableProperty] private int _groupFilteredTotal;
     [ObservableProperty] private string _groupWindowStatus = "";
 
-    public bool GroupHasMore => GroupCandidates.Count < GroupFilteredTotal;
+    // [W2-DEADSCAN-LOADMORE] as HasMore: a retired group session's rows must not offer a Load More that loads nothing.
+    public bool GroupHasMore => HasGroupSession && GroupCandidates.Count < GroupFilteredTotal;
     partial void OnGroupCandidatesChanged(ObservableCollection<GroupCandidate> value)
         => OnPropertyChanged(nameof(GroupHasMore));
     partial void OnGroupFilteredTotalChanged(int value)
@@ -1653,7 +1670,10 @@ public partial class ValueSearchViewModel : ViewModelBase
         string filt = (GroupFilteredTotal != GroupTotal) ? $" (filtered from {GroupTotal})" : "";
         GroupWindowStatus = GroupHasMore
             ? $"Showing {GroupCandidates.Count} of {GroupFilteredTotal}{filt} — Load More for the rest"
-            : $"Showing all {GroupFilteredTotal}{filt}";
+            : GroupCandidates.Count < GroupFilteredTotal
+                // [W2-DEADSCAN-LOADMORE] see UpdateWindowStatus
+                ? $"Showing {GroupCandidates.Count} of {GroupFilteredTotal}{filt} from the previous scan — its session has ended; run Group First Scan again for the rest"
+                : $"Showing all {GroupFilteredTotal}{filt}";
     }
 
     // --- Group handoffs. Slot leaves reuse the SAME four events as single mode

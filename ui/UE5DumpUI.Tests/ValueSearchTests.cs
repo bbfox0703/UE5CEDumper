@@ -1246,6 +1246,8 @@ public class ValueSearchTests
     private sealed class FakeDumpService : StubDumpService
     {
         public ValueScanBeginResult NextBeginResult { get; set; } = new();
+        /// <summary>[W2-DEADSCAN-LOADMORE] When set, every Begin (single and group) fails with it -- a pipe death mid-scan.</summary>
+        public Exception? BeginThrows { get; set; }
         public ValueScanRefineResult NextRefineResult { get; set; } = new();
         public ValueScanWindowResult NextWindowResult { get; set; } = new();
         // (dataType, scanType, value, value2, gameOnly, maxResults, roundMode, caseSensitive)
@@ -1292,6 +1294,7 @@ public class ValueSearchTests
             LastNewestFirst = newestFirst;
             LastDeadlineMs = deadlineMs;
             LastAutoSkipNoise = autoSkipNoise;
+            if (BeginThrows != null) return Task.FromException<ValueScanBeginResult>(BeginThrows);
             return Task.FromResult(NextBeginResult);
         }
 
@@ -1352,6 +1355,7 @@ public class ValueSearchTests
             LastGroupDeadlineMs = deadlineMs;
             LastGroupAutoSkipNoise = autoSkipNoise;
             LastGroupBeginRoundMode = roundMode;
+            if (BeginThrows != null) return Task.FromException<GroupScanBeginResult>(BeginThrows);
             return Task.FromResult(NextGroupBeginResult);
         }
 
@@ -2922,6 +2926,53 @@ public class ValueSearchTests
 
         Assert.Equal(3, vm.Candidates.Count);          // 1 inline + 2 appended
         Assert.Equal(1, fake.Queries[^1].Item2);       // offset = previously-loaded count
+    }
+
+    // ---- [W2-DEADSCAN-LOADMORE] a First Scan that fails (or is cancelled) has already retired the old session ----
+    // EndSessionIfAnyAsync zeroes the session before the new scan's await, so a failure left the previous rows on screen
+    // with a Load More whose load returned on !HasSession: no rows, no error, no log line. ⛔ The rows stay -- they are
+    // still valid, and blanking a 1,000-row result over a typo or a Cancel is the refuted fix. Only the dead lever goes.
+
+    [Fact]
+    public async Task FirstScan_FailingAfterASession_KeepsTheRows_ButOffersNoDeadLoadMore()
+    {
+        var (vm, fake) = await StartSessionAsync(total: 3000, inlineCount: 1);
+        Assert.True(vm.HasMore);                                   // setup: a live session with more to load
+        fake.BeginThrows = new System.IO.IOException("pipe broke");
+        vm.Value = "2";
+
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.False(vm.HasSession);                               // the old session was retired before the scan
+        Assert.Single(vm.Candidates);                              // the rows stay
+        Assert.False(vm.HasMore);                                  // ...but no Load More that loads nothing
+        Assert.Contains("previous scan", vm.WindowStatus);
+        Assert.DoesNotContain("Load More", vm.WindowStatus);
+    }
+
+    [Fact]
+    public async Task GroupFirstScan_FailingAfterASession_KeepsTheRows_ButOffersNoDeadLoadMore()
+    {
+        var (vm, fake) = MakeVm();
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].Value = "24";
+        vm.GroupInputs[1].Value = "10";
+        fake.NextGroupBeginResult = new GroupScanBeginResult
+        {
+            SessionId = 77UL, Total = 3000, SlotCount = 2,
+            Candidates = { new GroupCandidate { InstanceAddr = "7FF6AA", ClassName = "BP_Stats_C" } },
+        };
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+        Assert.True(vm.GroupHasMore);                              // setup: a live group session with more to load
+        fake.BeginThrows = new System.IO.IOException("pipe broke");
+
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+        Assert.False(vm.HasGroupSession);
+        Assert.Single(vm.GroupCandidates);
+        Assert.False(vm.GroupHasMore);
+        Assert.Contains("previous scan", vm.GroupWindowStatus);
+        Assert.DoesNotContain("Load More", vm.GroupWindowStatus);
     }
 
     // Poll until a condition holds (or a generous timeout elapses) instead of sleeping a

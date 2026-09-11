@@ -996,7 +996,7 @@ of the documented `SilentReturn`, so unticking pops a modal over a fullscreen ga
 the contract-check path (`ProtectionScriptGenerator.cs:64`) · ✅ `[W2-BETWEEN-PREVIEW]` (FIXED IN SOURCE 2026-09-12, batch L28: Value Search's Between preview parses with the DLL's grammar, so a bound the DLL refuses previews nothing. SPC keeps its own query's grammar, which is unchanged. Red first) the Between
 live preview parses with `NumberStyles.Any`, so for FVector/FRotator/FTransform it concatenates the
 three components into one fabricated number and for scalars it accepts thousands separators and
-parenthesised negatives the DLL refuses (`RoundModePreview.cs:75`) · `[W2-DEADSCAN-LOADMORE]` a
+parenthesised negatives the DLL refuses (`RoundModePreview.cs:75`) · ✅ `[W2-DEADSCAN-LOADMORE]` (FIXED IN SOURCE 2026-09-12, batch L29: Load More is gated on a live session and the window status says the rows are the previous scan's; the rows stay, per the refuted-fix table below; single and group alike; red first) a
 cancelled or failed First Scan leaves the previous session's rows on screen with a **Load More**
 button whose DLL session has already ended — a dead control that produces no rows, no error and no
 log line (`ValueSearchViewModel.cs:1031`).
@@ -5221,6 +5221,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 82 | `[W3-CAP-NOSAVE]` | LOW | `git log --grep W3-CAP-NOSAVE` (batch L30) | ClassListCapTests.cs `UiOptionsPersistSymmetryTests`, red first: every `BuildOptions` line copying from a tracked view model must name a property in that view model's persist set (one explicit alias, `Spc.JoinModeForOptions` → `SelectedJoinMode`). It failed on exactly the two caps and found no third. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5249/5249 |
 | 83 | `[W5-OFFSETS-UNMEASURED]` | LOW | `git log --grep W5-OFFSETS-UNMEASURED` (batch L15) | dll_core_test, red first: a give-up after a validated run stores validated=false (the first give-up is driven for real, over a pool with no Guid / Vector); the shutdown reset forgets all three; the verdict reason reads `probe-not-run` before detection, even beside a stale reason, and is never empty for an unmeasured run. InvokeScriptTests source pins cover the second give-up, the `UE5_Shutdown` call, the export's both-flags rule and the dissect warning. 8/8 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5251/5251. The export count is 59 → 60 at every derived site. The mailbox half is L45 |
 | 84 | `[W2-BETWEEN-PREVIEW]` | LOW | `git log --grep W2-BETWEEN-PREVIEW` (batch L28) | RoundModePreviewTests, red first: `1,2,3~4,5,6`, `1,000~2,000`, `(5)~10` and `5-~10` preview nothing in every scope, because the DLL refuses each of them. Control: SPC's absolute window keeps `NumberStyles.Any`, because `SpcQueryViewModel` Lo()/Hi() parse it that way. The kit's first draft assumed SPC used `SnapshotStore.TryParseValue`, which is the snapshot GROUP matcher's parse, and a read of the real call site refuted that. Whether SPC itself should accept `(5)` is a separate question, not filed. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5256/5256 |
+| 85 | `[W2-DEADSCAN-LOADMORE]` | LOW | `git log --grep W2-DEADSCAN-LOADMORE` (batch L29) | ValueSearchTests, red first: a First Scan, and a Group First Scan, that fails after a live session keeps its row, offers no Load More, and says the rows are the previous scan's. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5258/5258. The grid is NOT cleared, per the refuted-fix table |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5465,6 +5466,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. In Value Search → Between, an FVector bound pair `1,2,3` / `4,5,6` shows no preview (it used to show `→ 123~456`).
 2. Int32 `1,000` / `2,000` shows no preview.
 3. An SPC absolute Exact `1,000` still previews `→ 1000`. | UI only |
+| L71 | `[W2-DEADSCAN-LOADMORE]` | A game and the UI:
+1. First Scan something with more than one page of results, so Load More shows.
+2. Start another First Scan and Cancel it. The rows stay, Load More disappears, and the window status says they are the previous scan's.
+3. Repeat in Group mode. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5551,7 +5556,7 @@ completeness critic.
 - ✅ **L26:** `[W1-PIPEBUSY-LOG]` (CE)
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`
 - ✅ **L28:** `[W2-BETWEEN-PREVIEW]`
-- **L29:** `[W2-DEADSCAN-LOADMORE]`
+- ✅ **L29:** `[W2-DEADSCAN-LOADMORE]`
 - ✅ **L30:** `[W3-CAP-NOSAVE]`
 - **L31:** `[W3-DIP-PIXELS]`
 - **L32:** `[W4-HEXSORT]`
