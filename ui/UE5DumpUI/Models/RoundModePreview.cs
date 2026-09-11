@@ -71,17 +71,32 @@ public static class RoundModePreview
     private const string RangeSep   = "~";
     private const string SplitSep   = " · ";
 
-    private static bool TryParse(string? s, out double v) =>
-        double.TryParse((s ?? "").Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out v);
+    /// <summary>[W2-BETWEEN-PREVIEW] What a bound may look like, per the parser that will actually read it. The preview
+    /// must refuse exactly what that parser refuses, or it previews a number nobody will match: <c>NumberStyles.Any</c>
+    /// read an FVector's "1,2,3" as 123 and accepted "1,000" / "(5)" / "5-". Value Search bounds (single and group) go
+    /// to the DLL -- <c>std::stod</c> / <c>std::stoll</c>, the whole string consumed: plain decimal, sign, exponent; no
+    /// grouping, parentheses or trailing sign. A 0x-hex integer the DLL takes simply gets no preview, which misleads
+    /// nobody.</summary>
+    public const NumberStyles DllBoundStyles = NumberStyles.Float;
+
+    /// <summary>SPC's absolute window is never read by the DLL: <c>SpcQueryViewModel</c>'s own <c>Lo()</c> / <c>Hi()</c>
+    /// parse it with <c>NumberStyles.Any</c>, so its preview keeps that grammar. (The snapshot group matcher, which
+    /// shares <see cref="GroupSlotInput"/>'s preview, parses Float + thousands; the DLL grammar there can only HIDE a
+    /// preview for a grouped bound, never fabricate one.)</summary>
+    public const NumberStyles SpcBoundStyles = NumberStyles.Any;
+
+    private static bool TryParse(string? s, NumberStyles styles, out double v) =>
+        double.TryParse((s ?? "").Trim(), styles, CultureInfo.InvariantCulture, out v);
 
     private static string Int(double x)   => x.ToString("0",        CultureInfo.InvariantCulture);
     private static string Float(double x) => x.ToString("0.######", CultureInfo.InvariantCulture);
 
     /// <summary>Live preview for a Between predicate with the two entered bounds.
     /// Empty when either bound is missing / unparseable (caller hides the label).</summary>
-    public static string Between(string? loStr, string? hiStr, FloatRoundMode mode, Scope scope)
+    public static string Between(string? loStr, string? hiStr, FloatRoundMode mode, Scope scope,
+                                 NumberStyles styles = DllBoundStyles)
     {
-        if (!TryParse(loStr, out double lo) || !TryParse(hiStr, out double hi)) return "";
+        if (!TryParse(loStr, styles, out double lo) || !TryParse(hiStr, styles, out double hi)) return "";
         double a = System.Math.Min(lo, hi), b = System.Math.Max(lo, hi);
 
         // float range: the literal entered bounds (a float field is compared as-is when
@@ -100,17 +115,17 @@ public static class RoundModePreview
     public static string SpcAbsolute(string? kind, string? loStr, string? hiStr,
                                      FloatRoundMode mode, Scope scope) => kind switch
     {
-        "Exact"   => Point("",  loStr, mode, scope),
-        "Between" => Between(loStr, hiStr, mode, scope),
-        "≥"       => Point("≥", loStr, mode, scope),
-        "≤"       => Point("≤", hiStr, mode, scope),
+        "Exact"   => Point("",  loStr, mode, scope, SpcBoundStyles),
+        "Between" => Between(loStr, hiStr, mode, scope, SpcBoundStyles),
+        "≥"       => Point("≥", loStr, mode, scope, SpcBoundStyles),
+        "≤"       => Point("≤", hiStr, mode, scope, SpcBoundStyles),
         _         => "",
     };
 
     /// <summary>Single-bound preview (Exact / ≥ / ≤) with an optional comparison prefix.</summary>
-    private static string Point(string prefix, string? valStr, FloatRoundMode mode, Scope scope)
+    private static string Point(string prefix, string? valStr, FloatRoundMode mode, Scope scope, NumberStyles styles)
     {
-        if (!TryParse(valStr, out double v)) return "";
+        if (!TryParse(valStr, styles, out double v)) return "";
         string floatVal = $"{prefix}{Float(v)}";
         string intVal   = $"{prefix}{Int(CoerceIntTarget(v, mode))}";
         return Compose(intVal, floatVal, IsWhole(v), scope);

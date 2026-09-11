@@ -993,7 +993,7 @@ exists"* when `Laufen` returned before storing anything, so the queued override 
 exist (`TeleportViewModel.cs:2169`; its two siblings at `:2588`/`:3053` word it correctly) — ✅ FIXED IN SOURCE 2026-09-11 (batch B21): the clause is deleted, the recorded safe fix. **A twin was found and fixed with it:** the time-dilation status promised the same for both levers, and `Hemmung::SetDilation` also returns before storing anything when its owner does not resolve ·
 `[W2-CEGEN-MODAL]` the GodMode and Debug-Camera `[DISABLE]` blocks bail with `showMessage` instead
 of the documented `SilentReturn`, so unticking pops a modal over a fullscreen game — **twice** on
-the contract-check path (`ProtectionScriptGenerator.cs:64`) · `[W2-BETWEEN-PREVIEW]` the Between
+the contract-check path (`ProtectionScriptGenerator.cs:64`) · ✅ `[W2-BETWEEN-PREVIEW]` (FIXED IN SOURCE 2026-09-12, batch L28: Value Search's Between preview parses with the DLL's grammar, so a bound the DLL refuses previews nothing. SPC keeps its own query's grammar, which is unchanged. Red first) the Between
 live preview parses with `NumberStyles.Any`, so for FVector/FRotator/FTransform it concatenates the
 three components into one fabricated number and for scalars it accepts thousands separators and
 parenthesised negatives the DLL refuses (`RoundModePreview.cs:75`) · `[W2-DEADSCAN-LOADMORE]` a
@@ -5220,6 +5220,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 81 | `[P3-SCORING-MCDELEGATE]` | LOW | `git log --grep P3-SCORING-MCDELEGATE` (batch L33) | PropertyScoringTableTests, red first: a stat-named `MulticastDelegateProperty` gets `NonValueTypePenalty`; the three split spellings keep it (control). 1/1 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5248/5248. One name in a private predicate, one consumer |
 | 82 | `[W3-CAP-NOSAVE]` | LOW | `git log --grep W3-CAP-NOSAVE` (batch L30) | ClassListCapTests.cs `UiOptionsPersistSymmetryTests`, red first: every `BuildOptions` line copying from a tracked view model must name a property in that view model's persist set (one explicit alias, `Spc.JoinModeForOptions` → `SelectedJoinMode`). It failed on exactly the two caps and found no third. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5249/5249 |
 | 83 | `[W5-OFFSETS-UNMEASURED]` | LOW | `git log --grep W5-OFFSETS-UNMEASURED` (batch L15) | dll_core_test, red first: a give-up after a validated run stores validated=false (the first give-up is driven for real, over a pool with no Guid / Vector); the shutdown reset forgets all three; the verdict reason reads `probe-not-run` before detection, even beside a stale reason, and is never empty for an unmeasured run. InvokeScriptTests source pins cover the second give-up, the `UE5_Shutdown` call, the export's both-flags rule and the dissect warning. 8/8 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5251/5251. The export count is 59 → 60 at every derived site. The mailbox half is L45 |
+| 84 | `[W2-BETWEEN-PREVIEW]` | LOW | `git log --grep W2-BETWEEN-PREVIEW` (batch L28) | RoundModePreviewTests, red first: `1,2,3~4,5,6`, `1,000~2,000`, `(5)~10` and `5-~10` preview nothing in every scope, because the DLL refuses each of them. Control: SPC's absolute window keeps `NumberStyles.Any`, because `SpcQueryViewModel` Lo()/Hi() parse it that way. The kit's first draft assumed SPC used `SnapshotStore.TryParseValue`, which is the snapshot GROUP matcher's parse, and a read of the real call site refuted that. Whether SPC itself should accept `(5)` is a separate question, not filed. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5256/5256 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5460,6 +5461,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. On a game whose scan log says `validated=yes`, `UE5_GetOffsetsVerdict` returns 1, and `dissect.createFromClass` prints no warning.
 2. On a build whose scan log says `validated=NO` (the UE 5.8 fixture), the first dissect prints exactly one `[UE5Dissect WARN] UE property offsets were NOT measured (…)` line. It names the same reason as `get_offsets`' `fallback_reason`, and a second dissect prints nothing.
 3. After CE Disable, the verdict reads `probe-not-run` until the next Enable's scan finishes. | CE + a game |
+| L70 | `[W2-BETWEEN-PREVIEW]` | UI only (the preview renders without a game):
+1. In Value Search → Between, an FVector bound pair `1,2,3` / `4,5,6` shows no preview (it used to show `→ 123~456`).
+2. Int32 `1,000` / `2,000` shows no preview.
+3. An SPC absolute Exact `1,000` still previews `→ 1000`. | UI only |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5545,7 +5550,7 @@ completeness critic.
 - ✅ **L25:** `[W1-PARTIAL-MARK]`
 - ✅ **L26:** `[W1-PIPEBUSY-LOG]` (CE)
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`
-- **L28:** `[W2-BETWEEN-PREVIEW]`
+- ✅ **L28:** `[W2-BETWEEN-PREVIEW]`
 - **L29:** `[W2-DEADSCAN-LOADMORE]`
 - ✅ **L30:** `[W3-CAP-NOSAVE]`
 - **L31:** `[W3-DIP-PIXELS]`
