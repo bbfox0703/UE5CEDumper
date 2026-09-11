@@ -7446,6 +7446,12 @@ static void Test_Ubel_ClassifyOptionalLayout() {
     EXPECT("a non-power-of-two alignment is refused",    ClassifyOptionalLayout(24, 16, 3) == OptionalLayout::Unknown);
     EXPECT("an unresolved value size is Unknown",        ClassifyOptionalLayout(16, 0, 8) == OptionalLayout::Unknown);
     EXPECT("a zero optional size is Unknown",            ClassifyOptionalLayout(0, 8, 8) == OptionalLayout::Unknown);
+    // Review of cc430176: TOptional<TLazyObjectPtr>. FLazyObjectPtr is FWeakObjectPtr {int32, int32}
+    // (+ the pre-5.3 int32 TagAtLastTest) + a bare FGuid -- alignof 4 in every era.
+    EXPECT("TOptional<TLazyObjectPtr> 5.3+: Align(0x19,4) = 0x1C", ClassifyOptionalLayout(0x1C, 0x18, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<TLazyObjectPtr> 5.2:  Align(0x1D,4) = 0x20", ClassifyOptionalLayout(0x20, 0x1C, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("Scharf: alignof(FLazyObjectPtr) is 4, not 8",
+           Scharf::RequiredAlignment("LazyObjectProperty", 0x18, false) == 4);
 }
 
 static void Test_Ubel_PreviewScalarValue() {

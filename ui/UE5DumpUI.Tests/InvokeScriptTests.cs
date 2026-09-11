@@ -1705,6 +1705,9 @@ public class InvokeScriptTests
     {
         { 2000, 0, 2000 },     // one param running past the slab
         { 1028, 1024, 4 },     // a param that STARTS at the slab's end
+        // Review of cd73ec38: a SMALL ParmsSize with a param past the slab -- the 4.11-4.17 shape.
+        // Without it, a refusal keyed on ParmsSize alone passed both rows above.
+        { 2, 1024, 4 },
     };
 
     [Theory]
@@ -1723,7 +1726,15 @@ public class InvokeScriptTests
         Assert.DoesNotContain("btnFire", script, StringComparison.Ordinal);
         Assert.Contains($"{CeMailboxLayout.ParamsDataBytes}", script, StringComparison.Ordinal);
         Assert.Contains("nothing was sent", script, StringComparison.Ordinal);
-        Assert.Contains("memrec.Active = false", script, StringComparison.Ordinal);   // the untick
+        // The untick belongs to THIS refusal. Every Invoke script already contains
+        // `memrec.Active = false` somewhere (review of cd73ec38), so look between the refusal's
+        // message and the `return` that ends it.
+        int refusal = script.IndexOf("nothing was sent.')", StringComparison.Ordinal);
+        Assert.True(refusal > 0, "the refusal's message is gone");
+        var afterRefusal = script[refusal..];
+        int ret = afterRefusal.IndexOf("\nreturn", StringComparison.Ordinal);
+        Assert.True(ret > 0, "the refusal does not end the chunk with a return");
+        Assert.Contains("memrec.Active = false", afterRefusal[..ret], StringComparison.Ordinal);
     }
 
     [Fact]

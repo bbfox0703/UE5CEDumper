@@ -1214,8 +1214,8 @@ int main() {
 
         // 6. ONE CLASS BLOB PER CASE. s_walkClassCache is keyed by class address and
         //    nothing erases it; a shared blob serves case 1's memoised fields to case 2.
-        static uint8_t uvProp[9][0x100] = {};
-        static uint8_t uvCls[9][0x100] = {};
+        static uint8_t uvProp[12][0x100] = {};   // one blob per case -- keep >= the number of makeCase calls
+        static uint8_t uvCls[12][0x100] = {};
         int uvNext = 0;
         auto makeCase = [&](int typeIdx, int32_t fieldOffset, int32_t elemSize,
                             uintptr_t enumPtr, uintptr_t innerPtr) {
@@ -1334,6 +1334,15 @@ int main() {
         check("UNREADVAL ⭐⭐: readable-null and unreadable are no longer the same claim",
               opNull.typedValue != opDead.typedValue,
               (opNull.typedValue + " vs " + opDead.typedValue).c_str());
+
+        // Review of cc430176: the cases above are the INTRUSIVE shape (an 8-byte optional of an
+        // 8-byte object). Real object optionals are TRAILING-FLAG (16 bytes); their discriminator is
+        // the flag byte at +8. Here the pointer is readable and the flag sits across the page edge.
+        const auto opFlagDead = oneField("trailing-flag optional, flag unreadable", "OptionalProperty",
+            Ubel::WalkInstance(uinst, makeCase(4, 0x0FF8, 16, 0, uvInnerAddr), 64, 2, false));
+        check("UNREADVAL: a trailing-flag optional whose FLAG is unreadable refuses, not (unset)",
+              opFlagDead.typedValue.find("unreadable") != std::string::npos && opFlagDead.typedValue != "(unset)",
+              opFlagDead.typedValue.c_str());
 
         VirtualFree(upage, 0, MEM_RELEASE);
     }
@@ -1543,11 +1552,12 @@ int main() {
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
-        static uint8_t olEntry[7][0x40] = {};
-        const char* olNames[7] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
-                                   "StrProperty", "Opt", "Inner" };
-        static uintptr_t olChunk[8] = {};
-        for (int i = 1; i <= 6; ++i) {
+        static uint8_t olEntry[12][0x40] = {};
+        const char* olNames[12] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+                                    "StrProperty", "Opt", "Inner", "NameProperty", "TextProperty",
+                                    "StructProperty", "MyStruct", "LazyObjectProperty" };
+        static uintptr_t olChunk[13] = {};
+        for (int i = 1; i <= 11; ++i) {
             memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
             olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
         }
@@ -1563,7 +1573,7 @@ int main() {
         DynOff::bCasePreservingName = false;
         g_cachedUEVersion           = 505;
 
-        static uint8_t olFC[5][0x20] = {};
+        static uint8_t olFC[12][0x20] = {};
         auto fclass = [&](int nameIdx) {
             *reinterpret_cast<int32_t*>(olFC[nameIdx] + DynOff::FFIELDCLASS_NAME) = nameIdx;
             return reinterpret_cast<uintptr_t>(olFC[nameIdx]);
@@ -1572,7 +1582,7 @@ int main() {
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
 
         // The wrapped value properties: ObjectProperty (8), ArrayProperty (16), StrProperty (16).
-        static uint8_t olInner[3][0x100] = {};
+        static uint8_t olInner[8][0x100] = {};
         auto inner = [&](int k, int typeIdx, int32_t size) {
             putP(olInner[k], DynOff::FFIELD_CLASS, fclass(typeIdx));
             put32(olInner[k], DynOff::FFIELD_NAME, 6);
@@ -1587,7 +1597,7 @@ int main() {
         // keyed by class address). The optional field sits at +0x40 of its object; the object's
         // UClass pointer is at OFF_UOBJECT_CLASS so Find Refs can reach the class.
         constexpr int32_t kField = 0x40;
-        static uint8_t olProp[9][0x100] = {}, olCls[9][0x100] = {}, olObj[9][0x200] = {};
+        static uint8_t olProp[24][0x100] = {}, olCls[24][0x100] = {}, olObj[24][0x200] = {};
         static uint8_t olStale[0x100] = {};                 // a "UObject" a reset optional still points at
         const uintptr_t stale = reinterpret_cast<uintptr_t>(olStale);
         int olNext = 0;
@@ -1634,6 +1644,8 @@ int main() {
         const auto fB = walk("object optional set to null", cB);
         check("OPTLAYOUT ⭐: an object optional SET to null is not (unset)",
               fB.typedValue != "(unset)" && !isRefusal(fB.typedValue), fB.typedValue.c_str());
+        check("OPTLAYOUT: ...it renders exactly (set: null), with no drillable pointer",
+              fB.typedValue == "(set: null)" && fB.ptrValue == 0, fB.typedValue.c_str());
 
         // A2 (control, green both ways). Set, pointing at a live object.
         const int cA2 = makeCase(16, innerObj);
@@ -1693,6 +1705,72 @@ int main() {
         };
         check("OPTLAYOUT control: Find Refs sees a SET optional's pointer", hitsOf(cA2) == 1);
         check("OPTLAYOUT ⭐: Find Refs does NOT report a RESET optional's stale pointer", hitsOf(cA) == 0);
+        // Review of cc430176: the "unprovable layout is not bucketed" rule. Both candidate flag bytes
+        // are set, so a mutant treating Unknown as a trailing flag would find its gate open.
+        olObj[cF][kField + 8] = 1;
+        olObj[cF][kField + 16] = 1;
+        check("OPTLAYOUT: Find Refs does not bucket an optional whose layout it cannot prove",
+              hitsOf(cF) == 0);
+
+        // (#7) The intrusive sentinels beyond TArray: FString ArrayMax -1 @+12, FName ~0u @+0,
+        // FText TextData null @+0 -- each unset and set.
+        const uintptr_t innerName = inner(3, 7, DynOff::SizeofFName());
+        const uintptr_t innerText = inner(4, 8, 16);
+        const int nameSize = DynOff::SizeofFName();
+        const int cSu = makeCase(16, innerStr);   put32(olObj[cSu], kField + 12, -1);
+        const int cSs = makeCase(16, innerStr);   put32(olObj[cSs], kField + 12, 0); olObj[cSs][kField + 16] = 1;
+        const int cNu = makeCase(nameSize, innerName); put32(olObj[cNu], kField, -1);
+        const int cNs = makeCase(nameSize, innerName); put32(olObj[cNs], kField, 5);
+        static uint8_t olTextData[0x100] = {};
+        const int cTu = makeCase(16, innerText);
+        const int cTs = makeCase(16, innerText);  putP(olObj[cTs], kField, reinterpret_cast<uintptr_t>(olTextData));
+        const auto fSu = walk("intrusive FString, unset", cSu);
+        const auto fSs = walk("intrusive FString, set", cSs);
+        const auto fNu = walk("intrusive FName, unset", cNu);
+        const auto fNs = walk("intrusive FName, set", cNs);
+        const auto fTu = walk("intrusive FText, unset", cTu);
+        const auto fTs = walk("intrusive FText, set", cTs);
+        check("OPTLAYOUT: intrusive FString with ArrayMax -1 reads (unset)", fSu.typedValue == "(unset)", fSu.typedValue.c_str());
+        check("OPTLAYOUT: intrusive FString with a real ArrayMax is SET (a set neighbour byte decides nothing)",
+              fSs.typedValue != "(unset)" && !isRefusal(fSs.typedValue), fSs.typedValue.c_str());
+        check("OPTLAYOUT: intrusive FName with ComparisonIndex ~0u reads (unset)", fNu.typedValue == "(unset)", fNu.typedValue.c_str());
+        check("OPTLAYOUT: intrusive FName with a real index is SET",
+              fNs.typedValue != "(unset)" && !isRefusal(fNs.typedValue), fNs.typedValue.c_str());
+        check("OPTLAYOUT: intrusive FText with null TextData reads (unset)", fTu.typedValue == "(unset)", fTu.typedValue.c_str());
+        check("OPTLAYOUT: intrusive FText with TextData is SET",
+              fTs.typedValue != "(unset)" && !isRefusal(fTs.typedValue), fTs.typedValue.c_str());
+
+        // (#8) A struct optional: the struct probe + UScriptStruct::MinAlignment decide the layout.
+        static uint8_t olStruct[2][0x100] = {};
+        auto structInner = [&](int k, int s, int16_t minAlign) {
+            *reinterpret_cast<int32_t*>(olStruct[s] + Grimoire::OFF_UOBJECT_NAME) = 10;      // "MyStruct"
+            put32(olStruct[s], DynOff::USTRUCT_PROPSSIZE, 24);
+            memcpy(olStruct[s] + DynOff::USTRUCT_PROPSSIZE + 4, &minAlign, sizeof(minAlign));
+            const uintptr_t p = inner(k, 9, 24);                                              // "StructProperty"
+            putP(olInner[k], DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(olStruct[s]));
+            return p;
+        };
+        const uintptr_t innerStruct8 = structInner(5, 0, 8);
+        const uintptr_t innerStruct4 = structInner(6, 1, 4);
+        const int cVs = makeCase(32, innerStruct8); olObj[cVs][kField + 24] = 1;             // Align(25,8) = 32
+        const int cVu = makeCase(32, innerStruct8); olObj[cVu][kField + 24] = 0;
+        const int cVw = makeCase(32, innerStruct4);                                          // Align(25,4) = 28 != 32
+        const auto fVs = walk("set struct optional", cVs);
+        const auto fVu = walk("unset struct optional", cVu);
+        const auto fVw = walk("struct optional, wrong MinAlignment", cVw);
+        check("OPTLAYOUT: a SET struct optional (MinAlignment 8, 32 bytes) is not refused and not (unset)",
+              fVs.typedValue != "(unset)" && !isRefusal(fVs.typedValue), fVs.typedValue.c_str());
+        check("OPTLAYOUT: ...the same optional with its flag clear reads (unset)", fVu.typedValue == "(unset)", fVu.typedValue.c_str());
+        check("OPTLAYOUT control: a MinAlignment that does not produce the size is refused",
+              isRefusal(fVw.typedValue), fVw.typedValue.c_str());
+
+        // Review of cc430176: TOptional<TLazyObjectPtr> on 5.3+ is Align(0x18 + 1, 4) = 0x1C. With
+        // Scharf's old alignment of 8 it was "not recognised", and dropped from Find Refs.
+        const uintptr_t innerLazy = inner(7, 11, 0x18);
+        const int cLu = makeCase(0x1C, innerLazy); olObj[cLu][kField + 0x18] = 0;
+        const auto fLu = walk("unset lazy optional", cLu);
+        check("OPTLAYOUT ⭐: a 5.3+ TOptional<TLazyObjectPtr> (0x1C) is recognised -- an unset one reads (unset)",
+              fLu.typedValue == "(unset)", fLu.typedValue.c_str());
 
         g_cachedUEVersion           = savedVerO;
         DynOff::bCasePreservingName = savedCpnO;

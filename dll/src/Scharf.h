@@ -50,7 +50,11 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // WeakObjectProperty: 2x int32 (8 bytes), 4-byte aligned.
     if (typeName == "WeakObjectProperty") return 4;
     if (typeName == "SoftObjectProperty" || typeName == "SoftClassProperty") return 8;
-    if (typeName == "LazyObjectProperty") return 8;
+    // FLazyObjectPtr = TPersistentObjectPtr<FUniqueObjectGuid>: FWeakObjectPtr {int32, int32} (+ the
+    // pre-5.3 int32 TagAtLastTest) + a bare FGuid (four uint32, no alignas) -- alignof 4 in EVERY era.
+    // It said 8, which put a TMap<int32, TLazyObjectPtr> value at +8 instead of +4 and made every
+    // TOptional<TLazyObjectPtr> (Align(0x18+1, 4) = 0x1C on 5.3+) "not recognised" (review of cc430176).
+    if (typeName == "LazyObjectProperty") return 4;
 
     // Pointer-shaped (8-byte) properties — exact match for plain Object/ClassProperty.
     if (typeName == "ObjectProperty" || typeName == "ClassProperty") return 8;

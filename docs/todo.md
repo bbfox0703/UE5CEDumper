@@ -2724,6 +2724,64 @@ to 5.8.2:
     - Value Scan V1c's `optionalFlagOffset` still assumes a trailing flag, so an intrusive 5.5+
       FString optional gates on its neighbour's byte.
     - Find Refs' descent into a `TOptional<FStruct>` still assumes an unset slot is zeroed.
+  - ✅ **Review follow-up 2026-09-11 (adversarial review of cc430176 + cd73ec38: 11 survived, all LOW after refutation; 2 refuted).**
+    - **A regression this change exposed:** `Scharf::RequiredAlignment("LazyObjectProperty")` said 8.
+      `alignof(FLazyObjectPtr)` is 4 in every era, so every 5.3+ `TOptional<TLazyObjectPtr>`
+      (0x1C bytes) was "not recognised" and dropped from Find Refs. The same wrong 8 also put a
+      `TMap<int32, TLazyObjectPtr>` value at +8 instead of +4. Now 4. OPTLAYOUT's lazy case and the
+      Scharf pin were red first.
+    - **Pins the review found missing,** all green pins:
+      - the trailing-flag okProbe (UNREADVAL: a readable pointer with its flag across the page edge);
+      - the intrusive FString / FName / FText sentinels, unset and set;
+      - a struct optional, where the probe and MinAlignment decide the layout;
+      - Find Refs not bucketing an unknown layout;
+      - `(set: null)` asserted exactly.
+    - **Filed rather than half-fixed:** the two 🟡 leads above are now `[A2-TOPTIONAL-STRUCT-DESCENT]`,
+      which gains the Address Finder half, and `[A2-TOPTIONAL-VALUESCAN]`. Both need plumbing
+      through every entry kind.
+
+##### ⬜ `[A2-TOPTIONAL-STRUCT-DESCENT]` LOW — Find Refs and the Address Finder walk into a reset `TOptional<FStruct>` (filed 2026-09-11)
+
+`Aura.cpp` `CollectRefMetaRecursive` (the OptionalProperty/StructProperty branch) and
+`CollectContainersRecursive` (`:2318`) descend into a struct optional at the same offset. Nothing gates
+that descent on the optional's `bIsSet`, and both comments claim "an unset slot is zero". That is
+false. UE's `MarkUnset` runs `DestroyValue`, then clears the flag, and zeroes no bytes; a TArray keeps
+its Data / Num after `~TArray`. So:
+- a reset `TOptional<FMyStruct{ AActor* Target }>` is reported by Find Refs as a live `Opt.Target`
+  reference, and also by `EnumerateOutgoingObjectPtrs` (graph paths);
+- the Address Finder reads the destroyed array's stale header and freed buffer. The reads are
+  SEH-safe, so the result is false hits in dead memory, not a crash.
+
+This is the twin `[A2-TOPTIONAL-INTRUSIVE]` left: its pointer-shaped branch was gated; this descent
+was not. The review of cc430176 rated it LOW, because the shape is narrow and the outcome is a false
+positive.
+- ✅ **Safe fix (the reviewer's):**
+  - Resolve the struct optional with `Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty")`.
+  - Do not descend when it is Intrusive or Unknown.
+  - For a TrailingFlag optional, carry the flag's absolute offset (optional absOffset + sizeof(T))
+    down the recursion, and store it on EVERY entry kind produced underneath: direct, weak-like,
+    object / interface / weak arrays, maps, sets, `ContainerCacheEntry`. Every scan then checks it
+    before reading.
+  - A nested optional-in-optional needs an AND of flags, or a refusal.
+  - Correct both comments.
+- ⛔ **Unsafe:** dropping the descent altogether. That loses every true reference inside a SET struct
+  optional.
+
+##### ⬜ `[A2-TOPTIONAL-VALUESCAN]` LOW — Value Scan V1c still sizes the TOptional flag with the loose rule (filed 2026-09-11)
+
+`Aura.cpp` V1c (~`:7143-7163`) takes the flag offset from `Radar::OptionalFlagOffset(f.Size, innerSize)`:
+a loose "bigger than T" rule that `[A2-TOPTIONAL-INTRUSIVE]` names as unsafe. It never gates an
+intrusive optional either, so on 5.5+ an unset FString / FName / FText optional is scanned as a value,
+and its "flag" is read from the neighbour's byte.
+- ✅ **Safe fix (the reviewer's):**
+  - Use `Ubel::ResolveOptionalLayout`.
+  - TrailingFlag: gate on the byte at `sizeof(T)`.
+  - Unknown: skip the field.
+  - Intrusive: carry a per-type sentinel into the `ScanField` and test it before the read —
+    FString `ArrayMax == -1` @+12, FName `ComparisonIndex == ~0u`, FText `TextData` null.
+  - Drop `Radar::OptionalFlagOffset`'s loose rule.
+- ⛔ **Unsafe:** skipping every intrusive optional. That silently drops 5.5+ string optionals from
+  every scan.
 
 ##### ✅ `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask (FIXED IN SOURCE 2026-09-11)
 
@@ -3798,11 +3856,11 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21. **Review follow-up:** 10 survived / 1 refuted. The HIGH was that native is SetBoolSize's {1,0,01,FF}, not {1,0,FF,FF}, so no real bool classified native. It is fixed; helpers + `dll_core_test` BOOLLAYOUT / BOOLNATIVE were red first (2 + 3). The read side and the masked read-back / map / set pins also landed. 4/4 DLL + 6/6 UI mutants killed; UI 4952/4952 |
 | 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262. **Review follow-up:** the read side (post-call readout + return grid) now decodes the bit; 2 red first; 2/2 mutants killed. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** packed bools at a non-zero offset pinned in both decoders; 1/1 mutant killed |
 | 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout`. **Review follow-up:** the call site is pinned in `dll_core_test` BOOLLAYOUT; its mutant was killed |
-| 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** Copy AA Script now runs FIRE's gate (source pin, red first); the gate's Lua shape is pinned; 2/2 mutants killed |
+| 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** Copy AA Script now runs FIRE's gate (source pin, red first); the gate's Lua shape is pinned; 2/2 mutants killed. **Review follow-up 2 (cc430176 + cd73ec38):** the Copy AA pins now match the refusal's shape and the exact skip statement |
 | 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip). **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** Copy AA Script skips struct string members (source pin, red first); 1/1 mutant killed |
 | 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** `ParamTargetType` (FindFunctionsByClassParam) twin fixed, UFUNCWALK `CountClassParams` red first; 1/1 mutant killed; the CPN x 4.11-4.17 delta is recorded as an unmeasured lead |
-| 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** a param past the slab now refuses the whole script (2 red first); the DEBUG return prints are slab-bounded; 2/2 mutants killed; UI 4969/4969 |
-| 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0 |
+| 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** a param past the slab now refuses the whole script (2 red first); the DEBUG return prints are slab-bounded; 2/2 mutants killed; UI 4969/4969. **Review follow-up 2 (cc430176 + cd73ec38):** the untick is pinned to the refusal itself, and a small-ParmsSize row pins the walked span |
+| 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0. **Review follow-up 2 (cc430176 + cd73ec38):** the Lazy alignment regression fixed (2 red first) and 5 missing pins added; 8 DLL + 4 UI mutants killed; UI 4984/4984 |
 | 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976 |
 | 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed |
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981 |
@@ -3917,7 +3975,7 @@ completeness critic.
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 
-**LOW-only batches, after the MEDs** (39):
+**LOW-only batches, after the MEDs** (41):
 - **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - **L02:** `[P1-ENUMNAMES]`
 - **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
@@ -3957,6 +4015,8 @@ completeness critic.
 - **L37:** `[W2-CEGEN-MODAL]` (CE)
 - **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - **L39:** `[A3-COORD-NONFINITE]`
+- **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
+- **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

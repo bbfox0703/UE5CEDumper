@@ -768,8 +768,10 @@ public class AuditL11HonestyTests
         int add = src.IndexOf("list.Add(new BakedParamValue(", at, StringComparison.Ordinal);
         Assert.True(add > at);
 
-        // The struct branch's first row add must be preceded by the string-member skip.
-        Assert.Contains("ParamBufferBuilder.IsStringType(sf.TypeName)", src[at..add], StringComparison.Ordinal);
+        // The struct branch's first row add must be preceded by the string-member skip -- the exact
+        // statement, not just the predicate's name somewhere (review of cd73ec38).
+        Assert.Matches(new System.Text.RegularExpressions.Regex(
+            @"(?m)^\s*if \(ParamBufferBuilder\.IsStringType\(sf\.TypeName\)\) continue;\s*$"), src[at..add]);
     }
 
     [Fact]
@@ -780,7 +782,17 @@ public class AuditL11HonestyTests
         Assert.True(h > 0, "OnCopyBakedScriptClicked not found — re-point this pin");
         int gen = src.IndexOf("BakedScriptGenerator.Generate(", h, StringComparison.Ordinal);
         Assert.True(gen > h);
-        Assert.Contains("TryValidateInputsForInvoke(", src[h..gen], StringComparison.Ordinal);
+        // The call must be a REFUSAL that returns before anything is collected (review of cd73ec38):
+        // `if (!TryValidateInputsForInvoke(out var e)) { ... return; }`, ahead of CollectBakedValues().
+        var body = src[h..gen];
+        var refusal = System.Text.RegularExpressions.Regex.Match(body,
+            @"if\s*\(\s*!TryValidateInputsForInvoke\(out var \w+\)\)\s*\{[\s\S]*?\breturn;\s*\}");
+        Assert.True(refusal.Success, "the gate is not an if-refusal that returns");
+        // The lazy match stops at the FIRST `return; }`. If the refusal lost its return, that would
+        // be a later one -- past the collection -- so the block must not reach CollectBakedValues.
+        Assert.DoesNotContain("CollectBakedValues", refusal.Value, StringComparison.Ordinal);
+        int collect = body.IndexOf("CollectBakedValues()", StringComparison.Ordinal);
+        Assert.True(collect > refusal.Index, "the gate runs after the values are collected");
 
         // ...and the gate is FIRE's shared predicates, not a copied type list.
         int g = src.IndexOf("private bool TryValidateInputsForInvoke(", StringComparison.Ordinal);
