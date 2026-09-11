@@ -248,7 +248,14 @@ public sealed class CoordinateLibraryStore
                 // from .bak (a sharing violation reads as unreadable) the in-memory library the
                 // pre-clear backup was written from is OLDER than this file, and the newest revision
                 // then ended up in no file at all. (review of 2f8d36f8)
-                if (TryRead(path) != null) TryRollToBackup(path, path + ".bak");
+                if (TryRead(path) != null && !TryRollToBackup(path, path + ".bak"))
+                {
+                    // The roll exists to keep this revision; deleting it anyway loses exactly that.
+                    // Refused: the next Load shows the library again. (review of 70f9d372)
+                    _log?.Warn(Constants.LogCatView,
+                        $"CoordinateLibraryStore: {key} could not be backed up to .bak, NOT deleted");
+                    return;
+                }
                 if (File.Exists(path)) File.Delete(path);
             }
             catch (Exception ex)
@@ -286,26 +293,32 @@ public sealed class CoordinateLibraryStore
         }
     }
 
-    /// <summary>Move an unparseable main file aside as <c>&lt;file&gt;.corrupt-&lt;stamp&gt;</c> and keep at
+    /// <summary>COPY an unparseable main file aside as <c>&lt;file&gt;.corrupt-&lt;stamp&gt;</c> and keep at
     /// most <see cref="AtomicFileHygiene.MaxCorruptCopies"/> of them. The copy shares the game's key,
-    /// so it moves and expires with the game's group. The move is deliberately unguarded: see Save.</summary>
+    /// so it moves and expires with the game's group. The copy is deliberately unguarded: see Save.
+    /// A copy, not a move: moved first, a rename that then failed left NO main at all, which Load
+    /// reads as a Clear all. (review of 70f9d372)</summary>
     private void QuarantineUnparseableMain(string key, string path)
     {
         var dir   = Path.GetDirectoryName(path)!;
         var name  = Path.GetFileName(path);
         var aside = Path.Combine(dir, AtomicFileHygiene.QuarantineNameFor(name, DateTime.UtcNow));
-        File.Move(path, aside);
+        File.Copy(path, aside, overwrite: false);
         _log?.Warn(Constants.LogCatView,
             $"CoordinateLibraryStore: {key} main file unreadable, moved aside to " +
             $"{Path.GetFileName(aside)}; the .bak is untouched");
         try
         {
+            // The copy just made is never a prune candidate (a future-stamped copy would outrank it),
+            // and it still counts toward the cap: hence the -1, as in AobUsageService.
+            var fresh = Path.GetFileName(aside);
             var names = Directory.EnumerateFiles(dir, AtomicFileHygiene.CorruptPrefixFor(name) + "*")
                                  .Select(Path.GetFileName)
-                                 .Where(n => !string.IsNullOrEmpty(n))
+                                 .Where(n => !string.IsNullOrEmpty(n)
+                                             && !string.Equals(n, fresh, StringComparison.OrdinalIgnoreCase))
                                  .Select(n => n!);
             foreach (var stale in AtomicFileHygiene.SelectCorruptCopiesToPrune(
-                         names, name, AtomicFileHygiene.MaxCorruptCopies))
+                         names, name, AtomicFileHygiene.MaxCorruptCopies - 1))
                 File.Delete(Path.Combine(dir, stale));
         }
         catch (Exception ex)

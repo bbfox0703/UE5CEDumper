@@ -488,6 +488,58 @@ public class CoordinateLibraryStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_PruningNeverDeletesTheCopyItJustMade()
+    {
+        // (review of 70f9d372) The prune kept the newest N by the stamp's lexicographic order, so a
+        // copy stamped in the FUTURE (clock skew, a file copied off another machine) outranked the one
+        // just made -- and the fresh copy was the one deleted. AobUsageService excludes it; so does this.
+        var path = _store.FilePathFor("game");
+        var dir = Path.GetDirectoryName(path)!;
+        var name = Path.GetFileName(path);
+        for (int i = 1; i <= UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies; i++)
+            File.WriteAllText(Path.Combine(dir, $"{name}.corrupt-2999010{i}-000000000"), "old garbage");
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        CorruptMain("game");
+
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Replaced" }));
+
+        var copies = Directory.GetFiles(dir, name + ".corrupt-*");
+        Assert.Contains(copies, c => File.ReadAllText(c).Contains("this is not json"));   // the fresh one
+        Assert.Equal(UE5DumpUI.Helpers.AtomicFileHygiene.MaxCorruptCopies, copies.Length);  // still bounded
+    }
+
+    [Fact]
+    public void Delete_AfterABakRecovery_DoesNotRollTheCorruptMainOverTheGoodBak()
+    {
+        // (review of 70f9d372) Delete's roll is guarded on the main PARSING, exactly as Save's is; an
+        // unguarded roll would put garbage over the only good copy.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Good" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newer" }));   // .bak = "Good"
+        CorruptMain("game");
+        _store.Load("game");                                                      // recovered from .bak
+
+        _store.Delete("game");
+
+        Assert.Contains("Good", File.ReadAllText(_store.FilePathFor("game") + ".bak"));
+    }
+
+    [Fact]
+    public void Delete_RefusesWhenTheRollFails_SoTheNewestRevisionSurvives()
+    {
+        // (review of 70f9d372) Delete ignored TryRollToBackup's result, so a failed roll still deleted
+        // the one revision the roll existed to keep.
+        _store.Save("game", FileWith(new CoordEntry { Uid = "a", Label = "Older" }));
+        _store.Save("game", FileWith(new CoordEntry { Uid = "b", Label = "Newest" }));  // .bak = "Older"
+        var path = _store.FilePathFor("game");
+
+        using (new FileStream(path + ".bak", FileMode.Open, FileAccess.Read, FileShare.None))
+            _store.Delete("game");                                                  // the roll cannot write .bak
+
+        Assert.True(File.Exists(path));
+        Assert.Contains("Newest", File.ReadAllText(path));
+    }
+
+    [Fact]
     public void Save_StillRollsAGoodMainToBak()
     {
         // The control, green before and after: the rolling backup keeps working. THREE saves, so

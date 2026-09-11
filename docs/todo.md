@@ -2480,6 +2480,11 @@ this is the normal case, not an edge case. Hand-verified at source.
     one before it.
   - The resurrect test also pins that `Delete` keeps `.bak`, so the recorded-unsafe shortcut can no
     longer pass it.
+- ✅ **Second review follow-up 2026-09-11** (the review of 70f9d372).
+  - `Delete` REFUSES when the roll to `.bak` fails: it existed to keep that revision, and deleting it
+    anyway lost exactly that (red first, `.bak` held open). The next Load shows the library again.
+  - Pinned: `Delete`'s roll is guarded on the main PARSING, as `Save`'s is, so a recovered-from-`.bak`
+    session never rolls garbage over the good copy.
 
 ##### ✅ `[A1-COORD-BACKUP]` LOW — after a `.bak` recovery, the one-shot backups copy the corrupt file (FIXED IN SOURCE 2026-09-11)
 
@@ -2529,6 +2534,15 @@ because the load runs with persistence suppressed.
     - `ZTolerance` survives the hand-built copy;
     - the rolling-backup control takes three saves, so a guard that rolls only once cannot pass.
   - 6/6 mutants killed across both rows.
+- ✅ **Second review follow-up 2026-09-11** (the review of 70f9d372).
+  - The corrupt main is COPIED aside now, not moved: moved first, a rename that then failed left NO
+    main, which Load reads as a Clear all.
+    - ⚠ Not unit-reproducible: it needs the rename to fail after the quarantine. Its mutant (move
+      instead of copy) is the one expected survivor of the mutation check, reported as such.
+  - The prune never deletes the copy just made. A future-stamped copy (clock skew, a file from
+    another machine) outranked it, so the fresh one was pruned; it is excluded and counted, as in
+    `AobUsageService` (red first).
+  - 3/3 expected mutants killed; the 4th (move instead of copy) is the documented survivor. UI 5033/5033 (one suite run over the three second-round follow-ups together).
 
 ##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
 
@@ -4124,8 +4138,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0. **Review follow-up 2 (cc430176 + cd73ec38):** the Lazy alignment regression fixed (2 red first) and 5 missing pins added; 8 DLL + 4 UI mutants killed; UI 4984/4984 |
 | 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976. **Review follow-up:** that re-run was killed for Deploy only (every Undeploy test ran with `ThrowOnCancelledRefresh` off, and nothing checked that the post-cancel refresh landed). The Remove flag, a one-game Remove twin, landed-refresh + `ErrorMessage` asserts and the neutral colour are now pinned; Update All's cancel refreshes too (red first); 4/4 mutants killed; UI 5005/5005 |
 | 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed. **Review follow-up:** the pin also refuses an `IsEnabled` on the foreign-overwrite checkbox and on the radios' panel; 2/2 mutants killed |
-| 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981. **Review follow-up:** `Delete` rolls a parseable main to `.bak` first (a transient lock at Load had let Clear all lose the newest revision; red first), and the resurrect test pins that `.bak` survives |
-| 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only. **Review follow-up:** `Save` moves an unparseable main aside (bounded `.corrupt-*` copies) instead of destroying it (red first); pins for the passed-in library, `ZTolerance` and a three-save roll; 6/6 mutants killed across both rows; UI 5009/5009 |
+| 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981. **Review follow-up:** `Delete` rolls a parseable main to `.bak` first (a transient lock at Load had let Clear all lose the newest revision; red first), and the resurrect test pins that `.bak` survives. **Second follow-up:** `Delete` refuses when the roll fails (red first), and its parse guard is pinned |
+| 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only. **Review follow-up:** `Save` moves an unparseable main aside (bounded `.corrupt-*` copies) instead of destroying it (red first); pins for the passed-in library, `ZTolerance` and a three-save roll; 6/6 mutants killed across both rows; UI 5009/5009. **Second follow-up:** the quarantine copies instead of moving, and the prune spares the fresh copy (red first); 3/3 expected mutants killed; the 4th (move instead of copy) is the documented survivor; UI 5033/5033 (one suite run over the three second-round follow-ups together) |
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983. **Review follow-up:** the queued note reads the FINAL result, so a timed-out self-heal retry is reported (red first); pins for `-2` / `-4` and an unpinned `-5`; 3/3 mutants killed; UI 5011/5011. Filed `[W3-DUNSTE-QUEUED]` and `[W3-DEBUGCAM-QUEUED]` |
 | 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed. **Review:** snapshots captured before this build keep NULL enum values for the numeric readers; recorded as a decision, not backfilled (the policy first cited does not cover it, corrected by the review of f023a35a) |
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
