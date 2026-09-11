@@ -324,13 +324,22 @@ static void PollingThreadBody() {
             // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
             //
             // Skipped entirely for the commands CommandRequiresInit() exempts —
-            // today only CMD_FOREGROUND, whose handler is pure Win32 and which the
-            // PIPE path services with no init gate at all. Gating it made the
-            // CE-Lua Keep-Foreground toggle fail with -10 on any game whose AOB
-            // scan fails, and the generated script renders that as "hook error
-            // -10", naming MinHook — a subsystem the command never even reached.
-            // The exemption also skips the auto-init ATTEMPT, so the toggle no
-            // longer pays for a whole-image sweep it does not need. (audit #5 MB2)
+            // CMD_FOREGROUND and CMD_OFFSETS_VERDICT, for two different reasons.
+            //
+            // CMD_FOREGROUND: its handler is pure Win32 and the PIPE path services it
+            // with no init gate at all. Gating it made the CE-Lua Keep-Foreground
+            // toggle fail with -10 on any game whose AOB scan fails, and the generated
+            // script renders that as "hook error -10", naming MinHook — a subsystem the
+            // command never even reached. The exemption also skips the auto-init
+            // ATTEMPT, so the toggle no longer pays for a whole-image sweep it does not
+            // need. (audit #5 MB2)
+            //
+            // CMD_OFFSETS_VERDICT: its answer IS the init state — it reports whether the
+            // offsets were measured, and "no probe has run" is one of the answers. Gating
+            // it would return -10 in exactly the case the caller asked about, and
+            // auto-init would run a whole-image sweep to answer a question about whether
+            // that sweep has happened. ([W5-OFFSETS-MAILBOX]; Mimic.h carries the rule,
+            // and this comment is checked against it by a source pin — [A1-REVIEW6-PINS])
             if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
                 // Init failed — these commands all walk UE reflection.
                 if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {

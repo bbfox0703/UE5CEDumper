@@ -5355,7 +5355,7 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
     string buffers and carries its own refusal text, so folding it in was out of scope for a LOW-risk
     repair; the duplication is recorded rather than hidden.
 
-##### ⬜ `[A1-REVIEW6-PINS]` LOW — two stale decision comments, and a scan gate with no guard-the-guard (found 2026-09-12 by review 6)
+##### ✅ `[A1-REVIEW6-PINS]` LOW — two stale decision comments, and a scan gate with no guard-the-guard (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
 
 - `Mimic.cpp:326` still says the exemption list is *"today only CMD_FOREGROUND, whose handler is pure
   Win32"* after `[W5-OFFSETS-MAILBOX]` added a second exemption whose handler is not; and
@@ -5366,6 +5366,13 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
   asserting the scan matched anything, so renaming the logging entry points it keys on (or adding a
   DLL source in a subdirectory — the enumeration is non-recursive) makes it pass forever. Both sibling
   source scans added in the same range guard their scans explicitly.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L49): both comments now name **both** exemptions and give each
+  its own reason, and the `%ls` gate counts the files it scanned and the log-call lines it recognised.
+  - **Red first for the comments:** a source pin requires both to name `CMD_FOREGROUND and
+    CMD_OFFSETS_VERDICT` and refuses the old text.
+  - **The guard-the-guard passes the moment it is written**, so its red IS the mutation check: one mutant
+    stops the enumeration finding sources, another stops it recognising the loggers, and both turn the
+    gate red. Recorded here because "red first" means something different for a test-gap item.
 
 #### ⛔ REFUTED — do not re-raise (review 6)
 
@@ -5497,6 +5504,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 100 | `[A2-SENTINEL-OVERREAD]` | LOW | `git log --grep A2-SENTINEL-OVERREAD` (batch L46) | Review 6's first confirmed finding. Red first in dll_helpers_test's V1C block: the FString / FName / FText / None spans (16 / 4 / 8 / 0) against an inert helper that claims 16 for every sentinel; the InvokeScriptTests source pin requires `SentinelBytesNeeded` at the gate and refuses the flat `sizeof(v16)` read. 3/3 mutants killed; dll_helpers_test 2752/2752, dll_core_test 327/327; UI 5296/5296 |
 | 101 | `[A2-TOPTIONAL-REFINE]` | MED | `git log --grep A2-TOPTIONAL-REFINE` (batch L47) | Review 6's MED, and the lead L41 recorded without tracing. Red first in dll_core_test **REFINEOPT**: a reset trailing-flag optional and an intrusive unset one are dropped by an Unchanged refine; a SET optional, an intrusive set one and an ordinary leaf survive (three controls). An InvokeScriptTests source pin covers the descriptor stamping. 4/4 mutants killed; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5296/5296. The verifier's two corrections are in the row |
 | 102 | `[A1-VERDICT-STALEMB]` | MED | `git log --grep A1-VERDICT-STALEMB` (batch L48) | Review 6's second MED. One shared `simpleMailboxCall` for both small wrappers, carrying the AA19 latch; `-10` told apart from `-1`. Red first: InvokeScriptTests pins the helper, both call sites, the latch, the latch-aware release and the `dll-not-initialised` branch (the CE helper is Lua, so no test can run it). 4/4 mutants killed; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5297/5297 |
+| 103 | `[A1-REVIEW6-PINS]` | LOW | `git log --grep A1-REVIEW6-PINS` (batch L49) | Review 6's record-keeping half. The init-gate comments in Mimic.cpp and dll_helpers_test name both exemptions (source pin, red first); `DllLogCalls_NeverFormatAWideString` counts its scanned files and matched log lines, so a scan that stops matching fails instead of passing everything. 4/4 mutants killed — two of them the guard-the-guard's own red; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5298/5298 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5786,6 +5794,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L86 | `[A2-SENTINEL-OVERREAD]` | Needs a 5.5+ game with an intrusive `TOptional<FName>` as an object's LAST field, which is rare enough that the offline pins may be the whole story. If one is found: Value Search, FName, Exact the held name — the SET optional is a hit on every instance of the class, not just on those whose allocation is far from a page edge. | a 5.5+ game + UI |
 | L87 | `[A2-TOPTIONAL-REFINE]` | A game with a trailing-flag `TOptional<int32>` (UE4 or pre-5.5 shapes are the common ones): First Scan the held value, then reset the optional in game and run **Next Scan → Unchanged**. The row disappears. Control: with the optional still set, the same Next Scan keeps it. | a game + UI |
 | L88 | `[A1-VERDICT-STALEMB]` | **CE: announce it first.** With the DLL injected, wedge the game thread (a loading screen, or a game that stops ticking unfocused) and call `getOffsetsVerdict()` in CE's Lua Engine until it times out. The NEXT `invokeUFunction(...)` must REFUSE with "the previous mailbox call timed out and the DLL is STILL holding the mailbox", not run. Once the game thread returns, the following call works without a re-inject. | CE + a game |
+| L89 | `[A1-REVIEW6-PINS]` | **None.** Comments and a test guard only — nothing observable on a running game. Recorded so the backlog's row count and the ledger stay in step. | — |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5891,7 +5900,7 @@ completeness critic.
 - ✅ **L46:** `[A2-SENTINEL-OVERREAD]` (found 2026-09-12 by review 6)
 - ✅ **L47:** `[A2-TOPTIONAL-REFINE]` (found 2026-09-12 by review 6)
 - ✅ **L48:** `[A1-VERDICT-STALEMB]` (found 2026-09-12 by review 6) (CE)
-- **L49:** `[A1-REVIEW6-PINS]` (found 2026-09-12 by review 6)
+- ✅ **L49:** `[A1-REVIEW6-PINS]` (found 2026-09-12 by review 6)
 - ✅ **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync

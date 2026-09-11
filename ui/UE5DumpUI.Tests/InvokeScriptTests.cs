@@ -1993,6 +1993,22 @@ public class InvokeScriptTests
         Assert.Contains("if code == -10 then return false, 'dll-not-initialised' end", lua);
     }
 
+    [Fact]
+    public void InitGateComments_NameBothExemptions()
+    {
+        // [A1-REVIEW6-PINS] The gate's own comment is where a maintainer reads how many exemptions there are, and it
+        // said "today only CMD_FOREGROUND" after there were two -- with the second one's handler not Win32 at all.
+        // The test file said "Exactly ONE exemption" directly above an EXPECT for two. Mimic.h was correct, which is
+        // what made these stale rather than old.
+        string mimicCpp = DllSource("Mimic.cpp");
+        Assert.Contains("CMD_FOREGROUND and CMD_OFFSETS_VERDICT", mimicCpp);
+        Assert.DoesNotContain("today only CMD_FOREGROUND", mimicCpp);
+
+        string helpers = DllSource("../tests/dll_helpers_test.cpp");
+        Assert.Contains("Exactly TWO exemptions", helpers);
+        Assert.DoesNotContain("Exactly ONE exemption", helpers);
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -2079,11 +2095,20 @@ public class InvokeScriptTests
         // below its own -- so it is a gate now, not a note. Comment lines are skipped, and so is a WIDE printf, where
         // %ls is right. A format string belongs to the nearest call opened at or above it in the same statement.
         var offenders = new System.Collections.Generic.List<string>();
+        // [A1-REVIEW6-PINS] Guard the guard: a scan that silently matches nothing passes everything. Renaming the
+        // logging entry points below, or adding a DLL source in a subdirectory (this enumeration is NOT recursive),
+        // would leave `offenders` empty and this gate green forever. Both sibling source scans added alongside it
+        // count what they matched; this one did not.
+        int scannedFiles = 0, logCallLines = 0;
         foreach (var path in Directory.EnumerateFiles(DllSrcDir()))
         {
             var ext = Path.GetExtension(path);
             if (ext != ".cpp" && ext != ".h") continue;
+            scannedFiles++;
             var lines = File.ReadAllLines(path);
+            foreach (var probe in lines)
+                if (probe.Contains("Sein::", StringComparison.Ordinal) || probe.Contains("LOG_", StringComparison.Ordinal))
+                    logCallLines++;
             for (int i = 0; i < lines.Length; i++)
             {
                 if (!lines[i].Contains("%ls", StringComparison.Ordinal)) continue;
@@ -2101,6 +2126,14 @@ public class InvokeScriptTests
                 }
             }
         }
+        // 60, not 25: dll/src holds roughly 31 .cpp + 39 .h, so any threshold at or below 31 is met by
+        // the .cpp files ALONE -- and the mutant that drops ".h" from the filter then survives, which
+        // is exactly what it did at 25. A guard against a vacuous scan must itself require both
+        // extensions to be reaching the scan.
+        Assert.True(scannedFiles >= 60,
+                    $"only {scannedFiles} dll/src file(s) scanned -- the enumeration has stopped finding the sources");
+        Assert.True(logCallLines >= 100,
+                    $"only {logCallLines} log-call line(s) matched -- the Sein:: / LOG_ keys no longer name the loggers");
         Assert.True(offenders.Count == 0, "log calls formatting a wide string: " + string.Join(", ", offenders));
     }
 

@@ -1300,8 +1300,11 @@ static void Test_Mimic_CommandRequiresInit() {
     // and the gate is the cheaper refusal.
     EXPECT("an unknown cmd is gated", Mimic::CommandRequiresInit(9999));
 
-    // Exactly ONE exemption across the whole declared command space. A future
-    // handler that quietly adds itself to the exemption list trips this.
+    // Exactly TWO exemptions across the whole declared command space — CMD_FOREGROUND (pure Win32) and
+    // CMD_OFFSETS_VERDICT (its answer IS the init state). A future handler that quietly adds itself to the
+    // exemption list trips this. ⚠ The count and this comment must move together: they said ONE while the
+    // EXPECT below said two, which is how a reader gets the wrong answer from the file that pins it.
+    // [A1-REVIEW6-PINS]
     int exempt = 0;
     for (int32_t c = 0; c <= Mimic::CMD_OFFSETS_VERDICT; ++c)
         if (!Mimic::CommandRequiresInit(c)) ++exempt;
