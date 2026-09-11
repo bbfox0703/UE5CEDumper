@@ -335,6 +335,9 @@ struct ContainerScanStats {
     int32_t classesPrimed    = 0;   // Unique classes touched (cache built)
     int64_t durationMs       = 0;
     bool    deadlineHit      = false;
+    // [P1-SPARSEDELEGATE-REFS] Find References only: sparse delegates whose InvocationList could not be located. Their
+    // bindings are MISSING from the result, not absent from the game, so a sweep with any is not a complete one.
+    int32_t sparseUnlocated  = 0;
 };
 
 // Scan all UObjects' container fields for `addr`. Returns matches where

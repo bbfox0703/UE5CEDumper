@@ -2862,6 +2862,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             if (HasReferences)
             {
+                if (result.Scan is { SparseUnlocated: > 0 } su)   // [P1-SPARSEDELEGATE-REFS] these may not be all
+                    scanSuffix += $"  [{su.SparseUnlocated} sparse delegate(s) unreadable — their bindings are missing]";
                 ReferencesHeader = $"References to {scanName} ({References.Count})" + scanSuffix;
                 StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
                 _log.Info($"FindReferences: {scanAddr} -> {References.Count} matches{scanSuffix}");
@@ -2870,7 +2872,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 ReferencesHeader = $"References to {scanName} (none found)" + scanSuffix;
                 HasReferences = true;  // Show empty panel so user sees scan completed
-                StatusText = "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)" + scanSuffix;
+                StatusText = NoReferencesStatus(result.Scan) + scanSuffix;   // [P1-SPARSEDELEGATE-REFS]
                 _log.Info($"FindReferences: {scanAddr} -> 0 matches{scanSuffix}");
             }
         }
@@ -2883,6 +2885,23 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>[P1-SPARSEDELEGATE-REFS] The status line for a scan that found nothing. Its hint blames the GAME ("a
+    /// non-reflected pointer"), which is honest only after a COMPLETE scan: not after the deadline or a faulted worker
+    /// (the PATTERN-P5 widening), and not when sparse delegates were found whose bindings could not be read -- those
+    /// are missing from the result, not absent from the game. An older DLL sends neither signal and keeps the hint.</summary>
+    internal static string NoReferencesStatus(ContainerScanStats? scan)
+    {
+        var gaps = new List<string>();
+        if (scan is { DeadlineHit: true })
+            gaps.Add("the scan did not finish");
+        if (scan is { SparseUnlocated: > 0 } s)
+            gaps.Add($"{s.SparseUnlocated} sparse delegate(s) could not be read, so their bindings are missing");
+        return gaps.Count == 0
+            ? "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)"
+            : "No references found in what was read — " + string.Join("; ", gaps)
+              + ". That is not evidence that nothing points here.";
     }
 
     [RelayCommand]

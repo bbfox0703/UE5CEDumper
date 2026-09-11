@@ -1368,6 +1368,26 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task FindReferencesToUObjectAsync_ParsesSparseUnlocated()
+    {
+        // [P1-SPARSEDELEGATE-REFS] An additive key (0 from an older DLL); a sweep that skipped any is not complete.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["query_addr"] = "0x100",
+            ["scan"] = new JsonObject
+            {
+                ["objects_scanned"] = 5, ["objects_total"] = 5, ["deadline_hit"] = false, ["sparse_unlocated"] = 3,
+            },
+            ["references"] = new JsonArray(),
+        });
+
+        var r = await CreateService().FindReferencesToUObjectAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, r.Scan!.SparseUnlocated);
+        Assert.False(r.Scan.IsComplete);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesUnreadable()
     {
         // [P1-WALK-UNREADABLE] An additive key, absent from an older DLL (false) -- and not the same verdict as stale.

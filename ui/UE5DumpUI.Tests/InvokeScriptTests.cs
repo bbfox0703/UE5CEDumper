@@ -1820,6 +1820,15 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void FindRefsReply_CarriesSparseUnlocated()
+    {
+        // [P1-SPARSEDELEGATE-REFS] The count rides the scan object every Find References reply already sends. Fern.cpp
+        // reaches no test target.
+        Assert.Contains("scanInfo[\"sparse_unlocated\"] = stats.sparseUnlocated;", DllSource("Fern.cpp"),
+                        StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WalkInstanceReply_CarriesUnreadable_InLeanAndFull()
     {
         // [P1-WALK-UNREADABLE] Like `stale`, the freed-object signal must survive the LEAN contract: a batch export reads

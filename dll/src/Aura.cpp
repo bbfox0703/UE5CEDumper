@@ -3975,6 +3975,9 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // scan.deadlineHit — that gate asks "should I keep spending time", which a fault in an
     // already-finished parallel phase does not answer.)
     bool deadlineHit = scan.incomplete();
+    // [P1-SPARSEDELEGATE-REFS] Sparse delegates the pass below found but could not read. Reported, because a sweep that
+    // skipped any is not complete, and the UI must not blame the game for what we missed.
+    int32_t sparseUnlocated = 0;
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -4052,10 +4055,13 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                         //
                         // The failure here is WORSE than a wrong count: `continue` makes the
                         // binding silently ABSENT from Find Refs, and an absence reads as
-                        // "nothing points here". Keep skipping (there is no per-entry channel
-                        // to report on), but stop doing it silently.
+                        // "nothing points here". There is no per-entry channel to report on, so
+                        // skip -- but COUNT it into the aggregate one: ContainerScanStats carries
+                        // it to the UI, which then neither calls the sweep complete nor blames
+                        // the game for the gap. [P1-SPARSEDELEGATE-REFS]
                         const InvocationListView inv = LocateInvocationList(mcdAddr);
                         if (!inv.found) {
+                            ++sparseUnlocated;
                             LOG_WARN("FindReferences: no coherent sparse InvocationList at "
                                      "0x%llX — this delegate's bindings are MISSING from the "
                                      "results, not absent from the game",
@@ -4107,7 +4113,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         stats->classesPrimed  = classesPrimed;
         stats->durationMs     = static_cast<int64_t>(dt);
         stats->deadlineHit    = deadlineHit;
+        stats->sparseUnlocated = sparseUnlocated;
     }
+    if (sparseUnlocated > 0)
+        LOG_WARN("FindReferencesToUObject: %d sparse delegate(s) had no readable InvocationList — "
+                 "their bindings are MISSING from these results", sparseUnlocated);
     LOG_INFO("FindReferencesToUObject: found %d matches in %lld ms (scanned %d/%d, %d classes with refs, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
              scanned, count, classesPrimed, scan.nthreads, deadlineHit ? ", DEADLINE HIT" : "");

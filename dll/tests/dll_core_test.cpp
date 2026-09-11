@@ -2838,6 +2838,81 @@ int main() {
         check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
     }
 
+    // -- SPARSEREFS-2026-09-12 -- Find References counts the sparse delegates it could not read ----------------------
+    //
+    // ⛔ POOL-FAKING (own pool, last). [P1-SPARSEDELEGATE-REFS] A sparse delegate whose InvocationList cannot be located
+    // was skipped, and the sweep still reported itself complete -- so the UI blamed the game for our gap. A planted
+    // FSparseDelegateStorage map holds two unreadable delegates and one readable one: exactly two must be counted.
+    {
+        blk("SPARSEREFS - the sweep counts the sparse delegates it could not read");
+        ResetCancel();
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+
+        static uint8_t spEntry[2][0x40] = {};
+        memcpy(spEntry[1] + 0x10, "OnHit", 6);
+        static uintptr_t spChunk[3] = { 0, reinterpret_cast<uintptr_t>(spEntry[1]), 0 };
+        static uintptr_t spChunks[2] = { reinterpret_cast<uintptr_t>(spChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(spChunks), 0x10);
+        check("SPARSEREFS setup: the pool resolves the bound function's name", Serie::GetString(1) == "OnHit",
+              Serie::GetString(1).c_str());
+
+        const uint32_t  savedVerSp     = g_cachedUEVersion;
+        const bool      savedCpnSp     = DynOff::bCasePreservingName;
+        const uintptr_t savedStoreSp   = Genau::s_sparseDelegatesCache.load();
+        const bool      savedScannedSp = Genau::s_sparseDelegatesScanned.load();
+        g_cachedUEVersion           = 505;     // the sparse pass is UE 5.0+
+        DynOff::bCasePreservingName = false;   // 8-byte FName: the inner TPair slot is 0x20
+        auto spPutP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto spPut32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        // The readable delegate: InvocationList { Data, Num 1, Max 1 } at +0, one binding naming "OnHit" whose weak
+        // pointer resolves to nothing -- so it is read, and matches no target.
+        alignas(8) static uint8_t spBinding[0x10] = {};
+        spPut32(spBinding, 0x00, -1);    // FWeakObjectPtr.ObjectIndex
+        spPut32(spBinding, 0x08, 1);     // FName "OnHit"
+        alignas(8) static uint8_t spGood[0x20] = {};
+        spPutP(spGood, 0x00, reinterpret_cast<uintptr_t>(spBinding));
+        spPut32(spGood, 0x08, 1);
+        spPut32(spGood, 0x0C, 1);
+        alignas(8) static uint8_t spBad[0x20] = {};   // zeroed: neither candidate offset holds a coherent list
+
+        // The inner map's TPair<FName, TSharedPtr> slots: two unreadable delegates, then the readable one.
+        alignas(8) static uint8_t spInner[3][0x20] = {};
+        for (int k = 0; k < 3; ++k) {
+            spPut32(spInner[k], 0x00, 1);
+            spPutP(spInner[k], 0x08, reinterpret_cast<uintptr_t>(k < 2 ? spBad : spGood));
+        }
+        // The outer map: one 0x60 slot holding the owner, then the inner map's header at +0x08 (inline bits at +0x10).
+        alignas(8) static uint8_t spOwner[0x40] = {};
+        alignas(8) static uint8_t spOuterSlot[0x60] = {};
+        spPutP(spOuterSlot, 0x00, reinterpret_cast<uintptr_t>(spOwner));
+        spPutP(spOuterSlot, 0x08, reinterpret_cast<uintptr_t>(spInner));
+        spPut32(spOuterSlot, 0x08 + 0x08, 3);
+        spPut32(spOuterSlot, 0x08 + 0x10, 0x7);
+        alignas(8) static uint8_t spOuter[0x50] = {};
+        spPutP(spOuter, 0x00, reinterpret_cast<uintptr_t>(spOuterSlot));
+        spPut32(spOuter, 0x08, 1);
+        spPut32(spOuter, 0x10, 0x1);
+        Genau::s_sparseDelegatesCache.store(reinterpret_cast<uintptr_t>(spOuter));
+        Genau::s_sparseDelegatesScanned.store(true);
+        check("SPARSEREFS setup: the resolver returns the planted storage",
+              Genau::FindSparseDelegateStorage() == reinterpret_cast<uintptr_t>(spOuter));
+
+        static uint8_t spTarget[0x40] = {};
+        Aura::ContainerScanStats st;
+        const auto spRefs = Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &st);
+        check("SPARSEREFS setup: a complete, empty sweep of the whole pool",
+              spRefs.empty() && st.objectsTotal == kCount && !st.deadlineHit,
+              std::to_string(st.objectsTotal).c_str());
+        check("SPARSEREFS ⭐: the sweep counts the two unreadable sparse delegates, not the readable one",
+              st.sparseUnlocated == 2, std::to_string(st.sparseUnlocated).c_str());
+
+        Genau::s_sparseDelegatesCache.store(savedStoreSp);
+        Genau::s_sparseDelegatesScanned.store(savedScannedSp);
+        DynOff::bCasePreservingName = savedCpnSp;
+        g_cachedUEVersion           = savedVerSp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

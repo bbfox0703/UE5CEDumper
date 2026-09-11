@@ -119,6 +119,11 @@ public sealed class ContainerScanStats
     public long DurationMs { get; init; }
     public bool DeadlineHit { get; init; }
 
+    /// <summary>[P1-SPARSEDELEGATE-REFS] Find References only: sparse delegates the sweep found but could not read. Their
+    /// bindings are missing from the result, so "none found" beside a non-zero count is not a negative. 0 from an older
+    /// DLL.</summary>
+    public int SparseUnlocated { get; init; }
+
     /// <summary>
     /// The recursive DEEP descent ran (the shallow pass found nothing and the caller
     /// opted in via <c>container_depth &gt; 1</c>). It matters to the reader because the
@@ -130,7 +135,7 @@ public sealed class ContainerScanStats
     /// </summary>
     public bool DeepScan { get; init; }
 
-    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal;
+    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal && SparseUnlocated == 0;
 }
 
 /// <summary>

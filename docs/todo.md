@@ -2166,7 +2166,7 @@ code**, which is the behaviour the brief asked for.
      never retries fill-gaps on it.
    - **Tests, red first:** a dll_core_test walk of a reserved, uncommitted page (a readable control), the
      parse, a Fern pin that the key is not lean-gated, and the VM status. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204.
-5. ⬜ **`[P1-SPARSEDELEGATE-REFS]`** `Aura.cpp:3966`. Find References silently drops sparse-delegate
+5. ✅ **`[P1-SPARSEDELEGATE-REFS]`** (FIXED IN SOURCE 2026-09-12, batch L08) `Aura.cpp:3966`. Find References silently drops sparse-delegate
    bindings whose InvocationList cannot be located and reports a complete, clean sweep
    (`deadline_hit=false`) — so when that binding was the only reference, Live Walker says *"No
    references found — likely held by a non-reflected pointer"*, blaming the game for our gap. An
@@ -2174,6 +2174,16 @@ code**, which is the behaviour the brief asked for.
    ⚠ *Widened 2026-09-10 (`[PATTERN-P5-2026-09-10]`): the same hint also prints on a PARTIAL scan,
    i.e. `deadline_hit=true` from a deadline or a worker fault (`LiveWalkerViewModel.cs:2694`). One fix
    covers both: never blame the game unless the scan was complete.*
+   ✅ **FIXED IN SOURCE 2026-09-12, both paths** (batch L08).
+   - The DLL counts the unreadable delegates into the aggregate channel,
+     `ContainerScanStats.sparseUnlocated`, and the reply publishes it as `scan.sparse_unlocated`.
+   - The UI parses it, and `IsComplete` honours it.
+   - The empty-result status blames the game only after a COMPLETE scan: no deadline, no faulted worker,
+     no unreadable delegate. Otherwise it says what was missed.
+   - A non-empty result names the unreadable delegates too.
+   - **Tests, red first:** a dll_core_test sweep over a planted sparse-delegate map (two unreadable
+     delegates and one readable one; exactly two counted), the parse, a Fern pin, the status rule, and
+     both Live Walker status lines. 9/9 mutants killed; dll_core_test 291/291; UI 5212/5212.
 6. ✅ **`[P1-SEETHRU-NOPRODUCER]`** (FIXED IN SOURCE 2026-09-12, batch L05) `Schlacht.cpp:361` (+ `:443`). On a build missing
    `SetActorHiddenInGame`, `LineTraceSingle` or `KismetSystemLibrary`, or when a hit cannot be
    resolved to an actor, See-through does **nothing at all** — and Tick still ends `STR_OK` with
@@ -2982,6 +2992,7 @@ not measured.
     `:2694` still says *"No references found — likely held by a non-reflected pointer"*, blaming the
     game for a scan that did not finish. `[P1-SPARSEDELEGATE-REFS]` records the same wrong blame on
     the `deadline_hit=false` path. Its fix should also suppress the hint whenever `DeadlineHit` is set.
+    ✅ It does: batch L08 put both paths under one status rule.
 
 ##### Tools and records corrected on the way
 
@@ -5004,6 +5015,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 59 | `[P1-SEETHRU-NOPRODUCER]` + `[P1-SEETHRU-GIVEUP]` | LOW | `git log --grep P1-SEETHRU-NOPRODUCER` (batch L05) | the UI (the VM card for a -3 refusal, an abandoned and a pending restore; the parse) and source pins for Schlacht.cpp / Fern.cpp, red first. 9/9 mutants killed; UI 5183/5183. Refused at ENABLE, the recorded shape; the per-hit case stays out |
 | 60 | `[P1-UPROP-DELEGATE]` | LOW | `git log --grep P1-UPROP-DELEGATE` (batch L06) | dll_core_test, red first: a UProperty-mode walk over a refusing delegate array and a refusing multicast array. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195. The recorded safe fix, copied verbatim from the FProperty twins |
 | 61 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | LOW | `git log --grep P1-WALK-UNREADABLE` (batch L07) | dll_core_test (an unreadable walk is marked; a readable control), the parse, a Fern lean/full pin, and the Live Walker status on a re-root (freed, freed with a way back, unreadable) plus the compose rule, red first. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204. Its own key, not folded into `stale`; composed, never overwritten |
+| 62 | `[P1-SPARSEDELEGATE-REFS]` (+ the PATTERN-P5 widening) | LOW | `git log --grep P1-SPARSEDELEGATE-REFS` (batch L08) | dll_core_test (a planted sparse-delegate map: two unreadable delegates counted, the readable one not), the parse, a Fern pin, the status rule, and both Live Walker status lines, red first. 9/9 mutants killed; dll_core_test 291/291; UI 5212/5212. Aggregate channel only: no per-entry wire change |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5173,6 +5185,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L47 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | A connected game and Live Walker:
 1. **Unreadable:** open an object, let the game destroy it (a projectile, a UI widget that closes), then Refresh or re-open its address from the Go box. The status reads "⚠ This object is no longer readable (freed?)", not a blank grid.
 2. **Freed across a re-root:** re-open a recycled address from the Go box or a cross-tab handoff after browsing elsewhere. The status keeps the freed/recycled warning AND "← Back returns to …". | a game + UI |
+| L48 | `[P1-SPARSEDELEGATE-REFS]` | A UE 5.x game with sparse delegates, e.g. an actor bound through `OnActorBeginOverlap`:
+1. Run Find References on an object bound only through a sparse delegate. With a readable storage the binding is listed; the `offsets` log line "had no readable InvocationList" names any delegate that was not read.
+2. When that line appears, or the scan hits its deadline, the status must not say "likely held by a non-reflected pointer". | a UE5 game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5238,7 +5253,7 @@ completeness critic.
 - ✅ **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - ✅ **L06:** `[P1-UPROP-DELEGATE]`
 - ✅ **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
-- **L08:** `[P1-SPARSEDELEGATE-REFS]`
+- ✅ **L08:** `[P1-SPARSEDELEGATE-REFS]`
 - **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
 - **L10:** `[A2-LAZY-LATCH-GUESS]`
 - **L11:** `[A2-CRC-PATH-LS]`

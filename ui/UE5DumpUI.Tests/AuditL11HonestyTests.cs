@@ -98,6 +98,66 @@ public class AuditL11HonestyTests
     public void ComposeReRootStatus_NeverDropsEitherHalf(string walk, string hint, string expected)
         => Assert.Equal(expected, LiveWalkerViewModel.ComposeReRootStatus(walk, hint));
 
+    // ══ [P1-SPARSEDELEGATE-REFS] -- Find References blames the game only after a complete scan ══
+    //
+    // A sparse delegate whose bindings the DLL could not read was skipped, and the sweep still called itself complete,
+    // so "No references found — likely held by a non-reflected pointer" blamed the game for our gap. The same hint
+    // printed over a scan that hit its deadline (the PATTERN-P5 widening).
+
+    private sealed class RefsStub : StubDumpService
+    {
+        public FindReferencesResult Result { get; set; } = new();
+        public override Task<FindReferencesResult> FindReferencesToUObjectAsync(
+            string addr, int maxResults = 32, CancellationToken ct = default) => Task.FromResult(Result);
+    }
+
+    private static LiveWalkerViewModel RefsWalker(FindReferencesResult result)
+    {
+        var vm = new LiveWalkerViewModel(new RefsStub { Result = result }, new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        return vm;
+    }
+
+    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0) => new()
+    {
+        ObjectsScanned = 10, ObjectsTotal = 10, DurationMs = 5, DeadlineHit = deadline, SparseUnlocated = unlocated,
+    };
+
+    [Theory]
+    [InlineData(false, 0, true)]
+    [InlineData(true, 0, false)]
+    [InlineData(false, 2, false)]
+    [InlineData(true, 2, false)]
+    public void NoReferencesStatus_BlamesTheGameOnlyAfterACompleteScan(bool deadline, int unlocated, bool blames)
+        => Assert.Equal(blames, LiveWalkerViewModel.NoReferencesStatus(RefScan(deadline, unlocated))
+                                    .Contains("non-reflected", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task FindRefs_None_WithUnreadableSparseDelegates_DoesNotBlameTheGame()
+    {
+        var vm = RefsWalker(new FindReferencesResult { Scan = RefScan(unlocated: 2) });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("non-reflected", vm.StatusText);
+        Assert.Contains("2 sparse delegate(s)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FindRefs_Found_WithUnreadableSparseDelegates_SaysSomeMayBeMissing()
+    {
+        var vm = RefsWalker(new FindReferencesResult
+        {
+            References = new List<ReferenceMatch> { new() { OwnerAddress = "0x2000", OwnerName = "Owner", FieldName = "Target" } },
+            Scan = RefScan(unlocated: 1),
+        });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 sparse delegate(s) unreadable", vm.StatusText);
+    }
+
     private static LiveWalkerViewModel MakeWalker()
     {
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),

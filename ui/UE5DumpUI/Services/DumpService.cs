@@ -975,6 +975,7 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                SparseUnlocated = scanNode["sparse_unlocated"]?.GetValue<int>() ?? 0,   // [P1-SPARSEDELEGATE-REFS]
             };
         }
 
