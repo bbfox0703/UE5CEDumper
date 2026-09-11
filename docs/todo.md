@@ -4415,7 +4415,7 @@ This is a P4-CONTAINER-BASE twin that P8 could not see, because `PtrAddress` IS 
   - **Red → green:** `Refresh_PointerGainsATarget_ShowsTheDrillButton` failed first (no
     `IsPointerNavigation` notification), then passed.
 
-##### `[A3-RECYCLE-GUID-FAILOPEN]` LOW — `RecycleBinPolicy` says a failed volume-GUID lookup fails closed; it fails open
+##### ✅ `[A3-RECYCLE-GUID-FAILOPEN]` LOW — `RecycleBinPolicy` says a failed volume-GUID lookup fails closed; it fails open (FIXED IN SOURCE 2026-09-12)
 
 `RecycleBinPolicy.cs:75`/`:78-85`. On a failed lookup the per-volume value is null. `IsDisabled` tests
 `== 1`, so null reads as "bin enabled", and the verdict rests on `SHQueryRecycleBin` alone, which the
@@ -4427,6 +4427,13 @@ while the UI says "moved to the Recycle Bin", which is the B13/B41 false claim. 
 - ✅ **Safe fix:** refuse only when the lookup failed AND the per-volume flag would decide: no
   NoRecycleFiles policy, and `UseGlobalSettings != 1`.
 - ⛔ **Unsafe:** refusing unconditionally, or changing null semantics inside `IsDisabled`.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L38), the recorded safe fix. The failed lookup travels as its own fact,
+  `volumeLookupFailed`; null semantics are untouched.
+  - `IsDisabled` refuses on it only where the per-volume flag would decide: no policy, and not `UseGlobalSettings`.
+  - `WindowsPlatformService` passes `volumeLookupFailed: guid.Length == 0`.
+  - The two false docs are corrected: `VolumeGuidFromVolumeName`'s and `ReadDword`'s "null is load-bearing".
+  - **Red first:** a failed lookup fails closed where the volume flag decides; under the global setting or a policy it
+    changes nothing (control); a source pin checks the caller.
 
 ##### `[A3-COORD-NONFINITE]` LOW — a coordinate CSV / Lua import stores `NaN` / `Infinity` / `1e400` as 0 without a word
 
@@ -5239,6 +5246,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 86 | `[W3-DIP-PIXELS]` | LOW | `git log --grep W3-DIP-PIXELS` (batch L31) | WindowRestoreStateTests, red first, with AF21's 3840 px / 225% / x=-1707 geometry: a position reachable in physical pixels is kept, and a genuinely off-screen one (x=-2809) is still rejected (control). A source pin checks that ManagedDialogWindow pushes `SetScale(RenderScaling)` with every `SetScreens`. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5261/5261 |
 | 87 | `[P8-BOOKMARK-TIP]` | LOW | `git log --grep P8-BOOKMARK-TIP` (batch L34) | BookmarkTests, red first: re-saving into an occupied slot raises `TooltipText`, and the hover names the new target. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5262/5262. `BookmarkSlot_SetSameValue_DoesNotNotify` still holds |
 | 88 | `[A1-LOG-RESUME]` | LOW | `git log --grep A1-LOG-RESUME` (batch L35) | LogRetentionTests, red first: rolled `-0_NNN.log` files beside a `-0.log`, or alone, are archived at startup oldest first; another category's are untouched. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5264/5264. Residual: the in-session compression rule, not built |
+| 89 | `[A3-RECYCLE-GUID-FAILOPEN]` | LOW | `git log --grep A3-RECYCLE-GUID-FAILOPEN` (batch L38) | RecycleBinPolicyTests, red first: a failed volume-GUID lookup fails closed where the per-volume flag would decide; `UseGlobalSettings` or a policy still decides on its own (control); a source pin checks the platform caller. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5267/5267 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5497,6 +5505,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L74 | `[A1-LOG-RESUME]` | UI only:
 1. Leave a `pipe-0_00N.log` in the UI's log folder. Generate one with a >8 MB session, or copy one in.
 2. Start the UI. The file is archived under its own date, and the session writes `pipe-0.log`. | UI only |
+| L75 | `[A3-RECYCLE-GUID-FAILOPEN]` | Needs a SUBST or RAM-disk volume. This path is unmeasured, and this check measures it.
+1. `subst X: <dir>`, and put a leftover proxy DLL there.
+2. Run Proxy Deploy's cleanup. It refuses to "recycle" the DLL, failing closed, instead of claiming "moved to the Recycle Bin".
+3. On a normal fixed volume, the DLL is still recycled. | UI + a SUBST volume |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5592,7 +5604,7 @@ completeness critic.
 - ✅ **L35:** `[A1-LOG-RESUME]`
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
 - **L37:** `[W2-CEGEN-MODAL]` (CE)
-- **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
+- ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)

@@ -51,12 +51,15 @@ public static class RecycleBinPolicy
     /// <param name="useGlobalSettings">HKCU <c>BitBucket\UseGlobalSettings</c>, or null.</param>
     /// <param name="globalNukeOnDelete">HKCU <c>BitBucket\NukeOnDelete</c>, or null.</param>
     /// <param name="volumeNukeOnDelete">HKCU <c>BitBucket\Volume\{guid}\NukeOnDelete</c>, or null.</param>
+    /// <param name="volumeLookupFailed">[A3-RECYCLE-GUID-FAILOPEN] True when the volume-GUID lookup failed, so
+    /// <paramref name="volumeNukeOnDelete"/> could not be read at all -- a different fact from "absent".</param>
     public static bool IsDisabled(
         int? policyNoRecycleFilesMachine,
         int? policyNoRecycleFilesUser,
         int? useGlobalSettings,
         int? globalNukeOnDelete,
-        int? volumeNukeOnDelete)
+        int? volumeNukeOnDelete,
+        bool volumeLookupFailed = false)
     {
         // 1. Group Policy ("Do not move deleted files to the Recycle Bin") outranks
         //    everything and applies to every volume. Machine before user: an admin-set
@@ -72,16 +75,23 @@ public static class RecycleBinPolicy
 
         // 3. Otherwise the per-volume flag decides. This is the case the original probe
         //    missed entirely.
+        //
+        //    [A3-RECYCLE-GUID-FAILOPEN] ...and when that flag could not be READ -- the volume-GUID lookup failed
+        //    (SUBST, RAM-disk-style volumes) -- fail CLOSED. Null means "absent", and absent reads as "bin enabled",
+        //    which left the verdict to SHQueryRecycleBin: measured blind to NukeOnDelete. Refusing a delete that
+        //    would have worked is recoverable; a permanent delete reported as "moved to the Recycle Bin" is not.
+        //    Only here: a policy or the global setting above decides without the volume flag.
+        if (volumeLookupFailed) return true;
         return volumeNukeOnDelete == 1;
     }
 
     /// <summary>
     /// Extract the <c>{guid}</c> that keys the per-volume Recycle Bin settings from the
     /// volume name <c>GetVolumeNameForVolumeMountPoint</c> returns
-    /// (<c>\\?\Volume{...}\</c>). Returns "" when the input is not that shape, and the
-    /// caller must then treat the per-volume value as ABSENT rather than as zero —
-    /// guessing "enabled" from a failed lookup is how a disabled volume would slip back
-    /// through.
+    /// (<c>\\?\Volume{...}\</c>). Returns "" when the input is not that shape. The caller must
+    /// then pass <c>volumeLookupFailed</c> to <see cref="IsDisabled"/>: an ABSENT value reads as
+    /// "enabled", so treating a failed lookup as absent is exactly how a disabled volume slipped
+    /// back through [A3-RECYCLE-GUID-FAILOPEN].
     /// </summary>
     public static string VolumeGuidFromVolumeName(string? volumeName)
     {
