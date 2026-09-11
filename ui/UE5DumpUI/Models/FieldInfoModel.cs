@@ -7,6 +7,11 @@ namespace UE5DumpUI.Models;
 public sealed class FieldInfoModel
 {
     public string Address { get; init; } = "";
+    /// <summary>[W4-HEXSORT] <see cref="Address"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong AddressValue =>
+        ulong.TryParse(Address.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
     public string Name { get; init; } = "";
     public string TypeName { get; init; } = "";
     public int Offset { get; init; }

@@ -36,6 +36,11 @@ public sealed class ContainerHop
 public sealed class ContainerMatch
 {
     public string OwnerAddress { get; init; } = "";
+    /// <summary>[W4-HEXSORT] <see cref="OwnerAddress"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong OwnerAddressValue =>
+        ulong.TryParse(OwnerAddress.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
     public int OwnerIndex { get; init; }
     public string OwnerName { get; init; } = "";
     public string OwnerClassName { get; init; } = "";

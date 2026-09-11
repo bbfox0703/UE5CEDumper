@@ -49,6 +49,11 @@ public partial class LiveWalkerPanel : UserControl
             ["DisplayValue"] = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.DisplayValue),
             ["TypeName"]     = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.TypeName),
             ["Offset"]       = DataGridSortComparers.Number<LiveFieldValue>(r => r.Offset),
+            // [W4-HEXSORT] The two address columns sort NUMERICALLY. Both are binding-rooted, so they wired nothing and
+            // the default sort ordered the hex TEXT ("0x9" after "0x10"). "HexValue" stays text on purpose: a raw byte
+            // dump in memory order, for which text order IS memcmp order.
+            ["FieldAddress"] = DataGridSortComparers.Hex<LiveFieldValue>(r => r.FieldAddressValue),
+            ["PtrAddress"]   = DataGridSortComparers.Hex<LiveFieldValue>(r => r.PtrAddressValue),
         };
 
     // FunctionGrid's "Params" column (audit #5 AF20). This file wired 1 of its 3
@@ -57,11 +62,20 @@ public partial class LiveWalkerPanel : UserControl
     // syntax, which is a reflection binding rather than a compiled one — so nothing
     // roots NumParms and the header was inert in the shipped trimmed build. The
     // third grid (the reverse-lookup results) binds and sorts on the same path for
-    // every column, so it is rooted and needs no dictionary.
+    // every column, so it is rooted -- but rooted is not ORDERED: its Owner Addr column
+    // sorted the hex text until [W4-HEXSORT], and now has ReferencesSortComparers.
     private static readonly IReadOnlyDictionary<string, IComparer> FunctionsSortComparers =
         new Dictionary<string, IComparer>
         {
             ["NumParms"] = DataGridSortComparers.Number<FunctionInfoModel>(r => r.NumParms),
+            ["Address"]  = DataGridSortComparers.Hex<FunctionInfoModel>(r => r.AddressValue),   // [W4-HEXSORT]
+        };
+
+    // [W4-HEXSORT] Find Refs' Owner Addr, numerically.
+    private static readonly IReadOnlyDictionary<string, IComparer> ReferencesSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["OwnerAddress"] = DataGridSortComparers.Hex<ReferenceMatch>(r => r.OwnerAddressValue),
         };
 
     // Audit fix #18: track the currently-subscribed VM so we can `-=` from
@@ -76,6 +90,7 @@ public partial class LiveWalkerPanel : UserControl
         InitializeComponent();
         this.FindControl<DataGrid>("FieldGrid")?.WireSortComparers(FieldsSortComparers);
         this.FindControl<DataGrid>("FunctionGrid")?.WireSortComparers(FunctionsSortComparers);
+        this.FindControl<DataGrid>("ReferencesGrid")?.WireSortComparers(ReferencesSortComparers);
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttached;
         DetachedFromVisualTree += OnDetached;

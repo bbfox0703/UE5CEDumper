@@ -63,6 +63,20 @@ public class DataGridSortComparersTests
     }
 
     [Fact]
+    public void AddressAccessors_ReadTheDisplayedHex_AsAnUnsignedNumber()
+    {
+        // [W4-HEXSORT] The Hex comparer is only as right as the ulong it is handed.
+        Assert.Equal(0x7FF612345678UL, new UE5DumpUI.Models.ReferenceMatch { OwnerAddress = "0x7FF612345678" }.OwnerAddressValue);
+        Assert.Equal(0x1000UL, new UE5DumpUI.Models.ContainerMatch { OwnerAddress = "0x1000" }.OwnerAddressValue);
+        Assert.Equal(0x200UL, new UE5DumpUI.Models.FunctionInfoModel { Address = "0x200" }.AddressValue);
+        Assert.Equal(0xABCUL, new UE5DumpUI.Models.FieldInfoModel { Address = "0xabc" }.AddressValue);
+        var f = new UE5DumpUI.Models.LiveFieldValue { FieldAddress = "0x10", PtrAddress = "0x7FF600000000" };
+        Assert.Equal(0x10UL, f.FieldAddressValue);
+        Assert.Equal(0x7FF600000000UL, f.PtrAddressValue);
+        Assert.Equal(0UL, new UE5DumpUI.Models.LiveFieldValue().PtrAddressValue);   // "" -> 0: sorts first
+    }
+
+    [Fact]
     public void Hex_OrdersByUnsignedValue()
     {
         IComparer c = DataGridSortComparers.Hex<Row>(r => r.H);

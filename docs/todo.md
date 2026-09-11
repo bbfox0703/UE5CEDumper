@@ -1613,7 +1613,7 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
      still said only the class search fills it and the lookup clears it. It now says the lookup
      REPLACES it, and names `_hasActiveClassSearch` as the "is a class search active" signal. Doc only.
 
-**LOW** — 1 row: `[W4-HEXSORT]` nine address/hex `DataGrid` columns in this cluster sort as **text**
+**LOW** — 1 row: ✅ `[W4-HEXSORT]` (FIXED IN SOURCE 2026-09-12, batch L32: the seven ADDRESS columns sort numerically through a `ulong` accessor and `DataGridSortComparers.Hex`, and so does an eighth outside the cluster, Class / Struct's field Address, which the new address-column pin found. The two `HexValue` columns stay text: each is a raw byte dump in memory order, where text order is memcmp order and the refuted ulong parse fails, and they are exempted with that reason. Red first) nine address/hex `DataGrid` columns in this cluster sort as **text**
 (`InstanceFinderPanel.axaml:226/:136/:388/:391`, `LiveWalkerPanel.axaml:651/:654/:657/:455/:930`).
 
 ---
@@ -5262,6 +5262,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 90 | `[A3-COORD-NONFINITE]` | LOW | `git log --grep A3-COORD-NONFINITE` (batch L39) | CoordCsvCodecTests + CoordLuaParserTests, red first: `NaN`, `Infinity`, `-Infinity` and `1e400` in a CSV row, and `x=1e400` in a Lua entry, are rejected and visible, not stored as the origin. 1/1 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5272/5272 |
 | 91 | `[W2-CEGEN-MODAL]` | LOW | `git log --grep W2-CEGEN-MODAL` (batch L37) | ProtectionScriptGeneratorTests + DebugCameraScriptGeneratorTests, red first: `[DISABLE]` contains no `showMessage` but still has a `dbg` reason, and `[ENABLE]` still announces and unticks (control). 6/6 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5276/5276. Scoped to the two named generators; no repo-wide `[DISABLE]` pin was added |
 | 92 | `[A2-CABI-TELEPORT-PARENTREL]` | LOW | `git log --grep A2-CABI-TELEPORT-PARENTREL` (batch L44) | InvokeScriptTests source pin, red first: three `...Ex` exports carry `int32_t* outParentRelative` from `GetPose`'s flag and `m.ParentRelative`; the original signatures are unchanged. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5277/5277. The export count is 60 → 63. Residual: BugItGo ignores the stored flag |
+| 93 | `[W4-HEXSORT]` | LOW | `git log --grep W4-HEXSORT` (batch L32) | DataGridSortWiringTests adds a fourth rule, red first: every address-like sortable column must have `DataGridSortComparers.Hex` wired, even when its Binding roots it. Two `HexValue` exemptions carry reasons, with a stale-exemption check. DataGridSortComparersTests pins the five new `ulong` accessors. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5279/5279. The pin found a tenth column outside the cluster (Class / Struct's field Address), fixed here too |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5533,6 +5534,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. On foot, the flag reads 0.
 3. Save a marker while attached. `UE5_TeleportGetMarkerEx` returns the same flag.
 4. The three original getters still return the same values as before. | CE + a vehicle/mount game |
+| L79 | `[W4-HEXSORT]` | A game and the UI:
+1. Sort each Address column (Instance Finder's instances, container matches and fields; Live Walker's field Address and Ptr, Find Refs' Owner Addr and Functions' Address; Class / Struct's field Address) on a result set that mixes 12- and 13-character addresses. The order is numeric.
+2. The Hex column still sorts as text, which is memory order. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5622,7 +5626,7 @@ completeness critic.
 - ✅ **L29:** `[W2-DEADSCAN-LOADMORE]`
 - ✅ **L30:** `[W3-CAP-NOSAVE]`
 - ✅ **L31:** `[W3-DIP-PIXELS]`
-- **L32:** `[W4-HEXSORT]`
+- ✅ **L32:** `[W4-HEXSORT]`
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
 - ✅ **L34:** `[P8-BOOKMARK-TIP]`
 - ✅ **L35:** `[A1-LOG-RESUME]`

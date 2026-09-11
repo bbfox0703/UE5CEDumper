@@ -598,6 +598,16 @@ public sealed partial class LiveFieldValue : ObservableObject
 
     /// <summary>Absolute memory address of this field (instance base + offset). Set by ViewModel.</summary>
     [ObservableProperty] private string _fieldAddress = "";
+    /// <summary>[W4-HEXSORT] <see cref="FieldAddress"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong FieldAddressValue =>
+        ulong.TryParse(FieldAddress.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
+    /// <summary>[W4-HEXSORT] <see cref="PtrAddress"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong PtrAddressValue =>
+        ulong.TryParse(PtrAddress.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
 
     /// <summary>
     /// Where this field's PAYLOAD starts — <see cref="FieldAddress"/> plus
