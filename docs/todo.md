@@ -3626,7 +3626,7 @@ claims not kept**, the same shape as A1 (5/6) and A2 (7/9).
   reachable from all three and 89 from two or more. The in-band multi-exit functions were compared and
   **only `[A3-ST1-SUPER-DRAIN]` survived**. P3 on the transports is now bounded.
 
-##### ⛔ `[A3-ST1-SUPER-DRAIN]` MED — ST1's fail-open direct call still re-enters our ProcessEvent detour, and drains the invoke queue off the game thread
+##### ✅ `[A3-ST1-SUPER-DRAIN]` MED — ST1's fail-open direct call still re-enters our ProcessEvent detour, and drains the invoke queue off the game thread (FIXED IN SOURCE 2026-09-12)
 
 `Frieren.cpp:2261-2279`. `Mimic` auto-routes any `Native|Static` UFunction to
 `UE5_CallProcessEventDirect` (`Mimic.cpp:641`/`:702`). When the instance's class overrides ProcessEvent,
@@ -3651,6 +3651,20 @@ the address MinHook patched. So `HookedProcessEvent` runs on the mailbox thread 
 - **Live confirmation, which needs CE — ask first:** `tools/verify/st1_queued_drain_sideeffect.py` with
   a frozen game thread, a queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an
   actor. `bHidden` flips while the thread is frozen.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch B30). No contract bump.
+  - `Stark::CallAddressAsOwnSEH` holds `OwnPeCallGuard` in its own (outer) frame and calls the resolved
+    address through `CallAddressSEH`'s `__try` frame (MSVC C2712), exactly the shape of
+    `CallOriginalSEH`.
+  - `UE5_CallProcessEventDirect`'s fail-open branch calls it, so an override's `Super::ProcessEvent` that
+    re-enters our detour now finds `InOwnPeCall()` true and does not drain.
+  - None of the harmful fixes landed: not the trampoline, not a queue, and the guard is not set inside
+    `CallProcessEventSEH`, so the legitimate game-thread drain is untouched.
+  - **Test, red first:** a source pin in `InvokeScriptTests` (the `ClassListCapTests` pattern: no test
+    target compiles Frieren.cpp or Stark.cpp). The fail-open branch must go through the helper with no
+    raw call left, and the helper must hold the guard and keep the `__try` in a separate frame.
+    2/2 mutants killed; UI 5135/5135.
+  - ⚠ The pin reads source, so it proves the shape, not the runtime behaviour. The live confirmation
+    above (CE, announce first) is the backlog check.
 
 ##### ✅ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI (FIXED IN SOURCE 2026-09-11)
 
@@ -4630,6 +4644,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 47 | `[W4-STRIDE-TENTATIVE]` | MED | `git log --grep W4-STRIDE-TENTATIVE` (batch B27) | dll_core_test (re-inits over throwaway arrays: detected, tentative, undetected, forced, and the reset at entry) and the UI (parse, badge, dump stamp) red first against inert accessors. 12/12 mutants killed; dll_core_test 237/237; UI 5129/5129. Its own field, not a fourth layout mode |
 | 48 | `[A3-B30-STALE-FLAG]` | MED | `git log --grep A3-B30-STALE-FLAG` (batch B28) | one ordering pin per shipped artifact (generator + `.CT`), red first: the serving branch clears the flag before its untick. 2/2 mutants killed; UI 5134/5134. The recorded safe fix; no contract bump |
 | 49 | `[W3-DUNSTE-QUEUED]` | MED | `git log --grep W3-DUNSTE-QUEUED` (batch B31) | dll_helpers_test red first against the pre-fix mapping: -5 is Queued, and a queued request commits; the other codes stay Refused. 2/2 mutants killed; dll_helpers_test 2708/2708; UI 5134/5134 |
+| 50 | `[A3-ST1-SUPER-DRAIN]` | MED | `git log --grep A3-ST1-SUPER-DRAIN` (batch B30) | a source pin, red first: the fail-open branch goes through `Stark::CallAddressAsOwnSEH`, which holds the own-PE-call mark in an outer frame. 2/2 mutants killed; UI 5135/5135. The recorded safe fix; no contract bump |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4750,6 +4765,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. The DLL log reads "QUEUED (rc=-5 …)", not "NOT applied".
 3. Still in the UI, untick Noclip (or turn Fly off). Return to the game.
 4. **The pawn must stand on the floor:** collision ends ON, and both requests drain in order. | a game + UI; no CE |
+| L36 | `[A3-ST1-SUPER-DRAIN]` | **CE: announce first.** Run `tools/verify/st1_queued_drain_sideeffect.py` with the game thread frozen:
+1. Queue a `SetActorHiddenInGame`.
+2. Make a mailbox static-native invoke on an actor, e.g. `APawn::GetMovementBaseActor`.
+3. **`bHidden` must NOT flip while the thread is frozen.** The queued request runs only when the game thread drains. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4803,7 +4822,7 @@ completeness critic.
 | ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
-| ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
+| ✅ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 | ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
 

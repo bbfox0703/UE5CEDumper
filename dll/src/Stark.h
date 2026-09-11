@@ -174,8 +174,15 @@ bool HasOriginal();
 /// nested dispatch that DOES re-enter the detour is recognised as ours.
 int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
-/// True while this thread is inside CallOriginalSEH.
+/// True while this thread is inside CallOriginalSEH or CallAddressAsOwnSEH.
 bool InOwnPeCall();
+
+/// [A3-ST1-SUPER-DRAIN] Call a resolved ProcessEvent address that is NOT the hooked one -- a class's own
+/// override -- with the same SEH protection and the same "inside our own PE call" mark as CallOriginalSEH.
+/// An override (every AActor's) calls Super::ProcessEvent, which IS the patched address, so an unmarked
+/// call re-entered our detour off the game thread and drained the invoke queue there.
+/// Returns 0 on success, -3 on a null address, -4 on an SEH exception.
+int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 /// Should a caller that resolved `resolvedPeAddr` out of an instance's vtable
 /// route through the trampoline instead of calling that address directly?

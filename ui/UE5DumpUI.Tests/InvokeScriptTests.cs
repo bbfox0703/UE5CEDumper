@@ -1808,6 +1808,42 @@ public class InvokeScriptTests
         Assert.Equal(CeMailboxLayout.ParamsDataBytes, int.Parse(m.Groups[1].Value));
     }
 
+    private static string DllSource(string file)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src", file);
+            if (File.Exists(c)) return File.ReadAllText(c);
+        }
+        throw new FileNotFoundException("dll/src/" + file + " not found from " + AppContext.BaseDirectory);
+    }
+
+    [Fact]
+    public void DirectCall_FailOpenBranch_HoldsTheOwnPeCallMark()
+    {
+        // [A3-ST1-SUPER-DRAIN] Mimic auto-routes every Native|Static UFunction to UE5_CallProcessEventDirect. For a
+        // class that overrides ProcessEvent -- every AActor -- it fails open to the override, and
+        // AActor::ProcessEvent calls Super::ProcessEvent: the address MinHook patched. An UNMARKED call re-entered
+        // our detour on the mailbox thread with InOwnPeCall() false, and its drain ran every queued request there,
+        // off the game thread. No test target compiles Frieren.cpp or Stark.cpp, so this pins their source.
+        var frieren = DllSource("Frieren.cpp");
+        int fn = frieren.IndexOf("int32_t UE5_CallProcessEventDirect(uintptr_t", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "UE5_CallProcessEventDirect's definition not found -- re-point this pin");
+        int end = frieren.IndexOf("// === Mailbox ===", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the marker after UE5_CallProcessEventDirect not found -- re-point this pin");
+        var body = frieren[fn..end];
+        Assert.Contains("Stark::CallAddressAsOwnSEH(peAddr, instance, ufunc, params)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("pProcessEvent(", body, StringComparison.Ordinal);   // no unmarked raw call left
+
+        var stark = DllSource("Stark.cpp");
+        int h = stark.IndexOf("int32_t CallAddressAsOwnSEH(", StringComparison.Ordinal);
+        Assert.True(h >= 0, "Stark's CallAddressAsOwnSEH not found");
+        var helper = stark[h..stark.IndexOf("\n}", h, StringComparison.Ordinal)];
+        Assert.Contains("OwnPeCallGuard guard;", helper, StringComparison.Ordinal);   // the mark, in the OUTER frame
+        Assert.Contains("CallAddressSEH(", helper, StringComparison.Ordinal);         // the SEH frame, separate (C2712)
+    }
+
     [Fact]
     public void BakedScript_DebugReturnPrint_NeverReadsPastTheSlab()
     {

@@ -2266,23 +2266,21 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
         return Stark::CallOriginalSEH(instance, ufunc, params);
     }
 
-    typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
-    auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);
-
     LOG_INFO("UE5_CallProcessEventDirect: inst=0x%llX func=0x%llX pe=0x%llX (caller-asserted safe)",
              (unsigned long long)instance, (unsigned long long)ufunc,
              (unsigned long long)peAddr);
 
-    __try {
-        pProcessEvent(reinterpret_cast<void*>(instance),
-                      reinterpret_cast<void*>(ufunc),
-                      reinterpret_cast<void*>(params));
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
+    // [A3-ST1-SUPER-DRAIN] Failing open to the override is right -- but the override is not the end of
+    // the call. AActor::ProcessEvent (every actor) calls Super::ProcessEvent, which IS the address
+    // MinHook patched, so the unmarked call re-entered our detour here, on the mailbox thread, with
+    // InOwnPeCall() false -- and its drain ran every queued request off the game thread: ST1's crash
+    // class, one frame down. The helper holds the same "our own PE call" mark CallOriginalSEH does.
+    // ⛔ Not the trampoline (it skips AActor's world, GC and delegate checks), and not a queue (it
+    // brings back the idle-menu timeouts): the recorded harmful fixes.
+    const int32_t rc = Stark::CallAddressAsOwnSEH(peAddr, instance, ufunc, params);
+    if (rc == -4)
         LOG_ERROR("UE5_CallProcessEventDirect: EXCEPTION during direct ProcessEvent call!");
-        return -4;
-    }
-
-    return 0;
+    return rc;
 }
 
 // === Mailbox ===
