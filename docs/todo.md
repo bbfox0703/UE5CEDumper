@@ -3121,7 +3121,7 @@ same path.
   - a global nav mutex;
   - clearing `Fields` on Back, where the Reset jumps the grid to the top.
 
-##### ⛔ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again
+##### ✅ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again (FIXED IN SOURCE 2026-09-11)
 
 `LiveFieldValue.cs:578-583` + `LiveWalkerPanel.axaml.cs:448-459`. `_editableValue` is set only by the
 editor's TwoWay binding and is never reset. Since LWREFRESH the row object survives the post-commit
@@ -3146,6 +3146,18 @@ gate, 2026-09-10: a different object now gets fresh rows. The same-object varian
   - comparing against the current value, which silently drops a deliberate re-type.
 - 🟡 **UNDECIDED, same loop:** the in-place branch clears the `IsEditing` latch unconditionally
   (`:6562`) while an editor may now survive the copy.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (fix-pass batch B02).
+  - **The fix:** `LiveFieldValue.ResetPendingEdit()`, called by `FieldGrid_BeginningEdit` right after
+    the non-editable veto. This also closes the Escape variant.
+  - **Deliberately kept:** the refresh's copy does not reset the pending text, and there is no
+    "same as current" comparison. Both are pinned as controls.
+  - **Tests:** the code-behind hook cannot be driven by a VM test, so it is pinned by reading the
+    code-behind back (the `ClassListCapTests` pattern). That pin failed first ("must call
+    `ResetPendingEdit()`"), then passed. The semantics are pinned on `LiveFieldValue`: a reset
+    empties the pending text, the editor still opens on the current value, and a deliberate
+    re-type of the current value is still committed.
+  - 🟡 **Still undecided:** the `IsEditing` latch above is not part of this fix, and still needs
+    its live experiment.
 
 ##### ⛔ `[A4-PARENT-CRUMB-VTABLE]` MED — the Parent (Outer) crumb claims `[child + 0]` with a dereference, so CE exports through a Parent hop read the child's vtable
 
@@ -3406,6 +3418,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 6 | `[P4-CONTAINER-BASE]` | MED | same commit as 5 (the six members travel with the lists) | refresh + drill-time re-read; `ContainerTruncationTests` 19/19 |
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
+| 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3419,6 +3432,11 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 1. **Refresh:** the previews and hovers update; a CE XML and a CSX export taken after the refresh carry the NEW values.
 2. **Drill without a Refresh:** grow the array past its capacity so it reallocates, then drill it with NO Refresh. Element addresses must sit in the new buffer: compare with CE's view of the array's data pointer. Edit one element and read it back.
 3. **Pointer retarget:** retarget a pointer to another class and export with drilldown ≥ 1; the target must be walked with its own class. | DumperTest + UI; CE only to cross-check the data pointer — announce first |
+| L6 | `[A4-EDIT-STALE-PENDING]` | On DumperTest, with a float that the game changes:
+1. **Reopen without typing:** type 250 into it and commit. Once the game has moved the value, double-click the cell and press Enter WITHOUT typing. There must be no "Written:" status, and the value stays the game's.
+2. **Escape variant:** edit, press Escape, reopen, press Enter. Nothing is written.
+3. **Control:** typing the value the cell already shows DOES write.
+Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same session. | DumperTest + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3442,7 +3460,7 @@ completeness critic.
 | batch | rows | CE |
 |---|---|---|
 | ✅ B01 same-object staleness | `[W1-CONTAINER-STALE]` `[P4-CONTAINER-BASE]` `[P4-PTRCLASS]` `[A3-PTR-NAV-REPAINT]` | |
-| ⬜ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
+| ✅ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
 | ⬜ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
 | ⬜ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
 | ⬜ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |

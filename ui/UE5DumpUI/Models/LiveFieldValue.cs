@@ -665,6 +665,24 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>Get the pending edit value (what the user typed). Falls back to EditableValue getter if not set.</summary>
     internal string GetPendingEditValue() => _editableValue;
 
+    /// <summary>
+    /// Forget the pending edit text. Called when an edit BEGINS. [A4-EDIT-STALE-PENDING]
+    /// </summary>
+    /// <remarks>
+    /// <para><c>_editableValue</c> is written only by the editor's TwoWay binding, when the user
+    /// types. Opening the editor does not push the current value into it (Avalonia's
+    /// <c>BindingExpression.StartCore</c> publishes to the target before subscribing), and the
+    /// template column's commit does not push the TextBox either. Since [LWREFRESH-2026-08-21] the
+    /// row object survives the post-commit refresh, so the LAST typed text survived with it:
+    /// reopen the cell, press Enter without typing, and the previous edit was written into the game
+    /// again ("Written: Health = 250" while the game had moved on to 57). Escape, reopen, Enter did
+    /// the same with no refresh at all.</para>
+    /// <para>Reset at edit BEGIN, not in <see cref="CopyLiveValuesFrom"/>: a copy-time reset misses
+    /// the Escape variant and would drop text typed while a refresh lands mid-edit. And not by
+    /// comparing against the current value, which would silently drop a deliberate re-type.</para>
+    /// </remarks>
+    internal void ResetPendingEdit() => _editableValue = "";
+
     private string FormatArrayDisplay()
     {
         var typeLabel = !string.IsNullOrEmpty(ArrayStructType) ? ArrayStructType : ArrayInnerType;
