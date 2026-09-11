@@ -154,4 +154,9 @@ public sealed class PivotResult
     public int  GroupCount    { get; set; }
     public int  InstanceCount { get; set; }
     public bool Truncated     { get; set; }
+    /// <summary>[P5-PIVOT-FETCHCAP] The row FETCH cap SnapshotStore stopped at, 0 when it did not. A different fact from
+    /// <see cref="Truncated"/> (the GROUP cap over a complete input): the pivot was built over a PREFIX, so every count
+    /// is an undercount.</summary>
+    public int  FetchCap      { get; set; }
+    public bool FetchCapped   => FetchCap > 0;
 }

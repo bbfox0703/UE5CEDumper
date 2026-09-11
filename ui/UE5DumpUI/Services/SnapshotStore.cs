@@ -2255,7 +2255,9 @@ public sealed class SnapshotStore : ISnapshotStore
                 $"Pivot: row fetch hit the {PivotFetchRowCap:N0} cap for class {query.ClassName} — results truncated");
 
         var result = PivotEngine.Build(rows, query);
-        if (capped) result.Truncated = true;
+        // [P5-PIVOT-FETCHCAP] Its OWN flag. Truncated keeps meaning the GROUP cap (a complete input); this pivot was
+        // built over a prefix. The status says both when both fire -- never one folded into the other.
+        if (capped) result.FetchCap = PivotFetchRowCap;
         return result;
     }
 
@@ -2415,7 +2417,7 @@ public sealed class SnapshotStore : ISnapshotStore
             MaxGroups   = query.MaxGroups,
         };
         var result = PivotEngine.Build(rows, pq);
-        if (capped) result.Truncated = true;
+        if (capped) result.FetchCap = PivotFetchRowCap;   // [P5-PIVOT-FETCHCAP] its own flag, as the class pivot above
         return result;
     }
 

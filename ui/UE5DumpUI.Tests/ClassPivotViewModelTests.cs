@@ -391,6 +391,83 @@ public class ClassPivotViewModelTests : IDisposable
             });
     }
 
+    // ---- [W1-DT-TRUNC] the DataTable Run keeps the truncation notice its load printed ----
+
+    private sealed class TruncatedDtDumpService : StubDumpService
+    {
+        public override Task<FindInstancesResult> FindInstancesAsync(
+            string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default)
+            => Task.FromResult(new FindInstancesResult
+            {
+                Instances = new() { new InstanceResult { Name = "DT_Big", Address = "0xDA7A", ClassName = "DataTable" } },
+            });
+
+        public override Task<DataTableWalkResult> WalkDataTableRowsAsync(
+            string addr, int offset = 0, int limit = 64, CancellationToken ct = default)
+            => Task.FromResult(new DataTableWalkResult
+            {
+                RowCount = 500, RowStructName = "FItemRow",   // the table holds 500; the page fetched 2
+                Rows = new()
+                {
+                    new DataTableRowInfo { RowName = "Sword", DataAddr = "0x1000",
+                        Fields = new() { new LiveFieldValue { Name = "Damage", TypeName = "IntProperty", TypedValue = "50" } } },
+                    new DataTableRowInfo { RowName = "Shield", DataAddr = "0x2000",
+                        Fields = new() { new LiveFieldValue { Name = "Damage", TypeName = "IntProperty", TypedValue = "0" } } },
+                },
+            });
+    }
+
+    [Fact]
+    public async Task DataTableRun_KeepsTheTruncationNotice_ItsLoadPrinted()
+    {
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new TruncatedDtDumpService());
+        vm.SelectedSource = "DataTable";
+        await vm.PendingLoad!;
+        vm.SelectedDataTable = vm.DataTables[0];
+        await vm.PendingLoad!;
+        Assert.Contains("showing 2 of 500", vm.StatusText);   // the load says so...
+
+        await vm.RunPivotCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing 2 of 500", vm.StatusText);   // ...and the Run no longer overwrites it
+    }
+
+    // ---- [P5-PIVOT-FETCHCAP] two caps, two sentences ----
+
+    private static PivotResult Res(int groups, int instances, bool groupCap, int fetchCap)
+        => new() { GroupCount = groups, InstanceCount = instances, Truncated = groupCap, FetchCap = fetchCap };
+
+    [Fact]
+    public void PivotRunStatus_GroupCapAlone_KeepsItsSentence_AndExactCounts()
+    {
+        // The control: the group cap is the top N of a COMPLETE input, every count exact. Green both ways.
+        var s = ClassPivotViewModel.PivotRunStatus(Res(5_000, 80_000, groupCap: true, fetchCap: 0),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.Equal("5,000 groups (capped at 5,000) from 80,000 instances · identity", s);
+    }
+
+    [Fact]
+    public void PivotRunStatus_FetchCap_SaysPrefix_AndStopsCallingTheCountsTotals()
+    {
+        var s = ClassPivotViewModel.PivotRunStatus(Res(812, 204_800, groupCap: false, fetchCap: 2_000_000),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.StartsWith("≥ 812 groups", s);
+        Assert.Contains("from ≥ 204,800 instances", s);
+        Assert.Contains("2,000,000-row fetch cap", s);
+        Assert.Contains("not totals", s);
+        Assert.Contains("tick only the fields you need", s);
+        Assert.DoesNotContain("capped at 5,000", s);   // the GROUP cap did not fire
+    }
+
+    [Fact]
+    public void PivotRunStatus_BothCaps_ShowBothSentences()
+    {
+        var s = ClassPivotViewModel.PivotRunStatus(Res(5_000, 2_000_000, groupCap: true, fetchCap: 2_000_000),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.Contains("capped at 5,000", s);
+        Assert.Contains("2,000,000-row fetch cap", s);
+    }
+
     [Fact]
     public async Task DataTableSource_ListsTables_FiltersNonDataTables()
     {

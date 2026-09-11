@@ -671,7 +671,7 @@ ROW count, inflated by inner numeric props, and `ArrayPivotStoreTests.cs:90` pin
 with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it counts distinct (owner, element) pairs now, red first with a two-prop fixture) · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
 (⛔ **the fix is a new marker, NOT `is_usable=0`** — see the refuted-fix note below) ·
 ✅ `[W1-PIVOT-LOADCTS]` (FIXED IN SOURCE 2026-09-12, batch L18: one CTS per list, pinned by a class load gated on its token) one shared `_loadCts` lets a field load cancel an in-flight class load with
-no restart, leaving a stale picker · `[W1-DT-TRUNC]` DataTable pivot Run overwrites its own
+no restart, leaving a stale picker · ✅ `[W1-DT-TRUNC]` (FIXED IN SOURCE 2026-09-12, batch L22: the Run keeps the load's "(showing N of M)", pinned red first) DataTable pivot Run overwrites its own
 truncation notice with a bare row count, 17 lines above an array branch that gets it right ·
 `[W1-PIPEBUSY-LOG]` pipe-busy is logged as "Cheat Engine not running" (see below) ·
 `[W1-WINMM-LOADMODE]` `Fern.cpp:1408` omits `winmm.dll` from the proxy classifier so it never
@@ -2957,7 +2957,7 @@ The single-mode twin at `:1026` gets this right.
   - folding anything more into `deadline_hit`;
   - copying this wording onto `:1026`.
 
-##### `[P5-PIVOT-FETCHCAP]` LOW — Class / Array Pivot says "(capped at 5,000)" when a different cap fired
+##### ✅ `[P5-PIVOT-FETCHCAP]` LOW — Class / Array Pivot says "(capped at 5,000)" when a different cap fired (FIXED IN SOURCE 2026-09-12)
 
 `ClassPivotViewModel.cs:986` / `:1005`. `PivotResult.Truncated` is defined as the **group** cap: 5,000
 (`PivotEngine.cs:88-93`), the top N groups of a complete input, with every count exact. Commit
@@ -2979,6 +2979,16 @@ not measured.
   ticked, the `prop_name IN` filter is dropped and every prop is fetched (`SnapshotStore.cs:2217/2355`).
 - ⛔ Do not remove `result.Truncated = true` at `:2257/:2409` unless the new flag lands in the same
   change. Otherwise the fetch cap goes silent, which is exactly what 220443c7 fixed.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L22, with `[W1-DT-TRUNC]`).
+  - `PivotResult.FetchCap` / `FetchCapped` is the fetch cap's own flag. SnapshotStore sets it instead
+    of `Truncated`, in the same change, so `Truncated` means the group cap again.
+  - Both pivot Runs go through `ClassPivotViewModel.PivotRunStatus`. A fetch cap puts "≥" on the
+    counts and adds its own sentence ("…cover a prefix and are not totals — tick only the fields you
+    need"), and both caps can show together.
+  - **Tests, red first:** the fetch cap alone and both caps together. The group cap alone is the
+    control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233.
+  - ⚠ **Survivors by construction:** the two call sites and the store's flag assignment. No fake store
+    drives a fetch-capped Run; the status rule is pinned.
 
 ##### ⛔ Refuted or overridden — do not re-raise
 
@@ -5180,6 +5190,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 72 | `[A4-STEALTH-PRIME]` | LOW | `git log --grep A4-STEALTH-PRIME` (batch L20) | TeleportViewModelTests, red first: a still-held meter primes Holding, a Property Search force is not claimed (Unknown), and a disconnect says Unknown; nothing forced reads Off. Gate 17d reads the tuple form (a third selftest control). 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221. The recorded safe fix |
 | 73 | `[A4-PIVOT-CROSSGAME-ID]` + `[W1-PIVOT-LOADCTS]` | LOW | `git log --grep A4-PIVOT-CROSSGAME-ID` (batch L18) | One cross-game test each for Class Pivot, Snapshot and SPC on the real per-game store (the other game's newest or default wins; Class Pivot never serves the other game's class list), and a class load gated on its token that a field load must not cancel, red first. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225. The recorded safe fix, all three twins; no clear in SetEngineState |
 | 74 | `[A4-GAMEONLY-ADVICE]` + `[P5-GROUP-ADVICE]` + `[A3-CONTAINER-4096-ADVICE]` | LOW | `git log --grep A4-GAMEONLY-ADVICE` (batch L21) | Red first: the two Game Only pins inverted with controls, a group cap stop that must not advise "refine", and a scalar drill capped by the DLL that must not blame the slider. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229. Every advice names a lever the panel has and has not used |
+| 75 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | LOW | `git log --grep P5-PIVOT-FETCHCAP` (batch L22) | ClassPivotViewModelTests, red first: a capped DataTable Run keeps "(showing 2 of 500)"; `PivotRunStatus` gives the fetch cap its own sentence and "≥" counts, with both caps able to show; the group cap alone is the control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233. The fetch cap has its own flag, landed with the change that stopped folding it |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5392,6 +5403,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. A capped Interesting Functions load (Game Only on) advises nothing about Game Only. Console with it off says `tick "Game Only"`.
 2. A capped group First Scan advises more or more distinctive values, never "refine".
 3. Open a `TArray<float>` over 4,096 long. The status says it is capped per fetch, not "raise the Array Limit slider". | a game + UI |
+| L61 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | A game and Class Pivot:
+1. **DataTable:** a table over 64 rows. Select it; the status says "(showing 64 of N)". Run; the status still says it.
+2. **Fetch cap:** rare (about 800 owners × 256 elements × 10 ticked props). If one is reached, the status reads "≥ … groups … from ≥ …" plus the fetch-cap sentence, not "(capped at 5,000)". | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5471,7 +5485,7 @@ completeness critic.
 - ✅ **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 - ✅ **L20:** `[A4-STEALTH-PRIME]`
 - ✅ **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
-- **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
+- ✅ **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 - **L23:** `[W1-GROUP-DENYLIST]`
 - **L24:** `[W5-INSTEXPORT-TRUNC]`
 - **L25:** `[W1-PARTIAL-MARK]`

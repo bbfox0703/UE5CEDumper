@@ -1052,6 +1052,23 @@ public partial class ClassPivotViewModel : ViewModelBase
         return keys;
     }
 
+    /// <summary>[P5-PIVOT-FETCHCAP] The Run status for a snapshot / array pivot. Two caps, two sentences, and both can
+    /// fire on one run: the GROUP cap (PivotEngine: the top N groups of a COMPLETE input, every count exact) and the row
+    /// FETCH cap (SnapshotStore: the pivot was built over a PREFIX in gobjects_index order, so the instance count, the
+    /// group count and every group's count are undercounts -- and a mid-instance break can make a bogus "(missing)"
+    /// group). The fetch cap used to fold into the group cap's "(capped at 5,000)", presenting the prefix as totals.
+    /// "Tick only the fields you need", not "fewer": with NO value field ticked every prop is fetched.</summary>
+    internal static string PivotRunStatus(PivotResult r, int maxGroups, string groupsNoun, string instancesNoun, string tail)
+    {
+        var groupCap = r.Truncated ? $" (capped at {maxGroups:N0})" : "";
+        var atLeast  = r.FetchCapped ? "≥ " : "";
+        var fetch    = r.FetchCapped
+            ? $"  ⚠ the snapshot read stopped at its {r.FetchCap:N0}-row fetch cap, so these counts cover a prefix and "
+              + "are not totals — tick only the fields you need"
+            : "";
+        return $"{atLeast}{r.GroupCount:N0} {groupsNoun}{groupCap} from {atLeast}{r.InstanceCount:N0} {instancesNoun} · {tail}{fetch}";
+    }
+
     [RelayCommand]
     private async Task RunPivotAsync()
     {
@@ -1080,7 +1097,11 @@ public partial class ClassPivotViewModel : ViewModelBase
                 var valueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList();
                 var res = DataTablePivotEngine.Build(_dataTable!, valueFields);
                 SetResults(res.Rows, runSession);
-                StatusText = $"{res.GroupCount:N0} rows · key = RowName · {_dataTable!.RowStructName}";
+                // [W1-DT-TRUNC] The load said "(showing N of M)" for a capped page; the Run used to print a bare row
+                // count over it. Same wording as the load, 17 lines above an array branch that gets it right.
+                var dtTrunc = _dataTable!.RowCount > _dataTable.Rows.Count
+                    ? $" (showing {_dataTable.Rows.Count:N0} of {_dataTable.RowCount:N0})" : "";
+                StatusText = $"{res.GroupCount:N0} rows{dtTrunc} · key = RowName · {_dataTable!.RowStructName}";
                 return;
             }
 
@@ -1096,10 +1117,9 @@ public partial class ClassPivotViewModel : ViewModelBase
                 };
                 var arrRes = await Task.Run(() => _store.PivotArrayAsync(aq, ct), ct);
                 SetResults(arrRes.Rows, runSession);
-                var arrTrunc = arrRes.Truncated ? $" (capped at {aq.MaxGroups:N0})" : "";
                 string keyName = string.IsNullOrEmpty(SelectedArrayField.InnerKeyName)
                     ? "elem index" : SelectedArrayField.InnerKeyName;
-                StatusText = $"{arrRes.GroupCount:N0} {keyName} group(s){arrTrunc} from {arrRes.InstanceCount:N0} elements · {aq.ArrayField}";
+                StatusText = PivotRunStatus(arrRes, aq.MaxGroups, $"{keyName} group(s)", "elements", aq.ArrayField);
                 return;
             }
 
@@ -1115,9 +1135,8 @@ public partial class ClassPivotViewModel : ViewModelBase
             var snapRes = await Task.Run(() => _store.PivotAsync(query, ct), ct);
             SetResults(snapRes.Rows, runSession);
 
-            var snapTrunc = snapRes.Truncated ? $" (capped at {query.MaxGroups:N0})" : "";
             var keyDesc = IsFieldKeyMode ? $"key={string.Join(" · ", query.EffectiveKeyFields)}" : "identity";
-            StatusText = $"{snapRes.GroupCount:N0} groups{snapTrunc} from {snapRes.InstanceCount:N0} instances · {keyDesc}";
+            StatusText = PivotRunStatus(snapRes, query.MaxGroups, "groups", "instances", keyDesc);   // [P5-PIVOT-FETCHCAP]
         }
         catch (OperationCanceledException)
         {
