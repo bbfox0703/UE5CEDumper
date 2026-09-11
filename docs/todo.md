@@ -601,7 +601,8 @@ snapshots before the next capture, destroying the partial the design deliberatel
 
 #### Two gates this wave earned
 
-- ⬜ **`[W1-GATE-JSONDEFAULT]`** — fail any property under a `WhenWritingDefault` JSON context
+- ✅ **`[W1-GATE-JSONDEFAULT]`** *(registered 2026-09-10 as `check_json_default_ignore`, in e8e52a4f
+  with the `[W1-QUOTA-UNLIMITED]` fix; this marker was stale until 2026-09-11)* — fail any property under a `WhenWritingDefault` JSON context
   whose initializer differs from `default(T)`. It would have caught `[W1-QUOTA-UNLIMITED]` at
   commit time, the rule is already written down (`teleport-coord-library-spec.md:618`), and the
   whole-tree population is **one file**, so the gate ships green after one fix.
@@ -684,6 +685,22 @@ element for `MovementNote` and for the source chip, and **none** for the degrade
 
 ⬜ **Action: FP1 and FP2's register rows must record that they cover the pipe half only**, and the
 residuals above become their own rows. ⛔ Do **not** close FP1/FP2 on a pipe-only measurement.
+
+**Residual rows, filed 2026-09-11.** Only the save-path residual had become a row
+(`[W2-MARKER-PARENTREL]`). The fix-pass inventory's completeness critic found the other two never
+filed, so Track A's "P7: 0 new" counted a row that did not exist:
+- ⬜ **`[W2-POSEATTACH-QUIETPOLL]` MED** — `TeleportViewModel.cs:1013`/`:1017`.
+  - `RefreshPoseQuietAsync`, the 500 ms auto path the tab is left in, calls `ApplyPoseAndMovement(p)`
+    and never surfaces `ParentRelative`. Only the manual ↻ sets the ⚠ PARENT-RELATIVE status
+    (`:1066`), and any later status erases it.
+  - The pipe has published `parent_relative` since 242d48c4, so this is UI-only and testable
+    offline.
+  - The severity is inherited from `[POSEATTACH]`; the record gave this residual none of its own.
+  - This is the only recorded P7 instance.
+- ⬜ **`[W2-TPREL-TRANSPORTS]` LOW** — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
+  - Both call `TeleportRelative` without `&landingKnown` and publish the zero-initialised
+    `Pose p{}` as the landing. The pipe half was fixed in 5058e971.
+  - The mailbox half follows the `MAILBOX_CONTRACT` rules, and its live check needs CE.
 
 ---
 
@@ -2950,7 +2967,7 @@ slider ≥ 8192.
   request, then `FixedCapStatusLine`), never a hardcoded 4096.
 - ⛔ **Unsafe:** unbounded paging; raising the DLL cap.
 
-##### `[A3-PTR-NAV-REPAINT]` LOW — a pointer that gains a target after refresh shows its name but no → button
+##### ✅ `[A3-PTR-NAV-REPAINT]` LOW — a pointer that gains a target after refresh shows its name but no → button (FIXED IN SOURCE 2026-09-11)
 
 `LiveFieldValue.cs:158-161`. `_ptrAddress` notifies `DisplayValue` / `ValueTooltip` / `EditableValue`,
 but not `IsPointerNavigation`. That property drives the → button and the Ptr copy column. A pointer that
@@ -2958,6 +2975,15 @@ was null at the first walk therefore repaints its name after an auto-refresh, an
 This is a P4-CONTAINER-BASE twin that P8 could not see, because `PtrAddress` IS observable.
 - ✅ **Safe fix:** add the `[NotifyPropertyChangedFor]` attributes. Land them in the same-object
   staleness bundle, next to `[P4-CONTAINER-BASE]`'s `IsContainerNavigable` notifications.
+- ✅ **FIXED IN SOURCE 2026-09-11, the safe shape, as the bundle's follow-up.**
+  - ⚠ **It should have landed IN the bundle** (aa71e997), as this row and the A3 fix-pass notes say.
+    The fix-pass inventory's completeness critic caught the miss.
+  - **How it was missed:** the implementer's check for a bound navigability flag grepped for
+    `IsNavigable`, which is unbound. The bound flags are `IsPointerNavigation` and
+    `IsStructNavigation`.
+  - **The fix:** `_ptrAddress` now raises both, plus `IsNavigable`.
+  - **Red → green:** `Refresh_PointerGainsATarget_ShowsTheDrillButton` failed first (no
+    `IsPointerNavigation` notification), then passed.
 
 ##### `[A3-RECYCLE-GUID-FAILOPEN]` LOW — `RecycleBinPolicy` says a failed volume-GUID lookup fails closed; it fails open
 
@@ -3379,6 +3405,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 5 | `[W1-CONTAINER-STALE]` | MED | `git log --grep W1-CONTAINER-STALE` | `LiveWalkerRefreshStalenessTests`: 9/9 red on the recorded mechanisms → 10/10 green (+ the failed-re-read path); UI 4831/4831; gates 21/21. **Review follow-up:** 7 survived / 5 refuted; its 2 defects red → green, 7/7 mutants killed (restored by sha256); 18/18; UI 4839/4839; gates 21/21 |
 | 6 | `[P4-CONTAINER-BASE]` | MED | same commit as 5 (the six members travel with the lists) | refresh + drill-time re-read; `ContainerTruncationTests` 19/19 |
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
+| 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3392,6 +3419,103 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 1. **Refresh:** the previews and hovers update; a CE XML and a CSX export taken after the refresh carry the NEW values.
 2. **Drill without a Refresh:** grow the array past its capacity so it reallocates, then drill it with NO Refresh. Element addresses must sit in the new buffer: compare with CE's view of the array's data pointer. Edit one element and read it back.
 3. **Pointer retarget:** retarget a pointer to another class and export with drilldown ≥ 1; the target must be walked with its own class. | DumperTest + UI; CE only to cross-check the data pointer — announce first |
+
+#### Batch plan — the inventory of 2026-09-11
+
+**Source:** a 7-agent inventory of every open confirmed row: five region readers, a grouper and a
+completeness critic.
+- **Reconciliation:** every region reconciled EXACTLY with its recorded totals.
+- **Total at inventory time:** 96 open rows (33 MED · 63 LOW). The staleness trio has since landed,
+  and two residuals were filed. That leaves **95 − 3 = 92 open**, and derive it again before you
+  quote it.
+- ⚠ **Critic corrections applied:**
+  - `[A3-PTR-NAV-REPAINT]` belonged IN the staleness bundle and was missed. It landed as that
+    bundle's follow-up.
+  - The two FP residuals are now filed (`[W2-POSEATTACH-QUIETPOLL]`, `[W2-TPREL-TRANSPORTS]`).
+  - Two stale markers were fixed (`[W1-GATE-JSONDEFAULT]`, and the Order item 3 "A4 next").
+- **Grouping:** by shape, with every recorded "land together / fix before" coupling kept. The full
+  per-row fields are in the inventory JSON (session scratch); the durable facts are the rows
+  themselves.
+
+**MED batches, in fix order** (✅ landed · ⬜ open; CE = its live check needs Cheat Engine):
+
+| batch | rows | CE |
+|---|---|---|
+| ✅ B01 same-object staleness | `[W1-CONTAINER-STALE]` `[P4-CONTAINER-BASE]` `[P4-PTRCLASS]` `[A3-PTR-NAV-REPAINT]` | |
+| ⬜ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
+| ⬜ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
+| ⬜ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
+| ⬜ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
+| ⬜ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
+| ⬜ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
+| ⬜ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
+| ⬜ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
+| ⬜ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
+| ⬜ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
+| ⬜ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
+| ⬜ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
+| ⬜ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
+| ⬜ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
+| ⬜ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
+| ⬜ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
+| ⬜ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
+| ⬜ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
+| ⬜ B20 batch method | `[W3-BATCH-METHOD]` | |
+| ⬜ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
+| ⬜ B22 teleport pose map | `[W2-TPREL-MAP]` | |
+| ⬜ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
+| ⬜ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
+| ⬜ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
+| ⬜ B25 xref cap | `[W3-XREF-CAP]` | |
+| ⬜ B26 related stops | `[W4-RELATED-STOPS]` | |
+| ⬜ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
+| ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
+| ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
+| ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
+
+**LOW-only batches, after the MEDs** (39):
+- **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
+- **L02:** `[P1-ENUMNAMES]`
+- **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
+- **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
+- **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
+- **L06:** `[P1-UPROP-DELEGATE]`
+- **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
+- **L08:** `[P1-SPARSEDELEGATE-REFS]`
+- **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
+- **L10:** `[A2-LAZY-LATCH-GUESS]`
+- **L11:** `[A2-CRC-PATH-LS]`
+- **L12:** `[A2-HEAP-ANCHOR-TEXT]`
+- **L13:** `[A2-METHODE-MANUALMAP]` (CE)
+- **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
+- **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
+- **L16:** `[W5-DENKEN-DEADGUARD]`
+- **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
+- **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
+- **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
+- **L20:** `[A4-STEALTH-PRIME]`
+- **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
+- **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
+- **L23:** `[W1-GROUP-DENYLIST]`
+- **L24:** `[W5-INSTEXPORT-TRUNC]`
+- **L25:** `[W1-PARTIAL-MARK]`
+- **L26:** `[W1-PIPEBUSY-LOG]` (CE)
+- **L27:** `[W1-WINMM-LOADMODE]`
+- **L28:** `[W2-BETWEEN-PREVIEW]`
+- **L29:** `[W2-DEADSCAN-LOADMORE]`
+- **L30:** `[W3-CAP-NOSAVE]`
+- **L31:** `[W3-DIP-PIXELS]`
+- **L32:** `[W4-HEXSORT]`
+- **L33:** `[P3-SCORING-MCDELEGATE]`
+- **L34:** `[P8-BOOKMARK-TIP]`
+- **L35:** `[A1-LOG-RESUME]`
+- **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
+- **L37:** `[W2-CEGEN-MODAL]` (CE)
+- **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
+- **L39:** `[A3-COORD-NONFINITE]`
+
+⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
+has no cancellation), not to the batch L18 above.
 
 #### Live experiments recorded in the finding phase — each joins the backlog when its row is fixed
 
@@ -3421,7 +3545,7 @@ in its section; copy it into the backlog when the row is fixed.
    (`[TRACKB-A1-2026-09-10]`: 1 MED · 5 LOW, five of them fix-pass claims not kept). **A2 done
    2026-09-10** (`[TRACKB-A2-2026-09-10]`: 2 MED · 7 LOW, settled against vendored engine source).
    **A3 done 2026-09-10** (`[TRACKB-A3-2026-09-10]`: 4 MED · 8 LOW; three of the MEDs break the fix they
-   sit in); A4 next.
+   sit in). **A4 done 2026-09-10** (`[TRACKB-A4-2026-09-10]`: 4 MED · 10 LOW).
 4. ⬜ **ONE fix pass, LAST** — covering the June blank, Track A and Track B together, grouped **by
    shape, not by file**, so each shape is repaired ONCE with its complete instance list. That is the
    maintainer's stated reason for planning the second blank at all.

@@ -283,6 +283,39 @@ public class LiveWalkerRefreshStalenessTests
 
     // ── The drill, with no refresh at all ──────────────────────────────────────
 
+    /// <summary>[A3-PTR-NAV-REPAINT] A pointer that was null at the first walk gains a target on a
+    /// same-object refresh: its name repaints (PtrName is observable), but the → button and the Ptr
+    /// copy column bind to IsPointerNavigation, which nothing raised, so the row could not be
+    /// drilled. The record put this in the same bundle as the IsContainerNavigable notifications.</summary>
+    [Fact]
+    public async Task Refresh_PointerGainsATarget_ShowsTheDrillButton()
+    {
+        static InstanceWalkResult PcWalk(string ptr, string name) => new()
+        {
+            Address = AddrA, Name = "PC", ClassName = "BP_PC_C", ClassAddr = "0x900000",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Pawn", TypeName = "ObjectProperty", Offset = 0x30, Size = 8,
+                        PtrAddress = ptr, PtrName = name, PtrClassName = name.Length > 0 ? "BP_Hero_C" : "" },
+            },
+        };
+
+        var dump = new StubDumpService();
+        var vm = await OnA(dump, PcWalk("", ""));
+        var row = vm.Fields[0];
+        Assert.False(row.IsPointerNavigation);
+        var seen = Track(row);
+
+        dump.RegisterStruct(AddrA, PcWalk("0xAAA000", "Hero"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Same(row, vm.Fields[0]);
+        Assert.True(row.IsPointerNavigation);
+        Assert.Contains(seen, s => s.Prop == nameof(LiveFieldValue.IsPointerNavigation));
+        // IsStructNavigation is derived from IsPointerNavigation and bound to the {} button.
+        Assert.Contains(seen, s => s.Prop == nameof(LiveFieldValue.IsStructNavigation));
+    }
+
     [Fact]
     public async Task Drill_AfterTheArrayReallocatedSinceTheWalk_UsesTheLiveBuffer()
     {

@@ -170,6 +170,12 @@ public sealed partial class LiveFieldValue : ObservableObject
     [NotifyPropertyChangedFor(nameof(DisplayValue))]
     [NotifyPropertyChangedFor(nameof(ValueTooltip))]
     [NotifyPropertyChangedFor(nameof(EditableValue))]
+    // [A3-PTR-NAV-REPAINT] The → button and the Ptr copy column bind to IsPointerNavigation, the {}
+    // button to IsStructNavigation (derived from it). A pointer null at the first walk that gains a
+    // target on a same-object refresh repainted its name but stayed undrillable.
+    [NotifyPropertyChangedFor(nameof(IsPointerNavigation))]
+    [NotifyPropertyChangedFor(nameof(IsStructNavigation))]
+    [NotifyPropertyChangedFor(nameof(IsNavigable))]
     [ObservableProperty] private string _ptrAddress = "";
 
     /// <summary>For ObjectProperty: name of the pointed-to object.</summary>
