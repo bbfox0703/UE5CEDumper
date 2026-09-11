@@ -50,6 +50,18 @@ public class PartialResultNoticeTests
     }
 
     [Fact]
+    public void BatchCapClause_ClaimsOnlyWhatTheDllKnows()
+    {
+        // Review 3 of 640e7364: capHit fires when ONE worker reached the cap -- even a worker whose 200th match
+        // was its range's last object, with exactly 200 in total. The DLL knows "more MAY exist", never
+        // "matched more than" -- the dialog's own "[CAP HIT ... more may exist]" wording.
+        var s = PartialResultNotice.BatchCapClause(1, 1, 200);
+        Assert.DoesNotContain("more than", s, StringComparison.Ordinal);
+        Assert.Contains("reached the 200-result cap", s, StringComparison.Ordinal);
+        Assert.Contains("more may exist", s, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FunctionsSummary_CappedCell_ShowsALowerBound_AndIsNotAPartialCell()
     {
         var xrefs = new List<PropertyXrefMatch>

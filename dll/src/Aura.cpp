@@ -320,17 +320,19 @@ std::vector<ElemT> ConcatTruncate(std::vector<PerThreadT>& perThread,
     return out;
 }
 
-// [W3-XREF-CAP] True when a capped parallel scan's merged result is a PREFIX: a worker stopped at its own
-// maxResults (its index range was not finished), or the workers together found more than maxResults and
-// ConcatTruncate dropped some. Exactly maxResults found by workers that each finished is NOT capped. Ask it
-// BEFORE ConcatTruncate, which moves the elements out.
+// [W3-XREF-CAP] True when a capped parallel scan's merged result MAY be a prefix: a worker reached its own
+// maxResults and stopped there, so its index range may be unfinished -- or the workers together found more
+// than maxResults and ConcatTruncate dropped some. It cannot tell a worker cut short from one whose last object
+// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist"
+// (review 3). Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
+// ConcatTruncate, which moves the elements out.
 template <typename PerThreadT, typename ElemT>
 bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
                       std::vector<ElemT> PerThreadT::* member, int32_t maxResults) {
     size_t total = 0;
     for (const auto& tr : perThread) {
         const size_t n = (tr.*member).size();
-        if (n >= static_cast<size_t>(maxResults)) return true;   // this worker stopped early
+        if (n >= static_cast<size_t>(maxResults)) return true;   // it reached the cap: its range MAY be unfinished
         total += n;
     }
     return total > static_cast<size_t>(maxResults);              // the merge dropped some

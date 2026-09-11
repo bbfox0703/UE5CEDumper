@@ -110,8 +110,8 @@ public static class PartialResultNotice
     public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row")
         => cappedUnits <= 0
             ? ""
-            : $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {unit}(s) matched more than the {cap:N0}-result cap — "
-              + $"their counts (shown as N+) are lower bounds, and only the first {cap:N0} are listed.";
+            : $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {unit}(s) reached the {cap:N0}-result cap — "
+              + $"their counts (shown as N+) are lower bounds: only the first {cap:N0} are listed, and more may exist.";
 
     /// <summary>
     /// [W4-RELATED-STOPS] The Related Objects status clause: each cause the walk stopped for, in its own words.

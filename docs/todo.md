@@ -1094,9 +1094,11 @@ while eviction runs at the hand-edited number.
    - **DLL.** `PropertyXrefStats` gains `capHit` and `cap`, the effective cap.
      - A pure helper beside `ConcatTruncate`, `MergedScanCapHit`, sets it before the merge moves the
        elements out.
-     - It is set when a worker reached `maxResults`, so its index range was not finished, or when the
-       workers together found more than `maxResults`. Exactly `maxResults` found by workers that each
-       finished is NOT capped.
+     - It is set when a worker reached `maxResults`, or when the workers together found more than
+       `maxResults`. A worker at its cap stopped there, so its range MAY be unfinished. The helper cannot
+       tell that from a worker whose last object happened to be its 200th match, and flags both:
+       conservative, which suits a `200+` cell. Every worker below its cap, with the total within it, is
+       NOT capped. *(Corrected by review 3: this line first said a worker at its cap "was not finished".)*
      - Both scans set it, and Fern publishes `cap_hit` / `cap` in both handlers' `scan` objects.
      - An additive wire key: no contract bump, and the CE mailbox is untouched.
    - **UI, FIVE sites, not four.** The dialog, plus four batch loops. Property Search and Interesting
@@ -1122,6 +1124,13 @@ while eviction runs at the hand-edited number.
    - ⚠ **Documented survivors, by construction:** `FindFunctionsByClassParam`'s call site (it mirrors
      `FindPropertyXrefs` line for line, and no test builds UFunction param chains), and Fern.cpp's two
      serialisers (compiled by no test target). The real `UE5Dumper` build and the live check cover them.
+   - ✅ **Review follow-up 2026-09-12** (review 3, of F7 / B23b / B24 / F4b / F5b / B25: 9 survived, 2
+     refuted; this row's share was one LOW, `batch-cap-clause-overclaims`, CONFIRMED).
+     - The batch status said rows "matched more than" the cap. The DLL knows only that a worker REACHED it,
+       which means "more may exist", not "more exist".
+     - It now reads "reached the 200-result cap … only the first 200 are listed, and more may exist", the
+       dialog's own wording. The helper's comment dropped the same overclaim.
+     - **Test, red first:** the clause claims only what the DLL knows. 1/1 mutants killed; UI 5130/5130.
 3. ✅ **`[W3-BATCH-METHOD]`** (FIXED IN SOURCE 2026-09-11, batch B20) `InterestingFunctionsViewModel.cs:331`. `BatchFindFuncPropsAsync`
    consumes `res.Props` and `res.BudgetHit` and **never reads `res.Method`**. The DLL publishes
    four method tags and **two of them mean nothing was analysed at all** — `"none"`
