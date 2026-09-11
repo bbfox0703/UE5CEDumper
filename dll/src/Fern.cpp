@@ -4897,7 +4897,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"]   = addrStr;
             data["script_bytes"] = res.scriptBytes;
-            // Path 2: "bytecode" (exact) / "disasm" (native x64, heuristic) / "none".
+            // "bytecode" (exact) / "disasm" (native x64, heuristic) / "none" / the two refusals
+            // "blueprint_no_script" and "bytecode_unreadable" -- Aura.h's FunctionPropRefResult says what each means.
             data["method"]       = res.method;
             data["unmapped"]     = res.unmappedAccesses;
             // Path 2 only: the disassembler hit its instruction budget, so `props`

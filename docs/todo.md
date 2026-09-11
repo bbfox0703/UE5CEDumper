@@ -1170,6 +1170,12 @@ while eviction runs at the hand-edited number.
      - **Tests, red first:** a third row in the batch theory, and a `dll_core_test` block. An
        unreadable Script buffer is tagged `bytecode_unreadable`; the control, a readable Script with
        no anchor opcode, stays `bytecode`. 2/2 mutants killed (one UI, one DLL); UI 5090/5090; dll_core_test 191/191.
+   - ✅ **Review 3 follow-up 2026-09-12** (`bytecode-unreadable-doc-refusal`, LOW, CONFIRMED). Doc-only.
+     - The model's doc still said "the last one is a REFUSAL" after `bytecode_unreadable` was appended, so
+       it gave the new tag `blueprint_no_script`'s interpreter rationale.
+     - It now names both refusals and each one's cause.
+     - The DLL-side lists, Aura.h's `FunctionPropRefResult::method` and Fern's `walk_function_props`
+       comment, now carry the two values.
 
 **LOW** — 2 rows: `[W3-CAP-NOSAVE]` `PropertySearchCap` and `ClassListCap` round-trip through
 `ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls
@@ -4276,6 +4282,30 @@ enum's REAL underlying property: Dumper-7 `MappingGenerator.cpp:203-208` and RE-
   - The round-trip reader now reads an enum's underlying type through its inner reader, not as one
     byte, and records each property's type, underlying type and enum name, as the fix asked.
   - 4/4 mutants killed; UI 5098/5098.
+  - ⬜ **Review 3 (2026-09-12):** a container's TEnumAsByte inner is still a bare Byte, and this row's USMAP
+    header had called that desync "doubtful". It is certain, and predates B24. Filed as
+    `[A4-USMAP-CONTAINER-ENUM]` (MED, batch B32), which needs a DLL change. The header is corrected.
+
+##### ⬜ `[A4-USMAP-CONTAINER-ENUM]` MED — a container's TEnumAsByte inner is exported to USMAP as a bare ByteProperty (filed 2026-09-12 by review 3)
+
+`UsmapExportService.cs` `WriteInnerPropertyTypeFromField` + `Ubel.cpp:1298-1318`. B24's Arm 3 writes a
+TEnumAsByte as the canonical `[26][0][enumName]`, but only at the top level. A `TArray` / `TSet` / `TMap` /
+`TOptional` whose inner is a TEnumAsByte still goes out as `[8][0]`. The walker's container branches set the
+inner's type, struct and object class, never its enum: nothing named `inner_enum` exists in `dll/` or `ui/`.
+- **Why it matters:** in the vendored UE 5.8, an array of an enum-carrying byte cannot bulk-serialize
+  (`PropertyArray.cpp:121-126`), and each element serializes BY NAME (`PropertyByte.cpp:66-112`). A
+  consumer handed a plain 1-byte ByteProperty inner reads 1 byte against an 8-byte FName and misaligns.
+  Dumper-7 (`MappingGenerator.cpp:195-213`, the `:226` recursion) and RE-UE4SS (`Generator.cpp:90-92`,
+  `:256-263`) both emit `[8][26][0][E]`.
+- B24's header called a container enum desync "doubtful". That holds for an FEnumProperty inner, which we
+  already write as `[26]`. For a TEnumAsByte inner the same FName fact makes it certain.
+- ✅ **Fix shape:**
+  - the walker reads the container inner's `FBYTEPROP_ENUM` (Array / Optional, Set, and the Map key and
+    value) and publishes it as a new additive key, e.g. `inner_enum`;
+  - `WriteInnerPropertyTypeFromField` gains the Arm 3 branch.
+
+  A UI-only fix cannot work, because the enum name is not on the wire.
+- By comparison the top-level Arm 3 is display-only: a top-level TEnumAsByte serializes as an integer.
 
 ##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
 
@@ -4754,6 +4784,7 @@ completeness critic.
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ⬜ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
+| ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
 
 **LOW-only batches, after the MEDs** (43):
 - **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`

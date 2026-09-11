@@ -60,11 +60,12 @@ public sealed class FunctionPropRefsResult
     /// "blueprint_no_script", or "bytecode_unreadable" (the Script header looked plausible but its
     /// buffer did not read — nothing was scanned).
     ///
-    /// <para>⚠ The last one is a REFUSAL and the caller must not render it as an empty
-    /// result: a script/Blueprint UFunction with no usable Script buffer points
+    /// <para>⚠ The last TWO are refusals, and the caller must not render either as an empty result.
+    /// "blueprint_no_script": a script/Blueprint UFunction with no usable Script buffer points
     /// <c>Func</c> at the shared interpreter (<c>UObject::ProcessInternal</c>), so Path 2
     /// would disassemble the INTERPRETER and attribute its field accesses to this
-    /// function. Zero props here means "not looked at", not "touches nothing" — which is
+    /// function. "bytecode_unreadable": the Script buffer's read failed, so nothing was scanned.
+    /// Either way zero props means "not looked at", not "touches nothing" — which is
     /// the opposite of what this dialog is read for.</para>
     /// </summary>
     public string Method { get; init; } = "bytecode";

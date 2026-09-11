@@ -1295,6 +1295,10 @@ struct FunctionPropRefResult {
     // "bytecode" = Path 1 Kismet scan (exact). "disasm" = Path 2 native x64
     // disassembly (heuristic — see FunctionPropRef::confidence). "none" =
     // native but analysis unavailable (Func offset unresolved / unreadable).
+    // Two REFUSALS, which the UI must never render as "touches nothing":
+    // "blueprint_no_script" = a script UFunction with no usable Script (its Func is the
+    // shared interpreter, so Path 2 is not run); "bytecode_unreadable" = the Script
+    // header looked plausible but its buffer did not read, so nothing was scanned.
     std::string method;
     int32_t unmappedAccesses = 0;  // disasm: [reg+off] hits with no matching property
     // disasm: the decoder stopped at its instruction budget, so the property list

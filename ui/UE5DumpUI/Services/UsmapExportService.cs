@@ -15,11 +15,14 @@ namespace UE5DumpUI.Services;
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
-/// <para>⚠ One place still differs, and knowingly: both canonical writers write an enum's REAL underlying
-/// property. This one derives it from the enum's size (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a
-/// consumer deserializes but not its signedness. A container's enum inner is still written as Byte: 5.8
-/// serializes container enums as FName, so that desync is doubtful. The exact fix is a DLL-side underlying-type
-/// key on walk_class. [A4-USMAP-ENUM-UNDERLYING]</para>
+/// <para>⚠ Two places still differ, and knowingly.
+/// (1) Both canonical writers write an enum's REAL underlying property. This one derives it from the enum's size
+/// (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a consumer deserializes but not its signedness. The exact
+/// fix is a DLL-side underlying-type key on walk_class. [A4-USMAP-ENUM-UNDERLYING]
+/// (2) A container's TEnumAsByte inner is still written as a bare Byte, because the walker does not publish an
+/// inner's enum. For an FEnumProperty inner (written as [26]) a desync would be doubtful; but an enum-carrying byte
+/// array serializes each element BY NAME in 5.8 (PropertyArray.cpp's CanBulkSerialize, PropertyByte.cpp), so for a
+/// TEnumAsByte inner it is certain. This header called it doubtful until review 3. [A4-USMAP-CONTAINER-ENUM]</para>
 /// </summary>
 public static class UsmapExportService
 {
