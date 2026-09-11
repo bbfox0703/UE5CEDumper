@@ -3138,6 +3138,35 @@ same path.
     struct-array container view drills; after Back from a container view, the parent's rows drill.
   - ⛔ **Not done, as recorded:** `IsEnabled="{Binding !IsLoading}"`, a nav mutex, clearing `Fields`
     on Back.
+  - ⚠ **The batch's adversarial review** (3 lenses, 16 agents): **9 survived, 4 refuted.** The 4
+    refuted were test-gap claims about pins added while the review ran. The 9 completed the
+    stamp's instance list and were repaired in a follow-up commit:
+    - **The stamp recorded the crumb current at RENDER time, not the crumb the walk was for.**
+      Back's walk landing after a Forward pressed meanwhile installed A's rows as B's.
+      `RenderSuperseded(target)` now drops a navigation's render when its target is no longer
+      current. It covers Back (both branches), Forward, a jump, Parent, the synthetic-container
+      re-hydrate, bookmark load (both renders) and all three Locate renders.
+    - **Refresh:** it discards itself across a crumb change (the identity is checked, not only the
+      address and count, since a re-rooted Back keeps both), and it **never re-stamps**. It
+      re-walks the object on screen, and after a Back or Parent whose walk FAILED, re-stamping
+      recorded the old level's rows as the new crumb's.
+    - **The same window through other commands:** Copy CE XML, Copy CE Field(s), CSX and Save
+      Bookmark combine the current spine with the grid. They now refuse while the grid is behind
+      the spine (`RefuseWhileGridBehindSpine`). Push to CE, "+CE" and the AA script use absolute
+      field or object addresses, and were checked unaffected.
+    - **A failed re-root left every drill refused:** a Go-box typo, a DLL-rejected address, or a
+      failed GameEngine start clears the spine but keeps the rows. A re-root ticket
+      (`ReleaseLeftoverGrid`) now declares such rows a rootless leftover, so a drill re-roots at
+      the pointee as it always did.
+      - An older failure cannot release a newer re-root's guard.
+      - A re-root still IN FLIGHT keeps refusing; that window is the graft.
+    - **The refusal text is now true in both states** (still loading, or failed).
+    - **"Before any write" is pinned:** a refused drill leaves Back's destination crumb view state
+      and its loading state untouched.
+  - **Follow-up red → green:** 6 new gated or failing interleavings (Back then Forward, a failed Back
+    then Refresh, a Refresh across a same-count spine swap, a failed re-root, the exports and
+    bookmark save in the window, plus a re-root-in-flight control). All were red on the recorded
+    mechanism; `LiveWalkerNavStampTests` is now 20/20.
 
 ##### ✅ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again (FIXED IN SOURCE 2026-09-11)
 
@@ -3463,7 +3492,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
-| 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green |
+| 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green. **Review follow-up:** 9 survived / 4 refuted; the render discard, the refresh identity + no-restamp, the export / bookmark guards and the re-root ticket landed; 6 new tests red → green, 20/20; UI 4867/4867; gates 21/21 |
 | 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green |
 
 #### Live-check backlog — run at the end of the pass

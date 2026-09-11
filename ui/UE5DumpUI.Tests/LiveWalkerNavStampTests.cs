@@ -64,7 +64,17 @@ public class LiveWalkerNavStampTests
 
     /// <summary>A → ToB → B. B has a pointer (ToC), an inline int array (Items) and an Outer (P).
     /// A also has ToD, for the Forward case (its own pointer target must not be the gated one).</summary>
-    private static (GatedStub dump, LiveWalkerViewModel vm) OnB()
+    private static (GatedStub dump, LiveWalkerViewModel vm) OnB() => OnBWith(new MockPlatformService(Path.GetTempPath()));
+
+    private static async Task<(GatedStub dump, LiveWalkerViewModel vm)> WalkedToBWith(MockPlatformService platform)
+    {
+        var (dump, vm) = OnBWith(platform);
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToB"));
+        return (dump, vm);
+    }
+
+    private static (GatedStub dump, LiveWalkerViewModel vm) OnBWith(MockPlatformService platform)
     {
         var dump = new GatedStub();
         dump.RegisterStruct(A, Obj(A, "BP_A_C", Ptr("ToB", 0x10, B), Ptr("ToD", 0x18, D)));
@@ -109,7 +119,7 @@ public class LiveWalkerNavStampTests
         dump.RegisterStruct(C, Obj(C, "BP_C_C", new LiveFieldValue { Name = "X", TypeName = "IntProperty", Offset = 8, Size = 4 }));
         dump.RegisterStruct(D, Obj(D, "BP_D_C", new LiveFieldValue { Name = "Y", TypeName = "IntProperty", Offset = 8, Size = 4 }));
         dump.RegisterStruct(P, Obj(P, "BP_P_C", new LiveFieldValue { Name = "Z", TypeName = "IntProperty", Offset = 8, Size = 4 }));
-        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform);
         return (dump, vm);
     }
 
@@ -126,7 +136,7 @@ public class LiveWalkerNavStampTests
     private static void AssertRefused(LiveWalkerViewModel vm, string rowName)
     {
         Assert.DoesNotContain(vm.Breadcrumbs, b => b.FieldName == rowName);
-        Assert.Contains("belongs to the view you just left", vm.StatusText);
+        Assert.Contains("belongs to a view you have navigated away from", vm.StatusText);
     }
 
     [Fact]
@@ -136,9 +146,17 @@ public class LiveWalkerNavStampTests
         var gate = dump.Gate(A);
 
         var back = vm.GoBackCommand.ExecuteAsync(null);             // pops B at once, then walks A
+        var dest = vm.Breadcrumbs[^1];                               // A — where Back is headed
+        var hintBefore = dest.ScrollHintFieldName;                   // "ToB", from the drill into B
+        var selBefore = dest.ViewSelectedFields?.Select(s => s.Name).ToList();
         var stale = vm.Fields.Single(f => f.Name == "ToC");          // the grid still shows B
         await vm.NavigateToFieldCommand.ExecuteAsync(stale);
         AssertRefused(vm, "ToC");
+        // "Before ANY write": the refused drill must not overwrite the view state Back will
+        // restore on A, and must not end Back's loading state.
+        Assert.Equal(hintBefore, dest.ScrollHintFieldName);
+        Assert.Equal(selBefore, dest.ViewSelectedFields?.Select(s => s.Name).ToList());
+        Assert.True(vm.IsLoading, "a refused drill must not end Back's loading state");
 
         dump.Ungate(A);
         gate.SetResult(Obj(A, "BP_A_C", Ptr("ToB", 0x10, B), Ptr("ToD", 0x18, D)));
@@ -213,6 +231,156 @@ public class LiveWalkerNavStampTests
         dump.Ungate(P);
         gate.SetResult(Obj(P, "BP_P_C", new LiveFieldValue { Name = "Z", TypeName = "IntProperty", Offset = 8, Size = 4 }));
         await parent;
+    }
+
+    // ── The same shape, found by the batch's adversarial review ─────────────────
+
+    /// <summary>Two navigations in flight: Back's walk lands AFTER a Forward pressed meanwhile. The
+    /// stamp used to record whatever crumb was current at render time, so Back's rows (A) were
+    /// installed and stamped as Forward's crumb (B) — and a drill of one of them grafted A's field
+    /// under B. A navigation whose target is no longer current must drop its render.</summary>
+    [Fact]
+    public async Task Back_ThenForward_BeforeBacksWalkLands_BacksRenderIsDiscarded()
+    {
+        var (dump, vm) = await WalkedToB();
+        var gate = dump.Gate(A);
+
+        var back = vm.GoBackCommand.ExecuteAsync(null);             // pops B, walks A (held)
+        await vm.GoForwardCommand.ExecuteAsync(null);                // pushes B back, renders B
+        Assert.Equal(B, vm.CurrentAddress);
+
+        dump.Ungate(A);
+        gate.SetResult(Obj(A, "BP_A_C", Ptr("ToB", 0x10, B), Ptr("ToD", 0x18, D)));
+        await back;                                                  // Back's late render
+
+        Assert.Equal(B, vm.CurrentAddress);                          // still B, not A's rows
+        Assert.Equal("ToB", vm.Breadcrumbs[^1].FieldName);
+        Assert.DoesNotContain(vm.Fields, f => f.Name == "ToD");      // no A row to graft under B
+        Assert.Contains(vm.Fields, f => f.Name == "ToC");
+    }
+
+    /// <summary>Back's walk FAILS: the spine is on A, the grid still shows B. A Refresh (manual, or
+    /// an auto tick) re-walks what is on screen, B — and used to re-stamp B's rows as A's, reopening
+    /// the graft. Refresh re-walks the rendered object, so it must keep the stamp it found.</summary>
+    [Fact]
+    public async Task Back_WhoseWalkFails_ThenRefresh_TheOldRowsStayRefused()
+    {
+        var (dump, vm) = await WalkedToB();
+        var gate = dump.Gate(A);
+        var back = vm.GoBackCommand.ExecuteAsync(null);
+        gate.SetException(new System.InvalidOperationException("walk failed"));
+        await back;
+        Assert.Single(vm.Breadcrumbs);                               // the spine moved to A
+        Assert.Equal(B, vm.CurrentAddress);                          // the grid did not
+
+        await vm.RefreshCommand.ExecuteAsync(null);                  // re-walks B, the object on screen
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToC"));
+
+        AssertRefused(vm, "ToC");
+        Assert.Single(vm.Breadcrumbs);
+    }
+
+    /// <summary>A Refresh in flight across a spine swap that keeps the address AND the crumb count:
+    /// a re-rooted Back (one crumb for one crumb) whose own walk has not landed. The refresh used to
+    /// check only the address and the count, so its reply was installed and stamped as the restored
+    /// spine's crumb.</summary>
+    [Fact]
+    public async Task Refresh_AcrossASameCountSpineSwap_IsDiscarded()
+    {
+        var (dump, vm) = OnB();
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);           // spine [A]
+        await vm.NavigateToAddressCommand.ExecuteAsync(B);           // re-root: spine [B], A held for Back
+        var gateB = dump.Gate(B);
+        var gateA = dump.Gate(A);
+
+        var refresh = vm.RefreshCommand.ExecuteAsync(null);          // walks B (held)
+        var back = vm.GoBackCommand.ExecuteAsync(null);              // re-rooted Back: spine [A], walks A (held)
+        dump.Ungate(B);
+        gateB.SetResult(dump_B());                                   // the refresh's reply lands FIRST
+        await refresh;
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToC"));
+        AssertRefused(vm, "ToC");                                    // B's rows are not A's
+
+        dump.Ungate(A);
+        gateA.SetResult(Obj(A, "BP_A_C", Ptr("ToB", 0x10, B), Ptr("ToD", 0x18, D)));
+        await back;
+        Assert.Equal(A, vm.CurrentAddress);
+
+        static InstanceWalkResult dump_B() => new()
+        {
+            Address = B, Name = "Obj" + B, ClassName = "BP_B_C", ClassAddr = "0x92000",
+            Fields = new List<LiveFieldValue> { Ptr("ToC", 0x20, C) },
+        };
+    }
+
+    /// <summary>A re-root that FAILS after clearing the spine (a Go-box typo, an address the DLL
+    /// rejects) leaves the previous rows on screen with no crumb. That is no graft risk — a drill
+    /// there re-roots at the pointee, as it always did — so it must not be refused forever.</summary>
+    [Fact]
+    public async Task AFailedReRoot_LeavesTheOldRowsDrillable()
+    {
+        var (_, vm) = OnB();
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0xZZ");     // invalid: spine cleared, rows kept
+        Assert.Empty(vm.Breadcrumbs);
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToD"));
+
+        Assert.Equal(D, vm.CurrentAddress);
+        Assert.Equal("ToD", Assert.Single(vm.Breadcrumbs).FieldName);
+    }
+
+    /// <summary>The control for the case above: while a re-root's walk is still IN FLIGHT the old
+    /// rows are refused — that window is the graft.</summary>
+    [Fact]
+    public async Task AReRootInFlight_StillRefusesTheOldRows()
+    {
+        var (dump, vm) = OnB();
+        await vm.NavigateToAddressCommand.ExecuteAsync(A);
+        var gate = dump.Gate(B);
+        var reroot = vm.NavigateToAddressCommand.ExecuteAsync(B);
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToD"));
+        AssertRefused(vm, "ToD");
+
+        dump.Ungate(B);
+        gate.SetResult(Obj(B, "BP_B_C", Ptr("ToC", 0x20, C)));
+        await reroot;
+    }
+
+    /// <summary>The same window through the commands that combine the CURRENT spine with the grid:
+    /// Copy CE XML (all rows), Copy CE Field (the selection), CSX, and Save Bookmark (the address,
+    /// class, selection and anchor of the rendered level). Each used to emit or persist the new
+    /// spine with the old level's rows.</summary>
+    [Fact]
+    public async Task InTheWindow_ExportsAndBookmarkSave_AreRefused()
+    {
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var (dump, vm) = await WalkedToBWith(platform);
+        var gate = dump.Gate(A);
+        var back = vm.GoBackCommand.ExecuteAsync(null);
+        vm.SelectedField = vm.Fields.Single(f => f.Name == "ToC");   // a row of the level being left
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+        Assert.Contains("navigated away from", vm.StatusText);
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+        Assert.Contains("navigated away from", vm.StatusText);
+        await vm.ExportCsx77Command.ExecuteAsync(null);
+        Assert.Contains("navigated away from", vm.StatusText);
+        Assert.Null(platform.LastClipboard);
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        Assert.False(slot.IsOccupied);
+
+        dump.Ungate(A);
+        gate.SetResult(Obj(A, "BP_A_C", Ptr("ToB", 0x10, B), Ptr("ToD", 0x18, D)));
+        await back;
+
+        // Control: once the view has landed, the same bookmark save goes through.
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        Assert.True(slot.IsOccupied);
+        Assert.Equal(A, slot.SavedAddress);
     }
 
     // ── Negative controls: a too-strict stamp breaks the panel for everyone ──────
