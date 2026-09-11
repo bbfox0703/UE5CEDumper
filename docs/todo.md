@@ -3811,7 +3811,7 @@ Bitdefender's `atcuf64.dll`. **No published pointer moves:** both states refuse 
     states. The red made the silent Accept explicit. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213.
   - ⚠ **Survivors by construction:** `CurrentAnchorState`'s three-line wiring and the two log texts.
 
-##### `[A2-METHODE-MANUALMAP]` LOW — Methode reports a SUCCESSFUL CE force-load as "Injection failed", and blames CE's BOOL
+##### ✅ `[A2-METHODE-MANUALMAP]` LOW — Methode reports a SUCCESSFUL CE force-load as "Injection failed", and blames CE's BOOL (FIXED IN SOURCE 2026-09-12)
 
 `Methode.cpp:385-416`. From CE's source: `ForceLoadModule` re-raises on every failure
 (`CEFuncProc.pas:768-811`), so `ce_InjectDLL` TRUE after `EInjectError` means the forced load
@@ -3829,6 +3829,16 @@ be trusted"*.
 - ⛔ **Unsafe:** saying "CE manual-mapped it" whenever TRUE and absent. The APC path and a
   `GetExitCodeThread` failure also return TRUE with nothing mapped. Do not try to support manual
   mapping.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L13).
+  - The TRUE-but-absent case has its own message, which says it means one of two things: a failed load,
+    or CE's manual map. It names Settings -> "Always force load modules" (the label and the HKCU value
+    `Always Force Load` were read in CE's source), warns that a manually mapped image cannot handle
+    exceptions, and says to untick the setting and inject again.
+  - The FALSE case keeps the "Injection failed" text.
+  - The comment and `working-lessons.md` are corrected; the dev-log is untouched.
+  - Not done, as the row allows: reading `Always Force Load` before injecting.
+  - **Test, red first:** a Methode.cpp source pin. 2/2 mutants killed; dll_core_test 304/304, dll_helpers_test 2716/2716; UI 5214/5214.
+  - ⚠ **Survivor by construction:** the branch's wiring. No harness drives the plugin's inject path.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -5069,6 +5079,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 64 | `[A2-LAZY-LATCH-GUESS]` | LOW | `git log --grep A2-LAZY-LATCH-GUESS` (batch L10) | dll_core_test at a mis-resolved 504, red first: a real 0x1C is kept and latches +0x0C, `ResolveInnerSize` reads it, the reader latches nothing from the size it is handed; garbage still falls back, unlatched. 3/3 mutants killed; dll_core_test 304/304; UI 5212/5212. The recorded safe fix; the `InferScalarSize` entry kept |
 | 65 | `[A2-CRC-PATH-LS]` (+ its gate gap) | LOW | `git log --grep A2-CRC-PATH-LS` (batch L11) | A dll/src-wide gate test, red first: no `%ls` in a `Sein::` / `LOG_` call. It found eight sites (CrashReportClient ×2, the VERSIONINFO key, the pipe name, both proxies ×2), all converted. 4/4 mutants killed; dll_core_test 304/304; UI 5213/5213. Byte-identical for ASCII |
 | 66 | `[A2-HEAP-ANCHOR-TEXT]` | LOW | `git log --grep A2-HEAP-ANCHOR-TEXT` (batch L12) | dll_helpers_test, red first: a no-module anchor is Heap; a heap anchor refuses a foreign candidate with its own verdict and admits the producer; the truth table is 16 rows. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213. The enum form; the switch tail fails closed; None wording byte-identical |
+| 67 | `[A2-METHODE-MANUALMAP]` | LOW | `git log --grep A2-METHODE-MANUALMAP` (batch L13) | A Methode.cpp source pin, red first: the TRUE-but-absent text is ambiguous and names "Always force load modules"; the old verdict on CE's BOOL is gone. 2/2 mutants killed; dll_core_test 304/304, dll_helpers_test 2716/2716; UI 5214/5214. The recorded safe fix; comment and working-lessons corrected |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5254,6 +5265,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. `scan.log` says "Module anchor set on the HEAP".
 2. The atcuf64 refusal reads "GObjects validated on the HEAP", never "never validated this run".
 3. GWorld is still NOT taken from atcuf64. | a data-scan game + CE or proxy |
+| L53 | `[A2-METHODE-MANUALMAP]` | **CE: announce it first.** On a throwaway target (DumperTest), with CE's plugin loaded:
+1. Tick CE Settings -> "Always force load modules" and inject through the plugin. The message must be the new two-possibility text, naming the setting.
+2. Untick the setting, restart the target, inject again. The normal "DLL injected" message must appear. | CE + DumperTest |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5324,7 +5338,7 @@ completeness critic.
 - ✅ **L10:** `[A2-LAZY-LATCH-GUESS]`
 - ✅ **L11:** `[A2-CRC-PATH-LS]`
 - ✅ **L12:** `[A2-HEAP-ANCHOR-TEXT]`
-- **L13:** `[A2-METHODE-MANUALMAP]` (CE)
+- ✅ **L13:** `[A2-METHODE-MANUALMAP]` (CE)
 - **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
 - **L16:** `[W5-DENKEN-DEADGUARD]`

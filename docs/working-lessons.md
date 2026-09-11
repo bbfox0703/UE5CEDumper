@@ -2446,13 +2446,19 @@ hardcode `+0x3C` or any "+8 from ElementSize" form.
 > **For CE's *plugin* API, read the Pascal, not the header.** `ce_InjectDLL` is the worked example
 > (`pluginexports.pas:622-640` + `CEFuncProc.pas:1050-1051`, `1391-1396`): it returns `false` only if
 > an exception *escapes*, and CE catches one of the three it can raise. So it returns **true** on
-> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule`) and **false** on the
+> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule` — which RE-RAISES on
+> every failure, `CEFuncProc.pas:768-811`, so a TRUE there means the forced load **succeeded**, as a
+> manual map the module list cannot show; `[A2-METHODE-MANUALMAP]`) and **false** on the
 > >10 s timeout (a plain `Exception`) and on "Failed executing the function of the dll"
 > (`EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so
 > `on e:EInjectError` misses it). The BOOL is therefore *inverted for the common cases*, and a UI that
 > trusted it told users to check that the target is 64-bit while the DLL was loaded and running
 > (audit #5 AB2). **Where CE hands back an ambiguous status, prefer something you can observe** — the
-> plugin now re-walks the target's module list instead.
+> plugin now re-walks the target's module list instead. ⚠ **And when the observation is ambiguous
+> too, say so:** TRUE with the module absent is either a failed load (the APC path, a
+> `GetExitCodeThread` failure) or CE's manual map ("Always force load modules"), which the walk
+> cannot see and which cannot dispatch an exception. The plugin's message names both
+> (`[A2-METHODE-MANUALMAP]`, 2026-09-12).
 >
 > **CE's Lua has no `bAnd` / `bOr` / `bNot`.** Single-bit set/clear is done with pure arithmetic
 > (`math.floor(b / mask) % 2` to test, `b + mask` / `b - mask` to set/clear), which is also version-

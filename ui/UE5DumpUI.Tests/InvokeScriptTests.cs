@@ -1819,6 +1819,19 @@ public class InvokeScriptTests
         throw new FileNotFoundException("dll/src/" + file + " not found from " + AppContext.BaseDirectory);
     }
 
+    [Fact]
+    public void CePluginInject_TrueButAbsent_IsAmbiguous_AndNamesTheForceLoadSetting()
+    {
+        // [A2-METHODE-MANUALMAP] ce_InjectDLL TRUE after EInjectError means CE's forceLoadModule SUCCEEDED: a manual map
+        // the module walk cannot see. The old text called that "Injection failed" and blamed CE's BOOL. The APC path and
+        // a GetExitCodeThread failure also return TRUE with nothing mapped, so the honest text is AMBIGUOUS, and it names
+        // the setting that forces a manual map. Methode.cpp reaches no test target.
+        var src = DllSource("Methode.cpp");
+        Assert.Contains("\\\"Always force load modules\\\"", src, StringComparison.Ordinal);
+        Assert.Contains("That means one of two things", src, StringComparison.Ordinal);
+        Assert.DoesNotContain("its result cannot be trusted on its own", src, StringComparison.Ordinal);
+    }
+
     private static string DllSrcDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
