@@ -327,7 +327,12 @@ public static class InvokeScriptGenerator
             // Struct params keep their edit box so the `edits[i]` indices stay aligned with the
             // param list, but the label says the box is inert -- the alternative is a form that
             // silently ignores what the user typed (audit #5 Y6).
-            var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes" : "";
+            // [P3-INVOKE-Y11-CEFORM] The other unwritable params say so up front too, from the
+            // SAME predicates FIRE uses, so this label and the FIRE gate cannot disagree.
+            var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes"
+                : ParamBufferBuilder.IsRefusedParam(p.TypeName) ? ", CANNOT BE SENT - FIRE refuses it"
+                : ParamBufferBuilder.IsEmptyOnlyParam(p.TypeName) ? ", EMPTY ONLY - leave 0"
+                : "";
             var label = $"{p.Name}  [{ShortTypeName(p.TypeName)}{objClassSuffix}, {p.Size} B{(p.IsOut ? ", out" : "")}{structNote}]";
             var defaultVal = GetDefaultValue(p.TypeName);
             int idx = i + 1;
@@ -376,6 +381,7 @@ public static class InvokeScriptGenerator
 
         // Fire button logic — write params to mailbox, then CMD_INVOKE
         Line(sb, "btnFire.OnClick = function()");
+        AppendUnwritableParamGate(sb, inputParams);
         // The fourth guard, and the one whose bail shape genuinely differs: this is a
         // CLOSURE, so `return` leaves only the click handler — which is the right
         // behaviour here (the form stays open and the user can press FIRE again) but
@@ -420,6 +426,16 @@ public static class InvokeScriptGenerator
             if (p.TypeName == "StructProperty")
             {
                 Line(sb, $"    -- {p.Name}: struct ({p.Size} B) left ZEROED - this form cannot edit a struct");
+                continue;
+            }
+            // [P3-INVOKE-Y11-CEFORM] Every other type FIRE's WriteParam will not write either. The
+            // gate at the top of this handler refused a typed value (and an FText outright), so
+            // the zero-fill above IS the value sent -- the empty TArray, the unbound delegate.
+            // These used to fall through GetMailboxWriteStatement's size switch and write the
+            // textbox as a raw int32 over the structure's first pointer.
+            if (ParamBufferBuilder.IsUnwritableParam(p.TypeName))
+            {
+                Line(sb, $"    -- {p.Name}: {ShortTypeName(p.TypeName)} ({p.Size} B) left ZEROED - no textbox encoding");
                 continue;
             }
             var parseExpr = GetParseExpression(p.TypeName, idx);
@@ -504,6 +520,63 @@ public static class InvokeScriptGenerator
         Line(sb, $"{pad}t.Interval = 100");
         Line(sb, $"{pad}t.OnTimer = function(s) s.Enabled = false; s.destroy(); if memrec then memrec.Active = false end end");
         Line(sb, $"{pad}t.Enabled = true");
+    }
+
+    /// <summary>
+    /// Lua twin of <see cref="ParamBufferBuilder.IsZeroDefaultText"/>: empty, <c>0</c> or
+    /// <c>0x0</c> (any case), trimmed. The TYPE decision is never made in Lua -- only this text
+    /// test, because the text is what the user types into the form at FIRE time.
+    /// <c>InvokeScriptTests.CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling</c> pins this
+    /// exact spelling, which was run through a Lua interpreter against that predicate's cases.
+    /// </summary>
+    private const string ZeroDefaultLua =
+        "local function _isZeroDefault(e) local t = ((e and e.Text) or ''):match('^%s*(.-)%s*$'); " +
+        "return t == '' or t == '0' or t:lower() == '0x0' end";
+
+    /// <summary>
+    /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate (audit #5 Y11), emitted into the CE
+    /// form's own FIRE handler. Three invoke paths build the same ProcessEvent params from the
+    /// same <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refused
+    /// these, and this form wrote them.
+    ///
+    /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
+    /// <see cref="ParamBufferBuilder.IsEmptyOnlyParam"/> -- the predicates FIRE calls -- never
+    /// a copied type list. An FText is refused whatever the box holds (a zeroed FText is a
+    /// crash, not a default); an empty-only type only when the user typed something, because
+    /// the slot is always sent zeroed and a typed value would be dropped.</para>
+    ///
+    /// <para>It runs BEFORE the idle wait and the zero-fill, so a refusal touches nothing, and
+    /// it bails the way the busy-mailbox bail beside it does: say so, leave the form open, no
+    /// untick (<c>frm.OnClose</c> owns that).</para>
+    /// </summary>
+    private static void AppendUnwritableParamGate(StringBuilder sb, List<FunctionParamModel> inputParams)
+    {
+        const string nothingSent = "\\n\\nnothing was sent -- the form stays open.";
+        bool helperEmitted = false;
+        for (int i = 0; i < inputParams.Count; i++)
+        {
+            var p = inputParams[i];
+            var what = $"{EscapeLua(p.Name)}: {ShortTypeName(p.TypeName)}";
+            if (ParamBufferBuilder.IsRefusedParam(p.TypeName))
+            {
+                Line(sb, $"    do showMessage('[Invoke] {what} parameters cannot be sent -- an FText " +
+                         "holds a shared reference the engine allocates, and a zeroed one crashes the " +
+                         $"game. Invoke a wrapper that takes an FString instead.{nothingSent}'); return end");
+                continue;
+            }
+            if (!ParamBufferBuilder.IsEmptyOnlyParam(p.TypeName)) continue;
+            if (!helperEmitted)
+            {
+                Line(sb, "    " + ZeroDefaultLua);
+                helperEmitted = true;
+            }
+            Line(sb, $"    if not _isZeroDefault(edits[{i + 1}]) then");
+            Line(sb, $"        showMessage('[Invoke] {what} parameters cannot be built from a textbox -- " +
+                     "a multi-word structure whose contents must be allocated inside the game, so the " +
+                     $"value you typed would be dropped. Clear the box (or leave 0) to send it empty.{nothingSent}')");
+            Line(sb, "        return");
+            Line(sb, "    end");
+        }
     }
 
     /// <summary>True for UE string property types (built as an FString by value).</summary>

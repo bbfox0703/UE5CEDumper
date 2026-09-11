@@ -1518,7 +1518,7 @@ against.
 
 **MED**
 
-1. ⬜ **`[P3-INVOKE-Y11-CEFORM]`** `InvokeScriptGenerator.cs:553`. Three invoke paths build the same
+1. ✅ **`[P3-INVOKE-Y11-CEFORM]`** (FIXED IN SOURCE 2026-09-11, batch B06 — see the fixed note at the end of this item) `InvokeScriptGenerator.cs:553`. Three invoke paths build the same
    ProcessEvent params from the same `FunctionInfoModel`. **FIRE** has audit #5's Y11 unwritable-param
    gate (`ParamBufferBuilder.TryValidateScalar` + `IsEmptyOnlyParam` / `IsRefusedParam`, called at
    `InvokeParamDialog.cs:664`); the **interactive CE invoke form does not** — an FText param is sent
@@ -1527,6 +1527,25 @@ against.
    ⚠ **Safe only through the SHARED predicates**, never a hand-copied type list — the twin shares the
    contract (same params, same zero-filled buffer, same ProcessEvent), so the fix is to call what FIRE
    calls.
+   ✅ **FIXED IN SOURCE 2026-09-11, through the shared predicates** (batch B06, one commit with
+   `[P3-INVOKE-STRUCT-FSTRING]`).
+   - **The form's FIRE handler** now opens with a gate, `InvokeScriptGenerator.AppendUnwritableParamGate`,
+     classified by `ParamBufferBuilder.IsRefusedParam` / `IsEmptyOnlyParam`, the calls FIRE makes.
+     - An FText is refused whatever the box holds.
+     - An empty-only type (TArray/TMap/TSet, delegates, TFieldPath, TOptional, the layout-less
+       struct) is refused only when the box holds typed text.
+     - It runs BEFORE the idle wait and the zero-fill, so a refusal sends nothing. It bails the way
+       the busy-mailbox bail does: says so, leaves the form open, no untick.
+   - **Only the TEXT test is Lua** (`_isZeroDefault`, the twin of `IsZeroDefaultText`), because
+     the text is typed at FIRE time. Its exact spelling is pinned and was run through a Lua
+     interpreter against that predicate's cases, 16/16.
+   - **The write loop** skips every `IsUnwritableParam` type, so the zero-fill is the value sent.
+   - **The labels** say so up front: `CANNOT BE SENT` / `EMPTY ONLY`.
+   - **Tests (red first):**
+     - `InvokeScriptTests.CeForm_WritesAParamExactlyWhenFireWould`: parity over 34 type names,
+       with 10 red (every non-struct unwritable type).
+     - The gate, the FText refusal and the predicate spelling: 8 red.
+     - The controls (scalars, pointer, in/out FString not gated) were green throughout.
 2. ⬜ **`[P3-SNAPNUM-ENUM]`** `SnapshotNumeric.cs:17` (+ `Render` `:169`). No `EnumProperty` arm, so
    every enum field captured since **AB14** made enums scannable gets `numeric_value NULL`: every SPC
    numeric predicate and every Group Match slot skips it, and the grid shows raw hex. The DLL side
@@ -1541,12 +1560,25 @@ against.
 
 **LOW**
 
-3. ⬜ **`[P3-INVOKE-STRUCT-FSTRING]`** `ParamBufferBuilder.cs:353`. On the FIRE path a **top-level**
+3. ✅ **`[P3-INVOKE-STRUCT-FSTRING]`** (FIXED IN SOURCE 2026-09-11, batch B06) `ParamBufferBuilder.cs:353`. On the FIRE path a **top-level**
    string param goes through `InvokeStringParam` and the DLL builds the FString by value — but an
    FString-family **struct sub-field** takes the scalar route and is written as a raw int32 over
    `FString.Data`: a third hole beside Y11-OPAQUEDROP, and a code-path twin inside one builder.
    ✅ Safe with one caveat: refuse a *non-empty* string member in `TryValidateStructSubFields`; an
    all-zero FString `{null,0,0}` is the valid empty and must still pass.
+   ✅ **FIXED IN SOURCE 2026-09-11, exactly that shape.**
+   - `TryValidateStructSubFields` refuses any typed text in a string member, named. The comparison
+     is UNTRIMMED, because a space is a string too.
+   - The empty box passes.
+   - `WriteStructParam` leaves a string member zeroed, so a caller that skips the gate drops the
+     text instead of stamping an integer over `Data`.
+   - The dialog maps a cleared (null) string box to `""`, not `"0"`: the gate would read `"0"` as
+     the text "0".
+   - `TryValidateScalar` is unchanged. It still accepts strings, because a TOP-LEVEL string is built
+     for real (`Y11_StringAndPointerParamsAreStillAccepted` stays green).
+   - **Tests:** `AuditL11HonestyTests.StructFString_*`.
+     - All three string types, the texts `42` / `0` / space, and the write-never pin: 7 red first.
+     - The empty-member control was green before and after.
 4. ⬜ **`[P3-SCORING-MCDELEGATE]`** `PropertyScoringTable.cs:397`. `IsNonValueType` holds
    `DelegateProperty`, `MulticastInlineDelegateProperty` and `MulticastSparseDelegateProperty` and
    misses the **UE4 ≤ 4.22** name `MulticastDelegateProperty`, so old-UE4 delegates escape the
@@ -3561,6 +3593,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 12 | `[A3-BOOL-NATIVE-NOWRITE]` | MED | `git log --grep A3-BOOL-NATIVE-NOWRITE` | `LiveWalkerBoolWriteTests` 5/6 red → green (the read-modify-write control green both ways) + the `PlanBoolWrite` theory; `DumpServiceTests` `bool_native` parse red → green; `dll_helpers_test` `ClassifyBoolLayout`. DLL + 4 proxies + both C++ test exes built via `build_dll.py`, exit 0; UI 4892/4892; gates 21/21 |
 | 13 | `[A3-FIRE-STRUCT-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `InvokeBoolMaskTests` 7/7 red → green; `invoke_helper_test.lua` 2 new cases red → green, 97/97; ParamBufferBuilder 120/120, InvokeScript 134/134, CeLuaHygiene 76/76, CeMailboxBailout 262/262 |
 | 14 | `[A2-STRUCT-PREVIEW-BOOLMASK]` | LOW | same commit as row 12 (batch B05) | `dll_helpers_test` `PreviewScalarValue` packed set/clear, mask-0 fallback and native `0xFF` cases; the TOptional hand copy routed through `InterpretStructByLayout` |
+| 15 | `[P3-INVOKE-Y11-CEFORM]` | MED | `git log --grep P3-INVOKE-Y11-CEFORM` | `InvokeScriptTests.CeForm_*`: parity over 34 type names (10 red), gate / FText / predicate spelling (8 red), controls green throughout. The Lua `_isZeroDefault` was run through a Lua interpreter, 16/16. 4/4 mutants killed; UI 4946/4946 |
+| 16 | `[P3-INVOKE-STRUCT-FSTRING]` | LOW | same commit as row 15 (batch B06) | `AuditL11HonestyTests.StructFString_*`: 7 red → green, the empty-member control green both ways; 3/3 mutants killed (refusal, trimmed compare, write skip) |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3592,6 +3626,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 3. **Unresolved:** a bool whose mask shows as 0 must be REFUSED with the reason.
 4. **Preview and invoke:** a struct holding two packed bools (e.g. `FHitResult`, or a DumperTest struct) previews each bit separately. FIRE with both ticked sets both bits. Copy AA Script run in CE sets both bits too.
 5. **Read-back:** a field the game recomputes each tick reports the read-back mismatch, not "Written". | DumperTest + UI; **CE for the Copy AA Script and bit read-back steps — announce first** |
+| L10 | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | On DumperTest:
+1. **CE invoke form:** generate it for a UFunction that takes a `TArray` (or a delegate) and one that takes an `FText`. The labels read `EMPTY ONLY` / `CANNOT BE SENT`. Type `5` into the TArray box and press FIRE: the form says "nothing was sent", stays open, and the game logs no call. Clear it to `0`, press FIRE, and the call goes out with an empty array. The FText function refuses every FIRE.
+2. **App FIRE:** on a struct param that has an `FString` member, typing text into that member refuses with its name. Leaving it empty fires, and the callee sees an empty string, not a garbage pointer. | DumperTest + UI; **CE for step 1 — announce first** |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3619,7 +3656,7 @@ completeness critic.
 | ✅ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
 | ✅ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
 | ✅ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
-| ⬜ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
+| ✅ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
 | ⬜ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
 | ⬜ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
 | ⬜ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |

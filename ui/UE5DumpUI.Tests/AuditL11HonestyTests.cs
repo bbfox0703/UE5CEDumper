@@ -690,6 +690,66 @@ public class AuditL11HonestyTests
         Assert.False(ParamBufferBuilder.IsUnwritableParam("ObjectProperty"));
     }
 
+    // ── [P3-INVOKE-STRUCT-FSTRING] a string MEMBER of a struct param ───────────────────
+    //
+    // A top-level FString goes through InvokeStringParam and the DLL builds it by value. A
+    // string SUB-FIELD took the scalar route instead: TryValidateScalar has no width for a
+    // 16-byte StrProperty and passed it, and WriteParam's size-driven default wrote the textbox
+    // as a raw integer over FString.Data -- a bogus pointer handed to ProcessEvent, a third hole
+    // beside Y11-OPAQUEDROP. The recorded safe shape: refuse a NON-EMPTY member; the all-zero
+    // FString {null,0,0} is the valid empty and must still pass. (TryValidateScalar itself keeps
+    // accepting strings -- Y11_StringAndPointerParamsAreStillAccepted -- because a TOP-LEVEL
+    // string is built for real.)
+
+    private static readonly DynamicStructField[] WithLabel =
+    [
+        new("Id",    "IntProperty", 0, 4),
+        new("Label", "StrProperty", 8, 16),
+    ];
+
+    [Theory]
+    [InlineData("StrProperty")]
+    [InlineData("Utf8StrProperty")]
+    [InlineData("AnsiStrProperty")]
+    public void StructFString_NonEmptyMember_IsRefusedAndNamed(string strType)
+    {
+        DynamicStructField[] fields = [new("Id", "IntProperty", 0, 4), new("Label", strType, 8, 16)];
+
+        var ok = ParamBufferBuilder.TryValidateStructSubFields(fields, ["7", "hello"], out var field, out var err);
+
+        Assert.False(ok);
+        Assert.Equal("Label", field);
+        Assert.Contains("string", err, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("42")]   // written as int32 42 over FString.Data
+    [InlineData("0")]    // the one-character string "0" -- NOT the zero default a number box has
+    [InlineData(" ")]    // a string of one space is still a string the user typed
+    public void StructFString_AnyTypedTextIsRefused(string text)
+    {
+        Assert.False(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["0", text], out var field, out _));
+        Assert.Equal("Label", field);
+    }
+
+    [Fact]
+    public void StructFString_EmptyMember_StillPasses()
+    {
+        // The control, green before and after: an untouched string box (GetDefaultValue gives
+        // "") sends the valid empty FString.
+        Assert.True(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["7", ""], out _, out _));
+    }
+
+    [Fact]
+    public void StructFString_WriteNeverStampsTheTextOverData()
+    {
+        // Belt and braces behind the gate: the builder itself leaves a string member's 16 bytes
+        // zeroed, so a caller that skips validation drops the text instead of sending a pointer.
+        var buf = new byte[24];
+        ParamBufferBuilder.WriteStructParam(buf, 0, WithLabel, ["0", "42"]);
+        Assert.All(buf[8..24], b => Assert.Equal(0, b));
+    }
+
     // ══ Y14 — "N baked param(s)" was reported over params that failed to parse ══════
     //
     // Negative control: replace IsUnparsedLiteral's body with `=> false` -> the

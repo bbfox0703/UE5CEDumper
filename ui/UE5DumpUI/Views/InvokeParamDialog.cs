@@ -622,7 +622,10 @@ public sealed class InvokeParamDialog : Window
                         // this by writing the value instead: writing the user's text over a
                         // structure's first pointer field is the original Y11 defect.
                         var subFields = subEdits.Select(se => se.sf).ToArray();
-                        var subValues = subEdits.Select(se => se.edit.Text ?? "0").ToArray();
+                        // A cleared string box is the empty string, not "0" -- which
+                        // [P3-INVOKE-STRUCT-FSTRING]'s gate would read as the text "0".
+                        var subValues = subEdits.Select(se => se.edit.Text
+                            ?? (ParamBufferBuilder.IsStringType(se.sf.TypeName) ? "" : "0")).ToArray();
 
                         if (!ParamBufferBuilder.TryValidateStructSubFields(
                                 subFields, subValues, out var badField, out var subErr))

@@ -161,6 +161,23 @@ public static class ParamBufferBuilder
         for (int i = 0; i < subFields.Count && i < subValues.Count; i++)
         {
             var sf = subFields[i];
+            // [P3-INVOKE-STRUCT-FSTRING] A string MEMBER has no encoding in this buffer. A
+            // top-level FString is built by value DLL-side (InvokeStringParam); a sub-field took
+            // the scalar route, TryValidateScalar has no width for 16 bytes and passed it, and
+            // WriteParam wrote the text as a raw integer over FString.Data -- a bogus pointer
+            // handed to ProcessEvent. Refuse any typed text, compared UNTRIMMED (a space is a
+            // string too); the empty box is the all-zero {null,0,0}, the valid empty FString.
+            // (TryValidateScalar keeps accepting strings: its top-level callers build them.)
+            if (IsStringType(sf.TypeName))
+            {
+                if ((subValues[i] ?? "").Length == 0) continue;
+                fieldName = sf.Name;
+                error = $"{ShortTypeName(sf.TypeName)} members of a struct cannot be built from " +
+                        "this dialog — the string's characters must be allocated inside the game, " +
+                        "and the text would be written as a raw integer over its Data pointer. " +
+                        "Clear the box to send an empty string.";
+                return false;
+            }
             if (TryValidateScalar(sf.TypeName, sf.Size, (subValues[i] ?? "").Trim(), out var err))
                 continue;
             fieldName = sf.Name;
@@ -186,6 +203,10 @@ public static class ParamBufferBuilder
             var sf = subFields[i];
             int absOffset = paramOffset + sf.Offset;
             if (absOffset < 0 || absOffset >= buf.Length) continue;
+            // [P3-INVOKE-STRUCT-FSTRING] Leave a string member's bytes zeroed -- the valid empty
+            // FString. TryValidateStructSubFields refused any typed text; a caller that skipped
+            // it drops the text here instead of stamping an integer over FString.Data.
+            if (IsStringType(sf.TypeName)) continue;
             // [A3-FIRE-STRUCT-BOOLMASK] A PACKED bool shares its byte with siblings (FHitResult's
             // bBlockingHit / bStartPenetrating): set or clear only its bit. A whole-byte write
             // zeroed the sibling or landed on bit 0. Mask 0 / 0xFF keep the whole-byte write below.

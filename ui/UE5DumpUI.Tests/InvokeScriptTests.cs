@@ -1526,4 +1526,126 @@ public class InvokeScriptTests
         Assert.Contains("writeInteger(PD + 0,", script);
         Assert.DoesNotContain("left ZEROED", script);
     }
+
+    // --- [P3-INVOKE-Y11-CEFORM] the CE form shares FIRE's unwritable-param gate -----------
+    //
+    // Three invoke paths build the same ProcessEvent params from the same FunctionInfoModel.
+    // FIRE refuses an FText outright and a TYPED value for a multi-word structure
+    // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam, audit #5 Y11); the interactive CE
+    // form had no gate. An FText went out zeroed -- a crash, not a default -- and a typed TArray
+    // or delegate value was written as a raw int32 over the structure's first pointer. The
+    // type classification must come from the SHARED predicates, never a hand-copied list.
+
+    private static FunctionInfoModel OneParamFunc(string typeName, int size, bool isOut = false) => new()
+    {
+        Name = "Take", NumParms = 1, ParmsSize = (ushort)size,
+        Params = new List<FunctionParamModel>
+        {
+            new() { Name = "Arg", TypeName = typeName, Size = size, Offset = 0, IsOut = isOut },
+        },
+    };
+
+    /// <summary>The FIRE click handler: from its header to the end of the script.</summary>
+    private static string FireHandler(string script)
+    {
+        int click = script.IndexOf("btnFire.OnClick = function()", StringComparison.Ordinal);
+        Assert.True(click >= 0, "the FIRE handler is gone");
+        return script[click..];
+    }
+
+    /// <summary>The part of the FIRE handler that runs before the mailbox is touched.</summary>
+    private static string BeforeTheMailbox(string fire)
+    {
+        int wait = fire.IndexOf("waitIdle()", StringComparison.Ordinal);
+        Assert.True(wait > 0, "the FIRE handler has no idle wait");
+        return fire[..wait];
+    }
+
+    public static TheoryData<string> EveryParamType => new()
+    {
+        "BoolProperty", "ByteProperty", "Int8Property", "Int16Property", "UInt16Property",
+        "IntProperty", "UInt32Property", "Int64Property", "UInt64Property", "FloatProperty",
+        "DoubleProperty", "EnumProperty", "NameProperty", "ObjectProperty", "ClassProperty",
+        "SoftObjectProperty", "SoftClassProperty", "WeakObjectProperty", "LazyObjectProperty",
+        "InterfaceProperty", "StrProperty", "Utf8StrProperty", "AnsiStrProperty",
+        "StructProperty", "TextProperty", "ArrayProperty", "MapProperty", "SetProperty",
+        "FieldPathProperty", "OptionalProperty", "DelegateProperty", "MulticastDelegateProperty",
+        "MulticastInlineDelegateProperty", "MulticastSparseDelegateProperty",
+    };
+
+    [Theory]
+    [MemberData(nameof(EveryParamType))]
+    public void CeForm_WritesAParamExactlyWhenFireWould(string typeName)
+    {
+        // Parity with FIRE, by construction: the CE form writes a param's box into the params
+        // buffer iff WriteParam would. The zero-fill loop spells its address `PD + i`, so any
+        // `(PD + 0,` is a write of this param.
+        var fire = FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, 16)));
+
+        Assert.Equal(!ParamBufferBuilder.IsUnwritableParam(typeName), fire.Contains("(PD + 0,", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("ArrayProperty", 16)]
+    [InlineData("MapProperty", 80)]
+    [InlineData("DelegateProperty", 16)]
+    [InlineData("MulticastSparseDelegateProperty", 1)]
+    [InlineData("OptionalProperty", 16)]
+    [InlineData("StructProperty", 24)]   // the layout-less struct FIRE also refuses when typed
+    public void CeForm_TypedValueForAnEmptyOnlyParam_IsRefusedBeforeAnythingIsSent(string typeName, int size)
+    {
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size))));
+
+        int gate = pre.IndexOf("_isZeroDefault(edits[1])", StringComparison.Ordinal);
+        Assert.True(gate >= 0, $"no gate for the {typeName} param");
+        var bail = pre[gate..];
+        Assert.Contains("Arg", bail, StringComparison.Ordinal);            // names the param
+        Assert.Contains("nothing was sent", bail, StringComparison.Ordinal);
+        Assert.Contains("return", bail, StringComparison.Ordinal);
+        // The form stays open for another try: frm.OnClose owns the untick.
+        Assert.DoesNotContain("memrec", bail, StringComparison.Ordinal);
+        Assert.DoesNotContain("createTimer", bail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CeForm_FText_IsRefusedWhateverTheBoxHolds()
+    {
+        // An all-zero FText is not an empty FText (it holds a TSharedRef), so FIRE refuses it
+        // unconditionally -- not only when typed.
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
+
+        Assert.Contains("FText", pre, StringComparison.Ordinal);
+        Assert.Contains("nothing was sent", pre, StringComparison.Ordinal);
+        Assert.Contains("return", pre, StringComparison.Ordinal);
+        Assert.DoesNotContain("_isZeroDefault(edits[1])", pre, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling()
+    {
+        // Mirrors ParamBufferBuilder.IsZeroDefaultText (empty, `0`, `0x0` any case, trimmed).
+        // This exact spelling was run through a Lua interpreter (5.4 on the dev PC; it uses only
+        // string.match / string.lower, unchanged from CE's 5.3) against that predicate's cases,
+        // 16/16 incl. a nil edit and a nil Text; changing it means re-running that check.
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("ArrayProperty", 16));
+
+        Assert.Contains(
+            "local function _isZeroDefault(e) local t = ((e and e.Text) or ''):match('^%s*(.-)%s*$'); " +
+            "return t == '' or t == '0' or t:lower() == '0x0' end",
+            script, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("IntProperty", 4, false)]
+    [InlineData("ObjectProperty", 8, false)]
+    [InlineData("StrProperty", 16, false)]
+    [InlineData("StrProperty", 16, true)]    // an out FString is left empty, never gated
+    public void CeForm_WritableParams_AreNotGated(string typeName, int size, bool isOut)
+    {
+        // The control: the gate must not catch params FIRE writes.
+        var script = InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size, isOut));
+
+        Assert.DoesNotContain("_isZeroDefault", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing was sent", BeforeTheMailbox(FireHandler(script)), StringComparison.Ordinal);
+    }
 }
