@@ -866,6 +866,42 @@ public class SnapshotViewModelTests : IDisposable
         await pending!;   // observe any fault it captured
     }
 
+    // ---- [W1-GROUP-DENYLIST] group mode applies the Diff denylist -- and now says so ----
+
+    private async Task<SnapshotViewModel> GroupVmAsync(bool withDenylist, CancellationToken ct)
+    {
+        _store.SetActiveGame("GVM");
+        _store.SetClassDenylist(DenylistScope.Diff, withDenylist
+            ? new HashSet<string>(StringComparer.Ordinal) { "Noise_C" }
+            : new HashSet<string>(StringComparer.Ordinal));
+        var vm = await NewVmWithSnapshotAsync(ct);
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].ScanType = ValueScanType.Exact; vm.GroupInputs[0].Value = "24";
+        vm.GroupInputs[1].ScanType = ValueScanType.Exact; vm.GroupInputs[1].Value = "10";
+        return vm;
+    }
+
+    [Fact]
+    public async Task GroupMatch_WithADenylist_SaysClassesAreHidden_AndWhereToSeeThem()
+    {
+        var vm = await GroupVmAsync(withDenylist: true, TestContext.Current.CancellationToken);
+
+        await vm.RunGroupMatchCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 class(es) hidden by the Diff denylist", vm.GroupStatusText);
+        Assert.Contains("Diff mode", vm.GroupStatusText);
+    }
+
+    [Fact]
+    public async Task GroupMatch_WithoutADenylist_SaysNothingAboutIt()
+    {
+        var vm = await GroupVmAsync(withDenylist: false, TestContext.Current.CancellationToken);
+
+        await vm.RunGroupMatchCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("denylist", vm.GroupStatusText);
+    }
+
     [Fact]
     public async Task GroupMatch_PopulatesCandidates_FromSeededSnapshot()
     {

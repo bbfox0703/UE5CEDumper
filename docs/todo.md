@@ -663,7 +663,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
      the recorded mechanism first.
    - **Evidence and live check:** in the `[FIXPASS-2026-09-10]` ledger and backlog.
 
-**LOW** — 7 rows: `[W1-GROUP-DENYLIST]` Group mode filters by a persisted denylist it gives no way
+**LOW** — 7 rows: ✅ `[W1-GROUP-DENYLIST]` (FIXED IN SOURCE 2026-09-12, batch L23: the group status names how many classes the Diff denylist hid and where to see or clear them, on the no-match line too; red first) Group mode filters by a persisted denylist it gives no way
 to see or clear (the *applying* is documented design — `docs/snapshot-group-match-spec.md:255`;
 only the non-disclosure survives, and `GroupStatusText` already discloses the sibling
 `PerSlotCapHit` cause) · `[W1-ARRAYCOUNT]` the Class Pivot array-field picker's element count is a
@@ -5204,6 +5204,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 76 | `[W1-WINMM-LOADMODE]` | LOW | `git log --grep W1-WINMM-LOADMODE` (batch L27) | A symmetry pin, red first: Fern's load_mode classifier must name every proxy file name Methode's `kProxyDllNames` lists (all four). 2/2 mutants killed, one of them a different proxy dropped; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5234/5234 |
 | 77 | `[W5-INSTEXPORT-TRUNC]` | LOW | `git log --grep W5-INSTEXPORT-TRUNC` (batch L24) | AuditL11HonestyTests, red first: a 61,000-field Instance Finder export says "Copied, but TRUNCATED…" with this panel's levers, never Live Walker's; a small one adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236. The four copy hazards handled, not copied |
 | 78 | `[W1-PIPEBUSY-LOG]` | LOW | `git log --grep W1-PIPEBUSY-LOG` (batch L26) | AobMakerInjectTableFileTests, red first through an internal seam (pipe name, 150 ms timeout, existence probe): a busy pipe is a Warn "EXISTS but no instance was free", an absent one stays the Debug "not running". 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5238/5238. The public constructor is unchanged |
+| 79 | `[W1-GROUP-DENYLIST]` | LOW | `git log --grep W1-GROUP-DENYLIST` (batch L23) | SnapshotViewModelTests, red first: a group match with a Diff denylist says "1 class(es) hidden by the Diff denylist (switch to Diff mode…)"; without one it says nothing about it. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5240/5240. Disclosure only: the applying is documented design |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5428,6 +5429,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L64 | `[W1-PIPEBUSY-LOG]` | **CE: announce it first.** Two Cheat Engine instances, both with the AOBMaker plugin, and the UI:
 1. With the second CE holding the pipe, trigger any AOBMaker action (e.g. open the Interesting Functions tab). `init.log` has a WARN "…AOBMakerCEBridge EXISTS but no instance was free…", not the Debug "Cheat Engine not running".
 2. With no CE running, the Debug line still reads "not running". | CE ×2 + UI |
+| L65 | `[W1-GROUP-DENYLIST]` | A game with snapshots and the UI:
+1. Hide a class in Diff mode's noise picker.
+2. Switch to Group mode and match. The status says "1 class(es) hidden by the Diff denylist (switch to Diff mode to see or clear it)", on a no-match result too. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5508,7 +5512,7 @@ completeness critic.
 - ✅ **L20:** `[A4-STEALTH-PRIME]`
 - ✅ **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 - ✅ **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
-- **L23:** `[W1-GROUP-DENYLIST]`
+- ✅ **L23:** `[W1-GROUP-DENYLIST]`
 - ✅ **L24:** `[W5-INSTEXPORT-TRUNC]`
 - **L25:** `[W1-PARTIAL-MARK]`
 - ✅ **L26:** `[W1-PIPEBUSY-LOG]` (CE)
