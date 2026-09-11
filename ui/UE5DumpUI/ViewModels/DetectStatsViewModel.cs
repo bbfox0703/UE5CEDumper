@@ -107,11 +107,17 @@ public partial class DetectStatsViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    // [A1-DETECT-REPUBLISH] Bumped by ClearOnDisconnect. DetectAsync has no cancellation and its per-class catch swallows
+    // every pipe failure, so a run suspended at the disconnect finished anyway and republished the old game's rows. It
+    // now compares after every await and bails without touching the rows or the status (InstanceFinder's _searchGen).
+    private int _detectGen;
+
     /// <summary>Drop detected-stat rows so a reconnect never shows fields (and live
     /// addresses) from the previous game (audit X5). Client-side only — the offline
     /// snapshot corpus is owned by the store, not here.</summary>
     public void ClearOnDisconnect()
     {
+        _detectGen++;   // [A1-DETECT-REPUBLISH] a run in flight now publishes nothing
         _allResults = new List<DetectedStat>();
         SelectedResult = null;
         Results.Clear();
@@ -121,6 +127,7 @@ public partial class DetectStatsViewModel : ViewModelBase
     [RelayCommand]
     private async Task DetectAsync()
     {
+        var gen = _detectGen;   // [A1-DETECT-REPUBLISH] a disconnect after this point moves it
         try
         {
             IsBusy = true;
@@ -130,6 +137,7 @@ public partial class DetectStatsViewModel : ViewModelBase
             // 1. Run the shipped scorer (identical machinery to Interesting Properties).
             var batch = await _dump.SearchPropertiesBatchAsync(
                 PropertyScoringTable.SeedQueries, types: null, gameOnly: true, limitPerQuery: 200);
+            if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH] disconnected while it ran: publish nothing
 
             var dedup = new Dictionary<(string, string, int),
                                        (PropertySearchMatch m, PropertyScoringTable.ScoreResult s)>();
@@ -169,6 +177,7 @@ public partial class DetectStatsViewModel : ViewModelBase
             var (snapChanges, snapNote) = UseSnapshotSignal
                 ? await TryLoadDecreasedFieldsAsync()
                 : (new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), "");
+            if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH] the multi-hundred-ms snapshot await
 
             // 3. Group by defining class; resolve ONE live instance + ONE walk per
             //    class (bounded), then confirm every candidate field of that class.
@@ -182,6 +191,7 @@ public partial class DetectStatsViewModel : ViewModelBase
             int classesProbed = 0;
             foreach (var grp in byClass)
             {
+                if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH] not even the "Confirming" status
                 bool probe = classesProbed < MaxClassesProbed;
                 if (probe) classesProbed++;
 
@@ -194,6 +204,7 @@ public partial class DetectStatsViewModel : ViewModelBase
                     try
                     {
                         var inst = await _dump.FindInstancesAsync(grp.Key, exactMatch: true, limit: 3);
+                        if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH]
                         var live = inst.Instances.FirstOrDefault(i =>
                             !string.IsNullOrEmpty(i.Address) &&
                             !i.Name.StartsWith("Default__", StringComparison.Ordinal));
@@ -201,6 +212,7 @@ public partial class DetectStatsViewModel : ViewModelBase
                         {
                             liveExists = true;
                             walk = await _dump.WalkInstanceAsync(live.Address);
+                            if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH]
                         }
                     }
                     catch (Exception ex)
@@ -282,7 +294,8 @@ public partial class DetectStatsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = "Detect failed — see logs.";
+            // [A1-DETECT-REPUBLISH] A failure of a run the disconnect already superseded must not print over the reset.
+            if (gen == _detectGen) StatusText = "Detect failed — see logs.";
             _log.Error("DetectStats detect failed", ex);
         }
         finally

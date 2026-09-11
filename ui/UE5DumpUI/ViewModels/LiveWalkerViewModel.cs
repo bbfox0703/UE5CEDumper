@@ -6166,11 +6166,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         StopAutoRefreshTimer(resumable: true);   // also sets IsAutoRefreshing = false
         _exportCts?.Cancel();
 
-        Breadcrumbs.Clear();
-        Fields.Clear();
-        _renderedCrumb = null;   // [A4-NAV-BACKFIRST-GRAFT]
+        // [A4-LW-DISCONNECT-PARENT] The whole displayed node, through the helper that owns it. HasParent and
+        // CurrentOuter* survived here, and after a reconnect the Parent button walked the previous process's Outer.
+        ClearDisplayedNode();
+        // The References header and its flag, not only the rows.
+        ClearReferences();
+        // And the FULL function list the Functions filter rebuilds from. Clearing only the visible list let the next
+        // filter edit bring the previous game's UFunctions back. (The filter box is not blanked, so there is nothing
+        // for the keyword memory to Flush.)
+        _allFunctions.Clear();
         Functions.Clear();
-        References.Clear();
+        HasFunctions = false;
         ClearForwardStack();
         _replacedSpine = null;
         _cachedWorld = null;

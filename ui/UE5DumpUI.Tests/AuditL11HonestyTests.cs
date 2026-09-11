@@ -158,6 +158,86 @@ public class AuditL11HonestyTests
         Assert.Contains("1 sparse delegate(s) unreadable", vm.StatusText);
     }
 
+    // ══ [A4-LW-DISCONNECT-PARENT] / [A1-DETECT-REPUBLISH] -- ClearOnDisconnect keeps its promise ══
+    //
+    // Both methods promise "a reconnect never shows the previous game's ...". Live Walker's left the Parent button, the
+    // References header and the full function list; Detect Player Stats' was undone by a run already in flight.
+
+    private sealed class FuncsStub : StubDumpService
+    {
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+            => Task.FromResult(new List<FunctionInfoModel> { new() { Name = "ReceiveBeginPlay" } });
+    }
+
+    [Fact]
+    public async Task LiveWalker_ClearOnDisconnect_LeavesNoParent_NoReferencesHeader_AndNoFunctions()
+    {
+        var dump = new FuncsStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Pawn_0", ClassName = "Pawn", ClassAddr = "0x5000",
+            OuterAddr = "0x2000", OuterName = "PersistentLevel", OuterClassName = "Level",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        Assert.True(vm.HasParent);          // the fixture: a live Parent button...
+        Assert.NotEmpty(vm.Functions);      // ...and a loaded function list
+        vm.HasReferences = true;
+        vm.ReferencesHeader = "References to Pawn_0 (1)";
+
+        vm.ClearOnDisconnect();
+        vm.FunctionFilter = "R";            // the next filter edit rebuilds the visible list from the FULL one
+
+        Assert.False(vm.HasParent);
+        Assert.Equal("", vm.CurrentOuterAddr);
+        Assert.False(vm.HasReferences);
+        Assert.Equal("", vm.ReferencesHeader);
+        Assert.False(vm.HasFunctions);
+        Assert.Empty(vm.Functions);
+    }
+
+    private sealed class GatedBatchStub : StubDumpService
+    {
+        public TaskCompletionSource<PropertySearchBatchResult> Gate { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries,
+            string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default)
+            => Gate.Task;
+    }
+
+    [Fact]
+    public async Task DetectStats_ARunInFlightAtDisconnect_TouchesNeitherTheRowsNorTheStatus()
+    {
+        var dump = new GatedBatchStub();
+        var vm = new DetectStatsViewModel(dump, new MockLoggingService());
+        var run = vm.DetectCommand.ExecuteAsync(null);
+
+        vm.ClearOnDisconnect();
+        var reset = vm.StatusText;
+        dump.Gate.SetResult(new PropertySearchBatchResult());   // the suspended run resumes, into a new session
+        await run;
+
+        Assert.Equal(reset, vm.StatusText);
+        Assert.Empty(vm.Results);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task DetectStats_AFailureAfterDisconnect_DoesNotPrintOverTheReset()
+    {
+        var dump = new GatedBatchStub();
+        var vm = new DetectStatsViewModel(dump, new MockLoggingService());
+        var run = vm.DetectCommand.ExecuteAsync(null);
+
+        vm.ClearOnDisconnect();
+        var reset = vm.StatusText;
+        dump.Gate.SetException(new IOException("pipe broken"));
+        await run;
+
+        Assert.Equal(reset, vm.StatusText);
+    }
+
     private static LiveWalkerViewModel MakeWalker()
     {
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),

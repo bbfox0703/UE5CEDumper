@@ -3244,7 +3244,7 @@ diagnostics only.
   sweeps. The in-session case needs a different rule: the newest `-0*` file per prefix in our own
   folder is the live one.
 
-##### `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows
+##### ✅ `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows (FIXED IN SOURCE 2026-09-12)
 
 `DetectStatsViewModel.cs:250`. X5's `ClearOnDisconnect` (`:110-112`) promises that a reconnect never
 shows the previous game's fields. But `DetectAsync` has no cancellation (July **L18**, still open), and
@@ -3262,6 +3262,16 @@ disconnect finishes anyway and republishes its rows at `:250-255`.
   - The per-class catch swallows the `OperationCanceledException`, so the loop still publishes.
   - A `ThrowIfCancellationRequested` outside that catch makes the outer catch print "Detect failed"
     over the reset.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded generation guard** (batch L19, with
+  `[A4-LW-DISCONNECT-PARENT]`).
+  - `_detectGen` is bumped in `ClearOnDisconnect` and compared after every await: the batch, the
+    snapshot signal, each class's instance lookup and walk, and each loop turn.
+  - A superseded run bails without touching the rows or the status. The outer catch is guarded too,
+    so a superseded failure cannot print "Detect failed" over the reset.
+  - No CTS.
+  - **Tests, red first:** a run gated in its first await is disconnected and then resumed, once with a
+    result and once with a pipe failure. The rows and the reset status stay untouched. 7/7 mutants
+    killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218.
 
 ##### `[A1-SLOTSYM-FAILED]` LOW — a failed second "Get GWorld" record tears down a live record's symbol
 
@@ -4874,7 +4884,7 @@ the opposite ordering rule into the GoBack twin.
   - ⚠ **Survivor by construction:** the Find Refs Open site's compose. No harness drives
     `OpenReferenceOwnerAsync` end to end, but the helper it calls is pinned.
 
-##### `[A4-LW-DISCONNECT-PARENT]` LOW — X5's ClearOnDisconnect leaves the Parent button, the References header and the function list
+##### ✅ `[A4-LW-DISCONNECT-PARENT]` LOW — X5's ClearOnDisconnect leaves the Parent button, the References header and the function list (FIXED IN SOURCE 2026-09-12)
 
 `LiveWalkerViewModel.cs:5805-5833`. The method promises *"a reconnect never shows an object (and its
 live addresses) from the previous game"*. But `HasParent` / `CurrentOuter*`, `HasReferences` and
@@ -4886,6 +4896,13 @@ live addresses) from the previous game"*. But `HasParent` / `CurrentOuter*`, `Ha
 X5's live PASS was rooted at UWorld, where `HasParent` is false, so it could not see this.
 - ✅ **Safe fix:** call `ClearDisplayedNode()` + `ClearReferences()`, and clear the function list.
   `Flush()` the keyword memory first if the filter box is blanked.
+- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L19, with `[A1-DETECT-REPUBLISH]`).
+  - `ClearOnDisconnect` goes through `ClearDisplayedNode()` and `ClearReferences()`, and it clears the
+    FULL function list (`_allFunctions`, not only the visible one) and `HasFunctions`.
+  - The filter box is not blanked, so there was nothing to `Flush()`.
+  - **Test, red first:** a walker rooted on an object with an Outer and a loaded function list is
+    disconnected. The Parent button, the References header and the function list stay gone, even after a
+    filter edit rebuilds the list. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218.
 
 ##### ✅ `[A4-PUSHCE-UNPADDED]` LOW — the batch "Push CE Field(s)" still pushes the unpadded FieldAddress (FIXED IN SOURCE 2026-09-12)
 
@@ -5117,6 +5134,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 68 | `[A3-MIMIC-INIT-FASTPATH]` | LOW | `git log --grep A3-MIMIC-INIT-FASTPATH` (batch L14) | dll_helpers_test (`Mimic::InitFastPathOk`: both globals set WHILE an init scans does not take the fast path) + source pins for both ends of the wiring, red first. 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215. The recorded narrowest fix; the contract hash is unmoved |
 | 69 | `[W5-DENKEN-DEADGUARD]` | LOW | `git log --grep W5-DENKEN-DEADGUARD` (batch L16) | dll_helpers_test pins the behaviour the obvious repair would break: a followed impl is decoded past the death of its this-alias. Red against that repair as a source mutant. 2/2 mutants killed; dll_helpers_test 2721/2721, dll_core_test 304/304; UI 5215/5215. The dead guard removed; behaviour unchanged |
 | 70 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | LOW | `git log --grep A4-CDOSCOPE-ANCESTOR` (batch L17) | dll_core_test, red first: `Aura::PreviewAncestorsOf` credits every preview class from the super up, and a nested row sharing a direct row's class is not previewed. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215. Both recorded safe fixes; the swap not restored |
+| 71 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | LOW | `git log --grep A4-LW-DISCONNECT-PARENT` (batch L19) | AuditL11HonestyTests, red first: a disconnected walker keeps no Parent, References header or function list; a Detect run in flight at the disconnect, resumed with a result or a failure, touches neither the rows nor the status. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218. Both recorded safe fixes; no CTS |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5314,6 +5332,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L56 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | A game and Property Search:
 1. **Ancestor:** search `BaseEyeHeight`, a Pawn field, with live Characters present. The Pawn row shows "(subclass instance)", not "(CDO default)", and Freeze on it reports the same instances.
 2. **Nested:** a Deep search that matches a direct field AND a nested `Slots[].Count`-style leaf of the same class. The nested row shows no preview. | a game + UI |
+| L57 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | Two games (or one game restarted) and the UI:
+1. **Live Walker:** root on an actor with an Outer, so Parent is enabled, and open its functions. Kill the game; reconnect to the other. Parent is disabled, there is no References header, and the Functions list is empty, including after typing in its filter.
+2. **Detect Player Stats:** with the snapshot signal on, click Detect and kill the game mid-run. After the reconnect the panel shows the reset text and no rows. | two games + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5390,7 +5411,7 @@ completeness critic.
 - ✅ **L16:** `[W5-DENKEN-DEADGUARD]`
 - ✅ **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 - **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
-- **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
+- ✅ **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 - **L20:** `[A4-STEALTH-PRIME]`
 - **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 - **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
