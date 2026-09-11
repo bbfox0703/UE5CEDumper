@@ -788,6 +788,11 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
      control, green both ways, beside the existing not-reflected readout test.
    - ⚠ Residual, not this row: any other refusal (`MR_ERR_WRITE` -10, a transient read failure) still
      lands on the generic "no pawn / no CharacterMovement" text. That wording predates B21.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21, finding `gravdir-locate-twin`,
+     MED, CONFIRMED). **A third entrance B21 missed:** the card's Locate-in-GWorld command re-read
+     the params, painted the right Unknown badge, then overwrote the status with "needs UE5.4+".
+     Locate now takes the readout's split. A no-pawn Locate was red first, with the pre-5.4 Locate
+     as the control. 2/2 mutants killed; UI 5079/5079.
 2. ✅ **`[W2-TPREL-MAP]`** (FIXED IN SOURCE 2026-09-11, batch B22) `TeleportViewModel.cs:3281`. After a directional teleport the Current
    Pose Map row goes blank, because `teleport_relative`'s reply carries no `map` key. Every
    Coordinate Library row is then re-flagged as belonging to another map (`Dist` collapses to `—`,

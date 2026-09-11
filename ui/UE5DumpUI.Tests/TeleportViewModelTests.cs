@@ -1570,6 +1570,40 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("UE5.4", vm.StatusText);
     }
 
+    [Fact]
+    public async Task LocateGravDir_without_a_pawn_is_not_a_version_verdict()
+    {
+        // The review of B21 found a third entrance: Locate re-read the params, painted the right
+        // Unknown badge, then overwrote the status with "needs UE5.4+".
+        var fake = new FakeDumpService { NextMovementParams = new MovementParams { HasCmc = false } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.Contains("enter gameplay", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LocateGravDir_on_a_pre_UE54_engine_still_says_so()
+    {
+        // The control, green before and after: a CMC without a reflected GravityDirection.
+        var fake = new FakeDumpService
+        {
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = true, GravityDirection = new MovementVectorKnob { Resolved = false },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
+
+        Assert.Contains("UE5.4", vm.StatusText);
+    }
+
     // ---- [W2-MS-PROMISE] a refused apply must not promise a queued override ----
 
     [Fact]

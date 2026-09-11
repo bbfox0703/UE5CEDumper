@@ -3269,7 +3269,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var g = mp.GravityDirection;
             if (!g.HasAddr)
             {
-                StatusText = "No GravityDirection field to locate (needs UE5.4+).";
+                // [W2-GRAVDIR-VERDICT] review follow-up: the readout's split, here too. No CMC right now
+                // is transient; only a CMC WITHOUT the reflected field is the pre-5.4 verdict.
+                StatusText = !mp.HasCmc
+                    ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
+                    : !g.Resolved
+                        ? "No GravityDirection field to locate (needs UE5.4+)."
+                        : "The GravityDirection field resolved without an address — press ↻ and try again.";
                 return;
             }
             StatusText = $"Locating {g.FieldName} {g.OwnerAddr}+0x{g.FieldOffset:X} in GWorld…";
