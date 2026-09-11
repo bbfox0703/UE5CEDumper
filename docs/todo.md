@@ -2287,15 +2287,25 @@ against.
    misses the **UE4 ≤ 4.22** name `MulticastDelegateProperty`, so old-UE4 delegates escape the
    non-value penalty the map's own doc (`:394-396`) says they get. The calibration games are all 4.23+,
    which is why nobody saw it. ✅ Safe: one name, a private predicate, one consumer.
-5. ⬜ **`[P3-SDK-INNERS]`** `SdkExportService.cs:334`. The scalar path (`MapCppDeclCore` `:278-303`)
+5. ✅ **`[P3-SDK-INNERS]`** (FIXED IN SOURCE 2026-09-12, batch L04) `SdkExportService.cs:334`. The scalar path (`MapCppDeclCore` `:278-303`)
    spells `TSoftClassPtr<>`, `TLazyObjectPtr<>`, `FScriptDelegate` and `FFieldPath`; the
    container-inner map declares all four as `uint8_t`. ⚠ Partly safe: copying the four scalar arms is,
    the rest of the finding's sketch is not.
-6. ⬜ **`[P3-SDK-GUESSED]`** `SdkExportService.cs:561`. CE XML (`:2178`) and CSX (`:102`) both skip
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch L04): the four scalar arms, copied, and nothing more.
+   - A container inner of `SoftClassProperty` or `LazyObjectProperty` now spells what the scalar path
+     spells, with its class when the walk carries one.
+   - So does a `DelegateProperty` or `FieldPathProperty` inner.
+   - **Red first:** an Array of each, an Array carrying its class, a Map value and a Set element.
+6. ✅ **`[P3-SDK-GUESSED]`** (FIXED IN SOURCE 2026-09-12, batch L04) `SdkExportService.cs:561`. CE XML (`:2178`) and CSX (`:102`) both skip
    Live Walker's **Guess?** rows; the SDK header export declares them, and their `?0x…` names **do not
    compile**. The contract is written: commit `860245b0` — guessed fields are *"excluded from all
    exports"*. ✅ **Safe and measured**: filter `!f.IsGuessed` in `EmitClassHeaderFromLive`. Confined to
    the live path; the schema path (`walk_class`) can never see guessed rows.
+   ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L04).
+   - `EmitClassHeaderFromLive` filters `!f.IsGuessed`, so a guessed row's bytes become padding, as they do
+     in CE XML and CSX.
+   - **Red first:** a header over a class with a `?0x…` row.
+   - With `[P3-SDK-INNERS]`: 5/5 mutants killed; UI 5176/5176.
 
 `implied_fix_safe`: **4 safe or safe-with-caveat, 2 partly** — the safest batch in the sweep, for the
 reason given above.
@@ -4858,6 +4868,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 55 | `[P1-ENUMNAMES]` | LOW | `git log --grep P1-ENUMNAMES` (batch L02) | dll_core_test (a cancelled ForEach says so; a cancelled search latches nothing) and the UI (parse, export note), red first. 5/5 mutants killed; dll_core_test 253/253; UI 5152/5152. The harmful half as filed (publish the latch as-is) did not land |
 | 56 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | LOW | `git log --grep A4-PUSHCE-UNPADDED` (batch L03a) | the UI: a caller-level batch-push test, and CSX offsets for a unicast leaf and a multicast drill, red first. 5/5 mutants killed; UI 5162/5162. Not a blanket `+ DelegatePad`: the multicast raw block stays at the field offset |
 | 57 | `[A4-DELEGATE-ARRAY-PAD]` | LOW | `git log --grep A4-DELEGATE-ARRAY-PAD` (batch L03b) | dll_core_test (the helper, and a fake walk over a padded and an unpadded delegate array) and the UI (parse, CE XML leaves and tail, CSX leaves, multicast controls), red first against an inert member / helper / property. 10/10 mutants killed; dll_core_test 275/275; UI 5169/5169. The pad is per ELEMENT and ArrayProperty-only, never on the array field |
+| 58 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | LOW | `git log --grep P3-SDK-INNERS` (batch L04) | the UI: each copied inner spelling (Array, with its class, Map, Set) and a header over a guessed row, red first. 5/5 mutants killed; UI 5176/5176. Only the four scalar arms: the rest of the INNERS sketch was not safe |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5014,6 +5025,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Copy CE XML of the instance. Each element leaf sits at `index * 24 + 8` from the dereferenced Data, and CE reads the bound object's FWeakObjectPtr there, not 0. A Copy CE Field with a fabricate count pads the extra rows the same way.
 3. The CSX export's element leaves sit at the same offsets.
 **Control:** a Shipping build, where the key is absent and nothing moves. | CE + a game + UI |
+| L44 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | A connected game and the UI:
+1. **Guessed rows:** in Live Walker, open an instance whose class shows "Guess?" rows and export its C++ header. No `?0x` name appears, and those bytes are `Pad_` members.
+2. **Container inners:** export the SDK on a game with a `TArray<TSoftClassPtr<…>>`, `TArray<TLazyObjectPtr<…>>` or `TArray<FScriptDelegate>` field (find one in a class dump). The declaration spells the element type, not `uint8_t`. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5075,7 +5089,7 @@ completeness critic.
 - ✅ **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - ✅ **L02:** `[P1-ENUMNAMES]`
 - ✅ **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE), in two batches: L03a and L03b.
-- **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
+- ✅ **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - **L06:** `[P1-UPROP-DELEGATE]`
 - **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`

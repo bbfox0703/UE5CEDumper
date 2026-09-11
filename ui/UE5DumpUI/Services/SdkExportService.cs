@@ -326,6 +326,9 @@ public static class SdkExportService
             "ClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSubclassOf<class {objClass}>" : "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TWeakObjectPtr<class {objClass}>" : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftObjectPtr<class {objClass}>" : "TSoftObjectPtr<UObject>",
+            // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
+            "SoftClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftClassPtr<class {objClass}>" : "TSoftClassPtr<UObject>",
+            "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClass) ? $"TScriptInterface<class {objClass}>" : "TScriptInterface<IInterface>",
             _ => MapScalarInnerType(innerType),
         };
@@ -352,6 +355,8 @@ public static class SdkExportService
             "AnsiStrProperty" => "FAnsiString",
             "TextProperty" => "FText",
             "EnumProperty" => "uint8_t",
+            "DelegateProperty" => "FScriptDelegate",     // [P3-SDK-INNERS] as the scalar path
+            "FieldPathProperty" => "FFieldPath",
             _ => "uint8_t",
         };
     }
@@ -558,7 +563,9 @@ public static class SdkExportService
 
         EmitStructBody(
             sb,
-            fields.Select(f => new SdkField(
+            // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from every export (commit 860245b0), and
+            // their "?0x..." names do not compile. Their bytes stay covered, as padding.
+            fields.Where(f => !f.IsGuessed).Select(f => new SdkField(
                 f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
             superName, superPropsSize, propsSize, ownPropsStart);
     }
