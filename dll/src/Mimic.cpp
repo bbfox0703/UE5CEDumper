@@ -25,6 +25,7 @@
 #include "Genau.h"
 #include "Macht.h"
 #include "Grimoire.h"
+#include "Stark.h"      // Stark::kInvokeTimedOutStillQueued -- a queued Debug Camera toggle [W3-DEBUGCAM-QUEUED]
 #include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 
@@ -1026,7 +1027,8 @@ static void HandleListInstances() {
 
 // CMD_SET_DEBUG_CAMERA: robust Debug Camera force on/off, shared with the UI
 // pipe (set_debug_camera). instanceAddr carries the request: 0=OFF, 1=ON,
-// 2=query (read state, no change). result gets the resulting state (1/0/-1).
+// 2=query (read state, no change). result gets the resulting state (1/0/-1), or
+// -5 when the toggle is QUEUED (it will still run; errorMsg says not to re-send).
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
 static void HandleSetDebugCamera() {
@@ -1037,6 +1039,14 @@ static void HandleSetDebugCamera() {
     if (state == -1) {
         strncpy(g_invokeMailbox.errorMsg,
                 "Debug Camera: no live CheatManager / unreadable state",
+                sizeof(g_invokeMailbox.errorMsg) - 1);
+        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+    } else if (state == Stark::kInvokeTimedOutStillQueued) {
+        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED: it will still run. Not a
+        // contract change (MB3 above: a new negative result code; every script treats non-zero as failure and renders
+        // errorMsg verbatim) -- so errorMsg carries the one thing that matters: do not send it again.
+        strncpy(g_invokeMailbox.errorMsg,
+                "Debug Camera: toggle queued -- it will run when the game thread is free; do not re-send",
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     }

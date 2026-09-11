@@ -20,7 +20,7 @@
     ok, err = invokeUFunction(className, funcName, parmsSize, params)
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
-    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err)
+    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued)
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
 
   String INPUT params: a param descriptor with type 'fstring' (wide, UE FString)
@@ -41,6 +41,12 @@
     -- either way nothing was applied, so untick the record (a stateful toggle must not
     -- leave a ticked box claiming a cheat that is not on) and report. (audit #5 AA31)
     local ok, state = pcall(setDebugCamera, 1)
+    if ok and state == -5 then
+      -- QUEUED: the game thread did not answer in time, and the toggle WILL still run. Leave the record ticked and
+      -- do not tick again -- a second toggle would undo the first. [W3-DEBUGCAM-QUEUED]
+      showMessage('[Debug Camera] queued -- it will turn on when the game thread is free')
+      return
+    end
     if not ok or state ~= 1 then
       -- DEFERRED: an immediate memrec.Active = false inside [ENABLE] is a no-op, so the
       -- row would stay ticked over a camera that never turned on. Byte-identical to
@@ -781,7 +787,8 @@ end
 -- return the export's int result (observed: state=nil). The DLL handler
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
--- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown.
+-- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
+-- is QUEUED (it will run when the game thread is free -- never re-send it). [W3-DEBUGCAM-QUEUED]
 if not setDebugCamera then
 
   local CMD_SET_DEBUG_CAMERA = 7
@@ -809,7 +816,7 @@ if not setDebugCamera then
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
   --- @param enable number|boolean
-  --- @return number state  1=ON, 0=OFF, -1=error
+  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (do not re-send)
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

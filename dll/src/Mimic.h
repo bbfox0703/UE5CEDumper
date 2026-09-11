@@ -37,7 +37,9 @@ enum Cmd : int32_t {
                               //   identity witness has to travel per entry.
     CMD_SET_DEBUG_CAMERA = 7, // Robust Debug Camera force on/off / query.
                               //   Input:  instanceAddr = 0 (OFF) / 1 (ON) / 2 (query, no change)
-                              //   Output: result = resulting state (1=ON, 0=OFF, -1=error)
+                              //   Output: result = resulting state (1=ON, 0=OFF, -1=error,
+                              //           -5 = the toggle is QUEUED: it will still run -- do not re-send.
+                              //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR

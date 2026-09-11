@@ -678,10 +678,18 @@ public partial class ConsoleViewModel : ViewModelBase
         };
     }
 
-    /// <summary>Map the DLL's tri-state Debug Camera result (1=on, 0=off,
-    /// -1=unknown) onto the badge.</summary>
+    /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
+    /// -5=toggle queued) onto the badge.</summary>
     private void ApplyDebugCameraState(int state)
-        => SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+    {
+        // [W3-DEBUGCAM-QUEUED] A queued toggle is neither ON nor OFF yet -- and not "unknown": it WILL run.
+        if (state == Constants.DebugCameraToggleQueuedResult)
+        {
+            (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");   // amber — pending
+            return;
+        }
+        SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+    }
 
     /// <summary>↻ — re-read and display the live Debug Camera state. The
     /// two-hop reflection read lives DLL-side (get_debug_camera_state); this
@@ -752,6 +760,11 @@ public partial class ConsoleViewModel : ViewModelBase
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
+                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
+                Constants.DebugCameraToggleQueuedResult =>
+                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
+                      $"It will run when the game thread is free. Do not press Force {want} again: " +
+                      "a second toggle would undo the first.",
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

@@ -2739,6 +2739,15 @@ static void Test_ValueScan_V1cOptionalGate() {
            !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
 }
 
+// [W3-DEBUGCAM-QUEUED] UE5_SetDebugCamera folded every failed toggle call into -1 -- a TIMED-OUT one (-5) included,
+// which STAYS QUEUED and still runs. Read as "nothing happened", it invited a second toggle; the two drained ON then OFF.
+static void Test_Stark_StatefulToggleFailure() {
+    EXPECT("DBGCAMQ a timed-out toggle passes through as queued (-5)", Stark::StatefulToggleFailure(-5) == -5);
+    EXPECT("DBGCAMQ the queued code is EnqueueInvoke's timeout", Stark::kInvokeTimedOutStillQueued == -5);
+    EXPECT("DBGCAMQ control: an SEH fault is a plain failure", Stark::StatefulToggleFailure(-4) == -1);
+    EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
+}
+
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
 // pool. The DLL owns the full set; the UI is a window. These pure helpers run
 // over the DLL's own pools (no game memory), so filter/sort never touch the
@@ -8388,6 +8397,7 @@ int main() {
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
+    RUN(Test_Stark_StatefulToggleFailure);
     RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);

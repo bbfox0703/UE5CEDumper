@@ -1253,6 +1253,21 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task ForceDebugCamera_reports_a_queued_toggle_as_queued()
+    {
+        // [W3-DEBUGCAM-QUEUED] The Teleport card's twin of the Console's Force: a queued toggle is not a failure.
+        var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Contains("QUEUED", vm.StatusText);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
     public async Task ForceGodModeOn_calls_dll_and_sets_badge()
     {
         var fake = new FakeDumpService { NextGodModeState = 1 };

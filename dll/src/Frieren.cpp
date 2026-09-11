@@ -1275,7 +1275,9 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
     int32_t r = UE5_CallProcessEvent(cm, ufunc, 0);
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
-        return -1;
+        // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
+        // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
+        return Stark::StatefulToggleFailure(r);
     }
 
     state = DbgCam_ReadState(cm, dcc);

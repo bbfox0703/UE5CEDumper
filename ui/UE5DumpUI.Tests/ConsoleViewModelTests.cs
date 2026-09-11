@@ -960,6 +960,23 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
+    public async Task Force_reports_a_queued_toggle_as_queued_not_as_a_failure()
+    {
+        // [W3-DEBUGCAM-QUEUED] -5: the toggle timed out on the game thread and STAYS QUEUED -- it will run. Read as "no
+        // live CheatManager", it invited a second Force ON, and the two drained ON then OFF.
+        var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Contains("QUEUED", vm.StatusText);
+        Assert.Contains("Do not press Force ON again", vm.StatusText);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
     public void CopyDebugCameraScript_raises_RequestDebugCameraCeScript()
     {
         var vm = CreateVm(new FakeDumpService());

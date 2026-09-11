@@ -85,4 +85,27 @@ public class DebugCameraScriptGeneratorTests
         Assert.Contains("showMessage('[DebugCamera] g_invokeMailbox not found", enable);
         Assert.Contains("memrec.Active = false", enable);
     }
+
+    // [W3-DEBUGCAM-QUEUED] -5: the toggle STAYS QUEUED and will run. Read as "state ~= 1", [ENABLE] said the game refused
+    // and UNTICKED -- and a second tick queued a second toggle, the two draining ON then OFF. EveryEnableBailout's 8-line
+    // window cannot tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
+    [Fact]
+    public void A_queued_toggle_is_reported_and_never_unticks()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        int d = s.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        var enable = s[..d];
+        int q = enable.IndexOf("if state == -5 then", System.StringComparison.Ordinal);
+        Assert.True(q >= 0, "no queued branch in [ENABLE]");
+        int f = enable.IndexOf("elseif state ~= 1 then", q, System.StringComparison.Ordinal);
+        Assert.True(f > q, "the queued test must come BEFORE the failure test, or -5 reads as a failure");
+        var queued = enable[q..f];
+        Assert.Contains("showMessage('[DebugCamera] ON queued", queued);
+        Assert.DoesNotContain("memrec.Active = false", queued);    // nothing to untick: the toggle WILL run
+        Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);     // not a clean success either
+
+        var disable = s[d..];
+        Assert.Contains("if state == -5 then", disable);
+        Assert.Contains("dbg('[DebugCamera] OFF queued", disable);
+    }
 }

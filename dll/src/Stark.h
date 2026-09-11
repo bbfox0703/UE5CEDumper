@@ -49,6 +49,16 @@ bool IsHookActive();
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize);
 
+/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
+/// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
+constexpr int32_t kInvokeTimedOutStillQueued = -5;
+/// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
+/// passes through as kInvokeTimedOutStillQueued: the toggle WILL run, so the caller must say "queued, do not re-send" --
+/// a re-send queues a second toggle that drains after the first and undoes it. Every other failure ran nothing: -1.
+constexpr int32_t StatefulToggleFailure(int32_t callResult) {
+    return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
+}
+
 /// Default invoke timeout (compile-time baseline, used when no override is set).
 constexpr int32_t kDefaultInvokeTimeoutMs = 5000;
 /// Clamp band for a user-supplied invoke timeout (100ms .. 10min). Enforced by

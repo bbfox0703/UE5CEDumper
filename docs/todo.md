@@ -1324,7 +1324,7 @@ same contract.
       left (-8 cannot occur on the pipe thread), so `Test_Dunste_ShouldCommitCollision` alone pins it.
     - **A dll_helpers_test comment** in the function B31 edited still listed -5 among the refusals. Fixed.
 
-##### ⬜ `[W3-DEBUGCAM-QUEUED]` LOW — `UE5_SetDebugCamera` folds a queued toggle (`-5`) into `-1`, and every caller invites a second toggle
+##### ✅ `[W3-DEBUGCAM-QUEUED]` LOW — `UE5_SetDebugCamera` folds a queued toggle (`-5`) into `-1`, and every caller invites a second toggle (FIXED IN SOURCE 2026-09-12)
 
 `Frieren.cpp:1248`. The stateful `ToggleDebugCamera` goes through the queued `UE5_CallProcessEvent`,
 and any `r != 0`, `-5` included, returns `-1`. Every consumer reads `-1` as "nothing happened":
@@ -1343,6 +1343,30 @@ as idempotent.
   `[W3-DUNSTE-QUEUED]` step 1, so it only stops the second toggle. The distinct code is the only fix
   that covers both the misreport and the CE untick.
   ⚠ A new return code reaches the CE script, so check `Mimic.h`'s contract rules first.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L43), the probable fix:
+  - `Stark::StatefulToggleFailure` (header-inline) passes a timed-out `-5` through as
+    `kInvokeTimedOutStillQueued`; every other failure is still `-1`. `UE5_SetDebugCamera` returns it.
+  - Mimic's `CMD_SET_DEBUG_CAMERA` puts "toggle queued -- do not re-send" in `errorMsg`.
+  - Both view models show an amber **Queued** badge and "do not press Force again: a second toggle
+    would undo the first" (`Constants.DebugCameraToggleQueuedResult`).
+  - The CE record tests `-5` BEFORE `state ~= req`. `[ENABLE]` says it is queued and does **not**
+    untick; `[DISABLE]` only `dbg()`s it (`[W2-CEGEN-MODAL]`). Neither closes the window.
+  - Docs: Frieren.h, Mimic.h CMD 7, Fern's pipe reply, IDumpService, dll-spec, and
+    `ue5_invoke_helper.lua` (its `[ENABLE]` example unticked on `-5` too).
+  - **Not a contract bump**, following Mimic.cpp's MB3: a new negative result code is not a contract
+    change, because every script treats non-zero as failure and renders `errorMsg`. `[W3-CONSOLE-REINVOKE]`
+    already passes `-5` raw. An old `.CT` reads `-5` as a failure and unticks, which is today's
+    behaviour, not a break. The surface hash does not move (comments only).
+    ⚠ **Recorded, not resolved:** Mimic.h's own list says item 4, "Status / InitState values, or
+    result-code meanings", IS contract. MB3 and item 4 disagree about new negative codes; one of the
+    two should be reworded.
+  - **Red first:**
+    - dll_helpers_test DBGCAMQ pins the mapper against an inert stub, with `-4` / `-7` controls.
+    - ConsoleViewModelTests and TeleportViewModelTests check the badge and the text.
+    - DebugCameraScriptGeneratorTests pins that the queued branch comes first, never unticks and
+      never closes. EveryEnableBailout's 8-line window cannot tell, because the failure branch's untick
+      sits right below the queued message.
+    - An InvokeScriptTests source pin covers Frieren and Mimic.
 
 ---
 
@@ -5312,6 +5336,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new shape. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5281/5281. Shape pins only: the Lua RUN is a CE live check |
 | 95 | `[A4-AB4-BETWEEN]` | LOW | `git log --grep A4-AB4-BETWEEN` (batch L42) | dll_helpers_test BETWEEN block, red first against the old two-build behaviour: unsigned and Int16 bounds are clamped per width, reversed bounds are normalised, 64-bit values are exact, a float bound beyond 64 bits still bounds, and only `Encoded` entries are emitted. GroupMatchTests carries the same rows, and an InvokeScriptTests source pin covers the four Fern sites. 6/6 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5289/5289 |
 | 96 | `[A2-TOPTIONAL-VALUESCAN]` | LOW | `git log --grep A2-TOPTIONAL-VALUESCAN` (batch L41) | dll_helpers_test V1C block, red first against inert helpers: a trailing flag gates at `sizeof(T)`; intrusive FString / FName / FText carry their sentinels; Unknown and sentinel-less intrusive optionals are skipped; the three sentinel byte tests each have a control. An InvokeScriptTests source pin covers the V1c wiring, and the loose rule is removed. 4/4 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5290/5290. Refine-path lead recorded |
+| 97 | `[W3-DEBUGCAM-QUEUED]` | LOW | `git log --grep W3-DEBUGCAM-QUEUED` (batch L43) | Red first: dll_helpers_test DBGCAMQ (the mapper, against an inert stub, with -4 / -7 controls); Console and Teleport VM tests for the Queued badge and text; DebugCameraScriptGeneratorTests (the queued branch is first, never unticks, never closes); an InvokeScriptTests source pin for Frieren and Mimic. 5/5 mutants killed; dll_helpers_test 2746/2746, dll_core_test 320/320; UI 5294/5294. Not a contract bump (MB3); the item-4 conflict is recorded |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5595,6 +5620,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Between 10 70000 finds an Int16 field near 32767.
 3. Repeat both as a group slot, and as a snapshot Group match. | a game + UI |
 | L82 | `[A2-TOPTIONAL-VALUESCAN]` | A UE 5.5+ game with a `TOptional<FString>` field, if one can be found. Value Search, FString, Exact "": an UNSET intrusive optional is not a candidate. A set optional holding text is still found. | a 5.5+ game + UI |
+| L83 | `[W3-DEBUGCAM-QUEUED]` | Stall the game thread: unfocus a game that pauses its tick, with the foreground lock off. Console **Force ON** shows the amber Queued badge and "do not press Force ON again"; on refocus the camera turns ON **once** and stays ON. The CE Debug Camera record, ticked while stalled, shows the "queued" message and stays ticked; on refocus the camera is ON. | a game with ToggleDebugCamera + CE + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5695,7 +5721,7 @@ completeness critic.
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - ✅ **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
-- **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
+- ✅ **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 - **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 

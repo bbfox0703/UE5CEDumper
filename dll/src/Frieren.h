@@ -178,6 +178,8 @@ __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 // the local player's controller back to the original PlayerController by hand.
 // Returns the resulting state (1/0) or -1 on error. All offsets resolved live
 // from reflection (UE4/UE5 version-agnostic).
+// -5 = the toggle TIMED OUT on the game thread and stays QUEUED: it will still run, so
+// it must not be re-sent -- a second toggle drains after it and undoes it. [W3-DEBUGCAM-QUEUED]
 __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
 // === Teleport (Wirbel: marker save/recall + cursor teleport) ===

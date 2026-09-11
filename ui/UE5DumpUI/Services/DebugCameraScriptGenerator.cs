@@ -86,7 +86,7 @@ public static class DebugCameraScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error");
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -94,7 +94,17 @@ public static class DebugCameraScriptGenerator
         // returns 0 on an ENABLE, with no error code. Checking only -1 read that as
         // success: no message, window closed, row left ticked on a camera that never
         // turned on.
-        Line(sb, $"if state ~= {req} then");
+        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED -- it will still
+        // run. Not a failure, so no untick, and nothing to re-send: a second tick would queue a second toggle, and the
+        // two drain ON then OFF. [ENABLE] says so (a real warning, ungated); [DISABLE] dbg()s it (no modal on an untick,
+        // [W2-CEGEN-MODAL]). Neither is a clean success, so neither closes the window. Tested BEFORE `state ~= req`.
+        Line(sb, $"if state == {Constants.DebugCameraToggleQueuedResult} then");
+        if (enable)
+            Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
+                      "when it is free. Do not tick again: a second toggle would undo it.')");
+        else
+            Line(sb, $"  dbg('[DebugCamera] {label} queued -- the toggle will run when the game thread is free')");
+        Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +

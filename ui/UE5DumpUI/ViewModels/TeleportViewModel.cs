@@ -1558,12 +1558,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Debug Camera (deterministic force on/off, shared with Console) ──
 
-    /// <summary>Map the DLL tri-state (1=on, 0=off, -1=unknown) onto the badge.</summary>
+    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge.</summary>
     private void ApplyDebugCameraState(int state)
         => (DebugCameraState, DebugCameraBadgeColor) = state switch
         {
             1  => ("ON",      "#4EC9B0"),   // green — active
             0  => ("OFF",     "#999999"),   // grey — inactive
+            // [W3-DEBUGCAM-QUEUED] Neither ON nor OFF yet, and not "unknown": the toggle WILL run.
+            Constants.DebugCameraToggleQueuedResult => ("Queued", "#D7BA7D"),   // amber — pending
             _  => ("Unknown", "#888888"),
         };
 
@@ -1621,6 +1623,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
+                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
+                Constants.DebugCameraToggleQueuedResult =>
+                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
+                      $"It will run when the game thread is free. Do not press Force {want} again: " +
+                      "a second toggle would undo the first.",
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

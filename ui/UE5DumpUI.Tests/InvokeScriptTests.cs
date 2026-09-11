@@ -1915,6 +1915,15 @@ public class InvokeScriptTests
         Assert.DoesNotContain("OptionalFlagOffset(", DllSource("Radar.h"));   // the loose rule is gone, not bypassed
     }
 
+    [Fact]
+    public void SetDebugCamera_PassesAQueuedToggleThrough()
+    {
+        // [W3-DEBUGCAM-QUEUED] Frieren and Mimic reach no test target, so their halves are pinned from source; the mapper
+        // itself is dll_helpers_test's DBGCAMQ block.
+        Assert.Contains("return Stark::StatefulToggleFailure(r);", DllSource("Frieren.cpp"));
+        Assert.Contains("state == Stark::kInvokeTimedOutStillQueued", DllSource("Mimic.cpp"));
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

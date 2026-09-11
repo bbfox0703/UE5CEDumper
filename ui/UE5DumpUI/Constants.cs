@@ -95,6 +95,12 @@ public static class Constants
     // [W3-CONSOLE-REINVOKE]
     public const int InvokeDispatchTimeoutResult = -5;
 
+    // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED -- the
+    // toggle WILL run. Neither ON nor OFF yet, and not a failure: say "queued, do not press again", because a second
+    // Force queues a second toggle and the two drain ON then OFF. Same number as the dispatch timeout it passes through
+    // (Stark::StatefulToggleFailure). [W3-DEBUGCAM-QUEUED]
+    public const int DebugCameraToggleQueuedResult = InvokeDispatchTimeoutResult;
+
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
     // is what a pre-5.4 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT

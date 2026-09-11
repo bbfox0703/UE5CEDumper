@@ -477,7 +477,8 @@ public interface IDumpService
     /// reads state, toggles only when needed, and on a disable that the game's
     /// stripped ToggleDebugCamera can't honour, switches the local player's
     /// controller back to the original PlayerController. Returns the resulting
-    /// state (1 = ON, 0 = OFF, -1 = error).
+    /// state (1 = ON, 0 = OFF, -1 = error), or <see cref="Constants.DebugCameraToggleQueuedResult"/>
+    /// when the toggle is QUEUED: it will still run, so never re-send it. [W3-DEBUGCAM-QUEUED]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 
