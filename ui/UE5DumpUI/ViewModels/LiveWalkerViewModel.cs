@@ -3899,9 +3899,30 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // selection/scroll and tell the user instead of showing wrong data.
             var lastBc = Breadcrumbs.LastOrDefault();
             bool restoredFully = true;
+            bool dataTableGone = false;   // [W4-BOOKMARK-DT] say what failed, not "the game may have restarted"
             if (lastBc != null)
             {
-                if (lastBc.IsContainerView && lastBc.ContainerField != null)
+                if (lastBc.IsDataTableView && lastBc.DataTableData == null)
+                {
+                    // [W4-BOOKMARK-DT] A DataTable row view restored from the bookmark FILE: its rows are
+                    // live-only (never persisted), so re-walk them at the saved address. That address is
+                    // only valid in the same game process, so two guards make the walk safe: the DLL refuses
+                    // an address that is not a DataTable (Ubel::WalkDataTableRows), and the row struct must be
+                    // the one saved -- a different table now at that address is reported, not shown.
+                    var dt = await TryRewalkBookmarkedDataTableAsync(lastBc, slot.SavedClassName);
+                    if (RenderSuperseded(lastBc, "Bookmark")) return;
+                    if (dt != null)
+                    {
+                        Breadcrumbs[^1] = WithDataTableRows(lastBc, dt);   // the in-session shape
+                        PopulateDataTableRowFields(dt);
+                    }
+                    else
+                    {
+                        restoredFully = false;
+                        dataTableGone = true;
+                    }
+                }
+                else if (lastBc.IsContainerView && lastBc.ContainerField != null)
                 {
                     RepopulateContainerView(lastBc.ContainerField, lastBc);
                 }
@@ -3956,7 +3977,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                StatusText = $"Bookmark {slot.DisplayNumber} stale (game may have restarted) — re-create it";
+                StatusText = dataTableGone
+                    ? $"Bookmark {slot.DisplayNumber}: the DataTable at its saved address is gone or has changed — re-create it"
+                    : $"Bookmark {slot.DisplayNumber} stale (game may have restarted) — re-create it";
             }
             var topName = slot.SavedTopRow?.Name ?? "-";
             _log.Info($"Bookmark loaded slot={slot.SlotIndex} addr={slot.SavedAddress} sel={slot.SavedSelectedFields.Count} top={topName} full={restoredFully}");
@@ -4042,7 +4065,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var c = saved[i];
 
             // DataTable row views carry un-persisted walk state (DataTableData) — can't
-            // re-resolve; bail so the caller falls back (matches pre-fix behaviour).
+            // re-resolve; bail so the caller falls back to the saved addresses, where the load
+            // path re-walks the rows behind two guards. [W4-BOOKMARK-DT]
             if (c.IsDataTableView) return null;
 
             try
@@ -4236,6 +4260,42 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             DataTableData = src.DataTableData,
         };
 
+    /// <summary>[W4-BOOKMARK-DT] The row view's crumb with re-walked rows, in the in-session shape
+    /// (<see cref="BreadcrumbItem.DataTableData"/> plus the synthetic RowMap container field), so Refresh
+    /// and Back treat a restored view exactly like one navigated to live.</summary>
+    private static BreadcrumbItem WithDataTableRows(BreadcrumbItem src, DataTableWalkResult dt) => new()
+    {
+        Address = src.Address,
+        Label = src.Label,
+        ClassAddr = src.ClassAddr,
+        FieldOffset = src.FieldOffset,
+        FieldName = src.FieldName,
+        TargetClassName = src.TargetClassName,
+        IsPointerDeref = src.IsPointerDeref,
+        ScrollHintFieldName = src.ScrollHintFieldName,
+        IsContainerView = true,
+        ContainerField = SyntheticRowMapField(dt),
+        IsDataTableView = true,
+        DataTableData = dt,
+    };
+
+    /// <summary>[W4-BOOKMARK-DT] Re-walk a bookmarked DataTable's rows at the saved address, accepted only
+    /// when the row struct is the one saved (<c>DataTable&lt;RowStruct&gt;</c> is the view's class name). The
+    /// DLL refuses an address that is not a DataTable, which arrives here as an exception.</summary>
+    private async Task<DataTableWalkResult?> TryRewalkBookmarkedDataTableAsync(BreadcrumbItem crumb, string savedClassName)
+    {
+        try
+        {
+            var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
+            return string.Equals($"DataTable<{dt.RowStructName}>", savedClassName, StringComparison.Ordinal) ? dt : null;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Bookmark: DataTable re-walk at {crumb.Address} failed: {ex.Message}");
+            return null;
+        }
+    }
+
     [RelayCommand]
     private void ClearBookmark(BookmarkSlot? slot)
     {
@@ -4362,6 +4422,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             TargetClassName = bc.TargetClassName,
             IsPointerDeref = bc.IsPointerDeref,
             IsContainerView = bc.IsContainerView,
+            IsDataTableView = bc.IsDataTableView,   // [W4-BOOKMARK-DT]
         }).ToList(),
         SelectedFields = slot.SavedSelectedFields
             .Select(f => new PersistedFieldRef { Name = f.Name, Offset = f.Offset }).ToList(),
@@ -4389,6 +4450,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             TargetClassName = c.TargetClassName,
             IsPointerDeref = c.IsPointerDeref,
             IsContainerView = c.IsContainerView,
+            IsDataTableView = c.IsDataTableView,    // [W4-BOOKMARK-DT] the rows stay null: the load path re-walks them
         }).ToList();
         slot.SavedSelectedFields = pb.SelectedFields
             .Select(f => new BookmarkFieldRef(f.Name, f.Offset)).ToList();
@@ -7031,6 +7093,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Detect DataTable and inject a synthetic RowMap field for container navigation.
     /// Called fire-and-forget from UpdateDisplay to avoid blocking the UI.
     /// </summary>
+    /// <summary>The synthetic "RowMap" field a DataTable's grid carries: the row the user clicks to drill
+    /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. Shared by the live
+    /// load and the bookmark restore ([W4-BOOKMARK-DT]), so a restored view has the in-session shape.</summary>
+    internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult) => new()
+    {
+        Name = "RowMap",
+        TypeName = "DataTableRows",
+        Offset = dtResult.RowMapOffset,
+        Size = 0,
+        // Badge here too: this row is what the user clicks to drill in, so the
+        // "only 64 of these are actually fetched" fact belongs BEFORE the click,
+        // not only after it (audit #5 V8).
+        TypedValue = DataTableFieldPreview(dtResult),
+        DataTableRowCount = dtResult.RowCount,
+        DataTableStructName = dtResult.RowStructName,
+        DataTableFNameSize = dtResult.FNameSize,
+        DataTableStride = dtResult.Stride,
+        DataTableRowStructAddr = dtResult.RowStructAddr,
+        DataTableRowData = dtResult.Rows,
+    };
+
     private async Task TryLoadDataTableRowsAsync(string dataTableAddr, int bcAtStart)
     {
         try
@@ -7038,23 +7121,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var dtResult = await _dump.WalkDataTableRowsAsync(dataTableAddr);
 
             // Inject a synthetic "RowMap" field at the end of the field list
-            var syntheticField = new LiveFieldValue
-            {
-                Name = "RowMap",
-                TypeName = "DataTableRows",
-                Offset = dtResult.RowMapOffset,
-                Size = 0,
-                // Badge here too: this row is what the user clicks to drill in, so the
-                // "only 64 of these are actually fetched" fact belongs BEFORE the click,
-                // not only after it (audit #5 V8).
-                TypedValue = DataTableFieldPreview(dtResult),
-                DataTableRowCount = dtResult.RowCount,
-                DataTableStructName = dtResult.RowStructName,
-                DataTableFNameSize = dtResult.FNameSize,
-                DataTableStride = dtResult.Stride,
-                DataTableRowStructAddr = dtResult.RowStructAddr,
-                DataTableRowData = dtResult.Rows,
-            };
+            var syntheticField = SyntheticRowMapField(dtResult);
 
             // Apply on the UI thread, GUARDED (audit #7): UpdateDisplay fires this
             // and forgets it. If the user navigated to another object during the

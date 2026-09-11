@@ -705,6 +705,147 @@ public class BookmarkTests
             => Task.FromResult(_engine);
     }
 
+    // --- [W4-BOOKMARK-DT] a bookmark saved on a DataTable row view ---
+    //
+    // PersistedCrumb carried IsContainerView but not IsDataTableView, and a DataTable row view's rows
+    // (DataTableData) are live-only. A bookmark restored from the FILE therefore came back as a plain
+    // container crumb with nothing to show, fell through to an instance walk, failed the class check and
+    // reported "stale (game may have restarted)" -- blaming the session for a serialisation gap.
+
+    /// <summary>Answers the DataTable row walk the restore now makes, and counts it.</summary>
+    private sealed class DataTableDump : StubDumpService
+    {
+        public string RowStruct = "FItemRow";
+        public bool Refuse;
+        public int RowWalks;
+
+        public override Task<DataTableWalkResult> WalkDataTableRowsAsync(
+            string addr, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            RowWalks++;
+            if (Refuse) throw new InvalidOperationException("not a DataTable (class=Actor)");
+            return Task.FromResult(new DataTableWalkResult
+            {
+                RowCount = 2, RowStructName = RowStruct, RowMapOffset = 0x30,
+                Rows = new()
+                {
+                    new DataTableRowInfo { RowName = "Sword",  DataAddr = "0x1000", Fields = new() },
+                    new DataTableRowInfo { RowName = "Shield", DataAddr = "0x2000", Fields = new() },
+                },
+            });
+        }
+    }
+
+    private static LiveWalkerViewModel DataTableVm(DataTableDump dump)
+        => new(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+
+    /// <summary>A slot shaped the way the FILE hydrates a DataTable row view: the flag, no live rows.
+    /// <paramref name="liveRows"/> gives it the in-session shape instead.</summary>
+    private static void FillDataTableSlot(BookmarkSlot slot, DataTableWalkResult? liveRows = null)
+    {
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xDA7A", Label = "DT_Items", FieldName = "DT_Items", IsPointerDeref = true },
+            new()
+            {
+                Address = "0xDA7A", Label = "RowMap [2 x FItemRow]", FieldName = "RowMap", FieldOffset = 0x30,
+                IsContainerView = true, IsDataTableView = true,
+                DataTableData = liveRows,
+                ContainerField = liveRows != null ? new LiveFieldValue { Name = "RowMap", Offset = 0x30 } : null,
+            },
+        };
+        slot.SavedAddress = "0xDA7A";
+        slot.SavedClassName = "DataTable<FItemRow>";
+        slot.IsOccupied = true;
+    }
+
+    [Fact]
+    public void DataTableViewBookmark_KeepsItsKindThroughTheFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"UE5DumpBmDt_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var platform = new MockPlatformService(dir);
+            var vm1 = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(), platform,
+                                              bookmarks: new BookmarkStore(platform));
+            vm1.LoadBookmarksForGame("PE");
+            SetupViewModelWithData(vm1, objectName: "RowMap", className: "DataTable<FItemRow>", address: "0xDA7A");
+            vm1.Breadcrumbs.Add(new BreadcrumbItem
+            {
+                Address = "0xDA7A", Label = "RowMap [2 x FItemRow]", FieldName = "RowMap", FieldOffset = 0x30,
+                IsContainerView = true, IsDataTableView = true,
+            });
+            vm1.SaveBookmarkToSlotCommand.Execute(vm1.BookmarkSlots[0]);
+
+            var vm2 = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(), platform,
+                                              bookmarks: new BookmarkStore(platform));   // an app restart
+            vm2.LoadBookmarksForGame("PE");
+
+            Assert.True(vm2.BookmarkSlots[0].IsOccupied);
+            Assert.True(vm2.BookmarkSlots[0].SavedBreadcrumbs[^1].IsDataTableView);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DataTableViewBookmark_FromTheFile_ReWalksItsRows()
+    {
+        var dump = new DataTableDump();
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillDataTableSlot(slot);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal(1, dump.RowWalks);
+        Assert.Equal("DataTable<FItemRow>", vm.CurrentClassName);
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));
+        Assert.Contains("loaded", vm.StatusText);
+        // The restored crumb has the in-session shape, so Refresh and Back treat it the same.
+        Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);
+        Assert.NotNull(vm.Breadcrumbs[^1].ContainerField);
+    }
+
+    [Theory]
+    [InlineData(false)]   // a DIFFERENT DataTable now sits at the saved address
+    [InlineData(true)]    // the DLL refuses the address: it is not a DataTable any more
+    public async Task DataTableViewBookmark_WhoseTableIsGone_SaysSo_NotAGameRestart(bool refuse)
+    {
+        var dump = new DataTableDump { RowStruct = "FOtherRow", Refuse = refuse };
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillDataTableSlot(slot);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.DoesNotContain("restarted", vm.StatusText);
+        Assert.Contains("DataTable", vm.StatusText);
+        Assert.NotEqual("DataTable<FOtherRow>", vm.CurrentClassName);   // the wrong table is not shown as the bookmark
+    }
+
+    [Fact]
+    public async Task DataTableViewBookmark_InSession_UsesItsCachedRows()
+    {
+        // The control, green before and after: an in-memory bookmark still holds its rows.
+        var dump = new DataTableDump();
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillDataTableSlot(slot, new DataTableWalkResult
+        {
+            RowCount = 1, RowStructName = "FItemRow",
+            Rows = new() { new DataTableRowInfo { RowName = "Cached", DataAddr = "0x3000", Fields = new() } },
+        });
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal(0, dump.RowWalks);
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Cached"));
+    }
+
     private static LiveWalkerViewModel CreateViewModel()
     {
         var dump = new StubDumpService();

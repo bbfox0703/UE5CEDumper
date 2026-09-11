@@ -1187,10 +1187,27 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    - ⛔ Not `if (IsBusy) return;`, as the unsafe-fix table says.
    - **Tests, red first:** four, over a gated fake that lets two loads finish out of order: the stale
      one lands last; lands first; fails; lands after a disconnect.
-4. ⬜ **`[W4-BOOKMARK-DT]`** `LiveWalkerViewModel.cs:4173`. `PersistedCrumb` carries
+4. ✅ **`[W4-BOOKMARK-DT]`** (FIXED IN SOURCE 2026-09-11, batch B19) `LiveWalkerViewModel.cs:4173`. `PersistedCrumb` carries
    `IsContainerView` and **not** `IsDataTableView`, so a bookmark saved on a DataTable row view can
    never be restored — and the failure is reported as *"the game may have restarted"*, blaming the
    user's session for a serialisation gap.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B19): the safe `PersistedCrumb` half, plus a GUARDED re-walk.
+   - `PersistedCrumb.IsDataTableView` is written and read back; older files read it as false.
+   - A DataTable row view restored from the FILE has no rows (they are live-only), so the load path
+     re-walks them at the saved address. Two guards make that safe:
+     - the DLL refuses an address that is not a DataTable (`Ubel::WalkDataTableRows`);
+     - the row struct must be the one saved (`DataTable<RowStruct>` is the view's class name).
+     A different table at that address, or a refusal, now reads "the DataTable at its saved address is
+     gone or has changed", never "the game may have restarted".
+   - The restored crumb gets the in-session shape (rows plus the synthetic RowMap field, shared with the
+     live load through `SyntheticRowMapField`), so Refresh and Back treat it the same.
+   - ⚠ The unguarded re-walk is the recorded-dangerous half, and is not what landed.
+   - ⬜ Left as is: across a GAME restart the DataTable crumb still stops the spine re-resolution, so
+     the saved address is used and the guards report it gone. Re-resolving the table from the live
+     world first would be a separate change.
+   - **Tests, red first:** the flag survives the file; a file-shaped crumb re-walks its rows; a table
+     that changed, or an address the DLL refuses, is reported honestly. The in-session control uses its
+     cached rows and makes no walk.
 5. ✅ **`[W4-LOOKUP-FILTER]`** (FIXED IN SOURCE 2026-09-11, batch B18) `InstanceFinderViewModel.cs:620`. A reverse-address lookup empties
    `_allInstances` on purpose and adds its single result straight into the bound collection; the
    next `ApplyInstanceFilter` re-projects unconditionally from the now-empty backing list, so a
@@ -1219,7 +1236,7 @@ confirmed rows across three waves carry a harmful or partly-harmful obvious repa
 | `[W4-STRIDE-TENTATIVE]` | add a `"tentative"` value to `item_layout_mode` | ⛔ wrong shape — that field is a 3-value **layout** descriptor and tentativeness is **orthogonal**; a tentative detection is still classed |
 | `[W4-RELATED-STOPS]` | one boolean for "we stopped early" | ⛔ that is **P5**, the conflation `docs/todo.md:1314` is already open about and `[W3-XREF-CAP]` flags — **four** conditions fire here and `Tot::Requested()` is one of them |
 | `[W4-RELATED-RACE]` ✅ B17 | `if (IsBusy) return;` | ⛔ `DetectTargetAsync` sets `IsBusy = true` **then** awaits `LoadForAddress`, so that guard deadlocks the legitimate path |
-| `[W4-BOOKMARK-DT]` | the finding's own recommended second half | ⛔ dangerous — only the `PersistedCrumb` half is safe |
+| `[W4-BOOKMARK-DT]` ✅ B19 | the finding's own recommended second half | ⛔ dangerous — only the `PersistedCrumb` half is safe |
 | `[W4-LOOKUP-FILTER]` ✅ B18 | clear `InstanceFilterText` inside the lookup | ⛔ actively harmful — it is an `[ObservableProperty]`, so the assignment re-enters the filter |
 | `[W4-HEXSORT]` | wire `DataGridSortComparers.Hex` onto `HexValue` | ⛔ unsound — `ulong.TryParse` with `NumberStyles.HexNumber` fails on the dump formats actually present |
 
@@ -4172,6 +4189,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 33 | `[W1-ARRAYCOUNT]` | LOW | same commit as row 32 (batch B16) | `ListArrayFields_CountsElements_NotInnerPropRows` red first (6 rows, 3 elements); the old one-prop test kept, its comment corrected |
 | 34 | `[W4-RELATED-RACE]` | MED | `git log --grep W4-RELATED-RACE` (batch B17) | 4 red first over a gated fake (the stale load lands last / first / fails / lands after a disconnect). 4/4 mutants killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 | 35 | `[W4-LOOKUP-FILTER]` | MED | `git log --grep W4-LOOKUP-FILTER` (batch B18) | 2 red first (a filter pass; a leftover keyword, then cleared). 1/1 mutant killed; UI 5039/5039 (one suite run over B17 and B18 together) |
+| 36 | `[W4-BOOKMARK-DT]` | MED | `git log --grep W4-BOOKMARK-DT` (batch B19) | 4 red first (the flag through the file, the re-walk, a changed table, a refused address); the in-session control green both ways. 6/6 (one first tried in a form that did not compile; its compiling form went red) mutants killed, the unguarded re-walk among them; UI 5044/5044 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4249,6 +4267,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **Element count:** the array-field picker's count equals the array's element count, not elements × inner props. | a game + UI |
 | L21 | `[W4-RELATED-RACE]` | Related Objects on a connected game: hand off one object from Instance Finder and, while it loads, hand off a second one (or pick another detected candidate). The grid shows only the second object's graph under its header, and the busy indicator stays on until the second load finishes. | a game + UI |
 | L22 | `[W4-LOOKUP-FILTER]` | Instance Finder on a connected game: search a class, type a keyword, then Look Up the address of an object the keyword does not match. The result shows; editing the keyword hides it with "1 hidden by filter", and clearing the keyword brings it back. | a game + UI |
+| L23 | `[W4-BOOKMARK-DT]` | Live Walker on a connected game with a DataTable (items, weapons):
+1. **Same game session:** open the DataTable, drill into its RowMap, save a bookmark, restart the APP (not the game) and load the bookmark. The row list comes back, and Refresh keeps it.
+2. **After a game restart:** load the same bookmark. The status says the DataTable at its saved address is gone or has changed, not "the game may have restarted". | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4289,7 +4310,7 @@ completeness critic.
 | ✅ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
 | ✅ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
 | ✅ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
-| ⬜ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
+| ✅ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
 | ⬜ B20 batch method | `[W3-BATCH-METHOD]` | |
 | ⬜ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
 | ⬜ B22 teleport pose map | `[W2-TPREL-MAP]` | |
