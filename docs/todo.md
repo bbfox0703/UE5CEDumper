@@ -808,7 +808,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
     - The manual ↻'s status message stays as the fuller explanation; the chip is what survives.
     - **Tests, red first:** the quiet poll surfacing it, a directional TP keeping it, the disconnect
       clearing it, and the chip bound in the panel. A healthy read clearing it is the control.
-- ⬜ **`[A2-CABI-TELEPORT-PARENTREL]` LOW** (filed 2026-09-12 by review 5 of 76f93b94) — the C ABI pose getters carry no parent-relative flag.
+- ✅ **`[A2-CABI-TELEPORT-PARENTREL]` LOW** (filed 2026-09-12 by review 5 of 76f93b94; FIXED IN SOURCE 2026-09-12, batch L44) — the C ABI pose getters carry no parent-relative flag.
   - `UE5_TeleportGetPose` (`Frieren.cpp:1282`) passes `nullptr` for `outParentRelative`, and
     `UE5_TeleportGetMarker` / `UE5_TeleportGetLast` copy `m.P` and drop `m.ParentRelative`. None has a parameter
     that could report it.
@@ -818,6 +818,14 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
   - ⚠ **Fix shape:** new exports (a flag out-parameter, or an `...Ex` variant), never a change to the existing
     signatures, which CE scripts call by position. The C ABI export count is pinned by `check_derived_counts`,
     and `docs/dll-spec.md` lists the exports.
+  - ✅ **FIXED IN SOURCE 2026-09-12** (batch L44), exactly that shape.
+    - `UE5_TeleportGetPoseEx`, `UE5_TeleportGetMarkerEx` and `UE5_TeleportGetLastEx` are the same getters plus
+      `int32_t* outParentRelative` (nullable).
+    - The pose read passes the flag `GetPose` already computes; the marker reads copy the stored `m.ParentRelative`.
+    - The originals are unchanged. The export count is 60 → 63 at every derived site, and dll-spec gains the three rows.
+    - **Red first:** an InvokeScriptTests source pin, because Frieren.cpp reaches no test target. It checks the three
+      declarations, that the original signatures are intact, and each Ex's flag source.
+    - ⬜ **Residual, unchanged:** `BugItSave` records `ParentRelative`, and `BugItGo` still reads only `m.P`.
 - ✅ **`[W2-TPREL-TRANSPORTS]` LOW** (FIXED IN SOURCE 2026-09-12, batch B29b) — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
   - Both call `TeleportRelative` without `&landingKnown` and publish the zero-initialised
     `Pose p{}` as the landing. The pipe half was fixed in 5058e971.
@@ -5253,6 +5261,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 89 | `[A3-RECYCLE-GUID-FAILOPEN]` | LOW | `git log --grep A3-RECYCLE-GUID-FAILOPEN` (batch L38) | RecycleBinPolicyTests, red first: a failed volume-GUID lookup fails closed where the per-volume flag would decide; `UseGlobalSettings` or a policy still decides on its own (control); a source pin checks the platform caller. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5267/5267 |
 | 90 | `[A3-COORD-NONFINITE]` | LOW | `git log --grep A3-COORD-NONFINITE` (batch L39) | CoordCsvCodecTests + CoordLuaParserTests, red first: `NaN`, `Infinity`, `-Infinity` and `1e400` in a CSV row, and `x=1e400` in a Lua entry, are rejected and visible, not stored as the origin. 1/1 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5272/5272 |
 | 91 | `[W2-CEGEN-MODAL]` | LOW | `git log --grep W2-CEGEN-MODAL` (batch L37) | ProtectionScriptGeneratorTests + DebugCameraScriptGeneratorTests, red first: `[DISABLE]` contains no `showMessage` but still has a `dbg` reason, and `[ENABLE]` still announces and unticks (control). 6/6 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5276/5276. Scoped to the two named generators; no repo-wide `[DISABLE]` pin was added |
+| 92 | `[A2-CABI-TELEPORT-PARENTREL]` | LOW | `git log --grep A2-CABI-TELEPORT-PARENTREL` (batch L44) | InvokeScriptTests source pin, red first: three `...Ex` exports carry `int32_t* outParentRelative` from `GetPose`'s flag and `m.ParentRelative`; the original signatures are unchanged. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5277/5277. The export count is 60 → 63. Residual: BugItGo ignores the stored flag |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5519,6 +5528,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L77 | `[W2-CEGEN-MODAL]` | CE and a game, with the GodMode and Debug Camera records. ⚠ Announce CE use first.
 1. With the DLL not injected, untick each record. No dialog appears over the game. With `UE5_DEBUG=1`, the Lua Engine shows the dbg reason.
 2. Tick one with the DLL not injected. The ENABLE dialog still appears, and the record unticks. | CE + a game |
+| L78 | `[A2-CABI-TELEPORT-PARENTREL]` | CE and a game with a vehicle or mount. ⚠ Announce CE use first.
+1. With the pawn attached, force the world read to fail if possible. `UE5_TeleportGetPoseEx` fills the pose and sets the int32 flag buffer to 1.
+2. On foot, the flag reads 0.
+3. Save a marker while attached. `UE5_TeleportGetMarkerEx` returns the same flag.
+4. The three original getters still return the same values as before. | CE + a vehicle/mount game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5620,7 +5634,7 @@ completeness critic.
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
 - **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
-- **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
+- ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 - **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync

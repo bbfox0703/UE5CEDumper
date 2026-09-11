@@ -1354,6 +1354,44 @@ int32_t UE5_TeleportGetLast(double* outPose6, char* outMapName, int32_t mapNameC
     return rc;
 }
 
+// [A2-CABI-TELEPORT-PARENTREL] The getters above plus the parent-relative flag they cannot carry. The pose read
+// passes the flag GetPose already computes; the marker reads copy the one the Marker already stores.
+int32_t UE5_TeleportGetPoseEx(double* outPose6, char* outMapName, int32_t mapNameCap,
+                              int32_t* outParentRelative) {
+    Wirbel::Pose p{};
+    bool parentRel = false;
+    int32_t rc = Wirbel::GetPose(p, outMapName, mapNameCap, nullptr, &parentRel);
+    if (rc == 0) Teleport_CopyPose(p, outPose6);
+    if (outParentRelative) *outParentRelative = (rc == 0 && parentRel) ? 1 : 0;
+    return rc;
+}
+
+int32_t UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6, char* outMapName, int32_t mapNameCap,
+                                int32_t* outParentRelative) {
+    Wirbel::Marker m{};
+    int32_t rc = Wirbel::GetMarker(slot, m);
+    if (rc == 0) {
+        Teleport_CopyPose(m.P, outPose6);
+        if (outMapName && mapNameCap > 0)
+            CopyToBuffer(m.MapName, outMapName, mapNameCap);
+    }
+    if (outParentRelative) *outParentRelative = (rc == 0 && m.ParentRelative) ? 1 : 0;   // the marker's flag
+    return rc;
+}
+
+int32_t UE5_TeleportGetLastEx(double* outPose6, char* outMapName, int32_t mapNameCap,
+                              int32_t* outParentRelative) {
+    Wirbel::Marker m{};
+    int32_t rc = Wirbel::GetLast(m);
+    if (rc == 0) {
+        Teleport_CopyPose(m.P, outPose6);
+        if (outMapName && mapNameCap > 0)
+            CopyToBuffer(m.MapName, outMapName, mapNameCap);
+    }
+    if (outParentRelative) *outParentRelative = (rc == 0 && m.ParentRelative) ? 1 : 0;   // the last pose's flag
+    return rc;
+}
+
 int32_t UE5_TeleportGetPov(double* outPov11) {
     Wirbel::Pov pov{};
     int32_t rc = Wirbel::GetPov(pov);

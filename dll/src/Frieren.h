@@ -2,7 +2,7 @@
 
 // ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: 60 C ABI exports for CE Lua bridge
+// ExportAPI: 63 C ABI exports for CE Lua bridge
 //
 // ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
 // export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
@@ -200,6 +200,16 @@ __declspec(dllexport) int32_t   UE5_TeleportClearMarker(int32_t slot);
 __declspec(dllexport) int32_t   UE5_TeleportRecallLast();
 __declspec(dllexport) int32_t   UE5_TeleportGetLast(double* outPose6,
                                     char* outMapName, int32_t mapNameCap);
+// [A2-CABI-TELEPORT-PARENTREL] The three pose getters above cannot say a pose is PARENT-RELATIVE: an attached pawn
+// (vehicle / mount / moving platform) whose world read failed returns rc 0 and RelativeLocation numbers that read
+// exactly like world coordinates. These are the same getters plus that flag -- *outParentRelative = 1 / 0, nullable.
+// NEW exports, never a changed signature: CE scripts call the originals by position.
+__declspec(dllexport) int32_t   UE5_TeleportGetPoseEx(double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
+__declspec(dllexport) int32_t   UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
+__declspec(dllexport) int32_t   UE5_TeleportGetLastEx(double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
 // Read the camera POV (read-only). outPov11 receives 11 doubles:
 //   [0..5] camera X,Y,Z,Pitch,Yaw,Roll  [6] FOV
 //   [7..9] pawn X,Y,Z (for the camera-vs-pawn delta)  [10] hasPawn (1/0)

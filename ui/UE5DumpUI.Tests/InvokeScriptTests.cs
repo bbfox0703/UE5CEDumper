@@ -1865,6 +1865,34 @@ public class InvokeScriptTests
         throw new FileNotFoundException("scripts/" + file + " not found from " + AppContext.BaseDirectory);
     }
 
+    // ---- [A2-CABI-TELEPORT-PARENTREL] the C ABI pose getters gain Ex variants that carry the parent-relative flag ----
+
+    [Fact]
+    public void TeleportPoseGetters_HaveExVariantsThatCarryTheParentRelativeFlag()
+    {
+        // The three getters could not report a PARENT-RELATIVE pose (an attached pawn whose world read failed): rc 0 and
+        // RelativeLocation numbers read exactly like world coordinates. New exports, the originals untouched -- CE
+        // scripts call those by position.
+        string h = DllSource("Frieren.h");
+        foreach (var name in new[] { "UE5_TeleportGetPoseEx", "UE5_TeleportGetMarkerEx", "UE5_TeleportGetLastEx" })
+            Assert.Matches(name + @"\([^;]*int32_t\*\s*outParentRelative\);", h);
+        Assert.Matches(@"UE5_TeleportGetPose\(double\*\s*outPose6,\s*char\*\s*outMapName,\s*int32_t\s*mapNameCap\);", h);
+        Assert.Matches(@"UE5_TeleportGetMarker\(int32_t\s*slot,\s*double\*\s*outPose6,\s*char\*\s*outMapName,\s*int32_t\s*mapNameCap\);", h);
+        Assert.Matches(@"UE5_TeleportGetLast\(double\*\s*outPose6,\s*char\*\s*outMapName,\s*int32_t\s*mapNameCap\);", h);
+
+        string cpp = DllSource("Frieren.cpp");
+        string Body(string sig)
+        {
+            int at = cpp.IndexOf(sig, StringComparison.Ordinal);
+            Assert.True(at > 0, sig + " is not defined in Frieren.cpp");
+            int end = cpp.IndexOf("\n}\n", at, StringComparison.Ordinal);
+            return cpp.Substring(at, end - at);
+        }
+        Assert.Contains("&parentRel", Body("int32_t UE5_TeleportGetPoseEx("));
+        Assert.Contains("m.ParentRelative", Body("int32_t UE5_TeleportGetMarkerEx("));
+        Assert.Contains("m.ParentRelative", Body("int32_t UE5_TeleportGetLastEx("));
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

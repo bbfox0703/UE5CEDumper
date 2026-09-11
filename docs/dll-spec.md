@@ -497,7 +497,7 @@ the `bIsBound` flag only; binding enumeration is tracked in
 ## Frieren.h — C ABI Exports (legacy alias: ExportAPI)
 
 > ⚠ **Count is DERIVED, never hand-edited** — `grep -c '__declspec(dllexport)' dll/src/Frieren.h`
-> (**60** at the time of writing; this heading said *32* for months). The tables below cover the
+> (**63** at the time of writing; this heading said *32* for months). The tables below cover the
 > core set, not all of them.
 
 ```cpp
@@ -567,7 +567,7 @@ extern "C" {
     __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
     __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
-    // === Teleport (13) — Wirbel: marker save/recall + cursor + POV + facing/coord + cursor force ===
+    // === Teleport (16) — Wirbel: marker save/recall + cursor + POV + facing/coord + cursor force ===
     // BugIt-style. All resolve the local pawn via reflection and teleport by
     // invoking engine UFunctions (raw write is a tier-2 fallback). Pose arrays
     // are X,Y,Z,Pitch,Yaw,Roll doubles. Codes per teleport-spec.md §8/§16.
@@ -586,6 +586,11 @@ extern "C" {
     __declspec(dllexport) int32_t   UE5_TeleportRecallExplicit(double x, double y, double z, double pitch, double yaw, double roll, int32_t hasRot);
     __declspec(dllexport) int32_t   UE5_SetMouseCursor(int32_t show, int32_t* outState);  // writes bShowMouseCursor
     __declspec(dllexport) int32_t   UE5_GetMouseCursor(int32_t* outState);
+    // [A2-CABI-TELEPORT-PARENTREL] the three pose getters plus a parent-relative flag -- NEW exports; the
+    // originals keep their signatures (CE scripts call them by position)
+    __declspec(dllexport) int32_t   UE5_TeleportGetPoseEx(double* outPose6, char* outMap, int32_t mapCap, int32_t* outParentRelative);
+    __declspec(dllexport) int32_t   UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6, char* outMap, int32_t mapCap, int32_t* outParentRelative);
+    __declspec(dllexport) int32_t   UE5_TeleportGetLastEx(double* outPose6, char* outMap, int32_t mapCap, int32_t* outParentRelative);
 
     // === Mailbox (1) ===
     __declspec(dllexport) uintptr_t UE5_GetMailboxAddr();  // shared memory for CE Lua invocation
