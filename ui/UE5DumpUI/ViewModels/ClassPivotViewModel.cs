@@ -434,10 +434,19 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
                 // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
                 // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
-                StatusText = Fields.Any(f => f.Name == propName)
-                    ? $"Ready: {className} · {propName} — press Run Pivot."
-                    : $"'{propName}' is not a pivotable field of {className} in this snapshot "
-                      + "— only captured numeric fields can be pivoted.";
+                if (Fields.Any(f => f.Name == propName))
+                    StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+                else
+                {
+                    // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
+                    // Array source -- the scalar field list just never shows it.
+                    var arrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
+                    StatusText = arrays.Any(a => a.ArrayField == propName)
+                        ? $"'{propName}' is a struct array of {className}: pivot it under the Snapshot Array source "
+                          + $"({className} → {propName})."
+                        : $"'{propName}' is not a pivotable field of {className} in this snapshot "
+                          + "— only captured numeric fields and struct arrays can be pivoted.";
+                }
             }
         }
         catch (Exception ex)
@@ -480,7 +489,10 @@ public partial class ClassPivotViewModel : ViewModelBase
         var pending = PendingLoad;
         if (pending != null) { try { await pending; } catch { /* surfaced via SetError */ } }
 
-        if (!string.IsNullOrEmpty(propName) && SelectedKeyField != propName)
+        // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
+        // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
+        // under a "Ready" status.
+        if (!string.IsNullOrEmpty(propName) && !(IsFieldKeyMode && SelectedKeyField == propName))
         {
             var pick = Fields.FirstOrDefault(f => f.Name == propName);
             if (pick != null) pick.IsValue = true;

@@ -540,6 +540,71 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("not a pivotable field", vm.StatusText);
     }
 
+    // ---- the second review of 4880a779: the handoff's two remaining misses ----
+
+    // A class with no good key: no field scores >= 0.5 as one, so the field load opens it in Identity mode with
+    // the key picker on its alphabetically FIRST field -- a field that then plays no part in grouping.
+    private async Task SeedKeylessClassAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "loot" }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            Obj(1, "BP_Loot_C", "/G.M:L.Loot_0", ("Amount", 5), ("Level", 1)),
+            Obj(2, "BP_Loot_C", "/G.M:L.Loot_1", ("Amount", 6), ("Level", 1)),
+            Obj(3, "BP_Loot_C", "/G.M:L.Loot_2", ("Amount", 7), ("Level", 1)),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 3, 6, ct);
+    }
+
+    [Fact]
+    public async Task AKeylessClass_OpensInIdentityMode_KeyedOnItsFirstField()
+    {
+        // The control, green before and after -- and the precondition of the next test, kept apart so a fixture
+        // that stopped reaching Identity mode fails HERE instead of letting the next test pass for free.
+        await SeedKeylessClassAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Loot_C", "");
+
+        Assert.Equal("Identity (object path)", vm.SelectedKeyMode);
+        Assert.Equal("Amount", vm.SelectedKeyField);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_InIdentityMode_TicksAPropThatHappensToBeTheKeyPick()
+    {
+        // In Identity mode the key picker's field groups nothing, yet the handoff skipped ticking it and still
+        // said "Ready" -- the pivot then left the handed-off prop out entirely.
+        await SeedKeylessClassAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Loot_C", "Amount");
+
+        Assert.True(vm.Fields.First(f => f.Name == "Amount").IsValue);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_StructArrayField_PointsAtTheSnapshotArraySource()
+    {
+        // "Only captured numeric fields can be pivoted" was false for a captured struct array: it pivots under
+        // the Snapshot Array source, which the scalar field list never shows.
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "ps" }, ct);
+        var ps = Obj(9, "PlayerState", "/G.M:L.PlayerState_0", ("Gold", 100));
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        arr.Elements.Add(MakeSlot(0, "Fuel", 100));
+        ps.Arrays.Add(arr);
+        await _store.WriteChunkAsync(id, new[] { ps }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("PlayerState", "Cargo");
+
+        Assert.DoesNotContain("Ready", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);
+    }
+
     // ---- C3: change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.

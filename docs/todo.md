@@ -601,6 +601,23 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
        field). It now says the prop is not pivotable. A prop that is the key field still reads Ready.
      - **Tests, red first:** a keyless two-owner array, and a handoff of an uncaptured prop.
        2/2 mutants killed; UI 5087/5087.
+   - ✅ **Second review follow-up 2026-09-11** (the second adversarial review, of 4880a779: two LOW).
+     - **"A prop that is the key field still reads Ready" held in Field mode only**
+       (`pivotfor-identity-keyfield-silent-miss`, CONFIRMED).
+       - A class with no good key opens in Identity mode, with the key picker on its alphabetically first
+         field. That field groups nothing.
+       - The shared helper still skipped ticking it, so a handoff of that very prop left it out of the pivot
+         under a "Ready" status.
+       - The helper now skips the key pick only in Field mode.
+     - **"Only captured numeric fields can be pivoted" was false for a struct array**
+       (`pivotfor-array-field-misreported-unpivotable`, PLAUSIBLE). A captured struct array pivots under the
+       Snapshot Array source.
+       - `PivotForAsync` now asks the store for the class's captured arrays before it says a prop cannot be
+         pivoted, and points a struct array at that source.
+       - It does not switch the source itself: the handoff still only prepares.
+     - **Tests, red first:** an Identity-mode handoff of the key pick, and a struct-array handoff. A
+       separate control pins that the keyless fixture really opens in Identity mode on "Amount", so a
+       fixture drift fails there rather than passing the red test for free. 2/2 mutants killed; UI 5103/5103.
 
 6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place
