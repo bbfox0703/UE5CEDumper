@@ -121,6 +121,18 @@ public static class CeInjectScriptGenerator
         Line(sb, "-- ================================================================");
         Line(sb);
 
+        // [A3-B30-STALE-FLAG] review 4: an enable runs only on an UNTICKED record, which owns nothing -- whatever the
+        // global says was left by a record no longer active. CE drops records WITHOUT running [DISABLE] on a File >
+        // Open and on a process switch (MainUnit.pas: disableAllWithoutExecute), and every bail-out below defers an
+        // untick that runs the disable block's guard. The serving branch alone used to clear it, so the parked
+        // branch's failed UE5_AutoStart could still tear a pipe down. Cleared before the first bail-out; the success
+        // path at the bottom stays the one claim.
+        Line(sb, "-- This record owns nothing until the success path below claims it. The flag is one global that");
+        Line(sb, "-- outlives a File > Open and a process switch (both drop records without running their disable");
+        Line(sb, "-- block), and every bail-out below unticks -- so a stale true must not survive to reach them.");
+        Line(sb, "UE5_StartedByThisRecord = false");
+        Line(sb);
+
         // ── 0. CE must be attached to a process ──
         Line(sb, "if getOpenedProcessID() == 0 then");
         Line(sb, "  showMessage('[UE5CEDumper] No game process is attached.\\n\\n' ..");

@@ -176,6 +176,25 @@ public class CeExecuteCodeExArityTests
             "ue5_inject's serving branch must clear the flag before it returns false");
     }
 
+    [Fact]
+    public void Shipped_cheat_table_clears_a_stale_ownership_flag_before_its_first_bailout()
+    {
+        // [A3-B30-STALE-FLAG] review 4: ue5_inject's DLL-not-found bail-out ran BEFORE the serving check. A cancelled
+        // file picker there returned false with the previous table's flag still true, and the untick then passed
+        // ue5_shutdown's guard and tore a serving pipe down. The clear leads the function.
+        var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
+        Assert.NotNull(ct);
+        var text = File.ReadAllText(ct!);
+
+        var fn = text.IndexOf("function ue5_inject()", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "ue5_inject must still exist");
+        var firstBail = text.IndexOf("return false", fn, StringComparison.Ordinal);
+        var dllCheck = text.IndexOf("if not DLL_PATH then", fn, StringComparison.Ordinal);
+        var clear = text.IndexOf("UE5_StartedByThisRecord = false", fn, StringComparison.Ordinal);
+        Assert.True(clear > fn && clear < dllCheck && clear < firstBail,
+            "ue5_inject must clear the flag before its DLL-path check and its first return false");
+    }
+
     [Theory]
     [InlineData("inject")]
     [InlineData("autorun")]

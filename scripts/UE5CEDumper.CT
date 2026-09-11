@@ -575,6 +575,14 @@ end
 function ue5_inject()
     ue5_log("Starting UE5 Dumper...")
 
+    -- [A3-B30-STALE-FLAG] An [ENABLE] runs only on an UNTICKED record, and an unticked record owns nothing:
+    -- whatever this global says was left by a record that is no longer active. CE drops records WITHOUT
+    -- running [DISABLE] on a File &gt; Open and on a process switch (disableAllWithoutExecute), so it can
+    -- be stale-true here -- and EVERY bail-out below unticks, which runs ue5_shutdown's guard. Only the
+    -- serving branch used to clear it, so the DLL-not-found and parked-restart bail-outs could still tear a
+    -- serving pipe down. Cleared at ENTRY; only the success path at the bottom claims it again.
+    UE5_StartedByThisRecord = false
+
     -- The folder search ran in this record's parent [ENABLE], deliberately
     -- WITHOUT aborting on a miss. Here is where a miss actually matters, and
     -- where returning false unticks the record.

@@ -3885,13 +3885,26 @@ fresh CE session, where the flag was nil.
     `[ENABLE]` untick.
   - The untick still runs `[DISABLE]`, which now refuses on the cleared flag and leaves the pipe up.
     That is the fail-safe direction.
-  - The stale-flag scenario always lands in the SERVING branch: after a File > Open the previous table's
-    pipe is still up, so the reloaded record reads READY/SKIPPED. The parked branch is reached only after
-    a real `[DISABLE]`, which already released the flag.
+  - ~~The stale-flag scenario always lands in the SERVING branch.~~ False, found by review 4 (below): the
+    `.CT` bails out on a missing DLL BEFORE its serving check, and a process switch reaches the parked
+    branch.
   - None of the unsafe fixes landed: no per-ID keying, no mailbox owner token (so no contract bump), and
     not the generator alone.
   - **Tests, red first:** one ordering pin per artifact. The flag must be cleared inside the serving
     branch, and before its untick (generator) or its `return false` (`.CT`). 2/2 mutants killed; UI 5134/5134.
+- ✅ **Review 4 follow-up 2026-09-12** (of 691a797e: one MED, one LOW, both CONFIRMED). The serving-branch
+  clear covered one route of three.
+  - **MED, the `.CT`'s DLL-not-found bail-out.** It runs BEFORE the serving check. A cancelled file picker
+    returned false with the previous table's flag still true. The deferred untick ran `[DISABLE]`, the guard
+    passed, and `UE5_Shutdown` tore the serving pipe down: B30's exact symptom.
+  - **LOW, a process switch.** CE unticks every record on a process switch WITHOUT running `[DISABLE]`
+    (`MainUnit.pas`: `addresslist.disableAllWithoutExecute`, which only clears `factive`). The next tick can
+    reach the PARKED branch, whose failed `UE5_AutoStart` defers an untick too, in both artifacts.
+  - **The fix:** clear the flag at `[ENABLE]` ENTRY, before the first bail-out, in both artifacts. An enable
+    runs only on an unticked record, and an unticked record owns nothing. The success path stays the one
+    claim. The serving-branch clear is kept: now redundant, its pin still holds.
+  - **Tests, red first:** the clear precedes the first bail-out, in the generator and in `ue5_inject`.
+    2/2 mutants killed; UI 5156/5156.
 
 ##### ✅ `[A3-BOOL-NATIVE-NOWRITE]` MED — editing a native bool in Live Walker writes nothing and reports "Written" (FIXED IN SOURCE 2026-09-11)
 
@@ -4914,6 +4927,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. File > Open the same table without merging.
 3. Tick the reloaded record. It shows "already loaded and serving" and unticks itself.
 4. **The UI must stay connected:** no `UE5_Shutdown` in the DLL log.
+5. **Process switch** (review 4): with the record ticked, attach CE to another process and back; CE unticks the record without running `[DISABLE]`. Tick it again: it reads serving and unticks itself, and the UI stays connected. (The `.CT`'s cancelled-picker route is pinned by source. It is hard to reach live while the UI has recorded the DLL's folder.)
 **Control:** a fresh CE session with the proxy serving, which gives the same message and no teardown. | CE + a game + UI |
 | L35 | `[W3-DUNSTE-QUEUED]` | A game that idles when unfocused (the common case, per `Dunste.cpp`), with Fly on:
 1. Tick **Noclip** in the UI. Focus leaves the game; wait over 5 s.

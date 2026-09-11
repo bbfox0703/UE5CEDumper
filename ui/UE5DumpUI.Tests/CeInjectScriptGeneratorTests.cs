@@ -384,6 +384,21 @@ public class CeInjectScriptGeneratorTests
     }
 
     [Fact]
+    public void Enable_clears_a_stale_ownership_flag_before_its_first_bailout()
+    {
+        // [A3-B30-STALE-FLAG] review 4: File > Open is not the only stale origin. CE's process switch unticks every
+        // record WITHOUT running its disable block (MainUnit.pas: disableAllWithoutExecute), and the next tick can take
+        // the PARKED branch, whose failed UE5_AutoStart defers an untick too. An enable runs only on an unticked
+        // record, which owns nothing -- so the flag is cleared before the first bail-out of all.
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+        var clear = e.IndexOf("UE5_StartedByThisRecord = false", StringComparison.Ordinal);
+        var firstBail = e.IndexOf("if getOpenedProcessID() == 0 then", StringComparison.Ordinal);
+        Assert.True(firstBail >= 0, "the no-process bail-out must still exist");
+        Assert.True(clear >= 0 && clear < firstBail,
+            "the enable block must clear the flag before its first bail-out, not only in the serving branch");
+    }
+
+    [Fact]
     public void Disable_releases_ownership_after_tearing_down()
     {
         var d = Disable(CeInjectScriptGenerator.Generate(Dll));
