@@ -1396,7 +1396,7 @@ static void FillPointerSnapshot(json& data) {
     data["pid"] = static_cast<uint32_t>(GetCurrentProcessId());
 
     // load_mode: how the dumper got into this process, from THIS module's own file
-    // name (g_hDllModule). "proxy:version.dll" | "proxy:dinput8.dll" | "proxy:dxgi.dll"
+    // name (g_hDllModule). "proxy:version.dll" | "proxy:dinput8.dll" | "proxy:dxgi.dll" | "proxy:winmm.dll"
     // (the OS-loaded proxy — the mutex winner, correct even when 2 proxies coexist) /
     // "injected" (UE5Dumper.dll via CreateRemoteThread or CE .CT) / "loaded:<name>" /
     // "unknown". The UI folds a proxy load into per-game "confirmed-working" LKG.
@@ -1411,7 +1411,10 @@ static void FillPointerSnapshot(json& data) {
                 selfName += (wc < 128) ? static_cast<char>(towlower(wc)) : '?';
         }
         std::string loadMode;
-        if (selfName == "version.dll" || selfName == "dinput8.dll" || selfName == "dxgi.dll")
+        // [W1-WINMM-LOADMODE] All four proxies we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
+        // symmetry). winmm was missing, so its loads read "loaded:winmm.dll" and never earned a confirmed-proxy record.
+        if (selfName == "version.dll" || selfName == "dinput8.dll" || selfName == "dxgi.dll"
+            || selfName == "winmm.dll")
             loadMode = "proxy:" + selfName;
         else if (selfName == "ue5dumper.dll")
             loadMode = "injected";

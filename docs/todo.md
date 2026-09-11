@@ -674,7 +674,7 @@ with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it cou
 no restart, leaving a stale picker · ✅ `[W1-DT-TRUNC]` (FIXED IN SOURCE 2026-09-12, batch L22: the Run keeps the load's "(showing N of M)", pinned red first) DataTable pivot Run overwrites its own
 truncation notice with a bare row count, 17 lines above an array branch that gets it right ·
 `[W1-PIPEBUSY-LOG]` pipe-busy is logged as "Cheat Engine not running" (see below) ·
-`[W1-WINMM-LOADMODE]` `Fern.cpp:1408` omits `winmm.dll` from the proxy classifier so it never
+✅ `[W1-WINMM-LOADMODE]` (FIXED IN SOURCE 2026-09-12, batch L27: the classifier names all four proxies, and a symmetry pin against Methode's `kProxyDllNames` keeps it so) `Fern.cpp:1408` omits `winmm.dll` from the proxy classifier so it never
 earns a confirmed-proxy record.
 
 #### ⛔ REFUTED — do not re-raise
@@ -5191,6 +5191,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 73 | `[A4-PIVOT-CROSSGAME-ID]` + `[W1-PIVOT-LOADCTS]` | LOW | `git log --grep A4-PIVOT-CROSSGAME-ID` (batch L18) | One cross-game test each for Class Pivot, Snapshot and SPC on the real per-game store (the other game's newest or default wins; Class Pivot never serves the other game's class list), and a class load gated on its token that a field load must not cancel, red first. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225. The recorded safe fix, all three twins; no clear in SetEngineState |
 | 74 | `[A4-GAMEONLY-ADVICE]` + `[P5-GROUP-ADVICE]` + `[A3-CONTAINER-4096-ADVICE]` | LOW | `git log --grep A4-GAMEONLY-ADVICE` (batch L21) | Red first: the two Game Only pins inverted with controls, a group cap stop that must not advise "refine", and a scalar drill capped by the DLL that must not blame the slider. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229. Every advice names a lever the panel has and has not used |
 | 75 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | LOW | `git log --grep P5-PIVOT-FETCHCAP` (batch L22) | ClassPivotViewModelTests, red first: a capped DataTable Run keeps "(showing 2 of 500)"; `PivotRunStatus` gives the fetch cap its own sentence and "≥" counts, with both caps able to show; the group cap alone is the control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233. The fetch cap has its own flag, landed with the change that stopped folding it |
+| 76 | `[W1-WINMM-LOADMODE]` | LOW | `git log --grep W1-WINMM-LOADMODE` (batch L27) | A symmetry pin, red first: Fern's load_mode classifier must name every proxy file name Methode's `kProxyDllNames` lists (all four). 2/2 mutants killed, one of them a different proxy dropped; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5234/5234 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5406,6 +5407,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L61 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | A game and Class Pivot:
 1. **DataTable:** a table over 64 rows. Select it; the status says "(showing 64 of N)". Run; the status still says it.
 2. **Fetch cap:** rare (about 800 owners × 256 elements × 10 ticked props). If one is reached, the status reads "≥ … groups … from ≥ …" plus the fetch-cap sentence, not "(capped at 5,000)". | a game + UI |
+| L62 | `[W1-WINMM-LOADMODE]` | A game with the winmm proxy deployed (Proxy Deploy tab):
+1. Connect. The load mode reads `proxy:winmm.dll`.
+2. The per-game confirmed-proxy record now appears, as it does for version / dinput8 / dxgi. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5490,7 +5494,7 @@ completeness critic.
 - **L24:** `[W5-INSTEXPORT-TRUNC]`
 - **L25:** `[W1-PARTIAL-MARK]`
 - **L26:** `[W1-PIPEBUSY-LOG]` (CE)
-- **L27:** `[W1-WINMM-LOADMODE]`
+- ✅ **L27:** `[W1-WINMM-LOADMODE]`
 - **L28:** `[W2-BETWEEN-PREVIEW]`
 - **L29:** `[W2-DEADSCAN-LOADMORE]`
 - **L30:** `[W3-CAP-NOSAVE]`

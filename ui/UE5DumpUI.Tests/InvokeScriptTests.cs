@@ -1820,6 +1820,31 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void LoadModeClassifier_NamesEveryProxyWeShip()
+    {
+        // [W1-WINMM-LOADMODE] Fern's load_mode classifier omitted winmm.dll, so a winmm proxy load reported
+        // "loaded:winmm.dll" and never earned the per-game confirmed-proxy record the other three do. Methode's
+        // kProxyDllNames is the list of proxy file names we ship (itself kept in sync with the .CT and ProxyType.cs), so
+        // the classifier must name every one. Fern.cpp and Methode.cpp reach no test target.
+        var methode = DllSource("Methode.cpp");
+        int list = methode.IndexOf("kProxyDllNames[] = {", StringComparison.Ordinal);
+        Assert.True(list >= 0, "Methode.cpp's kProxyDllNames not found -- re-point this pin");
+        var body = methode.Substring(list, methode.IndexOf("};", list, StringComparison.Ordinal) - list);
+        var names = new System.Collections.Generic.List<string>();
+        foreach (System.Text.RegularExpressions.Match m in
+                 System.Text.RegularExpressions.Regex.Matches(body, @"L""([a-z0-9]+\.dll)"""))
+            names.Add(m.Groups[1].Value);
+        Assert.Equal(4, names.Count);   // version, dinput8, dxgi, winmm -- the four proxy targets CMake builds
+
+        var fern = DllSource("Fern.cpp");
+        int cls = fern.IndexOf("std::string loadMode;", StringComparison.Ordinal);
+        Assert.True(cls >= 0, "Fern.cpp's load_mode classifier not found -- re-point this pin");
+        var classifier = fern.Substring(cls, fern.IndexOf("loadMode = \"proxy:\"", cls, StringComparison.Ordinal) - cls);
+        foreach (var n in names)
+            Assert.Contains("selfName == \"" + n + "\"", classifier, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MailboxInitFastPath_WaitsWhileAnInitIsScanning()
     {
         // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp and Mimic.cpp reach no test target: the RULE is pinned in dll_helpers_test
