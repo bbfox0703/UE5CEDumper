@@ -673,7 +673,7 @@ with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it cou
 ✅ `[W1-PIVOT-LOADCTS]` (FIXED IN SOURCE 2026-09-12, batch L18: one CTS per list, pinned by a class load gated on its token) one shared `_loadCts` lets a field load cancel an in-flight class load with
 no restart, leaving a stale picker · ✅ `[W1-DT-TRUNC]` (FIXED IN SOURCE 2026-09-12, batch L22: the Run keeps the load's "(showing N of M)", pinned red first) DataTable pivot Run overwrites its own
 truncation notice with a bare row count, 17 lines above an array branch that gets it right ·
-`[W1-PIPEBUSY-LOG]` pipe-busy is logged as "Cheat Engine not running" (see below) ·
+✅ `[W1-PIPEBUSY-LOG]` (FIXED IN SOURCE 2026-09-12, batch L26: on the connect timeout the bridge asks whether the pipe EXISTS, and a busy one is a Warn naming the likely holder; red first through an internal seam) pipe-busy is logged as "Cheat Engine not running" (see below) ·
 ✅ `[W1-WINMM-LOADMODE]` (FIXED IN SOURCE 2026-09-12, batch L27: the classifier names all four proxies, and a symmetry pin against Methode's `kProxyDllNames` keeps it so) `Fern.cpp:1408` omits `winmm.dll` from the proxy classifier so it never
 earns a confirmed-proxy record.
 
@@ -5203,6 +5203,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 75 | `[W1-DT-TRUNC]` + `[P5-PIVOT-FETCHCAP]` | LOW | `git log --grep P5-PIVOT-FETCHCAP` (batch L22) | ClassPivotViewModelTests, red first: a capped DataTable Run keeps "(showing 2 of 500)"; `PivotRunStatus` gives the fetch cap its own sentence and "≥" counts, with both caps able to show; the group cap alone is the control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233. The fetch cap has its own flag, landed with the change that stopped folding it |
 | 76 | `[W1-WINMM-LOADMODE]` | LOW | `git log --grep W1-WINMM-LOADMODE` (batch L27) | A symmetry pin, red first: Fern's load_mode classifier must name every proxy file name Methode's `kProxyDllNames` lists (all four). 2/2 mutants killed, one of them a different proxy dropped; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5234/5234 |
 | 77 | `[W5-INSTEXPORT-TRUNC]` | LOW | `git log --grep W5-INSTEXPORT-TRUNC` (batch L24) | AuditL11HonestyTests, red first: a 61,000-field Instance Finder export says "Copied, but TRUNCATED…" with this panel's levers, never Live Walker's; a small one adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236. The four copy hazards handled, not copied |
+| 78 | `[W1-PIPEBUSY-LOG]` | LOW | `git log --grep W1-PIPEBUSY-LOG` (batch L26) | AobMakerInjectTableFileTests, red first through an internal seam (pipe name, 150 ms timeout, existence probe): a busy pipe is a Warn "EXISTS but no instance was free", an absent one stays the Debug "not running". 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5238/5238. The public constructor is unchanged |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5424,6 +5425,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L63 | `[W5-INSTEXPORT-TRUNC]` | A game, Instance Finder, and an instance whose CE XML export is huge (a dense object with Collapse Pointer Nodes off):
 1. Copy CE XML. The status says "Copied, but TRUNCATED at the 60,000-entry export cap", naming Collapse Pointer Nodes and the DropDown Limit.
 2. A normal instance copies with no warning. | a game + UI |
+| L64 | `[W1-PIPEBUSY-LOG]` | **CE: announce it first.** Two Cheat Engine instances, both with the AOBMaker plugin, and the UI:
+1. With the second CE holding the pipe, trigger any AOBMaker action (e.g. open the Interesting Functions tab). `init.log` has a WARN "…AOBMakerCEBridge EXISTS but no instance was free…", not the Debug "Cheat Engine not running".
+2. With no CE running, the Debug line still reads "not running". | CE ×2 + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5507,7 +5511,7 @@ completeness critic.
 - **L23:** `[W1-GROUP-DENYLIST]`
 - ✅ **L24:** `[W5-INSTEXPORT-TRUNC]`
 - **L25:** `[W1-PARTIAL-MARK]`
-- **L26:** `[W1-PIPEBUSY-LOG]` (CE)
+- ✅ **L26:** `[W1-PIPEBUSY-LOG]` (CE)
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`
 - **L28:** `[W2-BETWEEN-PREVIEW]`
 - **L29:** `[W2-DEADSCAN-LOADMORE]`
