@@ -1609,6 +1609,15 @@ against.
      little-endian value at the captured length, so an enum is never `-1`.
    - **Tests, red first:** `TryFromHex_DecodesAnEnumUnsigned` (3) and
      `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2).
+   - ⚠ **Known limitation, kept by policy** (the review of 25904d02; two of its findings, one of them
+     refuted as "not a defect of this commit").
+     - `numeric_value` is decoded once, at insert. A NumericAll snapshot captured between ab0fd6a6
+       (2026-08-19, when enums became capturable) and this build keeps it NULL for its enum rows.
+     - The grid now shows their numbers, because `Render` decodes the stored hex. SPC, Group Match
+       and Diff direction still skip them, because they read `numeric_value`.
+     - Not backfilled: the snapshot store's policy is recapture, not in-place migration
+       (`experimental-snapshot-spc-pivot.md`, and the build-1827 precedent). SPC runs in SQL, so a
+       read-time fallback could not cover it anyway. Take fresh snapshots.
 
 **LOW**
 
@@ -3987,7 +3996,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981. **Review follow-up:** `Delete` rolls a parseable main to `.bak` first (a transient lock at Load had let Clear all lose the newest revision; red first), and the resurrect test pins that `.bak` survives |
 | 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only. **Review follow-up:** `Save` moves an unparseable main aside (bounded `.corrupt-*` copies) instead of destroying it (red first); pins for the passed-in library, `ZTolerance` and a three-save roll; 6/6 mutants killed across both rows; UI 5009/5009 |
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
-| 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed |
+| 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed. **Review:** snapshots captured before this build keep NULL enum values; recorded as a known limitation (recapture policy), not backfilled |
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
 | 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict |
 | 28 | `[W2-GROUPMATCH-WIDTH]` | MED | same commit as row 27 (batch B13) | 5 theory rows + the group fact red first; 3 controls. 3/3 mutants killed: the verdict, the two sides swapped, Exact admitted; UI 5003/5003 |
@@ -4050,7 +4059,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Timeout:** run a STATEFUL exec command from the Console tab (one that adds an item or spawns something) while the thread is stalled, so it reports the dispatch timeout. The status says "still queued … not re-sent", and when the game resumes the effect happens ONCE, not twice.
 2. **Stale pin:** after a level change, a pinned command still self-heals (`re-resolved …`). | a game + UI |
 | L16 | `[P3-SNAPNUM-ENUM]` `[W2-GROUPMATCH-ENUM]` | On a game with an enum-backed state field (weapon type, quest stage):
-1. **Capture:** take two snapshots under the NumericAll capture scope. The diff grid shows the enum as a number, not raw hex, and SPC `Increased` / `Exact` find it.
+1. **Capture:** take two FRESH snapshots under the NumericAll capture scope (one captured before this build keeps NULL enum values: recapture, not migrate). The diff grid shows the enum as a number, not raw hex, and SPC `Increased` / `Exact` find it.
 2. **Group Match:** a Snapshot Group Match with the enum's value in one slot (NumericAll) plus a neighbouring int in another finds the object. Under NumericNoByte the enum slot finds nothing, exactly as the live Group Scan does. | a game + UI |
 | L17 | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | On a game with an actor that holds unsigned numeric fields (UInt16/UInt32/UInt64Property):
 1. **Live Group Scan:** a two-slot group, `Bigger -5` plus the value of a known int on the same actor, finds it. The Bigger slot's **All fields** list includes the unsigned fields, and a Refine with the same values keeps the actor.
