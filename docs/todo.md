@@ -3702,7 +3702,7 @@ across 5.2/5.3 AND an array walked before any scalar lazy field; the first scala
 - 🟡 **Same shape, tracked elsewhere:** the soft path's `>= 501` discriminator
   (`verification-register.md:500`).
 
-##### `[A2-WALKCLASSEX-UNMAPPED]` LOW — WalkClassEx permanently memoizes an UNMAPPED class address, defeating Aura's refusal gate
+##### ✅ `[A2-WALKCLASSEX-UNMAPPED]` LOW — WalkClassEx permanently memoizes an UNMAPPED class address, defeating Aura's refusal gate (FIXED IN SOURCE 2026-09-12)
 
 `Ubel.cpp:1229`. `WalkClass` sets `info.Address` BEFORE its read-fault early return (`:968`, `:994-998`),
 and `ReadSafe` zeroes on fault. So an unmapped address comes back as `{Address=addr, PropertiesSize=0}`.
@@ -3723,6 +3723,19 @@ and `ReadSafe` zeroes on fault. So an unmapped address comes back as `{Address=a
   - bounding or evicting the cache (the dangling-`const&` hazard).
 - **Twin, fix together:** `GetCachedStructFields` (`:2549-2645`) publishes `WalkClass`'s result
   unconditionally into a third never-erased cache.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix, with its twin** (batch L09).
+  - `WalkClassImpl(addr, bool& readOk)` carries the fault exit's verdict. `WalkClassEx` passes it to
+    `ShouldPublishClassWalk`, so an unreadable class is refused and NOT memoized, and Aura's two gates
+    refuse with it.
+  - `GetCachedStructFields` serves an unreadable struct empty, again without memoizing it.
+  - None of the recorded unsafe shapes: no Fields/Name gate, no second PropertiesSize read, no cache
+    bound or eviction.
+  - The un-memoizing got its log guard: WalkClass's warning is once per address (bounded at 4096), and
+    WalkClassEx says nothing extra for an unreadable class.
+  - **Test, red first:** dll_core_test decommits a page. WalkClassEx refuses it and the twin memoizes
+    nothing. It re-commits the page with a plausible class, and the class walks. 3/3 mutants killed;
+    dll_core_test 297/297; UI 5212/5212.
+  - ⚠ **Survivor by construction:** the once-per-address guard. Its only effect is log volume.
 
 ##### ✅ `[A2-GNAMES-PTRSCAN-ABORT]` LOW — a WIDENING of `[P1-GENAU-ABORT]`: the GNames tier-3 pointer scan aborts with no log and no flag (FIXED IN SOURCE 2026-09-12)
 
@@ -5016,6 +5029,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 60 | `[P1-UPROP-DELEGATE]` | LOW | `git log --grep P1-UPROP-DELEGATE` (batch L06) | dll_core_test, red first: a UProperty-mode walk over a refusing delegate array and a refusing multicast array. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195. The recorded safe fix, copied verbatim from the FProperty twins |
 | 61 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | LOW | `git log --grep P1-WALK-UNREADABLE` (batch L07) | dll_core_test (an unreadable walk is marked; a readable control), the parse, a Fern lean/full pin, and the Live Walker status on a re-root (freed, freed with a way back, unreadable) plus the compose rule, red first. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204. Its own key, not folded into `stale`; composed, never overwritten |
 | 62 | `[P1-SPARSEDELEGATE-REFS]` (+ the PATTERN-P5 widening) | LOW | `git log --grep P1-SPARSEDELEGATE-REFS` (batch L08) | dll_core_test (a planted sparse-delegate map: two unreadable delegates counted, the readable one not), the parse, a Fern pin, the status rule, and both Live Walker status lines, red first. 9/9 mutants killed; dll_core_test 291/291; UI 5212/5212. Aggregate channel only: no per-entry wire change |
+| 63 | `[A2-WALKCLASSEX-UNMAPPED]` (+ the `GetCachedStructFields` twin) | LOW | `git log --grep A2-WALKCLASSEX-UNMAPPED` (batch L09) | dll_core_test, red first: a decommitted page is refused by WalkClassEx and memoized by neither cache; re-committed, it walks. 3/3 mutants killed; dll_core_test 297/297; UI 5212/5212. The recorded safe fix: the read verdict threaded out, a once-per-address log guard |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5188,6 +5202,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L48 | `[P1-SPARSEDELEGATE-REFS]` | A UE 5.x game with sparse delegates, e.g. an actor bound through `OnActorBeginOverlap`:
 1. Run Find References on an object bound only through a sparse delegate. With a readable storage the binding is listed; the `offsets` log line "had no readable InvocationList" names any delegate that was not read.
 2. When that line appears, or the scan hits its deadline, the status must not say "likely held by a non-reflected pointer". | a UE5 game + UI |
+| L49 | `[A2-WALKCLASSEX-UNMAPPED]` | No live trigger: the defect needs a transient read fault on a class pointer, which dll_core_test makes by decommitting a page.
+1. **Regression only:** Class Pivot, Property / Value Search and a CE export still see every normal class's fields.
+2. `walk-0.log` holds at most one "is not readable at +0x…" line per address. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5254,7 +5271,7 @@ completeness critic.
 - ✅ **L06:** `[P1-UPROP-DELEGATE]`
 - ✅ **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 - ✅ **L08:** `[P1-SPARSEDELEGATE-REFS]`
-- **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
+- ✅ **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
 - **L10:** `[A2-LAZY-LATCH-GUESS]`
 - **L11:** `[A2-CRC-PATH-LS]`
 - **L12:** `[A2-HEAP-ANCHOR-TEXT]`

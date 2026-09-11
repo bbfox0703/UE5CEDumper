@@ -2913,6 +2913,51 @@ int main() {
         g_cachedUEVersion           = savedVerSp;
     }
 
+    // -- WALKCLASSEXUNMAPPED-2026-09-12 -- an unreadable class is refused, and NOT memoized --------------------------
+    //
+    // [A2-WALKCLASSEX-UNMAPPED] WalkClass returns {Address, PropertiesSize 0} from its read-fault exit, and WalkClassEx
+    // passed `true` as the read verdict, so the value test accepted and memoized that empty walk FOREVER -- and Aura's
+    // two refusal gates (`WalkClassEx(cls).Address != cls`) passed with it. A decommitted page is the transient fault;
+    // re-committing it is the page coming back. GetCachedStructFields is the twin.
+    {
+        blk("WALKCLASSEXUNMAPPED - an unreadable class is refused and not memoized, so it walks when it comes back");
+        ResetCancel();
+        uint8_t* wcPage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        check("WALKCLASSEXUNMAPPED setup: committed a page", wcPage != nullptr);
+        if (wcPage) {
+            const uintptr_t wcA = reinterpret_cast<uintptr_t>(wcPage);           // WalkClassEx's subject
+            const uintptr_t wcS = reinterpret_cast<uintptr_t>(wcPage + 0x800);   // GetCachedStructFields'
+            VirtualFree(wcPage, 0x1000, MEM_DECOMMIT);                           // the transient fault
+
+            const auto& ex1 = Ubel::WalkClassEx(wcA);
+            check("WALKCLASSEXUNMAPPED ⭐: WalkClassEx refuses an unreadable class (Aura's gate sees Address != cls)",
+                  ex1.Address != wcA);
+            const auto& sf1 = Ubel::GetCachedStructFields(wcS);
+            {
+                std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
+                check("WALKCLASSEXUNMAPPED ⭐: ...and GetCachedStructFields, the twin, memoizes nothing for it",
+                      sf1.empty() && Ubel::s_structFieldCache.count(wcS) == 0);
+            }
+
+            // The page comes back, holding a plausible class at each subject.
+            check("WALKCLASSEXUNMAPPED setup: re-committed the page",
+                  VirtualAlloc(wcPage, 0x1000, MEM_COMMIT, PAGE_READWRITE) != nullptr);
+            const int32_t wcProps = 0x40;
+            memcpy(wcPage + DynOff::USTRUCT_PROPSSIZE, &wcProps, sizeof(wcProps));
+            memcpy(wcPage + 0x800 + DynOff::USTRUCT_PROPSSIZE, &wcProps, sizeof(wcProps));
+            const auto& ex2 = Ubel::WalkClassEx(wcA);
+            check("WALKCLASSEXUNMAPPED ⭐: once the page is back, the class walks -- the fault was not memoized",
+                  ex2.Address == wcA && ex2.PropertiesSize == wcProps, std::to_string(ex2.PropertiesSize).c_str());
+            Ubel::GetCachedStructFields(wcS);
+            {
+                std::lock_guard<std::mutex> lk(Ubel::s_structFieldCacheMutex);
+                check("WALKCLASSEXUNMAPPED control: ...and the twin memoizes a readable struct",
+                      Ubel::s_structFieldCache.count(wcS) == 1);
+            }
+            // Deliberately NOT released: the memos now hold this address for the process, which ends soon.
+        }
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -979,7 +979,34 @@ void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApprox
     }
 }
 
+// [A2-WALKCLASSEX-UNMAPPED] Once per address. An unreadable class is no longer memoized by WalkClassEx (that memo was
+// the defect), so every later caller re-walks it -- Aura's scans do so once per OBJECT of that class -- and a warning per
+// walk would flood walk-0.log. Bounded: past kMax distinct addresses it stays quiet, having said so once.
+static std::mutex                    s_unreadableClassWarnMutex;
+static std::unordered_set<uintptr_t> s_unreadableClassWarned;
+static bool FirstUnreadableClassWarn(uintptr_t addr) {
+    constexpr size_t kMax = 4096;
+    std::lock_guard<std::mutex> lk(s_unreadableClassWarnMutex);
+    if (s_unreadableClassWarned.size() >= kMax) return false;
+    const bool first = s_unreadableClassWarned.insert(addr).second;
+    if (first && s_unreadableClassWarned.size() == kMax)
+        Sein::Warn("WALK:safe", "WalkClass: %zu unreadable class addresses reported -- further ones are not logged",
+                   kMax);
+    return first;
+}
+
+static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk);
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
+    bool readOk = true;
+    return WalkClassImpl(uclassAddr, readOk);
+}
+
+// [A2-WALKCLASSEX-UNMAPPED] WalkClass, plus its read-fault VERDICT. Its fault exit returns {Address, PropertiesSize 0},
+// which ShouldPublishClassWalk's value test ACCEPTS -- so a memo that gates on the value alone pins a transient fault
+// forever. `readOk` is false exactly when that exit was taken; a cache hit was readable when it was cached.
+static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
+    readOk = true;
     ClassInfo info{};
     if (!uclassAddr) return info;
 
@@ -1021,9 +1048,11 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
     // FField chain. Falls through to the same un-memoized exit as the value gate.
     if (!propsSizeReadOk) {
-        Sein::Warn("WALK:safe",
-            "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
-            (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
+        readOk = false;   // [A2-WALKCLASSEX-UNMAPPED] the verdict the memo gates need
+        if (FirstUnreadableClassWarn(uclassAddr))
+            Sein::Warn("WALK:safe",
+                "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
+                (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
         return info;
     }
 
@@ -1240,22 +1269,25 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         if (it != s_walkClassExCache.end()) return it->second;
     }
 
-    ClassInfo info = WalkClass(uclassAddr);
+    bool readOk = true;
+    ClassInfo info = WalkClassImpl(uclassAddr, readOk);
 
     // Same memoization gate WalkClass applies, for the same reason (audit #5 U4) —
     // this cache is the more widely consulted of the two (Property/Value Search,
     // snapshot capture, CE export, Solitar, Solide), so leaving it poisonable while
-    // fixing only WalkClass would close the smaller half. `propsSizeReadOk` is true
-    // by construction here: WalkClass returns early on a read fault, so an unmapped
-    // address arrives with PropertiesSize == 0 and no fields, and only the value test
-    // can fire. Refusing to memoize means refusing to RETURN too — the signature is a
+    // fixing only WalkClass would close the smaller half. [A2-WALKCLASSEX-UNMAPPED]
+    // This used to pass `true` for the read verdict, calling it "true by construction":
+    // but WalkClass's fault exit returns {Address, PropertiesSize 0}, which the value
+    // test ACCEPTS, so one transient fault was memoized forever and Aura's refusal gates
+    // (`Address != cls`) passed with it. The verdict is now WalkClassImpl's own.
+    // Refusing to memoize means refusing to RETURN too — the signature is a
     // reference into this map — so a rejected class reads as empty rather than as
     // garbage fields. That trade is bounded: WalkInstance already hard-fails on this
     // exact predicate, so an engine fork that mis-derives USTRUCT_PROPSSIZE is broken
     // before reaching here; this widens an existing failure rather than creating one.
     // Placed BEFORE CorrectSubclassOffsets so a garbage class cannot calibrate the
     // process-wide FSTRUCTPROP_STRUCT offset off its own bogus fields.
-    if (!ShouldPublishClassWalk(true, info.PropertiesSize)) {
+    if (!ShouldPublishClassWalk(readOk, info.PropertiesSize)) {
         // Logged, because this refusal is INVISIBLE otherwise and it is not a cache
         // miss: the signature returns a reference into the map, so a refused class
         // reads as a class with NO FIELDS to all ~26 external callers (Aura's
@@ -1264,10 +1296,15 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         // snapshot capture, CE export, Solitar and Solide. WalkClass has already
         // warned for this same address on this same path, so this adds one line per
         // refused class, not a flood. (SANEPROPS-2026-08-26)
-        Sein::Warn("WALK:safe",
-            "WalkClassEx: 0x%llx REFUSED (PropertiesSize=%d) — returning an EMPTY "
-            "ClassInfo, so every caller will see this class as having no fields",
-            (unsigned long long)uclassAddr, info.PropertiesSize);
+        // [A2-WALKCLASSEX-UNMAPPED] An UNREADABLE class is refused without this line: WalkClass has
+        // already said so, once per address, and this refusal is not memoized, so a line per call
+        // WOULD be the flood. The next call re-walks it, and a page that came back walks normally.
+        if (readOk) {
+            Sein::Warn("WALK:safe",
+                "WalkClassEx: 0x%llx REFUSED (PropertiesSize=%d) — returning an EMPTY "
+                "ClassInfo, so every caller will see this class as having no fields",
+                (unsigned long long)uclassAddr, info.PropertiesSize);
+        }
         return s_emptyClassInfo;
     }
 
@@ -2722,7 +2759,14 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
 
     // Walk the struct to get field layout (no lock held — WalkClass/GetName
     // take their own leaf locks).
-    ClassInfo ci = WalkClass(structAddr);
+    bool readOk = true;
+    ClassInfo ci = WalkClassImpl(structAddr, readOk);
+    // [A2-WALKCLASSEX-UNMAPPED] the twin: an UNREADABLE struct is served empty and NOT memoized. The publish below is
+    // permanent, so one transient fault used to pin "no fields" for the process. The next call re-walks it.
+    if (!readOk) {
+        static const std::vector<CachedStructField> s_emptyStructFields;
+        return s_emptyStructFields;
+    }
     std::vector<CachedStructField> cached;
     cached.reserve(ci.Fields.size());
 
