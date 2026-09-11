@@ -1450,6 +1450,18 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
      build and the live check cover it.
    - ⬜ **Not in this row:** Solide's `FindStealthMeter` still ignores the stats. A stealth meter on a
      129th owned object goes unscored, silently; that is a separate scope call.
+   - ✅ **Review 4 follow-up 2026-09-12** (of d6a3af46: two LOW, both CONFIRMED).
+     - **The new cap order was unpinned.** The fake graph never produced an edge that fails the filters
+       once the list is full: its parts own nothing, and every edge of the target qualifies. A mutant that
+       put the caps back above the filters passed all 16 checks. A second holder's Parts array now ends with
+       a fifth element it does not own, enumerated after the four parts that fill the list. At a row cap of
+       exactly 6, and at an owned budget of 4, that edge must not read as a refusal. Red against the pre-fix
+       order; 2/2 mutants killed; dll_core_test 256/256; UI 5152/5152.
+     - **Live check L32 step 2 was wrong.** It expected the PersistentLevel to fill the list, because "it
+       owns every actor". This walk follows REFLECTED pointers only, and `ULevel::Actors` carries no
+       UPROPERTY (`Aura.cpp` records this beside its ULevel lookup), so the level's actors are never
+       reached. The step now asks for any object that lists 128 rows. A game without one records the step
+       as not reachable, not as a failure.
 3. ✅ **`[W4-RELATED-RACE]`** (FIXED IN SOURCE 2026-09-11, batch B17) `RelatedObjectsViewModel.cs:106`. `LoadAsync` clears before its
    `await` and appends after, with **no generation ticket** — the only VM in the cluster without
    one. Two overlapping loads both pass their `Clear()` and both `Add()`, so the grid holds object
@@ -4867,7 +4879,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **Batch:** run Find Funcs in Property Search, Interesting Properties, Instance Finder and Game Class Filter over rows that include it. Its cell reads `200+ · …`, the status names the cap, and a re-run does not re-scan that row. | a game + UI |
 | L32 | `[W4-RELATED-STOPS]` | A connected game, the Related Objects panel:
 1. **A normal actor:** the status is "N related object(s)." with no ⚠ clause.
-2. **The PersistentLevel** (any actor's Outer; it owns every actor): the list fills its 128 rows, and the status says "full at its 128-row limit and more related objects exist", with no time budget named unless the walk also timed out. | a game + UI |
+2. **The row limit, where an object reaches it.** Not the PersistentLevel: this walk follows REFLECTED pointers only, and `ULevel::Actors` carries no UPROPERTY, so the level's actors are never reached, although each one's Outer is the level. Use any object whose list fills 128 rows (a candidate, not a promise: a World on a level-streaming game, through its `StreamingLevels`). There the status names the row limit ("full at its 128-row limit and more related objects exist") only if a further owned object was refused, and names no time budget unless the walk also timed out. If nothing reaches 128 rows, record the step as not reachable on this game, not as a failure: dll_core_test pins the cap (review 4). | a game + UI |
 | L33 | `[W4-STRIDE-TENTATIVE]` | A connected game:
 1. **Normal game:** `get_pointers` carries `item_detect: "detected"` with a validated count near 200. No stride badge appears, and a Dump All meta line reads `"stride_untrusted":false`.
 2. **A game on the forced static-stride path** (Obsidian-style UE 5.3): `item_detect` is `"forced"` and there is no badge.

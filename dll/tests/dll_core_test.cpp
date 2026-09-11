@@ -2213,6 +2213,45 @@ int main() {
               std::to_string(cx.size()).c_str());
         check("RELSTOPS ⭐: a cancel is its own cause, not a deadline", sCx.cancelled && !sCx.deadlineHit);
 
+        // Review 4 of d6a3af46: the caps are asked only of an object that QUALIFIES, so an edge that fails the filters
+        // AFTER the list is full is no refusal. The target above never produces one -- its parts own nothing and each
+        // of its edges qualifies -- so the old order passed every check here. A second holder's Parts array ends with
+        // a fifth element it does NOT own (no Outer), enumerated after the four parts that fill the list. (Not a
+        // separate pointer field: the enumerator emits direct pointers before array elements, so it came first.)
+        static uint8_t rsHolder2Cls[0x100] = {};
+        put32(rsHolder2Cls, DynOff::USTRUCT_PROPSSIZE, 0x100);
+        putP(rsHolder2Cls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(rsProp));
+        put32(rsHolder2Cls, Grimoire::OFF_UOBJECT_NAME, 5);
+        static uint8_t rsTarget2[0x100] = {}, rsStranger[0x100] = {};
+        static uint8_t rsPart2[4][0x100] = {};
+        static uintptr_t rsParts2[5] = {};
+        putP(rsTarget2, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(rsHolder2Cls));
+        for (int i = 0; i < 4; ++i) {
+            putP(rsPart2[i], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(rsPartCls));
+            putP(rsPart2[i], DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(rsTarget2));
+            rsParts2[i] = reinterpret_cast<uintptr_t>(rsPart2[i]);
+        }
+        putP(rsStranger, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(rsPartCls));   // no Outer: not owned
+        rsParts2[4] = reinterpret_cast<uintptr_t>(rsStranger);
+        putP(rsTarget2, kParts, reinterpret_cast<uintptr_t>(rsParts2));   // TArray.Data
+        put32(rsTarget2, kParts + 8, 5);                                   // Num
+        put32(rsTarget2, kParts + 12, 5);                                  // Max
+        const uintptr_t rsT2 = reinterpret_cast<uintptr_t>(rsTarget2);
+
+        Aura::RelatedObjectsStats sAll2;
+        const auto all2 = Aura::GetRelatedObjects(rsT2, 128, &sAll2, dflt);
+        check("RELSTOPS setup: the second holder relates Self, Class and its four parts, never the stranger",
+              all2.size() == 6 && !sAll2.resultCapHit && !sAll2.ownedCapHit, std::to_string(all2.size()).c_str());
+        Aura::RelatedObjectsStats sFit2;
+        const auto fit2 = Aura::GetRelatedObjects(rsT2, 6, &sFit2, dflt);
+        check("RELSTOPS ⭐: a non-qualifying edge after the list is full is not a refusal (no row cap)",
+              fit2.size() == 6 && !sFit2.resultCapHit, std::to_string(fit2.size()).c_str());
+        Aura::RelatedObjectsLimits own4;  own4.maxOwnedSubs = 4;
+        Aura::RelatedObjectsStats sOwn4;
+        const auto ownFit = Aura::GetRelatedObjects(rsT2, 128, &sOwn4, own4);
+        check("RELSTOPS ⭐: ...nor after the owned budget is spent (no owned cap)",
+              ownFit.size() == 6 && !sOwn4.ownedCapHit, std::to_string(ownFit.size()).c_str());
+
         DynOff::bUseFProperty       = savedFPropR;
         DynOff::bCasePreservingName = savedCpnR;
         g_cachedUEVersion           = savedVerR;
