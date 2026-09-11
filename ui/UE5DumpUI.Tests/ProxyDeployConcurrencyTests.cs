@@ -397,6 +397,14 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.True(panelOpen >= 0, "the radios' panel is gone -- re-point this pin");
         string panelTag = xaml.Substring(panelOpen, xaml.IndexOf('>', panelOpen) - panelOpen + 1);
         Assert.DoesNotContain("IsEnabled", panelTag);
+
+        // ...nor through the foreign-overwrite checkbox's OWN panel: disabling that parent disables the
+        // checkbox as surely as an attribute on it. (review of 64b28058)
+        int foreignAt = xaml.IndexOf("AllowForeignOverwrite", StringComparison.Ordinal);
+        int foreignPanel = xaml.LastIndexOf("<StackPanel", foreignAt, StringComparison.Ordinal);
+        Assert.True(foreignPanel >= 0, "the foreign-overwrite checkbox's panel is gone -- re-point this pin");
+        string foreignPanelTag = xaml.Substring(foreignPanel, xaml.IndexOf('>', foreignPanel) - foreignPanel + 1);
+        Assert.DoesNotContain("IsEnabled", foreignPanelTag);
     }
 
     // ── AE6: two DIFFERENT commands over the same folder ─────────────────────
