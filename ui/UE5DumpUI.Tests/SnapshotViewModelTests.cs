@@ -435,6 +435,7 @@ public class SnapshotViewModelTests : IDisposable
         var list = await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken);
         Assert.True(list.Count == 1, Diag("expected 1 persisted snapshot", list.Count, vm));
         Assert.True(list[0].IsUsable, Diag("a clean capture stays usable", list[0].IsUsable, vm));
+        Assert.Equal("", list[0].PartialReason);   // [W1-PARTIAL-MARK] a complete capture is not marked partial
         Assert.DoesNotContain("FAULT", vm.StatusText, StringComparison.Ordinal);
     }
 
@@ -539,11 +540,61 @@ public class SnapshotViewModelTests : IDisposable
         Assert.True(saved.ObjectCount > 0, "partial snapshot should hold the captured objects");
     }
 
+    // ---- [W1-PARTIAL-MARK] a kept partial carries a PERSISTED marker, not only a status line ----
+
+    [Fact]
+    public async Task Capture_MaxDatasetCap_PersistsTheCapMarker_AndStaysUsable()
+    {
+        var dump = new ManyChunkStub();
+        var store = new CapDecoratorStore(_store, fakeBytes: 600L * 1024 * 1024);
+        var vm = new SnapshotViewModel(dump, store, new MockLoggingService())
+        {
+            SelectedMaxDataset = "512 MB",
+            Label = "capped",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var saved = Assert.Single(await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(Constants.SnapshotPartialCap, saved.PartialReason);
+        // Still usable: is_usable=0 would auto-delete the partial the cap deliberately keeps.
+        Assert.True(saved.IsUsable);
+    }
+
+    [Fact]
+    public async Task Capture_LowDiskMidCapture_PersistsTheDiskLowMarker_NotTheCapOne()
+    {
+        // Plenty of room at the pre-flight guard; the drive "fills" on the first chunk fetch, so the
+        // mid-capture poll -- not the pre-check -- is what stops it. Its stop ALSO sets capReached, so
+        // this is the test that tells the two reasons apart.
+        var platform = new DiskStubPlatformService(_tempDir)
+        {
+            FreeBytes  = 500L * 1024 * 1024 * 1024,
+            TotalBytes = 1024L * 1024 * 1024 * 1024,
+        };
+        var dump = new ManyChunkStub { OnFetch = () => platform.FreeBytes = 1L * 1024 * 1024 * 1024 };
+        var vm = new SnapshotViewModel(dump, _store, new MockLoggingService(), gate: null, platform: platform)
+        {
+            SelectedScope = "NumericNoByte", Label = "lowdisk",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        Assert.True(dump.FetchCount < 10, $"expected the low-disk stop, fetched {dump.FetchCount} chunks");
+        var saved = Assert.Single(await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(Constants.SnapshotPartialDiskLow, saved.PartialReason);
+        Assert.True(saved.IsUsable);
+    }
+
     // Streams 1 object per chunk over a 20-object total (10 chunks of scanned=2) so a
     // working max-dataset cap stops it EARLY; a broken cap still terminates at chunk 10.
     private sealed class ManyChunkStub : StubDumpService
     {
         public int FetchCount;
+        /// <summary>Runs on every chunk fetch -- lets a test change the world mid-capture.</summary>
+        public Action? OnFetch;
 
         public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
             => Task.FromResult(20);
@@ -554,6 +605,7 @@ public class SnapshotViewModelTests : IDisposable
             string numericFamily = "Any", CancellationToken ct = default)
         {
             FetchCount++;
+            OnFetch?.Invoke();
             var r = new SnapshotChunkResult { Total = 20, Scanned = 2 };
             if (offset < 20)
             {
@@ -616,7 +668,7 @@ public class SnapshotViewModelTests : IDisposable
         public CapSession(ICaptureSession inner, long fakeBytes) { _inner = inner; _fakeBytes = fakeBytes; }
         public long CurrentSizeBytes() => _fakeBytes;   // force the cap to trip on the first poll
         public int WriteChunk(long s, IReadOnlyList<SnapshotCapturedObject> o, CancellationToken ct = default) => _inner.WriteChunk(s, o, ct);
-        public Task CompleteSnapshotAsync(long s, int oc, int fc, bool isUsable = true, CancellationToken ct = default) => _inner.CompleteSnapshotAsync(s, oc, fc, isUsable, ct);
+        public Task CompleteSnapshotAsync(long s, int oc, int fc, bool isUsable = true, string partialReason = "", CancellationToken ct = default) => _inner.CompleteSnapshotAsync(s, oc, fc, isUsable, partialReason, ct);
         public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 

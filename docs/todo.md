@@ -668,7 +668,7 @@ to see or clear (the *applying* is documented design — `docs/snapshot-group-ma
 only the non-disclosure survives, and `GroupStatusText` already discloses the sibling
 `PerSlotCapHit` cause) · `[W1-ARRAYCOUNT]` the Class Pivot array-field picker's element count is a
 ROW count, inflated by inner numeric props, and `ArrayPivotStoreTests.cs:90` pins the wrong value
-with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it counts distinct (owner, element) pairs now, red first with a two-prop fixture) · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
+with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it counts distinct (owner, element) pairs now, red first with a two-prop fixture) · ✅ `[W1-PARTIAL-MARK]` (FIXED IN SOURCE 2026-09-12, batch L25: a new additive `partial_reason` column, `cap` / `disklow`, shown in the grid label and every picker line; the partial stays usable, so the auto-clean keeps it; red first) a cap/low-disk partial has no PERSISTED marker
 (⛔ **the fix is a new marker, NOT `is_usable=0`** — see the refuted-fix note below) ·
 ✅ `[W1-PIVOT-LOADCTS]` (FIXED IN SOURCE 2026-09-12, batch L18: one CTS per list, pinned by a class load gated on its token) one shared `_loadCts` lets a field load cancel an in-flight class load with
 no restart, leaving a stale picker · ✅ `[W1-DT-TRUNC]` (FIXED IN SOURCE 2026-09-12, batch L22: the Run keeps the load's "(showing N of M)", pinned red first) DataTable pivot Run overwrites its own
@@ -5205,6 +5205,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 77 | `[W5-INSTEXPORT-TRUNC]` | LOW | `git log --grep W5-INSTEXPORT-TRUNC` (batch L24) | AuditL11HonestyTests, red first: a 61,000-field Instance Finder export says "Copied, but TRUNCATED…" with this panel's levers, never Live Walker's; a small one adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236. The four copy hazards handled, not copied |
 | 78 | `[W1-PIPEBUSY-LOG]` | LOW | `git log --grep W1-PIPEBUSY-LOG` (batch L26) | AobMakerInjectTableFileTests, red first through an internal seam (pipe name, 150 ms timeout, existence probe): a busy pipe is a Warn "EXISTS but no instance was free", an absent one stays the Debug "not running". 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5238/5238. The public constructor is unchanged |
 | 79 | `[W1-GROUP-DENYLIST]` | LOW | `git log --grep W1-GROUP-DENYLIST` (batch L23) | SnapshotViewModelTests, red first: a group match with a Diff denylist says "1 class(es) hidden by the Diff denylist (switch to Diff mode…)"; without one it says nothing about it. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5240/5240. Disclosure only: the applying is documented design |
+| 80 | `[W1-PARTIAL-MARK]` | LOW | `git log --grep W1-PARTIAL-MARK` (batch L25) | SnapshotStoreTests + SnapshotViewModelTests, red first: the reason round-trips and the partial survives `DeleteUnusableSnapshotsAsync`; a capped capture persists `cap` and stays usable; a mid-capture low-disk stop persists `disklow`, not `cap`; the grid label and the picker line both carry it; a clean capture carries none. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5244/5244. A NEW column, per the refuted-fix note: `is_usable=0` would auto-delete the partial |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5432,6 +5433,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L65 | `[W1-GROUP-DENYLIST]` | A game with snapshots and the UI:
 1. Hide a class in Diff mode's noise picker.
 2. Switch to Group mode and match. The status says "1 class(es) hidden by the Diff denylist (switch to Diff mode to see or clear it)", on a no-match result too. | a game + UI |
+| L66 | `[W1-PARTIAL-MARK]` | A game and the UI:
+1. Set Max dataset to 512 MB and capture more than that. The saved-snapshots grid label ends "(partial: stopped at the size cap)", and so does the snapshot's line in every Diff / Group / SPC / Pivot picker.
+2. Restart the UI. The marker is still there (it is persisted), and the snapshot is still listed (the auto-clean kept it).
+3. An older DB opens without error and gains the column. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5514,7 +5519,7 @@ completeness critic.
 - ✅ **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 - ✅ **L23:** `[W1-GROUP-DENYLIST]`
 - ✅ **L24:** `[W5-INSTEXPORT-TRUNC]`
-- **L25:** `[W1-PARTIAL-MARK]`
+- ✅ **L25:** `[W1-PARTIAL-MARK]`
 - ✅ **L26:** `[W1-PIPEBUSY-LOG]` (CE)
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`
 - **L28:** `[W2-BETWEEN-PREVIEW]`

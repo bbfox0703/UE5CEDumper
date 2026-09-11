@@ -320,6 +320,12 @@ public sealed class SnapshotStore : ISnapshotStore
         // otherwise. See Services.SnapshotConsistency.
         await AddColumnIfMissingAsync(conn, "snapshots", "is_usable", "INTEGER NOT NULL DEFAULT 1", ct);
 
+        // partial_reason [W1-PARTIAL-MARK] (additive, same as is_usable): why a KEPT capture is partial --
+        // Constants.SnapshotPartialCap / SnapshotPartialDiskLow; '' = complete. Its own column on purpose:
+        // marking a partial is_usable=0 would auto-delete it before the next capture
+        // (DeleteUnusableSnapshotsAsync), destroying exactly what the cap / low-disk stop keeps.
+        await AddColumnIfMissingAsync(conn, "snapshots", "partial_reason", "TEXT NOT NULL DEFAULT ''", ct);
+
         if (ver < SchemaVersion)
             await ExecAsync(conn, $"PRAGMA user_version={SchemaVersion};", ct);
     }
@@ -597,7 +603,8 @@ public sealed class SnapshotStore : ISnapshotStore
         }
 
         public async Task CompleteSnapshotAsync(long snapshotId, int objectCount, int fieldCount,
-                                                bool isUsable = true, CancellationToken ct = default)
+                                                bool isUsable = true, string partialReason = "",
+                                                CancellationToken ct = default)
         {
             // Flush the captured rows, then write totals + incremental pivot counts in a
             // fresh transaction (so a reader can't observe a half-written class_counts).
@@ -610,10 +617,11 @@ public sealed class SnapshotStore : ISnapshotStore
             await using (var u = _conn.CreateCommand())
             {
                 u.Transaction = tx;
-                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us WHERE id=$id;";
+                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us, partial_reason=$pr WHERE id=$id;";
                 u.Parameters.AddWithValue("$oc", objectCount);
                 u.Parameters.AddWithValue("$fc", fieldCount);
                 u.Parameters.AddWithValue("$us", isUsable ? 1 : 0);
+                u.Parameters.AddWithValue("$pr", partialReason ?? "");
                 u.Parameters.AddWithValue("$id", snapshotId);
                 await u.ExecuteNonQueryAsync(ct);
             }
@@ -718,7 +726,7 @@ public sealed class SnapshotStore : ISnapshotStore
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope, is_usable
+            SELECT id, label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope, is_usable, partial_reason
             FROM snapshots ORDER BY id DESC;
             """;
         var list = new List<SnapshotMeta>();
@@ -738,6 +746,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 Scope         = reader.IsDBNull(8) ? "" : reader.GetString(8),
                 // Defensive: treat NULL/missing as usable (older rows default to 1).
                 IsUsable      = reader.IsDBNull(9) || reader.GetInt32(9) != 0,
+                PartialReason = reader.IsDBNull(10) ? "" : reader.GetString(10),
             });
         }
 

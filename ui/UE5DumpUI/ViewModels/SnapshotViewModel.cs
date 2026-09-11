@@ -971,8 +971,16 @@ public partial class SnapshotViewModel : ViewModelBase
                 // Incremental pivot counts on the session connection — replaces the ~10s
                 // COUNT(DISTINCT) GROUP BY ×2 the lazy build runs (the documented finalize
                 // freeze). Dispose then restores pragmas + closes.
+                // [W1-PARTIAL-MARK] A cap / low-disk stop KEEPS the partial and finalises it usable (by
+                // design: is_usable=0 would auto-delete it). Persist WHY it is partial, so the grid and
+                // every picker still say so once this capture's status line is gone. Low disk first: its
+                // stop also sets capReached.
+                string partialReason =
+                    Volatile.Read(ref diskLowReached) != 0 ? Constants.SnapshotPartialDiskLow
+                    : Volatile.Read(ref capReached) != 0   ? Constants.SnapshotPartialCap
+                    : "";
                 await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount,
-                    isUsable: !driftDetected && !faultDetected, ct);
+                    isUsable: !driftDetected && !faultDetected, partialReason: partialReason, ct: ct);
             }
 
             // FIFO eviction: drop oldest snapshots of this game until the DB fits the

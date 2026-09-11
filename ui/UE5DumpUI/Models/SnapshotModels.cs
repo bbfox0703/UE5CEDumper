@@ -32,13 +32,32 @@ public sealed class SnapshotMeta
     /// <see cref="Services.SnapshotConsistency"/>.</summary>
     public bool IsUsable { get; set; } = true;
 
+    /// <summary>[W1-PARTIAL-MARK] Why a KEPT capture is partial -- <see cref="Constants.SnapshotPartialCap"/>
+    /// (stopped at the max-dataset cap) or <see cref="Constants.SnapshotPartialDiskLow"/> (stopped on low
+    /// disk); "" = complete. Deliberately NOT folded into <see cref="IsUsable"/>: a partial stays usable, and
+    /// is_usable=0 would auto-delete it before the next capture.</summary>
+    public string PartialReason { get; set; } = "";
+
+    public bool IsPartial => PartialReason.Length > 0;
+
     /// <summary>"⚠" for an unusable (inconsistent) snapshot, else empty — a compact
     /// status glyph for the saved-snapshots grid.</summary>
     public string UsabilityBadge => IsUsable ? "" : "⚠";
 
     /// <summary>Label with a leading ⚠ when the snapshot is unusable, so the
     /// saved-snapshots grid flags it without needing a separate column.</summary>
-    public string LabelDisplay => IsUsable ? Label : $"⚠ {Label}";
+    public string LabelDisplay => (IsUsable ? Label : $"⚠ {Label}") + PartialSuffix;
+
+    /// <summary>"  (partial: ...)" naming why a kept capture stopped early, else empty -- appended to the
+    /// grid label AND every picker line, so the marker outlives the capture's status text
+    /// [W1-PARTIAL-MARK].</summary>
+    public string PartialSuffix => PartialReason switch
+    {
+        ""                               => "",
+        Constants.SnapshotPartialCap     => "  (partial: stopped at the size cap)",
+        Constants.SnapshotPartialDiskLow => "  (partial: stopped on low disk)",
+        _                                => $"  (partial: {PartialReason})",
+    };
 
     /// <summary>Estimated on-disk size of this snapshot in bytes (field_count
     /// pro-rated against the DB file size). Computed by the store on list, not
@@ -60,8 +79,8 @@ public sealed class SnapshotMeta
             var prefix = IsUsable ? "" : "⚠ ";
             if (System.DateTimeOffset.TryParse(CapturedAt, System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.RoundtripKind, out var dto))
-                return $"{prefix}{Label}  ·  {dto.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
-            return $"{prefix}{Label}";
+                return $"{prefix}{Label}{PartialSuffix}  ·  {dto.LocalDateTime:yyyy-MM-dd HH:mm:ss}";
+            return $"{prefix}{Label}{PartialSuffix}";
         }
     }
 }

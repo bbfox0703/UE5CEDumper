@@ -269,6 +269,12 @@ public static class Constants
     // so a single number governs the cap everywhere.
     public const int DefaultMaxQueryRows = 50000;
 
+    // [W1-PARTIAL-MARK] snapshots.partial_reason tokens -- WHY a kept capture is partial; "" = complete.
+    // PERSISTED, so never rename one. A separate marker from is_usable on purpose: is_usable=0 would
+    // auto-delete the partial the cap / low-disk stop deliberately keeps (DeleteUnusableSnapshotsAsync).
+    public const string SnapshotPartialCap     = "cap";       // stopped at the max-dataset cap
+    public const string SnapshotPartialDiskLow = "disklow";   // stopped on low disk mid-capture
+
     // Live DLL value/group scan candidate cap (the DLL session's max returned rows).
     // Intentionally a SEPARATE constant from DefaultMaxQueryRows even though the value
     // matches — different subsystem (in-game scan session vs. snapshot-DB query).

@@ -40,9 +40,11 @@ public interface ICaptureSession : IAsyncDisposable
     /// (<c>EnsurePivotIndexAsync</c>) remains the fallback for snapshots NOT captured via a
     /// session. <paramref name="isUsable"/> false marks the capture temporally
     /// inconsistent (GObjects drifted mid-capture) so SPC/Pivot skip it and it's
-    /// auto-deleted before the next capture.</summary>
+    /// auto-deleted before the next capture. <paramref name="partialReason"/> (a
+    /// <c>Constants.SnapshotPartial*</c> token, "" = complete) records why a KEPT capture
+    /// stopped early -- its own marker, because a partial stays usable [W1-PARTIAL-MARK].</summary>
     Task CompleteSnapshotAsync(long snapshotId, int objectCount, int fieldCount,
-                               bool isUsable = true, CancellationToken ct = default);
+                               bool isUsable = true, string partialReason = "", CancellationToken ct = default);
 }
 
 public interface ISnapshotStore
