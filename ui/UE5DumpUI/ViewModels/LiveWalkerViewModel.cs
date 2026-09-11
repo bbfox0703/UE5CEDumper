@@ -5062,9 +5062,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 if (string.IsNullOrEmpty(field.FieldAddress)) { skipped++; continue; }
 
                 var t = CeXmlExportService.MapFieldToCeRecordType(field);
+                // [A4-PUSHCE-UNPADDED] PayloadAddress, as the per-row +CE and HEX already do: on a checked build a
+                // delegate's bytes start past an 8-byte access detector that reads 0. See LiveFieldValue.PayloadAddress.
                 var added = await _aobMaker.CreateMemoryRecordAsync(
                     Services.PackedLayoutNotice.RecordNamePrefix + field.Name,
-                    StripHexPrefix(field.FieldAddress), t.ValueType, t.IsSigned, t.ShowAsHex);
+                    StripHexPrefix(field.PayloadAddress), t.ValueType, t.IsSigned, t.ShowAsHex);
                 if (added)
                 {
                     ok++;
@@ -5792,8 +5794,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Add a single typed CE memory record at this field's own address (instance base +
     /// offset), labelled with the field name and typed to match the field. One-click
     /// alternative to copy-address-then-build-the-record-by-hand, so the user can jump
-    /// straight to CE's "Find out what accesses this address". Batch adds go through
-    /// the existing multi-select Copy CE Field (clipboard).
+    /// straight to CE's "Find out what accesses this address". Its multi-select batch form is
+    /// <see cref="PushCeFieldToCeAsync"/> (+CE Field (flat)), which sends the same PayloadAddress;
+    /// Copy CE Field is the hierarchical clipboard form. [A4-PUSHCE-UNPADDED]
     /// </summary>
     [RelayCommand]
     private async Task AddFieldToCeAsync(LiveFieldValue? field)

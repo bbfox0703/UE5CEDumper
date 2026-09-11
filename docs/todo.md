@@ -1788,10 +1788,23 @@ SCAN-CORE     1    0    1    0    0    0    0    0
 
 **LOW** — 4 rows.
 
-2. ⬜ **`[W5-CSX-DELEGATEPAD]`** `CsxExportService.cs:111`. The `[D4B-DELEGATEPAD]` fix reached the
+2. ✅ **`[W5-CSX-DELEGATEPAD]`** (FIXED IN SOURCE 2026-09-12, batch L03a) `CsxExportService.cs:111`. The `[D4B-DELEGATEPAD]` fix reached the
    DLL readers, CE XML and `ue5_dissect.lua`, and **never reached `CsxExportService`** — every CSX
    offset is the raw `field.Offset`. Wrong on checked builds (UE 5.3+ with `DO_CHECK`).
    ⛔ A blanket `+ field.DelegatePad` is wrong: **Multicast fields also carry `DelegatePad = 8`**.
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch L03a), and not as a blanket add. Every element passes through
+   `EmitElement`, which now tells the two delegate shapes apart.
+   - **Unicast:** the 8-byte leaf is part OF the payload (the `FWeakObjectPtr`), so it moves to
+     `Offset + DelegatePad`.
+   - **Multicast:** the raw block is the WHOLE field, detector included, so it stays at `Offset`.
+     - Its drill was hung on that raw block, and CE follows a child structure only from a POINTER
+       element (`StructuresFrm2.pas`: `isPointer` is `vartype = vtPointer`). So the drill was never
+       reachable, on either build.
+     - It is now its own Pointer element on `InvocationList.Data`, at `Offset + DelegatePad`.
+   - **Tests, red first:** a unicast leaf at +0 and +8, and a multicast drill on a checked build and on
+     Shipping. 5/5 mutants killed (with `[A4-PUSHCE-UNPADDED]`); UI 5162/5162.
+   - ⬜ **Not in this row:** a `TArray<FScriptDelegate>`'s ELEMENT leaves. That is
+     `[A4-DELEGATE-ARRAY-PAD]` (L03b).
 3. ⬜ **`[W5-INSTEXPORT-TRUNC]`** `CeXmlExportService.cs:1311`. `GenerateInstanceXml` computes the
    60,000-entry truncation flag and publishes it as `LastExportTruncated` with an explicit contract
    (`:208-212`: *"The caller reads this right after the synchronous Generate\* call"*). Two of three
@@ -4628,7 +4641,7 @@ X5's live PASS was rooted at UWorld, where `HasParent` is false, so it could not
 - ✅ **Safe fix:** call `ClearDisplayedNode()` + `ClearReferences()`, and clear the function list.
   `Flush()` the keyword memory first if the filter box is blanked.
 
-##### `[A4-PUSHCE-UNPADDED]` LOW — the batch "Push CE Field(s)" still pushes the unpadded FieldAddress
+##### ✅ `[A4-PUSHCE-UNPADDED]` LOW — the batch "Push CE Field(s)" still pushes the unpadded FieldAddress (FIXED IN SOURCE 2026-09-12)
 
 `LiveWalkerViewModel.cs:4800-4802`. `[CEPATHS-UNPADDED-2026-09-09]` moved HEX and +CE to
 `PayloadAddress` and claims *"both CE-facing handlers"*. The batch push is a third, self-described as
@@ -4636,6 +4649,12 @@ X5's live PASS was rooted at UWorld, where `HasParent` is false, so it could not
 access detector.
 - ✅ **Safe fix:** `field.PayloadAddress` at `:4802` only. Correct the stale doc at `:5479-5480`, and
   add a caller-level test.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L03a, with `[W5-CSX-DELEGATEPAD]`).
+  - `PushCeFieldToCeAsync` sends `field.PayloadAddress`, as the per-row +CE and HEX already did.
+  - **The stale doc** was `AddFieldToCeAsync`'s summary: "batch adds go through Copy CE Field". It now
+    names the batch push, and says it sends the same payload address.
+  - **Test, red first:** a caller-level push through a recording bridge. A delegate row with pad 8 sends
+    its payload; an IntProperty row sends its field address unchanged. 5/5 mutants killed; UI 5162/5162.
 
 ##### `[A4-GAMEONLY-ADVICE]` LOW — Interesting Functions and Console advise "Game classes only" when it is already ticked
 
@@ -4813,6 +4832,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 53 | `[A4-USMAP-CONTAINER-ENUM]` | MED | `git log --grep A4-USMAP-CONTAINER-ENUM` (batch B32) | dll_core_test (a fake Array / Set / Map whose inners carry a UEnum), the byte-exact USMAP shapes and the parse, red first. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148 |
 | 54 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | LOW | `git log --grep P1-GENAU-ABORT` (batch L01) | dll_core_test (each sweep with a pending cancel records its abort at the bail) and a Frieren source pin, red first against inert out-flags. 6/6 mutants killed; dll_core_test 249/249; UI 5149/5149 |
 | 55 | `[P1-ENUMNAMES]` | LOW | `git log --grep P1-ENUMNAMES` (batch L02) | dll_core_test (a cancelled ForEach says so; a cancelled search latches nothing) and the UI (parse, export note), red first. 5/5 mutants killed; dll_core_test 253/253; UI 5152/5152. The harmful half as filed (publish the latch as-is) did not land |
+| 56 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | LOW | `git log --grep A4-PUSHCE-UNPADDED` (batch L03a) | the UI: a caller-level batch-push test, and CSX offsets for a unicast leaf and a multicast drill, red first. 5/5 mutants killed; UI 5162/5162. Not a blanket `+ DelegatePad`: the multicast raw block stays at the field offset |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4960,6 +4980,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L41 | `[P1-ENUMNAMES]` | On a game where UEnum::Names is not located (the DLL log reads "DetectUEnumNames: FAILED"):
 1. Export USMAP. The progress names "enum member names are unavailable on this build".
 2. Disconnect the UI during the first enum-bearing walk. The log reads "search cancelled … not latching FAILED", and the next connect resolves enum names normally. | a game + UI; no CE |
+| L42 | `[A4-PUSHCE-UNPADDED]` + `[W5-CSX-DELEGATEPAD]` | **CE: announce first.** A UE 5.3+ CHECKED build (Development, e.g. DumperTest `dev`), on an instance with a multicast delegate field:
+1. **Batch push:** select the delegate row and press "+CE Field (flat)". The record's address equals the per-row +CE's (the field address + 8), and it reads the InvocationList data pointer, not 0.
+2. **CSX:** export the instance's CSX with drilldown 1 and load it in CE's Structure Dissect. A unicast delegate's leaf sits at its field offset + 8. A multicast's raw block sits at the field offset, and its "/ InvocationList" pointer at + 8 expands.
+**Control:** a Shipping build, where both sit at the field offset. | CE + a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5020,7 +5044,7 @@ completeness critic.
 **LOW-only batches, after the MEDs** (43):
 - ✅ **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - ✅ **L02:** `[P1-ENUMNAMES]`
-- **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
+- ◐ **L03:** `[W5-CSX-DELEGATEPAD]` ✅ `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` ✅ (CE). L03a landed; L03b, the per-element array pad, is next.
 - **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - **L06:** `[P1-UPROP-DELEGATE]`

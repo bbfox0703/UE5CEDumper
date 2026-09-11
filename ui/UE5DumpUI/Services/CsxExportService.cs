@@ -254,6 +254,26 @@ public static class CsxExportService
                 break;
         }
 
+        // [W5-CSX-DELEGATEPAD] UE 5.3+ checked builds (DO_CHECK) put an 8-byte access detector in FRONT of every
+        // delegate payload. DelegatePad is that 8 -- 0 on Shipping/Test and before 5.3 -- and the DLL derives it.
+        // ⛔ Not a blanket "+ DelegatePad": a MULTICAST carries the pad too, and its raw block is the WHOLE field.
+        if (field.TypeName == "DelegateProperty")
+        {
+            // The unicast leaf is 8 bytes OF the payload -- the FWeakObjectPtr -- so it moves past the detector.
+            EmitElementRaw(sb, offset + field.DelegatePad, description, typeInfo, childStructure, indent);
+            return;
+        }
+        if (childStructure != null
+            && (field.TypeName is "MulticastInlineDelegateProperty" or "MulticastDelegateProperty"))
+        {
+            // CE follows a child structure only from a POINTER element (StructuresFrm2.pas: isPointer is
+            // vartype = vtPointer), so a drill hung on the raw block was never reachable. The raw block keeps the
+            // field offset; the drill goes on InvocationList.Data, the payload's first 8 bytes, past the pad.
+            EmitElementRaw(sb, offset, description, typeInfo, null, indent);
+            EmitElementRaw(sb, offset + field.DelegatePad, description + " / InvocationList",
+                new CsxTypeInfo("Pointer", 8, "unsigned integer"), childStructure, indent);
+            return;
+        }
         EmitElementRaw(sb, offset, description, typeInfo, childStructure, indent);
     }
 

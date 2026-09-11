@@ -1413,6 +1413,61 @@ public class CsxExportServiceTests
         Assert.Contains("Vartype=\"Array of byte\"", csx);
     }
 
+    // ---- [W5-CSX-DELEGATEPAD] the UE 5.3+ access-detector pad (DelegatePad, derived by the DLL) ----
+
+    [Theory]
+    [InlineData(0, 256)]   // Shipping / Test, or UE <= 5.2: no detector
+    [InlineData(8, 264)]   // a checked build: the FWeakObjectPtr starts 8 bytes in
+    public async Task GenerateCsx_UnicastDelegate_LeafSitsOnThePayload(int pad, int expected)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "OnPicked", TypeName = "DelegateProperty", Offset = 0x100, Size = 16 + pad, DelegatePad = pad },
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains($"<Element Offset=\"{expected}\" Vartype=\"8 Bytes\"", csx);
+    }
+
+    private static LiveFieldValue MulticastWithOneBinding(int pad) => new()
+    {
+        Name = "OnClicked", TypeName = "MulticastInlineDelegateProperty", Offset = 0x2C0, Size = 16 + pad,
+        DelegatePad = pad, ArrayCount = 1, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+        ArrayDataAddr = "0xC000",
+        ArrayElements = new List<ArrayElementValue>
+        {
+            new() { Index = 0, PtrAddress = "0xE01", PtrName = "Button", PtrClassName = "UButton" },
+        },
+    };
+
+    [Fact]
+    public async Task GenerateCsx_MulticastDelegate_CheckedBuild_RawBlockStays_DrillIsAPointerOnThePayload()
+    {
+        // ⛔ Not a blanket "+ DelegatePad". The raw block is the WHOLE field, detector included, so it stays at 704;
+        // the drill must be a POINTER on InvocationList.Data (704 + 8) -- CE follows a child only from a pointer.
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { MulticastWithOneBinding(pad: 8) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Array of byte\" Bytesize=\"24\"", csx);   // the field
+        Assert.Contains("<Element Offset=\"712\" Vartype=\"Pointer\"", csx);                         // the drill
+        Assert.DoesNotContain("<Element Offset=\"712\" Vartype=\"Array of byte\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_MulticastDelegate_ShippingBuild_DrillIsAPointerOnTheField()
+    {
+        // No detector: the drill pointer sits on the field offset itself. Before the fix the child hung on the raw
+        // "Array of byte" block, which CE cannot expand (StructuresFrm2.pas: isPointer is vartype = vtPointer).
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { MulticastWithOneBinding(pad: 0) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Array of byte\" Bytesize=\"16\"", csx);
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Pointer\"", csx);
+    }
+
     [Fact]
     public async Task GenerateCsx_ArrayProperty_InterfaceInner_DrilldownOne_ShowsPointerElements()
     {
