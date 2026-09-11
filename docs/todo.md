@@ -1256,7 +1256,7 @@ while eviction runs at the hand-edited number.
      - The DLL-side lists, Aura.h's `FunctionPropRefResult::method` and Fern's `walk_function_props`
        comment, now carry the two values.
 
-**LOW** — 2 rows: `[W3-CAP-NOSAVE]` `PropertySearchCap` and `ClassListCap` round-trip through
+**LOW** — 2 rows: ✅ `[W3-CAP-NOSAVE]` (FIXED IN SOURCE 2026-09-12, batch L30: both caps added to their persist sets, plus a symmetry pin over every BuildOptions line so the next instance fails a test; red first) `PropertySearchCap` and `ClassListCap` round-trip through
 `ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls
 `ScheduleOptionSave()` — raising a cap and touching nothing else writes nothing to disk (**found
 independently by both APP-SHELL lenses**) · `[W3-DIP-PIXELS]` `WindowRestoreState.PositionAcceptable`
@@ -5207,6 +5207,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 79 | `[W1-GROUP-DENYLIST]` | LOW | `git log --grep W1-GROUP-DENYLIST` (batch L23) | SnapshotViewModelTests, red first: a group match with a Diff denylist says "1 class(es) hidden by the Diff denylist (switch to Diff mode…)"; without one it says nothing about it. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5240/5240. Disclosure only: the applying is documented design |
 | 80 | `[W1-PARTIAL-MARK]` | LOW | `git log --grep W1-PARTIAL-MARK` (batch L25) | SnapshotStoreTests + SnapshotViewModelTests, red first: the reason round-trips and the partial survives `DeleteUnusableSnapshotsAsync`; a capped capture persists `cap` and stays usable; a mid-capture low-disk stop persists `disklow`, not `cap`; the grid label and the picker line both carry it; a clean capture carries none. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5244/5244. A NEW column, per the refuted-fix note: `is_usable=0` would auto-delete the partial |
 | 81 | `[P3-SCORING-MCDELEGATE]` | LOW | `git log --grep P3-SCORING-MCDELEGATE` (batch L33) | PropertyScoringTableTests, red first: a stat-named `MulticastDelegateProperty` gets `NonValueTypePenalty`; the three split spellings keep it (control). 1/1 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5248/5248. One name in a private predicate, one consumer |
+| 82 | `[W3-CAP-NOSAVE]` | LOW | `git log --grep W3-CAP-NOSAVE` (batch L30) | ClassListCapTests.cs `UiOptionsPersistSymmetryTests`, red first: every `BuildOptions` line copying from a tracked view model must name a property in that view model's persist set (one explicit alias, `Spc.JoinModeForOptions` → `SelectedJoinMode`). It failed on exactly the two caps and found no third. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5249/5249 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5439,6 +5440,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Restart the UI. The marker is still there (it is persisted), and the snapshot is still listed (the auto-clean kept it).
 3. An older DB opens without error and gains the column. | a game + UI |
 | L67 | `[P3-SCORING-MCDELEGATE]` | Optional; needs a UE4 ≤ 4.22 game, and none is in the calibration set. In Interesting Properties, a `MulticastDelegateProperty` with a stat-like name ranks below the numeric field of the same name. | a UE4 ≤ 4.22 game + UI |
+| L68 | `[W3-CAP-NOSAVE]` | UI only, no game:
+1. Raise Property Search's Max and change nothing else.
+2. Close the UI. `ui-options.json` holds the new value, and the value is back on relaunch.
+3. Repeat with the Classes tab's Max. | UI only |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5526,7 +5531,7 @@ completeness critic.
 - ✅ **L27:** `[W1-WINMM-LOADMODE]`
 - **L28:** `[W2-BETWEEN-PREVIEW]`
 - **L29:** `[W2-DEADSCAN-LOADMORE]`
-- **L30:** `[W3-CAP-NOSAVE]`
+- ✅ **L30:** `[W3-CAP-NOSAVE]`
 - **L31:** `[W3-DIP-PIXELS]`
 - **L32:** `[W4-HEXSORT]`
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`

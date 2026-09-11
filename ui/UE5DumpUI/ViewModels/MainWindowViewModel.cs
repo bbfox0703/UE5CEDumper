@@ -2396,6 +2396,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private static readonly HashSet<string> PropertySearchPersist = new()
     {
         nameof(PropertySearchViewModel.GameClassesOnly), nameof(PropertySearchViewModel.DeepSearch),
+        // [W3-CAP-NOSAVE] ApplyOptions/BuildOptions round-trip the Max cap; without it here, raising it alone saved nothing.
+        nameof(PropertySearchViewModel.PropertySearchCap),
     };
     private static readonly HashSet<string> TeleportPersist = new()
     {
@@ -2427,7 +2429,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(InterestingPropertiesViewModel.ShowAll),
     };
     private static readonly HashSet<string> ConsolePersist = new() { nameof(ConsoleViewModel.GameOnly) };
-    private static readonly HashSet<string> GameClassFilterPersist = new() { nameof(GameClassFilterViewModel.GameClassesOnly) };
+    private static readonly HashSet<string> GameClassFilterPersist = new()
+    {
+        nameof(GameClassFilterViewModel.GameClassesOnly),
+        nameof(GameClassFilterViewModel.ClassListCap),   // [W3-CAP-NOSAVE] as PropertySearchPersist's Max cap
+    };
     private static readonly HashSet<string> ProxyDeployPersist = new()
     {
         nameof(ProxyDeployViewModel.SelectedProxyType), nameof(ProxyDeployViewModel.ForceOverwrite),

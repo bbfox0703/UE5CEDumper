@@ -180,3 +180,67 @@ public class RaiseMaxClauseTests
         }
     }
 }
+
+/// <summary>
+/// [W3-CAP-NOSAVE] Every option BuildOptions copies FROM a tracked view model must be in the persist set Track() wires for
+/// that view model -- otherwise changing it alone schedules no save, and the value reaches disk only if some OTHER option
+/// on the same panel happens to change too. Teleport's two dilation sliders were the first instance (X10); Property
+/// Search's and the Classes tab's Max caps, round-tripped by ApplyOptions/BuildOptions and in NEITHER set, the second and
+/// third. A symmetry pin rather than two more one-off asserts, so the next one fails here.
+/// </summary>
+public class UiOptionsPersistSymmetryTests
+{
+    private static string RepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not find {relative}");
+    }
+
+    // BuildOptions may copy a DERIVED getter whose change is announced under its SOURCE property's name. Each alias names
+    // that source, which must itself be in the set -- an alias is a redirection, never an exemption.
+    private static readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal)
+    {
+        // [W1-SPC-JOINMODE] In-session is launch-scoped, so the file gets Strict in its place.
+        ["Spc.JoinModeForOptions"] = "SelectedJoinMode",
+    };
+
+    [Fact]
+    public void EveryOptionBuildOptionsCopiesFromATrackedViewModel_IsInThatViewModelsPersistSet()
+    {
+        string src = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\MainWindowViewModel.cs"));
+
+        var tracks = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(src, @"Track\((\w+),\s*(\w+)\);"))
+            tracks[m.Groups[1].Value] = m.Groups[2].Value;
+        Assert.True(tracks.Count >= 10, $"only {tracks.Count} Track(...) wirings found -- the pattern no longer matches");
+
+        int at = src.IndexOf("private UiOptionsSettings BuildOptions()", StringComparison.Ordinal);
+        Assert.True(at > 0, "BuildOptions not found");
+        int end = src.IndexOf("\n    }\n", at, StringComparison.Ordinal);
+        Assert.True(end > at, "the end of BuildOptions not found");
+        string body = src.Substring(at, end - at);
+
+        var missing = new List<string>();
+        int checkedCount = 0;
+        foreach (Match m in Regex.Matches(body, @"^\s*o\.\w+\.\w+\s*=\s*(\w+)\.(\w+)\s*;", RegexOptions.Multiline))
+        {
+            string vm = m.Groups[1].Value, prop = m.Groups[2].Value;
+            if (!tracks.TryGetValue(vm, out var setName)) continue;
+            if (Aliases.TryGetValue($"{vm}.{prop}", out var source)) prop = source;
+            var setMatch = Regex.Match(src, @"HashSet<string>\s+" + setName + @"\s*=\s*new\(\)\s*\{(?<b>.*?)\};",
+                                       RegexOptions.Singleline);
+            Assert.True(setMatch.Success, $"persist set {setName} not found");
+            checkedCount++;
+            if (!Regex.IsMatch(setMatch.Groups["b"].Value, @"\." + prop + @"\)"))
+                missing.Add($"{vm}.{prop} (not in {setName})");
+        }
+        // A pattern that silently stops matching would pass this test vacuously; 76 lines matched when it was written.
+        Assert.True(checkedCount >= 50, $"only {checkedCount} tracked options checked -- the BuildOptions pattern no longer matches");
+        Assert.True(missing.Count == 0, "changing these alone schedules no save:\n  " + string.Join("\n  ", missing));
+    }
+}
