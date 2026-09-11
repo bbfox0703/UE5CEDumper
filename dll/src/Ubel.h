@@ -933,8 +933,22 @@ inline bool V1cOptionalGate(OptionalLayout layout, const std::string& innerType,
     return false;   // Unknown, or intrusive with no sentinel: skip
 }
 
-/// [A2-TOPTIONAL-VALUESCAN] True when an intrusive optional's value bytes (at least 16, from the value start) spell
-/// "unset" for its sentinel. Little-endian loads spelled out, so no header is needed and no alignment assumed.
+/// [A2-SENTINEL-OVERREAD] How many bytes from the value start IntrusiveOptionalIsUnset actually reads for this
+/// sentinel. An intrusive optional is exactly sizeof(T), so a fixed 16-byte read runs PAST an 8-byte
+/// TOptional<FName> (12 under case-preserving names) -- and a read that crosses into an unmapped page fails, which
+/// the caller cannot tell apart from "unset", so a SET optional is silently dropped. None = 0: nothing to read.
+inline int32_t SentinelBytesNeeded(OptionalUnsetSentinel s) {
+    switch (s) {
+        case OptionalUnsetSentinel::FStringMaxNone: return 16;   // ArrayMax at +12
+        case OptionalUnsetSentinel::FNameIndexNone: return 4;    // ComparisonIndex at +0
+        case OptionalUnsetSentinel::FTextNull:      return 8;    // the TextData pointer at +0
+        default: return 0;
+    }
+}
+
+/// [A2-TOPTIONAL-VALUESCAN] True when an intrusive optional's value bytes spell "unset" for its sentinel. The
+/// buffer must hold at least SentinelBytesNeeded(s) bytes from the value start -- 16 only for FString.
+/// [A2-SENTINEL-OVERREAD] Little-endian loads spelled out, so no header is needed and no alignment assumed.
 inline bool IntrusiveOptionalIsUnset(OptionalUnsetSentinel s, const uint8_t* value16) {
     switch (s) {
         case OptionalUnsetSentinel::FStringMaxNone: return OptionalLoadLe32(value16 + 12) == 0xFFFFFFFFu;

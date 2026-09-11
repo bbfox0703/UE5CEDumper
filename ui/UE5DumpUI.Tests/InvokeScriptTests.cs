@@ -1911,6 +1911,10 @@ public class InvokeScriptTests
         string aura = DllSource("Aura.cpp");
         Assert.Contains("Ubel::V1cOptionalGate(ol.layout, f.innerType, ol.innerSize", aura);
         Assert.Contains("Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel", aura);
+        // [A2-SENTINEL-OVERREAD] The gate reads what the sentinel needs, capped by the field itself -- a fixed 16
+        // bytes ran past an 8-byte intrusive TOptional<FName> and a page-edge failure dropped a SET optional.
+        Assert.Contains("Ubel::SentinelBytesNeeded(sf.optionalSentinel)", aura);
+        Assert.DoesNotContain("readBody(sf.offset, v16, sizeof(v16))", aura);
         Assert.DoesNotContain("OptionalFlagOffset(", aura);
         Assert.DoesNotContain("OptionalFlagOffset(", DllSource("Radar.h"));   // the loose rule is gone, not bypassed
     }

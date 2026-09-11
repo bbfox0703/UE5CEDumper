@@ -2722,6 +2722,18 @@ static void Test_ValueScan_V1cOptionalGate() {
     EXPECT("V1C an intrusive T with no known sentinel is skipped",
            !Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "IntProperty", 4, off, sen));
 
+    // [A2-SENTINEL-OVERREAD] Each sentinel says how many bytes it reads: an intrusive optional is exactly
+    // sizeof(T), so a fixed 16-byte read runs past an 8-byte TOptional<FName> and a page-edge failure is
+    // indistinguishable from "unset" -- the SET optional is dropped.
+    EXPECT("V1C the FString sentinel needs all 16 bytes (ArrayMax at +12)",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FStringMaxNone) == 16);
+    EXPECT("V1C the FName sentinel needs 4 bytes, not 16",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FNameIndexNone) == 4);
+    EXPECT("V1C the FText sentinel needs 8 bytes, not 16",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FTextNull) == 8);
+    EXPECT("V1C no sentinel reads nothing",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::None) == 0);
+
     uint8_t s16[16] = {};
     s16[12] = s16[13] = s16[14] = s16[15] = 0xFF;                 // ArrayMax = -1
     EXPECT("V1C an FString with ArrayMax -1 reads as unset",

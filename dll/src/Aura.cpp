@@ -8052,8 +8052,15 @@ ValueScanResult ScanForValue(
             // [A2-TOPTIONAL-VALUESCAN] An INTRUSIVE optional has no flag byte: "unset" is a special value of T itself,
             // so test that sentinel before the bytes are read as a value. An unreadable slot is skipped too.
             if (sf.optionalSentinel != Ubel::OptionalUnsetSentinel::None) {
+                // [A2-SENTINEL-OVERREAD] Read what the sentinel needs, never a flat 16: an intrusive optional is
+                // exactly sizeof(T), so 16 bytes ran past an 8-byte TOptional<FName>, and a read that crossed into
+                // an unmapped page failed -- indistinguishable from "unset", so a SET optional was dropped on some
+                // instances of a class and not others. sf.size is the field's own width (f.Size at emit time).
                 uint8_t v16[16] = {};
-                if (!readBody(sf.offset, v16, sizeof(v16))
+                int32_t need = Ubel::SentinelBytesNeeded(sf.optionalSentinel);
+                if (sf.size > 0 && sf.size < need) need = sf.size;
+                if (need <= 0
+                    || !readBody(sf.offset, v16, static_cast<size_t>(need))
                     || Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel, v16))
                     continue;
             }

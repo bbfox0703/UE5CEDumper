@@ -5267,6 +5267,105 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 - ONE `dev-log.md` entry for the pass.
 - Any step that needs Cheat Engine is announced to the maintainer first.
 
+#### Review 6 (2026-09-12) — the fix pass adversarially reviewed
+
+A read-only 14-agent review of `76f93b94..HEAD` (24 commits, 126 files, +6844 / −631): six area
+finders, then one skeptic per top finding, each defaulting to REFUTED. **11 raw findings, 8 verified,
+4 confirmed** (3 distinct defects), 4 refuted, and 3 lower-ranked LOWs reported unverified and then
+checked by hand. Nothing in the review built or ran anything.
+
+##### ✅ `[A2-SENTINEL-OVERREAD]` LOW — the intrusive-optional gate reads 16 bytes from a field that can be 8 (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
+
+`Aura.cpp` ScanForValue V1c reads a FIXED 16 bytes before testing an intrusive optional's sentinel
+(`[A2-TOPTIONAL-VALUESCAN]`, batch L41). An intrusive optional is exactly `sizeof(T)`, so an intrusive
+`TOptional<FName>` is 8 bytes (12 under case-preserving names). When such a field sits within 16 bytes
+of an unmapped page the SEH-guarded read fails, the `||` short-circuits to `continue`, and a **SET**
+optional is silently absent — on some instances of a class and not others. FString (16) and FText
+(≥16) never over-read, so NameProperty is the only affected type. The verifier confirmed it and
+narrowed it: no crash and no garbage value, only the silent miss.
+- ✅ **Safe fix:** the sentinel declares its own span (`Ubel::SentinelBytesNeeded`: 16 / 4 / 8 / 0) and
+  the gate reads exactly that, capped by `sf.size`, the field's own width, which it already holds.
+- ⛔ **Unsafe:** widening the buffer (keeps the over-read) or dropping the read (ungates every
+  intrusive optional, which is what L41 fixed).
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L46): `Ubel::SentinelBytesNeeded` (16 / 4 / 8 / 0) and a gate
+  that reads `min(need, sf.size)`. Red first: dll_helpers_test's V1C block pins all four counts against
+  an inert helper claiming 16 for everything, and the InvokeScriptTests source pin now requires the
+  gate to use it and refuses the flat `sizeof(v16)` read.
+
+##### ⬜ `[A2-TOPTIONAL-REFINE]` MED — Value Scan's REFINE re-reads a V1c optional with no gate (found 2026-09-12 by review 6)
+
+The first scan gates a `TOptional` leaf on its `bIsSet` byte, but `RefineCandidates` re-reads each
+candidate purely by its stored absolute address — `Radar::FieldDescriptor` carries no optional member
+at all. UE's `MarkUnset` clears the flag and zeroes no bytes, so a reset trailing-flag optional still
+reads as its old value: a Next Scan with **Unchanged** (or **Exact** the stale value) keeps the row,
+and the panel shows a value for a slot the engine considers empty. This is the lead L41 recorded and
+did not trace; review 6 traced it end to end and it is reachable from the UI's Next Scan button.
+- ⚠ **The verifier corrected two overstatements:** the row is NOT uneliminable (Changed / Increased /
+  Decreased / a different Exact all drop it), and the 5.5+ intrusive string case is largely
+  self-healing — `Ubel::ReadFString` returns `""` for a null Data / zero Count and never dereferences
+  a dangling pointer. The residual string case is the converse: a reset optional whose previous value
+  was `""` survives an Unchanged refine.
+- ✅ **Safe fix:** carry the same two facts the first scan uses (`optionalFlagOffset`, and the sentinel
+  as its `int8_t` base — Radar.h includes no project header) on `FieldDescriptor`, stamp them in
+  `ensureDescriptor`, and apply the identical gate in `RefineCandidates` before any re-read. V1c emits
+  only Direct anchors, so `c.addr` IS the value address and the flag is at `c.addr + flagOffset`; a
+  group session leaves the members at their defaults (audit #5 A12) and is unaffected.
+- ⛔ **Unsafe:** dropping every optional candidate at refine — a SET optional is a true hit.
+
+##### ⬜ `[A1-VERDICT-STALEMB]` MED — `getOffsetsVerdict` drops the AA19 stale-mailbox latch (found 2026-09-12 by review 6)
+
+`scripts/ue5_invoke_helper.lua`'s new wrapper (`[W5-OFFSETS-MAILBOX]`, batch L45) clears
+`_ue5_invoke_busy` unconditionally after a timeout and never sets `_ue5_invoke_stale_mb`. The next
+`invokeUFunction` therefore passes its entry guard and writes className / funcName / params into a
+mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to prevent, and which
+`invokeUFunction` itself latches against.
+- ⚠ **Two corrections from the verifier, both worth keeping:** the wrapper clears `status` BEFORE
+  waiting, so at the deadline `waitDone` reads STATUS_IDLE and reports *"the DLL never picked this up
+  (stale g_invokeMailbox address?)"* — a guessed diagnosis at the moment the DLL is actively using the
+  mailbox. And the consequence of the overwrite is not always "reported OK": the completing handler
+  publishes DONE + cmd=IDLE, so the next invoke can be dropped entirely while its caller reads the
+  OTHER command's result.
+- **`dbgCamMailbox` has the identical pre-AA19 shape** and predates this fix pass, so the fix belongs
+  to both wrappers rather than to the new one alone.
+- ⬜ **Also recorded (LOW, same wrapper):** against an *uninitialised* pre-contract-5 DLL the mailbox
+  answers `-10` ("DLL not initialized"), not `-1`, so reporting `dll-too-old` is the wrong diagnosis.
+- ✅ **Safe fix:** mirror `invokeUFunction` — latch `_ue5_invoke_stale_mb` on a timeout, release
+  `_ue5_invoke_busy` only when the mailbox is ours again, re-test the latch on entry, and tell `-10`
+  apart from `-1`.
+
+##### ⬜ `[A1-REVIEW6-PINS]` LOW — two stale decision comments, and a scan gate with no guard-the-guard (found 2026-09-12 by review 6)
+
+- `Mimic.cpp:326` still says the exemption list is *"today only CMD_FOREGROUND, whose handler is pure
+  Win32"* after `[W5-OFFSETS-MAILBOX]` added a second exemption whose handler is not; and
+  `dll_helpers_test`'s *"Exactly ONE exemption"* comment sits directly above
+  `EXPECT("exactly two commands are init-exempt", ...)`. Mimic.h's own block was updated, which is
+  what makes the other two stale rather than merely old.
+- `InvokeScriptTests.DllLogCalls_NeverFormatAWideString` ends on `offenders.Count == 0` with nothing
+  asserting the scan matched anything, so renaming the logging entry points it keys on (or adding a
+  DLL source in a subdirectory — the enumeration is non-recursive) makes it pass forever. Both sibling
+  source scans added in the same range guard their scans explicitly.
+
+#### ⛔ REFUTED — do not re-raise (review 6)
+
+- **`[W1-GROUP-DENYLIST]` "the note reports the denylist's SIZE, not how many classes it hid"**. The
+  code reads as filed, but in this app's vocabulary a denylisted class IS a hidden class: the noise
+  picker's column is `Hide`, `en.axaml` labels the persisted list *"Active denylist for this game"* and
+  *"Hidden classes (Pivot only)"*, and `ClassPivotViewModel.HasHiddenClasses` is the same Count-based
+  meaning, shipped earlier. The operative half of the note is *"switch to Diff mode to see or clear
+  it"*, and that block is `IsVisible="{Binding !IsGroupMode}"`.
+- **`[W3-DIP-PIXELS]` "`_scale` is a snapshot, so a cross-DPI drag discards the position again"**. The
+  staleness is real and the fix is incomplete on that path, but it is **not a regression**: with a
+  stale scale of 1.0 the guard computes exactly the pre-commit expression, so no state is discarded
+  that was not already discarded. `_screens` has identical cadence from the same two call sites.
+- **`[A1-SLOTSYM-FAILED]` "the test pins substring ORDER, not the ownership gate"**. The shipped
+  behaviour is correct and was walked through end to end. ⬜ The **test-strength half stands as a
+  lead**: the refuter agrees the two named mutants (`if false then`, `_mine = (_hs ~= nil)`) would
+  leave the pin green, because both keep the pinned substrings in order.
+- **`[A4-AB4-BETWEEN]` "the pin counts call sites, so a mis-wired bound stays green"**. All four
+  Fern.cpp sites pass two distinct sets in lo-then-hi order today, and the count of 4 is complete —
+  the other five `ScanType::Between` mentions are the vector and single-value branches, which build no
+  `NumericTargetSet`.
+
 #### Ledger
 
 | # | row | sev | commit | offline evidence |
@@ -5373,6 +5472,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 97 | `[W3-DEBUGCAM-QUEUED]` | LOW | `git log --grep W3-DEBUGCAM-QUEUED` (batch L43) | Red first: dll_helpers_test DBGCAMQ (the mapper, against an inert stub, with -4 / -7 controls); Console and Teleport VM tests for the Queued badge and text; DebugCameraScriptGeneratorTests (the queued branch is first, never unticks, never closes); an InvokeScriptTests source pin for Frieren and Mimic. 5/5 mutants killed; dll_helpers_test 2746/2746, dll_core_test 320/320; UI 5294/5294. Not a contract bump (MB3); the item-4 conflict is recorded |
 | 98 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | LOW | `git log --grep A2-TOPTIONAL-STRUCT-DESCENT` (batch L40) | Red first in dll_core_test OPTLAYOUT: a reset `{ UObject* }` / `{ TArray<UObject*> }` struct optional reports neither its pointer nor its array (controls: set ones report both); an Unknown layout is not descended; the container cache entry carries `setFlagOffset` 24. An InvokeScriptTests source pin covers Find Refs' loops (each kind gated twice). 5/5 mutants killed; dll_core_test 327/327, dll_helpers_test 2746/2746; UI 5295/5295. `CollectSchemaLeaves` lead recorded |
 | 99 | `[W5-OFFSETS-MAILBOX]` | LOW | `git log --grep W5-OFFSETS-MAILBOX` (batch L45) | Red first: dll_helpers_test pins `CMD_OFFSETS_VERDICT` = 16, the contract range 5 / 1, the new init exemption and the exemption COUNT (the test enumerates the whole command space on purpose). An InvokeScriptTests source pin covers Mimic.cpp's case + handler and the Lua wrapper, which no test target compiles. 4/4 mutants killed; dll_helpers_test 2748/2748, dll_core_test 327/327; UI 5296/5296. Contract 4 → 5, MIN stays 1: additive, so every saved `.CT` stays valid |
+| 100 | `[A2-SENTINEL-OVERREAD]` | LOW | `git log --grep A2-SENTINEL-OVERREAD` (batch L46) | Review 6's first confirmed finding. Red first in dll_helpers_test's V1C block: the FString / FName / FText / None spans (16 / 4 / 8 / 0) against an inert helper that claims 16 for every sentinel; the InvokeScriptTests source pin requires `SentinelBytesNeeded` at the gate and refuses the flat `sizeof(v16)` read. 3/3 mutants killed; dll_helpers_test 2752/2752, dll_core_test 327/327; UI 5296/5296 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5659,6 +5759,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L83 | `[W3-DEBUGCAM-QUEUED]` | Stall the game thread: unfocus a game that pauses its tick, with the foreground lock off. Console **Force ON** shows the amber Queued badge and "do not press Force ON again"; on refocus the camera turns ON **once** and stays ON. The CE Debug Camera record, ticked while stalled, shows the "queued" message and stays ticked; on refocus the camera is ON. | a game with ToggleDebugCamera + CE + UI |
 | L84 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | A UE 5.x game with a `TOptional<FStruct>` holding an actor pointer or array, if one can be found (the Property Search types filter shows `OptionalProperty`). **Find Refs** to that actor while the optional is SET: one hit. Reset it in game: no hit. **Address Finder** on an element of the array inside it: found while set, not after a reset. | a 5.x game + UI |
 | L85 | `[W5-OFFSETS-MAILBOX]` | **CE:** with the DLL injected into a game whose scan log says `validated=yes`, run `getOffsetsVerdict()` in CE's Lua Engine: `true, ""`. Then on a game whose offsets fall back (or before any scan, in proxy mode): `false` plus the reason, and `probe-not-run` when nothing has probed yet. Against a contract-4 DLL the same call says `dll-too-old`, never `measured`. | CE + a game + an old DLL build |
+| L86 | `[A2-SENTINEL-OVERREAD]` | Needs a 5.5+ game with an intrusive `TOptional<FName>` as an object's LAST field, which is rare enough that the offline pins may be the whole story. If one is found: Value Search, FName, Exact the held name — the SET optional is a hit on every instance of the class, not just on those whose allocation is far from a page edge. | a 5.5+ game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5761,6 +5862,10 @@ completeness critic.
 - ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - ✅ **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
+- ✅ **L46:** `[A2-SENTINEL-OVERREAD]` (found 2026-09-12 by review 6)
+- **L47:** `[A2-TOPTIONAL-REFINE]` (found 2026-09-12 by review 6)
+- **L48:** `[A1-VERDICT-STALEMB]` (found 2026-09-12 by review 6) (CE)
+- **L49:** `[A1-REVIEW6-PINS]` (found 2026-09-12 by review 6)
 - ✅ **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
