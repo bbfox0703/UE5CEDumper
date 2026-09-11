@@ -228,15 +228,25 @@ CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
     const int32_t rc = UE5_CallProcessEventEx(pawn, fi.address,
                                               reinterpret_cast<uintptr_t>(buf.data()),
                                               static_cast<uint32_t>(buf.size()));
-    if (rc != 0) {
+    const CollisionApply outcome = CollisionApplyFromRc(rc);
+    if (outcome == CollisionApply::Queued) {
+        // [W3-DUNSTE-QUEUED] -5 is NOT a refusal: the game thread did not drain within the
+        // timeout, but the request stays QUEUED and WILL run when it does. Reporting it as
+        // "unchanged" let a queued disable land after the record said collision was ON.
+        LOG_WARN("Fly: SetActorEnableCollision(%d) QUEUED (rc=-5, the game thread is busy) -- "
+                 "it will run when the thread drains; the record is committed so the next "
+                 "toggle undoes it", enable ? 1 : 0);
+        return outcome;
+    }
+    if (outcome == CollisionApply::Refused) {
         // The dispatcher REFUSED or failed — nothing reached the game. Reachable on the
         // worker thread: it is Tot::MarkBackgroundWorker'd, so with the PE hook down
         // Frieren returns -8 every time, while IsGameThreadResponsive() answers TRUE
         // because Unknown maps to responsive by documented contract (Stark.h).
         LOG_WARN("Fly: SetActorEnableCollision(%d) NOT applied — dispatcher rc=%d "
-                 "(-8 off-game-thread refusal / -5 game-thread timeout / -3 no usable PE "
-                 "offset); collision unchanged, will retry", enable ? 1 : 0, rc);
-        return CollisionApply::Refused;
+                 "(-8 off-game-thread refusal / -3 no usable PE offset / -7 shutdown); "
+                 "collision unchanged, will retry", enable ? 1 : 0, rc);
+        return outcome;
     }
     LOG_INFO("Fly: SetActorEnableCollision(%d) applied (rc=0)", enable ? 1 : 0);
     return CollisionApply::Applied;
@@ -567,6 +577,8 @@ void WorkerLoop() {
                         // Applied, or Absent — and no amount of retrying fixes absent
                         // (InvokeSetCollision says so once). Commit in both so the tick
                         // stops re-emitting. That is audit #4 B8, deliberately preserved.
+                        // Or Queued: it WILL land, so the record must say so, or the next
+                        // opposite toggle emits no undo. [W3-DUNSTE-QUEUED]
                         warnedCollDefer = false;
                         warnedCollRefused = false;
                         collRetrySkip = 0;

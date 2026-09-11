@@ -6629,6 +6629,18 @@ static void Test_Dunste_ShouldCommitCollision() {
     // wipes the record that keeps a ghosted pawn tracked.
     EXPECT("D1 *: a REFUSED invoke does NOT commit",
            !Dunste::ShouldCommitCollision(CA::Refused));
+
+    // [W3-DUNSTE-QUEUED] -5 is the dispatcher's "the game thread did not drain in time" -- and the request STAYS
+    // QUEUED and runs later (Frieren.h, Stark.cpp). Filed under Refused, a queued disable landed after the record
+    // said collision was ON, with nothing tracking it: the pawn fell through the world once Fly was off.
+    EXPECT("DUNSTE-QUEUED *: a -5 timeout is QUEUED, not refused",
+           Dunste::CollisionApplyFromRc(-5) == CA::Queued);
+    EXPECT("DUNSTE-QUEUED *: ...and a queued request commits the record (the next toggle emits the undo)",
+           Dunste::ShouldCommitCollision(Dunste::CollisionApplyFromRc(-5)));
+    EXPECT("DUNSTE-QUEUED control: rc 0 is Applied", Dunste::CollisionApplyFromRc(0) == CA::Applied);
+    for (int32_t rc : { -8, -7, -3, -2, -4 })
+        EXPECT("DUNSTE-QUEUED control: -8 / -7 / -3 / -2 / -4 stay Refused (nothing was queued)",
+               Dunste::CollisionApplyFromRc(rc) == CA::Refused);
 }
 
 static void Test_Aura_DescribeSparseDelegateState() {

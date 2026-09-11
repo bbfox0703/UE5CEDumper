@@ -1188,7 +1188,7 @@ safe form is to give `WindowRestoreState` a scale it does not currently have.
 
 #### Filed by the fix-pass review of 3561c93c (2026-09-11)
 
-##### ⬜ `[W3-DUNSTE-QUEUED]` MED — Fly / Noclip reads a queued collision-disable (`-5`) as refused, so it lands after the record says collision is ON
+##### ✅ `[W3-DUNSTE-QUEUED]` MED — Fly / Noclip reads a queued collision-disable (`-5`) as refused, so it lands after the record says collision is ON (FIXED IN SOURCE 2026-09-12)
 
 `Dunste.cpp:231` (`InvokeSetCollision`). The DLL-side twin of `[W3-CONSOLE-REINVOKE]`, breaking the
 same contract.
@@ -1214,6 +1214,21 @@ same contract.
 - ✅ **Probable fix:** a third outcome, "queued, will land", that commits the record, so the next
   opposite toggle emits the undo. Keep Refused for `-8` / `-7` / `-3` / `-2` / `-4`, and make
   `Dunste.h`'s doc agree with `Frieren.h`.
+- ✅ **FIXED IN SOURCE 2026-09-12, the probable fix** (batch B31).
+  - `CollisionApply::Queued` is the third outcome. The pure `Dunste::CollisionApplyFromRc` maps -5 to it
+    and every other non-zero code (-8 / -7 / -3 / -2 / -4) to Refused. `ShouldCommitCollision` commits
+    it, so the record moves and the next opposite toggle emits the undo.
+  - `InvokeSetCollision` logs "QUEUED … it will run when the thread drains" instead of "collision
+    unchanged".
+  - `Dunste.h`'s doc now agrees with `Frieren.h`: -5 is no longer listed as "must NOT commit".
+  - The two restore paths already commit anything that is not Refused. A queued restore drains AFTER
+    the queued disable, so the order is right.
+  - **Tests, red first** (`dll_helpers_test`, against the pre-fix mapping): -5 maps to Queued, and a
+    queued request commits. The other codes staying Refused, and 0 → Applied, are the controls.
+    2/2 mutants killed; dll_helpers_test 2708/2708; UI 5134/5134.
+  - ⚠ **Survivor by construction:** Dunste.cpp's use of the mapping, which no test target compiles.
+    The real `UE5Dumper` build and the live check cover it.
+  - ⬜ The debug-camera twin `[W3-DEBUGCAM-QUEUED]` (LOW, next) is separate.
 
 ##### ⬜ `[W3-DEBUGCAM-QUEUED]` LOW — `UE5_SetDebugCamera` folds a queued toggle (`-5`) into `-1`, and every caller invites a second toggle
 
@@ -4614,6 +4629,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 46 | `[W4-RELATED-STOPS]` | MED | `git log --grep W4-RELATED-STOPS` (batch B26) | dll_core_test (a fake owned graph tripping each bound) and the UI (parse, clause, panel status) red first against an inert stats param. 15/15 mutants killed; dll_core_test 230/230; UI 5120/5120. Five flags, one per cause |
 | 47 | `[W4-STRIDE-TENTATIVE]` | MED | `git log --grep W4-STRIDE-TENTATIVE` (batch B27) | dll_core_test (re-inits over throwaway arrays: detected, tentative, undetected, forced, and the reset at entry) and the UI (parse, badge, dump stamp) red first against inert accessors. 12/12 mutants killed; dll_core_test 237/237; UI 5129/5129. Its own field, not a fourth layout mode |
 | 48 | `[A3-B30-STALE-FLAG]` | MED | `git log --grep A3-B30-STALE-FLAG` (batch B28) | one ordering pin per shipped artifact (generator + `.CT`), red first: the serving branch clears the flag before its untick. 2/2 mutants killed; UI 5134/5134. The recorded safe fix; no contract bump |
+| 49 | `[W3-DUNSTE-QUEUED]` | MED | `git log --grep W3-DUNSTE-QUEUED` (batch B31) | dll_helpers_test red first against the pre-fix mapping: -5 is Queued, and a queued request commits; the other codes stay Refused. 2/2 mutants killed; dll_helpers_test 2708/2708; UI 5134/5134 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4729,6 +4745,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 3. Tick the reloaded record. It shows "already loaded and serving" and unticks itself.
 4. **The UI must stay connected:** no `UE5_Shutdown` in the DLL log.
 **Control:** a fresh CE session with the proxy serving, which gives the same message and no teardown. | CE + a game + UI |
+| L35 | `[W3-DUNSTE-QUEUED]` | A game that idles when unfocused (the common case, per `Dunste.cpp`), with Fly on:
+1. Tick **Noclip** in the UI. Focus leaves the game; wait over 5 s.
+2. The DLL log reads "QUEUED (rc=-5 …)", not "NOT applied".
+3. Still in the UI, untick Noclip (or turn Fly off). Return to the game.
+4. **The pawn must stand on the floor:** collision ends ON, and both requests drain in order. | a game + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4783,7 +4804,7 @@ completeness critic.
 | ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
-| ⬜ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
+| ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 | ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
 
 **LOW-only batches, after the MEDs** (43):
