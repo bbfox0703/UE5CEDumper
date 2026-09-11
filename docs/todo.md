@@ -752,7 +752,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
 
 ---
 
-#### The fix list — 10 rows, none repaired
+#### The fix list — 10 rows (each carries its own ✅/⬜; this heading read "none repaired" until 2026-09-11)
 
 **MED** — 6 rows.
 
@@ -780,7 +780,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
      control, green both ways, beside the existing not-reflected readout test.
    - ⚠ Residual, not this row: any other refusal (`MR_ERR_WRITE` -10, a transient read failure) still
      lands on the generic "no pawn / no CharacterMovement" text. That wording predates B21.
-2. ⬜ **`[W2-TPREL-MAP]`** `TeleportViewModel.cs:3281`. After a directional teleport the Current
+2. ✅ **`[W2-TPREL-MAP]`** (FIXED IN SOURCE 2026-09-11, batch B22) `TeleportViewModel.cs:3281`. After a directional teleport the Current
    Pose Map row goes blank, because `teleport_relative`'s reply carries no `map` key. Every
    Coordinate Library row is then re-flagged as belonging to another map (`Dist` collapses to `—`,
    the summary reads `⚠ different map (you are on '')`) — and the durable half: an entry added with
@@ -788,6 +788,20 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
    ⚠ **Second entrance, from the same auditor**: on a fresh connect nothing reads the pose at all
    (`SetConnected` calls only `RefreshMarkersAsync` + `PrimeHeldBadgesAsync`), so `PoseMap` is `""`
    until the user presses ↻ — *Add from fields* persists the same empty-map entry then too.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B22), on the UI side, so it holds against every DLL build.
+   - `TeleportPose.MapAbsent` records that the reply carried NO `map` key, and `ApplyPose` then keeps
+     the last-known map. The KEY decides: a reply of `map = ""` did report a map.
+   - **Second entrance:** the connect prime now reads the pose (`RefreshCurrentMapAsync`, already
+     quiet). *Add from fields* reads the map at add time, the rule the teleport guard already
+     follows. With no map knowable (disconnected, no pawn), its status says the entry has NO map.
+   - **Third entrance, found while fixing:** an UNKNOWN map (`""`, e.g. connecting in the main
+     menu) meant "no filter" to the filter and the teleport guard, but "another map" to the row
+     flag and the summary. One predicate, `IsOnCurrentMap`, now serves all four.
+   - **Twin, fixed with it:** a reply with no `source` key relabelled the pose "raw", a claim about
+     how it was read that nobody made. `SourceAbsent` keeps the last label.
+   - **Tests, red first:** the ParsePose key test, a directional teleport keeping the map and the
+     source, the add-time read, the connect prime, and an unknown map. A reply that does report a
+     map is the control.
 3. ⬜ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
 4. ✅ **`[W2-ORDEN-FINDENTRY]`** (FIXED IN SOURCE 2026-09-11, batch B13) `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
    **Smaller** silently skips every field of a width the target cannot be *encoded* at, even when
@@ -4219,6 +4233,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 37 | `[W3-BATCH-METHOD]` | MED | `git log --grep W3-BATCH-METHOD` (batch B20) | a theory over the two not-analysed tags red first; the analysed control green both ways. 3/3 mutants killed; UI 5048/5048 |
 | 38 | `[W2-GRAVDIR-VERDICT]` | MED | `git log --grep W2-GRAVDIR-VERDICT` (batch B21) | the readout and the apply without a pawn red first; the pre-5.4 apply the control. 9/9 mutants killed across both rows; UI 5057/5057 |
 | 39 | `[W2-MS-PROMISE]` | LOW | same commit as row 38 (batch B21) | Move Speed without a pawn red first, plus the Hemmung twin (both time lanes, red first). The clause is deleted, not made true |
+| 40 | `[W2-TPREL-MAP]` | MED | `git log --grep W2-TPREL-MAP` (batch B22) | 5 tests red first (the ParsePose key, the directional TP keeping map and source, the add-time read, the connect prime, an unknown map); the reported-map control green both ways. 11/11 mutants killed; UI 5063/5063 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4303,6 +4318,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L25 | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | On a UE5.4+ game, in the main menu or a loading screen (no pawn):
 1. **Gravity Direction:** press ↻ and Apply. The badge stays Unknown and the text says to enter gameplay, never "needs UE5.4+". In gameplay the card works; on a pre-5.4 game it says Unavailable.
 2. **No promises:** Apply Move Speed and both time levers. None says the override "applies once" a pawn or world exists. | a game + UI |
+| L26 | `[W2-TPREL-MAP]` | A connected game with a Coordinate Library for the current map:
+1. **Directional TP:** use TP facing. The Current Pose Map row keeps the map name, and the library rows keep their distances — no "⚠ different map (you are on '')".
+2. **Fresh connect:** reconnect the UI and do NOT press ↻. The map shows at once. *Add from fields* saves an entry carrying the map (its Map column).
+3. **Main menu:** connect with no pawn. The library rows are not flagged as another map's. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4346,7 +4365,7 @@ completeness critic.
 | ✅ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
 | ✅ B20 batch method | `[W3-BATCH-METHOD]` | |
 | ✅ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
-| ⬜ B22 teleport pose map | `[W2-TPREL-MAP]` | |
+| ✅ B22 teleport pose map | `[W2-TPREL-MAP]` | |
 | ⬜ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
 | ⬜ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
 | ⬜ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |

@@ -2548,6 +2548,113 @@ public class TeleportViewModelTests
         Assert.False(vm.HasPendingCoordImport);
     }
 
+    // ---- [W2-TPREL-MAP] an absent map is not an empty map ----
+    //
+    // teleport_relative's reply carries no `map` key, ParsePose read that as "", and ApplyPose wrote ""
+    // over the known map: every library row re-flagged as another map's, the summary reading "you are
+    // on ''", and "Add from fields" persisting map = "" -- which then matches no map ever again.
+
+    [Fact]
+    public async Task ParsePose_reports_an_absent_map_as_absent_not_empty()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "teleport_relative")   // the DLL's reply: no map, no source
+                return new System.Text.Json.Nodes.JsonObject { ["ok"] = true, ["code"] = 0, ["x"] = 1.0 };
+            return new System.Text.Json.Nodes.JsonObject
+                { ["ok"] = true, ["code"] = 0, ["map"] = "", ["source"] = "raw" };
+        });
+        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService());
+
+        var rel = await svc.TeleportRelativeAsync(100, true, TestContext.Current.CancellationToken);
+        var pose = await svc.TeleportGetPoseAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(rel.MapAbsent);
+        Assert.True(rel.SourceAbsent);
+        Assert.False(pose.MapAbsent);      // "" IS a report -- of the empty name. The KEY decides.
+        Assert.False(pose.SourceAbsent);
+    }
+
+    [Fact]
+    public async Task TeleportRelative_keeps_the_known_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01", Source = "invoke" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+        Assert.Equal("Map01", vm.PoseMap);
+
+        // What teleport_relative's reply parses to: a landing, and no map / source keys.
+        fake.NextPose = new() { Code = 0, X = 10, MapAbsent = true, SourceAbsent = true };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal("10.000", vm.PoseX);        // the landing itself is applied
+        Assert.Equal("Map01", vm.PoseMap);
+        Assert.Equal("invoke", vm.PoseSource);   // the twin: an absent source is not "raw"
+    }
+
+    [Fact]
+    public async Task A_reply_that_reports_a_map_is_still_believed()
+    {
+        // The control, green before and after: MapAbsent is about the KEY, not the value.
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        fake.NextPose = new() { Code = 0, Map = "Map02" };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal("Map02", vm.PoseMap);
+    }
+
+    [Fact]
+    public void AddCoordFromFields_reads_the_map_at_add_time()
+    {
+        // The second entrance: nothing had read the pose yet (a fresh connect, or right after a
+        // directional teleport), so PoseMap was "" and the entry went to disk with map = "".
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        Assert.Equal("Map01", Assert.Single(vm.CoordEntries).Map);
+    }
+
+    [Fact]
+    public async Task Connect_primes_the_pose_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Map01", vm.PoseMap);
+    }
+
+    [Fact]
+    public async Task An_unknown_current_map_is_not_a_different_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        await vm.RefreshPoseCommand.ExecuteAsync(null);   // PoseMap = Map01, so the entry is Map01's
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        vm.SetConnected(false);                           // clears the pose, and with it the map
+        vm.SelectedCoord = vm.CoordResults[0];
+
+        Assert.Equal("", vm.PoseMap);
+        Assert.True(vm.CoordResults[0].OnCurrentMap);
+        Assert.DoesNotContain("different map", vm.SelectedCoordSummary);
+    }
+
     [Fact]
     public async Task CoordLibrary_noDll_export_refuses_without_AOBMaker()
     {

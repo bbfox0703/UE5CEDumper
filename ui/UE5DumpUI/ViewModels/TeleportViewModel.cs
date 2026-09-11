@@ -2398,6 +2398,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ApplySeeThroughReadout(await _dump.SeeThroughGetStateAsync()), "seethrough");
         await PrimeOneAsync(async () =>
             ApplyMouseCursorState(await _dump.GetMouseCursorAsync()), "cursor");
+
+        // Not a badge, but the same omission: nothing read the POSE on connect, so PoseMap stayed ""
+        // until the user pressed Refresh -- and the library's map flags and "Add from fields" both
+        // work off it. RefreshCurrentMapAsync is already quiet (no IsBusy, no StatusText). [W2-TPREL-MAP]
+        await PrimeOneAsync(RefreshCurrentMapAsync, "pose");
     }
 
     /// <summary>One quiet prime: log-only on failure, and never abandons the rest.</summary>
@@ -3461,7 +3466,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (row == null) return "";
             var e = row.Entry;
             var where = string.IsNullOrEmpty(e.Map) ? "(no map)" : e.Map;
-            if (!IsSameMap(e.Map, PoseMap))
+            if (!IsOnCurrentMap(e.Map))
                 return $"{e.Label} — {where} — ⚠ different map (you are on '{PoseMap}')";
             return row.HasDistance
                 ? $"{e.Label} — {where} — {row.Distance:N0} uu away"
@@ -3479,6 +3484,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// flag every imported row cross-map. See spec §3 D2.</summary>
     internal static bool IsSameMap(string? a, string? b) =>
         string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[W2-TPREL-MAP] An UNKNOWN current map ("" -- before the first pose read, with no pawn,
+    /// or disconnected) is not a different map. The filter and the teleport guard already treated it
+    /// so; the row flag and the summary did not, and flagged every row "you are on ''". One predicate
+    /// for all four, so they cannot drift apart again.</summary>
+    private bool IsOnCurrentMap(string? entryMap) =>
+        string.IsNullOrEmpty(PoseMap) || IsSameMap(entryMap, PoseMap);
 
     partial void OnCoordFilterTextChanged(string value)
     {
@@ -3597,8 +3609,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var matched = new List<CoordEntry>();
         foreach (var e in _coordAll)
         {
-            if (CoordCurrentMapOnly && !string.IsNullOrEmpty(PoseMap)
-                && !IsSameMap(e.Map, PoseMap))
+            if (CoordCurrentMapOnly && !IsOnCurrentMap(e.Map))
             {
                 continue;
             }
@@ -3612,7 +3623,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         matched.Sort(CompareForDisplay);
         foreach (var e in matched)
-            CoordResults.Add(new CoordRow(e, IsSameMap(e.Map, PoseMap)));
+            CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
 
         UpdateCoordDistances();
 
@@ -3780,8 +3791,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Add an entry from the "TP to coords" fields (manual entry).</summary>
     [RelayCommand]
-    private void AddCoordFromFields()
+    private async Task AddCoordFromFieldsAsync()
     {
+        // [W2-TPREL-MAP] Read the map AT ADD TIME -- the rule the teleport guard already follows.
+        // PoseMap is only as fresh as the last read, and was "" after a directional teleport or
+        // before the first Refresh; that "" went to disk and then matched no map ever again.
+        if (IsConnected) await RefreshCurrentMapAsync();
         var entry = new CoordEntry
         {
             Label = NextCoordLabel(PoseMap),
@@ -3794,7 +3809,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             Roll = CoordPrecision.Round(CoordRoll),
         };
         AddCoordEntry(entry);
-        CoordStatus = $"Added '{entry.Label}' from the coordinate fields.";
+        CoordStatus = string.IsNullOrEmpty(entry.Map)
+            ? $"Added '{entry.Label}' from the coordinate fields — with NO map: the current map is not "
+              + "known right now (connect, or enter gameplay and press Refresh first)."
+            : $"Added '{entry.Label}' from the coordinate fields.";
         CoordLibraryExpanded = true;
     }
 
@@ -3977,7 +3995,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // The explicit-coordinate path does NO map check DLL-side (only slot recall
             // returns -7), so the guard has to live here. And the tool cannot LOAD a map:
             // an entry only becomes usable once the game itself is on that map.
-            if (!force && !string.IsNullOrEmpty(PoseMap) && !IsSameMap(e.Map, PoseMap))
+            if (!force && !IsOnCurrentMap(e.Map))
             {
                 CoordStatus = $"'{e.Label}' was saved on '{e.Map}' but you are on " +
                               $"'{PoseMap}'. Use Force to override — note this cannot " +
@@ -5019,9 +5037,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PosePitch = p.Pitch.ToString("0.00", CultureInfo.InvariantCulture);
         PoseYaw = p.Yaw.ToString("0.00", CultureInfo.InvariantCulture);
         PoseRoll = p.Roll.ToString("0.00", CultureInfo.InvariantCulture);
-        bool mapChanged = !IsSameMap(PoseMap, p.Map);
-        PoseMap = p.Map;
-        PoseSource = p.Source;
+        // [W2-TPREL-MAP] A reply with NO map key (teleport_relative; a save whose marker read-back
+        // failed) says nothing about the map, and a directional teleport cannot leave it. Writing its
+        // "" over PoseMap re-flagged every library row as another map's and let "Add from fields"
+        // persist map = "". The source label is the same shape: absent is not "raw".
+        bool mapChanged = !p.MapAbsent && !IsSameMap(PoseMap, p.Map);
+        if (!p.MapAbsent) PoseMap = p.Map;
+        if (!p.SourceAbsent) PoseSource = p.Source;
 
         // A map change re-filters the coordinate library (the "current map only"
         // default); otherwise just refresh the distances in place.

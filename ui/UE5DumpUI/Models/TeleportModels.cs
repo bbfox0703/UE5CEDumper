@@ -48,6 +48,17 @@ public sealed class TeleportPose
     /// [TPREL-ZEROPOSE-2026-09-10]</remarks>
     public bool LandingUnknown { get; init; }
 
+    /// <summary>TRUE when the reply carried NO <c>map</c> key at all -- <c>teleport_relative</c> has
+    /// none, nor does a save whose marker read-back failed. That is "not reported", NOT an empty map
+    /// name, and the Teleport panel keeps its last-known map rather than blanking it.</summary>
+    /// <remarks>Blanking it re-flagged every Coordinate Library row as another map's, and let "Add
+    /// from fields" persist <c>map = ""</c> to disk. [W2-TPREL-MAP]</remarks>
+    public bool MapAbsent { get; init; }
+
+    /// <summary>TRUE when the reply carried no <c>source</c> key. <see cref="Source"/> then holds
+    /// its "raw" default, which is not a reading. [W2-TPREL-MAP] twin.</summary>
+    public bool SourceAbsent { get; init; }
+
     /// <summary>Resolved pawn object address as a hex string ("0x0"/"" when
     /// unavailable) — the object whose coordinates this pose reports. Used by the
     /// Teleport tab's "Locate in GWorld" handoff to select this exact pawn in the
