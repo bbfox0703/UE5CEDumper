@@ -86,5 +86,10 @@ public sealed class FunctionPropRefsResult
     /// <summary>True when results came from native x64 disassembly (heuristic).</summary>
     public bool IsDisasm => Method == "disasm";
 
+    /// <summary>[W3-BATCH-METHOD] Nothing was analysed: "none" (the Func offset is unresolved on this build)
+    /// or "blueprint_no_script" (refused, see <see cref="Method"/>). Zero <see cref="Props"/> then means
+    /// "not looked at", never "touches nothing". An unrecognised future tag is NOT treated as this.</summary>
+    public bool NotAnalysed => Method is "none" or "blueprint_no_script";
+
     public List<FunctionPropRef> Props { get; init; } = new();
 }

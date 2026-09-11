@@ -240,6 +240,56 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     // ==================================================================
+    // [W3-BATCH-METHOD] a function that was never analysed must not read as "0".
+    // ==================================================================
+
+    /// <summary>A props walk whose method tag the test controls, with no props.</summary>
+    private sealed class MethodPropsDump : StubDumpService
+    {
+        public string Method { get; set; } = "bytecode";
+
+        public override Task<FunctionPropRefsResult> WalkFunctionPropsAsync(
+            string funcAddr, CancellationToken ct = default)
+            => Task.FromResult(new FunctionPropRefsResult { Method = Method });
+    }
+
+    /// <summary>
+    /// Two of the DLL's four method tags mean nothing was analysed: "none" (the Func offset is
+    /// unresolved on this build) and "blueprint_no_script" (refused: disassembling would read the shared
+    /// interpreter). The batch read Props and BudgetHit and never Method, so both wrote a bare "0" --
+    /// "analysed, touches no class fields", the conclusion the user acts on. The single-function dialog
+    /// already says "NOTHING was analysed".
+    /// </summary>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("blueprint_no_script")]
+    public async Task Functions_props_batch_marks_a_not_analysed_row_as_such(string method)
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("NativeOrEmptyBlueprint") };
+        var vm = new InterestingFunctionsViewModel(new MethodPropsDump { Method = method }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.Equal("n/a", rows[0].XrefInfo);
+        Assert.Contains("NOT analysed", vm.StatusText);
+    }
+
+    /// <summary>The control: an analysed function with no class fields still writes a bare "0".</summary>
+    [Theory]
+    [InlineData("bytecode")]
+    [InlineData("disasm")]
+    public async Task Functions_props_batch_keeps_a_real_zero(string method)
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("Analysed") };
+        var vm = new InterestingFunctionsViewModel(new MethodPropsDump { Method = method }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.Equal("0", rows[0].XrefInfo);
+        Assert.DoesNotContain("NOT analysed", vm.StatusText);
+    }
+
+    // ==================================================================
     // Z9 — the deadline flag must reach the cell and the roll-up.
     // ==================================================================
 

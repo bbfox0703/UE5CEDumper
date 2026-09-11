@@ -314,7 +314,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFields = 0, cached = 0, budgetTruncated = 0;
+        int done = 0, withFields = 0, cached = 0, budgetTruncated = 0, notAnalysed = 0;
         try
         {
             foreach (var row in targets)
@@ -328,21 +328,32 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                 try
                 {
                     var res = await _dump.WalkFunctionPropsAsync(row.FuncAddr, ct);
-                    var fields = res.Props.Where(p => p.IsClassField).ToList();
-                    // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
-                    // a disasm that stopped at its instruction budget yields a SHORT
-                    // list, and a bare "0" then reads as "this function touches no class
-                    // fields" — the conclusion the user acts on. Mark it.
-                    var partial = res.BudgetHit ? PartialResultNotice.CellMarker : "";
-                    if (fields.Count > 0)
+                    if (res.NotAnalysed)
                     {
-                        withFields++;
-                        var preview = string.Join(", ", fields.Take(2).Select(p => p.Name));
-                        row.XrefInfo = (fields.Count > 2 ? $"{fields.Count} · {preview}, …"
-                                                         : $"{fields.Count} · {preview}") + partial;
+                        // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script"), so a
+                        // bare "0" would read as "analysed, touches no class fields". The single-function
+                        // dialog already says "NOTHING was analysed"; the batch never read the tag.
+                        row.XrefInfo = PartialResultNotice.NotAnalysedCell;
+                        notAnalysed++;
                     }
-                    else row.XrefInfo = "0" + partial;
-                    if (res.BudgetHit) budgetTruncated++;
+                    else
+                    {
+                        var fields = res.Props.Where(p => p.IsClassField).ToList();
+                        // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
+                        // a disasm that stopped at its instruction budget yields a SHORT
+                        // list, and a bare "0" then reads as "this function touches no class
+                        // fields" — the conclusion the user acts on. Mark it.
+                        var partial = res.BudgetHit ? PartialResultNotice.CellMarker : "";
+                        if (fields.Count > 0)
+                        {
+                            withFields++;
+                            var preview = string.Join(", ", fields.Take(2).Select(p => p.Name));
+                            row.XrefInfo = (fields.Count > 2 ? $"{fields.Count} · {preview}, …"
+                                                             : $"{fields.Count} · {preview}") + partial;
+                        }
+                        else row.XrefInfo = "0" + partial;
+                        if (res.BudgetHit) budgetTruncated++;
+                    }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -358,7 +369,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                        + (cached > 0 ? $" ({cached} cached)." : ".")
                        + PartialResultNotice.BatchPartialClause(
                              budgetTruncated, targets.Count,
-                             cause: "hit the disassembler's instruction budget");
+                             cause: "hit the disassembler's instruction budget")
+                       + PartialResultNotice.BatchNotAnalysedClause(notAnalysed, targets.Count);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

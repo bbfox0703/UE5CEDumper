@@ -102,6 +102,23 @@ public static class PartialResultNotice
               + $"a 0 on those {unit}s means \"not found YET\", not \"none\".";
 
     /// <summary>
+    /// [W3-BATCH-METHOD] Cell value for a row whose analysis never RAN, so it cannot read as a real
+    /// <c>0</c> ("analysed, nothing touched"). The full explanation goes in the status line
+    /// (<see cref="BatchNotAnalysedClause"/>).
+    /// </summary>
+    public const string NotAnalysedCell = "n/a";
+
+    /// <summary>
+    /// [W3-BATCH-METHOD] Roll-up clause for a batch in which <paramref name="notAnalysed"/> units were
+    /// never analysed. Empty when none were, so a caller can append it unconditionally.
+    /// </summary>
+    public static string BatchNotAnalysedClause(int notAnalysed, int totalUnits, string unit = "function")
+        => notAnalysed <= 0
+            ? ""
+            : $" ⚠ {notAnalysed:N0} of {totalUnits:N0} {unit}(s) were NOT analysed (native code this build "
+              + $"cannot disassemble, or a Blueprint with no readable bytecode) — their \"{NotAnalysedCell}\" is not a 0.";
+
+    /// <summary>
     /// A group scan kept fewer WITNESSES per slot than the slot actually matched.
     ///
     /// <para>

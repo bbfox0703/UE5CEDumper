@@ -1007,7 +1007,7 @@ while eviction runs at the hand-edited number.
    `Fern.cpp:4809` reuses `functions_with_script` as "matched" and `Aura.cpp:6130` sums across
    workers that each self-cap, so a capped 8-thread scan can print *"(1,432 matched)"* beside 200
    rows. Do not mistake that for a disclosure when fixing this.
-3. ⬜ **`[W3-BATCH-METHOD]`** `InterestingFunctionsViewModel.cs:331`. `BatchFindFuncPropsAsync`
+3. ✅ **`[W3-BATCH-METHOD]`** (FIXED IN SOURCE 2026-09-11, batch B20) `InterestingFunctionsViewModel.cs:331`. `BatchFindFuncPropsAsync`
    consumes `res.Props` and `res.BudgetHit` and **never reads `res.Method`**. The DLL publishes
    four method tags and **two of them mean nothing was analysed at all** — `"none"`
    (`Aura.cpp:6257`, UFUNCTION_FUNC offset never resolved on this build) and
@@ -1015,6 +1015,15 @@ while eviction runs at the hand-edited number.
    and misattributed). The "Uses" column writes a bare **0**, indistinguishable from "analysed, found
    none". No DLL change and no contract bump needed — `method` is already published
    (`Fern.cpp:4855`) and already parsed (`DumpService.cs:1329`).
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B20; no DLL change, no contract bump).
+   - `FunctionPropRefsResult.NotAnalysed` names the two tags that mean nothing was looked at. An
+     unrecognised future tag is not treated as one.
+   - The batch reads it: such a row's cell is `n/a` (`PartialResultNotice.NotAnalysedCell`), never a
+     bare `0`, and the summary adds a clause counting them (`BatchNotAnalysedClause`).
+   - The single-function `FunctionPropsDialog` already handled both tags; the batch was the only
+     consumer that did not.
+   - **Tests, red first:** a theory over `none` / `blueprint_no_script`. The control over `bytecode` /
+     `disasm` keeps a bare `0`, green both ways.
 
 **LOW** — 2 rows: `[W3-CAP-NOSAVE]` `PropertySearchCap` and `ClassListCap` round-trip through
 `ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls
@@ -4190,6 +4199,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 34 | `[W4-RELATED-RACE]` | MED | `git log --grep W4-RELATED-RACE` (batch B17) | 4 red first over a gated fake (the stale load lands last / first / fails / lands after a disconnect). 4/4 mutants killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 | 35 | `[W4-LOOKUP-FILTER]` | MED | `git log --grep W4-LOOKUP-FILTER` (batch B18) | 2 red first (a filter pass; a leftover keyword, then cleared). 1/1 mutant killed; UI 5039/5039 (one suite run over B17 and B18 together) |
 | 36 | `[W4-BOOKMARK-DT]` | MED | `git log --grep W4-BOOKMARK-DT` (batch B19) | 4 red first (the flag through the file, the re-walk, a changed table, a refused address); the in-session control green both ways. 6/6 (one first tried in a form that did not compile; its compiling form went red) mutants killed, the unguarded re-walk among them; UI 5044/5044 |
+| 37 | `[W3-BATCH-METHOD]` | MED | `git log --grep W3-BATCH-METHOD` (batch B20) | a theory over the two not-analysed tags red first; the analysed control green both ways. 3/3 mutants killed; UI 5048/5048 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4270,6 +4280,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L23 | `[W4-BOOKMARK-DT]` | Live Walker on a connected game with a DataTable (items, weapons):
 1. **Same game session:** open the DataTable, drill into its RowMap, save a bookmark, restart the APP (not the game) and load the bookmark. The row list comes back, and Refresh keeps it.
 2. **After a game restart:** load the same bookmark. The status says the DataTable at its saved address is gone or has changed, not "the game may have restarted". | a game + UI |
+| L24 | `[W3-BATCH-METHOD]` | Interesting Functions on a connected game: run the batch "Props" over a mix of native functions and Blueprint functions. A function the DLL could not analyse shows `n/a` in the Uses column, not `0`, and the status line counts them as NOT analysed. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4311,7 +4322,7 @@ completeness critic.
 | ✅ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
 | ✅ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
 | ✅ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
-| ⬜ B20 batch method | `[W3-BATCH-METHOD]` | |
+| ✅ B20 batch method | `[W3-BATCH-METHOD]` | |
 | ⬜ B21 teleport card text | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | |
 | ⬜ B22 teleport pose map | `[W2-TPREL-MAP]` | |
 | ⬜ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
