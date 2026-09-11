@@ -230,6 +230,10 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
     std::lock_guard<std::mutex> lk(s_enumCacheMutex);
     auto it = s_enumCache.find(enumAddr);
     if (it == s_enumCache.end()) {
+        // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes
+        // that. The line below claimed "retry pending" here, falsely, once per enum field per walk.
+        if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+            return {};
         // ResolveEnumValue above ran and still published nothing, which since the
         // truncation fix means exactly one thing: a mid-table read failed, so there
         // is no trustworthy full list to hand CE. Say so — an empty DropDownList is

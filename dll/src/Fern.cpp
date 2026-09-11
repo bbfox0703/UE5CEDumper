@@ -2337,6 +2337,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["enums"] = enums;
             data["count"] = static_cast<int>(enums.size());
             if (truncated) data["truncated"] = true;
+            // [P1-ENUMNAMES] UEnum::Names was never located on this build: every enum's entries above are empty, and
+            // this is the only exit that says why. Latched only by a search that ran to completion.
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 

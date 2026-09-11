@@ -84,7 +84,9 @@ int32_t GetSerialNumber(int32_t index);
 
 // Iterate all valid objects
 // Callback: return false to stop iteration
-void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);
+// Returns FALSE when a cancel (Tot::Requested) cut the walk short: the callback did NOT see every object, so a
+// "not found" from it means nothing. [P1-ENUMNAMES]
+bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);
 
 // Find first object matching name (linear scan)
 uintptr_t FindByName(const std::string& name);

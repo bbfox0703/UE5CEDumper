@@ -5396,10 +5396,12 @@ bool DetectUEnumNames() {
     };
 
     // Search GObjects for each candidate
+    // [P1-ENUMNAMES] A search a cancel cut short proves nothing, so it must not latch FAILED below.
+    bool searchAborted = false;
     for (const auto& cand : candidates) {
         uintptr_t enumAddr = 0;
 
-        Aura::ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
+        const bool walked = Aura::ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
             std::string clsName = GetObjectClassName(obj);
             if (clsName != "Enum" && clsName != "UserDefinedEnum")
                 return true; // continue
@@ -5411,6 +5413,7 @@ bool DetectUEnumNames() {
             }
             return true; // continue
         });
+        if (!walked) searchAborted = true;
 
         if (!enumAddr) {
             Sein::Debug("DYNO:Enum", "  '%s' not found in GObjects", cand.name);
@@ -5478,6 +5481,14 @@ bool DetectUEnumNames() {
         }
 
         Sein::Debug("DYNO:Enum", "  '%s' found but no valid Names offset detected", cand.name);
+    }
+
+    // [P1-ENUMNAMES] A CANCELLED search found nothing because it did not look -- latching FAILED on it would disable
+    // enum names for the whole process. Leave both flags alone so the next call retries.
+    if (searchAborted) {
+        Sein::Warn("DYNO:Enum", "DetectUEnumNames: search cancelled (client gone / shutdown) -- "
+            "not latching FAILED; the next enum lookup retries");
+        return false;
     }
 
     // Mark as failed to prevent retry storm.

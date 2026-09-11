@@ -349,6 +349,30 @@ public class UsmapExportServiceTests
         Assert.Equal(new byte[] { 8, 0 }, ms.ToArray());
     }
 
+    // ---- [P1-ENUMNAMES] the .usmap shipped with every enum empty, and never said why ----
+
+    [Fact]
+    public void EnumCollectionNote_NamesAFailedLatchAndATruncation()
+    {
+        var failed = UsmapExportService.EnumCollectionNote(new EnumListResult
+        {
+            Enums = new() { new EnumDefinition { Name = "ENetRole" } },
+            EnumNamesFailed = true,
+        });
+        Assert.Contains("enum member names are unavailable", failed, StringComparison.Ordinal);
+
+        var cut = UsmapExportService.EnumCollectionNote(new EnumListResult { Enums = new(), Truncated = true });
+        Assert.Contains("cut short", cut, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnumCollectionNote_AHealthyList_IsJustTheCount()
+    {
+        // The control, green before and after.
+        Assert.Equal("Collected 2 enums", UsmapExportService.EnumCollectionNote(
+            new EnumListResult { Enums = new() { new EnumDefinition(), new EnumDefinition() } }));
+    }
+
     [Fact]
     public void EPropertyType_NewMembers_HaveCanonicalByteValues()
     {

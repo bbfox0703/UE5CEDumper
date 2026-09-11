@@ -209,6 +209,12 @@ public interface IDumpService
     // --- Enum Enumeration ---
     Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default);
 
+    /// <summary>[P1-ENUMNAMES] <see cref="ListEnumsAsync"/> plus what the list does not say by itself: the DLL could
+    /// not locate UEnum::Names on this build (every enum's entries are then empty), or the walk was cut short. The
+    /// default serves fakes with a list that claims neither.</summary>
+    async Task<EnumListResult> ListEnumsDetailedAsync(CancellationToken ct = default)
+        => new EnumListResult { Enums = await ListEnumsAsync(ct) };
+
     // --- Function Walking (for SDK export) ---
     Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
 

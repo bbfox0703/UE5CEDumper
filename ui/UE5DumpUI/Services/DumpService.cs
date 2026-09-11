@@ -1613,6 +1613,10 @@ public sealed class DumpService : IDumpService
     }
 
     public async Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+        => (await ListEnumsDetailedAsync(ct)).Enums;
+
+    /// <summary>[P1-ENUMNAMES] list_enums with the two flags the list alone cannot carry.</summary>
+    public async Task<EnumListResult> ListEnumsDetailedAsync(CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "list_enums" };
         var res = await _pipe.SendAsync(req, ct);
@@ -1633,8 +1637,14 @@ public sealed class DumpService : IDumpService
                 });
             }
         }
-        return result;
+        return new EnumListResult
+        {
+            Enums = result,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            EnumNamesFailed = res["enum_names_failed"]?.GetValue<bool>() ?? false,
+        };
     }
+
 
     public async Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
     {

@@ -1992,11 +1992,37 @@ code**, which is the behaviour the brief asked for.
      6/6 mutants killed; dll_core_test 249/249; UI 5149/5149.
    - ⚠ **Survivor by construction:** `FindGObjects`' call site. A pending cancel is always recorded by the
      tier-1 AOB scan first, so no deterministic test reaches the fallback's bail alone.
-2. ⬜ **`[P1-ENUMNAMES]`** `Genau.cpp:5476`. When `DetectUEnumNames` fails it latches
+2. ✅ **`[P1-ENUMNAMES]`** (FIXED IN SOURCE 2026-09-12, batch L02) `Genau.cpp:5476`. When `DetectUEnumNames` fails it latches
    `bUEnumNamesFailed` for the process, and **no exit publishes it**. `list_enums` then answers `ok`
    with every UEnum's entries empty, and the USMAP and CE exports ship without enum names — none of
    them saying why. ⛔ **Partly harmful as filed**: publishing the permanent-fail latch unconditionally
    is wrong, because `ForEach`'s void abort (`Aura.cpp:1467`) lets a *cancelled* detection latch FAILED.
+   ✅ **FIXED IN SOURCE 2026-09-12, the unharmful half first** (batch L02).
+   - **`Aura::ForEach` returns `bool`:** false when a cancel cut the walk short. Every other caller ignores
+     it, as before.
+   - **`DetectUEnumNames` does not latch on a cancel.** If any candidate search was cut short it returns
+     false and touches neither flag, so the next enum lookup retries. Only a search that ran to completion
+     latches FAILED.
+   - **Then the real failure is published.**
+     - `list_enums` carries `enum_names_failed`.
+     - The UI's `ListEnumsDetailedAsync` carries it with the long-ignored `truncated`. It is a default
+       interface member, so fakes are untouched.
+     - The USMAP export's progress line names both: "enum member names are unavailable on this build …" and
+       "the enum list was cut short …".
+   - **The widening.** Under the latch, `GetEnumEntries` no longer claims "truncated read, retry pending"
+     (false there, and unthrottled: one line per enum field per walk).
+   - **Tests, red first:**
+     - dll_core_test: a cancelled ForEach says so, and a cancelled `DetectUEnumNames` latches nothing, so the
+       next, uncancelled search really runs and, finding nothing, latches FAILED itself. (Before the fix it
+       could not: the FAILED latch also sets `bUEnumNamesDetected`, and the next call returned true at its
+       first line.) An uncancelled ForEach is the control.
+     - The parse, and the export note.
+
+     5/5 mutants killed; dll_core_test 253/253; UI 5152/5152.
+   - ⚠ **Survivors by construction:** Fern's key, which no test target compiles, and Ubel's quieted
+     warning, which is log-only.
+   - ⬜ **Not in this row:** the CE exports' per-field enum dropdowns still come back empty under the latch
+     with no note. They read the entries from the walk, not from `list_enums`.
 3. ⬜ **`[P1-UPROP-DELEGATE]`** `Ubel.cpp:4697`. The UProperty-mode (UE4 < 4.25) delegate-array arms
    still **drop the readers' refusal `error`** — commit `e16d2052` fixed exactly this on the FProperty
    arm, and that arm's comment calls the old behaviour a defect in so many words. ⭐ **P3 at the
@@ -4736,6 +4762,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 52 | `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) | LOW + MED | `git log --grep W2-TPREL-TRANSPORTS` (batch B29b) | the CE records' flag read (a theory) and a source pin on Mimic.cpp / Frieren.cpp, red first. 4/4 mutants killed; UI 5144/5144. Contract 3 → 4, additive (MIN stays 1) |
 | 53 | `[A4-USMAP-CONTAINER-ENUM]` | MED | `git log --grep A4-USMAP-CONTAINER-ENUM` (batch B32) | dll_core_test (a fake Array / Set / Map whose inners carry a UEnum), the byte-exact USMAP shapes and the parse, red first. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148 |
 | 54 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | LOW | `git log --grep P1-GENAU-ABORT` (batch L01) | dll_core_test (each sweep with a pending cancel records its abort at the bail) and a Frieren source pin, red first against inert out-flags. 6/6 mutants killed; dll_core_test 249/249; UI 5149/5149 |
+| 55 | `[P1-ENUMNAMES]` | LOW | `git log --grep P1-ENUMNAMES` (batch L02) | dll_core_test (a cancelled ForEach says so; a cancelled search latches nothing) and the UI (parse, export note), red first. 5/5 mutants killed; dll_core_test 253/253; UI 5152/5152. The harmful half as filed (publish the latch as-is) did not land |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4879,6 +4906,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. The DLL log shows the tier's "aborted" line and "NOT latching initialized".
 3. The next connect re-scans and resolves GNames.
 4. **Control:** an uninterrupted scan latches normally. | a game + UI; no CE |
+| L41 | `[P1-ENUMNAMES]` | On a game where UEnum::Names is not located (the DLL log reads "DetectUEnumNames: FAILED"):
+1. Export USMAP. The progress names "enum member names are unavailable on this build".
+2. Disconnect the UI during the first enum-bearing walk. The log reads "search cancelled … not latching FAILED", and the next connect resolves enum names normally. | a game + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4938,7 +4968,7 @@ completeness critic.
 
 **LOW-only batches, after the MEDs** (43):
 - ✅ **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
-- **L02:** `[P1-ENUMNAMES]`
+- ✅ **L02:** `[P1-ENUMNAMES]`
 - **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
 - **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`

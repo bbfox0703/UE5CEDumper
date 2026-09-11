@@ -879,6 +879,28 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task ListEnumsDetailedAsync_CarriesTheFailedLatchAndTheTruncation()
+    {
+        // [P1-ENUMNAMES] list_enums answered ok with every UEnum's entries empty, and no exit said why.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["enums"] = new JsonArray
+            {
+                new JsonObject { ["addr"] = "0x1", ["name"] = "ENetRole", ["entries"] = new JsonArray() },
+            },
+            ["enum_names_failed"] = true,
+            ["truncated"] = true,
+        });
+
+        var r = await CreateService().ListEnumsDetailedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(r.Enums);
+        Assert.True(r.EnumNamesFailed);
+        Assert.True(r.Truncated);
+    }
+
+    [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {
         _pipe.SetHandler(req =>

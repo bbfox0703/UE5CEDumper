@@ -93,6 +93,15 @@ public static class UsmapExportService
         Unknown = 0xFF,
     }
 
+    /// <summary>[P1-ENUMNAMES] The export's enum progress line, naming what the list alone does not say.</summary>
+    internal static string EnumCollectionNote(EnumListResult r)
+        => $"Collected {r.Enums.Count} enums"
+           + (r.EnumNamesFailed
+               ? " — ⚠ enum member names are unavailable on this build (UEnum::Names was not located), "
+                 + "so every enum in the .usmap is empty"
+               : "")
+           + (r.Truncated ? " — ⚠ the enum list was cut short (the scan was cancelled); re-export for a complete file" : "");
+
     /// <summary>
     /// Generate a complete USMAP binary file from the connected game's data.
     /// </summary>
@@ -102,8 +111,9 @@ public static class UsmapExportService
     {
         // 1. Collect enums
         progress?.Report("Collecting enums...");
-        var enums = await dump.ListEnumsAsync(ct);
-        progress?.Report($"Collected {enums.Count} enums");
+        var enumList = await dump.ListEnumsDetailedAsync(ct);   // [P1-ENUMNAMES]
+        var enums = enumList.Enums;
+        progress?.Report(EnumCollectionNote(enumList));
 
         // 2. Collect all Class/ScriptStruct objects
         var structTargets = new List<(string addr, string name)>();

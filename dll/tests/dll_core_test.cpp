@@ -2481,6 +2481,42 @@ int main() {
         Genau::s_gnamesReport = Genau::ScanReport{};
     }
 
+    // -- ENUMNAMESCANCEL-2026-09-12 -- a cancelled UEnum::Names search is not a FAILED one -------------------------
+    //
+    // [P1-ENUMNAMES] DetectUEnumNames searches through Aura::ForEach, whose cancel was VOID: a cancelled search read as
+    // "no known enum here" and latched FAILED for the rest of the process. Re-inits Aura on the main pool first.
+    {
+        blk("ENUMNAMESCANCEL - ForEach reports its abort; a cancelled DetectUEnumNames does not latch FAILED");
+        ResetCancel();
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+
+        int enSeen = 0;
+        const bool enWhole = Aura::ForEach([&](int32_t, uintptr_t) { ++enSeen; return true; });
+        check("ENUMNAMESCANCEL control: an uncancelled ForEach walks the whole pool and says so",
+              enWhole && enSeen == kCount, std::to_string(enSeen).c_str());
+        Tot::g_perCommand.store(true);
+        const bool enCut = Aura::ForEach([&](int32_t, uintptr_t) { return true; });
+        ResetCancel();
+        check("ENUMNAMESCANCEL ⭐: a cancelled ForEach says it was cut short", !enCut);
+
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        Tot::g_perCommand.store(true);
+        const bool enDet = Genau::DetectUEnumNames();
+        ResetCancel();
+        check("ENUMNAMESCANCEL ⭐: a CANCELLED search does not latch FAILED -- the next call retries",
+              !enDet && !DynOff::bUEnumNamesFailed.load() && !DynOff::bUEnumNamesDetected.load());
+
+        // ...and the next call RETRIES. Before the fix the cancelled search latched FAILED -- and the FAILED latch also
+        // sets bUEnumNamesDetected ("prevent retry storm"), so this call returned true at its first line, searching
+        // nothing. Uncancelled, it searches the fake pool, which holds no known UEnum, and latches FAILED itself.
+        const bool enDet2 = Genau::DetectUEnumNames();
+        check("ENUMNAMESCANCEL ⭐: ...so the next, uncancelled search really runs -- and, finding nothing, latches FAILED",
+              !enDet2 && DynOff::bUEnumNamesFailed.load());
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

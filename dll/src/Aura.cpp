@@ -1507,18 +1507,21 @@ int32_t GetSerialNumber(int32_t index) {
     return serial;
 }
 
-void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
+bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
     int32_t count = GetCount();
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:scan", "Aura::ForEach: aborted (client gone / shutdown)");
-            break;  // stop walking; callers see partial/empty result
+            // [P1-ENUMNAMES] Say so: the callback did NOT see every object. Void, this let a cancelled
+            // DetectUEnumNames read "no known enum here" and latch FAILED for the process.
+            return false;
         }
         uintptr_t obj = GetByIndex(i);
         if (obj != 0) {
             if (!cb(i, obj)) break;
         }
     }
+    return true;   // walked to the end, or the callback stopped it on purpose
 }
 
 uintptr_t FindByName(const std::string& name) {
