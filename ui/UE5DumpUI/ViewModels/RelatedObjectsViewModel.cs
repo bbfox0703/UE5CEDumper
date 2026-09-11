@@ -74,6 +74,10 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     public void ClearOnDisconnect()
     {
         _loadGen++;   // [W4-RELATED-RACE] a load still in flight must not repopulate the cleared grid
+        // ...and whoever bumps the generation takes over the busy flag. The superseded load's finally skips
+        // it by design, so without this a load in flight at disconnect left IsBusy stuck on -- the trap
+        // InstanceFinderViewModel.SupersedeClassSearch documents. (Review of c1c30d51.)
+        IsBusy = false;
         _suppressCandidateLoad = true;
         try
         {
@@ -197,6 +201,11 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     [RelayCommand]
     private async Task DetectTargetAsync()
     {
+        // [W4-RELATED-RACE] Detect takes a ticket too (review of c1c30d51). A handoff that starts while the
+        // detector runs, or a disconnect, supersedes it: it then neither repopulates the candidates, nor
+        // auto-loads over the newer graph, nor clears the newer load's busy state. Its own auto-load takes
+        // the next ticket, and that load's finally clears IsBusy.
+        int gen = ++_loadGen;
         try
         {
             IsBusy = true;
@@ -205,6 +214,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             TargetCandidates.Clear();
             HasCandidates = false;
             var r = await _dump.DetectCurrentTargetAsync();
+            if (gen != _loadGen) return;   // superseded: a newer load (or the disconnect) owns the panel
             foreach (var c in r.Candidates) TargetCandidates.Add(c);
             HasCandidates = TargetCandidates.Count > 0;
             StatusText = r.Note;
@@ -222,12 +232,12 @@ public partial class RelatedObjectsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = $"Error: {ex.Message}";
+            if (gen == _loadGen) StatusText = $"Error: {ex.Message}";   // a superseded failure is not news
             _log.Error("DetectCurrentTarget failed", ex);
         }
         finally
         {
-            IsBusy = false;
+            if (gen == _loadGen) IsBusy = false;   // never clear a newer load's busy state
         }
     }
 

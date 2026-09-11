@@ -151,13 +151,25 @@ public class RelatedObjectsViewModelTests
     private sealed class GatedDumpService : StubDumpService
     {
         public readonly Dictionary<string, TaskCompletionSource<RelatedObjectsResult>> Gates = new();
+        public readonly HashSet<string> Instant = new();   // addresses whose load returns at once
+        public readonly List<string> Calls = new();
+        public TaskCompletionSource<CurrentTargetResult>? DetectGate;
 
         public override Task<RelatedObjectsResult> GetRelatedObjectsAsync(
             string addr, int maxResults = 128, CancellationToken ct = default)
         {
+            Calls.Add(addr);
+            if (Instant.Contains(addr)) return Task.FromResult(Graph(addr, "BP_Instant_C"));
             var tcs = new TaskCompletionSource<RelatedObjectsResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             Gates[addr] = tcs;
             return tcs.Task;
+        }
+
+        public override Task<CurrentTargetResult> DetectCurrentTargetAsync(
+            int maxCandidates = 8, CancellationToken ct = default)
+        {
+            DetectGate = new TaskCompletionSource<CurrentTargetResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return DetectGate.Task;
         }
     }
 
@@ -245,5 +257,89 @@ public class RelatedObjectsViewModelTests
 
         Assert.Empty(vm.Related);
         Assert.Equal("", vm.QueryClassName);
+    }
+
+    // ---- review of c1c30d51: the busy flag, and the un-ticketed Detect ----
+
+    private static CurrentTargetResult OneCandidate(bool resolved) => new()
+    {
+        Resolved = resolved, Note = "Detected target: X",
+        Candidates = new List<TargetCandidate>
+        {
+            new() { Address = "0xX", Name = "X", ClassName = "BP_X_C", Score = resolved ? 90 : 0 },
+        },
+    };
+
+    [Fact]
+    public async Task ADisconnectDuringALoad_LeavesTheBusyFlagClear()
+    {
+        // ClearOnDisconnect bumped the generation but never took over IsBusy, and the superseded load's
+        // finally skips it by design -- so a load in flight at disconnect left it stuck on.
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var load = vm.LoadForAddressAsync("0xA");
+        vm.ClearOnDisconnect();
+        dump.Gates["0xA"].SetResult(Graph("0xA", "BP_A_C"));
+        await load;
+
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task AHandoffDuringDetect_KeepsItsGraphAndItsBusyFlag()
+    {
+        var dump = new GatedDumpService();
+        dump.Instant.Add("0xX");
+        var vm = CreateVm(dump);
+
+        var detect = vm.DetectTargetCommand.ExecuteAsync(null);   // parks on the detector
+        var handoff = vm.LoadForAddressAsync("0xB");              // the user hands off B meanwhile
+        dump.DetectGate!.SetResult(OneCandidate(resolved: true));
+        await detect;                                              // the OLDER action lands first
+
+        Assert.True(vm.IsBusy);                                    // B is still loading
+        Assert.DoesNotContain("0xX", dump.Calls);                  // and Detect did not auto-load over it
+
+        dump.Gates["0xB"].SetResult(Graph("0xB", "BP_B_C"));
+        await handoff;
+        Assert.False(vm.IsBusy);
+        Assert.All(vm.Related, r => Assert.StartsWith("0xB", r.Address));
+    }
+
+    [Fact]
+    public async Task ADetectLandingAfterADisconnect_IsDropped()
+    {
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var detect = vm.DetectTargetCommand.ExecuteAsync(null);
+        vm.ClearOnDisconnect();
+        dump.DetectGate!.SetResult(OneCandidate(resolved: false));
+        await detect;
+
+        Assert.Empty(vm.TargetCandidates);
+        Assert.False(vm.HasCandidates);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task ADetect_SupersedesAnEarlierLoad_EvenWhenItFindsNothing()
+    {
+        // The latest action owns the panel: a load handed off BEFORE Detect must not land over Detect's
+        // result, nor clear the busy state Detect now owns.
+        var dump = new GatedDumpService();
+        var vm = CreateVm(dump);
+
+        var load = vm.LoadForAddressAsync("0xA");
+        var detect = vm.DetectTargetCommand.ExecuteAsync(null);
+        dump.DetectGate!.SetResult(OneCandidate(resolved: false));   // nothing to auto-load
+        await detect;
+        dump.Gates["0xA"].SetResult(Graph("0xA", "BP_A_C"));         // the earlier load lands last
+        await load;
+
+        Assert.Empty(vm.Related);
+        Assert.Single(vm.TargetCandidates);
+        Assert.False(vm.IsBusy);
     }
 }

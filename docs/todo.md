@@ -1240,6 +1240,25 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
    - ⛔ Not `if (IsBusy) return;`, as the unsafe-fix table says.
    - **Tests, red first:** four, over a gated fake that lets two loads finish out of order: the stale
      one lands last; lands first; fails; lands after a disconnect.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21: two MED findings, both CONFIRMED).
+     - **`related-disconnect-busy-stuck`, a regression B17 introduced.** `ClearOnDisconnect` bumped the
+       ticket but never took over `IsBusy`, and the superseded load's finally skips it by design. So a
+       load in flight at disconnect left `IsBusy` stuck on. `ClearOnDisconnect` now clears it: whoever
+       bumps the generation owns the busy flag (the trap `SupersedeClassSearch` documents).
+     - **`related-detect-unticketed`.** `DetectTargetAsync` had no ticket:
+       - its unconditional finally cleared a newer load's `IsBusy`;
+       - its post-await auto-load overwrote a later handoff;
+       - a detect in flight at disconnect repopulated the candidates.
+
+       It now takes a ticket and checks it after the detector. The latest action owns the panel, so a
+       Detect also supersedes a load handed off before it.
+     - **Tests, red first:**
+       - a disconnect during a load;
+       - a handoff during Detect;
+       - a Detect landing after a disconnect;
+       - a Detect that finds nothing, superseding an earlier load.
+
+       4/4 mutants killed; UI 5083/5083.
 4. ✅ **`[W4-BOOKMARK-DT]`** (FIXED IN SOURCE 2026-09-11, batch B19) `LiveWalkerViewModel.cs:4173`. `PersistedCrumb` carries
    `IsContainerView` and **not** `IsDataTableView`, so a bookmark saved on a DataTable row view can
    never be restored — and the failure is reported as *"the game may have restarted"*, blaming the
