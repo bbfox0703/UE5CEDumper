@@ -243,7 +243,36 @@ public class ConsoleViewModelTests
         Assert.Contains("not evidence the game has none", vm.StatusText);
         // ...and it must name the cap + a lever the panel actually has.
         Assert.Contains("STOPPED at the 100,000-row cap", vm.StatusText);
-        Assert.Contains("Game classes only", vm.StatusText);
+        // [A4-GAMEONLY-ADVICE] by the label this panel's checkbox actually shows ("Game Only"), and only while it is off.
+        Assert.Contains("tick \"Game Only\"", vm.StatusText);
+    }
+
+    /// <summary>[A4-GAMEONLY-ADVICE] With Game Only already on, ticking it is a lever already spent: the advice must not
+    /// offer it.</summary>
+    [Fact]
+    public async Task Load_TRUNCATED_with_Game_Only_already_on_does_not_advise_ticking_it()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 100_000, ScannedObjects = 900_000, ScannedClasses = 9_000,
+                TotalFunctions = 100_000, Truncated = true, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName="A", FuncName="X", FunctionFlags=FUNC_BlueprintCallable },
+                },
+            }
+        };
+        var vm = CreateVm(fake);
+        vm.GameOnly = true;
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Contains("STOPPED at the 100,000-row cap", vm.StatusText);
+        Assert.DoesNotContain("Game Only\" to", vm.StatusText);
+        Assert.DoesNotContain("Game classes only", vm.StatusText);
+        Assert.Contains("already on", vm.StatusText);
     }
 
     /// <summary>An aborted walk is partial for a different reason; same honesty rule.</summary>

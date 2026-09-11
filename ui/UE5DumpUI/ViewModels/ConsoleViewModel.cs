@@ -252,7 +252,9 @@ public partial class ConsoleViewModel : ViewModelBase
             _stickyInstance.Clear();
             StatusText = "Scanning all UFunctions for exec flag (FUNC_Exec=0x200)...";
 
-            var result = await _dump.ListAllFunctionsAsync(gameOnly: GameOnly);
+            // [A4-GAMEONLY-ADVICE] Captured before the await: the advice below describes THIS scan, not the checkbox now.
+            bool gameOnly = GameOnly;
+            var result = await _dump.ListAllFunctionsAsync(gameOnly: gameOnly);
 
             _allExec = await Task.Run(() =>
             {
@@ -288,8 +290,10 @@ public partial class ConsoleViewModel : ViewModelBase
                 ? PartialResultNotice.Cancelled("scan")
                 : result.Truncated
                     ? PartialResultNotice.RowCap(result.Limit, "functions",
-                          "tick \"Game classes only\" to skip engine classes so the cap "
-                          + "reaches further into the game's own classes")
+                          // [A4-GAMEONLY-ADVICE] By this panel's label, and never a lever the scan already used.
+                          gameOnly ? "\"Game Only\" is already on, so the rest are the game's own classes past the cap"
+                                   : "tick \"Game Only\" to skip engine classes so the cap "
+                                     + "reaches further into the game's own classes")
                     : "";
 
             if (_allExec.Count == 0)

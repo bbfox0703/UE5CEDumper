@@ -480,6 +480,26 @@ public class ValueSearchTests
     }
 
     [Fact]
+    public async Task GroupFirstScan_StoppedByDeadlineOrCap_AdvisesOnlyWhatGroupModeCanReach()
+    {
+        // [P5-GROUP-ADVICE] A cap stop is not helped by a longer timeout (it re-scans into the same cap) nor by a refine
+        // (it prunes the capped set), and Max never renders in group mode. Measured on DQ7R: a cap stop at 1,849 ms.
+        var (vm, fake) = MakeVm();
+        fake.NextGroupBeginResult = new GroupScanBeginResult
+        {
+            SessionId = 2UL, Total = 50_000, DeadlineHit = true, DurationMs = 1_849,
+        };
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].Value = "1";
+        vm.GroupInputs[1].Value = "2";
+
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("or refine", vm.StatusText);
+        Assert.Contains("more distinctive values", vm.StatusText);
+    }
+
+    [Fact]
     public void ViewModel_ScanTimeout_ClampsToBand()
     {
         var (vm, _) = MakeVm();

@@ -838,16 +838,30 @@ public class InterestingFunctionsViewModelTests
     /// census of the game.
     /// </summary>
     [Fact]
-    public void StatusLine_on_a_capped_scan_names_the_cap_and_a_lever_this_panel_has()
+    public void StatusLine_on_a_capped_scan_names_the_cap_and_no_lever_already_applied()
     {
+        // [A4-GAMEONLY-ADVICE] INVERTED. This panel scans with Game Only ON by default, so advising to tick it offered a
+        // lever the scan had already used -- under a label ("Game classes only") the panel does not even show.
         var s = InterestingFunctionsViewModel.BuildStatusLine(
             new InterestingFunctionsViewModel.LoadScanFacts(
-                100_000, 9_000, 2_100, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000),
+                100_000, 9_000, 2_100, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000, GameOnly: true),
             interesting: 1_500);
 
         Assert.Contains("STOPPED at the 100,000-row cap", s);
         Assert.Contains("more functions exist", s);
-        Assert.Contains("Game classes only", s);   // a control this panel really owns
+        Assert.DoesNotContain("Game Only", s);
+        Assert.DoesNotContain("Game classes only", s);
+    }
+
+    [Fact]
+    public void StatusLine_on_a_capped_scan_with_Game_Only_off_names_that_checkbox_by_its_label()
+    {
+        var s = InterestingFunctionsViewModel.BuildStatusLine(
+            new InterestingFunctionsViewModel.LoadScanFacts(
+                100_000, 9_000, 2_100, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000, GameOnly: false),
+            interesting: 1_500);
+
+        Assert.Contains("tick \"Game Only\"", s);   // the label this panel's checkbox actually shows
     }
 
     [Fact]

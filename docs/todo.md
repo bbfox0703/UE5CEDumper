@@ -2922,7 +2922,7 @@ The two real instances are both places where **advice** was written for only one
 narrow the predicate"*. "Narrow the predicate" is the cap's remedy, and Max is visible in single mode.
 ⛔ Do not "fix" this half. Only its group twin gives the wrong advice (`[P5-GROUP-ADVICE]`).
 
-##### `[P5-GROUP-ADVICE]` LOW — Group First Scan names the candidate cap but advises only deadline remedies
+##### ✅ `[P5-GROUP-ADVICE]` LOW — Group First Scan names the candidate cap but advises only deadline remedies (FIXED IN SOURCE 2026-09-12)
 
 `ValueSearchViewModel.cs:1449`. `ScanForValueGroup` folds its 50,000-candidate cap
 (`Aura.cpp:9459-9460`) into the same `deadline_hit` as the clock (`:9384`). The text reads
@@ -2943,6 +2943,9 @@ The single-mode twin at `:1026` gets this right.
   "or refine". For example: *"raise the Timeout slider (deadline) or use more / more distinctive
   values (result cap)"*. No test pins that string. `begin_group_scan` is pipe-only, so a separate cap
   field would not be a three-exit P3 hazard, but it is not needed.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded re-word** (batch L21). The line now reads "raise the
+  Timeout slider (deadline) or use more / more distinctive values (result cap)", with no "or refine".
+  **Test, red first:** a group First Scan stopped at 1,849 ms, as in the DQ7R run. 6/6 mutants killed.
 - ✅ **More precise, still no wire change:** a cap stop yields `Total == the sent max_results`
   exactly. Every push is followed by a `>= maxResults` break, and the clock is checked only at the
   top of an iteration. So the UI can tell the two causes apart. Capture `MaxResults` in a local
@@ -4329,7 +4332,7 @@ result line never says so.
     checkbox's OWN panel is pinned too; disabling that parent disables the checkbox as surely as an
     attribute on it. 1/1 mutant killed. UI 5033/5033 (one suite run over the three second-round follow-ups together).
 
-##### `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern
+##### ✅ `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern (FIXED IN SOURCE 2026-09-12)
 
 `ContainerTruncation.cs:43` via `LiveWalkerViewModel.cs:1254-1277`. The scalar-array re-fetch asks for
 the full count, but the DLL clamps every request at 4,096 (`Ubel.cpp:42`/`:2227`). So a 10,000-element
@@ -4340,6 +4343,14 @@ slider ≥ 8192.
 - ✅ **Safe fix:** a UI honesty fix derived from the reply (`ReadCount < TotalCount` despite a full
   request, then `FixedCapStatusLine`), never a hardcoded 4096.
 - ⛔ **Unsafe:** unbounded paging; raising the DLL cap.
+- ✅ **FIXED IN SOURCE 2026-09-12, derived from the reply** (batch L21).
+  - Each array-drill branch records what it asked for: the full count for the scalar re-fetch, the
+    slider for the inline preview.
+  - Fewer elements back than asked means the DLL capped the reply, and gets `FixedCapStatusLine`; the
+    slider advice stays for a slider-capped view. No hardcoded 4096, no paging, no DLL change.
+  - **Tests, red first:** a scalar drill clamped at 4,096 of 10,000 by a fake reply. The existing
+    128-of-199 pointer test is the control, and it kills the mutant that counts the full count as
+    requested. 6/6 mutants killed.
 
 ##### ✅ `[A3-PTR-NAV-REPAINT]` LOW — a pointer that gains a target after refresh shows its name but no → button (FIXED IN SOURCE 2026-09-11)
 
@@ -4931,7 +4942,7 @@ access detector.
   - **Test, red first:** a caller-level push through a recording bridge. A delegate row with pad 8 sends
     its payload; an IntProperty row sends its field address unchanged. 5/5 mutants killed; UI 5162/5162.
 
-##### `[A4-GAMEONLY-ADVICE]` LOW — Interesting Functions and Console advise "Game classes only" when it is already ticked
+##### ✅ `[A4-GAMEONLY-ADVICE]` LOW — Interesting Functions and Console advise "Game classes only" when it is already ticked (FIXED IN SOURCE 2026-09-12)
 
 Interesting Functions `:650-665`, Console `:287-293`. This turns the P5 lead into a measured defect.
 Z10's written rule, *"only while it is still OFF"*, reached Property Search only (same commit
@@ -4939,6 +4950,11 @@ a87706c7). Interesting Functions defaults the box to ticked, so its only advice 
 Two tests PIN the wrong text. The panels' checkbox actually reads "Game Only".
 - ✅ **Safe fix:** carry the scan-time GameOnly in `LoadScanFacts`, capture Console's before its
   await, and invert the two tests. Never read the live checkbox.
+- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L21).
+  - `LoadScanFacts.GameOnly` and Console's local capture the scan-time value before the await.
+  - The advice names the panels' own label, "Game Only", and only while it was off. With it on,
+    Console says it is already on.
+  - The two pinning tests are inverted, and each has a control. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229.
 
 ##### ✅ `[A4-DELEGATE-ARRAY-PAD]` LOW — CE XML / CSX element leaves of a `TArray<FScriptDelegate>` read the checked-build access detector (FIXED IN SOURCE 2026-09-12)
 
@@ -5163,6 +5179,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 71 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | LOW | `git log --grep A4-LW-DISCONNECT-PARENT` (batch L19) | AuditL11HonestyTests, red first: a disconnected walker keeps no Parent, References header or function list; a Detect run in flight at the disconnect, resumed with a result or a failure, touches neither the rows nor the status. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218. Both recorded safe fixes; no CTS |
 | 72 | `[A4-STEALTH-PRIME]` | LOW | `git log --grep A4-STEALTH-PRIME` (batch L20) | TeleportViewModelTests, red first: a still-held meter primes Holding, a Property Search force is not claimed (Unknown), and a disconnect says Unknown; nothing forced reads Off. Gate 17d reads the tuple form (a third selftest control). 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221. The recorded safe fix |
 | 73 | `[A4-PIVOT-CROSSGAME-ID]` + `[W1-PIVOT-LOADCTS]` | LOW | `git log --grep A4-PIVOT-CROSSGAME-ID` (batch L18) | One cross-game test each for Class Pivot, Snapshot and SPC on the real per-game store (the other game's newest or default wins; Class Pivot never serves the other game's class list), and a class load gated on its token that a field load must not cancel, red first. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225. The recorded safe fix, all three twins; no clear in SetEngineState |
+| 74 | `[A4-GAMEONLY-ADVICE]` + `[P5-GROUP-ADVICE]` + `[A3-CONTAINER-4096-ADVICE]` | LOW | `git log --grep A4-GAMEONLY-ADVICE` (batch L21) | Red first: the two Game Only pins inverted with controls, a group cap stop that must not advise "refine", and a scalar drill capped by the DLL that must not blame the slider. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229. Every advice names a lever the panel has and has not used |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5371,6 +5388,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Connect to game B. Each tab shows B's newest or default, and Class Pivot's class list is B's.
 3. An Extra Scan on B keeps B's picks.
 4. Switch snapshot and immediately pick a class. The class list still arrives for the new snapshot. | two games + UI |
+| L60 | `[A4-GAMEONLY-ADVICE]` + `[P5-GROUP-ADVICE]` + `[A3-CONTAINER-4096-ADVICE]` | A game and the UI:
+1. A capped Interesting Functions load (Game Only on) advises nothing about Game Only. Console with it off says `tick "Game Only"`.
+2. A capped group First Scan advises more or more distinctive values, never "refine".
+3. Open a `TArray<float>` over 4,096 long. The status says it is capped per fetch, not "raise the Array Limit slider". | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5449,7 +5470,7 @@ completeness critic.
 - ✅ **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 - ✅ **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 - ✅ **L20:** `[A4-STEALTH-PRIME]`
-- **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
+- ✅ **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 - **L22:** `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 - **L23:** `[W1-GROUP-DENYLIST]`
 - **L24:** `[W5-INSTEXPORT-TRUNC]`

@@ -1347,16 +1347,23 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // so an address-only check lets the very mislabel this guards against through.
         var parentAtGesture = CurrentCrumb;
         List<ArrayElementValue> elements;
+        // [A3-CONTAINER-4096-ADVICE] How many elements this view ASKED for. Fewer back than asked means the DLL capped
+        // the reply (4,096 per request today), which the Array Limit slider cannot raise -- so the status must not send
+        // the user to it. Derived from the reply, never a hardcoded 4096. The inline preview was walked at the slider's
+        // value (the drill re-reads the row first), so the slider is what it asked for.
+        int requested;
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
         {
             // All elements already inline (complete set)
             elements = field.ArrayElements;
+            requested = field.ArrayCount;
         }
         else if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
         {
             // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
             // read_array_elements is scalar-only and cannot resolve pointer names.
             elements = field.ArrayElements;
+            requested = Math.Min(ArrayLimit, field.ArrayCount);
         }
         else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
@@ -1365,10 +1372,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 parentAddr, field.Offset, field.ArrayInnerAddr,
                 field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount);
             elements = result.Elements;
+            requested = field.ArrayCount;
         }
         else
         {
             elements = field.ArrayElements ?? new();
+            requested = Math.Min(ArrayLimit, field.ArrayCount);
         }
 
         // Only add breadcrumb after successful element retrieval — and only if the
@@ -1381,10 +1390,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // Scalar arrays are re-fetched in full above; only pointer/struct arrays fall back to the
-        // capped inline preview, so compare the elements actually shown against the true count.
+        // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
+        // to the capped inline preview. Compare the elements actually shown against the true count.
         label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
-        var arrTruncStatus = ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        var arrTruncStatus = elements.Count < requested
+            ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
+            : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
 
         Breadcrumbs.Add(new BreadcrumbItem

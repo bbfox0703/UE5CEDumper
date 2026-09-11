@@ -207,6 +207,49 @@ public class ContainerTruncationTests
         Assert.Contains("Array Limit", vm.StatusText);
     }
 
+    // ---- [A3-CONTAINER-4096-ADVICE] a DLL-capped reply is not a slider-capped one ----
+    //
+    // The scalar re-fetch asks for the FULL count, and the DLL clamps every request (4,096 today). The status then
+    // advised "raise the Array Limit slider", which cannot raise that cap. Derived from the reply, never a hardcoded 4096.
+
+    private sealed class ClampingArrayStub : StubDumpService
+    {
+        public int Clamp { get; init; } = 4096;
+        public override Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr,
+            string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            int n = Math.Min(limit, Clamp);
+            return Task.FromResult(new ArrayElementsResult
+            {
+                TotalCount = limit, ReadCount = n, InnerType = innerType, ElemSize = elemSize,
+                Elements = Enumerable.Range(0, n).Select(i => new ArrayElementValue { Index = i }).ToList(),
+            });
+        }
+    }
+
+    [Fact]
+    public async Task Drill_ScalarArray_ClampedByTheDll_DoesNotBlameTheSlider()
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "Samples", TypeName = "ArrayProperty", ArrayCount = 10_000,
+            ArrayInnerType = "FloatProperty", ArrayElemSize = 4, ArrayInnerAddr = "0x7FF600001000",
+        };
+        var dump = new ClampingArrayStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Contains("showing 4,096 of 10,000", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+    }
+
     [Fact]
     public async Task Drill_FullPointerArray_NoBadge()
     {
