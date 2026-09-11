@@ -186,6 +186,12 @@ public class GroupMatchTests
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  70000,  false)]  // no int16 exceeds it
     [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Smaller, -5,     false)]  // no unsigned is below it
     [InlineData("Int16Property",  5,     GroupMatch.Predicate.Exact,   70000,  false)]  // Exact keeps the gate
+    // (review of aaf6a022) +/-Infinity lies beyond every integer range, as in Radar's verdict; NaN never.
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.PositiveInfinity, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  double.NegativeInfinity, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.NaN,              false)]
+    // ...and "-0" is an unsigned target of 0 on both sides (parity with the DLL fix beside it).
+    [InlineData("UInt16Property", 0,     GroupMatch.Predicate.Exact,   -0.0,   true)]
     public void OrderedSlot_UnencodableTarget_KeepsTheWidthWhenEveryValueSatisfies(
         string type, double value, GroupMatch.Predicate p, double target, bool satisfies)
         => Assert.Equal(satisfies, GroupMatch.LeafSatisfiesSlot(L(0x10, type, value), Abs(p, target)));

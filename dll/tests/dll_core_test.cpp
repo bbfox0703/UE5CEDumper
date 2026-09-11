@@ -938,6 +938,23 @@ int main() {
         c2[0].slotMatches = { { match(2, &leafI16) }, { match(1, &leafI32) } };
         Aura::RefineGroupCandidates(slots2, c2, descs, insts);
         check("GROUPREFINE control: Refine(Bigger 70000) still drops an Int16-only slot", c2.empty());
+
+        // (review of aaf6a022) A refine that compared an AlwaysTrue entry's ZEROED bytes (the raw
+        // overload) keeps the 3 above -- 3 > 0 -- so these two pin the verdict itself: an unsigned 0
+        // under Bigger -5, and an Int16 32767 under Smaller 70000.
+        static uint16_t zeroU16 = 0;
+        static int16_t  maxI16  = 32767;
+        const std::vector<Radar::SlotSpec> slots3 = { slot(ST::Bigger, "-5"), slot(ST::Exact, "24") };
+        std::vector<Radar::GroupCandidate> c3(1);
+        c3[0].slotMatches = { { match(0, &zeroU16) }, { match(1, &leafI32) } };
+        Aura::RefineGroupCandidates(slots3, c3, descs, insts);
+        check("GROUPREFINE ⭐: an unsigned 0 survives Refine(Bigger -5) -- the verdict, not a zeroed target",
+              c3.size() == 1);
+        const std::vector<Radar::SlotSpec> slots4 = { slot(ST::Smaller, "70000"), slot(ST::Exact, "24") };
+        std::vector<Radar::GroupCandidate> c4(1);
+        c4[0].slotMatches = { { match(2, &maxI16) }, { match(1, &leafI32) } };
+        Aura::RefineGroupCandidates(slots4, c4, descs, insts);
+        check("GROUPREFINE ⭐: an Int16 32767 survives Refine(Smaller 70000)", c4.size() == 1);
     }
 
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------

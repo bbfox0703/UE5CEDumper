@@ -150,7 +150,10 @@ public static class GroupMatch
     /// side -- Smaller above the max, Bigger below the min.</summary>
     private static bool EveryValueSatisfies(double target, string t, bool bigger)
     {
-        if (!double.IsFinite(target) || IsFloat(t)) return false;
+        // +/-Infinity lies beyond every integer range, exactly as in Radar's verdict; only NaN has no
+        // answer. (review of aaf6a022) Float leaves never get here: TargetFitsWidth accepts any finite
+        // target for them and rejects a non-finite one, which the DLL does not -- older and separate.
+        if (double.IsNaN(target) || IsFloat(t)) return false;
         if (!IntegerRange(t, out double min, out double max)) return false;
         return bigger ? target < min : target > max;
     }

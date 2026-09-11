@@ -598,6 +598,11 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
             uv = static_cast<uint64_t>(r); hasUnsigned = true;
         }
     }
+    // A '-'-prefixed value whose integer reading is NOT negative ("-0", or a negative fraction that
+    // rounds to 0) is a valid unsigned target: the sign CHARACTER suppressed the unsigned readings
+    // above, not the value. Without this every unsigned width was dropped for it, even under Exact,
+    // while the snapshot matcher kept them. (review of aaf6a022)
+    if (!hasUnsigned && hasSigned && sv >= 0) { uv = static_cast<uint64_t>(sv); hasUnsigned = true; }
 
     auto push = [&](DataType dt, const void* src, size_t n) {
         NumericTargetSet::Entry e;

@@ -3910,6 +3910,22 @@ it"*. Modelled in Python. `dll_helpers_test` asserts only UInt16/32.
     Controls: Smaller -5, Bigger 2^63, Exact -5, and the narrow boundary Smaller 32768 → Int16,
     which also kills a `>` mutant.
   - The records gap is closed: the Between residual is its own row now, `[A4-AB4-BETWEEN]` below.
+- ✅ **Review follow-up 2026-09-11** (the review of aaf6a022: 13 survived across B13 and the four
+  follow-ups, all LOW; B13's share was 4).
+  - **The sign leak survived for zero.** A '-'-prefixed target whose integer value is 0 ("-0", or a
+    negative fraction that rounds to 0) never got an unsigned reading: the sign CHARACTER suppressed
+    it, so every unsigned width was dropped, even under Exact, while the snapshot matcher kept them.
+    `BuildNumericTargets` now takes an unsigned reading from a non-negative signed one (red first:
+    3 ⭐ `AB4-SIGN`; `Exact(-1)` the control; a C# parity row).
+  - **±Infinity:** `EveryValueSatisfies` refused a non-finite target, so for `Smaller Infinity` the
+    live matcher (now reading the verdict) kept every integer leaf and the snapshot mirror kept none.
+    It now refuses only NaN (red first: two C# rows).
+    - ⬜ Older and separate, recorded here only: FLOAT leaves still differ on a non-finite target (the
+      DLL encodes it, `TargetFitsWidth` rejects it), and "1e400" is an error in the DLL (`stod` throws)
+      but +Infinity in .NET. Degenerate input, both sides.
+  - **GROUPREFINE** gained an unsigned 0 under `Bigger -5` and an Int16 32767 under `Smaller 70000`:
+    a refine comparing an AlwaysTrue entry's ZEROED bytes passed the old cases (3 > 0).
+  - 3/3 mutants killed. UI 5033/5033 (one suite run over the three second-round follow-ups together).
 
 ##### `[A4-AB4-BETWEEN]` LOW — `Between` still drops a width either bound cannot encode, in both group matchers and the single-value scan
 
@@ -4113,9 +4129,9 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983. **Review follow-up:** the queued note reads the FINAL result, so a timed-out self-heal retry is reported (red first); pins for `-2` / `-4` and an unpinned `-5`; 3/3 mutants killed; UI 5011/5011. Filed `[W3-DUNSTE-QUEUED]` and `[W3-DEBUGCAM-QUEUED]` |
 | 25 | `[P3-SNAPNUM-ENUM]` | MED | `git log --grep P3-SNAPNUM-ENUM` (batch B12) | `TryFromHex_DecodesAnEnumUnsigned` (3) + `Render_ShowsAnEnumAsItsNumber_NotRawHex` (2) red first. 2/2 mutants killed. **Review:** snapshots captured before this build keep NULL enum values for the numeric readers; recorded as a decision, not backfilled (the policy first cited does not cover it, corrected by the review of f023a35a) |
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
-| 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict |
+| 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict. **Review follow-up:** GROUPREFINE pins the verdict itself (an unsigned 0, an Int16 32767), which a zeroed-bytes refine passed |
 | 28 | `[W2-GROUPMATCH-WIDTH]` | MED | same commit as row 27 (batch B13) | 5 theory rows + the group fact red first; 3 controls. 3/3 mutants killed: the verdict, the two sides swapped, Exact admitted; UI 5003/5003 |
-| 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap |
+| 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap. **Review follow-up:** "-0" and negative fractions that round to 0 keep the unsigned widths (red first, 3 ⭐); the C# mirror accepts ±Infinity as the DLL does (red first, 2 rows); 3/3 mutants killed; UI 5033/5033 (one suite run over the three second-round follow-ups together) |
 | 30 | `[W1-PIVOT-SESSION]` | MED | `git log --grep W1-PIVOT-SESSION` (batch B14) | 3 red first (no session, a previous launch, disconnect); 2 controls (the current launch, DataTable rows under an old pick). `check_session_gate` registered, 20/20 gated. 7/7 mutants killed, the two AXAML ones through the registered gate; UI 5016/5016 |
 | 31 | `[W1-SPC-JOINMODE]` | MED | `git log --grep W1-SPC-JOINMODE` (batch B15) | the source pin red first (the wiring is in `MainWindowViewModel`, which no test constructs); 4 behaviour tests whose red is the mutation check. 6/6 mutants killed; UI 5021/5021 |
 | 32 | `[W1-DISCOVER-ARRAY]` | MED | `git log --grep W1-DISCOVER-ARRAY` (batch B16) | "Use →" on an array element and the scalar "Ghost" prop red first; the two array refusals take their red from the mutation check. 7/7 (one first tried in a form that did not compile; its compiling form went red) mutants killed across both rows; UI 5026/5026 |

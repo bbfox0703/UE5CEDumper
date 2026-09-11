@@ -1799,6 +1799,26 @@ static void Test_ValueScan_BuildNumericTargets() {
         Radar::NumericTargetSet exNeg;
         Radar::BuildNumericTargets(DT::NumericNoByte, "-5", exNeg);
         EXPECT("AB4-U64 control: Exact(-5) still has no UInt64", exNeg.FindEntry(DT::UInt64) == nullptr);
+
+        // (review of aaf6a022) A '-'-prefixed target whose integer value is 0 ("-0", or a negative
+        // fraction that rounds to 0) never got an unsigned reading: the sign CHARACTER suppressed the
+        // unsigned parse, so every unsigned width was dropped, even under Exact, while the snapshot
+        // matcher kept them.
+        Radar::NumericTargetSet mz;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-0", mz);
+        EXPECT("AB4-SIGN ⭐ Exact(-0) has an encoded UInt16 target",
+               mz.FindEntry(DT::UInt16) && mz.FindEntry(DT::UInt16)->fit == Fit::Encoded);
+        uint16_t zero16 = 0;
+        EXPECT("AB4-SIGN ⭐ predicate: a UInt16 holding 0 equals -0",
+               Radar::ComparePredicate(DT::UInt16, ST::Exact,
+                                       reinterpret_cast<const uint8_t*>(&zero16), mz.FindEntry(DT::UInt16)));
+        Radar::NumericTargetSet mzf;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-0.3", mzf, Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4-SIGN ⭐ Bigger(-0.3) rounds to 0 and keeps UInt32 as an encoded target",
+               mzf.FindEntry(DT::UInt32) && mzf.FindEntry(DT::UInt32)->fit == Fit::Encoded);
+        Radar::NumericTargetSet m1;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-1", m1);
+        EXPECT("AB4-SIGN control: Exact(-1) still has no UInt16", m1.FindEntry(DT::UInt16) == nullptr);
     }
 
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
