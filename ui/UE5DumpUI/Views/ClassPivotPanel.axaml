@@ -149,10 +149,14 @@
 
         <Button Content="{StaticResource str.Pivot.Run}" Command="{Binding RunPivotCommand}"
                 IsEnabled="{Binding CanRunPivot}" Classes="accent" Padding="12,4" Margin="0,0,8,0"/>
+        <!-- [W1-PIVOT-SESSION] Every row handoff is gated on the game session, as Snapshot Diff and SPC
+             gate theirs: a previous launch's address means nothing in this one. -->
         <Button Content="{StaticResource str.Pivot.OpenWalker}" Command="{Binding OpenInLiveWalkerCommand}"
-                CommandParameter="{Binding SelectedResult}" Padding="8,4" Margin="0,0,8,0"/>
+                CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanUseResultRowActions}"
+                Padding="8,4" Margin="0,0,8,0"/>
         <Button Content="{StaticResource str.Pivot.CopyAddr}" Command="{Binding CopyAddressCommand}"
-                CommandParameter="{Binding SelectedResult}" Padding="8,4"/>
+                CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanUseResultRowActions}"
+                Padding="8,4"/>
         <!-- Locate the selected group's representative object in the world/engine graph. -->
         <Button Content="{StaticResource str.Pivot.LocateGWorld}" Command="{Binding LocateResultInGWorldCommand}"
                 CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanLocateResultInGWorld}"

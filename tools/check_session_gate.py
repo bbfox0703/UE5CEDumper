@@ -2,10 +2,9 @@
 
     py tools/check_session_gate.py [--list] [--selftest]
 
-⛔ STATUS: A FINDING-PHASE DETECTOR, DELIBERATELY NOT REGISTERED IN check_all.py. It is red by design
-today: Class Pivot's four row handoffs are ungated, which is `[W1-PIVOT-SESSION]`. The blank sweep
-is in its record-don't-fix phase, so they are not repaired here; the detector is registered in the
-SAME commit that gates them, during the fix pass.
+✅ STATUS: REGISTERED in check_all.py (fix pass B14, 2026-09-11), in the same commit that gated Class
+Pivot's four row handoffs (`[W1-PIVOT-SESSION]`). Until then it was a finding-phase detector, red by
+design and deliberately left out of the gate run.
 
 WHAT IT REFUSES. In a ViewModel class that reads STORED snapshots (it references `SnapshotMeta` /
 `ISnapshotStore`, directly or through a helper type), a command that hands an ADDRESS to the live game -- `NavigateToInstance` /
@@ -44,7 +43,8 @@ detector, and all three were found the same way: by checking the run against the
 by row, never by its total -- two of the three left the headline number looking right.
 
 MEASURED POPULATION (2026-09-10): Snapshot Diff, Snapshot Group, SPC single and SPC Group -- gated;
-Class Pivot -- 4 ungated handoffs (recorded); Detect Player Stats -- class-name payload, not counted.
+Class Pivot -- 4 ungated handoffs (recorded; gated 2026-09-11 through `CanUseResultRowActions`);
+Detect Player Stats -- class-name payload, not counted.
 Live Walker bookmarks are the other persisted-address family and are OUT of this predicate's scope:
 they re-resolve through the GWorld spine and check the saved class name before calling a restore
 "loaded", which is an identity check rather than a session gate.

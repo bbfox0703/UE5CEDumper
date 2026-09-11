@@ -66,6 +66,13 @@ public partial class ClassPivotViewModel : ViewModelBase
     private readonly IPlatformService? _platform;
     private readonly IDumpService? _dump;
     private EngineState? _engineState;
+    // [W1-PIVOT-SESSION] Live game session id (PeHash-CreationTime), kept exactly as Snapshot and SPC
+    // keep theirs. A result row's ObjAddr is an address in the launch that captured it.
+    private string _currentSessionId = "";
+    // The launch the CURRENT results belong to ("" = none). Stamped when the results are set, not read
+    // from SelectedSnapshot: a DataTable run walks the LIVE process whatever the snapshot picker shows,
+    // and the picker can move after a run.
+    private string _resultsSessionId = "";
     private readonly List<PivotClassInfo> _allClasses = new();
     /// <summary>Rows of the selected DataTable, cached so Run projects without a
     /// second pipe round-trip (Phase C4).</summary>
@@ -161,15 +168,27 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// reaches engine-layer objects the GWorld graph can't.</summary>
     public event Action<string>? LocateInGameEngine;
 
-    /// <summary>A result row is selected, so its representative object can be located.</summary>
-    public bool CanLocateResult => SelectedResult != null;
+    /// <summary>[W1-PIVOT-SESSION] A result row is selected AND the results belong to the CURRENT live
+    /// session, so the row's ObjAddr is still an address in the running game. Gates all four row
+    /// handoffs (Open in Live Walker, Copy Address, both Locates), as Snapshot Diff and SPC gate theirs.
+    /// Class Pivot shipped before that gate and never got it: right after a reconnect its DEFAULT
+    /// snapshot is a previous launch's, and the handoffs gave the running game a dead process's address.</summary>
+    public bool CanUseResultRowActions =>
+        SelectedResult != null
+        && !string.IsNullOrEmpty(_currentSessionId)
+        && _resultsSessionId == _currentSessionId;
+    /// <summary>The selected row can be located: <see cref="CanUseResultRowActions"/>.</summary>
+    public bool CanLocateResult => CanUseResultRowActions;
     /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
     /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
     /// flag disabled this button on games where GWorld WAS resolved (audit #5 AE10).</summary>
-    public bool CanLocateResultInGWorld => SelectedResult != null;
+    public bool CanLocateResultInGWorld => CanUseResultRowActions;
 
-    partial void OnSelectedResultChanged(PivotResultRow? value)
+    partial void OnSelectedResultChanged(PivotResultRow? value) => RaiseResultRowActionGates();
+
+    private void RaiseResultRowActionGates()
     {
+        OnPropertyChanged(nameof(CanUseResultRowActions));
         OnPropertyChanged(nameof(CanLocateResult));
         OnPropertyChanged(nameof(CanLocateResultInGWorld));
     }
@@ -200,6 +219,11 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// fire-and-forget chain deterministically; the live UI ignores it.</summary>
     public Task? PendingLoad { get; private set; }
 
+    /// <summary>The snapshot-list refresh <see cref="SetEngineState"/> kicked off. A test seam only,
+    /// exactly as in SnapshotViewModel: a test that awaited a SECOND refresh instead ran two rebuilds
+    /// of the same collection concurrently.</summary>
+    public Task? PendingRefresh { get; private set; }
+
     /// <summary>Per-session remembered class-filter keywords (LRU) surfaced as the
     /// class-filter box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.</summary>
     private readonly KeywordSearchMemory _classFilterMemory;
@@ -224,13 +248,15 @@ public partial class ClassPivotViewModel : ViewModelBase
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
+        _currentSessionId = state.GameSessionId;   // PeHash-CreationTime; matches capture-time GameSessionId
+        RaiseResultRowActionGates();
         _store.SetActiveGame(state.PeHash);
         LoadDenylistFromStore();
         // A new connection invalidates any DataTable list/rows from a prior game.
         DataTables.Clear();
         _dataTable = null;
         SelectedDataTable = null;
-        _ = RefreshAsync();
+        PendingRefresh = RefreshAsync();
         if (IsDataTableSource) PendingLoad = RefreshDataTablesAsync();
     }
 
@@ -243,6 +269,9 @@ public partial class ClassPivotViewModel : ViewModelBase
         DataTables.Clear();
         _dataTable = null;
         SelectedDataTable = null;   // handler early-returns on null (no pipe call)
+        // [W1-PIVOT-SESSION] No live session: the row handoffs close until the next connect.
+        _currentSessionId = "";
+        RaiseResultRowActionGates();
     }
 
     // --- N1: Pivot-scope class denylist (right-click "Hide this class") ---
@@ -958,7 +987,11 @@ public partial class ClassPivotViewModel : ViewModelBase
         StatusText = "Running pivot…";
         SelectedResult = null;   // detach before clearing the bound results grid
         _allResults.Clear();
+        _resultsSessionId = "";
         Results.Clear();
+        // [W1-PIVOT-SESSION] The launch this run's addresses belong to, taken BEFORE the first await:
+        // a DataTable run walks the live process; a snapshot run reads the snapshot's launch.
+        string runSession = IsDataTableSource ? _currentSessionId : (SelectedSnapshot?.GameSessionId ?? "");
         try
         {
             if (IsDataTableSource)
@@ -966,7 +999,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // Zero-config: RowName is the key, every row its own group.
                 var valueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList();
                 var res = DataTablePivotEngine.Build(_dataTable!, valueFields);
-                SetResults(res.Rows);
+                SetResults(res.Rows, runSession);
                 StatusText = $"{res.GroupCount:N0} rows · key = RowName · {_dataTable!.RowStructName}";
                 return;
             }
@@ -982,7 +1015,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                     ValueProps = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
                 };
                 var arrRes = await Task.Run(() => _store.PivotArrayAsync(aq, ct), ct);
-                SetResults(arrRes.Rows);
+                SetResults(arrRes.Rows, runSession);
                 var arrTrunc = arrRes.Truncated ? $" (capped at {aq.MaxGroups:N0})" : "";
                 string keyName = string.IsNullOrEmpty(SelectedArrayField.InnerKeyName)
                     ? "elem index" : SelectedArrayField.InnerKeyName;
@@ -1000,7 +1033,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
             };
             var snapRes = await Task.Run(() => _store.PivotAsync(query, ct), ct);
-            SetResults(snapRes.Rows);
+            SetResults(snapRes.Rows, runSession);
 
             var snapTrunc = snapRes.Truncated ? $" (capped at {query.MaxGroups:N0})" : "";
             var keyDesc = IsFieldKeyMode ? $"key={string.Join(" · ", query.EffectiveKeyFields)}" : "identity";
@@ -1144,12 +1177,15 @@ public partial class ClassPivotViewModel : ViewModelBase
     // Full (unfiltered) result set; Results is the filtered view bound to the grid.
     private readonly List<PivotResultRow> _allResults = new();
 
-    // Store the pivot output + apply the current result filter into the bound grid.
-    private void SetResults(IEnumerable<PivotResultRow> rows)
+    // Store the pivot output + apply the current result filter into the bound grid. `sessionId` is the
+    // launch the rows' addresses belong to ([W1-PIVOT-SESSION]).
+    private void SetResults(IEnumerable<PivotResultRow> rows, string sessionId)
     {
         _allResults.Clear();
         _allResults.AddRange(rows);
+        _resultsSessionId = sessionId;
         ApplyResultFilter();
+        RaiseResultRowActionGates();
     }
 
     // Filter the results grid by space-separated AND terms over key + values (each term

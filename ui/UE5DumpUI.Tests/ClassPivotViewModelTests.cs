@@ -672,7 +672,7 @@ public class ClassPivotViewModelTests : IDisposable
     }
 
     [Fact]
-    public void LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
+    public async Task LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
     {
         // audit #5 AE10 — this used to assert the command was gated off when
         // IsGWorldAvailable was false. That flag is EngineState.HasGWorld, i.e. "the
@@ -680,19 +680,131 @@ public class ClassPivotViewModelTests : IDisposable
         // exists": the DLL has world-recovery fallbacks that work when the scan did
         // not, so the gate disabled the button on games where locate worked. The DLL
         // answers authoritatively; the client must not pre-refuse.
-        var vm = NewVm();
+        //
+        // [W1-PIVOT-SESSION] The selection is no longer the ONLY precondition: the results must also
+        // belong to the running launch (the RowHandoffs_* tests below). This test keeps the AE10
+        // half, under a same-session connect whose EngineState.HasGWorld is false.
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
         string? hit = null;
         vm.LocateInGWorld += a => hit = a;
-        var row = new PivotResultRow { ObjAddr = "0xABC", KeyValue = "K" };
-        vm.SelectedResult = row;
+        var row = vm.SelectedResult!;
+        Assert.False(string.IsNullOrEmpty(row.ObjAddr));
 
-        Assert.True(vm.CanLocateResultInGWorld);   // selection is the only precondition
+        Assert.True(vm.CanLocateResultInGWorld);
         vm.LocateResultInGWorldCommand.Execute(row);
-        Assert.Equal("0xABC", hit);
+        Assert.Equal(row.ObjAddr, hit);
 
         hit = null;
         vm.LocateResultInGWorldCommand.Execute(row);
-        Assert.Equal("0xABC", hit);                // and repeatable
+        Assert.Equal(row.ObjAddr, hit);            // and repeatable
+    }
+
+    // ---- [W1-PIVOT-SESSION] the row handoffs are gated on the game session ----
+    //
+    // A result row's ObjAddr is an address in the launch that captured its snapshot. Class Pivot
+    // shipped (e554639c) before the session gate (534314f4) and never got it, and right after a
+    // reconnect its DEFAULT selection is a previous launch's snapshot -- so Open in Live Walker,
+    // Copy Address and both Locates handed a dead process's address to the running game.
+
+    private static EngineState Live(string creation) =>
+        new() { PeHash = "G", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = creation };
+
+    private async Task SeedSessionAsync(string session)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(
+            new SnapshotMeta { Label = session, PeHash = "G", GameSessionId = session }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            Obj(1, "BP_Item_C", "/G.M:L.Item_0", ("ItemID", 1), ("Quantity", 10)),
+            Obj(2, "BP_Item_C", "/G.M:L.Item_1", ("ItemID", 2), ("Quantity", 20)),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 2, 4, ct);
+    }
+
+    /// <summary>Connect to a launch, pivot the default (newest) snapshot and select its first row.</summary>
+    private async Task<ClassPivotViewModel> PivotAfterConnectAsync(string liveCreation)
+    {
+        var vm = NewVm();
+        vm.SetEngineState(Live(liveCreation));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "BP_Item_C");
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[0];
+        return vm;
+    }
+
+    [Fact]
+    public void RowHandoffs_AreDisabled_WithNoLiveSession()
+    {
+        // Never connected, or disconnected: no row address is known to be live.
+        var vm = NewVm();
+        vm.SelectedResult = new PivotResultRow { ObjAddr = "0xABC", KeyValue = "K" };
+
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_AreDisabled_ForAPreviousLaunchSnapshot()
+    {
+        await SeedSessionAsync("G-OLD");
+        var vm = await PivotAfterConnectAsync("NEW");
+
+        Assert.Equal("G-OLD", vm.SelectedSnapshot!.GameSessionId);   // the post-connect DEFAULT is the old launch
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_AreEnabled_ForTheCurrentLaunch()
+    {
+        // The control, green before and after.
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
+
+        Assert.True(vm.CanLocateResult);
+        Assert.True(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_Close_OnDisconnect()
+    {
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
+        Assert.True(vm.CanLocateResult);
+
+        vm.ClearOnDisconnect();
+
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_OnDataTableRows_FollowTheLiveWalk_NotTheSnapshotPicker()
+    {
+        // A DataTable run walks the LIVE process, so its rows belong to the running launch even while
+        // the snapshot picker still shows an old one. A gate keyed on the picker would disable them;
+        // the gate follows the launch the RESULTS came from. Green before and after.
+        await SeedSessionAsync("G-OLD");
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
+        vm.SetEngineState(Live("NEW"));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+        await vm.PendingLoad!;   // and any field load the class load started
+        Assert.Equal("G-OLD", vm.SelectedSnapshot!.GameSessionId);
+
+        vm.SelectedSource = "DataTable";
+        await vm.PendingLoad!;
+        vm.SelectedDataTable = vm.DataTables[0];
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[0];
+
+        Assert.True(vm.CanLocateResult);
     }
 
     [Fact]

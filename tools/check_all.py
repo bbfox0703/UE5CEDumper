@@ -206,6 +206,13 @@ GATES = [
      "snapshots that way. Drop WhenWritingDefault from the context (the spec rule), or mark a "
      "property that can never take default(T) [JsonIgnore(Condition = JsonIgnoreCondition.Never)]. "
      "Run 'py tools/check_json_default_ignore.py --list' or '--selftest'", False),
+
+    ("check_session_gate",
+     ["tools/check_session_gate.py"],
+     "a command hands a STORED snapshot's address (Live Walker / Locate / Copy) to the running game "
+     "with nothing enabling it that reaches the game session (GameSessionId / _currentSessionId), so a "
+     "previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do "
+     "([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'", False),
 ]
 
 

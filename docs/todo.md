@@ -514,7 +514,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    valid *"while the object lives"* — using it across launches joins on GObjects slot number.
    ⚠ MED not HIGH: the mode IS visible (combo, status line, per-pick `SessionShort`).
 
-4. ⬜ **`[W1-PIVOT-SESSION]` Class Pivot row handoffs have no cross-session gate.**
+4. ✅ **`[W1-PIVOT-SESSION]` Class Pivot row handoffs have no cross-session gate.** (FIXED IN SOURCE 2026-09-11, batch B14)
    `ClassPivotViewModel.cs:165/169` are `SelectedResult != null`; `_engineState` is assigned at
    `:226` and **read nowhere**, while both siblings compare `state.GameSessionId`. Open in Live
    Walker / Copy Address / the two Locates hand a dead process's `obj_addr` to the running game;
@@ -523,6 +523,24 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    default selection IS a previous-launch snapshot. **Historical omission, not a decision** —
    `534314f4` (2026-06-16) added the gate to exactly four files, all Snapshot/SPC, and Class Pivot
    had shipped in `e554639c` (2026-06-02).
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B14, with the P6 detector registered in the same commit).
+   - `CanUseResultRowActions` requires a selected row AND results that belong to the live session
+     (`_currentSessionId`: set in `SetEngineState`, cleared in `ClearOnDisconnect`), the shape
+     Snapshot Diff and SPC use. `CanLocateResult` / `CanLocateResultInGWorld` read it, and Open in
+     Live Walker and Copy Address now bind it as `IsEnabled`.
+   - The session is STAMPED on the results when they are set, not read from the picker. A DataTable
+     run walks the live process whatever the snapshot picker shows, and the picker can move after
+     a run.
+   - `tools/check_session_gate.py` is registered in `check_all.py`, and the tree is 20/20 gated.
+   - **Tests, red first:** `RowHandoffs_AreDisabled_WithNoLiveSession`,
+     `RowHandoffs_AreDisabled_ForAPreviousLaunchSnapshot` (which also pins that the post-connect
+     DEFAULT is the old launch) and `RowHandoffs_Close_OnDisconnect`.
+     - Controls: the current launch, and DataTable rows under an old snapshot pick. The DataTable
+       one is what kills a gate keyed on the picker.
+     - The AE10 test keeps its point (the client GWorld flag plays no part) under a same-session
+       connect; "selection is the only precondition" is exactly what this row ends.
+     - `SetEngineState` now keeps its refresh task (`PendingRefresh`), a behaviour-neutral test seam
+       as in SnapshotViewModel.
 
 5. ⬜ **`[W1-DISCOVER-ARRAY]` "Use →" on a struct-array discovery candidate ticks nothing.**
    `ClassPivotViewModel.cs:1122`. `BuildDiscoverSql` puts `array_field, elem_index` in the
@@ -1422,7 +1440,7 @@ to grow. Build the gates first and Track B shrinks.
 | **P3** | **fix landed on 1 of N transports** — a contract stated at a function, honoured by one of three callers | every function with an optional out-param → do `Fern` / `Mimic` / `Frieren` all pass it? | ✅ **SWEPT 2026-09-10** — 112/112 ruled, **6 confirmed (2 MED · 4 LOW)**, 0 refuted; see `[PATTERN-P3-2026-09-10]` below. Tool: `tools/verify/pattern_p3.py`, five axes, control 7/7. ⛔ *This row first said "new gate" — wrong: twins legitimately differ (a pipe-only feature, an exporter that does not need a field), so P3's legitimate population is NOT empty and it is a SWEEP, like P1. It was also widened from "transports" to "twins": the sweep found the same shape between code-path arms, exporter siblings and callers of one function.* |
 | **P4** | **`init`-only member absent from a copy path** | types with a `Copy*From` method → members it never assigns | ✅ **SWEPT 2026-09-10** — 44/44 ruled, **4 confirmed (1 HIGH · 2 MED · 1 LOW)**, 0 refuted; see `[PATTERN-P4-P7-P8-2026-09-10]` below. All of `LiveFieldValue`'s own `init` members; it has the only copy path that has any (`SpcQueryViewModel.CopyGroupCellsFrom` has none). ⚠ The population missed 10 of 54 members; the one that matters (`StructDataAddr`) was found by reading. |
 | **P5** | **cap conflated with deadline/cancel** | `deadlineHit =` assignments and `>= maxResults` sites | ✅ **SWEPT 2026-09-10** — 86/86 ruled (35 DLL/pipe · 29 UI · 22 UI supplement), **2 confirmed, both LOW**, 1 refuted, 1 overridden to recorded; see `[PATTERN-P5-2026-09-10]` below. Tool: `tools/verify/pattern_p5.py`, control 6/6; its UI axis first missed 36 flag reads, now fixed. ⚠ *This cell first said "partly covered by `docs/todo.md:1314`", a line that never held a P5 row. The value scan's cap-in-`deadline_hit` is filed nowhere, and **needs no filing**: its one consumer names the cap and gives the cap's remedy.* |
-| **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | 🟡 **DETECTOR BUILT 2026-09-10, NOT REGISTERED** — `tools/check_session_gate.py`, selftest 5/5; 20 snapshot-address handoffs, 16 gated, 4 ungated (Class Pivot, recorded). Registered in the fix-pass commit that gates them; see `[PATTERN-P6-2026-09-10]` below. |
+| **P6** | **control outlives its backing session** | panels that hand an address to the live game vs those comparing `GameSessionId` | ✅ **REGISTERED 2026-09-11 (fix pass B14)** — `tools/check_session_gate.py`, selftest 5/5; 20 snapshot-address handoffs, all 20 gated since B14 gated Class Pivot's 4 in the same commit. See `[PATTERN-P6-2026-09-10]` below. |
 | **P7** | **warning only on the manual path** | a status set in `X()` and not in its `X*QuietAsync` sibling | ✅ **SWEPT 2026-09-10** — 5/5 ruled, **0 new**: the tree-wide residue is the one recorded instance (Teleport's pose poll). Every other auto path runs its manual path's own code. See `[PATTERN-P4-P7-P8-2026-09-10]` below. |
 | **P8** | **repaint never fires** — no `[ObservableProperty]`, or assigned *after* the property whose `[NotifyPropertyChangedFor]` was to repaint it | AST over the VMs | ✅ **SWEPT 2026-09-10** — 9/9 ruled, **1 confirmed (LOW)**, 0 refuted, plus `[W1-CONTAINER-STALE]` widened to `ValueTooltip`; see `[PATTERN-P4-P7-P8-2026-09-10]` below. Tool: `tools/verify/pattern_p8.py`; 3 of its 9 rows were name-collision artifacts (limit recorded in its header). |
 
@@ -1827,6 +1845,8 @@ insert with CRLF, never mix.
 `tools/check_session_gate.py`. **A detector written as a gate and deliberately NOT registered in
 `check_all.py`** — red by design until the fix pass gates Class Pivot, and registered in that same
 commit.
+✅ **Registered 2026-09-11 (batch B14)**, in the commit that gated Class Pivot. The table below is the
+measurement at registration time; Class Pivot's row is now gated too.
 
 | panel | address handoffs | verdict |
 |---|---:|---|
@@ -1834,7 +1854,7 @@ commit.
 | Snapshot Group | 4 | ✅ gated — **in XAML only**; the RelayCommands carry no `CanExecute` |
 | SPC single | 4 | ✅ gated — `CanUseResultRowActions` → `_currentSessionId` |
 | SPC Group | 4 | ✅ gated — **in XAML only**, through the shared `CanUseResultRowActions` |
-| **Class Pivot** | **4** | ⛔ **ungated** — `[W1-PIVOT-SESSION]`, recorded. Open-in-Live-Walker and Copy Address have no `IsEnabled` at all; the two Locates are gated on `SelectedResult != null`, which never reaches the session |
+| **Class Pivot** | **4** | ✅ **gated since B14** — `CanUseResultRowActions` → `_currentSessionId`. (Was ⛔ ungated, `[W1-PIVOT-SESSION]`: Open-in-Live-Walker and Copy Address had no `IsEnabled` at all, and the two Locates were gated on `SelectedResult != null`, which never reaches the session.) |
 | Detect Player Stats | — | not counted: `LocateInGWorld(row.ClassName)` passes a **class name**, valid in every launch (confirmed at the invoke sites, not taken from the comment) |
 | Live Walker bookmarks | — | out of scope: a restore re-resolves through the GWorld spine and checks the saved class name before saying "loaded" — an identity check, not a session gate |
 
@@ -4056,6 +4076,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 27 | `[W2-ORDEN-FINDENTRY]` | MED | `git log --grep W2-ORDEN-FINDENTRY` (batch B13) | `Test_Orden_OrderedVerdictWidths` 3 ⭐ + dll_core_test `GROUPREFINE` 2 ⭐ red first; the Bigger 70000 and Between controls green both ways. 3/3 mutants killed: Orden's verdict, its Between guard, the refine's verdict |
 | 28 | `[W2-GROUPMATCH-WIDTH]` | MED | same commit as row 27 (batch B13) | 5 theory rows + the group fact red first; 3 controls. 3/3 mutants killed: the verdict, the two sides swapped, Exact admitted; UI 5003/5003 |
 | 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap |
+| 30 | `[W1-PIVOT-SESSION]` | MED | `git log --grep W1-PIVOT-SESSION` (batch B14) | 3 red first (no session, a previous launch, disconnect); 2 controls (the current launch, DataTable rows under an old pick). `check_session_gate` registered, 20/20 gated. 7/7 mutants killed, the two AXAML ones through the registered gate; UI 5016/5016 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4120,6 +4141,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Live Group Scan:** a two-slot group, `Bigger -5` plus the value of a known int on the same actor, finds it. The Bigger slot's **All fields** list includes the unsigned fields, and a Refine with the same values keeps the actor.
 2. **Snapshot Group Match:** the same group over a NumericAll snapshot finds the same actor.
 3. **Single-value scan:** `Bigger -5` over NumericNoByte now returns UInt64Property fields as well as UInt16/UInt32. | a game + UI |
+| L18 | `[W1-PIVOT-SESSION]` | With snapshots captured in an EARLIER launch of the game:
+1. **Reconnect:** restart the game, connect, open Class Pivot and run a pivot on the default snapshot (the old one). Open in Live Walker, Copy Address and both Locates are greyed out.
+2. **Current launch:** capture a new snapshot and pivot it. The four buttons are enabled, and Open in Live Walker lands on the object.
+3. **Disconnect:** close the game. The buttons grey out. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4155,7 +4180,7 @@ completeness critic.
 | ✅ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
 | ✅ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
 | ✅ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
-| ⬜ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
+| ✅ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
 | ⬜ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
 | ⬜ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
 | ⬜ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
