@@ -7713,6 +7713,10 @@ ValueScanResult ScanForValue(
             // Vector scans only: the source width the refine path can no longer
             // re-derive (fieldType is the bare "StructProperty").
             d.vectorWidth   = sf.vectorWidth;
+            // [A2-TOPTIONAL-REFINE] The V1c optional gate, carried so the REFINE path can apply the SAME one:
+            // it re-reads by absolute address, and a reset optional's bytes are still its old value.
+            d.optionalFlagOffset = sf.optionalFlagOffset;
+            d.optionalSentinel   = static_cast<int8_t>(sf.optionalSentinel);
 
             DefKey dk{ cls, sf.offset };
             auto dit = definingNameCache.find(dk);
@@ -8568,6 +8572,26 @@ ValueScanStats RefineCandidates(
                     c.containerNum = hs.num;   // keep the stamp current for the NEXT refine
                     break;
             }
+        }
+        // [A2-TOPTIONAL-REFINE] The gate ScanForValue's V1c applies, applied again here -- a TOptional's bytes
+        // are only a value while it is SET, and UE's MarkUnset clears bIsSet while zeroing nothing. Without this
+        // an Unchanged (or Exact-the-stale-value) refine kept a reset optional forever. Every non-optional
+        // candidate has -1 / 0 here and falls straight through; V1c emits only Direct anchors, so c.addr IS the
+        // value address, and a group session leaves these at their defaults (audit #5 A12).
+        if (desc.optionalFlagOffset >= 0) {
+            uint8_t isSet = 0;
+            if (!Macht::ReadSafe(c.addr + static_cast<uintptr_t>(desc.optionalFlagOffset), isSet)
+                || isSet == 0)
+                continue;
+        }
+        if (desc.optionalSentinel != 0) {
+            const auto sen = static_cast<Ubel::OptionalUnsetSentinel>(desc.optionalSentinel);
+            const int32_t need = Ubel::SentinelBytesNeeded(sen);   // never a flat 16 [A2-SENTINEL-OVERREAD]
+            uint8_t sbuf[16] = {};
+            if (need <= 0
+                || !Macht::ReadBytesSafe(c.addr, sbuf, static_cast<size_t>(need))
+                || Ubel::IntrusiveOptionalIsUnset(sen, sbuf))
+                continue;
         }
         if (isMulti) {
             // Re-resolve this candidate's own width from its stored

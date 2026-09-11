@@ -1914,6 +1914,10 @@ public class InvokeScriptTests
         // [A2-SENTINEL-OVERREAD] The gate reads what the sentinel needs, capped by the field itself -- a fixed 16
         // bytes ran past an 8-byte intrusive TOptional<FName> and a page-edge failure dropped a SET optional.
         Assert.Contains("Ubel::SentinelBytesNeeded(sf.optionalSentinel)", aura);
+        // [A2-TOPTIONAL-REFINE] The gate is only half a fix if it stops at the FIRST scan: the descriptor must carry
+        // it, because refine is handed nothing else about the field. dll_core_test's REFINEOPT block drives the gate.
+        Assert.Contains("d.optionalFlagOffset = sf.optionalFlagOffset;", aura);
+        Assert.Contains("d.optionalSentinel   = static_cast<int8_t>(sf.optionalSentinel);", aura);
         Assert.DoesNotContain("readBody(sf.offset, v16, sizeof(v16))", aura);
         Assert.DoesNotContain("OptionalFlagOffset(", aura);
         Assert.DoesNotContain("OptionalFlagOffset(", DllSource("Radar.h"));   // the loose rule is gone, not bypassed

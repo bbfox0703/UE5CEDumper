@@ -695,6 +695,13 @@ struct FieldDescriptor {
     // (The multi-numeric family re-resolves its width from fieldType, which is
     // a concrete property-type name there; vectors have no such equivalent.)
     int32_t     vectorWidth = 0;
+    // [A2-TOPTIONAL-REFINE] V1c TOptional leaves only, and the reason they live HERE is the one vectorWidth
+    // gives above: refine is handed nothing but the candidate and this descriptor, so a fact the FIRST scan
+    // used must travel or the second scan cannot apply it. -1 / 0 = not an optional, which is every other
+    // field. The sentinel is `Ubel::OptionalUnsetSentinel` cast to its int8_t base -- Radar.h deliberately
+    // includes no project header, and the enum is int8_t-backed, so the round trip is exact.
+    int32_t     optionalFlagOffset = -1;  // bIsSet byte, relative to the value address; -1 = none
+    int8_t      optionalSentinel   = 0;   // 0 = OptionalUnsetSentinel::None
 };
 
 // Per-owning-object metadata. One entry per distinct UObject that owns at

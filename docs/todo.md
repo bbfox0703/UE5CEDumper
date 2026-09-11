@@ -5292,7 +5292,7 @@ narrowed it: no crash and no garbage value, only the silent miss.
   an inert helper claiming 16 for everything, and the InvokeScriptTests source pin now requires the
   gate to use it and refuses the flat `sizeof(v16)` read.
 
-##### ⬜ `[A2-TOPTIONAL-REFINE]` MED — Value Scan's REFINE re-reads a V1c optional with no gate (found 2026-09-12 by review 6)
+##### ✅ `[A2-TOPTIONAL-REFINE]` MED — Value Scan's REFINE re-reads a V1c optional with no gate (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
 
 The first scan gates a `TOptional` leaf on its `bIsSet` byte, but `RefineCandidates` re-reads each
 candidate purely by its stored absolute address — `Radar::FieldDescriptor` carries no optional member
@@ -5311,6 +5311,15 @@ did not trace; review 6 traced it end to end and it is reachable from the UI's N
   only Direct anchors, so `c.addr` IS the value address and the flag is at `c.addr + flagOffset`; a
   group session leaves the members at their defaults (audit #5 A12) and is unaffected.
 - ⛔ **Unsafe:** dropping every optional candidate at refine — a SET optional is a true hit.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L47), the safe fix above: `FieldDescriptor` carries
+  `optionalFlagOffset` + `optionalSentinel`, `ensureDescriptor` stamps them, and `RefineCandidates`
+  applies the same gate before any re-read (with `SentinelBytesNeeded`, not a flat 16 — L46).
+  - **Red first:** dll_core_test's new **REFINEOPT** block drives `RefineCandidates` over a hand-built
+    session. A reset optional and an intrusive unset one are dropped; a SET optional, an intrusive set
+    one and an ordinary leaf survive as controls. It fakes no pool — refine reads plain process memory,
+    so a static buffer is the object — and building the pools by hand is itself the point: the gate has
+    to live on the DESCRIPTOR, the only per-field thing a refine is handed.
+  - An InvokeScriptTests source pin covers the stamping in `ensureDescriptor`.
 
 ##### ⬜ `[A1-VERDICT-STALEMB]` MED — `getOffsetsVerdict` drops the AA19 stale-mailbox latch (found 2026-09-12 by review 6)
 
@@ -5473,6 +5482,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 98 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | LOW | `git log --grep A2-TOPTIONAL-STRUCT-DESCENT` (batch L40) | Red first in dll_core_test OPTLAYOUT: a reset `{ UObject* }` / `{ TArray<UObject*> }` struct optional reports neither its pointer nor its array (controls: set ones report both); an Unknown layout is not descended; the container cache entry carries `setFlagOffset` 24. An InvokeScriptTests source pin covers Find Refs' loops (each kind gated twice). 5/5 mutants killed; dll_core_test 327/327, dll_helpers_test 2746/2746; UI 5295/5295. `CollectSchemaLeaves` lead recorded |
 | 99 | `[W5-OFFSETS-MAILBOX]` | LOW | `git log --grep W5-OFFSETS-MAILBOX` (batch L45) | Red first: dll_helpers_test pins `CMD_OFFSETS_VERDICT` = 16, the contract range 5 / 1, the new init exemption and the exemption COUNT (the test enumerates the whole command space on purpose). An InvokeScriptTests source pin covers Mimic.cpp's case + handler and the Lua wrapper, which no test target compiles. 4/4 mutants killed; dll_helpers_test 2748/2748, dll_core_test 327/327; UI 5296/5296. Contract 4 → 5, MIN stays 1: additive, so every saved `.CT` stays valid |
 | 100 | `[A2-SENTINEL-OVERREAD]` | LOW | `git log --grep A2-SENTINEL-OVERREAD` (batch L46) | Review 6's first confirmed finding. Red first in dll_helpers_test's V1C block: the FString / FName / FText / None spans (16 / 4 / 8 / 0) against an inert helper that claims 16 for every sentinel; the InvokeScriptTests source pin requires `SentinelBytesNeeded` at the gate and refuses the flat `sizeof(v16)` read. 3/3 mutants killed; dll_helpers_test 2752/2752, dll_core_test 327/327; UI 5296/5296 |
+| 101 | `[A2-TOPTIONAL-REFINE]` | MED | `git log --grep A2-TOPTIONAL-REFINE` (batch L47) | Review 6's MED, and the lead L41 recorded without tracing. Red first in dll_core_test **REFINEOPT**: a reset trailing-flag optional and an intrusive unset one are dropped by an Unchanged refine; a SET optional, an intrusive set one and an ordinary leaf survive (three controls). An InvokeScriptTests source pin covers the descriptor stamping. 4/4 mutants killed; dll_core_test 332/332, dll_helpers_test 2752/2752; UI 5296/5296. The verifier's two corrections are in the row |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5760,6 +5770,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L84 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | A UE 5.x game with a `TOptional<FStruct>` holding an actor pointer or array, if one can be found (the Property Search types filter shows `OptionalProperty`). **Find Refs** to that actor while the optional is SET: one hit. Reset it in game: no hit. **Address Finder** on an element of the array inside it: found while set, not after a reset. | a 5.x game + UI |
 | L85 | `[W5-OFFSETS-MAILBOX]` | **CE:** with the DLL injected into a game whose scan log says `validated=yes`, run `getOffsetsVerdict()` in CE's Lua Engine: `true, ""`. Then on a game whose offsets fall back (or before any scan, in proxy mode): `false` plus the reason, and `probe-not-run` when nothing has probed yet. Against a contract-4 DLL the same call says `dll-too-old`, never `measured`. | CE + a game + an old DLL build |
 | L86 | `[A2-SENTINEL-OVERREAD]` | Needs a 5.5+ game with an intrusive `TOptional<FName>` as an object's LAST field, which is rare enough that the offline pins may be the whole story. If one is found: Value Search, FName, Exact the held name — the SET optional is a hit on every instance of the class, not just on those whose allocation is far from a page edge. | a 5.5+ game + UI |
+| L87 | `[A2-TOPTIONAL-REFINE]` | A game with a trailing-flag `TOptional<int32>` (UE4 or pre-5.5 shapes are the common ones): First Scan the held value, then reset the optional in game and run **Next Scan → Unchanged**. The row disappears. Control: with the optional still set, the same Next Scan keeps it. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5863,7 +5874,7 @@ completeness critic.
 - ✅ **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 - ✅ **L46:** `[A2-SENTINEL-OVERREAD]` (found 2026-09-12 by review 6)
-- **L47:** `[A2-TOPTIONAL-REFINE]` (found 2026-09-12 by review 6)
+- ✅ **L47:** `[A2-TOPTIONAL-REFINE]` (found 2026-09-12 by review 6)
 - **L48:** `[A1-VERDICT-STALEMB]` (found 2026-09-12 by review 6) (CE)
 - **L49:** `[A1-REVIEW6-PINS]` (found 2026-09-12 by review 6)
 - ✅ **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)

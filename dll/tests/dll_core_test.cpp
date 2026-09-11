@@ -2012,6 +2012,74 @@ int main() {
         DynOff::bUseFProperty       = savedFPropO;
     }
 
+    // -- REFINEOPT-2026-09-12 -- a refine applies the same TOptional gate the first scan did -------
+    //
+    // [A2-TOPTIONAL-REFINE] (adversarial review 6). The first scan skips a TOptional whose bIsSet byte is 0,
+    // but RefineCandidates re-reads every candidate by its stored ABSOLUTE address. UE's MarkUnset clears the
+    // flag and zeroes no bytes, so the value is still there: an Unchanged refine kept the row forever and the
+    // panel showed a value for a slot the engine considers empty.
+    //
+    // No pool faking here: refine reads plain process memory through Macht's SEH-guarded readers, so a static
+    // buffer IS the object. The session pools are built by hand, which is also the point -- it pins that the
+    // gate lives on the DESCRIPTOR, where a refine can still see it.
+    {
+        blk("REFINEOPT - a refine drops a TOptional that is no longer set");
+
+        static uint8_t roObj[64] = {};
+        const uintptr_t roAddr = reinterpret_cast<uintptr_t>(roObj);
+        auto putI32 = [](uint8_t* b, int off, int32_t v) { memcpy(b + off, &v, sizeof(v)); };
+
+        // One session: a direct Int32 leaf at the object's start, whose optional flag byte sits at +4.
+        std::vector<Radar::InstanceRecord>  roInst(1);
+        roInst[0].instanceAddr = roAddr;
+        roInst[0].instanceName = "Obj";
+
+        auto refineOnce = [&](int32_t flagOffset, int8_t sentinel, int32_t stored) {
+            std::vector<Radar::FieldDescriptor> descs(1);
+            descs[0].className          = "C";
+            descs[0].fieldName          = "Opt";
+            descs[0].fieldType          = "IntProperty";
+            descs[0].fieldOffset        = 0;
+            descs[0].anchor             = Radar::ValueAnchor::Direct;
+            descs[0].optionalFlagOffset = flagOffset;
+            descs[0].optionalSentinel   = sentinel;
+
+            std::vector<Radar::Candidate> cands(1);
+            cands[0].addr          = roAddr;
+            cands[0].descriptorIdx = 0;
+            cands[0].instanceIdx   = 0;
+            memcpy(cands[0].prevValue, &stored, sizeof(stored));
+
+            Aura::RefineCandidates(Radar::DataType::Int32, Radar::ScanType::Unchanged,
+                                   nullptr, nullptr, cands, descs, roInst);
+            return cands.size();
+        };
+
+        // A. Trailing-flag optional, still SET: the value is unchanged, so the row survives (control).
+        putI32(roObj, 0, 100);
+        roObj[4] = 1;
+        check("REFINEOPT control: a SET optional survives an Unchanged refine", refineOnce(4, 0, 100) == 1);
+
+        // B. The same optional after Reset(): bIsSet cleared, value bytes untouched -- the row must go.
+        roObj[4] = 0;
+        check("REFINEOPT ⭐: a reset optional is dropped by a refine, not kept on its stale value",
+              refineOnce(4, 0, 100) == 0);
+
+        // C. An INTRUSIVE optional has no flag byte. The gate is type-agnostic (it runs before the value is
+        //    read), so an FName sentinel over these bytes pins it: ComparisonIndex ~0u means unset.
+        putI32(roObj, 0, -1);
+        check("REFINEOPT ⭐: an intrusive unset optional is dropped by a refine",
+              refineOnce(-1, static_cast<int8_t>(Ubel::OptionalUnsetSentinel::FNameIndexNone), -1) == 0);
+        putI32(roObj, 0, 7);
+        check("REFINEOPT control: an intrusive SET optional survives",
+              refineOnce(-1, static_cast<int8_t>(Ubel::OptionalUnsetSentinel::FNameIndexNone), 7) == 1);
+
+        // D. An ordinary leaf carries no gate at all, and must be untouched by any of this.
+        putI32(roObj, 0, 42);
+        roObj[4] = 0;
+        check("REFINEOPT control: an ordinary leaf refines exactly as before", refineOnce(-1, 0, 42) == 1);
+    }
+
     // -- STRARRAYWALK-2026-09-11 -- WalkInstance hands a string array its elements -------------
     //
     // ⛔ POOL-FAKING, like BOOLNATIVE: the walker picks the ArrayProperty handler by `fi.TypeName` and
