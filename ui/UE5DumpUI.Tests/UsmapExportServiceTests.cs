@@ -288,6 +288,67 @@ public class UsmapExportServiceTests
         Assert.Equal(new byte[] { 28, 4 }, bytes);  // ObjectProperty writes no extra bytes
     }
 
+    // ---- [A4-USMAP-CONTAINER-ENUM] a container inner's TEnumAsByte takes the canonical enum shape too ----
+
+    [Fact]
+    public void WritePropertyType_ArrayOfTEnumAsByte_WritesTheCanonicalEnumShape()
+    {
+        // TArray<TEnumAsByte<E>> -> [ArrayProperty=8][EnumProperty=26][ByteProperty=0][E]. A bare [8][0] had a consumer
+        // read one byte per element against the FName UE 5.8 serializes for each (PropertyByte.cpp).
+        var nameTable = new UsmapExportService.NameTable();
+        nameTable.GetOrAdd("EObjectTypeQuery");
+        var field = new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = "ByteProperty", InnerEnumName = "EObjectTypeQuery",
+        };
+
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        UsmapExportService.WritePropertyType(w, field, nameTable);
+        w.Flush();
+
+        Assert.Equal(new byte[] { 8, 26, 0, 0, 0, 0, 0 }, ms.ToArray());   // enum name index 0, as int32
+    }
+
+    [Fact]
+    public void WritePropertyType_MapWithEnumKeyAndValue_WritesEachItsOwnEnum()
+    {
+        // A TEnumAsByte key and an EnumProperty value: each carries its OWN enum -- the map passed "" for both.
+        var nameTable = new UsmapExportService.NameTable();
+        nameTable.GetOrAdd("EKey");      // idx 0
+        nameTable.GetOrAdd("EValue");    // idx 1
+        var field = new FieldInfoModel
+        {
+            TypeName = "MapProperty",
+            KeyType = "ByteProperty", KeyEnumName = "EKey",
+            ValueType = "EnumProperty", ValueEnumName = "EValue",
+        };
+
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        UsmapExportService.WritePropertyType(w, field, nameTable);
+        w.Flush();
+        var bytes = ms.ToArray();
+
+        Assert.Equal((byte)UsmapExportService.EPropertyType.MapProperty, bytes[0]);
+        Assert.Equal(new byte[] { 26, 0, 0, 0, 0, 0, 26, 0, 1, 0, 0, 0 }, bytes[1..]);
+    }
+
+    [Fact]
+    public void WritePropertyType_ArrayOfPlainBytes_StaysAByteArray()
+    {
+        // The control, green before and after: no enum, no fake enum shape.
+        var nameTable = new UsmapExportService.NameTable();
+        var field = new FieldInfoModel { TypeName = "ArrayProperty", InnerType = "ByteProperty" };
+
+        using var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        UsmapExportService.WritePropertyType(w, field, nameTable);
+        w.Flush();
+
+        Assert.Equal(new byte[] { 8, 0 }, ms.ToArray());
+    }
+
     [Fact]
     public void EPropertyType_NewMembers_HaveCanonicalByteValues()
     {

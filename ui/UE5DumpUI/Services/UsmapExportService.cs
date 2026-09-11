@@ -19,10 +19,9 @@ namespace UE5DumpUI.Services;
 /// (1) Both canonical writers write an enum's REAL underlying property. This one derives it from the enum's size
 /// (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a consumer deserializes but not its signedness. The exact
 /// fix is a DLL-side underlying-type key on walk_class. [A4-USMAP-ENUM-UNDERLYING]
-/// (2) A container's TEnumAsByte inner is still written as a bare Byte, because the walker does not publish an
-/// inner's enum. For an FEnumProperty inner (written as [26]) a desync would be doubtful; but an enum-carrying byte
-/// array serializes each element BY NAME in 5.8 (PropertyArray.cpp's CanBulkSerialize, PropertyByte.cpp), so for a
-/// TEnumAsByte inner it is certain. This header called it doubtful until review 3. [A4-USMAP-CONTAINER-ENUM]</para>
+/// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
+/// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
+/// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
 /// </summary>
 public static class UsmapExportService
 {
@@ -345,19 +344,19 @@ public static class UsmapExportService
 
             case EPropertyType.ArrayProperty:
                 WriteInnerPropertyTypeFromField(w, f.InnerType, f.InnerStructType,
-                    f.InnerObjClass, f.EnumName, nameTable);
+                    f.InnerObjClass, f.InnerEnumName, nameTable);
                 break;
 
             case EPropertyType.SetProperty:
                 WriteInnerPropertyTypeFromField(w, f.ElemType, f.ElemStructType,
-                    "", "", nameTable);
+                    "", f.ElemEnumName, nameTable);
                 break;
 
             case EPropertyType.MapProperty:
                 WriteInnerPropertyTypeFromField(w, f.KeyType, f.KeyStructType,
-                    "", "", nameTable);
+                    "", f.KeyEnumName, nameTable);
                 WriteInnerPropertyTypeFromField(w, f.ValueType, f.ValueStructType,
-                    "", "", nameTable);
+                    "", f.ValueEnumName, nameTable);
                 break;
 
             case EPropertyType.OptionalProperty:
@@ -365,7 +364,7 @@ public static class UsmapExportService
                 // FOptionalProperty / CUE4Parse). The DLL fills InnerType/InnerStructType/
                 // InnerObjClass for OptionalProperty exactly as it does for ArrayProperty.
                 WriteInnerPropertyTypeFromField(w, f.InnerType, f.InnerStructType,
-                    f.InnerObjClass, f.EnumName, nameTable);
+                    f.InnerObjClass, f.InnerEnumName, nameTable);
                 break;
 
             // Simple types: no extra data needed
@@ -395,6 +394,17 @@ public static class UsmapExportService
         BinaryWriter w, string innerType, string structType, string objClass,
         string enumName, NameTable nameTable)
     {
+        // [A4-USMAP-CONTAINER-ENUM] Arm 3 for an INNER: a TEnumAsByte inner takes the canonical [26][0][enumName], as
+        // both vendored writers emit (Dumper-7 recurses into the inner; RE-UE4SS maps it to EnumProperty). UE 5.8
+        // serializes each element of such an array BY NAME, so a bare [0] misaligned every consumer.
+        if (innerType == "ByteProperty" && !string.IsNullOrEmpty(enumName))
+        {
+            w.Write((byte)EPropertyType.EnumProperty);
+            w.Write((byte)EPropertyType.ByteProperty);
+            w.Write(nameTable.IndexOf(enumName));
+            return;
+        }
+
         var propType = MapPropertyType(innerType);
         w.Write((byte)propType);
 
@@ -406,8 +416,8 @@ public static class UsmapExportService
                 break;
 
             case EPropertyType.EnumProperty:
-                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING], left as is: an inner carries no size to derive the
-                // underlying type from, and 5.8 serializes a container's enums as FName, so the desync is doubtful.
+                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING], left as is for the UNDERLYING: an inner carries no size to
+                // derive it from. The enum NAME is now the inner's own ([A4-USMAP-CONTAINER-ENUM]), not "None".
                 WriteInnerPropertyType(w, "ByteProperty");
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(enumName) ? enumName : "None"));
@@ -477,6 +487,11 @@ public static class UsmapExportService
     {
         if (!string.IsNullOrEmpty(f.StructType)) table.GetOrAdd(f.StructType);
         if (!string.IsNullOrEmpty(f.EnumName)) table.GetOrAdd(f.EnumName);
+        // [A4-USMAP-CONTAINER-ENUM] every container inner's own enum, or IndexOf would find no entry for it
+        if (!string.IsNullOrEmpty(f.InnerEnumName)) table.GetOrAdd(f.InnerEnumName);
+        if (!string.IsNullOrEmpty(f.ElemEnumName)) table.GetOrAdd(f.ElemEnumName);
+        if (!string.IsNullOrEmpty(f.KeyEnumName)) table.GetOrAdd(f.KeyEnumName);
+        if (!string.IsNullOrEmpty(f.ValueEnumName)) table.GetOrAdd(f.ValueEnumName);
         if (!string.IsNullOrEmpty(f.InnerStructType)) table.GetOrAdd(f.InnerStructType);
         if (!string.IsNullOrEmpty(f.ElemStructType)) table.GetOrAdd(f.ElemStructType);
         if (!string.IsNullOrEmpty(f.KeyStructType)) table.GetOrAdd(f.KeyStructType);

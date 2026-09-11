@@ -2227,6 +2227,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.elemType.empty())         fj["elem_type"]         = f.elemType;
                 if (!f.elemStructType.empty())   fj["elem_struct_type"]  = f.elemStructType;
                 if (!f.enumName.empty())         fj["enum_name"]         = f.enumName;
+                // [A4-USMAP-CONTAINER-ENUM] a container inner's own UEnum (additive keys)
+                if (!f.innerEnumName.empty())    fj["inner_enum"]        = f.innerEnumName;
+                if (!f.elemEnumName.empty())     fj["elem_enum"]         = f.elemEnumName;
+                if (!f.keyEnumName.empty())      fj["key_enum"]          = f.keyEnumName;
+                if (!f.valueEnumName.empty())    fj["value_enum"]        = f.valueEnumName;
                 if (f.boolFieldMask != 0)        fj["bool_mask"]         = f.boolFieldMask;
                 fields.push_back(fj);
             }

@@ -4355,7 +4355,7 @@ enum's REAL underlying property: Dumper-7 `MappingGenerator.cpp:203-208` and RE-
     header had called that desync "doubtful". It is certain, and predates B24. Filed as
     `[A4-USMAP-CONTAINER-ENUM]` (MED, batch B32), which needs a DLL change. The header is corrected.
 
-##### ⬜ `[A4-USMAP-CONTAINER-ENUM]` MED — a container's TEnumAsByte inner is exported to USMAP as a bare ByteProperty (filed 2026-09-12 by review 3)
+##### ✅ `[A4-USMAP-CONTAINER-ENUM]` MED — a container's TEnumAsByte inner is exported to USMAP as a bare ByteProperty (filed 2026-09-12 by review 3; FIXED IN SOURCE 2026-09-12)
 
 `UsmapExportService.cs` `WriteInnerPropertyTypeFromField` + `Ubel.cpp:1298-1318`. B24's Arm 3 writes a
 TEnumAsByte as the canonical `[26][0][enumName]`, but only at the top level. A `TArray` / `TSet` / `TMap` /
@@ -4375,6 +4375,30 @@ inner's type, struct and object class, never its enum: nothing named `inner_enum
 
   A UI-only fix cannot work, because the enum name is not on the wire.
 - By comparison the top-level Arm 3 is display-only: a top-level TEnumAsByte serializes as an integer.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded fix shape** (batch B32).
+  - **DLL.** `WalkClassEx` reads each container inner's own UEnum, with the same validation as the field's
+    own `enumName`: `FBYTEPROP_ENUM` for a TEnumAsByte, `FENUMPROP_ENUM` for an EnumProperty. It stores it
+    in four new `FieldInfo` fields: `innerEnumName` (Array / Optional), `elemEnumName` (Set), and
+    `keyEnumName` / `valueEnumName` (Map).
+  - Fern publishes them as `inner_enum` / `elem_enum` / `key_enum` / `value_enum`. Additive keys, and the
+    CE mailbox is untouched.
+  - **UI.**
+    - `FieldInfoModel` carries the four enum names.
+    - `WriteInnerPropertyTypeFromField` gains the Arm 3 branch, so a TEnumAsByte inner writes `[26][0][E]`.
+    - Each caller now passes the inner's OWN enum: arrays used to pass the field's always-empty
+      `EnumName`, and sets and maps passed `""`. An EnumProperty inner therefore carries its real name
+      instead of "None".
+    - `RegisterPropertyNames` registers all four names, and the band header records the fix.
+  - **Tests, red first:**
+    - a pool-faking `CONTAINERENUM` block in dll_core_test (an Array's TEnumAsByte inner, a Set's
+      EnumProperty element, a Map's TEnumAsByte key);
+    - the byte-exact USMAP shapes for an array and a map;
+    - the parse.
+
+    A plain byte array, and a Map value with no enum, are the controls. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148.
+  - ⚠ **Survivor by construction:** Fern.cpp's four keys, which no test target compiles.
+  - ⬜ **Not in this row:** the offline Dump All JSONL does not yet carry the inner enums, so a USMAP built
+    from an offline dump still lacks them.
 
 ##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
 
@@ -4687,6 +4711,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 50 | `[A3-ST1-SUPER-DRAIN]` | MED | `git log --grep A3-ST1-SUPER-DRAIN` (batch B30) | a source pin, red first: the fail-open branch goes through `Stark::CallAddressAsOwnSEH`, which holds the own-PE-call mark in an outer frame. 2/2 mutants killed; UI 5135/5135. The recorded safe fix; no contract bump |
 | 51 | `[W2-MARKER-PARENTREL]` (pipe half) | MED | `git log --grep W2-MARKER-PARENTREL` (batch B29a) | the UI, red first against inert properties: a parent-relative save (status and row), a refresh flagging a marker and the Last slot, and the parse. 5/5 mutants killed; UI 5139/5139. The mailbox half is B29b |
 | 52 | `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) | LOW + MED | `git log --grep W2-TPREL-TRANSPORTS` (batch B29b) | the CE records' flag read (a theory) and a source pin on Mimic.cpp / Frieren.cpp, red first. 4/4 mutants killed; UI 5144/5144. Contract 3 → 4, additive (MIN stays 1) |
+| 53 | `[A4-USMAP-CONTAINER-ENUM]` | MED | `git log --grep A4-USMAP-CONTAINER-ENUM` (batch B32) | dll_core_test (a fake Array / Set / Map whose inners carry a UEnum), the byte-exact USMAP shapes and the parse, red first. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4821,6 +4846,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. A contract-3 .CT still runs against the new DLL (MIN 1).
 3. A new record against an OLD DLL refuses with "update the DLL".
 4. **Control:** an on-foot save closes cleanly. | CE + a game |
+| L39 | `[A4-USMAP-CONTAINER-ENUM]` | A game with a `TArray<TEnumAsByte<E>>` UPROPERTY (e.g. `EObjectTypeQuery` arrays on collision components):
+1. Export USMAP and load it in FModel.
+2. The array's elements show enum NAMES, and the properties after it in the same object stay aligned.
+3. **Control:** a plain `TArray<uint8>` stays a byte array. | a game + UI + FModel; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4876,7 +4905,7 @@ completeness critic.
 | ✅ B29 pose parent-relative (B29a pipe + UI; B29b mailbox + C ABI) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ✅ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
-| ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
+| ✅ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
 
 **LOW-only batches, after the MEDs** (43):
 - **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`

@@ -39,6 +39,12 @@ struct FieldInfo {
     std::string elemType;        // SetProperty -> element FProperty type name
     std::string elemStructType;  // SetProperty element struct name (if StructProperty)
     std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
+    // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner's FBYTEPROP_ENUM, or an EnumProperty
+    // inner's FENUMPROP_ENUM. Each its OWN field -- enumName above is the field's own enum, never an inner's.
+    std::string innerEnumName;   // ArrayProperty / OptionalProperty inner
+    std::string elemEnumName;    // SetProperty element
+    std::string keyEnumName;     // MapProperty key
+    std::string valueEnumName;   // MapProperty value
     uint8_t     boolFieldMask = 0; // BoolProperty -> FieldMask byte (0 = not resolved)
     bool        boolNative = false; // BoolProperty -> native whole-byte layout (FieldMask 0xFF) [A3-BOOL-NATIVE-NOWRITE]
 };

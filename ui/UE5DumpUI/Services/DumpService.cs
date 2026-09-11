@@ -406,6 +406,11 @@ public sealed class DumpService : IDumpService
                     ElemType = fo["elem_type"]?.GetValue<string>() ?? "",
                     ElemStructType = fo["elem_struct_type"]?.GetValue<string>() ?? "",
                     EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    // [A4-USMAP-CONTAINER-ENUM] each container inner's own UEnum; absent from an older DLL
+                    InnerEnumName = fo["inner_enum"]?.GetValue<string>() ?? "",
+                    ElemEnumName  = fo["elem_enum"]?.GetValue<string>() ?? "",
+                    KeyEnumName   = fo["key_enum"]?.GetValue<string>() ?? "",
+                    ValueEnumName = fo["value_enum"]?.GetValue<string>() ?? "",
                     BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
                     PropertyFlags = ParseFlagsHex(fo["prop_flags"]?.GetValue<string>()),
                     ArrayDim = fo["array_dim"]?.GetValue<int>() ?? 1,

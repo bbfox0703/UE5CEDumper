@@ -851,6 +851,34 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkClassAsync_CarriesEachContainerInnersEnum()
+    {
+        // [A4-USMAP-CONTAINER-ENUM] inner_enum / elem_enum / key_enum / value_enum are new, additive wire keys.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "Items", ["type"] = "ArrayProperty", ["inner_type"] = "ByteProperty", ["inner_enum"] = "EA" },
+                new JsonObject { ["name"] = "Tags", ["type"] = "SetProperty", ["elem_type"] = "EnumProperty", ["elem_enum"] = "EB" },
+                new JsonObject
+                {
+                    ["name"] = "Lookup", ["type"] = "MapProperty",
+                    ["key_type"] = "ByteProperty", ["key_enum"] = "EC",
+                    ["value_type"] = "EnumProperty", ["value_enum"] = "ED",
+                },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("EA", model.Fields[0].InnerEnumName);
+        Assert.Equal("EB", model.Fields[1].ElemEnumName);
+        Assert.Equal("EC", model.Fields[2].KeyEnumName);
+        Assert.Equal("ED", model.Fields[2].ValueEnumName);
+    }
+
+    [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {
         _pipe.SetHandler(req =>

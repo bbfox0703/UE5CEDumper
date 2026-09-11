@@ -2349,6 +2349,91 @@ int main() {
         DynOff::bUseFProperty = savedFPropSS;
     }
 
+    // -- CONTAINERENUM-2026-09-12 -- a container inner's UEnum reaches FieldInfo -------------------------------
+    //
+    // ⛔ POOL-FAKING (own pool, last). [A4-USMAP-CONTAINER-ENUM] The walker named a container inner's type, struct and
+    // object class, never its enum -- so USMAP wrote a TArray<TEnumAsByte<E>> as a bare byte array.
+    {
+        blk("CONTAINERENUM - WalkClassEx publishes a container inner's UEnum (Array / Set / Map)");
+
+        static uint8_t ceEntry[12][0x40] = {};
+        const char* ceNames[12] = { "", "ArrayProperty", "SetProperty", "MapProperty", "ByteProperty",
+                                    "EnumProperty", "IntProperty", "Items", "Tags", "Lookup", "EMyEnum", "EOther" };
+        static uintptr_t ceChunk[13] = {};
+        for (int i = 1; i <= 11; ++i) {
+            memcpy(ceEntry[i] + 0x10, ceNames[i], strlen(ceNames[i]) + 1);
+            ceChunk[i] = reinterpret_cast<uintptr_t>(ceEntry[i]);
+        }
+        static uintptr_t ceChunks[2] = { reinterpret_cast<uintptr_t>(ceChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ceChunks), 0x10);
+
+        const bool savedFPropCE = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        static uint8_t ceFC[7][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            put32(ceFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx);
+            return reinterpret_cast<uintptr_t>(ceFC[nameIdx]);
+        };
+        static uint8_t ceEnumA[0x40] = {}, ceEnumB[0x40] = {};              // the two UEnum objects
+        put32(ceEnumA, Grimoire::OFF_UOBJECT_NAME, 10);                      // "EMyEnum"
+        put32(ceEnumB, Grimoire::OFF_UOBJECT_NAME, 11);                      // "EOther"
+
+        // Inners: a TEnumAsByte (ByteProperty + Enum), an EnumProperty (+ Enum), and a plain IntProperty.
+        static uint8_t ceByteInner[0x100] = {}, ceEnumInner[0x100] = {}, ceByteKey[0x100] = {}, ceIntVal[0x100] = {};
+        putP(ceByteInner, DynOff::FFIELD_CLASS, fclass(4));
+        putP(ceByteInner, DynOff::FBYTEPROP_ENUM, reinterpret_cast<uintptr_t>(ceEnumA));
+        putP(ceEnumInner, DynOff::FFIELD_CLASS, fclass(5));
+        putP(ceEnumInner, DynOff::FENUMPROP_ENUM, reinterpret_cast<uintptr_t>(ceEnumB));
+        putP(ceByteKey, DynOff::FFIELD_CLASS, fclass(4));
+        putP(ceByteKey, DynOff::FBYTEPROP_ENUM, reinterpret_cast<uintptr_t>(ceEnumA));
+        putP(ceIntVal, DynOff::FFIELD_CLASS, fclass(6));
+
+        // The three containers, chained through FFIELD_NEXT.
+        static uint8_t ceArr[0x100] = {}, ceSet[0x100] = {}, ceMap[0x100] = {};
+        auto prop = [&](uint8_t* p, int fcIdx, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fclass(fcIdx));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(next));
+        };
+        prop(ceArr, 1, 7, 0x40, 16, ceSet);
+        putP(ceArr, DynOff::FARRAYPROP_INNER, reinterpret_cast<uintptr_t>(ceByteInner));
+        prop(ceSet, 2, 8, 0x50, 0x50, ceMap);
+        putP(ceSet, DynOff::FARRAYPROP_INNER, reinterpret_cast<uintptr_t>(ceEnumInner));
+        prop(ceMap, 3, 9, 0xA0, 0x50, nullptr);
+        putP(ceMap, DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(ceByteKey));
+        putP(ceMap, DynOff::FSTRUCTPROP_STRUCT + 8, reinterpret_cast<uintptr_t>(ceIntVal));
+
+        static uint8_t ceCls[0x100] = {};
+        put32(ceCls, DynOff::USTRUCT_PROPSSIZE, 0x100);
+        putP(ceCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ceArr));
+
+        const auto& ceInfo = Ubel::WalkClassEx(reinterpret_cast<uintptr_t>(ceCls));
+        const auto& F = ceInfo.Fields;
+        int ia = -1, is = -1, im = -1;
+        for (int i = 0; i < static_cast<int>(F.size()); ++i) {
+            if (F[i].Name == "Items") ia = i; else if (F[i].Name == "Tags") is = i; else if (F[i].Name == "Lookup") im = i;
+        }
+        check("CONTAINERENUM control: the fake class produced its Array, Set and Map with their inner types",
+              ia >= 0 && is >= 0 && im >= 0 && F[ia].innerType == "ByteProperty" && F[is].elemType == "EnumProperty"
+                && F[im].keyType == "ByteProperty" && F[im].valueType == "IntProperty",
+              std::to_string(F.size()).c_str());
+        check("CONTAINERENUM ⭐: an Array's TEnumAsByte inner publishes its enum",
+              ia >= 0 && F[ia].innerEnumName == "EMyEnum", ia >= 0 ? F[ia].innerEnumName.c_str() : "(no field)");
+        check("CONTAINERENUM ⭐: a Set's EnumProperty element publishes its enum",
+              is >= 0 && F[is].elemEnumName == "EOther", is >= 0 ? F[is].elemEnumName.c_str() : "(no field)");
+        check("CONTAINERENUM ⭐: a Map's TEnumAsByte key publishes its enum, and its plain value none",
+              im >= 0 && F[im].keyEnumName == "EMyEnum" && F[im].valueEnumName.empty(),
+              im >= 0 ? F[im].keyEnumName.c_str() : "(no field)");
+
+        DynOff::bUseFProperty = savedFPropCE;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

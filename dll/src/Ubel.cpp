@@ -1279,6 +1279,17 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         const auto& tn = fi.TypeName;
 
+        // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner carries it at FBYTEPROP_ENUM, an
+        // EnumProperty inner at FENUMPROP_ENUM. Read and validated exactly like the field's own enumName below.
+        auto innerEnumOf = [](uintptr_t prop, const std::string& ptn) -> std::string {
+            uintptr_t e = 0;
+            if (ptn == "ByteProperty")      Macht::ReadSafe(prop + DynOff::FBYTEPROP_ENUM, e);
+            else if (ptn == "EnumProperty") Macht::ReadSafe(prop + DynOff::FENUMPROP_ENUM, e);
+            if (!e) return std::string();
+            std::string n = GetName(e);
+            return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
+        };
+
         // StructProperty -> UScriptStruct name
         if (tn == "StructProperty") {
             fi.structType = ReadSubclassTypeName(fi.Address);
@@ -1303,6 +1314,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
@@ -1317,6 +1329,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
@@ -1342,6 +1355,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.valueType = valTn;
                 if (keyTn == "StructProperty")   fi.keyStructType = ReadSubclassTypeName(keyProp);
                 if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
+                fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
+                fi.valueEnumName = innerEnumOf(valueProp, valTn);
                 break;
             }
         }
@@ -1353,6 +1368,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
                     fi.elemStructType = ReadSubclassTypeName(elemProp);
+                fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
