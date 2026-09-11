@@ -2958,6 +2958,59 @@ int main() {
         }
     }
 
+    // -- LAZYLATCHGUESS-2026-09-12 -- a lazy array's size is the engine's, and only a real one is latched ----------
+    //
+    // [A2-LAZY-LATCH-GUESS] InferScalarSize("LazyObjectProperty") is a VERSION GUESS (>= 503 ? 0x18 : 0x1C).
+    // ValidateArrayElemSize and ResolveInnerSize let it override the engine's raw ElementSize, and the array reader fed
+    // the result into the envelope latch, which logged "payload envelope measured". A 5.0-5.2 title mis-resolved as 504
+    // strode 0x18 over 0x1C elements and latched a false +0x08.
+    {
+        blk("LAZYLATCHGUESS - a lazy array's size comes from the engine, and only a real one is latched");
+        ResetCancel();
+        const uint32_t savedVerLz   = g_cachedUEVersion;
+        const int      savedLatchLz = DynOff::LAZYPTR_GUID;
+        g_cachedUEVersion    = 504;   // mis-resolved across 5.2/5.3: the guess says 0x18
+        DynOff::LAZYPTR_GUID = -1;    // nothing measured yet
+
+        const int32_t lzKept = Ubel::ValidateArrayElemSize(0x1C, "LazyObjectProperty");
+        check("LAZYLATCHGUESS ⭐: a real 0x1C ElementSize is kept, not replaced by the version guess",
+              lzKept == 0x1C, std::to_string(lzKept).c_str());
+        check("LAZYLATCHGUESS ⭐: ...and the envelope it latches is the measured +0x0C",
+              DynOff::LAZYPTR_GUID == 0x0C, std::to_string(DynOff::LAZYPTR_GUID).c_str());
+
+        DynOff::LAZYPTR_GUID = -1;
+        alignas(8) static uint8_t lzInner[0x100] = {};
+        const int32_t lzRaw = 0x1C;
+        memcpy(lzInner + DynOff::FPROPERTY_ELEMSIZE, &lzRaw, sizeof(lzRaw));
+        const int32_t lzInnerSize = Ubel::ResolveInnerSize(reinterpret_cast<uintptr_t>(lzInner), "LazyObjectProperty");
+        check("LAZYLATCHGUESS ⭐: ResolveInnerSize reads the engine's ElementSize for a lazy inner too",
+              lzInnerSize == 0x1C, std::to_string(lzInnerSize).c_str());
+
+        DynOff::LAZYPTR_GUID = -1;
+        const int32_t lzGarbage = Ubel::ValidateArrayElemSize(0x77, "LazyObjectProperty");
+        check("LAZYLATCHGUESS guard: a garbage ElementSize still falls back to the version default, as before",
+              lzGarbage == 0x18, std::to_string(lzGarbage).c_str());
+        check("LAZYLATCHGUESS guard: ...and latches nothing -- a fallback is not a measurement",
+              DynOff::LAZYPTR_GUID == -1, std::to_string(DynOff::LAZYPTR_GUID).c_str());
+
+        // The reader is handed a size its caller already derived; re-measuring THAT latched a fallback as "measured".
+        alignas(8) static uint8_t lzData[2 * 0x18] = {};
+        alignas(8) static uint8_t lzInst[0x20] = {};
+        const uintptr_t lzDataAddr = reinterpret_cast<uintptr_t>(lzData);
+        const int32_t   lzNum      = 2;
+        memcpy(lzInst + 0x00, &lzDataAddr, sizeof(lzDataAddr));
+        memcpy(lzInst + 0x08, &lzNum, sizeof(lzNum));
+        memcpy(lzInst + 0x0C, &lzNum, sizeof(lzNum));
+        DynOff::LAZYPTR_GUID = -1;
+        const auto lzr = Ubel::ReadLazyObjectArrayElements(reinterpret_cast<uintptr_t>(lzInst), 0, 0x18, 0, 16);
+        check("LAZYLATCHGUESS setup: the reader read the array", lzr.ok, lzr.error.c_str());
+        check("LAZYLATCHGUESS ⭐: the array reader latches nothing from the size it is handed",
+              DynOff::LAZYPTR_GUID == -1, std::to_string(DynOff::LAZYPTR_GUID).c_str());
+
+        DynOff::LAZYPTR_GUID = savedLatchLz;
+        g_cachedUEVersion    = savedVerLz;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

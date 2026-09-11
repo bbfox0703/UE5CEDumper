@@ -3683,7 +3683,7 @@ repeats the defect, which contradicts "now the ONLY one" (`:1982`).
     `InterpretStructByLayout`.
   - Dropping the mask argument turns it red (mutation check).
 
-##### `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured"
+##### ✅ `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured" (FIXED IN SOURCE 2026-09-12)
 
 `Ubel.cpp:1724` (+ `:1745`, `:1780`, `:3033`, `:394`).
 - `InferScalarSize("LazyObjectProperty")` is a version guess (`ver >= 503 ? 0x18 : 0x1C`).
@@ -3701,6 +3701,20 @@ across 5.2/5.3 AND an array walked before any scalar lazy field; the first scala
   65536, so a garbage ElementSize would reach the pipe, the exporter and FindInContainers.
 - 🟡 **Same shape, tracked elsewhere:** the soft path's `>= 501` discriminator
   (`verification-register.md:500`).
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L10).
+  - For LazyObjectProperty only, `ValidateArrayElemSize` returns `LazyGuidOffset(raw) + 0x10`, and
+    `ResolveInnerSize` no longer asks the guess before reading the engine.
+  - The `InferScalarSize` entry stays (the unsafe deletion was not made).
+  - The array reader, which is only ever handed that derived size, now derives its envelope WITHOUT
+    the latch. A fallback is never latched as "measured"; a real raw size is still measured once, where
+    the size is resolved.
+  - **Test, red first:** dll_core_test at a mis-resolved 504, with guards that garbage still falls back
+    and latches nothing:
+    - a real 0x1C is kept and latches +0x0C;
+    - `ResolveInnerSize` reads 0x1C;
+    - the reader latches nothing from the size it is handed.
+    3/3 mutants killed; dll_core_test 304/304; UI 5212/5212.
+  - 🟡 The soft path's `>= 501` discriminator is untouched, and stays tracked where it is.
 
 ##### ✅ `[A2-WALKCLASSEX-UNMAPPED]` LOW — WalkClassEx permanently memoizes an UNMAPPED class address, defeating Aura's refusal gate (FIXED IN SOURCE 2026-09-12)
 
@@ -5030,6 +5044,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 61 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | LOW | `git log --grep P1-WALK-UNREADABLE` (batch L07) | dll_core_test (an unreadable walk is marked; a readable control), the parse, a Fern lean/full pin, and the Live Walker status on a re-root (freed, freed with a way back, unreadable) plus the compose rule, red first. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204. Its own key, not folded into `stale`; composed, never overwritten |
 | 62 | `[P1-SPARSEDELEGATE-REFS]` (+ the PATTERN-P5 widening) | LOW | `git log --grep P1-SPARSEDELEGATE-REFS` (batch L08) | dll_core_test (a planted sparse-delegate map: two unreadable delegates counted, the readable one not), the parse, a Fern pin, the status rule, and both Live Walker status lines, red first. 9/9 mutants killed; dll_core_test 291/291; UI 5212/5212. Aggregate channel only: no per-entry wire change |
 | 63 | `[A2-WALKCLASSEX-UNMAPPED]` (+ the `GetCachedStructFields` twin) | LOW | `git log --grep A2-WALKCLASSEX-UNMAPPED` (batch L09) | dll_core_test, red first: a decommitted page is refused by WalkClassEx and memoized by neither cache; re-committed, it walks. 3/3 mutants killed; dll_core_test 297/297; UI 5212/5212. The recorded safe fix: the read verdict threaded out, a once-per-address log guard |
+| 64 | `[A2-LAZY-LATCH-GUESS]` | LOW | `git log --grep A2-LAZY-LATCH-GUESS` (batch L10) | dll_core_test at a mis-resolved 504, red first: a real 0x1C is kept and latches +0x0C, `ResolveInnerSize` reads it, the reader latches nothing from the size it is handed; garbage still falls back, unlatched. 3/3 mutants killed; dll_core_test 304/304; UI 5212/5212. The recorded safe fix; the `InferScalarSize` entry kept |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5205,6 +5220,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L49 | `[A2-WALKCLASSEX-UNMAPPED]` | No live trigger: the defect needs a transient read fault on a class pointer, which dll_core_test makes by decommitting a page.
 1. **Regression only:** Class Pivot, Property / Value Search and a CE export still see every normal class's fields.
 2. `walk-0.log` holds at most one "is not readable at +0x…" line per address. | a game + UI |
+| L50 | `[A2-LAZY-LATCH-GUESS]` | A UE 5.0-5.2 game with a `TArray<TLazyObjectPtr>` (rare, so any lazy array will do):
+1. Walk it in Live Walker. Every element's GUID is read, not only element 0.
+2. `offsets.log` has at most one "TLazyObjectPtr payload envelope measured" line, whose ElementSize is the engine's own (0x1C on 5.0-5.2, 0x18 from 5.3). | a UE5 game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5272,7 +5290,7 @@ completeness critic.
 - ✅ **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 - ✅ **L08:** `[P1-SPARSEDELEGATE-REFS]`
 - ✅ **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
-- **L10:** `[A2-LAZY-LATCH-GUESS]`
+- ✅ **L10:** `[A2-LAZY-LATCH-GUESS]`
 - **L11:** `[A2-CRC-PATH-LS]`
 - **L12:** `[A2-HEAP-ANCHOR-TEXT]`
 - **L13:** `[A2-METHODE-MANUALMAP]` (CE)

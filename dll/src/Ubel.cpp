@@ -1831,6 +1831,13 @@ static int32_t InferScalarSize(const std::string& typeName) {
 /// resolved size. Keep at Debug for developer diagnosis without polluting
 /// user logs.
 static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeName) {
+    // [A2-LAZY-LATCH-GUESS] LazyObjectProperty ONLY: derive the size from the engine's RAW ElementSize. Its
+    // InferScalarSize entry is a version guess, and overriding the engine with it -- then feeding that into the
+    // envelope latch -- wrote a false "measured" line on a version mis-resolved across 5.2/5.3. LazyGuidOffset accepts
+    // only the two real envelopes (0x0C / 0x08) and otherwise falls back exactly as the guess did. The entry itself
+    // stays: without it the generic arm below would pass any garbage size from 1 to 65536.
+    if (typeName == "LazyObjectProperty")
+        return LazyGuidOffset(readSize) + 0x10;
     int32_t expected = InferScalarSize(typeName);
     if (expected > 0) {
         // For known types, we know the exact size — override if it doesn't match
@@ -1865,7 +1872,9 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
 // Returns 0 when undetermined.
 // ============================================================
 static int32_t ResolveInnerSize(uintptr_t innerProp, const std::string& innerTn) {
-    int32_t es = InferScalarSize(innerTn);
+    // [A2-LAZY-LATCH-GUESS] Not for a lazy inner: its "scalar size" is a version guess, and asking it first meant the
+    // engine's own ElementSize was never read. ValidateArrayElemSize below derives lazy from the raw value.
+    int32_t es = innerTn == "LazyObjectProperty" ? 0 : InferScalarSize(innerTn);
     if (es > 0) return es;
 
     int32_t rawElemSize = 0;
@@ -3240,7 +3249,13 @@ ReadArrayResult ReadLazyObjectArrayElements(
     // as FAILED. Route through the same envelope the scalar path uses: LazyGuidOffset MEASURES
     // from a real ElementSize and latches it, and falls back to the version default on garbage,
     // which is what the old forced constant was really guarding against.
-    elemSize = LazyGuidOffset(elemSize) + 0x10;   // envelope + sizeof(FGuid)
+    //
+    // [A2-LAZY-LATCH-GUESS] ...but not by re-measuring HERE. Both callers hand in a size ValidateArrayElemSize already
+    // derived from the engine's RAW ElementSize, measuring and latching it when it was real. Re-measuring the handed
+    // size latched a FALLBACK as "measured" whenever the raw value was garbage. Same arithmetic, no latch.
+    const int lazyGuidOff = DynOff::PersistentPtrEnvelopeFor(elemSize, 0x10, 0x0C, DynOff::LAZYPTR_GUID,
+                                                             g_cachedUEVersion);
+    elemSize = lazyGuidOff + 0x10;   // envelope + sizeof(FGuid)
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -3276,7 +3291,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // FGuid inside the TLazyObjectPtr (4 x uint32). NOT +0x10 — FUniqueObjectGuid
         // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
         // from 5.3. See DynOff::LAZYPTR_GUID.
-        const int guidOff = LazyGuidOffset(elemSize);
+        const int guidOff = lazyGuidOff;
         // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
         // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
         // differently" is not available -- a faulted read and a genuinely-unset pointer
