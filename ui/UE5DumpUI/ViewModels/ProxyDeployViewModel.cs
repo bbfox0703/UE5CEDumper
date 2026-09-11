@@ -1354,6 +1354,12 @@ public partial class ProxyDeployViewModel : ViewModelBase
             await ApplyProxySuggestionsAsync(ct);
             StatusText = $"{Games.Count} game(s) — status refreshed";
         }
+        catch (OperationCanceledException)
+        {
+            // [A3-DEPLOY-CANCEL] The user's own Cancel is not a failure; say so neutrally.
+            StatusText = "Refresh cancelled";
+            StatusColor = StatusNeutral;
+        }
         catch (Exception ex)
         {
             StatusText = "Refresh failed";
@@ -1388,41 +1394,55 @@ public partial class ProxyDeployViewModel : ViewModelBase
         bool pickChanged = false;
         var failedDirs = NewBinariesDirSet();
 
-        foreach (var game in selected)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            StatusText = $"Deploying to {game.Name}...";
-
-            bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
-                new DeployOptions(ForceSameVersion: ForceOverwrite,
-                                  ForeignConsent:   AllowForeignOverwrite), ct);
-            if (success)
+            foreach (var game in selected)
             {
-                ok++;
-                // Remember what the user deployed for this game (mini "last known
-                // good"), keyed by the stable folder name so it survives reinstall.
-                if (!string.IsNullOrEmpty(game.Name))
+                ct.ThrowIfCancellationRequested();
+                StatusText = $"Deploying to {game.Name}...";
+
+                bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
+                    new DeployOptions(ForceSameVersion: ForceOverwrite,
+                                      ForeignConsent:   AllowForeignOverwrite), ct);
+                if (success)
                 {
-                    if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
+                    ok++;
+                    // Remember what the user deployed for this game (mini "last known
+                    // good"), keyed by the stable folder name so it survives reinstall.
+                    if (!string.IsNullOrEmpty(game.Name))
                     {
-                        LastManualProxyByGame[game.Name] = SelectedProxyType;
-                        pickChanged = true;
+                        if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
+                        {
+                            LastManualProxyByGame[game.Name] = SelectedProxyType;
+                            pickChanged = true;
+                        }
                     }
                 }
+                else { fail++; failedDirs.Add(game.BinariesDir); }
             }
-            else { fail++; failedDirs.Add(game.BinariesDir); }
+
+            // Refresh status from disk to ensure DataGrid reflects actual state — EXCEPT for the
+            // games this run failed on, whose Status/ErrorMessage DeployAsync just wrote. Their
+            // disk state is "file absent", which refreshes to NotDeployed with a blank Error and
+            // would leave the reason visible only in the log.
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
+            // Reflect the just-recorded pick in the Suggested column immediately.
+            await ApplyProxySuggestionsAsync(ct);
+            if (pickChanged) RequestOptionSave?.Invoke();
+
+            SetOperationResult($"Deployed: {ok} success, {fail} failed", fail);
         }
-
-        // Refresh status from disk to ensure DataGrid reflects actual state — EXCEPT for the
-        // games this run failed on, whose Status/ErrorMessage DeployAsync just wrote. Their
-        // disk state is "file absent", which refreshes to NotDeployed with a blank Error and
-        // would leave the reason visible only in the log.
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
-        // Reflect the just-recorded pick in the Suggested column immediately.
-        await ApplyProxySuggestionsAsync(ct);
-        if (pickChanged) RequestOptionSave?.Invoke();
-
-        SetOperationResult($"Deployed: {ok} success, {fail} failed", fail);
+        catch (OperationCanceledException)
+        {
+            // [A3-DEPLOY-CANCEL] The user's own Cancel (AE20 made it reach this command). Without
+            // this catch it rethrew out of the AsyncRelayCommand onto the dispatcher, where
+            // DispatcherFaultGuard refuses to swallow it and the process died -- a one-game deploy
+            // included, through the refresh's token. Report what DID happen, keep a changed pick,
+            // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
+            if (pickChanged) RequestOptionSave?.Invoke();
+            await RefreshAfterCancelAsync(failedDirs);
+            SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}", fail);
+        }
     }
 
     [RelayCommand]
@@ -1447,25 +1467,56 @@ public partial class ProxyDeployViewModel : ViewModelBase
         int ok = 0, fail = 0;
         var failedDirs = NewBinariesDirSet();
 
-        foreach (var game in selected)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            StatusText = $"Removing from {game.Name}...";
+            foreach (var game in selected)
+            {
+                ct.ThrowIfCancellationRequested();
+                StatusText = $"Removing from {game.Name}...";
 
-            // Type-agnostic: removes every proxy flavour of ours in the folder, not
-            // just SelectedProxyType (that radio governs deploying).
-            bool success = await _deploy.UndeployAsync(game, ct);
-            if (success) ok++;
-            else { fail++; failedDirs.Add(game.BinariesDir); }
+                // Type-agnostic: removes every proxy flavour of ours in the folder, not
+                // just SelectedProxyType (that radio governs deploying).
+                bool success = await _deploy.UndeployAsync(game, ct);
+                if (success) ok++;
+                else { fail++; failedDirs.Add(game.BinariesDir); }
+            }
+
+            // Refresh status from disk to ensure DataGrid reflects actual state — but not for the
+            // games this run failed on (a locked file, a foreign DLL we refused to touch): their
+            // proxy IS still on disk, so the refresh would report a healthy DeployedCurrent and
+            // erase the very reason the removal did not happen.
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
+
+            SetOperationResult($"Removed: {ok} success, {fail} failed", fail);
         }
+        catch (OperationCanceledException)
+        {
+            // [A3-DEPLOY-CANCEL] See DeploySelectedAsync: report the partial tally and refresh
+            // without the cancelled token, instead of crashing the app on the user's own Cancel.
+            await RefreshAfterCancelAsync(failedDirs);
+            SetOperationResult($"Remove cancelled — removed: {ok}, failed: {fail}", fail);
+        }
+    }
 
-        // Refresh status from disk to ensure DataGrid reflects actual state — but not for the
-        // games this run failed on (a locked file, a foreign DLL we refused to touch): their
-        // proxy IS still on disk, so the refresh would report a healthy DeployedCurrent and
-        // erase the very reason the removal did not happen.
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
-
-        SetOperationResult($"Removed: {ok} success, {fail} failed", fail);
+    /// <summary>
+    /// [A3-DEPLOY-CANCEL] After a cancelled Deploy / Remove some games WERE written, so the grid
+    /// must be brought back in line with the disk -- but not with the cancelled token, which would
+    /// only throw again. <see cref="CancellationToken.None"/>, and a failure here is shown and
+    /// logged, never rethrown: rethrowing it would be the same dispatcher crash this exists to stop.
+    /// </summary>
+    private async Task RefreshAfterCancelAsync(IReadOnlySet<string> preserve)
+    {
+        try
+        {
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, preserve,
+                                                   CancellationToken.None);
+            await ApplyProxySuggestionsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Warn("ProxyDeploy", $"Refresh after a cancelled operation failed: {ex.Message}");
+        }
     }
 
     [RelayCommand]

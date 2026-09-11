@@ -2955,7 +2955,7 @@ the address MinHook patched. So `HookedProcessEvent` runs on the mailbox thread 
   a frozen game thread, a queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an
   actor. `bHidden` flips while the thread is frozen.
 
-##### ⛔ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI
+##### ✅ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI (FIXED IN SOURCE 2026-09-11)
 
 `ProxyDeployViewModel.cs:1391-1414` (+ Undeploy `:1452`). AE20 made "Cancel operation" reach all nine
 commands, but `DeploySelectedAsync` and `UndeploySelectedAsync` have **no try/catch at all**. The cancel
@@ -2979,6 +2979,26 @@ refuses to swallow, and **the process dies**.
   - teaching `DispatcherFaultGuard` to swallow OCE;
   - dropping Deploy/Undeploy from the cancellable set, which reverts AE20;
   - a bare `catch(Exception)`.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B09, one commit with
+  `[A3-RADIO-MIDDEPLOY]`).
+  - **Deploy and Undeploy** wrap each loop and its refresh in `catch (OperationCanceledException)`,
+    mirroring `UpdateAll`. The catch:
+    - reports the partial tally: `Deploy cancelled — deployed: N, failed: M` /
+      `Remove cancelled — removed: N, failed: M`;
+    - still calls `RequestOptionSave` when a pick changed;
+    - never re-runs the refresh with the cancelled token. `RefreshAfterCancelAsync` refreshes with
+      `CancellationToken.None`, and a failure there is shown and logged, not rethrown.
+  - **Refresh** has a neutral `Refresh cancelled` branch ahead of its `catch (Exception)`.
+  - It uses no `FlowExceptionsToTaskScheduler`, no `DispatcherFaultGuard` change and no bare catch
+    as the fix. Deploy / Undeploy stay cancellable.
+  - **Tests, red first.** `ProxyDeployConcurrencyTests`, 5 red:
+    - Deploy and Undeploy cancelled mid-run (the cancel escaped `ExecuteAsync`);
+    - the saved pick;
+    - a one-game Deploy whose cancel reaches the final refresh;
+    - Refresh's red "Refresh failed".
+  - The no-cancel control was green throughout.
+  - The harness gained an opt-in `ThrowOnCancelledRefresh`, modelling the real service honouring its
+    token. It is off by default, so the existing tests keep the stub that does not.
 
 ##### ⛔ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down
 
@@ -3169,7 +3189,7 @@ A2's root fix cures it. The hardening is safe only as `max(PARMS_SIZE, max(Offse
       ⚠ That test was added with the fix, not before it, so it was never observed red; the
       mutation check is what shows it bites.
 
-##### `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy
+##### ✅ `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy (FIXED IN SOURCE 2026-09-11)
 
 `ProxyDeployViewModel.cs:1396`/`:1406-1408`. The radios have no `IsEnabled`, and their handler takes no
 gate, so a click mid-Deploy silently re-targets every remaining game to another DLL flavour. The
@@ -3181,6 +3201,12 @@ result line never says so.
   holds the LKG checkbox.
 - ⛔ **Unsafe:** disabling the foreign-overwrite checkbox mid-run, which would stop the user withdrawing
   consent; gating the handler alone.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B09).
+  - The four proxy-type radios carry `IsEnabled="{Binding !IsBusy}"`: on the radios, not on their
+    panel.
+  - The LKG checkbox and the foreign-overwrite checkbox stay live.
+  - Pinned from the AXAML (`ProxyTypeRadios_AreDisabledWhileBusy_TheLkgCheckboxIsNot`, red first).
+    The binding compiles in the UI build.
 
 ##### `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern
 
@@ -3748,6 +3774,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 17 | `[A2-UFUNC-TAIL-4X]` | MED | `git log --grep A2-UFUNC-TAIL-4X` | `dll_core_test` UFUNCTAIL, 3 red: numParms 52 / parmsSize 3 / rvo 0x30 at 4.15. UFUNCWALK, 2 red: both subclass reads empty at 4.15. The 4.18 / UE 5.5 controls stayed green; `dll_helpers_test` pins the boundary, unknown version and subclass start. 7/7 DLL mutants killed; DLL + 4 proxies built; helpers 2663/0, core 136/0. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** `ParamTargetType` (FindFunctionsByClassParam) twin fixed, UFUNCWALK `CountClassParams` red first; 1/1 mutant killed; the CPN x 4.11-4.17 delta is recorded as an unmeasured lead |
 | 18 | `[A3-CEFORM-4X-STALESLAB]` | LOW | same commit as row 17 (batch B07) | `InvokeScriptTests.ZeroFill_*`: 3 red → green; the right-ParmsSize control green both ways; the `ParamsDataBytes_MatchesMimicH` pin. 4/4 mutants killed; UI 4957/4957. **Review follow-up (d8a7f44f + d5e9148d + 9abc03c8):** a param past the slab now refuses the whole script (2 red first); the DEBUG return prints are slab-bounded; 2/2 mutants killed; UI 4969/4969 |
 | 19 | `[A2-TOPTIONAL-INTRUSIVE]` | MED | `git log --grep A2-TOPTIONAL-INTRUSIVE` | `dll_core_test` OPTLAYOUT (pool-faking): 9 red, green after the fix; the set / set-empty / Find Refs-set controls and the UNREADVAL TOptional cases green throughout. `dll_helpers_test` pins `ClassifyOptionalLayout`. 6/6 DLL mutants killed; DLL + 4 proxies built; helpers 2678/0, core 157/0 |
+| 20 | `[A3-DEPLOY-CANCEL]` | MED | `git log --grep A3-DEPLOY-CANCEL` | `ProxyDeployConcurrencyTests`: 5 red → green (Deploy / Undeploy cancelled mid-run, the saved pick, the one-game final-refresh cancel, Refresh's red "Refresh failed"); the no-cancel control green throughout. 5/5 mutants killed, incl. the recorded-unsafe re-run with the cancelled token; UI 4976/4976 |
+| 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3792,6 +3820,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. **Container optional (5.8):** an unset `TOptional<TArray<…>>` reads `(unset)` whatever its neighbour holds, and a set one reads set.
 3. **String optional:** on 5.4, an unset `TOptional<FString>` reads `(unset)`, not `""`. On 5.8 the same holds through the intrusive sentinel.
 4. **Find Refs:** while the optional is reset, Find Refs to the actor finds no hit on it; once it is set, the hit is back. | DumperTest 5.4 + 5.8 + UI |
+| L13 | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | In the Proxy Deploy panel, against two or three installed (NOT running) games:
+1. **Cancel during Deploy:** select the games, Deploy, and click "Cancel operation" at once. The app stays up; the result reads `Deploy cancelled — deployed: N, failed: M`; the grid shows the games that WERE written as deployed.
+2. **One game:** repeat with ONE game selected. Still no crash.
+3. **Cancel during Remove and Refresh:** Remove reads `Remove cancelled — …`; a cancelled Refresh reads `Refresh cancelled` in neutral colour, not a red "Refresh failed".
+4. **Radios:** during a Deploy, the four proxy-type radios are greyed out, while the LKG and foreign-overwrite checkboxes are not. | UI only, no game running |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3822,7 +3855,7 @@ completeness critic.
 | ✅ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
 | ✅ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |
 | ✅ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
-| ⬜ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
+| ✅ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
 | ⬜ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
 | ⬜ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
 | ⬜ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |

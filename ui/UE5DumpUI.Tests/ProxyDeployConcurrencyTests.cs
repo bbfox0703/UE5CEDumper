@@ -43,6 +43,11 @@ public class ProxyDeployConcurrencyTests : IDisposable
         /// <summary>Raised from inside RefreshDeployStatusAsync, after the gate opens — lets a
         /// test mutate Games at the exact moment Update All is suspended.</summary>
         public Action? DuringDeploy;
+        /// <summary>Raised from inside UndeployAsync, after the gate opens.</summary>
+        public Action? DuringUndeploy;
+        /// <summary>Opt-in: make RefreshDeployStatusAsync honour a cancelled token, as the REAL
+        /// service does inside its worker loop. Off by default -- see the note in the method.</summary>
+        public bool ThrowOnCancelledRefresh;
 
         private async Task WaitAsync(string what)
         {
@@ -78,6 +83,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
             // worker loop but applies AFTER the await, so a cancel arriving in that window does
             // not stop the write — which is precisely the gap the post-await re-check closes.
             // A stub that threw on ct would model away the thing under test.
+            if (ThrowOnCancelledRefresh) ct.ThrowIfCancellationRequested();
             Applied.Add(proxyType);
         }
 
@@ -92,6 +98,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         public async Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default)
         {
             await WaitAsync($"undeploy:{game.Name}");
+            DuringUndeploy?.Invoke();
             return true;
         }
 
@@ -196,6 +203,141 @@ public class ProxyDeployConcurrencyTests : IDisposable
     /// concurrency test that can hang forever when the fix regresses is not a usable test.</para>
     /// </summary>
     private static Task Refused(Task t) => t.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // ── [A3-DEPLOY-CANCEL]: "Cancel operation" during Deploy / Undeploy / Refresh ─────────
+    //
+    // AE20 made Cancel reach all nine commands, but DeploySelectedAsync and UndeploySelectedAsync
+    // had no try/catch: the cancel rethrew out of the AsyncRelayCommand onto the dispatcher, where
+    // DispatcherFaultGuard refuses to swallow it and the process dies. Here the escape is the
+    // ExecuteAsync task faulting with the same exception the dispatcher would have received.
+
+    [Fact]
+    public async Task Deploy_CancelledMidRun_DoesNotEscape_AndReportsThePartialTally()
+    {
+        var (vm, svc) = Ready();
+        svc.Gate.SetResult();
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);   // cancel during game A
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.DeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("deploy:A", svc.Calls);
+        Assert.DoesNotContain("deploy:B", svc.Calls);                        // the second never started
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("deployed: 1", vm.LastOperationResult ?? "");
+        Assert.False(vm.IsScanning);                                          // the gate was released
+    }
+
+    [Fact]
+    public async Task Deploy_CancelledAfterAPickChanged_StillSavesIt()
+    {
+        var (vm, svc) = Ready();
+        svc.Gate.SetResult();
+        bool saved = false;
+        vm.RequestOptionSave = () => saved = true;
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);
+
+        await Record.ExceptionAsync(() => Refused(vm.DeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.True(vm.LastManualProxyByGame.ContainsKey("A"));
+        Assert.True(saved, "game A was deployed with a new pick; cancelling must not lose it");
+    }
+
+    [Fact]
+    public async Task Deploy_OneGame_CancelReachingTheFinalRefresh_DoesNotEscape()
+    {
+        // "Even a ONE-game deploy reaches it, through the post-loop refresh's token": the loop ends
+        // before any re-check, and the refresh -- the real service honours its token -- throws.
+        var (vm, svc) = Ready();
+        vm.Games[1].IsSelected = false;
+        svc.Gate.SetResult();
+        svc.ThrowOnCancelledRefresh = true;
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.DeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("deployed: 1", vm.LastOperationResult ?? "");
+    }
+
+    [Fact]
+    public async Task Undeploy_CancelledMidRun_DoesNotEscape_AndReportsThePartialTally()
+    {
+        var (vm, svc) = Ready();
+        svc.Gate.SetResult();
+        svc.DuringUndeploy = () => vm.CancelOperationCommand.Execute(null);
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.UndeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.DoesNotContain("undeploy:B", svc.Calls);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("removed: 1", vm.LastOperationResult ?? "");
+    }
+
+    [Fact]
+    public async Task Refresh_Cancelled_IsNeutral_NotAFailure()
+    {
+        // Refresh's catch(Exception) showed the user's own cancel as a red "Refresh failed".
+        var (vm, svc) = Ready();
+        svc.ParkRefreshes = true;
+        svc.ThrowOnCancelledRefresh = true;
+
+        var refresh = vm.RefreshCommand.ExecuteAsync(null);
+        vm.CancelOperationCommand.Execute(null);
+        svc.PendingRefreshes[0].SetResult();
+        await Refused(refresh);
+
+        Assert.DoesNotContain("failed", (vm.StatusText ?? "").ToLowerInvariant());
+        Assert.Contains("cancel", (vm.StatusText ?? "").ToLowerInvariant());
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Deploy_WithoutACancel_CompletesAsBefore()
+    {
+        // The control: nobody cancels, both games deploy, and the tally says nothing of a cancel.
+        var (vm, svc) = Ready();
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Contains("deploy:B", svc.Calls);
+        Assert.DoesNotContain("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+    }
+
+    // ── [A3-RADIO-MIDDEPLOY]: the proxy-type radios stay live during Deploy ─────────────────
+    //
+    // A click mid-Deploy re-targeted every remaining game to another DLL flavour, and
+    // LastManualProxyByGame recorded the NEW flavour for the game in flight. The recorded fix binds
+    // the four radios -- not their panel, which also holds the LKG checkbox -- to !IsBusy. Pinned
+    // from the AXAML (the window cannot be constructed here).
+    private static string PanelXaml()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Views", "ProxyDeployPanel.axaml");
+            if (File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        return File.ReadAllText(path!);
+    }
+
+    [Fact]
+    public void ProxyTypeRadios_AreDisabledWhileBusy_TheLkgCheckboxIsNot()
+    {
+        var xaml = PanelXaml();
+        var radios = System.Text.RegularExpressions.Regex.Matches(xaml, @"<RadioButton GroupName=""ProxyType""[^>]*>");
+        Assert.Equal(4, radios.Count);
+        Assert.All(radios, m => Assert.Contains(@"IsEnabled=""{Binding !IsBusy}""", m.Value));
+
+        var lkg = System.Text.RegularExpressions.Regex.Match(xaml, @"<CheckBox[^>]*LkgSuggestEnabled[^>]*>");
+        Assert.True(lkg.Success, "the LKG checkbox is gone -- re-point this pin");
+        Assert.DoesNotContain("IsEnabled", lkg.Value);
+    }
 
     // ── AE6: two DIFFERENT commands over the same folder ─────────────────────
 
