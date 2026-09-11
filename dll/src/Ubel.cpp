@@ -6722,6 +6722,10 @@ void ResolvePropertyPreviews(
     const std::unordered_map<uintptr_t, uintptr_t>& instanceMap)
 {
     for (auto& m : matches) {
+        // [A4-CDOSCOPE-NESTED-PREVIEW] A nested (deep) row is NEVER previewed -- Aura.h's promise. It is keyed by its
+        // root field's defining class and its offset is informational only, so once a direct match put that class in
+        // the map, this read inst + the leaf offset: a UObject header word, sometimes with a source suffix.
+        if (m.isNested) continue;
         auto it = instanceMap.find(m.classAddr);
         if (it == instanceMap.end()) continue;
 

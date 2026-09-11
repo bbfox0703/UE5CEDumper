@@ -3011,6 +3011,53 @@ int main() {
         g_cachedUEVersion    = savedVerLz;
     }
 
+    // -- CDOSCOPE-2026-09-12 -- every preview class on the chain is credited; a nested row is never previewed --------
+    {
+        blk("CDOSCOPE - PreviewAncestorsOf credits every preview class above a class; nested rows get no preview");
+        // [A4-CDOSCOPE-ANCESTOR] The walk broke at the NEAREST preview class (and an exact hit skipped it), so an
+        // ancestor row read "(CDO default)" while Force / Freeze on it acted on live instances.
+        // A <- B <- C (C's super is B, B's super is A); D's super is itself.
+        const uintptr_t cA = 0xA000, cB = 0xB000, cC = 0xC000, cD = 0xD000;
+        auto cdSuperOf = [&](uintptr_t c) -> uintptr_t {
+            return c == cC ? cB : c == cB ? cA : c == cD ? cD : 0;
+        };
+        auto cdAll = [&](uintptr_t c) { return c == cA || c == cB || c == cC; };
+        const auto upC = Aura::PreviewAncestorsOf(cC, cdAll, cdSuperOf);
+        check("CDOSCOPE ⭐: a live C is credited to EVERY preview ancestor, nearest first -- not to B alone",
+              upC.size() == 2 && upC[0] == cB && upC[1] == cA, std::to_string(upC.size()).c_str());
+        const auto upB = Aura::PreviewAncestorsOf(cB, cdAll, cdSuperOf);
+        check("CDOSCOPE ⭐: the walk starts at the SUPER -- an exact B still credits A",
+              upB.size() == 1 && upB[0] == cA, std::to_string(upB.size()).c_str());
+        check("CDOSCOPE ⭐: ...and a root preview class credits nothing above itself",
+              Aura::PreviewAncestorsOf(cA, cdAll, cdSuperOf).empty());
+        auto cdOnlyA = [&](uintptr_t c) { return c == cA; };
+        const auto upCa = Aura::PreviewAncestorsOf(cC, cdOnlyA, cdSuperOf);
+        check("CDOSCOPE control: a non-preview class in between is passed over, not a stop",
+              upCa.size() == 1 && upCa[0] == cA);
+        check("CDOSCOPE control: a self-looping chain terminates", Aura::PreviewAncestorsOf(cD, cdAll, cdSuperOf).empty());
+
+        // [A4-CDOSCOPE-NESTED-PREVIEW] A Deep search matching a direct field AND a nested leaf of the same class put that
+        // class in the preview map, and the nested row -- keyed by its root field's defining class, its offset
+        // informational only -- was previewed at inst + that offset: a UObject header word.
+        alignas(8) static uint8_t cdInst[0x40] = {};
+        const int32_t cdVal = 1234;
+        memcpy(cdInst + 0x20, &cdVal, sizeof(cdVal));
+        const uintptr_t cdCls = 0xE000;
+        std::vector<Aura::PropertyMatch> cdRows(2);
+        cdRows[0].classAddr  = cdCls;
+        cdRows[0].propType   = "IntProperty";
+        cdRows[0].propOffset = 0x20;
+        cdRows[0].propSize   = 4;
+        cdRows[1] = cdRows[0];
+        cdRows[1].isNested   = true;
+        cdRows[1].propOffset = 0x08;
+        std::unordered_map<uintptr_t, uintptr_t> cdMap{ { cdCls, reinterpret_cast<uintptr_t>(cdInst) } };
+        Ubel::ResolvePropertyPreviews(cdRows, cdMap);
+        check("CDOSCOPE control: the direct row is previewed", !cdRows[0].preview.empty(), cdRows[0].preview.c_str());
+        check("CDOSCOPE ⭐: the nested row sharing its class is NOT previewed", cdRows[1].preview.empty(),
+              cdRows[1].preview.c_str());
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

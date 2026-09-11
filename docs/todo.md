@@ -4732,7 +4732,7 @@ inner's type, struct and object class, never its enum: nothing named `inner_enum
     - **L39's example was wrong.** No collision component declares a `TArray<TEnumAsByte<E>>`; it now names one
       that exists.
 
-##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
+##### ✅ `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class (FIXED IN SOURCE 2026-09-12)
 
 `Aura.cpp:4985-5002`. `previewBaseOf` breaks at the first preview class on the super chain and
 memoizes it. An exact instance short-circuits too. So an ancestor row reads *"(CDO default)"*, which
@@ -4741,8 +4741,20 @@ row act on N live instances. That is the disagreement CDOSCOPE was written to re
 its own untested chain walk. Modelled in Python: `Pawn · BaseEyeHeight` samples `Default__Pawn`.
 - ✅ **Safe fix:** credit EVERY preview class on the chain, including for exact hits, starting from the
   super. Keep the per-class memo, and pin it as a pure helper.
+- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L17, with `[A4-CDOSCOPE-NESTED-PREVIEW]`).
+  - The pure helper is `Aura::PreviewAncestorsOf`, and the per-class memo now holds its vector.
+  - The Phase-2 sweep makes an object the exact sample for its own class, and a derived sample for every
+    preview class above it, exact hits included.
+  - **Tests, red first:** the helper in dll_core_test.
+    - A live C credits both B and A.
+    - An exact B still credits A.
+    - A root credits nothing.
+    - Controls: a non-preview class in between is passed over, and a self-loop terminates.
+  - 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215.
+  - ⚠ **Survivor by construction:** the sweep's wiring. No harness drives `SearchProperties`' preview
+    phase; the rule it calls is pinned.
 
-##### `[A4-CDOSCOPE-NESTED-PREVIEW]` LOW — CDOSCOPE removed the swap that kept Deep nested rows out of preview; container-element rows now show a wrong Preview
+##### ✅ `[A4-CDOSCOPE-NESTED-PREVIEW]` LOW — CDOSCOPE removed the swap that kept Deep nested rows out of preview; container-element rows now show a wrong Preview (FIXED IN SOURCE 2026-09-12)
 
 `Aura.cpp:5075` → `Ubel.cpp:6479`. A nested row's lookup key became its root field's defining class. A
 Deep search matching both a direct field and a `Slots[].Count` leaf of the same class therefore
@@ -4750,6 +4762,11 @@ previews `inst + 0x08`, a UObject header word, sometimes with a source suffix. A
 comment and a69e23ba's body all promise that nested rows are never previewed.
 - ✅ **Safe fix:** skip `isNested` rows in the Phase-2 loop.
 - ⛔ **Unsafe:** restoring the swap, which brings back CDOSCOPE's proxy defect.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L17, with `[A4-CDOSCOPE-ANCESTOR]`).
+  `ResolvePropertyPreviews` skips `isNested` rows, and Aura.h's promise now names the skip. The swap
+  was not restored.
+  **Test, red first:** dll_core_test previews a direct row and a nested row that share a class. The
+  direct row is previewed and the nested one is not. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215.
 
 ##### `[A4-PIVOT-CROSSGAME-ID]` LOW — Class Pivot restores the previous game's snapshot pick and class list into a different game
 
@@ -5099,6 +5116,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 67 | `[A2-METHODE-MANUALMAP]` | LOW | `git log --grep A2-METHODE-MANUALMAP` (batch L13) | A Methode.cpp source pin, red first: the TRUE-but-absent text is ambiguous and names "Always force load modules"; the old verdict on CE's BOOL is gone. 2/2 mutants killed; dll_core_test 304/304, dll_helpers_test 2716/2716; UI 5214/5214. The recorded safe fix; comment and working-lessons corrected |
 | 68 | `[A3-MIMIC-INIT-FASTPATH]` | LOW | `git log --grep A3-MIMIC-INIT-FASTPATH` (batch L14) | dll_helpers_test (`Mimic::InitFastPathOk`: both globals set WHILE an init scans does not take the fast path) + source pins for both ends of the wiring, red first. 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215. The recorded narrowest fix; the contract hash is unmoved |
 | 69 | `[W5-DENKEN-DEADGUARD]` | LOW | `git log --grep W5-DENKEN-DEADGUARD` (batch L16) | dll_helpers_test pins the behaviour the obvious repair would break: a followed impl is decoded past the death of its this-alias. Red against that repair as a source mutant. 2/2 mutants killed; dll_helpers_test 2721/2721, dll_core_test 304/304; UI 5215/5215. The dead guard removed; behaviour unchanged |
+| 70 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | LOW | `git log --grep A4-CDOSCOPE-ANCESTOR` (batch L17) | dll_core_test, red first: `Aura::PreviewAncestorsOf` credits every preview class from the super up, and a nested row sharing a direct row's class is not previewed. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215. Both recorded safe fixes; the swap not restored |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5293,6 +5311,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 3. No one-off DynOff error that succeeds on retry. | CE + a game |
 | L55 | `[W5-DENKEN-DEADGUARD]` | No live trigger, and no behaviour change.
 1. **Regression only:** a Live Funcs or Interesting Properties native-xref run finds the same fields it did before the removal, on any game. | a game + UI |
+| L56 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | A game and Property Search:
+1. **Ancestor:** search `BaseEyeHeight`, a Pawn field, with live Characters present. The Pawn row shows "(subclass instance)", not "(CDO default)", and Freeze on it reports the same instances.
+2. **Nested:** a Deep search that matches a direct field AND a nested `Slots[].Count`-style leaf of the same class. The nested row shows no preview. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5367,7 +5388,7 @@ completeness critic.
 - ✅ **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
 - ✅ **L16:** `[W5-DENKEN-DEADGUARD]`
-- **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
+- ✅ **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 - **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 - **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 - **L20:** `[A4-STEALTH-PRIME]`

@@ -5088,24 +5088,19 @@ PropertySearchResult SearchProperties(
         // Same reasoning as FindInstancesDerivedFrom's derivedCache — GObjects holds 10^5-10^6
         // objects over 10^3-10^4 distinct classes, so caching by UClass* turns a per-OBJECT
         // chain walk into a per-CLASS one, which is what makes this affordable at all.
-        std::unordered_map<uintptr_t, uintptr_t> derivesFromCache;
-        auto previewBaseOf = [&](uintptr_t cls) -> uintptr_t {
-            auto it = derivesFromCache.find(cls);
-            if (it != derivesFromCache.end()) return it->second;
-            uintptr_t found = 0;
-            uintptr_t cur = cls;
-            // Bounded the same way Ubel::ResolveFunctionInChain and Dunste::FindFuncByName
-            // are: a malformed or mid-teardown SuperStruct can self-loop.
-            for (int depth = 0; cur && depth < 64; ++depth) {
-                if (needPreviewClasses.count(cur)) { found = cur; break; }
-                uintptr_t super = 0;
-                if (!Macht::ReadSafe(cur + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
-                    || super == 0 || super == cur)
-                    break;
-                cur = super;
-            }
-            derivesFromCache[cls] = found;
-            return found;
+        // [A4-CDOSCOPE-ANCESTOR] The memo now holds EVERY preview class on the chain (Aura::PreviewAncestorsOf, pinned in
+        // dll_core_test), not the nearest one: crediting only the nearest left every ancestor row at "(CDO default)".
+        std::unordered_map<uintptr_t, std::vector<uintptr_t>> ancestorsCache;
+        auto previewAncestorsOf = [&](uintptr_t cls) -> const std::vector<uintptr_t>& {
+            auto it = ancestorsCache.find(cls);
+            if (it != ancestorsCache.end()) return it->second;
+            auto ins = ancestorsCache.emplace(cls, PreviewAncestorsOf(cls,
+                [&](uintptr_t c) { return needPreviewClasses.count(c) != 0; },
+                [](uintptr_t c) -> uintptr_t {
+                    uintptr_t super = 0;
+                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) ? super : 0;
+                }));
+            return ins.first->second;
         };
 
         int32_t cnt = GetCount();
@@ -5128,13 +5123,17 @@ PropertySearchResult SearchProperties(
             if (obj == cls) continue;
 
             const bool exact = needPreviewClasses.count(cls) != 0;
-            // Only pay for the chain walk when the class is not one we already want, and
-            // only while some preview class still lacks a derived sample.
-            const uintptr_t base = exact ? cls
-                                 : (derivedMap.size() < needPreviewClasses.size()
-                                        ? previewBaseOf(cls) : 0);
-            if (!base) continue;
-            if (exact ? (instanceMap.count(base) != 0) : (derivedMap.count(base) != 0)) continue;
+            // [A4-CDOSCOPE-ANCESTOR] An object is the EXACT sample for its own class and a DERIVED sample for every
+            // preview class above it -- exact hits included. Only pay for the chain walk while some preview class
+            // still lacks a derived sample.
+            static const std::vector<uintptr_t> kNoAncestors;
+            const std::vector<uintptr_t>& ancestors =
+                derivedMap.size() < needPreviewClasses.size() ? previewAncestorsOf(cls) : kNoAncestors;
+            const bool wantsExact = exact && instanceMap.count(cls) == 0;
+            bool wantsDerived = false;
+            for (uintptr_t anc : ancestors)
+                if (derivedMap.count(anc) == 0) { wantsDerived = true; break; }
+            if (!wantsExact && !wantsDerived) continue;
 
             uint32_t nameIdx = 0;
             if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
@@ -5142,12 +5141,12 @@ PropertySearchResult SearchProperties(
                 // Only the row's OWN class default is offered as the last-resort sample. A
                 // subclass CDO is another class's default, which would be a worse answer than
                 // the row's own and is not what the actions would touch either.
-                if (exact) cdoOnlyMap.emplace(base, obj);   // first CDO wins; live still preferred
+                if (exact) cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
                 continue;
             }
 
-            if (exact) instanceMap[base] = obj;
-            else       derivedMap.emplace(base, obj);
+            if (wantsExact) instanceMap[cls] = obj;
+            for (uintptr_t anc : ancestors) derivedMap.emplace(anc, obj);   // first live sample per class wins
         }
 
         // Fall back to the CDO where nothing live exists — a default value is still the only

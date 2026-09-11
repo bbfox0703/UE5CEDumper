@@ -646,7 +646,8 @@ struct PropertyMatch {
     //   - propOffset is informational only (no single class-absolute address
     //     once the path crosses a container) — the UI gates Copy Offset / Freeze
     //     off this flag.
-    //   - preview is never resolved (previewClassAddr stays 0 → Phase 2 skips).
+    //   - preview is never resolved: previewClassAddr stays 0, and ResolvePropertyPreviews skips isNested rows
+    //     even when a direct match put their class in the preview map. [A4-CDOSCOPE-NESTED-PREVIEW]
     bool        isNested = false;
 };
 
@@ -844,6 +845,25 @@ inline const char* PreviewSourceSuffix(PreviewSource src) {
         case PreviewSource::ClassDefault: return " (CDO default)";
         default:                          return "";
     }
+}
+
+// [A4-CDOSCOPE-ANCESTOR] The preview classes a live instance of `cls` is a DERIVED sample for: EVERY one on its super
+// chain, nearest first, STARTING FROM THE SUPER (the object's own class is its exact sample, credited by the caller). The
+// CDOSCOPE walk stopped at the NEAREST preview class, and an exact hit skipped the walk, so an ancestor row read
+// "(CDO default)" -- "subclasses were searched and none was live" -- while Force and Freeze on that same row acted on
+// its live instances. `superOf` returns 0 when the chain ends or cannot be read; bounded, because a malformed or
+// mid-teardown SuperStruct can self-loop.
+template <class IsPreviewFn, class SuperOfFn>
+inline std::vector<uintptr_t> PreviewAncestorsOf(uintptr_t cls, IsPreviewFn isPreview, SuperOfFn superOf) {
+    std::vector<uintptr_t> out;
+    uintptr_t cur = cls ? superOf(cls) : 0;
+    for (int depth = 0; cur && cur != cls && depth < 64; ++depth) {
+        if (isPreview(cur)) out.push_back(cur);
+        const uintptr_t next = superOf(cur);
+        if (next == cur) break;
+        cur = next;
+    }
+    return out;
 }
 
 bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::string>& baseNames);
