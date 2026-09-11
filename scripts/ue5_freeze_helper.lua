@@ -476,9 +476,13 @@ end
 -- reporting success -- exactly the silent-wrong-scope failure being fixed -- so this
 -- refuses up front and says to update the DLL.
 -- 4: the teleport pose block's flags byte (paramsData[178]). This helper does not use CMD_TELEPORT; it
--- bakes 4 because every emitted script bakes the same contract
+-- bakes it because every emitted script bakes the same contract
 -- (FreezeHelper_BakesTheSameContractVersionAsTheGenerator).
-local UE5_SCRIPT_CONTRACT = 4
+-- 5: CMD_OFFSETS_VERDICT ([W5-OFFSETS-MAILBOX]) -- "were the DynOff offsets measured?". This helper does
+-- not send it either, and bakes it for the same reason as 4.
+-- ⚠ Baking 5 means this helper REFUSES a contract-4 DLL ("update UE5Dumper.dll"). That is what the pin
+-- above encodes: the helper and the generator ship together, so they claim ONE contract.
+local UE5_SCRIPT_CONTRACT = 5
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

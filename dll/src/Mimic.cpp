@@ -108,6 +108,7 @@ static void HandleFly();
 static void HandleForeground();
 static void HandleQueryPtr();
 static void HandleSeeThrough();
+static void HandleOffsetsVerdict();
 static void SetError(int32_t code, const char* msg);
 static void SetDone(int32_t resultCode);
 static bool EnsureInitialized();
@@ -404,6 +405,9 @@ static void PollingThreadBody() {
                 break;
             case CMD_TIME:
                 HandleTime();
+                break;
+            case CMD_OFFSETS_VERDICT:
+                HandleOffsetsVerdict();
                 break;
             default:
                 SetError(-1, "Unknown command");
@@ -1053,6 +1057,21 @@ static void HandleSetDebugCamera() {
     LOG_INFO("Mailbox: SET_DEBUG_CAMERA req=%llu -> state=%d",
              (unsigned long long)req, state);
     SetDone(state);
+}
+
+// CMD_OFFSETS_VERDICT: were the DynOff offsets MEASURED? [W5-OFFSETS-MAILBOX]
+// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) both carry this verdict; the mailbox --
+// the path a CE script takes when executeCodeEx is unavailable -- did not, while ue5_dissect.lua builds
+// CE structures out of those very offsets. No input. result = 1 measured / 0 not; paramsData[0..127]
+// carries the reason ("" when measured, "probe-not-run" before any detection).
+// Init-EXEMPT (Mimic.h CommandRequiresInit): "no probe has run" is an ANSWER here, not a failure.
+static void HandleOffsetsVerdict() {
+    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    char reason[128] = {};
+    const int32_t measured = UE5_GetOffsetsVerdict(reason, static_cast<int32_t>(sizeof(reason)));
+    memcpy(g_invokeMailbox.paramsData, reason, sizeof(reason));
+    LOG_INFO("Mailbox: OFFSETS_VERDICT -> measured=%d reason='%s'", measured, reason);
+    SetDone(measured);
 }
 
 // CMD_TELEPORT: marker save/recall + cursor teleport (Wirbel). Field usage

@@ -1941,6 +1941,25 @@ public class InvokeScriptTests
         Assert.DoesNotContain("just sees zeros", aura);
     }
 
+    [Fact]
+    public void OffsetsVerdict_ReachesTheCeMailbox()
+    {
+        // [W5-OFFSETS-MAILBOX] No test target compiles Mimic.cpp and the CE helper is Lua, so the wiring is pinned from
+        // source; the numbering, the contract bump and the init exemption are dll_helpers_test's.
+        string mimic = DllSource("Mimic.cpp");
+        Assert.Contains("case CMD_OFFSETS_VERDICT:", mimic);
+        Assert.Contains("UE5_GetOffsetsVerdict(reason,", mimic);
+
+        string lua = HelperLuaResource.Read();
+        Assert.Contains("local CMD_OFFSETS_VERDICT = 16", lua);
+        Assert.Contains("function getOffsetsVerdict()", lua);
+        // It must still run against an older DLL, which answers "Unknown command" (-1).
+        Assert.Contains("dll-too-old", lua);
+
+        Assert.Equal(16, CeMailboxLayout.CmdOffsetsVerdict);
+        Assert.Equal(5, CeMailboxLayout.ContractVersion);   // baked into every emitted script
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

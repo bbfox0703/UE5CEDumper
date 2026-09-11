@@ -1909,9 +1909,20 @@ SCAN-CORE     1    0    1    0    0    0    0    0
    - `scripts/ue5_dissect.lua` warns once per distinct reason before building a structure on unmeasured offsets.
    - Both early give-ups now store `validated=false` through one helper, `PublishOffsetsGiveUp`, and `UE5_Shutdown` forgets
      the verdict (`DynOff::ResetOffsetsVerdict`). Together these close the widening below.
-   - ⬜ **`[W5-OFFSETS-MAILBOX]`** (L45): the CE **mailbox** still does not carry the verdict. Publishing it needs a new
-     field or a new status meaning, either of which is a `MAILBOX_CONTRACT` change. It waits for that decision rather than
-     riding in on a LOW fix.
+   - ✅ **`[W5-OFFSETS-MAILBOX]`** (L45, FIXED IN SOURCE 2026-09-12): the CE **mailbox** carries the verdict now, taken
+     the additive way Mimic.h's rules prescribe — a new **Cmd**, not a new field and not a new status meaning.
+     - `CMD_OFFSETS_VERDICT = 16`. Output: `result` = 1 measured / 0 not, and the reason (null-terminated, `""` when
+       measured, else e.g. `probe-not-run`) in `paramsData[0..127]`.
+     - `MAILBOX_CONTRACT` 4 → 5; `MAILBOX_CONTRACT_MIN` stays 1, so every saved `.CT` stays valid. The surface hash
+       moves this time (a new enum member, unlike versions 2 and 4), and `check_mailbox_contract.py` records why.
+     - **Init-EXEMPT**, the second exemption after `CMD_FOREGROUND`: gating it would answer `-10` ("DLL not
+       initialized") exactly when the honest answer, `probe-not-run`, matters most. `Test_Mimic_CommandRequiresInit`
+       enumerates the command space and counts exemptions, so the decision had to be made there.
+     - `CeMailboxLayout` gains `CmdOffsetsVerdict` and bakes `ContractVersion` 5; the tool's closed registry learns the
+       new Cmd.
+     - `ue5_invoke_helper.lua` gains `getOffsetsVerdict()` → measured, reason. It keeps `UE5_SCRIPT_CONTRACT = 1`, so it
+       still runs against an older DLL: that DLL answers "Unknown command" (`-1`), reported as `dll-too-old`, never as
+       measured.
 5. ✅ **`[W5-DENKEN-DEADGUARD]`** (FIXED IN SOURCE 2026-09-12, batch L16) `Denken.cpp:221`. The *"bail to save budget in a followed impl"*
    guard is **dead in every reachable state** — `TryFollow` increments `ctx.callsFollowed` before
    recursing, so the inner branch can never be taken.
@@ -5361,6 +5372,7 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 | 96 | `[A2-TOPTIONAL-VALUESCAN]` | LOW | `git log --grep A2-TOPTIONAL-VALUESCAN` (batch L41) | dll_helpers_test V1C block, red first against inert helpers: a trailing flag gates at `sizeof(T)`; intrusive FString / FName / FText carry their sentinels; Unknown and sentinel-less intrusive optionals are skipped; the three sentinel byte tests each have a control. An InvokeScriptTests source pin covers the V1c wiring, and the loose rule is removed. 4/4 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5290/5290. Refine-path lead recorded |
 | 97 | `[W3-DEBUGCAM-QUEUED]` | LOW | `git log --grep W3-DEBUGCAM-QUEUED` (batch L43) | Red first: dll_helpers_test DBGCAMQ (the mapper, against an inert stub, with -4 / -7 controls); Console and Teleport VM tests for the Queued badge and text; DebugCameraScriptGeneratorTests (the queued branch is first, never unticks, never closes); an InvokeScriptTests source pin for Frieren and Mimic. 5/5 mutants killed; dll_helpers_test 2746/2746, dll_core_test 320/320; UI 5294/5294. Not a contract bump (MB3); the item-4 conflict is recorded |
 | 98 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | LOW | `git log --grep A2-TOPTIONAL-STRUCT-DESCENT` (batch L40) | Red first in dll_core_test OPTLAYOUT: a reset `{ UObject* }` / `{ TArray<UObject*> }` struct optional reports neither its pointer nor its array (controls: set ones report both); an Unknown layout is not descended; the container cache entry carries `setFlagOffset` 24. An InvokeScriptTests source pin covers Find Refs' loops (each kind gated twice). 5/5 mutants killed; dll_core_test 327/327, dll_helpers_test 2746/2746; UI 5295/5295. `CollectSchemaLeaves` lead recorded |
+| 99 | `[W5-OFFSETS-MAILBOX]` | LOW | `git log --grep W5-OFFSETS-MAILBOX` (batch L45) | Red first: dll_helpers_test pins `CMD_OFFSETS_VERDICT` = 16, the contract range 5 / 1, the new init exemption and the exemption COUNT (the test enumerates the whole command space on purpose). An InvokeScriptTests source pin covers Mimic.cpp's case + handler and the Lua wrapper, which no test target compiles. 4/4 mutants killed; dll_helpers_test 2748/2748, dll_core_test 327/327; UI 5296/5296. Contract 4 → 5, MIN stays 1: additive, so every saved `.CT` stays valid |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5646,6 +5658,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L82 | `[A2-TOPTIONAL-VALUESCAN]` | A UE 5.5+ game with a `TOptional<FString>` field, if one can be found. Value Search, FString, Exact "": an UNSET intrusive optional is not a candidate. A set optional holding text is still found. | a 5.5+ game + UI |
 | L83 | `[W3-DEBUGCAM-QUEUED]` | Stall the game thread: unfocus a game that pauses its tick, with the foreground lock off. Console **Force ON** shows the amber Queued badge and "do not press Force ON again"; on refocus the camera turns ON **once** and stays ON. The CE Debug Camera record, ticked while stalled, shows the "queued" message and stays ticked; on refocus the camera is ON. | a game with ToggleDebugCamera + CE + UI |
 | L84 | `[A2-TOPTIONAL-STRUCT-DESCENT]` | A UE 5.x game with a `TOptional<FStruct>` holding an actor pointer or array, if one can be found (the Property Search types filter shows `OptionalProperty`). **Find Refs** to that actor while the optional is SET: one hit. Reset it in game: no hit. **Address Finder** on an element of the array inside it: found while set, not after a reset. | a 5.x game + UI |
+| L85 | `[W5-OFFSETS-MAILBOX]` | **CE:** with the DLL injected into a game whose scan log says `validated=yes`, run `getOffsetsVerdict()` in CE's Lua Engine: `true, ""`. Then on a game whose offsets fall back (or before any scan, in proxy mode): `false` plus the reason, and `probe-not-run` when nothing has probed yet. Against a contract-4 DLL the same call says `dll-too-old`, never `measured`. | CE + a game + an old DLL build |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5748,7 +5761,7 @@ completeness critic.
 - ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - ✅ **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
-- **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
+- ✅ **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)
 
 ⚠ **L18's trap text** ("L18's CTS alone is insufficient") refers to the July row L18 (DetectAsync
 has no cancellation), not to the batch L18 above.

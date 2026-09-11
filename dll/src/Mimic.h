@@ -140,6 +140,15 @@ enum Cmd : int32_t {
                               //             [0..7] double value (1.0 normal, 0 frozen)
                               //   Output: result = 1 (active) / 0 (off) / negative
                               //           Hemmung::TimeResult
+    CMD_OFFSETS_VERDICT = 16, // [W5-OFFSETS-MAILBOX] Were the DynOff offsets MEASURED? CE Lua builds
+                              //   structures from them (ue5_dissect.lua), so a script that cannot ask
+                              //   is building on fallbacks without knowing. Read-only, and
+                              //   init-EXEMPT on purpose: when the probe never ran, "probe-not-run"
+                              //   IS the answer the caller needs -- a -10 refusal would hide it.
+                              //   Input:  none
+                              //   Output: result = 1 (measured) / 0 (not measured)
+                              //           paramsData[0..127] = reason, null-terminated ("" when
+                              //             measured, else e.g. "probe-not-run")
 };
 
 // CMD_TELEPORT op codes (written into instanceAddr by CE Lua / pipe bridge)
@@ -495,8 +504,14 @@ constexpr bool InitFastPathOk(bool haveGObjects, bool haveGNames, bool initInPro
 /// Counter-examples that look exempt and are NOT: CMD_QUERY_PTR is "read-only and
 /// thread-agnostic" but reads the caches the scan fills and iterates GObjects;
 /// CMD_TIME is a "pure reflected memory write" — reflected means GObjects.
+///
+/// [W5-OFFSETS-MAILBOX] CMD_OFFSETS_VERDICT is the SECOND exemption, and for a reason the first does not
+/// share: its answer IS the init state. It reports whether the offsets were measured, and "no probe has
+/// run" is one of the answers; gating it would return -10 ("DLL not initialized") in exactly the case
+/// the caller asked about, and auto-init would run a whole-image sweep to answer a question about
+/// whether that sweep has happened. It reads two atomics and a fixed string — no UObject, no cache.
 constexpr bool CommandRequiresInit(int32_t cmd) {
-    return cmd != CMD_FOREGROUND;
+    return cmd != CMD_FOREGROUND && cmd != CMD_OFFSETS_VERDICT;
 }
 
 /// Start the mailbox polling thread.
@@ -571,7 +586,12 @@ namespace Mimic {
 ///   unused output for every pose-block op (only CURSOR writes it, as its own usedCenter), so no contract-1..3
 ///   script reads it, and MAILBOX_CONTRACT_MIN stays at 1. Like version 2 this moves on MEANING alone -- the
 ///   surface hash does not change, and tools/check_mailbox_contract.py records why.
-constexpr int32_t MAILBOX_CONTRACT = 4;
+/// 5 ([W5-OFFSETS-MAILBOX]): CMD_OFFSETS_VERDICT = 16 -- "were the DynOff offsets measured?", answered with
+///   result 1/0 plus the reason in paramsData[0..127]. ADDITIVE in the plainest sense: a NEW Cmd at a
+///   previously unused number, so no older script can send it or read its output, and
+///   MAILBOX_CONTRACT_MIN stays at 1. Unlike versions 2 and 4 this DOES move the surface hash -- a new
+///   enum member is layout -- so tools/check_mailbox_contract.py takes a new golden pair.
+constexpr int32_t MAILBOX_CONTRACT = 5;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

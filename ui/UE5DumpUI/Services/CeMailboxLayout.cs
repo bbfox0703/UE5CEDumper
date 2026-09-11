@@ -67,6 +67,9 @@ internal static class CeMailboxLayout
     public const int CmdQueryPtr       = 13;  // CMD_QUERY_PTR (resolve GWorld / GameEngine address)
     public const int CmdSeeThrough     = 14;  // CMD_SEETHROUGH (Schlacht — see-through occluders toggle)
     public const int CmdTime           = 15;  // CMD_TIME      (Hemmung — time dilation hold)
+    // [W5-OFFSETS-MAILBOX] Answer: result 1 = the DynOff offsets were measured, 0 = not, with the reason
+    // in paramsData. Contract 5. An older DLL does not know it and answers "Unknown command" (-1).
+    public const int CmdOffsetsVerdict = 16;  // CMD_OFFSETS_VERDICT (are the offsets measured?)
 
     // CMD_TIME op codes (Mimic.h TimeOp): instanceAddr = op, ufuncAddr = target
     // (0 global / 1 pawn), paramsData[0..7] = double value (SET only).
@@ -86,7 +89,7 @@ internal static class CeMailboxLayout
     // the DLL publishes. The DLL answers with a RANGE, so the two failure
     // directions can be told apart: too-old script => regenerate the .CT, too-old
     // DLL => update the DLL. Today the second case is silent corruption.
-    public const int ContractVersion = 4;
+    public const int ContractVersion = 5;
 
     /// <summary>Exported symbol carrying the contract. Deliberately NOT a field of
     /// the mailbox struct: reading the layout version out of the struct whose layout

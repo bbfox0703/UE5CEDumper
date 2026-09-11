@@ -104,8 +104,14 @@ import sys
 # flags: bit0 parent-relative, bit1 RELATIVE's landing unknown -- and paramsData is one byte array, so no field,
 # offset or enum value this script hashes could move. [178] was an unused output for every pose-block op (only
 # CURSOR writes it, as its own usedCenter), so no older script reads it: ADDITIVE, MAILBOX_CONTRACT_MIN stays 1.
-GOLDEN_VERSION = 4
-GOLDEN_HASH = "b131d22dbef3e9bb5453d88afca22850ff7d54883ab99766a2c491aa0a5a6ac3"
+# NOTE on version 5 ([W5-OFFSETS-MAILBOX]): unlike versions 2 and 4, this one moved the HASH as well as the
+# version, and correctly so -- `CMD_OFFSETS_VERDICT = 16` is a new member of the `Cmd` enum, which item 2 of the
+# surface hashes. It is nevertheless ADDITIVE in the strongest sense: the number was unused, no older script can
+# send it or read its output, and no field moved -- so MAILBOX_CONTRACT_MIN stays at 1 and every saved .CT keeps
+# working. The command answers "were the DynOff offsets measured?", which CE Lua could not ask before while
+# ue5_dissect.lua built structures from those offsets.
+GOLDEN_VERSION = 5
+GOLDEN_HASH = "f6738c50c61a4d9b4677c58a16121b3a3ac95d3f99518a1508edc4ec6794470a"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
 LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
@@ -163,7 +169,8 @@ LUA_ENUM_ALIASES = {
     for enum, names in (
         ("Cmd", ("CMD_IDLE", "CMD_INVOKE", "CMD_FIND_INSTANCE", "CMD_FIND_FUNCTION",
                  "CMD_INVOKE_BY_NAME", "CMD_LIST_FUNCTIONS", "CMD_LIST_INSTANCES",
-                 "CMD_SET_DEBUG_CAMERA", "CMD_TELEPORT", "CMD_PROTECT")),
+                 "CMD_SET_DEBUG_CAMERA", "CMD_TELEPORT", "CMD_PROTECT",
+                 "CMD_OFFSETS_VERDICT")),
         ("Status", ("STATUS_IDLE", "STATUS_DONE", "STATUS_PROCESSING")),
         ("InitState", ("INIT_IDLE", "INIT_RUNNING", "INIT_READY",
                        "INIT_FAILED", "INIT_SKIPPED")),

@@ -1168,6 +1168,7 @@ static void Test_Mimic_CommandNumbering() {
     EXPECT("CMD_QUERY_PTR = 13",       static_cast<int>(Mimic::CMD_QUERY_PTR)        == 13);
     EXPECT("CMD_SEETHROUGH = 14",      static_cast<int>(Mimic::CMD_SEETHROUGH)       == 14);
     EXPECT("CMD_TIME = 15",            static_cast<int>(Mimic::CMD_TIME)             == 15);
+    EXPECT("CMD_OFFSETS_VERDICT = 16", static_cast<int>(Mimic::CMD_OFFSETS_VERDICT)  == 16);
 
     // InitState -- polled as a bare memory read by the CE bootstrap, so these
     // are as load-bearing as the offsets above.
@@ -1180,9 +1181,9 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 4 since 76f93b94 ([W2-TPREL-TRANSPORTS]: the mailbox carries the parent-relative flag). This pin sat stale
-    // because that item's close-out ran dll_core_test only; the fix-pass close-out now runs both DLL test targets.
-    EXPECT("contract is 4",          Mimic::MAILBOX_CONTRACT     == 4);
+    // 5 since [W5-OFFSETS-MAILBOX] (batch L45) added CMD_OFFSETS_VERDICT. ADDITIVE -- a new Cmd, so MIN stays 1 and
+    // every saved .CT is still accepted. (4 was 76f93b94, [W2-TPREL-TRANSPORTS]: the parent-relative pose flag.)
+    EXPECT("contract is 5",          Mimic::MAILBOX_CONTRACT     == 5);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -1268,6 +1269,10 @@ static void Test_Mimic_CommandRequiresInit() {
     // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
     // the pipe path gates it on nothing.
     EXPECT("CMD_FOREGROUND is exempt", !Mimic::CommandRequiresInit(Mimic::CMD_FOREGROUND));
+    // [W5-OFFSETS-MAILBOX] The second exemption. Its whole job is to report that the offsets are NOT measured --
+    // including the case where no probe ran at all -- so gating it would replace the answer with "-10 not initialized".
+    EXPECT("CMD_OFFSETS_VERDICT is init-exempt",
+           !Mimic::CommandRequiresInit(Mimic::CMD_OFFSETS_VERDICT));
 
     // Negative control — everything else must still be gated. This is the half
     // that matters: over-exempting turns "-10 DLL not initialized" into a handler
@@ -1298,9 +1303,9 @@ static void Test_Mimic_CommandRequiresInit() {
     // Exactly ONE exemption across the whole declared command space. A future
     // handler that quietly adds itself to the exemption list trips this.
     int exempt = 0;
-    for (int32_t c = 0; c <= Mimic::CMD_TIME; ++c)
+    for (int32_t c = 0; c <= Mimic::CMD_OFFSETS_VERDICT; ++c)
         if (!Mimic::CommandRequiresInit(c)) ++exempt;
-    EXPECT("exactly one command is init-exempt", exempt == 1);
+    EXPECT("exactly two commands are init-exempt", exempt == 2);
 }
 
 // ----- Flamme: the hint-cache publish gate (audit #5 FL1) ----------------------

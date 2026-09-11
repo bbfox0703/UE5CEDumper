@@ -22,6 +22,7 @@
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
     state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued)
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
+    ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
   String INPUT params: a param descriptor with type 'fstring' (wide, UE FString)
   or 'fstringn' (narrow, FUtf8String/FAnsiString) takes value = a Lua string; the
@@ -123,6 +124,7 @@ local CMD_INVOKE_BY_NAME = 4
 local STATUS_DONE        = 1
 local STATUS_IDLE        = 0    -- untouched: the DLL never picked the command up
 local CMD_IDLE           = 0    -- the DLL clears cmd back to this when it finishes
+local CMD_OFFSETS_VERDICT = 16  -- [W5-OFFSETS-MAILBOX] were the DynOff offsets measured? (contract 5+)
 
 -- Default invoke timeout (ms). UE5DumpUI's per-game override only
 -- affects the DLL side; this Lua-side timeout guards against the
@@ -829,6 +831,40 @@ if not setDebugCamera then
     return ok and state or -1
   end
   registerLuaFunctionHighlight('getDebugCameraState')
+
+end
+
+-- ============================================================
+-- Offsets verdict (CMD_OFFSETS_VERDICT) -- [W5-OFFSETS-MAILBOX]
+-- ============================================================
+-- Every CE structure ue5_dissect.lua builds comes from the DLL's DynOff offsets, so a script that
+-- cannot ask whether those were MEASURED is building on fallbacks without knowing it.
+--- @return boolean measured, string reason  reason is '' when measured, else e.g. 'probe-not-run'
+--- A DLL older than contract 5 does not know the command and answers "Unknown command" (result -1):
+--- reported as false, 'dll-too-old' -- never as measured. That is why this file still bakes
+--- UE5_SCRIPT_CONTRACT = 1: refusing to load against an older DLL would be the worse trade.
+if not getOffsetsVerdict then
+
+  function getOffsetsVerdict()
+    if _ue5_invoke_busy then
+      error('[ue5_invoke] busy -- another mailbox call is mid-flight')
+    end
+    _ue5_invoke_busy = true
+    local pok, measured, reason = pcall(function()
+      local mb = findMailbox()
+      writeInteger(mb + OFF_STATUS, 0)                     -- clear status
+      writeInteger(mb + OFF_CMD, CMD_OFFSETS_VERDICT)      -- trigger (write LAST)
+      local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
+      if not ok_w then error(err_w) end
+      local code = readInteger(mb + OFF_RESULT, true)      -- signed: -1 = Unknown command
+      if code < 0 then return false, 'dll-too-old' end
+      return code == 1, readString(mb + OFF_PARAMS, 127, false) or ''
+    end)
+    _ue5_invoke_busy = false
+    if not pok then error(tostring(measured)) end
+    return measured, reason
+  end
+  registerLuaFunctionHighlight('getOffsetsVerdict')
 
 end
 
