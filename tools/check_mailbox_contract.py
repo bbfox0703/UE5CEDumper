@@ -98,7 +98,13 @@ import sys
 # the 16-byte derived page is reachable ONLY when the caller sets LI_IN_DERIVED, the
 # flag defaults to 0, and the handler CLEARS it after every use — so no contract-1/2
 # script can set it, inherit it, or encounter the format it selects.
-GOLDEN_VERSION = 3
+#
+# NOTE on version 4 ([W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]): the version moved and the HASH did not,
+# exactly as for version 2 and for the same reason. CMD_TELEPORT's pose block now writes paramsData[178] -- pose
+# flags: bit0 parent-relative, bit1 RELATIVE's landing unknown -- and paramsData is one byte array, so no field,
+# offset or enum value this script hashes could move. [178] was an unused output for every pose-block op (only
+# CURSOR writes it, as its own usedCenter), so no older script reads it: ADDITIVE, MAILBOX_CONTRACT_MIN stays 1.
+GOLDEN_VERSION = 4
 GOLDEN_HASH = "b131d22dbef3e9bb5453d88afca22850ff7d54883ab99766a2c491aa0a5a6ac3"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")

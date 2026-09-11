@@ -475,7 +475,7 @@ end
 -- DLL the flag would be ignored and the freeze would hold the wrong pool while
 -- reporting success -- exactly the silent-wrong-scope failure being fixed -- so this
 -- refuses up front and says to update the DLL.
-local UE5_SCRIPT_CONTRACT = 3
+local UE5_SCRIPT_CONTRACT = 4
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

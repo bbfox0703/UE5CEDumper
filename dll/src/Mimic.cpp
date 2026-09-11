@@ -1049,9 +1049,10 @@ static void HandleTeleport() {
     const int32_t slot = static_cast<int32_t>(g_invokeMailbox.ufuncAddr);
 
     // Pose block writer: [0..47] 6 doubles, [48..175] mapName,
-    // [176] source, [177] tier. Zeroes the whole buffer first.
+    // [176] source, [177] tier, [178] pose flags (contract 4: bit0 parent-relative,
+    // bit1 landing unknown). Zeroes the whole buffer first.
     auto writePoseBlock = [](const Wirbel::Pose& p, const char* mapName,
-                             uint8_t source, uint8_t tier) {
+                             uint8_t source, uint8_t tier, uint8_t flags = 0) {
         memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
         double v[6] = { p.X, p.Y, p.Z, p.Pitch, p.Yaw, p.Roll };
         memcpy(g_invokeMailbox.paramsData, v, sizeof(v));
@@ -1063,6 +1064,7 @@ static void HandleTeleport() {
         }
         g_invokeMailbox.paramsData[176] = source;
         g_invokeMailbox.paramsData[177] = tier;
+        g_invokeMailbox.paramsData[178] = flags;   // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]
     };
 
     int32_t rc;
@@ -1071,8 +1073,9 @@ static void HandleTeleport() {
         Wirbel::Pose p{};
         char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
         uint8_t source = 0;
-        rc = Wirbel::GetPose(p, map, sizeof(map), &source);
-        if (rc == 0) writePoseBlock(p, map, source, 0);
+        bool parentRel = false;   // [W2-MARKER-PARENTREL]
+        rc = Wirbel::GetPose(p, map, sizeof(map), &source, &parentRel);
+        if (rc == 0) writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);
         break;
     }
     case TP_OP_SAVE: {
@@ -1080,7 +1083,7 @@ static void HandleTeleport() {
         if (rc == 0) {
             Wirbel::Marker m{};
             if (Wirbel::GetMarker(slot, m) == 0)
-                writePoseBlock(m.P, m.MapName, 0, 0);
+                writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         }
         break;
     }
@@ -1116,7 +1119,7 @@ static void HandleTeleport() {
     case TP_OP_GET_MARKER: {
         Wirbel::Marker m{};
         rc = Wirbel::GetMarker(slot, m);
-        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0);
+        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         break;
     }
     case TP_OP_CLEAR_MARKER:
@@ -1132,15 +1135,16 @@ static void HandleTeleport() {
     case TP_OP_GET_LAST: {
         Wirbel::Marker m{};
         rc = Wirbel::GetLast(m);
-        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0);
+        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         break;
     }
     case TP_OP_BUGIT_SAVE: {
         Wirbel::Pose p{};
         char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
         uint8_t source = 0;
-        rc = Wirbel::BugItSave(p, map, sizeof(map), &source);
-        if (rc == 0) writePoseBlock(p, map, source, 0);
+        bool parentRel = false;   // [W2-MARKER-PARENTREL]
+        rc = Wirbel::BugItSave(p, map, sizeof(map), &source, &parentRel);
+        if (rc == 0) writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);
         break;
     }
     case TP_OP_BUGIT_GO: {
@@ -1173,8 +1177,17 @@ static void HandleTeleport() {
         bool horizontalOnly = g_invokeMailbox.paramsData[8] == 0;  // mode 0 = horizontal
         Wirbel::Pose p{};
         uint8_t tier = 0;
-        rc = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier);
-        if (rc == 0) writePoseBlock(p, nullptr, 0, tier);
+        bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
+        rc = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown);
+        if (rc == 0 && !landingKnown) {
+            // The move succeeded but its re-read failed: publish NaN (nobody measured it) and say so --
+            // never the zero-initialised Pose, a landing at the world origin. [TPREL-ZEROPOSE-2026-09-10]
+            const uint64_t nanBits = 0x7FF8000000000000ull;
+            double nan = 0;
+            memcpy(&nan, &nanBits, sizeof(nan));
+            p.X = p.Y = p.Z = p.Pitch = p.Yaw = p.Roll = nan;
+        }
+        if (rc == 0) writePoseBlock(p, nullptr, 0, tier, landingKnown ? 0 : 0x02);
         break;
     }
     case TP_OP_EXPLICIT: {

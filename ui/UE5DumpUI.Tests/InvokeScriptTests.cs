@@ -1845,6 +1845,24 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
+    {
+        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
+        // or Frieren.cpp, so this pins their source; the generated scripts must claim the contract that carries the byte.
+        var mimic = DllSource("Mimic.cpp");
+        Assert.Contains("g_invokeMailbox.paramsData[178] = flags;", mimic, StringComparison.Ordinal);
+        Assert.Contains("writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);", mimic, StringComparison.Ordinal);
+        Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown)", mimic,
+            StringComparison.Ordinal);
+        var frieren = DllSource("Frieren.cpp");
+        Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown)", frieren,
+            StringComparison.Ordinal);
+        Assert.True(CeMailboxLayout.ContractVersion >= 4,
+            "a script that reads paramsData[178] must claim contract 4 -- a contract-3 DLL would accept it and leave "
+            + "the byte nobody wrote at 0, i.e. no warning");
+    }
+
+    [Fact]
     public void BakedScript_DebugReturnPrint_NeverReadsPastTheSlab()
     {
         // Review of 9abc03c8: Copy AA Script's DEBUG return decode was bounded by ParmsSize only,

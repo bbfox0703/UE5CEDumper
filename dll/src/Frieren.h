@@ -200,7 +200,8 @@ __declspec(dllexport) int32_t   UE5_TeleportGetLast(double* outPose6,
 __declspec(dllexport) int32_t   UE5_TeleportGetPov(double* outPov11);
 // Teleport along the pawn's facing by `distance` uu (negative = backward).
 // horizontalOnly!=0 keeps Z (ground-plane move); 0 uses the full 3D forward.
-// outNewPose6 (nullable) receives the resulting X,Y,Z,Pitch,Yaw,Roll.
+// outNewPose6 (nullable) receives the resulting X,Y,Z,Pitch,Yaw,Roll -- all NaN when the move
+// succeeded but its landing could not be re-read (never zeros: a landing at the origin). [W2-TPREL-TRANSPORTS]
 __declspec(dllexport) int32_t   UE5_TeleportRelative(double distance,
                                     int32_t horizontalOnly, double* outNewPose6);
 // Teleport to explicit world coordinates (force — no map check). hasRot!=0 also

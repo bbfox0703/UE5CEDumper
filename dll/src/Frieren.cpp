@@ -1343,7 +1343,16 @@ int32_t UE5_TeleportGetPov(double* outPov11) {
 int32_t UE5_TeleportRelative(double distance, int32_t horizontalOnly,
                              double* outNewPose6) {
     Wirbel::Pose p{};
-    int32_t rc = Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr);
+    bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
+    int32_t rc = Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown);
+    if (rc == 0 && !landingKnown) {
+        // The move succeeded, its re-read did not: NaN (nobody measured it), never zeros -- which read as a
+        // landing at the world origin. [TPREL-ZEROPOSE-2026-09-10]
+        const uint64_t nanBits = 0x7FF8000000000000ull;
+        double nan = 0;
+        memcpy(&nan, &nanBits, sizeof(nan));
+        p.X = p.Y = p.Z = p.Pitch = p.Yaw = p.Roll = nan;
+    }
     if (rc == 0) Teleport_CopyPose(p, outNewPose6);
     return rc;
 }

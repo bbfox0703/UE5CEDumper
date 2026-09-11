@@ -456,6 +456,31 @@ public class CeLuaHygieneTests
         Assert.DoesNotContain("\r", s);
     }
 
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Save)]
+    [InlineData(TeleportScriptGenerator.Action.GetPose)]
+    [InlineData(TeleportScriptGenerator.Action.BugIt)]
+    public void Teleport_pose_reading_actions_warn_on_a_parent_relative_pose(TeleportScriptGenerator.Action action)
+    {
+        // [W2-MARKER-PARENTREL] mailbox half: the pose block's flags byte (paramsData[178], contract 4) says the pose came
+        // from the raw parent-relative fallback. The pose card's "do not save these" never reached CE -- the record
+        // must say so, and keep its window open like every other genuine problem.
+        var s = TeleportScriptGenerator.Generate(action, 0);
+        var read = s.IndexOf("readBytes(mb + 0x3DA, 1, true)", StringComparison.Ordinal);
+        Assert.True(read >= 0, "the record must read paramsData[178]");
+        var warn = s.IndexOf("PARENT-RELATIVE", read, StringComparison.Ordinal);
+        Assert.True(warn > read, "and name the parent-relative read after it");
+        var flag = s.LastIndexOf("hadError = true", warn, StringComparison.Ordinal);
+        Assert.True(flag > read, "the warning must set hadError, or the window closes on it");
+    }
+
+    [Fact]
+    public void Teleport_recall_does_not_read_the_pose_flags()
+    {
+        // The control, green before and after: RECALL writes no pose block.
+        Assert.DoesNotContain("0x3DA", TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.Recall, 0));
+    }
+
     [Fact]
     public void Teleport_clear_all_gates_print_and_closes()
     {

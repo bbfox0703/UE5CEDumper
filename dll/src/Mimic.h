@@ -46,11 +46,17 @@ enum Cmd : int32_t {
                               //             [9] u8 fallbackToCenter
                               //   Output: result = Wirbel code (0 OK, negatives per
                               //           docs/teleport-spec.md §8)
-                              //           paramsData pose block (GET_POSE/SAVE/GET_MARKER):
+                              //           paramsData pose block (GET_POSE/SAVE/GET_MARKER/
+                              //           GET_LAST/BUGIT_SAVE/RELATIVE):
                               //             [0..47]   6 doubles X,Y,Z,Pitch,Yaw,Roll
                               //             [48..175] mapName (null-terminated)
                               //             [176]     u8 source (0 raw / 1 invoke)
                               //             [177]     u8 tier (1 invoke / 2 raw write)
+                              //             [178]     u8 pose flags (contract 4+): bit0 = the
+                              //                       pose came from the raw parent-relative
+                              //                       fallback (NOT world coords); bit1 =
+                              //                       RELATIVE's landing is unknown (the 6
+                              //                       doubles are then NaN, never zeros)
                               //           op CURSOR output:
                               //             [0..23] 3 doubles hit point, [177] tier,
                               //             [178] u8 usedCenter
@@ -546,7 +552,13 @@ namespace Mimic {
 ///       no old script can encounter it.
 ///   Note this bump DOES move the surface hash (the struct gained fields), unlike
 ///   version 2 which moved on meaning alone — see tools/check_mailbox_contract.py.
-constexpr int32_t MAILBOX_CONTRACT = 3;
+/// 4 ([W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]): CMD_TELEPORT's pose block gains paramsData[178], pose
+///   flags -- bit0 the pose came from the raw parent-relative fallback, bit1 TP_OP_RELATIVE's landing is unknown
+///   (its 6 doubles are then NaN, never the zeros of a landing at the world origin). ADDITIVE: [178] was an
+///   unused output for every pose-block op (only CURSOR writes it, as its own usedCenter), so no contract-1..3
+///   script reads it, and MAILBOX_CONTRACT_MIN stays at 1. Like version 2 this moves on MEANING alone -- the
+///   surface hash does not change, and tools/check_mailbox_contract.py records why.
+constexpr int32_t MAILBOX_CONTRACT = 4;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

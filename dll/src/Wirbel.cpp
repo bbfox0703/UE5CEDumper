@@ -1756,7 +1756,8 @@ int32_t GetLast(Marker& out) {
     return out.Valid ? TP_OK : TP_ERR_EMPTY_MARKER;
 }
 
-int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource) {
+int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                  bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     Marker m{};
     int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), outSource, nullptr,
@@ -1765,6 +1766,7 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
     m.Valid = true;
     s_bugItMarker = m;
     out = m.P;
+    if (outParentRelative) *outParentRelative = m.ParentRelative;   // [W2-MARKER-PARENTREL]
     if (mapName && mapNameCap > 0) {
         int32_t n = 0;
         for (; n < mapNameCap - 1 && m.MapName[n]; ++n) mapName[n] = m.MapName[n];

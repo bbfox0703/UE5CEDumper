@@ -219,7 +219,9 @@ int32_t GetLast(Marker& out);
 // so the caller can also copy a "BugItGo X Y Z" string). User-triggered single
 // slot, distinct from the markers and the system "last" slot — it persists DLL
 // side so a later BugItGo can teleport back without the caller holding the pose.
-int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource);
+// outParentRelative (optional): the pose came from the raw parent-relative fallback. [W2-MARKER-PARENTREL]
+int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                  bool* outParentRelative = nullptr);
 
 // BugItGo: teleport to the pose stored by the most recent BugItSave (restores
 // rotation, one-way like a marker recall). TP_ERR_EMPTY_MARKER (no-op) when no

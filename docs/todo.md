@@ -802,10 +802,16 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
     - The manual ↻'s status message stays as the fuller explanation; the chip is what survives.
     - **Tests, red first:** the quiet poll surfacing it, a directional TP keeping it, the disconnect
       clearing it, and the chip bound in the panel. A healthy read clearing it is the control.
-- ⬜ **`[W2-TPREL-TRANSPORTS]` LOW** — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
+- ✅ **`[W2-TPREL-TRANSPORTS]` LOW** (FIXED IN SOURCE 2026-09-12, batch B29b) — `Mimic.cpp:1176-1177`, `Frieren.cpp:1346-1347` (the table above).
   - Both call `TeleportRelative` without `&landingKnown` and publish the zero-initialised
     `Pose p{}` as the landing. The pipe half was fixed in 5058e971.
   - The mailbox half follows the `MAILBOX_CONTRACT` rules, and its live check needs CE.
+  - ✅ **FIXED IN SOURCE 2026-09-12** (batch B29b). Both transports now pass `&landingKnown`. An unknown
+    landing is published as NaN, never the zero-initialised Pose:
+    - TP_OP_RELATIVE writes NaN doubles plus pose-flag bit1 (contract 4, see `[W2-MARKER-PARENTREL]`);
+    - `UE5_TeleportRelative` fills `outNewPose6` with NaN, with `rc` still 0 because the move worked.
+
+    The pin is the same source pin. 4/4 mutants killed; UI 5144/5144.
 
 ---
 
@@ -864,7 +870,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
    - **Tests, red first:** the ParsePose key test, a directional teleport keeping the map and the
      source, the add-time read, the connect prime, and an unknown map. A reply that does report a
      map is the control.
-3. ◐ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
+3. ✅ **`[W2-MARKER-PARENTREL]`** `Wirbel.cpp:1490` — the FP1 residual above, filed as its own row.
    ✅ **The pipe half, FIXED IN SOURCE 2026-09-12** (batch B29a). ⬜ The mailbox half is batch B29b.
    - `struct Marker` gains `ParentRelative`. `SaveMarker`, `SaveLastImpl` and `BugItSave` capture it
      from `GetPoseImpl`, which already reported it. The save path used to pass `nullptr`, so it could
@@ -884,9 +890,21 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
      A healthy save and a healthy marker are the controls. 5/5 mutants killed; UI 5139/5139.
    - ⚠ **Survivors by construction:** Wirbel.cpp's capture and Fern.cpp's publish, which no test target
      compiles. The real `UE5Dumper` build and the live check cover them.
-   - ⬜ **B29b:** TP_OP_SAVE / GET_POSE / GET_MARKER / GET_LAST / BUGIT_SAVE carrying the flag in the
-     pose block, with `[W2-TPREL-TRANSPORTS]`. That moves a byte's meaning and follows the
-     `MAILBOX_CONTRACT` rules.
+   ✅ **The mailbox and C ABI half, FIXED IN SOURCE 2026-09-12** (batch B29b, together with `[W2-TPREL-TRANSPORTS]`).
+   - The pose block gains `paramsData[178]`, pose flags: bit0 parent-relative, bit1 RELATIVE's landing
+     unknown. It is written by GET_POSE, SAVE, GET_MARKER, GET_LAST, BUGIT_SAVE and RELATIVE.
+   - `BugItSave` gains an optional `outParentRelative`.
+   - **Contract 3 → 4, ADDITIVE.** [178] was an unused output for every pose-block op (only CURSOR writes
+     it, as its own usedCenter), so `MAILBOX_CONTRACT_MIN` stays at 1. Like version 2 it moves on meaning
+     alone: the surface hash is unchanged, and `tools/check_mailbox_contract.py` records why.
+     `CeMailboxLayout.ContractVersion` follows.
+   - The CE Save / Get current coords / BugIt records read the flag. A parent-relative pose shows a
+     PARENT-RELATIVE message and keeps the window open (`hadError`).
+   - **Tests, red first:**
+     - a theory over the three records;
+     - a source pin on Mimic.cpp / Frieren.cpp (no test target compiles them) plus the contract claim.
+
+     RECALL not reading the byte is the control. 4/4 mutants killed; UI 5144/5144.
 4. ✅ **`[W2-ORDEN-FINDENTRY]`** (FIXED IN SOURCE 2026-09-11, batch B13) `dll/src/Orden.h:102`. A Group Scan slot with **Bigger** or
    **Smaller** silently skips every field of a width the target cannot be *encoded* at, even when
    every value of that width satisfies the comparison. Because a group candidate needs ALL slots at
@@ -4668,6 +4686,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 49 | `[W3-DUNSTE-QUEUED]` | MED | `git log --grep W3-DUNSTE-QUEUED` (batch B31) | dll_helpers_test red first against the pre-fix mapping: -5 is Queued, and a queued request commits; the other codes stay Refused. 2/2 mutants killed; dll_helpers_test 2708/2708; UI 5134/5134 |
 | 50 | `[A3-ST1-SUPER-DRAIN]` | MED | `git log --grep A3-ST1-SUPER-DRAIN` (batch B30) | a source pin, red first: the fail-open branch goes through `Stark::CallAddressAsOwnSEH`, which holds the own-PE-call mark in an outer frame. 2/2 mutants killed; UI 5135/5135. The recorded safe fix; no contract bump |
 | 51 | `[W2-MARKER-PARENTREL]` (pipe half) | MED | `git log --grep W2-MARKER-PARENTREL` (batch B29a) | the UI, red first against inert properties: a parent-relative save (status and row), a refresh flagging a marker and the Last slot, and the parse. 5/5 mutants killed; UI 5139/5139. The mailbox half is B29b |
+| 52 | `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) | LOW + MED | `git log --grep W2-TPREL-TRANSPORTS` (batch B29b) | the CE records' flag read (a theory) and a source pin on Mimic.cpp / Frieren.cpp, red first. 4/4 mutants killed; UI 5144/5144. Contract 3 → 4, additive (MIN stays 1) |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4797,6 +4816,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Save Marker 1. The status names the PARENT-RELATIVE read, and the row reads "⚠ parent-relative (not world)".
 3. Reconnect the UI: the flag survives in the row (it lives DLL-side).
 4. **Control:** a normal on-foot save gives a plain "Marker 1 saved.". | a game + UI; no CE |
+| L38 | `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox) | **CE: announce first.** Regenerate the CE records (contract 4):
+1. On an attached pawn whose world read fails, fire the Save / Get current coords / BugIt records. Each shows the PARENT-RELATIVE message and keeps its window open.
+2. A contract-3 .CT still runs against the new DLL (MIN 1).
+3. A new record against an OLD DLL refuses with "update the DLL".
+4. **Control:** an on-foot save closes cleanly. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4849,7 +4873,7 @@ completeness critic.
 | ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ✅ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
-| ◐ B29 pose parent-relative (B29a pipe + UI ✅; B29b mailbox ⬜) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
+| ✅ B29 pose parent-relative (B29a pipe + UI; B29b mailbox + C ABI) | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ✅ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |
 | ✅ B31 queued collision | `[W3-DUNSTE-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) | |
 | ⬜ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
