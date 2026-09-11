@@ -4897,6 +4897,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (delResult.ok && !delResult.elements.empty()) {
                         fv.arrayElements = std::move(delResult.elements);
+                    } else if (!delResult.ok && !delResult.error.empty()) {
+                        // [P1-UPROP-DELEGATE] The FProperty twin's fix (e16d2052), copied: a refused stride reached
+                        // the UI as NOTHING -- a bare header, indistinguishable from an empty array.
+                        fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
                 // Phase K: Multicast delegate arrays (UProperty mode)
@@ -4906,6 +4910,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (mcastResult.ok && !mcastResult.elements.empty()) {
                         fv.arrayElements = std::move(mcastResult.elements);
+                    } else if (!mcastResult.ok && !mcastResult.error.empty()) {
+                        // [P1-UPROP-DELEGATE] Same silent-refusal defect as the unicast arm just above.
+                        fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
                     }
                 }
                 // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]

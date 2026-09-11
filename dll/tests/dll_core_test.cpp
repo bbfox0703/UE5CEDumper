@@ -2740,6 +2740,85 @@ int main() {
         DynOff::bCasePreservingName = savedCpnD;
     }
 
+    // -- UPROPDELEGATE-2026-09-12 -- the UProperty-mode delegate-array arms name the readers' refusal ---------------
+    //
+    // ⛔ POOL-FAKING (own pool, last). [P1-UPROP-DELEGATE] e16d2052 fixed the FProperty arms; the UProperty-mode
+    // (UE4 < 4.25) twins kept dropping the refusal. A 20-byte element is neither 16 nor 24, so both readers refuse it.
+    {
+        blk("UPROPDELEGATE - a UProperty-mode delegate array names the reader's refusal, as the FProperty arm does");
+        ResetCancel();
+
+        static uint8_t udEntry[6][0x40] = {};
+        const char* udNames[6] = { "", "ArrayProperty", "DelegateProperty", "MulticastDelegateProperty",
+                                   "Handlers", "Events" };
+        static uintptr_t udChunk[7] = {};
+        for (int i = 1; i <= 5; ++i) {
+            memcpy(udEntry[i] + 0x10, udNames[i], strlen(udNames[i]) + 1);
+            udChunk[i] = reinterpret_cast<uintptr_t>(udEntry[i]);
+        }
+        static uintptr_t udChunks[2] = { reinterpret_cast<uintptr_t>(udChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(udChunks), 0x10);
+        check("UPROPDELEGATE setup: the pool resolves MulticastDelegateProperty",
+              Serie::GetString(3) == "MulticastDelegateProperty", Serie::GetString(3).c_str());
+
+        const bool savedFPropUD = DynOff::bUseFProperty;
+        const bool savedCpnUD   = DynOff::bCasePreservingName;
+        DynOff::bUseFProperty       = false;
+        DynOff::bCasePreservingName = false;
+        auto udPutP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto udPut32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        // The UProperty "classes": UObjects whose FName is the property type's name.
+        static uint8_t udTypeCls[4][0x40] = {};
+        for (int i = 1; i <= 3; ++i) udPut32(udTypeCls[i], Grimoire::OFF_UOBJECT_NAME, i);
+
+        // Two array UProperties, each with a 20-byte inner UProperty at Offset_Internal + 0x2C (the walker's probe).
+        static uint8_t udInner[2][0x100] = {}, udProp[2][0x100] = {};
+        for (int k = 0; k < 2; ++k) {
+            udPutP(udInner[k], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(udTypeCls[k == 0 ? 2 : 3]));
+            udPut32(udInner[k], DynOff::UPROPERTY_ELEMSIZE, 20);
+            udPutP(udProp[k], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(udTypeCls[1]));   // ArrayProperty
+            udPut32(udProp[k], Grimoire::OFF_UOBJECT_NAME, k == 0 ? 4 : 5);                              // Handlers / Events
+            udPut32(udProp[k], DynOff::UPROPERTY_OFFSET, 0x40 + k * 0x10);
+            udPut32(udProp[k], DynOff::UPROPERTY_ELEMSIZE, 16);
+            udPut32(udProp[k], DynOff::UPROPERTY_ELEMSIZE - 4, 1);
+            udPutP(udProp[k], DynOff::UPROPERTY_OFFSET + 0x2C, reinterpret_cast<uintptr_t>(udInner[k]));
+        }
+        udPutP(udProp[0], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(udProp[1]));
+
+        static uint8_t udCls[0x100] = {};
+        udPut32(udCls, DynOff::USTRUCT_PROPSSIZE, 0x100);
+        udPutP(udCls, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(udProp[0]));
+
+        static uint8_t udData[2][2 * 20] = {};
+        static uint8_t udInst[0x100] = {};
+        for (int k = 0; k < 2; ++k) {
+            udPutP(udInst, 0x40 + k * 0x10, reinterpret_cast<uintptr_t>(udData[k]));   // TArray.Data
+            udPut32(udInst, 0x48 + k * 0x10, 2);                                          // Num
+            udPut32(udInst, 0x4C + k * 0x10, 2);                                          // Max
+        }
+
+        const auto ur = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(udInst),
+                                           reinterpret_cast<uintptr_t>(udCls), 64, 2, false);
+        const Ubel::LiveFieldValue* uHand = ur.fields.size() == 2 ? &ur.fields[0] : nullptr;
+        const Ubel::LiveFieldValue* uEvt  = ur.fields.size() == 2 ? &ur.fields[1] : nullptr;
+        check("UPROPDELEGATE setup: the UProperty walk found both arrays with their 20-byte inners",
+              uHand && uEvt && uHand->arrayInnerType == "DelegateProperty" && uHand->arrayElemSize == 20
+              && uEvt->arrayInnerType == "MulticastDelegateProperty",
+              std::to_string(ur.fields.size()).c_str());
+        check("UPROPDELEGATE ⭐: the unicast arm names the reader's refusal",
+              uHand && uHand->typedValue.find("(delegate array") == 0
+              && uHand->typedValue.find("element size 20") != std::string::npos,
+              uHand ? uHand->typedValue.c_str() : "-");
+        check("UPROPDELEGATE ⭐: ...and so does the multicast arm",
+              uEvt && uEvt->typedValue.find("(multicast array") == 0
+              && uEvt->typedValue.find("element size 20") != std::string::npos,
+              uEvt ? uEvt->typedValue.c_str() : "-");
+
+        DynOff::bUseFProperty       = savedFPropUD;
+        DynOff::bCasePreservingName = savedCpnUD;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

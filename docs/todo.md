@@ -2143,12 +2143,17 @@ code**, which is the behaviour the brief asked for.
        5/5 mutants killed; dll_core_test 277/277; UI 5187/5187.
      - ⚠ **Survivors by construction:** `GetEnumEntries`' quiet branch (log-only), and the
        MainWindowViewModel status line (no export harness).
-3. ⬜ **`[P1-UPROP-DELEGATE]`** `Ubel.cpp:4697`. The UProperty-mode (UE4 < 4.25) delegate-array arms
+3. ✅ **`[P1-UPROP-DELEGATE]`** (FIXED IN SOURCE 2026-09-12, batch L06) `Ubel.cpp:4697`. The UProperty-mode (UE4 < 4.25) delegate-array arms
    still **drop the readers' refusal `error`** — commit `e16d2052` fixed exactly this on the FProperty
    arm, and that arm's comment calls the old behaviour a defect in so many words. ⭐ **P3 at the
    code-path level**: a fix that reached one of two twins. ✅ **The only fully SAFE fix in the batch**:
    copy the two shipped, verified `else if (!r.ok && !r.error.empty())` branches into the UProperty
    arm.
+   ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L06). Both UProperty-mode arms (Phase J unicast,
+   Phase K multicast) now write the reader's refusal into the field's value, as their FProperty twins do.
+   **Red first:** dll_core_test walks a fake UProperty-mode class (`bUseFProperty = false`). Its two array
+   UProperties carry 20-byte inners, neither 16 nor 24, so both readers refuse, and each field must now name
+   its refusal. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195.
 4. ⬜ **`[P1-WALK-UNREADABLE]`** `Ubel.cpp:3981`. `WalkInstance` knows the object is gone
    (`IsAddrReadable` false, logged *"not readable (freed?)"*) and returns an `InstanceWalkResult`
    carrying **only `addr`** — no `stale`, no error. Live Walker shows a silently blank grid.
@@ -4981,6 +4986,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 57 | `[A4-DELEGATE-ARRAY-PAD]` | LOW | `git log --grep A4-DELEGATE-ARRAY-PAD` (batch L03b) | dll_core_test (the helper, and a fake walk over a padded and an unpadded delegate array) and the UI (parse, CE XML leaves and tail, CSX leaves, multicast controls), red first against an inert member / helper / property. 10/10 mutants killed; dll_core_test 275/275; UI 5169/5169. The pad is per ELEMENT and ArrayProperty-only, never on the array field |
 | 58 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | LOW | `git log --grep P3-SDK-INNERS` (batch L04) | the UI: each copied inner spelling (Array, with its class, Map, Set) and a header over a guessed row, red first. 5/5 mutants killed; UI 5176/5176. Only the four scalar arms: the rest of the INNERS sketch was not safe |
 | 59 | `[P1-SEETHRU-NOPRODUCER]` + `[P1-SEETHRU-GIVEUP]` | LOW | `git log --grep P1-SEETHRU-NOPRODUCER` (batch L05) | the UI (the VM card for a -3 refusal, an abandoned and a pending restore; the parse) and source pins for Schlacht.cpp / Fern.cpp, red first. 9/9 mutants killed; UI 5183/5183. Refused at ENABLE, the recorded shape; the per-hit case stays out |
+| 60 | `[P1-UPROP-DELEGATE]` | LOW | `git log --grep P1-UPROP-DELEGATE` (batch L06) | dll_core_test, red first: a UProperty-mode walk over a refusing delegate array and a refusing multicast array. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195. The recorded safe fix, copied verbatim from the FProperty twins |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5144,6 +5150,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Enable** on a normal game. It turns ON (the producer probe passes), and the DLL log has no "refusing to enable".
 2. **Give-up:** with an occluder hidden, pause the game (background it without Keep Foreground), turn See-through off in the UI, and keep the game paused over 5 minutes. Refresh: the card says the restore gave up and to turn See-through on and off again. Do that with the game running: the actor reappears, and the card reads plain OFF.
 3. The -3 refusal is not reachable on a stock build; the source pin covers it. | a game + UI |
+| L46 | `[P1-UPROP-DELEGATE]` | A UE4 < 4.25 game (UProperty mode) with a `TArray<FScriptDelegate>` or a multicast array:
+1. Live Walker shows its elements, or its count, as on an FProperty title.
+2. The refusal text ("(delegate array — unexpected … element size N, not read)") appears only for an ElementSize the readers do not recognise. A stock build does not produce one, so dll_core_test covers it. | a UE4 < 4.25 game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5207,7 +5216,7 @@ completeness critic.
 - ✅ **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE), in two batches: L03a and L03b.
 - ✅ **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - ✅ **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
-- **L06:** `[P1-UPROP-DELEGATE]`
+- ✅ **L06:** `[P1-UPROP-DELEGATE]`
 - **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 - **L08:** `[P1-SPARSEDELEGATE-REFS]`
 - **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
