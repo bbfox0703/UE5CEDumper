@@ -330,7 +330,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                     var res = await _dump.WalkFunctionPropsAsync(row.FuncAddr, ct);
                     if (res.NotAnalysed)
                     {
-                        // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script"), so a
+                        // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script" /
+                        // "bytecode_unreadable" -- see FunctionPropRefsResult.NotAnalysed), so a
                         // bare "0" would read as "analysed, touches no class fields". The single-function
                         // dialog already says "NOTHING was analysed"; the batch never read the tag.
                         row.XrefInfo = PartialResultNotice.NotAnalysedCell;

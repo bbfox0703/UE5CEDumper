@@ -1089,6 +1089,17 @@ while eviction runs at the hand-edited number.
      consumer that did not.
    - **Tests, red first:** a theory over `none` / `blueprint_no_script`. The control over `bytecode` /
      `disasm` keeps a bare `0`, green both ways.
+   - ✅ **Review follow-up 2026-09-11** (adversarial review of B14–B21, `batchmethod-bytecode-unread`,
+     LOW/PLAUSIBLE). B20's premise, that only two tags mean nothing was analysed, was incomplete.
+     - `WalkFunctionPropertyRefs` set `method = "bytecode"` BEFORE reading the Script buffer, and
+       returned empty refs when that read failed. That happens with a stale or freed allocation, or a
+       mis-resolved `USTRUCT_SCRIPT`. The batch then wrote a bare `0` for a function nobody scanned.
+     - The DLL now tags that case `bytecode_unreadable`. `NotAnalysed` includes it, and the
+       single-function dialog says NOTHING was analysed, as it does for `blueprint_no_script`.
+     - No contract bump: `method` is a pipe string the UI already reads; the mailbox is untouched.
+     - **Tests, red first:** a third row in the batch theory, and a `dll_core_test` block. An
+       unreadable Script buffer is tagged `bytecode_unreadable`; the control, a readable Script with
+       no anchor opcode, stays `bytecode`. 2/2 mutants killed (one UI, one DLL); UI 5090/5090; dll_core_test 191/191.
 
 **LOW** — 2 rows: `[W3-CAP-NOSAVE]` `PropertySearchCap` and `ClassListCap` round-trip through
 `ApplyOptions`/`BuildOptions` but are in **neither** persist set, so `Track()` never calls

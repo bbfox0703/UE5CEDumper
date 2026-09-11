@@ -56,8 +56,9 @@ public sealed class FunctionPropRefsResult
     /// <summary>
     /// How the props were recovered: "bytecode" (Path 1 Kismet scan, exact),
     /// "disasm" (Path 2 native x64 disassembly, heuristic), "none" (native
-    /// but analysis unavailable — Func offset unresolved on this build), or
-    /// "blueprint_no_script".
+    /// but analysis unavailable — Func offset unresolved on this build),
+    /// "blueprint_no_script", or "bytecode_unreadable" (the Script header looked plausible but its
+    /// buffer did not read — nothing was scanned).
     ///
     /// <para>⚠ The last one is a REFUSAL and the caller must not render it as an empty
     /// result: a script/Blueprint UFunction with no usable Script buffer points
@@ -86,10 +87,11 @@ public sealed class FunctionPropRefsResult
     /// <summary>True when results came from native x64 disassembly (heuristic).</summary>
     public bool IsDisasm => Method == "disasm";
 
-    /// <summary>[W3-BATCH-METHOD] Nothing was analysed: "none" (the Func offset is unresolved on this build)
-    /// or "blueprint_no_script" (refused, see <see cref="Method"/>). Zero <see cref="Props"/> then means
-    /// "not looked at", never "touches nothing". An unrecognised future tag is NOT treated as this.</summary>
-    public bool NotAnalysed => Method is "none" or "blueprint_no_script";
+    /// <summary>[W3-BATCH-METHOD] Nothing was analysed: "none" (the Func offset is unresolved on this build),
+    /// "blueprint_no_script" (refused, see <see cref="Method"/>), or "bytecode_unreadable" (the Script buffer
+    /// did not read; review of 0de62ec1). Zero <see cref="Props"/> then means "not looked at", never
+    /// "touches nothing". An unrecognised future tag is NOT treated as this.</summary>
+    public bool NotAnalysed => Method is "none" or "blueprint_no_script" or "bytecode_unreadable";
 
     public List<FunctionPropRef> Props { get; init; } = new();
 }

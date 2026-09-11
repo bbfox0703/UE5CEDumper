@@ -6404,10 +6404,16 @@ FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr) {
         return out;
     }
     out.scriptBytes = scriptNum;
-    out.method = "bytecode";
 
     std::vector<uint8_t> buf(static_cast<size_t>(scriptNum));
-    if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) return out;
+    if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) {
+        // [W3-BATCH-METHOD] review follow-up: the Script header looked plausible but its buffer did not
+        // read (a stale / freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this
+        // must not leave as "bytecode" with zero refs -- the batch renders that as a real "0".
+        out.method = "bytecode_unreadable";
+        return out;
+    }
+    out.method = "bytecode";
 
     // Opcode-anchored property-reference scan. Anchors are the value-access
     // opcodes whose immediate operand is an FProperty* (8B):

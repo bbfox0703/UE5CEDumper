@@ -263,6 +263,7 @@ public class BatchXrefCancelVsDisconnectTests
     [Theory]
     [InlineData("none")]
     [InlineData("blueprint_no_script")]
+    [InlineData("bytecode_unreadable")]   // review of 0de62ec1: a Script header whose buffer did not read
     public async Task Functions_props_batch_marks_a_not_analysed_row_as_such(string method)
     {
         var rows = new List<ScoredFunctionRow> { FuncRow("NativeOrEmptyBlueprint") };

@@ -722,6 +722,30 @@ int main() {
     }
 
 
+    {   blk("W3-BATCH-METHOD review -- an unreadable Script buffer is not \"bytecode\"");
+        // WalkFunctionPropertyRefs tagged a function "bytecode" BEFORE reading its Script buffer and
+        // returned empty refs when that read failed -- which the UI's batch rendered as a real "0"
+        // ("analysed, touches no class fields") for a function nobody scanned. Review of 0de62ec1.
+        alignas(16) static uint8_t fn[0x400] = {};
+        const uintptr_t fnAddr = reinterpret_cast<uintptr_t>(fn);
+        *reinterpret_cast<uintptr_t*>(fn + DynOff::USTRUCT_SCRIPT)      = 0x1000;   // never mapped
+        *reinterpret_cast<int32_t*>(fn + DynOff::USTRUCT_SCRIPT + 0x08) = 16;       // a plausible Num
+        auto dead = Aura::WalkFunctionPropertyRefs(fnAddr);
+        check("W3-BATCH-METHOD ⭐: an unreadable Script buffer is tagged bytecode_unreadable, not bytecode",
+              dead.method == "bytecode_unreadable", dead.method.c_str());
+        check("...with no refs", dead.refs.empty());
+
+        // ⭐ The control: a READABLE Script with no property opcode is genuinely analysed, and stays
+        // "bytecode" -- otherwise the fix would have relabelled every empty scan as unread.
+        alignas(16) static uint8_t script[16];
+        memset(script, 0x0B, sizeof(script));   // 0x0B is none of the anchor opcodes
+        *reinterpret_cast<uintptr_t*>(fn + DynOff::USTRUCT_SCRIPT) = reinterpret_cast<uintptr_t>(script);
+        auto live = Aura::WalkFunctionPropertyRefs(fnAddr);
+        check("W3-BATCH-METHOD control: a readable Script is still bytecode",
+              live.method == "bytecode", live.method.c_str());
+    }
+
+
     {   blk("D2 -- a scan worker that THROWS must not report the run as COMPLETE");
         // Blind-spot sweep, 2026-09-08. ParallelIndexRanges' catch(...) is the
         // terminate-guard (an exception escaping a std::thread callable calls
