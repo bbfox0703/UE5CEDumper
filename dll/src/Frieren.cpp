@@ -2241,9 +2241,12 @@ extern "C" int UE5_GetProcessEventOffset() {
 // address read out of the vtable lands in HookedProcessEvent — on a pipe lane or
 // the Mimic polling thread — and its drain then executed queued requests that
 // were queued precisely because they are NOT safe off-thread. Now true again,
-// because we route through the trampoline below.
-// Sharing the body via a static helper would tangle SEH+C++ object
-// lifetimes; the duplication is small.
+// on BOTH branches below: the patched address goes through the trampoline, and
+// an override's fail-open call runs under Stark::CallAddressAsOwnSEH's own-PE-call
+// mark -- so when AActor::ProcessEvent calls Super::ProcessEvent, which IS the
+// patched address, the detour sees InOwnPeCall() and does not drain
+// ([A3-ST1-SUPER-DRAIN]). The SEH frame and that mark live in Stark's helper pair
+// (CallAddressSEH / CallAddressAsOwnSEH).
 int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     if (!instance || !ufunc) return -1;
 

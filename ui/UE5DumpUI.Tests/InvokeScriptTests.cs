@@ -1890,6 +1890,21 @@ public class InvokeScriptTests
         var helper = stark[h..stark.IndexOf("\n}", h, StringComparison.Ordinal)];
         Assert.Contains("OwnPeCallGuard guard;", helper, StringComparison.Ordinal);   // the mark, in the OUTER frame
         Assert.Contains("CallAddressSEH(", helper, StringComparison.Ordinal);         // the SEH frame, separate (C2712)
+
+        // Review 5 of 0edd5214: raw substrings let a COMMENTED-OUT guard pass, and CallAddressSEH's body was never read,
+        // so the recorded HARMFUL trampoline swap inside it passed too. Read both bodies with their comments removed.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        Assert.Contains("OwnPeCallGuard guard;", CodeOnly(helper), StringComparison.Ordinal);
+        int sehAt = stark.IndexOf("static int32_t CallAddressSEH(", StringComparison.Ordinal);
+        Assert.True(sehAt >= 0, "Stark's CallAddressSEH not found");
+        var seh = CodeOnly(stark[sehAt..stark.IndexOf("\n}", sehAt, StringComparison.Ordinal)]);
+        Assert.Contains("__try", seh, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<FnProcessEvent>(peAddr)(", seh, StringComparison.Ordinal);   // the RESOLVED address
+        Assert.DoesNotContain("s_originalPE", seh, StringComparison.Ordinal);                      // never the trampoline
     }
 
     [Fact]

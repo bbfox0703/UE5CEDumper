@@ -3901,6 +3901,15 @@ the address MinHook patched. So `HookedProcessEvent` runs on the mailbox thread 
     2/2 mutants killed; UI 5135/5135.
   - ⚠ The pin reads source, so it proves the shape, not the runtime behaviour. The live confirmation
     above (CE, announce first) is the backlog check.
+  - ✅ **Review 5 follow-up 2026-09-12** (of 0edd5214: three LOW, one filed MED).
+    - **Live check L36 named a rig that cannot do its step 2.** `st1_queued_drain_sideeffect.py` freezes,
+      queues one invoke and resumes at once, so its PASS does not depend on this fix. L36 now says so, and
+      gives the manual route: the pipe's `direct_call: true` reaches the fail-open branch without CE.
+    - **Stale comments.** The rewritten function's header (Frieren.cpp) and Stark.h still said our direct
+      calls never enter the detour, and that the body could not be shared through a helper. Corrected.
+    - **The pin missed two one-line mutants:** a commented-out guard, and the recorded HARMFUL trampoline
+      swap inside `CallAddressSEH`, whose body it never read. It now reads both bodies with their comments
+      stripped. 2/2 mutants killed; UI 5193/5193.
 
 ##### ✅ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI (FIXED IN SOURCE 2026-09-11)
 
@@ -5078,10 +5087,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. The DLL log reads "QUEUED (rc=-5 …)", not "NOT applied".
 3. Still in the UI, untick Noclip (or turn Fly off). Return to the game.
 4. **The pawn must stand on the floor:** collision ends ON, and both requests drain in order. | a game + UI; no CE |
-| L36 | `[A3-ST1-SUPER-DRAIN]` | **CE: announce first.** Run `tools/verify/st1_queued_drain_sideeffect.py` with the game thread frozen:
-1. Queue a `SetActorHiddenInGame`.
-2. Make a mailbox static-native invoke on an actor, e.g. `APawn::GetMovementBaseActor`.
-3. **`bHidden` must NOT flip while the thread is frozen.** The queued request runs only when the game thread drains. | CE + a game |
+| L36 | `[A3-ST1-SUPER-DRAIN]` | ⚠ **`tools/verify/st1_queued_drain_sideeffect.py` cannot do step 2 as it stands** (review 5). It freezes, queues one invoke and resumes at once, and its PASS does not depend on this fix. Extend it, or drive step 2 by hand:
+1. Freeze the game thread (`tools/verify/suspend.py suspend-tid`) and queue a `SetActorHiddenInGame` on an actor.
+2. While it is frozen, make a direct invoke of a Native|Static UFunction on an actor, e.g. `APawn::GetMovementBaseActor`: over the pipe with `direct_call: true`, or through the mailbox (CE: announce first). Either reaches `UE5_CallProcessEventDirect`'s fail-open branch.
+3. **`bHidden` must NOT flip while the thread is frozen.** It flips only after the resume, when the game thread drains. | a game (+ CE for the mailbox route) |
 | L37 | `[W2-MARKER-PARENTREL]` | A game with an attached pawn (a vehicle, mount or moving platform) where the world-space read fails:
 1. The pose card shows "⚠ parent-relative".
 2. Save Marker 1. The status names the PARENT-RELATIVE read, and the row reads "⚠ parent-relative (not world)".
@@ -5231,9 +5240,8 @@ has no cancellation), not to the batch L18 above.
 ⚠ Items marked **CE** need Cheat Engine: announce first. Every other row carries its own `experiment`
 in its section; copy it into the backlog when the row is fixed.
 
-- **CE:** `[A3-ST1-SUPER-DRAIN]` — run `st1_queued_drain_sideeffect.py` with a frozen game thread, a
-  queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an actor. `bHidden` must not
-  flip while the thread is frozen.
+- `[A3-ST1-SUPER-DRAIN]` — L36. The rig cannot do its step 2 yet (review 5); the pipe's `direct_call: true`
+  reaches the same branch without CE, and the mailbox route needs CE.
 - **CE:** `[A3-B30-STALE-FLAG]` — tick the inject record, reopen the `.CT` without merging, tick
   again. The pipe must survive.
 - `[A4-USMAP-ENUM-UNDERLYING]` — parse an asset with a non-uint8 enum using our `.usmap` and a

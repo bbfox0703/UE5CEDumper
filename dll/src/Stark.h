@@ -157,8 +157,10 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // tree and nothing resolves GIsGameThreadId, so any gate would be guessing --
 // and a gate that guesses wrong never drains, which times out every game-thread
 // invoke and is strictly worse than the defect. Instead we do what Grausam
-// already does for its own hooks: call the TRAMPOLINE we are holding, so our
-// calls never enter the detour in the first place.
+// already does for its own hooks: call the TRAMPOLINE we are holding, so a call
+// through it never enters the detour. A fail-open call to an OVERRIDE does (its
+// Super::ProcessEvent is the patched address), so it runs under the own-PE-call
+// mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -200,7 +202,8 @@ inline bool ShouldUseTrampoline(uintptr_t resolvedPeAddr,
 
 /// Should HookedProcessEvent drain the queue on this entry?
 ///
-/// `entryIsOurs` is true when this thread is inside our own CallOriginalSEH --
+/// `entryIsOurs` is true when this thread is inside our own CallOriginalSEH or
+/// CallAddressAsOwnSEH --
 /// i.e. the detour was re-entered by a nested dispatch underneath a call WE
 /// issued, which is not a game-thread tick and must not drain. This is the
 /// shipped gate, not a mirror of it: HookedProcessEventBody calls exactly this.
