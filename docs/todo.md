@@ -3190,7 +3190,7 @@ gate, 2026-09-10: a different object now gets fresh rows. The same-object varian
   - 🟡 **Still undecided:** the `IsEditing` latch above is not part of this fix, and still needs
     its live experiment.
 
-##### ⛔ `[A4-PARENT-CRUMB-VTABLE]` MED — the Parent (Outer) crumb claims `[child + 0]` with a dereference, so CE exports through a Parent hop read the child's vtable
+##### ✅ `[A4-PARENT-CRUMB-VTABLE]` MED — the Parent (Outer) crumb claims `[child + 0]` with a dereference, so CE exports through a Parent hop read the child's vtable (FIXED IN SOURCE 2026-09-11)
 
 `LiveWalkerViewModel.cs:2577-2584` (hand-verified): `FieldOffset = 0, IsPointerDeref = true`. The
 e88190ba fix named exactly this shape as the defect ("a positive claim of `[UWorld + 0]`") and gave the
@@ -3206,6 +3206,19 @@ applied to it. A GWorld spine passes the AA script's `FieldOffset >= 0` gate too
     breadcrumb jump does; stamp `-1` only otherwise;
   - (b) run `CleanBreadcrumbs` before `AnchorAtLastUnchainableHop` in both export commands.
 - Add both scenarios as tests. Do not special-case the name "Outer".
+- ✅ **FIXED IN SOURCE 2026-09-11, safe shape (a)** (fix-pass batch B04).
+  - **Outer already on the spine:** `GoToParentAsync` finds the last OBJECT crumb there (not a
+    container view; no `ClassAddr`, which excludes inline structs and DataTable rows; the address is
+    compared numerically) and makes Parent a breadcrumb jump to it.
+  - **Otherwise:** it pushes the Parent crumb as an offset-less hop, `FieldOffset = -1`, the marker
+    the other two producers already use.
+  - **No special case on the name "Outer".**
+  - **Red → green:** both scenarios, as the record asks.
+    - An Instance-Finder root followed by Parent is now a `-1` hop, and the export re-anchors at
+      the parent's own address. It was red: "Expected -1, Actual 0".
+    - GWorld › PersistentLevel › Hero › RootComponent › Parent lands back on the Hero crumb, with
+      RootComponent on the forward history and every hop a real offset (restart-stable). It was
+      red: the spine had grown an `Outer` crumb.
 
 ##### ⛔ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty
 
@@ -3451,6 +3464,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
 | 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green |
+| 11 | `[A4-PARENT-CRUMB-VTABLE]` | MED | `git log --grep A4-PARENT-CRUMB-VTABLE` | both recorded scenarios red → green; NavStamp / ForwardNav / NavRace / GWorldActorChain classes green |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3473,6 +3487,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Back:** press Back and, before the grid changes, click → on a row of the level you just left. It must refuse with "belongs to the view you just left", and Copy CE XML afterwards must carry the RIGHT chain.
 2. **Repeat** for a breadcrumb jump, Forward and Parent.
 3. **Control:** ordinary drills, drills inside a container view, and the Find Refs owner auto-drill all still work. | DumperTest + UI; no CE |
+| L8 | `[A4-PARENT-CRUMB-VTABLE]` | On DumperTest:
+1. **Outer off the spine:** open an actor through Instance Finder, press Parent, then Copy CE XML. The table must be anchored on the parent's own address, with no `+0` dereference of the actor. Load it in CE: the records read the parent's real fields, not vtable garbage.
+2. **Outer on the spine:** from GWorld, drill Actor › RootComponent and press Parent. You land on the Actor crumb, and Forward returns to RootComponent. Copy CE XML stays GWorld-rooted (restart-stable). | DumperTest + UI + **CE to load the table — announce first** |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3498,7 +3515,7 @@ completeness critic.
 | ✅ B01 same-object staleness | `[W1-CONTAINER-STALE]` `[P4-CONTAINER-BASE]` `[P4-PTRCLASS]` `[A3-PTR-NAV-REPAINT]` | |
 | ✅ B02 edit pending | `[A4-EDIT-STALE-PENDING]` | |
 | ✅ B03 nav stamp | `[A4-NAV-BACKFIRST-GRAFT]` | |
-| ⬜ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
+| ✅ B04 Parent crumb | `[A4-PARENT-CRUMB-VTABLE]` | CE |
 | ⬜ B05 bool mask end to end | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | |
 | ⬜ B06 invoke Y11 gate | `[P3-INVOKE-Y11-CEFORM]` `[P3-INVOKE-STRUCT-FSTRING]` | CE |
 | ⬜ B07 UFunction tail 4.x | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | CE |

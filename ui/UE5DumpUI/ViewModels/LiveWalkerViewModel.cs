@@ -2668,10 +2668,39 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>The last OBJECT crumb — not a container view, not an inline struct (those carry a
+    /// ClassAddr) — whose address is <paramref name="addr"/>, or null. [A4-PARENT-CRUMB-VTABLE]</summary>
+    private BreadcrumbItem? LastObjectCrumbAt(string addr)
+    {
+        ulong a = ParseHexAddr(addr);
+        if (a == 0) return null;
+        for (int i = Breadcrumbs.Count - 1; i >= 0; i--)
+        {
+            var bc = Breadcrumbs[i];
+            if (!bc.IsContainerView && string.IsNullOrEmpty(bc.ClassAddr) && ParseHexAddr(bc.Address) == a)
+                return bc;
+        }
+        return null;
+    }
+
     [RelayCommand]
     private async Task GoToParentAsync()
     {
         if (string.IsNullOrEmpty(CurrentOuterAddr) || CurrentOuterAddr == "0x0") return;
+
+        // [A4-PARENT-CRUMB-VTABLE] An Outer is reached by a BACK-reference: no forward offset leads
+        // from the child to it. When it is already on the spine, going to it IS a breadcrumb jump,
+        // which keeps a GWorld spine forward-walkable (Actor › RootComponent › Parent lands back on
+        // the Actor crumb, restart-stable). Otherwise the crumb below is an offset-less hop.
+        // ⛔ Not -1 unconditionally: both XML exports re-anchor at the last -1 hop BEFORE their cycle
+        // collapse, so the Actor › RootComponent › Parent case would lose its GWorld root.
+        var onSpine = LastObjectCrumbAt(CurrentOuterAddr);
+        if (onSpine != null)
+        {
+            _log.Info($"NAV↑Parent {CurrentOuterAddr} is already on the spine — jumping to that crumb");
+            await NavigateToBreadcrumbAsync(onSpine);
+            return;
+        }
 
         // Parent (Outer) is a different object — drop the field-search filter.
         ClearFieldSearchForNavigation();
@@ -2695,7 +2724,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 Address = parentAddr,
                 Label = !string.IsNullOrEmpty(CurrentOuterName) ? CurrentOuterName : "Parent",
                 IsPointerDeref = true,
-                FieldOffset = 0,
+                // [A4-PARENT-CRUMB-VTABLE] -1, the offset-less-hop marker the GWorld actor list and
+                // PathStepToBreadcrumbs already use: CE exports then re-root at the parent's own
+                // address. It used to be 0 with a dereference — a claim of [child + 0], the child's
+                // vtable — and every parent record was applied to it.
+                FieldOffset = -1,
                 FieldName = "Outer",
             });
 
