@@ -2042,6 +2042,13 @@ code**, which is the behaviour the brief asked for.
      6/6 mutants killed; dll_core_test 249/249; UI 5149/5149.
    - ⚠ **Survivor by construction:** `FindGObjects`' call site. A pending cancel is always recorded by the
      tier-1 AOB scan first, so no deterministic test reaches the fallback's bail alone.
+   - ✅ **Review 5 follow-up 2026-09-12** (of 785b1730: two LOW, both CONFIRMED).
+     - **Two sweeps had no uncancelled control.** `FindGObjectsStaticStruct` and `FindGNamesByStringRef` were
+       checked only with a cancel pending. A bail store hoisted above its poll, set on EVERY call, passed every
+       test, and on a real game it would refuse the init latch on every scan. Both now have an uncancelled
+       control, red against exactly that hoist; 2/2 mutants killed; dll_core_test 279/279; UI 5187/5187.
+     - **Live check L40 could not work.** A UI disconnect never cancels `UE5_Init` (its thread is unbound, and
+       the monitor cancels only an in-flight command). L40 now says so and keeps only its control live.
 2. ✅ **`[P1-ENUMNAMES]`** (FIXED IN SOURCE 2026-09-12, batch L02) `Genau.cpp:5476`. When `DetectUEnumNames` fails it latches
    `bUEnumNamesFailed` for the process, and **no exit publishes it**. `list_enums` then answers `ok`
    with every UEnum's entries empty, and the USMAP and CE exports ship without enum names — none of
@@ -5055,11 +5062,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Export USMAP and load it in FModel.
 2. The array's elements show enum NAMES, and the properties after it in the same object stay aligned.
 3. **Control:** a plain `TArray<uint8>` stays a byte array. | a game + UI + FModel; no CE |
-| L40 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | On a game whose GObjects needs the recovery path (Avowed-style) or whose GNames falls to the string-ref / pointer-scan tiers:
-1. Disconnect the UI mid-scan.
-2. The DLL log shows the tier's "aborted" line and "NOT latching initialized".
-3. The next connect re-scans and resolves GNames.
-4. **Control:** an uninterrupted scan latches normally. | a game + UI; no CE |
+| L40 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | ⚠ **The abort half is not reachable from the UI** (review 5).
+- A disconnect never cancels `UE5_Init`. `trigger_scan` runs it on an unbound `RunScan` thread, whose `Tot::Requested()` reads only the per-command and shutdown flags, and the monitor sets the per-command flag only for a connection with a command IN FLIGHT. The 500 ms `scan_status` polls finish between breaks.
+- A shutdown mid-scan tears the DLL down, leaving nothing to re-scan with.
+- dll_core_test (GENAUABORT, with an uncancelled control for every sweep) and the recovery pin cover the abort paths.
+**Live, the control only:** on a game whose GObjects needs the recovery path (Avowed-style) or whose GNames falls to the string-ref / pointer-scan tiers, an uninterrupted scan latches normally, with no "aborted" line. | a game + UI; no CE |
 | L41 | `[P1-ENUMNAMES]` | Two games, because the halves need opposite ones (review 5):
 1. **A game where UEnum::Names is not located** (the DLL log reads "DetectUEnumNames: FAILED"). Export USMAP. The FINAL status reads "USMAP exported — ⚠ enum member names are unavailable on this build …", and the log carries the same warning.
 2. **A game where it IS located.** Disconnect the UI during the first enum-bearing walk (a class with many enum fields). The log reads "search cancelled … not latching FAILED". Reconnect: enum values resolve to names again, including the enums the cancelled walk touched. | a game + UI; no CE |

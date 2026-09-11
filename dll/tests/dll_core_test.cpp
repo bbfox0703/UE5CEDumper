@@ -2581,6 +2581,17 @@ int main() {
         Genau::FindGNamesByPointerScan();
         check("GENAUABORT control: an uncancelled pointer scan records no abort", !Genau::s_gnamesReport.cancelled);
         Genau::s_gnamesReport = Genau::ScanReport{};
+
+        // Review 5 of 785b1730: the two sweeps above were checked only with a cancel pending, so a store hoisted above
+        // its poll -- set on EVERY call -- passed. On a real game that refuses the init latch on every scan.
+        int gaStride3 = 0;
+        bool gaStatic3 = false;
+        Genau::FindGObjectsStaticStruct(&gaStride3, &gaStatic3);
+        check("GENAUABORT control ⭐: an uncancelled static-struct sweep records no abort", !gaStatic3);
+        Genau::s_gnamesReport = Genau::ScanReport{};
+        Genau::FindGNamesByStringRef();
+        check("GENAUABORT control ⭐: an uncancelled string-ref sweep records no abort", !Genau::s_gnamesReport.cancelled);
+        Genau::s_gnamesReport = Genau::ScanReport{};
     }
 
     // -- ENUMNAMESCANCEL-2026-09-12 -- a cancelled UEnum::Names search is not a FAILED one -------------------------
