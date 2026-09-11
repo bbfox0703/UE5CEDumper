@@ -99,6 +99,42 @@ public sealed class LogRetentionTests : IDisposable
         Assert.Contains("pipe-0.log", Names());
     }
 
+    // ── [A1-LOG-RESUME] a rolled session's "-0_NNN.log" files are the previous session's too ──
+    // Serilog.Sinks.File (no checkpoint) RESUMES the highest-sequence file it finds, so once a category had rolled past
+    // 8 MB, every later session appended to the old "-0_NNN.log": "-0.log" was never created again, and no session was
+    // archived under its own date. Field shape: a 28-minute session on build 3262 logged into pipe-0_005/006.log.
+
+    [Fact]
+    public void Archive_TakesTheRolledFilesToo_SoTheNewSessionStartsAtSlotZero()
+    {
+        Touch("pipe-0.log",     new DateTime(2026, 3, 4, 1, 0, 0));
+        Touch("pipe-0_001.log", new DateTime(2026, 3, 4, 2, 0, 0));
+        Touch("pipe-0_002.log", new DateTime(2026, 3, 4, 3, 0, 0));
+
+        LoggingService.ArchivePreviousLog(_dir, "pipe");
+
+        Assert.Equal(
+            new[] { "pipe-20260304-010000.log", "pipe-20260304-020000.log", "pipe-20260304-030000.log" },
+            Names());
+    }
+
+    [Fact]
+    public void Archive_RolledFilesAlone_OldestFirst_AndOtherCategoriesUntouched()
+    {
+        // No "-0.log" at all: the session resumed a rolled file. Same second, so the de-dup suffix shows the ORDER.
+        var t = new DateTime(2026, 3, 4, 5, 6, 7);
+        var five = Touch("pipe-0_005.log", t); File.WriteAllText(five, "005"); File.SetLastWriteTime(five, t);
+        var six  = Touch("pipe-0_006.log", t); File.WriteAllText(six,  "006"); File.SetLastWriteTime(six,  t);
+        Touch("init-0_001.log", t);   // another category
+
+        LoggingService.ArchivePreviousLog(_dir, "pipe");
+
+        Assert.Equal(
+            new[] { "init-0_001.log", "pipe-20260304-050607-1.log", "pipe-20260304-050607.log" },
+            Names());
+        Assert.Equal("005", File.ReadAllText(Path.Combine(_dir, "pipe-20260304-050607.log")));   // oldest first
+    }
+
     // ── prune ────────────────────────────────────────────────────────────
 
     [Fact]

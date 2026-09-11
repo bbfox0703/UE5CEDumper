@@ -283,9 +283,13 @@ public sealed class LoggingService : ILoggingService, IDisposable
                 // is precisely the retention policy this project deliberately replaced with
                 // an age-based one, so leaving it defaulted would reinstate generation-count
                 // eviction by the back door. Retention stays owned by PruneAgedLogs, which
-                // still sees the rolled files: they are named "{prefix}-0_001.log", which
-                // matches its "{prefix}-*.log" glob and does not end in "-0.log", so the
-                // live-file guard correctly leaves only the active file alone.
+                // still sees the rolled files ("{prefix}-0_001.log" matches its "{prefix}-*.log"
+                // glob). ⚠ Its live-file guard knows only "-0.log": in a session that has
+                // rolled, the ACTIVE file is the newest "-0_NNN.log" -- harmless to an AGE prune
+                // (an active file is never old), but the sink RESUMES that file on the next
+                // start, so ArchivePreviousLog archives every "-0_NNN.log" at startup
+                // [A1-LOG-RESUME]. Do NOT widen LogCompressionPolicy.IsLiveLog to match them:
+                // that would mark every closed 8 MB rolled file as live forever.
                 retainedFileCountLimit: null,
                 outputTemplate: OutputTemplate)
             .CreateLogger();
@@ -310,6 +314,14 @@ public sealed class LoggingService : ILoggingService, IDisposable
         try
         {
             ArchiveOne(Path.Combine(directory, $"{prefix}-0.log"), directory, prefix);
+
+            // [A1-LOG-RESUME] ...and the files it ROLLED into. Serilog.Sinks.File, with no checkpoint, resumes the
+            // highest-sequence "{prefix}-0_NNN.log" it finds -- so once a category had rolled past the 8 MB cap, every
+            // later session appended to that old file and "-0.log" was never created again. Oldest first (the sequence
+            // order), so a same-second pair keeps its order in the de-duplicated names.
+            foreach (var rolled in Directory.GetFiles(directory, $"{prefix}-0_*.log")
+                                            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                ArchiveOne(rolled, directory, prefix);
 
             // Legacy generations from builds before age-based retention. Without this
             // they orphan: nothing rotates them any more, and PruneAgedLogs keys on

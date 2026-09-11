@@ -3261,7 +3261,7 @@ because the load runs with persistence suppressed.
     quarantine was changed away from. Only the bound follows it; the comment now says so.
   - 2/2 mutants killed; UI 5100/5100.
 
-##### `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log`
+##### ✅ `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log` (FIXED IN SOURCE 2026-09-12)
 
 `LoggingService.cs:286`. When there is no checkpoint, Serilog.Sinks.File 7.0.0 resumes the
 highest-sequence file (the refuter decompiled `RollingFileSink.OpenFile` to confirm this).
@@ -3282,6 +3282,15 @@ diagnostics only.
   closed 8 MB rolled file as live forever, dropping the largest and most compressible files from both
   sweeps. The in-session case needs a different rule: the newest `-0*` file per prefix in our own
   folder is the live one.
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L35), the recorded safe fix:
+  - `ArchivePreviousLog` now also archives every `{prefix}-0_*.log` at startup, oldest first, so the new session
+    starts at `-0.log` again;
+  - `CreateFileLogger`'s comment is rewritten: the live-file guard knows only `-0.log`, and `IsLiveLog` must not be
+    widened.
+  - **Red first:** rolled files beside a `-0.log` and rolled files alone are both archived, in order, and another
+    category's are left alone.
+  - ⬜ Residual, unchanged: inside ONE session that rolls, the compression sweep can still call the live rolled file
+    idle after a quiet hour. That is the "different rule" above, and it is not built.
 
 ##### ✅ `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows (FIXED IN SOURCE 2026-09-12)
 
@@ -5229,6 +5238,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 85 | `[W2-DEADSCAN-LOADMORE]` | LOW | `git log --grep W2-DEADSCAN-LOADMORE` (batch L29) | ValueSearchTests, red first: a First Scan, and a Group First Scan, that fails after a live session keeps its row, offers no Load More, and says the rows are the previous scan's. 5/5 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5258/5258. The grid is NOT cleared, per the refuted-fix table |
 | 86 | `[W3-DIP-PIXELS]` | LOW | `git log --grep W3-DIP-PIXELS` (batch L31) | WindowRestoreStateTests, red first, with AF21's 3840 px / 225% / x=-1707 geometry: a position reachable in physical pixels is kept, and a genuinely off-screen one (x=-2809) is still rejected (control). A source pin checks that ManagedDialogWindow pushes `SetScale(RenderScaling)` with every `SetScreens`. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5261/5261 |
 | 87 | `[P8-BOOKMARK-TIP]` | LOW | `git log --grep P8-BOOKMARK-TIP` (batch L34) | BookmarkTests, red first: re-saving into an occupied slot raises `TooltipText`, and the hover names the new target. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5262/5262. `BookmarkSlot_SetSameValue_DoesNotNotify` still holds |
+| 88 | `[A1-LOG-RESUME]` | LOW | `git log --grep A1-LOG-RESUME` (batch L35) | LogRetentionTests, red first: rolled `-0_NNN.log` files beside a `-0.log`, or alone, are archived at startup oldest first; another category's are untouched. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5264/5264. Residual: the in-session compression rule, not built |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5484,6 +5494,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Bookmark object A into slot 1.
 2. Navigate to object B, then ★ and slot 1 again.
 3. Hover slot 1. It names B, and a click goes to B. | a game + UI |
+| L74 | `[A1-LOG-RESUME]` | UI only:
+1. Leave a `pipe-0_00N.log` in the UI's log folder. Generate one with a >8 MB session, or copy one in.
+2. Start the UI. The file is archived under its own date, and the session writes `pipe-0.log`. | UI only |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5576,7 +5589,7 @@ completeness critic.
 - **L32:** `[W4-HEXSORT]`
 - ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
 - ✅ **L34:** `[P8-BOOKMARK-TIP]`
-- **L35:** `[A1-LOG-RESUME]`
+- ✅ **L35:** `[A1-LOG-RESUME]`
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
 - **L37:** `[W2-CEGEN-MODAL]` (CE)
 - **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
