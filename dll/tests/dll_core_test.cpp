@@ -2298,6 +2298,8 @@ int main() {
         check("STRIDEVERDICT ⭐: five clean items at stride 16 are a DETECTED stride, with all five validated",
               strcmp(Aura::GetItemDetect(), "detected") == 0 && Aura::GetItemDetectValidated() == 5,
               Aura::GetItemDetect());
+        check("STRIDEVERDICT control: ...found by P1, so of its 200 probes",
+              Aura::GetItemDetectProbes() == 200, std::to_string(Aura::GetItemDetectProbes()).c_str());
 
         // TENTATIVE: ONE valid object among nulls. Every stride validates exactly it, which clears no gate.
         static uint8_t svTenChunk[0x4000] = {};
@@ -2309,6 +2311,40 @@ int main() {
               strcmp(Aura::GetItemDetect(), "tentative") == 0 && Aura::GetItemDetectValidated() == 1,
               Aura::GetItemDetect());
 
+        // DEEP ([W4-STRIDE-TENTATIVE] review 4): the first 200 slots are null at every stride, so P1 finds nothing
+        // and P2-deep probes 100 items from item 1000 (x24). A pass won there must publish ITS probe count -- the
+        // badge divides by it -- not P1's 200. Chunk and table are both 0x7000 bytes, so no phase reads past them.
+        static uint8_t svDeepChunk[0x7000] = {};
+        static uintptr_t svDeepTable[0x7000 / 8] = {};
+        static uint8_t svDeepHdr[0x40] = {};
+        for (int i = 0; i < 5; ++i)
+            putP(svDeepChunk, 1000 * 24 + i * 16, reinterpret_cast<uintptr_t>(svObjs[i]));
+        Aura::InitWithExtendedLayout(header(svDeepHdr, svDeepTable, svDeepChunk), 0);
+        check("STRIDEVERDICT setup: five items deep in the chunk are DETECTED, all five validated",
+              strcmp(Aura::GetItemDetect(), "detected") == 0 && Aura::GetItemDetectValidated() == 5,
+              Aura::GetItemDetect());
+        check("STRIDEVERDICT ⭐: a pass won in a deep phase publishes ITS 100 probes, not P1's 200",
+              Aura::GetItemDetectProbes() == 100, std::to_string(Aura::GetItemDetectProbes()).c_str());
+
+        // FORCED right after it: the caller fixed the stride, so nothing was probed.
+        Aura::InitWithExtendedLayout(header(svDeepHdr, svDeepTable, svDeepChunk), 16);
+        check("STRIDEVERDICT ⭐: a FORCED stride probed nothing: 0 probes, not the previous run's 100",
+              strcmp(Aura::GetItemDetect(), "forced") == 0 && Aura::GetItemDetectProbes() == 0,
+              std::to_string(Aura::GetItemDetectProbes()).c_str());
+
+        // TENTATIVE-DEEP: one object deep in the chunk clears no gate, so the weak fallback reports it -- and its
+        // badge must read "1 of 100", not "1 of 200".
+        static uint8_t svDeepTenChunk[0x7000] = {};
+        static uintptr_t svDeepTenTable[0x7000 / 8] = {};
+        static uint8_t svDeepTenHdr[0x40] = {};
+        putP(svDeepTenChunk, 1000 * 24, reinterpret_cast<uintptr_t>(svObjs[0]));
+        Aura::InitWithExtendedLayout(header(svDeepTenHdr, svDeepTenTable, svDeepTenChunk), 0);
+        check("STRIDEVERDICT ⭐: a tentative stride from a deep phase reads 1 of 100 probes",
+              strcmp(Aura::GetItemDetect(), "tentative") == 0 && Aura::GetItemDetectValidated() == 1
+              && Aura::GetItemDetectProbes() == 100,
+              (std::string(Aura::GetItemDetect()) + " " + std::to_string(Aura::GetItemDetectValidated()) + " of "
+               + std::to_string(Aura::GetItemDetectProbes())).c_str());
+
         // UNDETECTED, and the reset: a previous run left packed mode on; this re-init cannot even read its
         // chunk table (Objects == 0), so it returns at the first early return.
         Aura::SetPackedConsts(0, 0, true, -1);
@@ -2319,6 +2355,9 @@ int main() {
               !Aura::IsPacked());
         check("STRIDEVERDICT ⭐: ...and reads \"undetected\", not the previous run's verdict",
               strcmp(Aura::GetItemDetect(), "undetected") == 0, Aura::GetItemDetect());
+
+        check("STRIDEVERDICT ⭐: ...and publishes 0 probes, not the previous run's 100",
+              Aura::GetItemDetectProbes() == 0, std::to_string(Aura::GetItemDetectProbes()).c_str());
 
         // The rest of the reset ([W4-STRIDE-TENTATIVE] review 4). The runs above leave the stride at 16, the object
         // offset at +0x00 and a validated count nothing reads -- the very values the reset writes -- so dropping any of

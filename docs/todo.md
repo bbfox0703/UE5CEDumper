@@ -1425,6 +1425,18 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
      leaves all three unlike the defaults: five objects at stride 20 with the pointer at +0x08, which only
      the +0x08 pass detects. The unreadable re-init must put back 16, +0x00 and 0. Red against those three
      resets removed; 3/3 mutants killed; dll_core_test 260/260; UI 5152/5152.
+   - ✅ **Review 4 follow-up 2026-09-12, the probe count** (of d76732d3: LOW, CONFIRMED).
+     `item_detect_probes` was the 200-probe budget constant, but a pass won in a deep phase (P2-deep,
+     P3-flat-deep) probes 100. On a UE4 title whose chunk opens with null slots, a tentative stride read
+     "30 of 200" where its pass had validated 30 of 100: half the ratio the badge exists to show.
+     - `DetectStrideForCurrentObjOffset` returns the winning phase's own probe count. The weak fallback keeps
+       the strongest pass's, and the alias warning divides by it too. The preset hint publishes its 200, the
+       packed probe its own count, and forced and undetected publish 0.
+     - **Tests, red first:** a deep-phase detection reads 100, a deep-phase tentative stride reads "1 of
+       100", and a forced stride and an unreadable re-init read 0. P1's detection still reads 200.
+       7/7 mutants killed; dll_core_test 266/266; UI 5152/5152.
+     - ⚠ **Documented survivors:** the preset-hint and packed counts (no fixture reaches either), the
+       P0-flat / P3-flat assignments, and the alias warning (log-only).
 2. ✅ **`[W4-RELATED-STOPS]`** (FIXED IN SOURCE 2026-09-11, batch B26) `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
    (`maxResults` 128, `kMaxOwnedSubs` 128, `kMaxVisited` 200000, and an 8 s deadline *or*
    `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
@@ -4888,7 +4900,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **A normal actor:** the status is "N related object(s)." with no ⚠ clause.
 2. **The row limit, where an object reaches it.** Not the PersistentLevel: this walk follows REFLECTED pointers only, and `ULevel::Actors` carries no UPROPERTY, so the level's actors are never reached, although each one's Outer is the level. Use any object whose list fills 128 rows (a candidate, not a promise: a World on a level-streaming game, through its `StreamingLevels`). There the status names the row limit ("full at its 128-row limit and more related objects exist") only if a further owned object was refused, and names no time budget unless the walk also timed out. If nothing reaches 128 rows, record the step as not reachable on this game, not as a failure: dll_core_test pins the cap (review 4). | a game + UI |
 | L33 | `[W4-STRIDE-TENTATIVE]` | A connected game:
-1. **Normal game:** `get_pointers` carries `item_detect: "detected"` with a validated count near 200. No stride badge appears, and a Dump All meta line reads `"stride_untrusted":false`.
+1. **Normal game:** `get_pointers` carries `item_detect: "detected"` with a validated count near its `item_detect_probes` (200; 100 when only a deep phase found items). No stride badge appears, and a Dump All meta line reads `"stride_untrusted":false`.
 2. **A game on the forced static-stride path** (Obsidian-style UE 5.3): `item_detect` is `"forced"` and there is no badge.
 3. A tentative or undetected game is rare. If one turns up, the orange "stride is a guess" badge names its validated count. | a game + UI |
 | L34 | `[A3-B30-STALE-FLAG]` | **CE: announce first.** On a game with the dumper loaded, for BOTH the UI-generated inject record and `scripts/UE5CEDumper.CT`:

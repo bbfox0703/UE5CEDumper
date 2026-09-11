@@ -92,6 +92,9 @@ static Lineal::ItemLayoutMode s_layoutMode = Lineal::ItemLayoutMode::Classic;
 // used to be spent on log lines; reset at the ENTRY of every detection run.
 static const char* s_itemDetect          = "undetected";
 static int         s_itemDetectValidated = 0;
+// How many items the winning pass PROBED: 200 in P1, 100 in a deep phase. The badge divides by it, so it is that pass's
+// own count, never the budget constant. [W4-STRIDE-TENTATIVE] review 4
+static int         s_itemDetectProbes    = 0;
 // Calibratable packed reconstruction constants. ⭐ The defaults are DERIVED from the vendored
 // UE 5.7 source, not assumed — alignBits 3 and ptrMask 0x3FFF are read out of
 // UObjectArray.h:84-88 plus ObjectMacros.h:705; Lineal.h's header carries the line-by-line
@@ -858,10 +861,15 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
 static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chunk0,
                                             int candidates[], int numCandidates,
                                             int& bestStride, int& bestCount, int& bestNamed,
-                                            int& bestBad, bool& bestHasNames, int& bestNull) {
+                                            int& bestBad, bool& bestHasNames, int& bestNull,
+                                            int& bestProbes) {
     bestStride = 0; bestCount = 0; bestNamed = 0; bestBad = INT_MAX; bestHasNames = false;
     bestNull = 0;
     constexpr int MAX_ITEMS_PHASE1 = kStrideProbeBudget;
+    // The deep phases probe half as many. Each phase OVERWRITES best*, so the counts returned are the last phase
+    // run's, and bestProbes follows it. [W4-STRIDE-TENTATIVE] review 4
+    constexpr int MAX_ITEMS_DEEP = 100;
+    bestProbes = 0;
     bool detected = false;
 
     // --- Pre-check: detect flat (non-chunked) FFixedUObjectArray (UE4.11-4.20) ---
@@ -931,6 +939,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
         if (mightBeFlat) {
             // Try flat layout first: probe chunkTable itself as item base (no deref)
             s_isFlat = true;
+            bestProbes = MAX_ITEMS_PHASE1;
             ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P0-flat",
                             candidates, numCandidates,
                             bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
@@ -952,6 +961,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     // Phase 1: scan first 200 items of chunk[0] (standard chunked layout)
     // Use 200 items (not 100) to give sparse UE4 arrays enough items for correct stride detection.
     if (!detected) {
+        bestProbes = MAX_ITEMS_PHASE1;
         ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
@@ -961,7 +971,8 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     // Some UE4 games have thousands of null slots at the start.
     if (!detected && bestCount == 0) {
         LOG_INFO("ObjectArray: Phase 1 found no items, trying deep scan from item 1000...");
-        ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, 100, "P2-deep",
+        bestProbes = MAX_ITEMS_DEEP;
+        ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, MAX_ITEMS_DEEP, "P2-deep",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
     }
@@ -975,13 +986,15 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
 
         s_isFlat = true;  // Temporarily set for probing
 
+        bestProbes = MAX_ITEMS_PHASE1;
         ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P3-flat",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
 
         if (bestCount == 0) {
             // Try deep scan on flat array too
-            ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, 100, "P3-flat-deep",
+            bestProbes = MAX_ITEMS_DEEP;
+            ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, MAX_ITEMS_DEEP, "P3-flat-deep",
                             candidates, numCandidates,
                             bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
         }
@@ -1084,6 +1097,7 @@ static void DetectItemSize() {
     // verdict or leaves this one: nothing validated, the default stride in use.
     s_itemDetect          = "undetected";
     s_itemDetectValidated = 0;
+    s_itemDetectProbes    = 0;
     s_layoutMode          = Lineal::ItemLayoutMode::Classic;
     s_itemObjOffset       = 0;
     s_itemSize            = 16;   // the static default: what "keeping default" below has always meant
@@ -1131,6 +1145,7 @@ static void DetectItemSize() {
             s_itemSize   = s_hintItemStride;
             s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE] the hint cleared the gate
             s_itemDetectValidated = hGood;
+            s_itemDetectProbes = HINT_PROBE_ITEMS;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             LOG_INFO("ObjectArray: FUObjectItem size=%d, object-ptr offset=+0x%02X (preset item hint) — %d named, %d total, %d bad",
@@ -1182,18 +1197,18 @@ static void DetectItemSize() {
     const int objOffPasses[] = { 0x00, 0x08 };
 
     // Strongest result seen across passes, for the tentative fallback below.
-    int gStride = 0, gCount = 0, gNamed = 0, gBad = INT_MAX, gObjOff = 0;
+    int gStride = 0, gCount = 0, gNamed = 0, gBad = INT_MAX, gObjOff = 0, gProbes = 0;
     bool gHasNames = false, gFlat = false;
 
     for (int pass = 0; pass < 2; ++pass) {
         s_itemObjOffset = objOffPasses[pass];
         s_isFlat = false;
 
-        int bestStride, bestCount, bestNamed, bestBad, bestNull;
+        int bestStride, bestCount, bestNamed, bestBad, bestNull, bestProbes;
         bool bestHasNames;
         DetectStrideForCurrentObjOffset(chunkTable, chunk0, candidates, NUM_CANDIDATES,
                                         bestStride, bestCount, bestNamed, bestBad, bestHasNames,
-                                        bestNull);
+                                        bestNull, bestProbes);
 
         int threshold = bestHasNames ? 2 : 3;
         int bestTotal = bestHasNames ? bestNamed : bestCount;
@@ -1207,7 +1222,7 @@ static void DetectItemSize() {
         // Track the strongest pass (strictly-better, so ties keep the earlier/classic pass).
         if (bestNamed > gNamed || (bestNamed == gNamed && bestCount > gCount)) {
             gStride = bestStride; gCount = bestCount; gNamed = bestNamed; gBad = bestBad;
-            gHasNames = bestHasNames; gObjOff = s_itemObjOffset; gFlat = s_isFlat;
+            gHasNames = bestHasNames; gObjOff = s_itemObjOffset; gFlat = s_isFlat; gProbes = bestProbes;
         }
 
         if (bestTotal >= threshold && qualityOk) {
@@ -1234,6 +1249,7 @@ static void DetectItemSize() {
             s_itemSize = bestStride;   // s_itemObjOffset / s_isFlat already reflect this pass
             s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE]
             s_itemDetectValidated = bestHasNames ? bestNamed : bestCount;
+            s_itemDetectProbes = bestProbes;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             if (s_itemObjOffset != 0) {
@@ -1267,6 +1283,7 @@ static void DetectItemSize() {
         const int validated = gHasNames ? gNamed : gCount;
         s_itemDetect = "tentative";   // [W4-STRIDE-TENTATIVE] published -- it used to reach only the log
         s_itemDetectValidated = validated;
+        s_itemDetectProbes = gProbes;
         LOG_WARN("ObjectArray: FUObjectItem size tentatively set to %d bytes, object-ptr offset +0x%02X (only %d items validated)",
                  gStride, gObjOff, validated);
         // Say what "tentative" COSTS, because the previous wording read as routine and the
@@ -1275,12 +1292,12 @@ static void DetectItemSize() {
         // stride, so every k-th probe hits a real object and the rest are garbage — which
         // surfaces later as a suspiciously round "N% of objects named" and a scan that walks
         // almost nothing. If that is what you are looking at, the missing stride is the bug.
-        if (validated * 4 < kStrideProbeBudget) {
+        if (validated * 4 < gProbes) {
             LOG_ERROR("ObjectArray: that is only %d of %d probes — treat every object count and "
                       "name below as UNTRUSTWORTHY. A real stride that is a MULTIPLE of %d "
                       "(e.g. %d) would validate all of them; if the object tree shows a round "
                       "fraction named, that multiple is missing from the candidate list.",
-                      validated, kStrideProbeBudget, gStride, gStride * 2);
+                      validated, gProbes, gStride, gStride * 2);
         }
         return;
     }
@@ -1300,6 +1317,7 @@ static void DetectItemSize() {
         // item_packed's to say (orthogonal).
         s_itemDetect = "detected";
         s_itemDetectValidated = packed.good;
+        s_itemDetectProbes = packed.probed;
         LOG_WARN("ObjectArray: *** UNVERIFIED UE5.7+ PACKED FUObjectItem layout ACTIVATED *** "
                  "stride=%d %s, %d reconstructed (%d named) of %d probed. This packed encoding "
                  "has NEVER been validated against a real game — object addresses, serial numbers "
@@ -1343,6 +1361,7 @@ void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize) {
         s_layoutMode = Lineal::ItemLayoutMode::Classic;
         s_itemDetect = "forced";   // [W4-STRIDE-TENTATIVE] the caller verified this stride by content
         s_itemDetectValidated = 0;
+        s_itemDetectProbes = 0;
         LOG_INFO("ObjectArray: Initialized (forced UE5-Extended, stride=%d) at 0x%llX, Count=%d",
                  forcedItemSize, static_cast<unsigned long long>(gobjectsAddr), GetCount());
     } else {
@@ -1388,7 +1407,7 @@ bool IsPacked() {
 // [W4-STRIDE-TENTATIVE] The stride verdict (see Aura.h). Set by DetectItemSize / InitWithExtendedLayout only.
 const char* GetItemDetect() { return s_itemDetect; }
 int GetItemDetectValidated() { return s_itemDetectValidated; }
-int GetItemDetectProbes() { return kStrideProbeBudget; }
+int GetItemDetectProbes() { return s_itemDetectProbes; }
 
 // Runtime calibration for the *** UNVERIFIED *** packed reconstruction. Lets the first
 // real packed game tune alignBits / ptrMaskBits (and optionally the serial offset) and

@@ -133,6 +133,7 @@ bool IsFlat();
 const char* GetItemDetect();
 // Items the winning pass validated, of GetItemDetectProbes() probed (0 when undetected or forced).
 int GetItemDetectValidated();
+// That pass's OWN probe count: 200 in P1, 100 when only a deep phase found items; 0 when undetected or forced.
 int GetItemDetectProbes();
 
 // Search objects by partial name (case-insensitive), returns up to maxResults
