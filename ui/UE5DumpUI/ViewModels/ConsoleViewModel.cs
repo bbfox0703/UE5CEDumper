@@ -482,8 +482,15 @@ public partial class ConsoleViewModel : ViewModelBase
             // reconnect). If the pinned call failed, drop the pin and retry
             // once with a fresh classname resolution so a dead pin self-heals
             // instead of permanently breaking the command.
+            //
+            // [W3-CONSOLE-REINVOKE] EXCEPT on a dispatch timeout: the DLL leaves that request
+            // QUEUED and it will still run, so a retry ran the command twice -- a stateful give /
+            // spawn / teleport, twice. A stale pin produces -2 / -4, never -5, so the self-heal
+            // still covers exactly the case it was written for; and the pin stays, because the
+            // queued call is on it.
+            bool dispatchTimedOut = result.Result == Constants.InvokeDispatchTimeoutResult;
             bool reResolved = false;
-            if (!result.Success && usedPin)
+            if (!result.Success && usedPin && !dispatchTimedOut)
             {
                 _stickyInstance.Remove(entry.ClassName);
                 reResolved = true;
@@ -507,6 +514,8 @@ public partial class ConsoleViewModel : ViewModelBase
                 : (string.IsNullOrEmpty(result.Error)
                     ? $"Result code {result.Result}"
                     : result.Error);
+            if (dispatchTimedOut)
+                resultText += " — still queued: it will run when the game thread is free (not re-sent)";
 
             AppendHistory(entry, result.Success, resultText);
 

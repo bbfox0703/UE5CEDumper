@@ -86,6 +86,14 @@ public static class Constants
     // command line at 32,767 and these paths are long (a per-game folder is named after
     // the game EXE). Set well under the cap; overflowing fails a whole batch.
     public const int LogCompressBatchSize = 40;
+
+    // ── Invoke result codes ─────────────────────────────────────────────────
+    // invoke_function / UE5_CallProcessEvent result -5: the game-thread dispatch TIMED OUT and
+    // the request STAYS QUEUED -- it will still execute when the game thread next drains
+    // (dll/src/Stark.cpp, the future.wait_for timeout path; Fern leaks the FString buffers for
+    // exactly that reason). So never "resend on failure" for it: that runs the call twice.
+    // [W3-CONSOLE-REINVOKE]
+    public const int InvokeDispatchTimeoutResult = -5;
     public const int LogCompressMaxArgChars = 24000;
 
     // Leftover-proxy cleanup reports (Reports/leftover-proxies-<stamp>.txt).

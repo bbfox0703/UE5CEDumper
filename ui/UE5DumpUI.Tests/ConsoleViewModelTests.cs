@@ -623,6 +623,65 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
+    public async Task DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin()
+    {
+        // [W3-CONSOLE-REINVOKE] -5 is the game-thread dispatch TIMEOUT, and the DLL says verbatim
+        // "The request stays queued" (Stark.cpp): it WILL run when the game thread drains. The
+        // self-heal retry fired on every non-zero code, so a -5 enqueued the same exec command a
+        // second time and a stateful one (give, spawn, teleport) ran twice.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0,  Message = "OK", InstanceAddr = "0x1234" }, // Fly: pins
+                new InvokeFunctionResult { Result = -5, Error = "game-thread dispatch timeout" },   // God: pinned, times out
+                new InvokeFunctionResult { Result = 0,  Message = "OK", InstanceAddr = "0x1234" }, // God again
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2]; // Fly -- pins UCheatManager
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3]; // God -- the pinned call times out
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, fake.InvokeCallCount);                                    // NOT re-sent
+        Assert.Contains("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+
+        await vm.RunSelectedCommand.ExecuteAsync(null);                           // God again
+        Assert.Equal("0x1234", fake.InstanceAddrHistory[2]);                      // the pin survived
+    }
+
+    [Fact]
+    public async Task StalePin_minus4_is_still_retried()
+    {
+        // The half of the finding the row REFUSES: a stale pin produces -2 / -4, never -5, so -4
+        // must keep self-healing. Green before and after.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0,  Message = "OK", InstanceAddr = "0x1234" },
+                new InvokeFunctionResult { Result = -4, Error = "exception during call" },
+                new InvokeFunctionResult { Result = 0,  Message = "OK", InstanceAddr = "0x5678" },
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(3, fake.InvokeCallCount);
+        Assert.Null(fake.InstanceAddrHistory[2]);                                 // the self-heal re-resolve
+    }
+
+    [Fact]
     public async Task Pin_is_per_class_and_not_shared_across_classes()
     {
         // Two no-arg execs on DIFFERENT classes — a pin for one must not

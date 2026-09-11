@@ -882,7 +882,7 @@ while eviction runs at the hand-edited number.
 
 **MED** — 3 rows, all OBJTREE.
 
-1. ⬜ **`[W3-CONSOLE-REINVOKE]`** `ConsoleViewModel.cs:486`. The sticky-instance self-heal fires on
+1. ✅ **`[W3-CONSOLE-REINVOKE]`** (FIXED IN SOURCE 2026-09-11, batch B11) `ConsoleViewModel.cs:486`. The sticky-instance self-heal fires on
    `!result.Success`, which is true for **every** non-zero ProcessEvent code — including
    **`-5` (game-thread dispatch timeout)**. `Stark.cpp:412-423` states verbatim that on `-5` *"The
    request stays queued"* and will execute when the game thread next drains, and
@@ -891,6 +891,16 @@ while eviction runs at the hand-edited number.
    command (give item, spawn, teleport, set) then runs twice.
    ⛔ **Fix is partly unsafe**: excluding `-5` is correct; the finding's repair also covers `-4`,
    and **that half must be refused** — a stale pin produces `-2`/`-4`, never `-5`.
+   ✅ **FIXED IN SOURCE 2026-09-11, the safe half only.**
+   - The self-heal skips its retry on `Constants.InvokeDispatchTimeoutResult` (-5). The constant
+     is named, with a comment citing Stark.cpp's timeout path, where "The request stays queued".
+   - It keeps the pin, because the queued call runs on it.
+   - The status says the command is still queued and was not re-sent.
+   - `-2` and `-4` still self-heal: the refused half.
+   - **Tests.** `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` was red
+     first: it counts invocations, checks the status, and checks that the pin survives.
+     `StalePin_minus4_is_still_retried` is the control, green both ways; the existing `-2`
+     self-heal test is unchanged.
 2. ⬜ **`[W3-XREF-CAP]`** `PropertyXrefDialog.cs:433`. `Aura::FindPropertyXrefs` and
    `FindFunctionsByClassParam` self-cap each worker at `maxResults` then `ConcatTruncate`, and
    **neither folds the cap into any published flag** — both set only
@@ -3797,6 +3807,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 21 | `[A3-RADIO-MIDDEPLOY]` | LOW | same commit as row 20 (batch B09) | the AXAML pin (red first); the binding compiles in the UI build; 1/1 mutant killed |
 | 22 | `[A1-COORD-RESURRECT]` | MED | `git log --grep A1-COORD-RESURRECT` | `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` red first; `Load_CorruptMainFile_RecoversFromBackup` stays green. 1/1 mutant killed; UI 4981/4981 |
 | 23 | `[A1-COORD-BACKUP]` | LOW | same commit as row 22 (batch B10) | both backups after a `.bak` recovery + a Save over a corrupt main: 3 red first (against the old API), the rolling-backup control green both ways. 3/3 mutants killed; the view model's snapshot hand-off is compile-covered only |
+| 24 | `[W3-CONSOLE-REINVOKE]` | MED | `git log --grep W3-CONSOLE-REINVOKE` | `DispatchTimeout_on_a_pinned_invoke_is_not_resent_and_keeps_the_pin` red first (invocation count, status, surviving pin); `StalePin_minus4_is_still_retried` the control for the refused half. 3/3 mutants killed; UI 4983/4983 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -3849,6 +3860,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L14 | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | Teleport's coordinate library on any connected game:
 1. **Clear all stays cleared:** save two or three entries (so a `.bak` exists), then Clear all. Reconnect, and restart the app: the library is still empty, and `…preclear.bak` holds the cleared entries.
 2. **Corrupt main:** with the app closed, overwrite `teleport-coords.<game>.json` with garbage and start it. The library loads from `.bak`. Now Clear all: `…preclear.bak` holds the recovered entries, not garbage. | any connected game + UI |
+| L15 | `[W3-CONSOLE-REINVOKE]` | On a game whose game thread can be stalled (a loading screen, or a pause long enough to exceed the invoke timeout):
+1. **Timeout:** run a STATEFUL exec command from the Console tab (one that adds an item or spawns something) while the thread is stalled, so it reports the dispatch timeout. The status says "still queued … not re-sent", and when the game resumes the effect happens ONCE, not twice.
+2. **Stale pin:** after a level change, a pinned command still self-heals (`re-resolved …`). | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -3881,7 +3895,7 @@ completeness critic.
 | ✅ B08 TOptional | `[A2-TOPTIONAL-INTRUSIVE]` | |
 | ✅ B09 proxy deploy | `[A3-DEPLOY-CANCEL]` `[A3-RADIO-MIDDEPLOY]` | |
 | ✅ B10 coord library | `[A1-COORD-RESURRECT]` `[A1-COORD-BACKUP]` | |
-| ⬜ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
+| ✅ B11 console re-invoke | `[W3-CONSOLE-REINVOKE]` | |
 | ⬜ B12 snapshot enum | `[P3-SNAPNUM-ENUM]` then `[W2-GROUPMATCH-ENUM]` | |
 | ⬜ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
 | ⬜ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
