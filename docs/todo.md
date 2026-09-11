@@ -2414,7 +2414,7 @@ against.
      including inside an OUT struct, where the callee's assignment frees memory UE never allocated.
      `CollectBakedValues` now skips them (the zeroed slot is the empty FString, as FIRE leaves it),
      and typed text is refused by the gate above. Pinned from the source (red first).
-4. ⬜ **`[P3-SCORING-MCDELEGATE]`** `PropertyScoringTable.cs:397`. `IsNonValueType` holds
+4. ✅ **`[P3-SCORING-MCDELEGATE]`** (FIXED IN SOURCE 2026-09-12, batch L33: the UE4 name added to the set, and nothing more; red first) `PropertyScoringTable.cs:397`. `IsNonValueType` holds
    `DelegateProperty`, `MulticastInlineDelegateProperty` and `MulticastSparseDelegateProperty` and
    misses the **UE4 ≤ 4.22** name `MulticastDelegateProperty`, so old-UE4 delegates escape the
    non-value penalty the map's own doc (`:394-396`) says they get. The calibration games are all 4.23+,
@@ -5206,6 +5206,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 78 | `[W1-PIPEBUSY-LOG]` | LOW | `git log --grep W1-PIPEBUSY-LOG` (batch L26) | AobMakerInjectTableFileTests, red first through an internal seam (pipe name, 150 ms timeout, existence probe): a busy pipe is a Warn "EXISTS but no instance was free", an absent one stays the Debug "not running". 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5238/5238. The public constructor is unchanged |
 | 79 | `[W1-GROUP-DENYLIST]` | LOW | `git log --grep W1-GROUP-DENYLIST` (batch L23) | SnapshotViewModelTests, red first: a group match with a Diff denylist says "1 class(es) hidden by the Diff denylist (switch to Diff mode…)"; without one it says nothing about it. 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5240/5240. Disclosure only: the applying is documented design |
 | 80 | `[W1-PARTIAL-MARK]` | LOW | `git log --grep W1-PARTIAL-MARK` (batch L25) | SnapshotStoreTests + SnapshotViewModelTests, red first: the reason round-trips and the partial survives `DeleteUnusableSnapshotsAsync`; a capped capture persists `cap` and stays usable; a mid-capture low-disk stop persists `disklow`, not `cap`; the grid label and the picker line both carry it; a clean capture carries none. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5244/5244. A NEW column, per the refuted-fix note: `is_usable=0` would auto-delete the partial |
+| 81 | `[P3-SCORING-MCDELEGATE]` | LOW | `git log --grep P3-SCORING-MCDELEGATE` (batch L33) | PropertyScoringTableTests, red first: a stat-named `MulticastDelegateProperty` gets `NonValueTypePenalty`; the three split spellings keep it (control). 1/1 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5248/5248. One name in a private predicate, one consumer |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5437,6 +5438,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Set Max dataset to 512 MB and capture more than that. The saved-snapshots grid label ends "(partial: stopped at the size cap)", and so does the snapshot's line in every Diff / Group / SPC / Pivot picker.
 2. Restart the UI. The marker is still there (it is persisted), and the snapshot is still listed (the auto-clean kept it).
 3. An older DB opens without error and gains the column. | a game + UI |
+| L67 | `[P3-SCORING-MCDELEGATE]` | Optional; needs a UE4 ≤ 4.22 game, and none is in the calibration set. In Interesting Properties, a `MulticastDelegateProperty` with a stat-like name ranks below the numeric field of the same name. | a UE4 ≤ 4.22 game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5527,7 +5529,7 @@ completeness critic.
 - **L30:** `[W3-CAP-NOSAVE]`
 - **L31:** `[W3-DIP-PIXELS]`
 - **L32:** `[W4-HEXSORT]`
-- **L33:** `[P3-SCORING-MCDELEGATE]`
+- ✅ **L33:** `[P3-SCORING-MCDELEGATE]`
 - **L34:** `[P8-BOOKMARK-TIP]`
 - **L35:** `[A1-LOG-RESUME]`
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)

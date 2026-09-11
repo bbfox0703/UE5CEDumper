@@ -401,7 +401,9 @@ public static class PropertyScoringTable
             or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty"
             or "InterfaceProperty"
             or "DelegateProperty" or "MulticastInlineDelegateProperty"
-            or "MulticastSparseDelegateProperty" => true,
+            or "MulticastSparseDelegateProperty"
+            // [P3-SCORING-MCDELEGATE] UE4 <= 4.22's single multicast name (4.23 split it into Inline / Sparse).
+            or "MulticastDelegateProperty" => true,
         _ => false,
     };
 

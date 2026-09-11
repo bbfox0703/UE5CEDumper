@@ -408,6 +408,27 @@ public class PropertyScoringTableTests
         Assert.True(value.FinalScore > obj.FinalScore);
     }
 
+    // [P3-SCORING-MCDELEGATE] UE4 <= 4.22 names every multicast delegate "MulticastDelegateProperty"; 4.23 split it into
+    // Inline / Sparse. The non-value set held only the split names, so an old-UE4 delegate named like a stat escaped the
+    // penalty. The calibration games are all 4.23+, which is why nobody saw it.
+    [Fact]
+    public void Score_ValueKeywordOnAUE4MulticastDelegate_GetsTheNonValuePenalty()
+    {
+        var r = PropertyScoringTable.Score(Make("Health", "BP_Player_C", propType: "MulticastDelegateProperty"));
+        Assert.Equal(PropertyScoringTable.NonValueTypePenalty, r.StructuralBonus);
+    }
+
+    // The control: the spellings the set already held keep the penalty.
+    [Theory]
+    [InlineData("DelegateProperty")]
+    [InlineData("MulticastInlineDelegateProperty")]
+    [InlineData("MulticastSparseDelegateProperty")]
+    public void Score_ValueKeywordOnTheSplitDelegateSpellings_GetsTheNonValuePenalty(string delegateType)
+    {
+        var r = PropertyScoringTable.Score(Make("Health", "BP_Player_C", propType: delegateType));
+        Assert.Equal(PropertyScoringTable.NonValueTypePenalty, r.StructuralBonus);
+    }
+
     [Fact]
     public void Score_NumericValueType_StaysNeutral_RegressionGuard()
     {
