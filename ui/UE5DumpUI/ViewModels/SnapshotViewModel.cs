@@ -33,6 +33,8 @@ public partial class SnapshotViewModel : ViewModelBase
     // are only valid when the New (DiffB) snapshot belongs to the current live
     // session. See EngineState.GameSessionId.
     private string _currentSessionId = "";
+    // [A4-PIVOT-CROSSGAME-ID] The game whose snapshot list is shown: ids are per-game-DB AUTOINCREMENT.
+    private string? _listedPe;
     private CancellationTokenSource? _cts;        // capture (streaming) op
     private CancellationTokenSource? _diffCts;    // diff (heavy in-memory) op
 
@@ -626,10 +628,16 @@ public partial class SnapshotViewModel : ViewModelBase
     {
         try
         {
+            var pe = _engineState?.PeHash ?? "";   // [A4-PIVOT-CROSSGAME-ID] the game this list is read from
             var list = await Task.Run(() => _store.ListSnapshotsAsync());
             // Preserve the diff picks across a refresh (a capture finishes -> this
-            // runs) by id, since Reset detaches every selection bound to Snapshots.
-            long? keepA = DiffA?.Id, keepB = DiffB?.Id, keepG = GroupSnapshot?.Id, keepGC = GroupCompareSnapshot?.Id;
+            // runs) by id, since Reset detaches every selection bound to Snapshots --
+            // but only within ONE game: after a reconnect to a different game the same
+            // id names some other snapshot. [A4-PIVOT-CROSSGAME-ID]
+            bool sameGame = pe == _listedPe;
+            _listedPe = pe;
+            long? keepA  = sameGame ? DiffA?.Id : null,         keepB  = sameGame ? DiffB?.Id : null,
+                  keepG  = sameGame ? GroupSnapshot?.Id : null, keepGC = sameGame ? GroupCompareSnapshot?.Id : null;
             UiCollection.Reset(Snapshots, list,
                 () => { SelectedSnapshot = null; DiffA = null; DiffB = null; GroupSnapshot = null; GroupCompareSnapshot = null; });
             if (keepA.HasValue) DiffA = Snapshots.FirstOrDefault(s => s.Id == keepA.Value);

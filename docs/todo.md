@@ -670,7 +670,7 @@ only the non-disclosure survives, and `GroupStatusText` already discloses the si
 ROW count, inflated by inner numeric props, and `ArrayPivotStoreTests.cs:90` pins the wrong value
 with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it counts distinct (owner, element) pairs now, red first with a two-prop fixture) · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
 (⛔ **the fix is a new marker, NOT `is_usable=0`** — see the refuted-fix note below) ·
-`[W1-PIVOT-LOADCTS]` one shared `_loadCts` lets a field load cancel an in-flight class load with
+✅ `[W1-PIVOT-LOADCTS]` (FIXED IN SOURCE 2026-09-12, batch L18: one CTS per list, pinned by a class load gated on its token) one shared `_loadCts` lets a field load cancel an in-flight class load with
 no restart, leaving a stale picker · `[W1-DT-TRUNC]` DataTable pivot Run overwrites its own
 truncation notice with a bare row count, 17 lines above an array branch that gets it right ·
 `[W1-PIPEBUSY-LOG]` pipe-busy is logged as "Cheat Engine not running" (see below) ·
@@ -4778,7 +4778,7 @@ comment and a69e23ba's body all promise that nested rows are never previewed.
   **Test, red first:** dll_core_test previews a direct row and a nested row that share a class. The
   direct row is previewed and the nested one is not. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215.
 
-##### `[A4-PIVOT-CROSSGAME-ID]` LOW — Class Pivot restores the previous game's snapshot pick and class list into a different game
+##### ✅ `[A4-PIVOT-CROSSGAME-ID]` LOW — Class Pivot restores the previous game's snapshot pick and class list into a different game (FIXED IN SOURCE 2026-09-12)
 
 `ClassPivotViewModel.cs:479-520`, `:562`, `:672`. Snapshot ids are per-game-DB `AUTOINCREMENT`, and
 `SetEngineState` switches the DB file but clears neither `_classCache` nor `_fieldCache`. So after a
@@ -4796,6 +4796,18 @@ and `SpcQueryViewModel.RefreshAsync :453-467`.
 - ⛔ **Unsafe:**
   - clearing inside `SetEngineState`: it also runs on a same-game Extra Scan, which reopens AF5;
   - a clear alone: an in-flight load re-inserts A's list after it.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix, all three twins** (batch L18, with
+  `[W1-PIVOT-LOADCTS]`).
+  - Both Class Pivot caches are keyed by the game's PeHash, captured at load start. The prune is scoped
+    to the current game.
+  - Each view model records which game its list shows (`_listedPe`), and keeps the pick and ticks by
+    Id only when the game is unchanged: Class Pivot's selection and discovery ticks, Snapshot's Diff and
+    Group picks, SPC's ticks and predicates.
+  - Nothing is cleared in `SetEngineState`, so a same-game Extra Scan still keeps AF5's pick.
+  - SPC gained a `PendingRefresh` seam, as the other two had.
+  - **Tests, red first:** one cross-game test per view model on the real per-game store. Each checks
+    that the other game's newest or default wins, and Class Pivot's also checks that the other game's
+    class list is never served. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225.
 
 ##### ✅ `[A4-AB4-UINT64]` LOW — AB4's ordered-predicate verdict never covers the 64-bit members, so `Bigger -5` still drops every UInt64Property field (FIXED IN SOURCE 2026-09-11, batch B13)
 
@@ -5150,6 +5162,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 70 | `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]` | LOW | `git log --grep A4-CDOSCOPE-ANCESTOR` (batch L17) | dll_core_test, red first: `Aura::PreviewAncestorsOf` credits every preview class from the super up, and a nested row sharing a direct row's class is not previewed. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215. Both recorded safe fixes; the swap not restored |
 | 71 | `[A4-LW-DISCONNECT-PARENT]` + `[A1-DETECT-REPUBLISH]` | LOW | `git log --grep A4-LW-DISCONNECT-PARENT` (batch L19) | AuditL11HonestyTests, red first: a disconnected walker keeps no Parent, References header or function list; a Detect run in flight at the disconnect, resumed with a result or a failure, touches neither the rows nor the status. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218. Both recorded safe fixes; no CTS |
 | 72 | `[A4-STEALTH-PRIME]` | LOW | `git log --grep A4-STEALTH-PRIME` (batch L20) | TeleportViewModelTests, red first: a still-held meter primes Holding, a Property Search force is not claimed (Unknown), and a disconnect says Unknown; nothing forced reads Off. Gate 17d reads the tuple form (a third selftest control). 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221. The recorded safe fix |
+| 73 | `[A4-PIVOT-CROSSGAME-ID]` + `[W1-PIVOT-LOADCTS]` | LOW | `git log --grep A4-PIVOT-CROSSGAME-ID` (batch L18) | One cross-game test each for Class Pivot, Snapshot and SPC on the real per-game store (the other game's newest or default wins; Class Pivot never serves the other game's class list), and a class load gated on its token that a field load must not cancel, red first. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225. The recorded safe fix, all three twins; no clear in SetEngineState |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5353,6 +5366,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L58 | `[A4-STEALTH-PRIME]` | A game where the stealth meter auto-finds (experimental gate on):
 1. Detect, then Hold @0. Restart the UI with the game still running and reconnect. The Stealth card reads "Holding @0", and Reset releases it.
 2. With only a Property Search Force active, the card reads "Unknown", and turning the experimental gate off does not release that Force. | a game + UI |
+| L59 | `[A4-PIVOT-CROSSGAME-ID]` + `[W1-PIVOT-LOADCTS]` | Two games with a few snapshots each, one UI session:
+1. In game A pick an older snapshot in Class Pivot, and tick picks in Snapshot and SPC.
+2. Connect to game B. Each tab shows B's newest or default, and Class Pivot's class list is B's.
+3. An Extra Scan on B keeps B's picks.
+4. Switch snapshot and immediately pick a class. The class list still arrives for the new snapshot. | two games + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5428,7 +5446,7 @@ completeness critic.
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
 - ✅ **L16:** `[W5-DENKEN-DEADGUARD]`
 - ✅ **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
-- **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
+- ✅ **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 - ✅ **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 - ✅ **L20:** `[A4-STEALTH-PRIME]`
 - **L21:** `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`

@@ -364,6 +364,8 @@ public partial class SpcQueryViewModel : ViewModelBase
     // Live/Addr/GWorld actions are only valid when that newest snapshot belongs
     // to the current live session. See EngineState.GameSessionId.
     private string _currentSessionId = "";
+    // [A4-PIVOT-CROSSGAME-ID] The game whose snapshot list is shown: ids are per-game-DB AUTOINCREMENT.
+    private string? _listedPe;
 
     /// <summary>GameSessionId of the newest selected snapshot (by Id == capture
     /// time) — the one whose live ObjAddr the result rows carry.</summary>
@@ -410,8 +412,12 @@ public partial class SpcQueryViewModel : ViewModelBase
         RaiseResultRowActionGates();
         _store.SetActiveGame(state.PeHash);
         LoadDenylistFromStore();
-        _ = RefreshAsync();
+        PendingRefresh = RefreshAsync();
     }
+
+    /// <summary>The refresh <see cref="SetEngineState"/> started -- a test seam, as Class Pivot and Snapshot have.
+    /// Production code never reads it.</summary>
+    public Task? PendingRefresh { get; private set; }
 
     /// <summary>Drop the live session id so per-row Live/Addr actions auto-disable, and
     /// cancel any in-flight query, on disconnect (audit X5). The disk-backed corpus +
@@ -441,6 +447,7 @@ public partial class SpcQueryViewModel : ViewModelBase
             // Off the UI thread (SQLite "*Async" is synchronous) — this also posts
             // the rebuild as a fresh dispatcher work item, avoiding the "cannot
             // change ObservableCollection during a CollectionChanged event" crash.
+            var pe = _engineState?.PeHash ?? "";   // [A4-PIVOT-CROSSGAME-ID] the game this list is read from
             var list = await Task.Run(() => _store.ListSnapshotsAsync());
             // Exclude UNUSABLE snapshots (captures that spanned a GObjects drift): SPC
             // joins across snapshots, so an inconsistent one silently poisons results.
@@ -450,8 +457,13 @@ public partial class SpcQueryViewModel : ViewModelBase
             // Preserve current selections/predicates across a refresh so a capture
             // on the Snapshot tab doesn't wipe a half-built query — including the SPC
             // group matrix (every pick's per-slot cells).
-            var prev = SnapshotPicks.ToDictionary(p => p.Id, p => (p.IsSelected, p.SelectedPredicate));
-            var prevPick = SnapshotPicks.ToDictionary(p => p.Id);
+            // [A4-PIVOT-CROSSGAME-ID] ...within ONE game only: a pick carried by id into a different game's list lands
+            // on some other snapshot. A different game gets the first-visit default instead.
+            bool sameGame = pe == _listedPe;
+            _listedPe = pe;
+            var prev = SnapshotPicks.Where(_ => sameGame)
+                                    .ToDictionary(p => p.Id, p => (p.IsSelected, p.SelectedPredicate));
+            var prevPick = SnapshotPicks.Where(_ => sameGame).ToDictionary(p => p.Id);
             foreach (var p in SnapshotPicks) p.PropertyChanged -= OnPickChanged;
 
             // Build the fresh picks detached, then swap in one shot.

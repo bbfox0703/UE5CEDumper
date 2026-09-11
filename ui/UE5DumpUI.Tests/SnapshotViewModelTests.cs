@@ -51,6 +51,46 @@ public class SnapshotViewModelTests : IDisposable
                string.Join(Environment.NewLine + "  ", tail);
     }
 
+    // ---- [A4-PIVOT-CROSSGAME-ID] the Diff / Group picks do not follow an id into a different game ----
+
+    private async Task SeedGameAsync(string pe, int count)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame(pe);
+        for (int i = 0; i < count; i++)
+        {
+            long id = await _store.CreateSnapshotAsync(
+                new SnapshotMeta { Label = $"{pe}{i}", PeHash = pe, GameSessionId = pe + "-S" }, ct);
+            var o = new SnapshotCapturedObject
+            {
+                Index = 1, Addr = "0x1000", Name = "O_1", ClassName = "C", OuterClassName = "World", Path = "/G.M:L.O_1",
+            };
+            o.Fields.Add(new SnapshotCapturedField { Name = "HP", Type = "IntProperty", Hex = "64000000", Offset = 0x10 });
+            await _store.WriteChunkAsync(id, new[] { o }, ct);
+            await _store.FinalizeSnapshotAsync(id, 1, 1, ct);
+        }
+    }
+
+    private static EngineState GameState(string pe) =>
+        new() { PeHash = pe, UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" };
+
+    [Fact]
+    public async Task ADifferentGame_GetsItsOwnDefaultDiffPicks_NotTheOtherGamesIds()
+    {
+        await SeedGameAsync("A", 2);
+        await SeedGameAsync("B", 3);
+        var vm = new SnapshotViewModel(new StubDumpService(), _store, new MockLoggingService());
+        vm.SetEngineState(GameState("A"));
+        await vm.PendingRefresh!;
+        Assert.Equal(2, vm.DiffB!.Id);   // A's two newest: A#1 -> A#2
+
+        vm.SetEngineState(GameState("B"));
+        await vm.PendingRefresh!;
+
+        Assert.Equal(3, vm.DiffB!.Id);   // B's newest, not B#2 by A's id
+        Assert.Equal(2, vm.DiffA!.Id);
+    }
+
     // Stub that streams 3 objects (4 fields) across two non-empty chunks, then a
     // terminal empty chunk — mirrors the DLL's stateless cursor pagination.
     private sealed class CaptureStub : StubDumpService

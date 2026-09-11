@@ -67,6 +67,34 @@ public class SpcQueryViewModelTests : IDisposable
         return id;
     }
 
+    // ---- [A4-PIVOT-CROSSGAME-ID] SPC's ticks do not follow an id into a different game ----
+
+    private async Task SeedGameAsync(string pe, int count)
+    {
+        _store.SetActiveGame(pe);
+        for (int i = 0; i < count; i++) await SeedAsync($"{pe}{i}", ("HP", 100 - i));
+    }
+
+    private static EngineState GameState(string pe) =>
+        new() { PeHash = pe, UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" };
+
+    [Fact]
+    public async Task ADifferentGame_GetsTheFirstVisitDefault_NotTheOtherGamesTicks()
+    {
+        await SeedGameAsync("A", 2);
+        await SeedGameAsync("B", 3);
+        var vm = NewVm();
+        vm.SetEngineState(GameState("A"));
+        await vm.PendingRefresh!;
+        foreach (var p in vm.SnapshotPicks) p.IsSelected = p.Id == 1;   // the user ticks A#1 only
+
+        vm.SetEngineState(GameState("B"));
+        await vm.PendingRefresh!;
+
+        Assert.False(vm.SnapshotPicks.First(p => p.Id == 1).IsSelected);   // A#1's tick did not land on B#1
+        Assert.True(vm.SnapshotPicks.First(p => p.Id == 3).IsSelected);    // B's first-visit default: the two newest
+    }
+
     private SpcQueryViewModel NewVm(IPlatformService? platform = null)
         => new SpcQueryViewModel(_store, new MockLoggingService(), platform);
 

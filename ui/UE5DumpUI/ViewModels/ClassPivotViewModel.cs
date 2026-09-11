@@ -87,7 +87,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     private int _classLoadId;
     private int _fieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
-    private CancellationTokenSource? _loadCts;    // class / field list loads (GROUP BY over ~1.7M rows)
+    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
+    // nothing restarts, leaving the previous snapshot's classes in the picker.
+    private CancellationTokenSource? _classLoadCts;   // class list loads (GROUP BY over ~1.7M rows)
+    private CancellationTokenSource? _fieldLoadCts;   // field list loads
+    // [A4-PIVOT-CROSSGAME-ID] The game (PeHash) whose snapshot list is on screen. Snapshot ids are per-game-DB
+    // AUTOINCREMENT, so an id only names "the same snapshot" within one game.
+    private string? _listedPe;
+    private string CurrentPe => _engineState?.PeHash ?? "";
 
     [ObservableProperty] private string _selectedSource = "Snapshot";
     [ObservableProperty] private SnapshotMeta? _selectedSnapshot;
@@ -554,6 +561,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     public async Task RefreshAsync()
     {
         if (_refreshing) return;   // coalesce overlapping refreshes (rapid tab re-entry / clicks)
+        var pe = CurrentPe;        // [A4-PIVOT-CROSSGAME-ID] the game this list is read from
         // Off the UI thread: Microsoft.Data.Sqlite "*Async" runs synchronously on the
         // caller, so awaiting it on the UI thread would block + run the collection
         // rebuild inline inside a binding event (the crash).
@@ -567,10 +575,15 @@ public partial class ClassPivotViewModel : ViewModelBase
         // repopulates with NEW instances, so this must round-trip by Id — never by
         // reference or index. A refresh used to hard-reset the picker to "newest"
         // plus the two-newest ticks, silently discarding a deliberate choice.
-        long? keepSnapshotId = SelectedSnapshot?.Id;
-        var keepTicked = DiscoverPicks.Where(p => p.IsSelected)
-                                      .Select(p => p.Id)
-                                      .ToHashSet();
+        //
+        // [A4-PIVOT-CROSSGAME-ID] ...but only within ONE game: after a reconnect to a different game the same Id names
+        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick (AF5), so
+        // the test is "did the game change", not "was there a connect".
+        bool sameGame = pe == _listedPe;
+        long? keepSnapshotId = sameGame ? SelectedSnapshot?.Id : null;
+        var keepTicked = sameGame
+            ? DiscoverPicks.Where(p => p.IsSelected).Select(p => p.Id).ToHashSet()
+            : new HashSet<long>();
 
         _refreshing = true;
         try
@@ -581,9 +594,10 @@ public partial class ClassPivotViewModel : ViewModelBase
             // Drop cache entries for snapshots that no longer exist (deleted) so a
             // recaptured Id can't ever read a stale class/field list.
             var liveIds = new HashSet<long>(list.Select(s => s.Id));
-            foreach (var k in _classCache.Keys.Where(k => !liveIds.Contains(k.Item1)).ToList())
+            // [A4-PIVOT-CROSSGAME-ID] Scoped to THIS game: another game's entries are keyed apart and stay valid.
+            foreach (var k in _classCache.Keys.Where(k => k.Item1 == pe && !liveIds.Contains(k.Item2)).ToList())
                 _classCache.Remove(k);
-            foreach (var k in _fieldCache.Keys.Where(k => !liveIds.Contains(k.Item1)).ToList())
+            foreach (var k in _fieldCache.Keys.Where(k => k.Item1 == pe && !liveIds.Contains(k.Item2)).ToList())
                 _fieldCache.Remove(k);
             // Restore the previous selection, falling back to the newest. A snapshot
             // that was deleted between refreshes simply isn't in `list`, so the
@@ -596,6 +610,7 @@ public partial class ClassPivotViewModel : ViewModelBase
             // build (nothing ticked yet) falls back to the two newest — the common
             // "capture before/after an action" flow.
             RebuildDiscoverPicks(keepTicked);
+            _listedPe = pe;
         }
         catch (Exception ex)
         {
@@ -650,7 +665,8 @@ public partial class ClassPivotViewModel : ViewModelBase
     // change. Keyed by (snapshotId, arrayMode); pruned in RefreshAsync when a
     // snapshot is deleted. The denylist filter is applied on top of the cached
     // list (so hiding a class never needs a re-scan).
-    private readonly Dictionary<(long, bool), IReadOnlyList<PivotClassInfo>> _classCache = new();
+    // [A4-PIVOT-CROSSGAME-ID] Keyed by GAME too: snapshot ids repeat across per-game DBs.
+    private readonly Dictionary<(string, long, bool), IReadOnlyList<PivotClassInfo>> _classCache = new();
 
     private async Task LoadClassesAsync()
     {
@@ -665,7 +681,9 @@ public partial class ClassPivotViewModel : ViewModelBase
         if (SelectedSnapshot == null) { _allClasses.Clear(); Classes.Clear(); return; }
         long snapId = SelectedSnapshot.Id;
         bool arrayMode = IsArraySource;
-        var key = (snapId, arrayMode);
+        // [A4-PIVOT-CROSSGAME-ID] The game is captured HERE, at load start: a load in flight across a game switch then
+        // caches under the game it read from, never under the new one.
+        var key = (CurrentPe, snapId, arrayMode);
 
         // Cache hit → apply instantly, no scan, no thread.
         if (_classCache.TryGetValue(key, out var cachedList))
@@ -677,9 +695,9 @@ public partial class ClassPivotViewModel : ViewModelBase
 
         // Cache miss → scan once. Cancel a prior in-flight load so rapidly
         // changing the snapshot doesn't stack several heavy scans on the pool.
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        var cts = _loadCts = new CancellationTokenSource();
+        _classLoadCts?.Cancel();
+        _classLoadCts?.Dispose();
+        var cts = _classLoadCts = new CancellationTokenSource();
         var ct = cts.Token;
         StatusText = "Loading classes… (first time for this snapshot)";
         try
@@ -760,7 +778,7 @@ public partial class ClassPivotViewModel : ViewModelBase
 
     // Per-(snapshot, class) field-list cache — same immutability rationale as the
     // class cache: a snapshot's fields for a class never change, so scan once.
-    private readonly Dictionary<(long, string), IReadOnlyList<PivotFieldInfo>> _fieldCache = new();
+    private readonly Dictionary<(string, long, string), IReadOnlyList<PivotFieldInfo>> _fieldCache = new();   // + game
 
     private async Task LoadFieldsAsync()
     {
@@ -778,7 +796,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         }
         long snapId = SelectedSnapshot.Id;
         string cls = SelectedClass.ClassName;
-        var key = (snapId, cls);
+        var key = (CurrentPe, snapId, cls);   // [A4-PIVOT-CROSSGAME-ID] captured at load start
 
         // Cache hit → rebuild the picker instantly (no scan).
         if (_fieldCache.TryGetValue(key, out var cachedFields))
@@ -787,9 +805,9 @@ public partial class ClassPivotViewModel : ViewModelBase
             return;
         }
 
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        var cts = _loadCts = new CancellationTokenSource();
+        _fieldLoadCts?.Cancel();   // [W1-PIVOT-LOADCTS] never the class load's
+        _fieldLoadCts?.Dispose();
+        var cts = _fieldLoadCts = new CancellationTokenSource();
         var ct = cts.Token;
         StatusText = "Loading fields…";
         try
@@ -1308,7 +1326,8 @@ public partial class ClassPivotViewModel : ViewModelBase
     public void CancelPendingWork()
     {
         _pivotCts?.Cancel();
-        _loadCts?.Cancel();
+        _classLoadCts?.Cancel();
+        _fieldLoadCts?.Cancel();
         _discoverCts?.Cancel();
     }
 
