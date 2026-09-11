@@ -39,6 +39,11 @@ public sealed class TeleportPose
     /// [POSEATTACH-2026-09-10]</remarks>
     public bool ParentRelative { get; init; }
 
+    /// <summary>The reply CARRIED <c>parent_relative</c> at all, true or false. The save reply has no <c>source</c>
+    /// key, so without this the card could not tell "healthy" from "an older DLL that never says". Review 5 of
+    /// 7490c24e.</summary>
+    public bool ParentRelativeKnown { get; init; }
+
     /// <summary>TRUE when a move SUCCEEDED but the post-move pose re-read failed, so
     /// X/Y/Z carry nothing — <b>not</b> a landing at the origin.</summary>
     /// <remarks>The DLL leaves the Pose untouched when the re-read fails, and every

@@ -1819,6 +1819,18 @@ public class InvokeScriptTests
         throw new FileNotFoundException("dll/src/" + file + " not found from " + AppContext.BaseDirectory);
     }
 
+    [Fact]
+    public void SaveMarkerReply_AlwaysCarriesTheParentRelativeFlag()
+    {
+        // Review 5 of 7490c24e: sent only when true, its absence meant both "healthy" and "an older DLL", and the pose
+        // card -- which trusts a reply's read metadata by its keys -- could not use it. Fern.cpp reaches no test target.
+        var fern = DllSource("Fern.cpp");
+        int save = fern.IndexOf("if (cmd == Renge::CMD_TELEPORT_SAVE_MARKER)", StringComparison.Ordinal);
+        Assert.True(save >= 0, "teleport_save_marker's handler not found");
+        int end = fern.IndexOf("return Renge::MakeResponse(id, data).dump();", save, StringComparison.Ordinal);
+        Assert.Contains("data[\"parent_relative\"] = m.ParentRelative;", fern[save..end], StringComparison.Ordinal);
+    }
+
     // ---- [P1-SEETHRU-NOPRODUCER] / [P1-SEETHRU-GIVEUP]: Schlacht.cpp and Fern.cpp, which no test target compiles ----
 
     [Fact]

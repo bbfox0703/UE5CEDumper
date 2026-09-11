@@ -3756,6 +3756,8 @@ public sealed class DumpService : IDumpService
         // Absent on a healthy read; the DLL only emits it when the pose degraded to a
         // parent-relative fallback. [POSEATTACH-2026-09-10]
         ParentRelative = res["parent_relative"]?.GetValue<bool>() ?? false,
+        // Review 5 of 7490c24e: false is an answer, absence (an older DLL) is not.
+        ParentRelativeKnown = res["parent_relative"] is not null,
         // Emitted only when a move succeeded and its landing re-read did not.
         LandingUnknown = res["landing_unknown"]?.GetValue<bool>() ?? false,
         PawnAddr    = res["pawn_addr"]?.GetValue<string>() ?? "",

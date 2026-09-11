@@ -339,6 +339,44 @@ public class TeleportViewModelTests
         Assert.Contains("PARENT-RELATIVE", vm.StatusText);
     }
 
+    [Theory]
+    [InlineData(false, true)]    // a degraded save switches the chip ON
+    [InlineData(true, false)]    // a healthy save switches a stale chip OFF
+    public async Task SaveMarker_TheReplysFlagDrivesThePoseChip_ThoughItCarriesNoSource(bool chipBefore, bool parentRel)
+    {
+        // Review 5 of 7490c24e: the save reply carries parent_relative but never 'source', and ApplyPose kept the chip
+        // for a source-less reply -- so a degraded save showed parent-relative numbers under a chip that stayed off.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", SourceAbsent = true,
+                               ParentRelative = parentRel, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.PoseParentRelative = chipBefore;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal(parentRel, vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task SaveMarker_FromAnOlderDllThatSaysNothing_KeepsTheChip()
+    {
+        // The control: no key at all (an older DLL) says nothing, so the last state stands.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", SourceAbsent = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.PoseParentRelative = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
     [Fact]
     public void RefreshMarkers_FlagsAParentRelativeMarker_AndTheLastSlot()
     {

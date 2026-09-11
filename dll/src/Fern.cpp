@@ -6295,8 +6295,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["x"] = m.P.X;         data["y"] = m.P.Y;     data["z"] = m.P.Z;
                     data["pitch"] = m.P.Pitch; data["yaw"] = m.P.Yaw; data["roll"] = m.P.Roll;
                     data["map"] = m.MapName;
-                    // [W2-MARKER-PARENTREL] absent on a healthy save, like get_pose's own key
-                    if (m.ParentRelative) data["parent_relative"] = true;
+                    // [W2-MARKER-PARENTREL] ALWAYS sent (review 5 of 7490c24e): this reply has no 'source' key, so only
+                    // a key present on a healthy save too lets the UI tell "healthy" from "an older DLL that never says".
+                    data["parent_relative"] = m.ParentRelative;
                 }
             }
             return Renge::MakeResponse(id, data).dump();

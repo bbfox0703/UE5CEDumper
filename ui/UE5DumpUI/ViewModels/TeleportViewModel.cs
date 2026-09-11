@@ -5087,7 +5087,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         // [W2-POSEATTACH-QUIETPOLL] The degraded-read state, for EVERY pose path -- the 0.5s quiet
         // poll included, which never said so. Kept, like the source label, when the reply carries no
         // read metadata (teleport_relative).
-        if (!p.SourceAbsent) PoseParentRelative = p.ParentRelative;
+        // Review 5 of 7490c24e: ...and when the reply CARRIED the flag, as the save reply does with no source key.
+        if (!p.SourceAbsent || p.ParentRelativeKnown) PoseParentRelative = p.ParentRelative;
 
         // A map change re-filters the coordinate library (the "current map only"
         // default); otherwise just refresh the distances in place.

@@ -1295,6 +1295,30 @@ public class DumpServiceTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TeleportSaveMarkerAsync_ReportsWhetherTheReplyCarriedTheFlag(bool carried)
+    {
+        // Review 5 of 7490c24e: the save reply never carries 'source', so the pose card needs to know whether it carried
+        // parent_relative at all -- false is an answer, absence (an older DLL) is not.
+        _pipe.SetHandler(_ =>
+        {
+            var o = new JsonObject
+            {
+                ["ok"] = true, ["code"] = 0, ["slot"] = 0, ["x"] = 1.0, ["y"] = 2.0, ["z"] = 3.0,
+                ["pitch"] = 0.0, ["yaw"] = 0.0, ["roll"] = 0.0, ["map"] = "M",
+            };
+            if (carried) o["parent_relative"] = false;
+            return o;
+        });
+
+        var p = await CreateService().TeleportSaveMarkerAsync(0, TestContext.Current.CancellationToken);
+
+        Assert.Equal(carried, p.ParentRelativeKnown);
+        Assert.False(p.ParentRelative);
+    }
+
+    [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
     public async Task SeeThroughGetStateAsync_ParsesTheRestoreVerdict(bool pending, bool abandoned)

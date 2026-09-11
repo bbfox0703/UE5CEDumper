@@ -906,6 +906,17 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
      A healthy save and a healthy marker are the controls. 5/5 mutants killed; UI 5139/5139.
    - ⚠ **Survivors by construction:** Wirbel.cpp's capture and Fern.cpp's publish, which no test target
      compiles. The real `UE5Dumper` build and the live check cover them.
+   - ✅ **Review 5 follow-up 2026-09-12** (of 7490c24e: two LOW, both CONFIRMED).
+     - **The pose-card chip never saw the save's flag.** `ApplyPose` trusts a reply's read metadata only when
+       the reply carries `source`, and `teleport_save_marker`'s never does. So a degraded save showed
+       parent-relative numbers under a chip that stayed off, and a healthy save left a stale chip on. The VM
+       test faked a `source` the wire never sends.
+     - Fern now ALWAYS sends `parent_relative` on the save reply. "Absent when healthy" looked exactly like an
+       older DLL's silence. The parse records whether the reply carried it (`ParentRelativeKnown`), and the
+       card honours a carried flag.
+     - **Tests, red first:** the chip both ways through a source-less reply, the parse, and a Fern pin. An
+       older DLL's silent reply keeping the chip is the control. 3/3 mutants killed; UI 5193/5193.
+     - The C ABI transport this row once folded in is now its own row, `[A2-CABI-TELEPORT-PARENTREL]`.
    ✅ **The mailbox half, FIXED IN SOURCE 2026-09-12** (batch B29b, together with `[W2-TPREL-TRANSPORTS]`).
    ⚠ Until review 5 this line said "the mailbox and C ABI half". The C ABI carries only RELATIVE's NaN landing. Its
    three pose getters stay flagless, and are now their own row, `[A2-CABI-TELEPORT-PARENTREL]`.
