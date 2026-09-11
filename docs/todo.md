@@ -1964,13 +1964,34 @@ code**, which is the behaviour the brief asked for.
 
 #### The fix list — 7 rows, all LOW, none repaired
 
-1. ⬜ **`[P1-GENAU-ABORT]`** `Genau.cpp:567` (+ `:751`, `:2304`). Three sweeps poll
+1. ✅ **`[P1-GENAU-ABORT]`** (FIXED IN SOURCE 2026-09-12, batch L01) `Genau.cpp:567` (+ `:751`, `:2304`). Three sweeps poll
    `Tot::Requested()` and each spends its abort on a log line, then returns a result that reads as
    "nothing found" — `DataScanGObjectsCandidates` (void), `FindGObjectsStaticStruct` and
    `FindGNamesByStringRef` (both return 0). `bScanCancelled` never sees them, so `UE5_Init`'s latch
    guard (`Frieren.cpp:583`) can **latch a partial init after a per-command cancel** — and GNames
    cannot be rescanned afterwards. ⚠ Fix shape: record the abort **at the bail** as an out-flag and
    OR it into `bScanCancelled`; never re-derive it from `Tot::Requested()` later.
+   ✅ **FIXED IN SOURCE 2026-09-12, the recorded shape** (batch L01, with `[A2-GNAMES-PTRSCAN-ABORT]`).
+   - **Each abort is recorded at its bail.**
+     - `DataScanGObjectsCandidates`, `FindGObjectsByDataScan`, `CollectGObjectsCandidates` and
+       `FindGObjectsStaticStruct` take an optional `bool* outCancelled`.
+     - The two GNames tiers set `s_gnamesReport.cancelled`. `FindGNames` resets that report before
+       calling them, and `FindAll` already ORs it into `bScanCancelled`.
+   - **Inside `FindAll`**, the data-scan fallback feeds `s_gobjectsReport.cancelled`.
+   - **After `FindAll`**, `UE5_Init`'s two recovery sweeps (static struct, then heap candidates) OR their
+     aborts into `ptrs.bScanCancelled`. That is the predicate the latch guard reads, and until now it
+     could never see them.
+   - ⛔ `ExtraScanGWorld`'s bail is left out. That is the recorded harm: it would refuse a complete init
+     over a non-critical pointer.
+   - **Tests, red first:**
+     - a `GENAUABORT` block in dll_core_test. Each sweep, run with a pending cancel over the test exe's
+       own sections, records its abort; an uncancelled candidate sweep and pointer scan are the
+       controls.
+     - A source pin on Frieren's recovery, since no test target compiles Frieren.cpp.
+
+     6/6 mutants killed; dll_core_test 249/249; UI 5149/5149.
+   - ⚠ **Survivor by construction:** `FindGObjects`' call site. A pending cancel is always recorded by the
+     tier-1 AOB scan first, so no deterministic test reaches the fallback's bail alone.
 2. ⬜ **`[P1-ENUMNAMES]`** `Genau.cpp:5476`. When `DetectUEnumNames` fails it latches
    `bUEnumNamesFailed` for the process, and **no exit publishes it**. `list_enums` then answers `ok`
    with every UEnum's entries empty, and the USMAP and CE exports ship without enum names — none of
@@ -3500,7 +3521,7 @@ and `ReadSafe` zeroes on fault. So an unmapped address comes back as `{Address=a
 - **Twin, fix together:** `GetCachedStructFields` (`:2549-2645`) publishes `WalkClass`'s result
   unconditionally into a third never-erased cache.
 
-##### `[A2-GNAMES-PTRSCAN-ABORT]` LOW — a WIDENING of `[P1-GENAU-ABORT]`: the GNames tier-3 pointer scan aborts with no log and no flag
+##### ✅ `[A2-GNAMES-PTRSCAN-ABORT]` LOW — a WIDENING of `[P1-GENAU-ABORT]`: the GNames tier-3 pointer scan aborts with no log and no flag (FIXED IN SOURCE 2026-09-12)
 
 `Genau.cpp:2122`. `FindGNamesByPointerScan` returns 0 on `Tot::Requested()`, silently.
 `s_gnamesReport.cancelled` stays false, so `UE5_Init` can latch initialized with GNames missing, which
@@ -3512,6 +3533,8 @@ reachable: a DumperTest D1 run resolved GNames by `pointer_scan`.
 - ✅ **Safe fix:** set `s_gnamesReport.cancelled` at the bail, in the recorded row's shape.
 - ⛔ **Harmful:** ORing `ExtraScanGWorld`'s bail into the latch guard. That refuses a complete init
   over a non-critical pointer that has its own recovery route.
+- ✅ **FIXED IN SOURCE 2026-09-12, the safe fix** (batch L01, with `[P1-GENAU-ABORT]`): the bail sets
+  `s_gnamesReport.cancelled` and now logs. `ExtraScanGWorld` is untouched. Pinned by the `GENAUABORT` block.
 
 ##### `[A2-CRC-PATH-LS]` LOW — CrashReportClient version detection logs its path with `%ls`, which this file forbids
 
@@ -4712,6 +4735,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 51 | `[W2-MARKER-PARENTREL]` (pipe half) | MED | `git log --grep W2-MARKER-PARENTREL` (batch B29a) | the UI, red first against inert properties: a parent-relative save (status and row), a refresh flagging a marker and the Last slot, and the parse. 5/5 mutants killed; UI 5139/5139. The mailbox half is B29b |
 | 52 | `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) | LOW + MED | `git log --grep W2-TPREL-TRANSPORTS` (batch B29b) | the CE records' flag read (a theory) and a source pin on Mimic.cpp / Frieren.cpp, red first. 4/4 mutants killed; UI 5144/5144. Contract 3 → 4, additive (MIN stays 1) |
 | 53 | `[A4-USMAP-CONTAINER-ENUM]` | MED | `git log --grep A4-USMAP-CONTAINER-ENUM` (batch B32) | dll_core_test (a fake Array / Set / Map whose inners carry a UEnum), the byte-exact USMAP shapes and the parse, red first. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148 |
+| 54 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | LOW | `git log --grep P1-GENAU-ABORT` (batch L01) | dll_core_test (each sweep with a pending cancel records its abort at the bail) and a Frieren source pin, red first against inert out-flags. 6/6 mutants killed; dll_core_test 249/249; UI 5149/5149 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4850,6 +4874,11 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Export USMAP and load it in FModel.
 2. The array's elements show enum NAMES, and the properties after it in the same object stay aligned.
 3. **Control:** a plain `TArray<uint8>` stays a byte array. | a game + UI + FModel; no CE |
+| L40 | `[P1-GENAU-ABORT]` + `[A2-GNAMES-PTRSCAN-ABORT]` | On a game whose GObjects needs the recovery path (Avowed-style) or whose GNames falls to the string-ref / pointer-scan tiers:
+1. Disconnect the UI mid-scan.
+2. The DLL log shows the tier's "aborted" line and "NOT latching initialized".
+3. The next connect re-scans and resolves GNames.
+4. **Control:** an uninterrupted scan latches normally. | a game + UI; no CE |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4908,7 +4937,7 @@ completeness critic.
 | ✅ B32 container enum | `[A4-USMAP-CONTAINER-ENUM]` (filed 2026-09-12 by review 3) | |
 
 **LOW-only batches, after the MEDs** (43):
-- **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
+- ✅ **L01:** `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 - **L02:** `[P1-ENUMNAMES]`
 - **L03:** `[W5-CSX-DELEGATEPAD]` `[A4-DELEGATE-ARRAY-PAD]` `[A4-PUSHCE-UNPADDED]` (CE)
 - **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`

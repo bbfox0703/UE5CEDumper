@@ -1863,6 +1863,19 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InitRecovery_RecordsItsCancelForTheLatchGuard()
+    {
+        // [P1-GENAU-ABORT] UE5_Init's post-FindAll GObjects recovery runs two more cancellable sweeps. Their aborts must
+        // reach ptrs.bScanCancelled, which the latch guard reads -- or a cancelled recovery latches a partial init.
+        var frieren = DllSource("Frieren.cpp");
+        Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled)", frieren, StringComparison.Ordinal);
+        Assert.Contains("if (staticCancelled) ptrs.bScanCancelled = true;", frieren, StringComparison.Ordinal);
+        Assert.Contains("Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled)", frieren,
+            StringComparison.Ordinal);
+        Assert.Contains("if (heapCancelled) ptrs.bScanCancelled = true;", frieren, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BakedScript_DebugReturnPrint_NeverReadsPastTheSlab()
     {
         // Review of 9abc03c8: Copy AA Script's DEBUG return decode was bounded by ParmsSize only,

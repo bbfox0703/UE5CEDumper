@@ -2434,6 +2434,53 @@ int main() {
         DynOff::bUseFProperty = savedFPropCE;
     }
 
+    // -- GENAUABORT-2026-09-12 -- a Genau sweep that bails on a cancel records it AT THE BAIL -----------------
+    //
+    // [P1-GENAU-ABORT] [A2-GNAMES-PTRSCAN-ABORT] Each sweep polls Tot::Requested() on its first page-aligned slot, so
+    // a cancel already pending stops it there -- deterministic, with no thread race. They walk THIS test exe's own
+    // sections. Last, because the uncancelled controls run whole sweeps whose success paths may touch Serie.
+    {
+        blk("GENAUABORT - a Genau sweep that bails on a cancel records the abort at the bail");
+
+        std::vector<uintptr_t> gaCands;
+        bool gaHeap = false;
+        ResetCancel();
+        Tot::g_perCommand.store(true);
+        Genau::CollectGObjectsCandidates(gaCands, 0, 4, &gaHeap);
+        ResetCancel();
+        check("GENAUABORT ⭐: CollectGObjectsCandidates records its abort", gaHeap);
+
+        int gaStride = 0;
+        bool gaStatic = false;
+        Tot::g_perCommand.store(true);
+        Genau::FindGObjectsStaticStruct(&gaStride, &gaStatic);
+        ResetCancel();
+        check("GENAUABORT ⭐: FindGObjectsStaticStruct records its abort", gaStatic);
+
+        Genau::s_gnamesReport = Genau::ScanReport{};
+        Tot::g_perCommand.store(true);
+        Genau::FindGNamesByStringRef();
+        ResetCancel();
+        check("GENAUABORT ⭐: the GNames string-ref tier records its abort in the GNames report",
+              Genau::s_gnamesReport.cancelled);
+
+        Genau::s_gnamesReport = Genau::ScanReport{};
+        Tot::g_perCommand.store(true);
+        Genau::FindGNamesByPointerScan();
+        ResetCancel();
+        check("GENAUABORT ⭐: the GNames pointer-scan tier records its abort (it bailed with no log and no flag)",
+              Genau::s_gnamesReport.cancelled);
+
+        std::vector<uintptr_t> gaCands2;
+        bool gaHeap2 = false;
+        Genau::CollectGObjectsCandidates(gaCands2, 0, 1, &gaHeap2);
+        check("GENAUABORT control: an uncancelled candidate sweep records no abort", !gaHeap2);
+        Genau::s_gnamesReport = Genau::ScanReport{};
+        Genau::FindGNamesByPointerScan();
+        check("GENAUABORT control: an uncancelled pointer scan records no abort", !Genau::s_gnamesReport.cancelled);
+        Genau::s_gnamesReport = Genau::ScanReport{};
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

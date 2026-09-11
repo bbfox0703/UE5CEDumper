@@ -269,7 +269,9 @@ bool UE5_Init() {
             // base is content-validated (first objects resolve to clean names), so the
             // layout is known — force UE5-Extended so Aura reads NumElements at +0x24.
             int staticStride = 0;
-            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride);
+            bool staticCancelled = false;   // [P1-GENAU-ABORT]
+            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled);
+            if (staticCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             if (staticBase) {
                 Aura::InitWithExtendedLayout(staticBase, staticStride);
                 if (Aura::GetCount() > 0) {
@@ -290,7 +292,9 @@ bool UE5_Init() {
         // whose first slots resolve to names — a small partial list must not win.
         if (Aura::GetCount() == 0) {
             std::vector<uintptr_t> candidates;
-            Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects);
+            bool heapCancelled = false;   // [P1-GENAU-ABORT]
+            Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled);
+            if (heapCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             LOG_INFO("UE5_Init: Recovery (heap fallback) — evaluating %zu candidate(s)", candidates.size());
 
             uintptr_t best = 0;

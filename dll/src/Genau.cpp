@@ -508,7 +508,8 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
 //   - FindGObjectsByDataScan       (maxWanted=1: original "first validated" fallback)
 //   - Genau::CollectGObjectsCandidates (maxWanted>1: post-init decoy recovery)
 // ─────────────────────────────────────────────────────────────────────────────
-static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxWanted) {
+static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxWanted,
+                                       bool* outCancelled = nullptr) {
     Sein::Info("SCAN:GObj", "DataScanGObjectsCandidates: Collecting static pointer references...");
 
     uintptr_t base = Macht::GetModuleBase(nullptr);
@@ -565,6 +566,9 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
         // decoration. void: the caller reads the (partial) bag and reports no winner.
         if ((scan & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("SCAN:GObj", "DataScanGObjectsCandidates: aborted (client gone / shutdown)");
+            // [P1-GENAU-ABORT] Recorded AT THE BAIL, never re-derived later: Fern::AcceptLoop resets the
+            // per-command flag on firstConn, so a later Tot::Requested() can no longer see this abort.
+            if (outCancelled) *outCancelled = true;
             return;
         }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
@@ -635,9 +639,9 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
 }
 
 // FindGObjectsByDataScan — fallback: first validated GObjects from the data scan.
-static uintptr_t FindGObjectsByDataScan() {
+static uintptr_t FindGObjectsByDataScan(bool* outCancelled = nullptr) {
     std::vector<uintptr_t> v;
-    DataScanGObjectsCandidates(v, /*avoid=*/0, /*maxWanted=*/1);
+    DataScanGObjectsCandidates(v, /*avoid=*/0, /*maxWanted=*/1, outCancelled);
     return v.empty() ? 0 : v[0];
 }
 
@@ -712,7 +716,7 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride) {
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
     if (outItemStride) *outItemStride = 0;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
@@ -749,6 +753,7 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride) {
         // so an aborted run memoizes nothing.
         if ((scan & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("SCAN:GObj", "FindGObjectsStaticStruct: aborted (client gone / shutdown)");
+            if (outCancelled) *outCancelled = true;   // [P1-GENAU-ABORT] recorded AT THE BAIL
             return 0;
         }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
@@ -1657,7 +1662,7 @@ uintptr_t FindGObjects(const char* hintPatternId) {
     } else {
         // Fallback: exhaustive data-section pointer scan
         Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
-        result = FindGObjectsByDataScan();
+        result = FindGObjectsByDataScan(&s_gobjectsReport.cancelled);   // [P1-GENAU-ABORT]
         if (result) s_gobjectsMethod = "data_scan";
     }
 
@@ -2119,7 +2124,13 @@ static uintptr_t FindGNamesByPointerScan() {
             // Cooperative cancel. UE5_Shutdown runs on the CE Lua caller's thread and
             // joins the accept thread, so an unbounded sweep here freezes CE's UI for its
             // whole duration. Aura's idiom: poll cheaply every 4096 slots. (B18)
-            if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;
+            if ((off & 0xFFF) == 0 && Tot::Requested()) {
+                // [A2-GNAMES-PTRSCAN-ABORT] This bail used to leave no log and no flag, so UE5_Init could latch
+                // with GNames missing. Recorded AT THE BAIL, in [P1-GENAU-ABORT]'s shape.
+                s_gnamesReport.cancelled = true;
+                Sein::Warn("SCAN:GNam", "FindGNamesByPointerScan: aborted (client gone / shutdown)");
+                return 0;
+            }
             if (!Macht::ReadSafe(secBase + off, ptr)) continue;
 
             // Plausible user-space 64-bit address (exclude null, low, kernel)
@@ -2302,6 +2313,7 @@ static uintptr_t FindGNamesByStringRef() {
         for (uintptr_t scan = rdataStart; scan + markerLen < rdataEnd; ++scan) {
             if ((scan & 0xFFF) == 0 && Tot::Requested()) {
                 Sein::Warn("SCAN:GNam", "FindGNamesByStringRef: aborted (client gone / shutdown)");
+                s_gnamesReport.cancelled = true;   // [P1-GENAU-ABORT] recorded AT THE BAIL
                 return 0;
             }
             char buf[64] = {};
@@ -4344,9 +4356,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 // Aura::Init + name resolution to reject count-only decoys that pass the
 // structural validator but contain no usable objects.
 // ============================================================
-size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxCandidates) {
+size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxCandidates,
+                                 bool* outCancelled) {
     size_t before = out.size();
-    DataScanGObjectsCandidates(out, avoid, before + maxCandidates);
+    DataScanGObjectsCandidates(out, avoid, before + maxCandidates, outCancelled);
     return out.size() - before;
 }
 

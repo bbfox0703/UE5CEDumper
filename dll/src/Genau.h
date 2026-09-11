@@ -364,8 +364,10 @@ uintptr_t ExtraScanGObjects();
 // GObjects yielded 0 usable objects (e.g. Avowed / Obsidian UE5.x, where a .data
 // structure coincidentally matches but contains no objects). Skips `avoid`.
 // Appends up to `maxCandidates` UNIQUE addresses to `out`; returns the number added.
+// outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested() -- the candidate list is then
+// PARTIAL, and the caller must not latch an init on it. [P1-GENAU-ABORT]
 size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 0,
-                                 size_t maxCandidates = 16);
+                                 size_t maxCandidates = 16, bool* outCancelled = nullptr);
 
 // Locate a STATIC FUObjectArray living in the module's .data/BSS, for games where
 // GUObjectArray is a static global that NO AOB pattern matches (Avowed / Obsidian
@@ -377,7 +379,9 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 
 // outItemStride (optional) receives the FUObjectItem stride that decoded cleanly
 // (e.g. 0x14 for Obsidian's packed item, 0x18 standard) — pass it to
 // Aura::InitWithExtendedLayout so the stride isn't re-detected (and mis-picked).
-uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr);
+// outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested(), so a 0 return says nothing about
+// whether a static array exists. [P1-GENAU-ABORT]
+uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr, bool* outCancelled = nullptr);
 
 // Find GWorld by iterating GObjects for UWorld instance, then scanning .data
 // for a static pointer to that instance.  Requires GObjects + GNames already initialized.
