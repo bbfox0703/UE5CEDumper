@@ -2320,6 +2320,30 @@ int main() {
         check("STRIDEVERDICT ⭐: ...and reads \"undetected\", not the previous run's verdict",
               strcmp(Aura::GetItemDetect(), "undetected") == 0, Aura::GetItemDetect());
 
+        // The rest of the reset ([W4-STRIDE-TENTATIVE] review 4). The runs above leave the stride at 16, the object
+        // offset at +0x00 and a validated count nothing reads -- the very values the reset writes -- so dropping any of
+        // those three resets passed. This fixture leaves all three unlike the defaults: five objects at stride 20
+        // with the pointer at +0x08, which the classic pass cannot read and the +0x08 pass detects. Chunk and table
+        // are both 0x7000 bytes, so no deep or flat phase of either pass reads past them.
+        static uint8_t svOffChunk[0x7000] = {};
+        static uintptr_t svOffTable[0x7000 / 8] = {};
+        static uint8_t svOffHdr[0x40] = {};
+        for (int i = 0; i < 5; ++i)
+            putP(svOffChunk, 8 + i * 20, reinterpret_cast<uintptr_t>(svObjs[i]));
+        Aura::InitWithExtendedLayout(header(svOffHdr, svOffTable, svOffChunk), 0);
+        check("STRIDEVERDICT setup: five items at stride 20, object at +0x08, are DETECTED as exactly that",
+              strcmp(Aura::GetItemDetect(), "detected") == 0 && Aura::GetItemSize() == 20
+              && Aura::GetItemObjOffset() == 8 && Aura::GetItemDetectValidated() == 5,
+              (std::string(Aura::GetItemDetect()) + " stride " + std::to_string(Aura::GetItemSize()) + " off "
+               + std::to_string(Aura::GetItemObjOffset()) + " n " + std::to_string(Aura::GetItemDetectValidated())).c_str());
+        Aura::InitWithExtendedLayout(reinterpret_cast<uintptr_t>(svBadHdr), 0);
+        check("STRIDEVERDICT ⭐: the unreadable re-init puts the stride back to the default 16",
+              Aura::GetItemSize() == 16, std::to_string(Aura::GetItemSize()).c_str());
+        check("STRIDEVERDICT ⭐: ...the object-pointer offset back to +0x00",
+              Aura::GetItemObjOffset() == 0, std::to_string(Aura::GetItemObjOffset()).c_str());
+        check("STRIDEVERDICT ⭐: ...and the validated count back to 0",
+              Aura::GetItemDetectValidated() == 0, std::to_string(Aura::GetItemDetectValidated()).c_str());
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
         check("STRIDEVERDICT control: the main pool is back, classic", !Aura::IsPacked() && Aura::GetCount() == kCount);
     }

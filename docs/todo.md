@@ -1418,6 +1418,13 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
      badge (no MainWindow harness). The real `UE5Dumper` build and the live check cover them.
    - ⬜ **Not in this row:** CE XML / CSX exports do not yet carry a stride note the way they carry
      `PackedLayoutNotice`.
+   - ✅ **Review 4 follow-up 2026-09-12, the reset pins** (of d76732d3: LOW, CONFIRMED). The reset-at-entry
+     test pinned 2 of the 5 resets. The run before the unreadable re-init left the stride at 16, the
+     object offset at +0x00 and a validated count nothing read. Those are the values the reset writes, so
+     dropping any of those three passed, and the "12/12 mutants" above never tried them. A fixture now
+     leaves all three unlike the defaults: five objects at stride 20 with the pointer at +0x08, which only
+     the +0x08 pass detects. The unreadable re-init must put back 16, +0x00 and 0. Red against those three
+     resets removed; 3/3 mutants killed; dll_core_test 260/260; UI 5152/5152.
 2. ✅ **`[W4-RELATED-STOPS]`** (FIXED IN SOURCE 2026-09-11, batch B26) `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
    (`maxResults` 128, `kMaxOwnedSubs` 128, `kMaxVisited` 200000, and an 8 s deadline *or*
    `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
