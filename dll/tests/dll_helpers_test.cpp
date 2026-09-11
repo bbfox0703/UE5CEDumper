@@ -1180,7 +1180,9 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    EXPECT("contract is 3",          Mimic::MAILBOX_CONTRACT     == 3);
+    // 4 since 76f93b94 ([W2-TPREL-TRANSPORTS]: the mailbox carries the parent-relative flag). This pin sat stale
+    // because that item's close-out ran dll_core_test only; the fix-pass close-out now runs both DLL test targets.
+    EXPECT("contract is 4",          Mimic::MAILBOX_CONTRACT     == 4);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
