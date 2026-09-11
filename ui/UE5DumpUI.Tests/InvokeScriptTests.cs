@@ -1820,6 +1820,18 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void WalkInstanceReply_CarriesUnreadable_InLeanAndFull()
+    {
+        // [P1-WALK-UNREADABLE] Like `stale`, the freed-object signal must survive the LEAN contract: a batch export reads
+        // lean replies. Fern.cpp reaches no test target.
+        var fern = DllSource("Fern.cpp");
+        int at = fern.IndexOf("data[\"unreadable\"] = true;", StringComparison.Ordinal);
+        Assert.True(at >= 0, "walk_instance must publish unreadable");
+        int guard = fern.LastIndexOf("if (", at, StringComparison.Ordinal);
+        Assert.DoesNotContain("lean", fern[guard..at], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SaveMarkerReply_AlwaysCarriesTheParentRelativeFlag()
     {
         // Review 5 of 7490c24e: sent only when true, its absence meant both "healthy" and "an older DLL", and the pose

@@ -2161,6 +2161,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["is_definition"] = true;
             if (result.isStale)
                 data["stale"] = true;
+            // [P1-WALK-UNREADABLE] In BOTH lean and full, like stale: it is the freed-object signal. Distinct from it --
+            // stale means a class pointer that read back implausible; this, a header that could not be read at all.
+            if (result.unreadable)
+                data["unreadable"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.

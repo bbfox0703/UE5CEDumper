@@ -2154,11 +2154,18 @@ code**, which is the behaviour the brief asked for.
    **Red first:** dll_core_test walks a fake UProperty-mode class (`bUseFProperty = false`). Its two array
    UProperties carry 20-byte inners, neither 16 nor 24, so both readers refuse, and each field must now name
    its refusal. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195.
-4. ⬜ **`[P1-WALK-UNREADABLE]`** `Ubel.cpp:3981`. `WalkInstance` knows the object is gone
+4. ✅ **`[P1-WALK-UNREADABLE]`** (FIXED IN SOURCE 2026-09-12, batch L07) `Ubel.cpp:3981`. `WalkInstance` knows the object is gone
    (`IsAddrReadable` false, logged *"not readable (freed?)"*) and returns an `InstanceWalkResult`
    carrying **only `addr`** — no `stale`, no error. Live Walker shows a silently blank grid.
    ⚠ Fix shape: a **distinct** `unreadable` key in both lean and full replies, **not** folded into
    `stale` (which means something narrower).
+   ✅ **FIXED IN SOURCE 2026-09-12, in that shape** (batch L07, with `[A4-REROOT-STALE-WARNING]`).
+   - `InstanceWalkResult.unreadable` is set at the readability bail. Fern sends `unreadable`, like `stale`,
+     in BOTH lean and full replies, as its own key.
+   - The UI parses it (`IsUnreadable`). Live Walker says "⚠ This object is no longer readable (freed?)", and
+     never retries fill-gaps on it.
+   - **Tests, red first:** a dll_core_test walk of a reserved, uncommitted page (a readable control), the
+     parse, a Fern pin that the key is not lean-gated, and the VM status. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204.
 5. ⬜ **`[P1-SPARSEDELEGATE-REFS]`** `Aura.cpp:3966`. Find References silently drops sparse-delegate
    bindings whose InvocationList cannot be located and reports a complete, clean sweep
    (`deadline_hit=false`) — so when that binding was the only reference, Live Walker says *"No
@@ -4744,7 +4751,7 @@ until now it was not here.
   - It needs the two bounds built jointly, with reversed bounds normalised first.
   - ⛔ Fix both matchers or neither (`snapshot-group-match-spec.md` §9).
 
-##### `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint
+##### ✅ `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint (FIXED IN SOURCE 2026-09-12)
 
 `LiveWalkerViewModel.cs:2822` (+ `:2758`). This is the path the stale warning itself names as common:
 Snapshot and Pivot handoffs, 13 cross-tab handlers, the Go box, Find Refs' Open. The freed object opens
@@ -4753,6 +4760,15 @@ the opposite ordering rule into the GoBack twin.
 - ✅ **Safe fix:** compose at both sites; never assign `""` over a status.
 - ⛔ **Unsafe:** moving the hint before the walk, which loses the only return path when the user needs
   it most.
+- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L07, with `[P1-WALK-UNREADABLE]`).
+  - Both re-root sites compose. The Go box path keeps what UpdateDisplay said (`_reRootWalkStatus`) and
+    appends the Back hint; the Find Refs Open composes the same status with its "Opened … · Back" line.
+  - `ComposeReRootStatus` never drops either half, and never assigns "" over a status.
+  - **Tests, red first:** a first re-root onto a freed object keeps the warning. A later one keeps the
+    warning AND the way back. An unreadable walk says so. A theory pins the compose rule.
+    6/6 mutants killed; UI 5204/5204.
+  - ⚠ **Survivor by construction:** the Find Refs Open site's compose. No harness drives
+    `OpenReferenceOwnerAsync` end to end, but the helper it calls is pinned.
 
 ##### `[A4-LW-DISCONNECT-PARENT]` LOW — X5's ClearOnDisconnect leaves the Parent button, the References header and the function list
 
@@ -4987,6 +5003,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 58 | `[P3-SDK-INNERS]` + `[P3-SDK-GUESSED]` | LOW | `git log --grep P3-SDK-INNERS` (batch L04) | the UI: each copied inner spelling (Array, with its class, Map, Set) and a header over a guessed row, red first. 5/5 mutants killed; UI 5176/5176. Only the four scalar arms: the rest of the INNERS sketch was not safe |
 | 59 | `[P1-SEETHRU-NOPRODUCER]` + `[P1-SEETHRU-GIVEUP]` | LOW | `git log --grep P1-SEETHRU-NOPRODUCER` (batch L05) | the UI (the VM card for a -3 refusal, an abandoned and a pending restore; the parse) and source pins for Schlacht.cpp / Fern.cpp, red first. 9/9 mutants killed; UI 5183/5183. Refused at ENABLE, the recorded shape; the per-hit case stays out |
 | 60 | `[P1-UPROP-DELEGATE]` | LOW | `git log --grep P1-UPROP-DELEGATE` (batch L06) | dll_core_test, red first: a UProperty-mode walk over a refusing delegate array and a refusing multicast array. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195. The recorded safe fix, copied verbatim from the FProperty twins |
+| 61 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | LOW | `git log --grep P1-WALK-UNREADABLE` (batch L07) | dll_core_test (an unreadable walk is marked; a readable control), the parse, a Fern lean/full pin, and the Live Walker status on a re-root (freed, freed with a way back, unreadable) plus the compose rule, red first. 6/6 mutants killed; dll_core_test 287/287; UI 5204/5204. Its own key, not folded into `stale`; composed, never overwritten |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5153,6 +5170,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L46 | `[P1-UPROP-DELEGATE]` | A UE4 < 4.25 game (UProperty mode) with a `TArray<FScriptDelegate>` or a multicast array:
 1. Live Walker shows its elements, or its count, as on an FProperty title.
 2. The refusal text ("(delegate array — unexpected … element size N, not read)") appears only for an ElementSize the readers do not recognise. A stock build does not produce one, so dll_core_test covers it. | a UE4 < 4.25 game + UI |
+| L47 | `[P1-WALK-UNREADABLE]` + `[A4-REROOT-STALE-WARNING]` | A connected game and Live Walker:
+1. **Unreadable:** open an object, let the game destroy it (a projectile, a UI widget that closes), then Refresh or re-open its address from the Go box. The status reads "⚠ This object is no longer readable (freed?)", not a blank grid.
+2. **Freed across a re-root:** re-open a recycled address from the Go box or a cross-tab handoff after browsing elsewhere. The status keeps the freed/recycled warning AND "← Back returns to …". | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5217,7 +5237,7 @@ completeness critic.
 - ✅ **L04:** `[P3-SDK-INNERS]` `[P3-SDK-GUESSED]`
 - ✅ **L05:** `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 - ✅ **L06:** `[P1-UPROP-DELEGATE]`
-- **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
+- ✅ **L07:** `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 - **L08:** `[P1-SPARSEDELEGATE-REFS]`
 - **L09:** `[A2-WALKCLASSEX-UNMAPPED]`
 - **L10:** `[A2-LAZY-LATCH-GUESS]`

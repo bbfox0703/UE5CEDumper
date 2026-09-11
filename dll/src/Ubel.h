@@ -651,6 +651,9 @@ struct InstanceWalkResult {
     std::string outerClassName;    // Class name of the outer object
     bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
     bool        isStale = false;   // True when classAddr looks recycled/garbage (implausible PropertiesSize)
+    // [P1-WALK-UNREADABLE] The instance's own header could not be read (freed?), so nothing was walked. Distinct from
+    // isStale, which means a class pointer that read back implausible -- a narrower verdict.
+    bool        unreadable = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
     // The reflected walk RAN and its fields below are real; only the Guess-What
     // raw-byte pass was skipped, because PropertiesSize exceeds kMaxGapFillBytes.

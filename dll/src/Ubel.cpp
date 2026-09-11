@@ -4156,6 +4156,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         Sein::Warn("WALK:safe",
             "WalkInstance: instance 0x%llx not readable (freed?), skipping",
             (unsigned long long)instanceAddr);
+        result.unreadable = true;   // [P1-WALK-UNREADABLE] say so on the wire, not only in the log
         return result;
     }
 

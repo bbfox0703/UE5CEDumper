@@ -1368,6 +1368,21 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesUnreadable()
+    {
+        // [P1-WALK-UNREADABLE] An additive key, absent from an older DLL (false) -- and not the same verdict as stale.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["unreadable"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.IsUnreadable);
+        Assert.False(r.IsStale);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject

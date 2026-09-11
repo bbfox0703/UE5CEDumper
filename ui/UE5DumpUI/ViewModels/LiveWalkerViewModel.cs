@@ -2288,6 +2288,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// is always clickable) and the breadcrumb strip shows the new spine, so without
     /// this the return path is invisible. Empty when there is nothing to go back to.
     /// </summary>
+    /// <summary>[A4-REROOT-STALE-WARNING] What the re-root's walk said -- a freed / recycled / unreadable warning,
+    /// a skipped gap-fill -- captured before the Back hint is added, so both re-root sites can compose with it.</summary>
+    private string _reRootWalkStatus = "";
+
+    /// <summary>[A4-REROOT-STALE-WARNING] The walk's own status, then the way back. Every re-root used to assign the
+    /// hint -- or "" -- over UpdateDisplay's freed/recycled warning, on the very paths that warning names as common.
+    /// Never drops either half, and never assigns "" over a status.</summary>
+    internal static string ComposeReRootStatus(string walkStatus, string hint)
+        => string.IsNullOrEmpty(hint) ? walkStatus
+         : string.IsNullOrEmpty(walkStatus) ? hint
+         : $"{walkStatus}  ·  {hint}";
+
     private string ReRootedHint()
     {
         if (_replacedSpine is not { } prev || prev.Crumbs.Count == 0) return "";
@@ -2922,7 +2934,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // ClearStatus(), so the hint this method used to set never survived to the
         // screen — it was written and wiped within the same click.
         if (Breadcrumbs.Count > 0)
-            StatusText = BuildOpenedRefStatus(match);
+            StatusText = ComposeReRootStatus(_reRootWalkStatus, BuildOpenedRefStatus(match));   // [A4-REROOT-STALE-WARNING]
     }
 
     /// <summary>Status line for an Open-from-Find-Refs landing: where the pointer was
@@ -2956,6 +2968,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             ClearStatus();
+            _reRootWalkStatus = "";
             IsLoading = true;
             StopAutoRefreshTimer();
             // This is a RE-ROOT: the spine below is about to be thrown away wholesale,
@@ -2989,7 +3002,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                                   // Go box / bookmark / cross-tab handoff: re-roots via
                                   // Breadcrumbs.Clear() above, so no parent is expected.
                                   expectedParent: null);
-            StatusText = ReRootedHint();
+            _reRootWalkStatus = StatusText;   // what UpdateDisplay said about the object it walked
+            StatusText = ComposeReRootStatus(_reRootWalkStatus, ReRootedHint());
         }
         catch (Exception ex)
         {
@@ -6567,9 +6581,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // types across a bogus multi-hundred-MB PropertiesSize, which wedges the
         // single-threaded pipe (the "switch back to Live Walker froze the pipe"
         // bug). The DLL caps this too, but bail here so we don't even send it.
-        if (result.IsStale)
+        if (result.IsStale || result.IsUnreadable)   // [P1-WALK-UNREADABLE] nothing to guess on either
         {
-            _log.Warn($"Skipping fill_gaps auto-retry for {addr}: object is stale (recycled class pointer)");
+            _log.Warn($"Skipping fill_gaps auto-retry for {addr}: object is stale or unreadable");
             return result;
         }
 
@@ -6875,7 +6889,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // to Live Walker from a long Snapshot / Class-Pivot pass on the same
         // address). The field grid is empty; surface why instead of showing a
         // silently-blank grid, and never auto-retry fill_gaps on it.
-        if (result.IsStale)
+        if (result.IsUnreadable)
+        {
+            // [P1-WALK-UNREADABLE] The DLL could not even read the object's header -- freed, most likely. It used to
+            // return a bare address, and the grid went silently blank.
+            StatusText = "⚠ This object is no longer readable (freed?) — re-open it from \U0001F30D GWorld or the finder.";
+            _log.Warn($"UpdateDisplay: unreadable object at {result.Address} — nothing walked");
+        }
+        else if (result.IsStale)
         {
             StatusText = "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.";
             _log.Warn($"UpdateDisplay: stale/recycled object at {result.Address} (implausible PropertiesSize) — fields unavailable");

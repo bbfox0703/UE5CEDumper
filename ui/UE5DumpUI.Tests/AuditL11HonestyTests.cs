@@ -38,6 +38,66 @@ public class AuditL11HonestyTests
     // Negative control: drop the BadgeSuffix calls in NavigateToDataTableContainer /
     // PopulateDataTableRowFields / DataTableFieldPreview -> all three Truncated facts fail.
 
+    // ══ [P1-WALK-UNREADABLE] / [A4-REROOT-STALE-WARNING] -- the walk's own warning survives the re-root ══
+    //
+    // A re-root (the Go box, every cross-tab handoff, Find Refs' Open) walked, let UpdateDisplay say the object was
+    // freed -- then set StatusText to the Back hint, or to "" on a first navigation. The report and the thing it reports
+    // on were produced by different code, which is this class's theme.
+
+    private static LiveWalkerViewModel WalkerWith(params (string addr, InstanceWalkResult r)[] walks)
+    {
+        var dump = new StubDumpService();
+        foreach (var (addr, r) in walks) dump.RegisterStruct(addr, r);
+        return new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+    }
+
+    private static InstanceWalkResult HealthyWalk(string addr) => new()
+    {
+        Address = addr, Name = "Pawn_0", ClassName = "Actor",
+        Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+    };
+
+    [Fact]
+    public async Task ReRoot_OntoAFreedObject_KeepsTheStaleWarning()
+    {
+        var vm = WalkerWith(("0x2000", new InstanceWalkResult { Address = "0x2000", IsStale = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x2000");
+
+        Assert.Contains("freed/recycled", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ReRoot_OntoAFreedObject_KeepsTheWarning_AndTheWayBack()
+    {
+        var vm = WalkerWith(("0x1000", HealthyWalk("0x1000")),
+                            ("0x2000", new InstanceWalkResult { Address = "0x2000", IsStale = true }));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x2000");
+
+        Assert.Contains("freed/recycled", vm.StatusText);
+        Assert.Contains("Back returns to", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Walk_OfAnUnreadableObject_SaysSo()
+    {
+        var vm = WalkerWith(("0x3000", new InstanceWalkResult { Address = "0x3000", IsUnreadable = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x3000");
+
+        Assert.Contains("no longer readable", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData("", "", "")]
+    [InlineData("W", "", "W")]
+    [InlineData("", "H", "H")]
+    [InlineData("W", "H", "W  ·  H")]
+    public void ComposeReRootStatus_NeverDropsEitherHalf(string walk, string hint, string expected)
+        => Assert.Equal(expected, LiveWalkerViewModel.ComposeReRootStatus(walk, hint));
+
     private static LiveWalkerViewModel MakeWalker()
     {
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),

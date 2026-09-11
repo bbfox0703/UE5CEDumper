@@ -2819,6 +2819,25 @@ int main() {
         DynOff::bCasePreservingName = savedCpnUD;
     }
 
+    // -- WALKUNREADABLE-2026-09-12 -- a walk of an unreadable instance SAYS so ---------------------------------------
+    //
+    // [P1-WALK-UNREADABLE] WalkInstance knew ("not readable (freed?)") and returned a result carrying only addr: no
+    // stale, no error, so Live Walker showed a silently blank grid. A reserved, uncommitted page is the freed object.
+    {
+        blk("WALKUNREADABLE - WalkInstance marks an instance it cannot read");
+        uint8_t* wuPage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE, PAGE_NOACCESS));
+        check("WALKUNREADABLE setup: reserved an uncommitted page", wuPage != nullptr);
+        if (wuPage) {
+            const auto wr = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(wuPage), 0, 64, 2, false);
+            check("WALKUNREADABLE ⭐: an unreadable instance is marked unreadable", wr.unreadable);
+            check("WALKUNREADABLE control: ...and not stale, which means something narrower", !wr.isStale);
+            VirtualFree(wuPage, 0, MEM_RELEASE);
+        }
+        static uint8_t wuLive[0x100] = {};
+        const auto wl = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(wuLive), 0, 64, 2, false);
+        check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
