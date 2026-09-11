@@ -3168,7 +3168,20 @@ gate, 2026-09-10: a different object now gets fresh rows. The same-object varian
   - **The fix:** `LiveFieldValue.ResetPendingEdit()`, called by `FieldGrid_BeginningEdit` right after
     the non-editable veto. This also closes the Escape variant.
   - **Deliberately kept:** the refresh's copy does not reset the pending text, and there is no
-    "same as current" comparison. Both are pinned as controls.
+    "same as current" comparison. The first is pinned on `CopyLiveValuesFrom`. The second is
+    pinned on the model AND, since the review follow-up, in `FieldGrid_CellEditEnded`'s commit
+    decision, where the unsafe comparison would naturally go.
+  - **The batch's adversarial review:** 3 survived, all LOW, all about the tests and comments; 2
+    refuted. It was repaired in a follow-up commit, and the production code is unchanged.
+    - **The hook pin was weak:** it compared raw substring positions, so it stayed green with the
+      call moved INTO the veto block or commented out. It now reads code lines only (the
+      `CodeOnly` rule) and requires the call after the veto block's end.
+    - **A new pin reads `FieldGrid_CellEditEnded`:** the commit is exactly "a non-empty pending
+      value", and nothing current is read.
+    - **Comments corrected:** the pending text is also written when the bool ComboBox is picked, not
+      only when the user types; and `GetPendingEditValue` does not "fall back to the getter".
+    - **Mutation-checked:** 4 mutants (the call moved into the veto, the call commented out, the
+      guard removed, a comparison added) were all killed, and each file was restored by sha256.
   - **Tests:** the code-behind hook cannot be driven by a VM test, so it is pinned by reading the
     code-behind back (the `ClassListCapTests` pattern). That pin failed first ("must call
     `ResetPendingEdit()`"), then passed. The semantics are pinned on `LiveFieldValue`: a reset
@@ -3436,7 +3449,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 6 | `[P4-CONTAINER-BASE]` | MED | same commit as 5 (the six members travel with the lists) | refresh + drill-time re-read; `ContainerTruncationTests` 19/19 |
 | 7 | `[P4-PTRCLASS]` | LOW | same commit as 5 (same copy path) | red → green |
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
-| 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned |
+| 9 | `[A4-EDIT-STALE-PENDING]` | MED | `git log --grep A4-EDIT-STALE-PENDING` | code-behind hook pin red → green; semantics + the two recorded-unsafe controls pinned. **Review follow-up:** 3 LOW survived (pin strength, commit-half control, comments); the pins were strengthened and a `CellEditEnded` pin added; 4/4 mutants killed |
 | 10 | `[A4-NAV-BACKFIRST-GRAFT]` | MED | `git log --grep A4-NAV-BACKFIRST-GRAFT` | `LiveWalkerNavStampTests`: 5/5 gated interleavings red → green; 5 negative controls green throughout; NavRace / ForwardNav / staleness / gate / truncation / search-nav classes green |
 
 #### Live-check backlog — run at the end of the pass

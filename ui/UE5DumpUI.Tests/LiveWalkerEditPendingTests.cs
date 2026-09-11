@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using UE5DumpUI.Models;
 using Xunit;
 
@@ -9,8 +10,9 @@ namespace UE5DumpUI.Tests;
 /// [A4-EDIT-STALE-PENDING] Reopening an edited Live Walker cell and closing it without typing wrote
 /// the PREVIOUS edit into the game again.
 ///
-/// <para>The pending text (<c>LiveFieldValue._editableValue</c>) is written only by the editor's
-/// TwoWay binding, when the user types, and nothing ever reset it. Since [LWREFRESH-2026-08-21] the
+/// <para>The pending text (<c>LiveFieldValue._editableValue</c>) is written only by the editing
+/// template's TwoWay bindings — the TextBox as the user types, the bool ComboBox when the user
+/// picks — and nothing ever reset it. Since [LWREFRESH-2026-08-21] the
 /// row object survives the post-commit refresh, so the last typed text survived with it: type 250
 /// into Health and commit, the game drops Health to 57, double-click the cell and press Enter
 /// without typing, and 250 is written again with "Written: Health = 250". Escape, reopen and Enter
@@ -65,11 +67,12 @@ public class LiveWalkerEditPendingTests
     }
 
     [Fact]
-    public void ADeliberateReType_OfTheCurrentValue_IsStillCommitted()
+    public void ADeliberateReType_OfTheCurrentValue_IsStillPending()
     {
         // Why the fix is a reset and not a "same as current? skip" comparison: typing the value the
         // game already holds is a real request (e.g. to write it back after the game changed it
-        // between the read and the keystroke), and a comparison would drop it silently.
+        // between the read and the keystroke), and a comparison would drop it silently. This pins
+        // the MODEL half; TheCommitHook_… pins the commit half in the code-behind.
         var row = Health();
         row.ResetPendingEdit();
         row.EditableValue = "57";
@@ -86,11 +89,48 @@ public class LiveWalkerEditPendingTests
         Assert.True(end > at, "could not find the end of FieldGrid_BeginningEdit");
         string body = src.Substring(at, end - at);
 
-        int veto = body.IndexOf("!field.IsEditable", StringComparison.Ordinal);
-        int reset = body.IndexOf(".ResetPendingEdit()", StringComparison.Ordinal);
+        // Full-line comments dropped: the comment above the call names ResetPendingEdit on purpose,
+        // and a commented-out call must not satisfy this pin (the CtDllDiscoveryTests.CodeOnly rule).
+        string code = CodeOnly(body);
+
+        int veto = code.IndexOf("!field.IsEditable", StringComparison.Ordinal);
         Assert.True(veto > 0, "the non-editable veto moved — re-check this pin");
+        int vetoReturn = code.IndexOf("return;", veto, StringComparison.Ordinal);
+        Assert.True(vetoReturn > veto, "the veto no longer returns — re-check this pin");
+        int vetoEnd = code.IndexOf('}', vetoReturn);   // the veto block's closing brace
+
+        int reset = code.LastIndexOf(".ResetPendingEdit();", StringComparison.Ordinal);
         Assert.True(reset > 0, "FieldGrid_BeginningEdit must call LiveFieldValue.ResetPendingEdit()");
-        // As recorded: after the veto, so only an edit that actually opens forgets the old text.
-        Assert.True(reset > veto, "ResetPendingEdit must run after the non-editable veto");
+        // After the veto BLOCK, not inside it: only an edit that actually opens forgets the old text.
+        // (Moved INTO the veto block, the reset would run only for rows that never open.)
+        Assert.True(reset > vetoEnd, "ResetPendingEdit must run after the non-editable veto block, not inside it");
     }
+
+    /// <summary>The commit half of the "no same-as-current comparison" control. The recorded-UNSAFE
+    /// alternative fix compared the pending text against the current value, and the natural place
+    /// to add it is where the commit is decided — FieldGrid_CellEditEnded — not the model. So pin
+    /// that the commit decision is exactly "a non-empty pending value", and reads nothing current.</summary>
+    [Fact]
+    public void TheCommitHook_CommitsAnyNonEmptyPendingValue_WithNoSameAsCurrentComparison()
+    {
+        string src = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\Views\LiveWalkerPanel.axaml.cs"));
+        int at = src.IndexOf("private async void FieldGrid_CellEditEnded(", StringComparison.Ordinal);
+        Assert.True(at > 0, "FieldGrid_CellEditEnded not found — re-point this pin");
+        int end = src.IndexOf("\n    }", at, StringComparison.Ordinal);
+        Assert.True(end > at, "could not find the end of FieldGrid_CellEditEnded");
+        string code = CodeOnly(src.Substring(at, end - at));
+
+        Assert.Contains(".GetPendingEditValue()", code);
+        // "" is the write-nothing signal a reset leaves behind; drop this guard and every
+        // open-and-close would try to write an empty value.
+        Assert.Contains("!string.IsNullOrEmpty(newValue)", code);
+        // The recorded-unsafe shape would read the current value here. ("GetPendingEditValue" does
+        // not contain either substring.)
+        Assert.DoesNotContain("EditableValue", code);
+        Assert.DoesNotContain("TypedValue", code);
+    }
+
+    private static string CodeOnly(string body)
+        => string.Join('\n', body.Split('\n')
+            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 }

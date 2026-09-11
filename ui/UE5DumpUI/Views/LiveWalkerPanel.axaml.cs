@@ -434,7 +434,7 @@ public partial class LiveWalkerPanel : UserControl
         }
 
         // [A4-EDIT-STALE-PENDING] Forget the previous edit's text. The row object survives a
-        // refresh, and the pending text is written only when the user types, so without this a
+        // refresh, and the pending text is written only when the user types or picks, so without this a
         // reopen-then-Enter (or Escape, reopen, Enter) wrote the LAST edit into the game again.
         // Here, at edit BEGIN — not in CopyLiveValuesFrom, which misses the Escape variant and would
         // drop text typed while a refresh lands mid-edit. See LiveFieldValue.ResetPendingEdit.

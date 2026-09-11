@@ -662,15 +662,19 @@ public sealed partial class LiveFieldValue : ObservableObject
     }
     private string _editableValue = "";
 
-    /// <summary>Get the pending edit value (what the user typed). Falls back to EditableValue getter if not set.</summary>
+    /// <summary>The pending edit value: the editor's last write since the edit began, or "" when
+    /// nothing was entered (<see cref="ResetPendingEdit"/> runs at edit begin). It does NOT fall
+    /// back to the <see cref="EditableValue"/> getter — "" is the write-nothing signal
+    /// <c>FieldGrid_CellEditEnded</c> relies on (it commits only a non-empty value).</summary>
     internal string GetPendingEditValue() => _editableValue;
 
     /// <summary>
     /// Forget the pending edit text. Called when an edit BEGINS. [A4-EDIT-STALE-PENDING]
     /// </summary>
     /// <remarks>
-    /// <para><c>_editableValue</c> is written only by the editor's TwoWay binding, when the user
-    /// types. Opening the editor does not push the current value into it (Avalonia's
+    /// <para><c>_editableValue</c> is written only by the editing template's TwoWay bindings — the
+    /// TextBox as the user types, the bool ComboBox when the user picks. Opening the editor does not
+    /// push the current value into it (Avalonia's
     /// <c>BindingExpression.StartCore</c> publishes to the target before subscribing), and the
     /// template column's commit does not push the TextBox either. Since [LWREFRESH-2026-08-21] the
     /// row object survives the post-commit refresh, so the LAST typed text survived with it:
