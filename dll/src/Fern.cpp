@@ -3238,6 +3238,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (!Radar::BuildNumericTargets(dt, val2Str, multiTargets2, roundMode)) {
                         return Renge::MakeError(id, "Between requires a valid 'value2' for data_type " + dtStr).dump();
                     }
+                    // [A4-AB4-BETWEEN] first scan: both bounds JOINTLY, clamped per width (the checks above keep
+                    // their messages for a bound that parses as nothing).
+                    if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, multiTargets, multiTargets2, roundMode)) {
+                        return Renge::MakeError(id, "Between range '" + valStr + "'..'" + val2Str +
+                            "' covers no numeric width of " + dtStr).dump();
+                    }
                     multiPtr2 = &multiTargets2;
                 }
             } else {
@@ -3389,6 +3395,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             multiPtr = &multiTargets;
                             if (st == Radar::ScanType::Between) {
                                 if (!Radar::BuildNumericTargets(dt, val2Str, multiTargets2, roundMode)) {
+                                    parseFailed = true;
+                                    return;
+                                }
+                                // [A4-AB4-BETWEEN] refine: both bounds jointly
+                                if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, multiTargets,
+                                                                       multiTargets2, roundMode)) {
                                     parseFailed = true;
                                     return;
                                 }
@@ -3605,6 +3617,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (!Radar::BuildNumericTargets(dt, val2Str, sp.targets2, sp.roundMode)) {
                         return Renge::MakeError(id, "Invalid group Between upper value '" + val2Str + "' (fits no numeric width)").dump();
                     }
+                    // [A4-AB4-BETWEEN] group first scan: both bounds jointly
+                    if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, sp.targets, sp.targets2, sp.roundMode)) {
+                        return Renge::MakeError(id, "Group Between range '" + valStr + "'..'" + val2Str +
+                            "' covers no numeric width").dump();
+                    }
                     sp.value2 = val2Str;
                 }
                 sp.dt        = dt;
@@ -3740,6 +3757,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 std::string val2Str = valuesJson[s].value("value2", "");
                                 Radar::NumericTargetSet nt2;
                                 if (!Radar::BuildNumericTargets(sess.slots[s].dt, val2Str, nt2, sess.slots[s].roundMode)) {
+                                    parseFailed = true;
+                                    return;
+                                }
+                                // [A4-AB4-BETWEEN] group refine: both bounds jointly
+                                if (!Radar::BuildNumericBetweenTargets(sess.slots[s].dt, valStr, val2Str,
+                                                                       sess.slots[s].targets, nt2, sess.slots[s].roundMode)) {
                                     parseFailed = true;
                                     return;
                                 }

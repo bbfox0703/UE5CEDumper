@@ -207,6 +207,21 @@ public class GroupMatchTests
         Assert.Equal(new[] { 0, 1 }, per[0]);
     }
 
+    // [A4-AB4-BETWEEN] the snapshot half, fixed with the live one: a Between bound with no encoding at an integer
+    // leaf's width no longer drops the width -- the range is clamped into it (Between is inclusive), and only a range
+    // that misses the width entirely excludes it. The same cases as dll_helpers_test's BETWEEN block.
+    [Theory]
+    [InlineData("UInt16Property", 7,     -5,    10,    true)]    // no unsigned -5: clamped to 0..10
+    [InlineData("UInt32Property", 0,     -5,    10,    true)]
+    [InlineData("Int16Property",  32767, 10,    70000, true)]    // no int16 70000: clamped to 10..32767
+    [InlineData("UInt16Property", 7,     10,    -5,    true)]    // reversed bounds
+    [InlineData("Int16Property",  9,     10,    70000, false)]   // below the range (control)
+    [InlineData("Int16Property",  5,     70000, 80000, false)]   // a range that misses int16 entirely (control)
+    [InlineData("IntProperty",    75000, 70000, 80000, true)]    // ...and still meets int32 (control)
+    public void BetweenSlot_UnencodableBound_ClampsIntoTheWidth(
+        string type, double value, double lo, double hi, bool satisfies)
+        => Assert.Equal(satisfies, GroupMatch.LeafSatisfiesSlot(L(0x10, type, value), Between(lo, hi)));
+
     [Fact]
     public void Scope_OneByteExcludedUnderNoByte_ButIncludedUnderAll()
     {

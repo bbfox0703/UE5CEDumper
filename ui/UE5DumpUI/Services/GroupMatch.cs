@@ -127,6 +127,18 @@ public static class GroupMatch
         return IntegerRange(t, out double min, out double max) && target >= min && target <= max;
     }
 
+    /// <summary>[A4-AB4-BETWEEN] Does the inclusive range [a, b] -- either order -- meet the leaf's width at all? The
+    /// live matcher now clamps each bound into the width's range instead of requiring both to encode, so a width is
+    /// lost only when the range misses it entirely. A float leaf takes any finite pair, as TargetFitsWidth did.</summary>
+    private static bool BetweenOverlapsWidth(double a, double b, string t)
+    {
+        if (double.IsNaN(a) || double.IsNaN(b)) return false;
+        double lo = Math.Min(a, b), hi = Math.Max(a, b);
+        if (IsFloat(t)) return double.IsFinite(lo) && double.IsFinite(hi);
+        if (!IntegerRange(t, out double min, out double max)) return false;
+        return hi >= min && lo <= max;
+    }
+
     /// <summary>Inclusive range of an integer leaf type, per width and signedness.</summary>
     private static bool IntegerRange(string t, out double min, out double max)
     {
@@ -187,6 +199,14 @@ public static class GroupMatch
                 // integer value (the live DLL coerces identically in BuildNumericTargets).
                 bool isFloat = SnapshotNumeric.IsFloatType(leaf.DeclaredType);
                 double fitTarget = isFloat ? target : SnapshotNumeric.CoerceIntTarget(target, slot.RoundMode);
+                // [A4-AB4-BETWEEN] Between asks "does the RANGE meet this width", not "does each bound encode at it":
+                // the live matcher now clamps both bounds into the width (Between is inclusive), so only a range that
+                // misses the width entirely excludes it. BetweenMatch already normalises reversed bounds.
+                if (slot.Predicate == Predicate.Between)
+                    return slot.Target2 is double hi
+                        && BetweenOverlapsWidth(fitTarget, isFloat ? hi : SnapshotNumeric.CoerceIntTarget(hi, slot.RoundMode),
+                                                leaf.DeclaredType)
+                        && SnapshotNumeric.BetweenMatch(v, target, hi, leaf.DeclaredType, slot.RoundMode);
                 // [W2-GROUPMATCH-WIDTH] No encoding at this width ends it for Exact, but for
                 // Bigger/Smaller it can mean the opposite: EVERY value of the width satisfies
                 // (every Int16 < 70000, every unsigned > -5). The live matcher keeps the width
@@ -200,9 +220,6 @@ public static class GroupMatch
                     Predicate.Exact   => SnapshotNumeric.ExactMatch(v, target, leaf.DeclaredType, slot.RoundMode),
                     Predicate.Bigger  => SnapshotNumeric.OrderedMatch(v, target, leaf.DeclaredType, slot.RoundMode, bigger: true),
                     Predicate.Smaller => SnapshotNumeric.OrderedMatch(v, target, leaf.DeclaredType, slot.RoundMode, bigger: false),
-                    Predicate.Between => slot.Target2 is double hi
-                        && TargetFitsWidth(isFloat ? hi : SnapshotNumeric.CoerceIntTarget(hi, slot.RoundMode), leaf.DeclaredType)
-                        && SnapshotNumeric.BetweenMatch(v, target, hi, leaf.DeclaredType, slot.RoundMode),
                     _ => false,
                 };
             }

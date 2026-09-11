@@ -4943,7 +4943,7 @@ it"*. Modelled in Python. `dll_helpers_test` asserts only UInt16/32.
     a refine comparing an AlwaysTrue entry's ZEROED bytes passed the old cases (3 > 0).
   - 3/3 mutants killed. UI 5033/5033 (one suite run over the three second-round follow-ups together).
 
-##### `[A4-AB4-BETWEEN]` LOW — `Between` still drops a width either bound cannot encode, in both group matchers and the single-value scan
+##### ✅ `[A4-AB4-BETWEEN]` LOW — `Between` still drops a width either bound cannot encode, in both group matchers and the single-value scan (FIXED IN SOURCE 2026-09-12)
 
 Filed 2026-09-11 (batch B13), to close `[A4-AB4-UINT64]`'s records gap. `Radar.h`'s
 `BuildNumericTargets` comment and `working-lessons.md` §5 cause 3 both say "see todo.md" for it, and
@@ -4965,6 +4965,24 @@ until now it was not here.
   - Skip the width only when the range misses it entirely.
   - It needs the two bounds built jointly, with reversed bounds normalised first.
   - ⛔ Fix both matchers or neither (`snapshot-group-match-spec.md` §9).
+- ✅ **FIXED IN SOURCE 2026-09-12** (batch L42), both matchers.
+  - **DLL.** `Radar::BuildNumericBetweenTargets` builds the two bounds jointly.
+    - Reversed bounds are normalised first.
+    - Each bound is clamped into every integer width's range, on exact int64 / uint64 readings, with ±∞ for a float
+      bound beyond both. A width the range misses entirely gets no entry.
+    - It emits only `Encoded` entries, never `AlwaysTrue`, because `ComparePredicate`'s entry overload would accept a
+      verdict without reading the upper bound.
+    - It shares `BuildNumericTargets`' parse, moved verbatim into `ParseNumericBound`.
+    - All four Fern sites call it, after their per-bound checks, which keep their messages.
+    - The consumers are unchanged: they already take an `Encoded` entry from both sets.
+  - **C#.** `GroupMatch.LeafSatisfiesSlot`'s Between arm asks whether the range overlaps the width (`BetweenOverlapsWidth`)
+    instead of `TargetFitsWidth` on each bound. `BetweenMatch` already compares doubles.
+  - **Red first:** dll_helpers_test's BETWEEN block. It covers -5..10 on unsigned, 10..70000 on Int16, reversed bounds,
+    a range that misses a width, 64-bit exactness, a float bound beyond 64 bits, and only-`Encoded`. The same rows are in
+    GroupMatchTests, and a source pin covers the four Fern sites.
+  - ⬜ **Lead, unverified (found while mapping this row):** `Aura.cpp` `AppendRawHoleLeaves` prefilters with
+    `sp.targets.Find(w)`, which hides a Smaller/Bigger `AlwaysTrue` entry. Native-C raw-hole group leaves may therefore
+    still lose the verdict that `[W2-ORDEN-FINDENTRY]` restored elsewhere.
 
 ##### ✅ `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint (FIXED IN SOURCE 2026-09-12)
 
@@ -5281,6 +5299,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 - both waits have one deadline, with the iteration count only in the `else` of the getTickCount branch;
 - the slot-symbol register records its holder, and the release checks ownership before it decrements.
 CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new shape. 4/4 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5281/5281. Shape pins only: the Lua RUN is a CE live check |
+| 95 | `[A4-AB4-BETWEEN]` | LOW | `git log --grep A4-AB4-BETWEEN` (batch L42) | dll_helpers_test BETWEEN block, red first against the old two-build behaviour: unsigned and Int16 bounds are clamped per width, reversed bounds are normalised, 64-bit values are exact, a float bound beyond 64 bits still bounds, and only `Encoded` entries are emitted. GroupMatchTests carries the same rows, and an InvokeScriptTests source pin covers the four Fern sites. 6/6 mutants killed; dll_helpers_test 2742/2742, dll_core_test 320/320; UI 5289/5289 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5559,6 +5578,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Make two PointerQuery "Get GWorld" records. Tick A, which succeeds.
 2. Tick B while its ENABLE fails (for example, before the DLL is injected). B unticks, and A's `[UE_GWorld]+offset` records still resolve. Untick A, and `UE_GWorld` is unregistered.
 3. In CE's Lua Engine, run an emitted idle or status wait against a busy mailbox with `getTickCount` present. It gives up at the real millisecond deadline, not after N sleeps. | CE + a game |
+| L81 | `[A4-AB4-BETWEEN]` | A game and the UI:
+1. Value Search, NumericNoByte, Between -5 10 finds a UInt16 field holding a small value. It used to skip it.
+2. Between 10 70000 finds an Int16 field near 32767.
+3. Repeat both as a group slot, and as a snapshot Group match. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5658,7 +5681,7 @@ completeness critic.
 - ✅ **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)
 - **L41:** `[A2-TOPTIONAL-VALUESCAN]` (filed 2026-09-11 by the review of cc430176)
-- **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
+- ✅ **L42:** `[A4-AB4-BETWEEN]` (filed 2026-09-11 by B13)
 - **L43:** `[W3-DEBUGCAM-QUEUED]` (filed 2026-09-11 by the review of 3561c93c) (CE)
 - ✅ **L44:** `[A2-CABI-TELEPORT-PARENTREL]` (filed 2026-09-12 by review 5 of 76f93b94) (CE)
 - **L45:** `[W5-OFFSETS-MAILBOX]` (split off 2026-09-12 by L15: the CE mailbox does not carry the offsets verdict, and publishing it is a `MAILBOX_CONTRACT` change) (CE)

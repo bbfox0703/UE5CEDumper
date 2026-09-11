@@ -521,14 +521,17 @@ bool IntegerMemberRange(DataType dt, double& lo, double& hiEx) {
     }
 }
 
-}  // namespace
+// [A4-AB4-BETWEEN] One bound string's readings -- BuildNumericTargets' own parse, MOVED here so the joint Between
+// builder reads a bound exactly as the single-value builder does. Two parses of one string is how two answers start.
+struct BoundReadings {
+    bool     ok = false;                          // non-empty after the trim
+    bool     hasSigned = false;   int64_t  sv = 0;
+    bool     hasUnsigned = false; uint64_t uv = 0;
+    bool     hasFloat = false;    double   dv = 0.0;
+};
 
-bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
-                         RoundMode roundMode, ScanType st) {
-    out.entries.clear();
-    const auto& members = MultiNumericMembers(metaDt);
-    if (members.empty()) return false;
-
+BoundReadings ParseNumericBound(const std::string& raw, RoundMode roundMode) {
+    BoundReadings b;
     // Trim surrounding whitespace (mirrors ParseValueBytes — the UI's
     // NumericTextBox can ship a trailing newline).
     size_t lo = 0, hi = raw.size();
@@ -537,7 +540,7 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
     };
     while (lo < hi && isWs(raw[lo])) ++lo;
     while (hi > lo && isWs(raw[hi - 1])) --hi;
-    if (lo >= hi) return false;
+    if (lo >= hi) return b;
     const std::string s = raw.substr(lo, hi - lo);
 
     const bool isNeg = s[0] == '-';
@@ -603,6 +606,68 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
     // above, not the value. Without this every unsigned width was dropped for it, even under Exact,
     // while the snapshot matcher kept them. (review of aaf6a022)
     if (!hasUnsigned && hasSigned && sv >= 0) { uv = static_cast<uint64_t>(sv); hasUnsigned = true; }
+
+    b.ok = true;
+    b.hasSigned = hasSigned;     b.sv = sv;
+    b.hasUnsigned = hasUnsigned; b.uv = uv;
+    b.hasFloat = hasFloat;       b.dv = dv;
+    return b;
+}
+
+// [A4-AB4-BETWEEN] An integer bound on ONE exact line: negatives as int64, non-negatives as uint64, and -inf / +inf for
+// a float reading beyond every 64-bit range (a Between bound of 1e30 still bounds every integer width). A double would
+// lose integers above 2^53; this never does.
+struct IntBound {
+    int      cls = 0;     // -2 = -inf, -1 = negative (neg), 0 = non-negative (pos), +2 = +inf
+    int64_t  neg = 0;
+    uint64_t pos = 0;
+};
+
+bool IntBoundLess(const IntBound& a, const IntBound& b) {
+    if (a.cls != b.cls) return a.cls < b.cls;
+    if (a.cls == -1) return a.neg < b.neg;
+    if (a.cls == 0)  return a.pos < b.pos;
+    return false;                                  // two equal infinities
+}
+
+// The bound's integer reading, or false when it has none (NaN; a hex string too wide for 64 bits).
+bool IntBoundOf(const BoundReadings& r, IntBound& out) {
+    if (r.hasSigned && r.sv < 0) { out = { -1, r.sv, 0 }; return true; }
+    if (r.hasUnsigned)           { out = { 0, 0, r.uv }; return true; }
+    if (r.hasSigned)             { out = { 0, 0, static_cast<uint64_t>(r.sv) }; return true; }
+    if (r.hasFloat && !std::isnan(r.dv)) { out = { r.dv < 0 ? -2 : 2, 0, 0 }; return true; }
+    return false;
+}
+
+// An integer member's inclusive range, on the same line.
+bool IntegerMemberBounds(DataType dt, IntBound& lo, IntBound& hi) {
+    switch (dt) {
+        case DataType::Int8:   lo = { -1, INT8_MIN,  0 }; hi = { 0, 0, INT8_MAX };   return true;
+        case DataType::UInt8:  lo = { 0, 0, 0 };          hi = { 0, 0, UINT8_MAX };  return true;
+        case DataType::Int16:  lo = { -1, INT16_MIN, 0 }; hi = { 0, 0, INT16_MAX };  return true;
+        case DataType::UInt16: lo = { 0, 0, 0 };          hi = { 0, 0, UINT16_MAX }; return true;
+        case DataType::Int32:  lo = { -1, INT32_MIN, 0 }; hi = { 0, 0, INT32_MAX };  return true;
+        case DataType::UInt32: lo = { 0, 0, 0 };          hi = { 0, 0, UINT32_MAX }; return true;
+        case DataType::Int64:  lo = { -1, INT64_MIN, 0 }; hi = { 0, 0, static_cast<uint64_t>(INT64_MAX) }; return true;
+        case DataType::UInt64: lo = { 0, 0, 0 };          hi = { 0, 0, UINT64_MAX }; return true;
+        default:               return false;
+    }
+}
+
+}  // namespace
+
+bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
+                         RoundMode roundMode, ScanType st) {
+    out.entries.clear();
+    const auto& members = MultiNumericMembers(metaDt);
+    if (members.empty()) return false;
+
+    const BoundReadings rd = ParseNumericBound(raw, roundMode);
+    if (!rd.ok) return false;
+    const bool     hasSigned = rd.hasSigned, hasUnsigned = rd.hasUnsigned, hasFloat = rd.hasFloat;
+    const int64_t  sv = rd.sv;
+    const uint64_t uv = rd.uv;
+    const double   dv = rd.dv;
 
     auto push = [&](DataType dt, const void* src, size_t n) {
         NumericTargetSet::Entry e;
@@ -690,8 +755,8 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
         // member's own minimum is 0, the target is below it, and the verdict is
         // AlwaysTrue — which is exactly right.
         if (out.entries.size() == beforeCount && haveScalar) {
-            // memLo/memHiEx, not lo/hi: the whitespace trim above already owns those
-            // names in this scope and shadowing them is a C4456.
+            // memLo/memHiEx, named apart from the trim's lo/hi (now in ParseNumericBound),
+            // which a C4456 would flag again if the trim ever moved back.
             double memLo = 0.0, memHiEx = 0.0;
             if (IntegerMemberRange(m, memLo, memHiEx)) {
                 const bool always = (st == ScanType::Smaller && scalar >= memHiEx)
@@ -708,6 +773,75 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
     }
 
     return !out.entries.empty();
+}
+
+bool BuildNumericBetweenTargets(DataType metaDt, const std::string& rawLo, const std::string& rawHi,
+                                NumericTargetSet& outLo, NumericTargetSet& outHi, RoundMode roundMode) {
+    outLo.entries.clear();
+    outHi.entries.clear();
+    const auto& members = MultiNumericMembers(metaDt);
+    if (members.empty()) return false;
+    const BoundReadings a = ParseNumericBound(rawLo, roundMode);
+    const BoundReadings b = ParseNumericBound(rawHi, roundMode);
+    if (!a.ok || !b.ok) return false;
+
+    // Always Encoded: a verdict here would be accepted by ComparePredicate without the upper bound (see Radar.h).
+    auto push = [](NumericTargetSet& out, DataType dt, const void* src, size_t n) {
+        NumericTargetSet::Entry e;
+        e.dt = dt;
+        std::memset(e.bytes, 0, sizeof(e.bytes));
+        std::memcpy(e.bytes, src, n);
+        out.entries.push_back(e);
+    };
+
+    IntBound lo{}, hi{};
+    const bool haveInt = IntBoundOf(a, lo) && IntBoundOf(b, hi);
+    if (haveInt && IntBoundLess(hi, lo)) { const IntBound t = lo; lo = hi; hi = t; }   // reversed bounds, FIRST
+
+    for (DataType m : members) {
+        if (m == DataType::Float || m == DataType::Double) {
+            // A float width holds each bound as typed -- exactly BuildNumericTargets' float entries; no clamp.
+            if (!a.hasFloat || !b.hasFloat) continue;
+            if (m == DataType::Float) {
+                float x = static_cast<float>(a.dv), y = static_cast<float>(b.dv);
+                push(outLo, m, &x, 4); push(outHi, m, &y, 4);
+            } else {
+                double x = a.dv, y = b.dv;
+                push(outLo, m, &x, 8); push(outHi, m, &y, 8);
+            }
+            continue;
+        }
+        IntBound wLo{}, wHi{};
+        if (!haveInt || !IntegerMemberBounds(m, wLo, wHi)) continue;
+        const IntBound cLo = IntBoundLess(lo, wLo) ? wLo : lo;   // CLAMP into the width's own range...
+        const IntBound cHi = IntBoundLess(wHi, hi) ? wHi : hi;
+        if (IntBoundLess(cHi, cLo)) continue;                     // ...a range that misses it entirely: no entry
+        if (wLo.cls == -1) {                                      // a signed width
+            const int64_t x = cLo.cls == -1 ? cLo.neg : static_cast<int64_t>(cLo.pos);
+            const int64_t y = cHi.cls == -1 ? cHi.neg : static_cast<int64_t>(cHi.pos);
+            switch (m) {
+                case DataType::Int8:  { int8_t  p = static_cast<int8_t>(x),  q = static_cast<int8_t>(y);
+                                        push(outLo, m, &p, 1); push(outHi, m, &q, 1); break; }
+                case DataType::Int16: { int16_t p = static_cast<int16_t>(x), q = static_cast<int16_t>(y);
+                                        push(outLo, m, &p, 2); push(outHi, m, &q, 2); break; }
+                case DataType::Int32: { int32_t p = static_cast<int32_t>(x), q = static_cast<int32_t>(y);
+                                        push(outLo, m, &p, 4); push(outHi, m, &q, 4); break; }
+                default:              { push(outLo, m, &x, 8); push(outHi, m, &y, 8); break; }
+            }
+        } else {                                                  // an unsigned width: both clamped bounds >= 0
+            const uint64_t x = cLo.pos, y = cHi.pos;
+            switch (m) {
+                case DataType::UInt8:  { uint8_t  p = static_cast<uint8_t>(x),  q = static_cast<uint8_t>(y);
+                                         push(outLo, m, &p, 1); push(outHi, m, &q, 1); break; }
+                case DataType::UInt16: { uint16_t p = static_cast<uint16_t>(x), q = static_cast<uint16_t>(y);
+                                         push(outLo, m, &p, 2); push(outHi, m, &q, 2); break; }
+                case DataType::UInt32: { uint32_t p = static_cast<uint32_t>(x), q = static_cast<uint32_t>(y);
+                                         push(outLo, m, &p, 4); push(outHi, m, &q, 4); break; }
+                default:               { push(outLo, m, &x, 8); push(outHi, m, &y, 8); break; }
+            }
+        }
+    }
+    return !outLo.entries.empty();
 }
 
 // --- Compare predicate ---

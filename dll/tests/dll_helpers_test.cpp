@@ -5091,6 +5091,93 @@ static void Test_Orden_BetweenFirstScan() {
     }
 }
 
+static void Test_ValueScan_BetweenTargets_ClampPerWidth() {
+    using DT  = Radar::DataType;
+    using ST  = Radar::ScanType;
+    using Fit = Radar::NumericTargetSet::Fit;
+    // [A4-AB4-BETWEEN] Between's two bounds were built by two independent BuildNumericTargets calls, and every consumer
+    // needs BOTH encoded at a width -- so `Between -5 10` (no unsigned -5) skipped every UInt16 / UInt32 holding 0..10,
+    // and `Between 10 70000` (no int16 70000) every Int16 >= 10. Silently. Built jointly now: each bound CLAMPED into
+    // the width (Between is inclusive, so nothing is lost), a width the range misses skipped, on exact integers.
+    auto sval = [](const Radar::NumericTargetSet& s, DT dt, int64_t& v) {
+        const uint8_t* p = s.Find(dt);
+        if (!p) return false;
+        switch (dt) {
+            case DT::Int8:  v = *reinterpret_cast<const int8_t*>(p);  return true;
+            case DT::Int16: v = *reinterpret_cast<const int16_t*>(p); return true;
+            case DT::Int32: v = *reinterpret_cast<const int32_t*>(p); return true;
+            case DT::Int64: v = *reinterpret_cast<const int64_t*>(p); return true;
+            default:        return false;
+        }
+    };
+    auto uval = [](const Radar::NumericTargetSet& s, DT dt, uint64_t& v) {
+        const uint8_t* p = s.Find(dt);
+        if (!p) return false;
+        switch (dt) {
+            case DT::UInt8:  v = *reinterpret_cast<const uint8_t*>(p);  return true;
+            case DT::UInt16: v = *reinterpret_cast<const uint16_t*>(p); return true;
+            case DT::UInt32: v = *reinterpret_cast<const uint32_t*>(p); return true;
+            case DT::UInt64: v = *reinterpret_cast<const uint64_t*>(p); return true;
+            default:         return false;
+        }
+    };
+    auto srange = [&](const Radar::NumericTargetSet& l, const Radar::NumericTargetSet& h, DT dt, int64_t a, int64_t b) {
+        int64_t x = 0, y = 0;
+        return sval(l, dt, x) && sval(h, dt, y) && x == a && y == b;
+    };
+    auto urange = [&](const Radar::NumericTargetSet& l, const Radar::NumericTargetSet& h, DT dt, uint64_t a, uint64_t b) {
+        uint64_t x = 0, y = 0;
+        return uval(l, dt, x) && uval(h, dt, y) && x == a && y == b;
+    };
+    Radar::NumericTargetSet lo, hi;
+
+    EXPECT("BETWEEN setup: -5..10 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "-5", "10", lo, hi));
+    EXPECT("BETWEEN -5..10 keeps UInt16, clamped to 0..10", urange(lo, hi, DT::UInt16, 0, 10));
+    EXPECT("BETWEEN -5..10 keeps UInt32, clamped to 0..10", urange(lo, hi, DT::UInt32, 0, 10));
+    EXPECT("BETWEEN control: -5..10 on Int32 is unchanged", srange(lo, hi, DT::Int32, -5, 10));
+    uint16_t seven = 7;
+    EXPECT("BETWEEN a UInt16 of 7 satisfies -5..10",
+           Radar::ComparePredicate(DT::UInt16, ST::Between, reinterpret_cast<const uint8_t*>(&seven),
+                                   lo.FindEntry(DT::UInt16), hi.Find(DT::UInt16)));
+    bool allEncoded = true;
+    for (const auto& e : lo.entries) if (e.fit != Fit::Encoded) allEncoded = false;
+    for (const auto& e : hi.entries) if (e.fit != Fit::Encoded) allEncoded = false;
+    EXPECT("BETWEEN control: only Encoded bounds, never a verdict", allEncoded);
+
+    EXPECT("BETWEEN setup: 10..70000 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "70000", lo, hi));
+    EXPECT("BETWEEN 10..70000 keeps Int16, clamped to 10..32767", srange(lo, hi, DT::Int16, 10, 32767));
+    int16_t edge = 32767, below = 9;
+    EXPECT("BETWEEN an Int16 of 32767 satisfies 10..70000",
+           Radar::ComparePredicate(DT::Int16, ST::Between, reinterpret_cast<const uint8_t*>(&edge),
+                                   lo.FindEntry(DT::Int16), hi.Find(DT::Int16)));
+    EXPECT("BETWEEN control: an Int16 of 9 does not",
+           !Radar::ComparePredicate(DT::Int16, ST::Between, reinterpret_cast<const uint8_t*>(&below),
+                                    lo.FindEntry(DT::Int16), hi.Find(DT::Int16)));
+
+    EXPECT("BETWEEN setup: reversed 10..-5 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "-5", lo, hi));
+    EXPECT("BETWEEN reversed 10..-5 is normalised: UInt16 0..10", urange(lo, hi, DT::UInt16, 0, 10));
+
+    EXPECT("BETWEEN setup: 70000..80000 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "70000", "80000", lo, hi));
+    EXPECT("BETWEEN control: a range that misses Int16 leaves no Int16 entry",
+           !lo.FindEntry(DT::Int16) && !hi.FindEntry(DT::Int16));
+    EXPECT("BETWEEN control: ...and it still bounds Int32", srange(lo, hi, DT::Int32, 70000, 80000));
+
+    EXPECT("BETWEEN setup: -1..18446744073709551615 builds",
+           Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "-1", "18446744073709551615", lo, hi));
+    EXPECT("BETWEEN 64-bit: UInt64 0..UINT64_MAX, exact", urange(lo, hi, DT::UInt64, 0, UINT64_MAX));
+    EXPECT("BETWEEN 64-bit: Int64 -1..INT64_MAX, exact", srange(lo, hi, DT::Int64, -1, INT64_MAX));
+
+    EXPECT("BETWEEN setup: 10..1e30 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "1e30", lo, hi));
+    EXPECT("BETWEEN a float bound beyond 64 bits still bounds Int32: 10..INT32_MAX",
+           srange(lo, hi, DT::Int32, 10, INT32_MAX));
+    double dlo = 0.0, dhi = 0.0;
+    const uint8_t* pd = lo.Find(DT::Double);
+    const uint8_t* qd = hi.Find(DT::Double);
+    if (pd) std::memcpy(&dlo, pd, 8);
+    if (qd) std::memcpy(&dhi, qd, 8);
+    EXPECT("BETWEEN control: Double keeps the typed bounds 10..1e30", pd && qd && dlo == 10.0 && dhi == 1e30);
+}
+
 static void Test_Orden_OrderedVerdictWidths() {
     // [W2-ORDEN-FINDENTRY] LeafSatisfiesSlot looked the slot's target up with Find(), which hides
     // an AlwaysTrue entry (audit #5 AB4: EVERY value of this width satisfies the predicate). So a
@@ -8410,6 +8497,7 @@ int main() {
     RUN(Test_Orden_ConvergenceAndAssignment);
     RUN(Test_Orden_OrderedFirstScan);
     RUN(Test_Orden_BetweenFirstScan);
+    RUN(Test_ValueScan_BetweenTargets_ClampPerWidth);
     RUN(Test_Orden_OrderedVerdictWidths);
     RUN(Test_Orden_RoundedFloatExact);
     RUN(Test_Orden_PrevValueRejectedOnFirstScan);

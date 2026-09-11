@@ -1893,6 +1893,16 @@ public class InvokeScriptTests
         Assert.Contains("m.ParentRelative", Body("int32_t UE5_TeleportGetLastEx("));
     }
 
+    [Fact]
+    public void BetweenScans_BuildBothBoundsJointly()
+    {
+        // [A4-AB4-BETWEEN] Fern.cpp reaches no test target, so its four Between sites (single-value first scan and refine,
+        // group first scan and refine) are pinned from source: each builds its bounds with the joint builder, which
+        // dll_helpers_test's BETWEEN block pins behaviourally.
+        string fern = DllSource("Fern.cpp");
+        Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(fern, @"Radar::BuildNumericBetweenTargets\(").Count);
+    }
+
     private static string DllSource(string file)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -420,11 +420,22 @@ struct NumericTargetSet {
 // for Smaller/Bigger it may instead mean "EVERY field of this width matches", which
 // is emitted as a Fit::AlwaysTrue entry. Defaulted to Exact so the existing callers
 // and every Exact/Changed/Unchanged path keep byte-identical behaviour.
-// Between is deliberately NOT handled — its two bounds are built by two independent
-// calls at four call sites, so a correct fix has to build them jointly. See todo.md.
+// Between is NOT handled here: its two bounds are built JOINTLY by BuildNumericBetweenTargets
+// below ([A4-AB4-BETWEEN]), which clamps each into every width instead of dropping the width.
 bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
                          RoundMode roundMode = RoundMode::Round,
                          ScanType  st        = ScanType::Exact);
+
+// [A4-AB4-BETWEEN] Between's two bounds, built JOINTLY -- the four Fern.cpp Between sites call this, not two
+// independent BuildNumericTargets. Per integer width the inclusive range, reversed bounds normalised first, is CLAMPED
+// into the width's own range and both bounds are emitted as Encoded entries; a width the range misses entirely gets
+// none. Between is inclusive, so a clamped bound loses no row: every uint16 >= -5 is every uint16 >= 0. The clamp runs
+// on exact integer readings (int64 / uint64, and +/-infinity for a float bound beyond both), never on a double.
+// Float / Double take each bound's float reading unchanged. NEVER emits AlwaysTrue: ComparePredicate's entry overload
+// accepts a verdict without reading the upper bound. False when either bound is unparseable or no width survives.
+bool BuildNumericBetweenTargets(DataType metaDt, const std::string& rawLo, const std::string& rawHi,
+                                NumericTargetSet& outLo, NumericTargetSet& outHi,
+                                RoundMode roundMode = RoundMode::Round);
 
 // True when the (DataType, ScanType) pair is a legal combination.
 // Used by the pipe handler to reject Bigger/Smaller on strings and
