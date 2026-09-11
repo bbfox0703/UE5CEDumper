@@ -3966,6 +3966,39 @@ static void Test_Denken_FollowsCallHandoff() {
     if (a) EXPECT("follow: @0x40 high-conf in impl", a->highConfidence && a->writeCount == 1);
 }
 
+static void Test_Denken_FollowedImplOutlivesItsAlias() {
+    // [W5-DENKEN-DEADGUARD] Denken.cpp's "bail to save budget in a followed impl" guard was dead: TryFollow counts the
+    // follow BEFORE recursing, so `callsFollowed == 0` never held at depth 1. The obvious repair -- drop that term --
+    // would make a followed impl stop the moment its this-alias dies, and lose everything after it. This pins the
+    // behaviour the code has always had: the impl is decoded to its end.
+    // Thunk @ B0 (as FollowsCallHandoff): mov rbx, rcx ; mov rcx, rbx ; call impl ; ret
+    // Impl  @ B1: mov ecx, 5    B9 05 00 00 00   the this-alias dies
+    //             mov eax, [rdx+0x30]   8B 42 30   a low-confidence read AFTER it
+    //             ret                   C3
+    const uintptr_t B0 = 0x140000000ULL;
+    const uintptr_t B1 = 0x140001000ULL;
+    const int32_t rel = static_cast<int32_t>(B1 - (B0 + 11));
+    std::vector<uint8_t> thunk = {
+        0x48, 0x89, 0xCB,
+        0x48, 0x89, 0xD9,
+        0xE8,
+        static_cast<uint8_t>(rel & 0xFF),
+        static_cast<uint8_t>((rel >> 8) & 0xFF),
+        static_cast<uint8_t>((rel >> 16) & 0xFF),
+        static_cast<uint8_t>((rel >> 24) & 0xFF),
+        0xC3,
+    };
+    std::vector<DenkenRegion> regions = {
+        { B0, thunk },
+        { B1, { 0xB9, 0x05, 0x00, 0x00, 0x00, 0x8B, 0x42, 0x30, 0xC3 } },
+    };
+    auto r = Denken::Analyze(B0, MakeReader(&regions));
+    EXPECT("deadguard: ran and followed the impl", r.ok && r.callsFollowed == 1);
+    const auto* a = FindAccess(r, 0x30);
+    EXPECT("DEADGUARD: a followed impl is decoded past the death of its this-alias",
+           a != nullptr && !a->highConfidence);
+}
+
 static void Test_Denken_DoesNotFollowNonThisCall() {
     // call rel32 with a NON-this rcx (rcx was clobbered by a load) must NOT
     // follow. Sequence: mov rcx, [rdx] (clobbers rcx) ; call impl ; ret.
@@ -8324,6 +8357,7 @@ int main() {
     RUN(Test_Denken_BasicAccesses);
     RUN(Test_Denken_ExcludesStackAndZeroDisp);
     RUN(Test_Denken_FollowsCallHandoff);
+    RUN(Test_Denken_FollowedImplOutlivesItsAlias);
     RUN(Test_Denken_DoesNotFollowNonThisCall);
     RUN(Test_Denken_TerminatesAndGuards);
 

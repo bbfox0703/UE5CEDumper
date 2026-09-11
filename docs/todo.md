@@ -1859,10 +1859,16 @@ SCAN-CORE     1    0    1    0    0    0    0    0
    C ABI and the CE mailbox, **which build CE structures from those very offsets**, do not. P3.
    ⛔ Making `UE5_Init` return false on `!allMeasured` is harmful — `Grimoire.h`'s *"TWO flags,
    deliberately"* block explains why.
-5. ⬜ **`[W5-DENKEN-DEADGUARD]`** `Denken.cpp:221`. The *"bail to save budget in a followed impl"*
+5. ✅ **`[W5-DENKEN-DEADGUARD]`** (FIXED IN SOURCE 2026-09-12, batch L16) `Denken.cpp:221`. The *"bail to save budget in a followed impl"*
    guard is **dead in every reachable state** — `TryFollow` increments `ctx.callsFollowed` before
    recursing, so the inner branch can never be taken.
    ⛔ The obvious repair (drop `&& ctx.callsFollowed == 0`) is a **behaviour regression**.
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch L16), by removing the guard rather than "repairing" it. Its
+   place carries a comment stating what the code does.
+   - The regression is now pinned. `Test_Denken_FollowedImplOutlivesItsAlias` follows an impl whose
+     RCX dies (`mov ecx, 5`), and the impl's later `[rdx+0x30]` read must still be recorded.
+   - **A test-gap item**, so the red was taken against the obvious repair applied as a source mutant.
+     2/2 mutants killed; dll_helpers_test 2721/2721, dll_core_test 304/304; UI 5215/5215.
 
 #### ⛔ `implied_fix_safe`: 5 of 5 again
 
@@ -5092,6 +5098,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 66 | `[A2-HEAP-ANCHOR-TEXT]` | LOW | `git log --grep A2-HEAP-ANCHOR-TEXT` (batch L12) | dll_helpers_test, red first: a no-module anchor is Heap; a heap anchor refuses a foreign candidate with its own verdict and admits the producer; the truth table is 16 rows. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213. The enum form; the switch tail fails closed; None wording byte-identical |
 | 67 | `[A2-METHODE-MANUALMAP]` | LOW | `git log --grep A2-METHODE-MANUALMAP` (batch L13) | A Methode.cpp source pin, red first: the TRUE-but-absent text is ambiguous and names "Always force load modules"; the old verdict on CE's BOOL is gone. 2/2 mutants killed; dll_core_test 304/304, dll_helpers_test 2716/2716; UI 5214/5214. The recorded safe fix; comment and working-lessons corrected |
 | 68 | `[A3-MIMIC-INIT-FASTPATH]` | LOW | `git log --grep A3-MIMIC-INIT-FASTPATH` (batch L14) | dll_helpers_test (`Mimic::InitFastPathOk`: both globals set WHILE an init scans does not take the fast path) + source pins for both ends of the wiring, red first. 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215. The recorded narrowest fix; the contract hash is unmoved |
+| 69 | `[W5-DENKEN-DEADGUARD]` | LOW | `git log --grep W5-DENKEN-DEADGUARD` (batch L16) | dll_helpers_test pins the behaviour the obvious repair would break: a followed impl is decoded past the death of its this-alias. Red against that repair as a source mutant. 2/2 mutants killed; dll_helpers_test 2721/2721, dll_core_test 304/304; UI 5215/5215. The dead guard removed; behaviour unchanged |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5284,6 +5291,8 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. Fire it repeatedly while `UE5_Init` runs.
 2. A command landing after the "Module anchor set" line but before init's end must produce a "UE5_Init: init already in progress … waiting" line, then succeed first time.
 3. No one-off DynOff error that succeeds on retry. | CE + a game |
+| L55 | `[W5-DENKEN-DEADGUARD]` | No live trigger, and no behaviour change.
+1. **Regression only:** a Live Funcs or Interesting Properties native-xref run finds the same fields it did before the removal, on any game. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5357,7 +5366,7 @@ completeness critic.
 - ✅ **L13:** `[A2-METHODE-MANUALMAP]` (CE)
 - ✅ **L14:** `[A3-MIMIC-INIT-FASTPATH]` (CE)
 - **L15:** `[W5-OFFSETS-UNMEASURED]` (CE)
-- **L16:** `[W5-DENKEN-DEADGUARD]`
+- ✅ **L16:** `[W5-DENKEN-DEADGUARD]`
 - **L17:** `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 - **L18:** `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 - **L19:** `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
