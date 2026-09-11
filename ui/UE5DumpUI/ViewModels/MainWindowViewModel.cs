@@ -167,11 +167,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public bool ShowPackedLayoutBadge => IsConnected && Pointers.ShowPackedLayoutBadge;
     public string PackedLayoutBadgeText => Pointers.PackedLayoutBadgeText;
 
+    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the DLL said
+    /// the stride is tentative or undetected -- object counts and names may be wrong.</summary>
+    public bool ShowStrideGuessBadge => IsConnected && Pointers.ShowStrideGuessBadge;
+    public string StrideGuessBadgeText => Pointers.StrideGuessBadgeText;
+
     partial void OnIsConnectedChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowBuildMismatchBadge));
         OnPropertyChanged(nameof(ShowDllBuildOk));
         OnPropertyChanged(nameof(ShowPackedLayoutBadge));
+        OnPropertyChanged(nameof(ShowStrideGuessBadge));
     }
     [ObservableProperty] private bool _needsScan;       // True when connected but scan not yet done (proxy DLL mode)
     [ObservableProperty] private bool _isScanning;      // True while trigger_scan is in progress
@@ -690,6 +696,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 OnPropertyChanged(nameof(ShowPackedLayoutBadge));
                 OnPropertyChanged(nameof(PackedLayoutBadgeText));
+            }
+            if (e.PropertyName is nameof(PointerPanelViewModel.ShowStrideGuessBadge)
+                               or nameof(PointerPanelViewModel.StrideGuessBadgeText))
+            {
+                OnPropertyChanged(nameof(ShowStrideGuessBadge));
+                OnPropertyChanged(nameof(StrideGuessBadgeText));
             }
             if (e.PropertyName == nameof(PointerPanelViewModel.IsAobMakerAvailable))
                 IsAobMakerAvailable = Pointers.IsAobMakerAvailable;

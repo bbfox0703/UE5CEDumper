@@ -2218,6 +2218,73 @@ int main() {
         g_cachedUEVersion           = savedVerR;
     }
 
+    // -- STRIDEVERDICT-2026-09-12 -- DetectItemSize publishes its verdict, and resets at entry --------------
+    //
+    // ⛔ RE-INITIALISES AURA on throwaway arrays, so it runs LAST and puts the main pool back at the end. The
+    // "named" probe needs a live name pool: this relies on RELSTOPS' (index 2 resolves). [W4-STRIDE-TENTATIVE]
+    {
+        blk("STRIDEVERDICT - detected / tentative / undetected / forced reach the accessors; a re-init resets first");
+        ResetCancel();
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        check("STRIDEVERDICT ⭐: the fixture's forced stride reads \"forced\"",
+              strcmp(Aura::GetItemDetect(), "forced") == 0, Aura::GetItemDetect());
+
+        // A class whose class-of-class is itself, so LooksLikeUObject accepts an object of it.
+        static uint8_t svCls[0x40] = {};
+        putP(svCls, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(svCls));
+        const uintptr_t svClsP = reinterpret_cast<uintptr_t>(svCls);
+        // A one-chunk array header in the forced extended shape: Objects@+0x10, Max/Num@+0x20/+0x24, chunks.
+        auto header = [&](uint8_t* hdr, uintptr_t* table, uint8_t* chunk) {
+            table[0] = reinterpret_cast<uintptr_t>(chunk);
+            putP(hdr, 0x10, reinterpret_cast<uintptr_t>(table));
+            put32(hdr, 0x20, 64);  put32(hdr, 0x24, 64);
+            put32(hdr, 0x28, 1);   put32(hdr, 0x2C, 1);
+            return reinterpret_cast<uintptr_t>(hdr);
+        };
+
+        // DETECTED: five named objects at the first five slots of a 16-byte-stride chunk, the rest null.
+        static uint8_t svObjs[5][0x40] = {};
+        static uint8_t svDetChunk[0x4000] = {};                 // 200 probes x the widest stride (40) fit
+        static uintptr_t svDetTable[2] = {};
+        static uint8_t svDetHdr[0x40] = {};
+        for (int i = 0; i < 5; ++i) {
+            putP(svObjs[i], Grimoire::OFF_UOBJECT_CLASS, svClsP);
+            put32(svObjs[i], Grimoire::OFF_UOBJECT_NAME, 2);
+            putP(svDetChunk, i * 16, reinterpret_cast<uintptr_t>(svObjs[i]));
+        }
+        Aura::InitWithExtendedLayout(header(svDetHdr, svDetTable, svDetChunk), 0);
+        check("STRIDEVERDICT ⭐: five clean items at stride 16 are a DETECTED stride, with all five validated",
+              strcmp(Aura::GetItemDetect(), "detected") == 0 && Aura::GetItemDetectValidated() == 5,
+              Aura::GetItemDetect());
+
+        // TENTATIVE: ONE valid object among nulls. Every stride validates exactly it, which clears no gate.
+        static uint8_t svTenChunk[0x4000] = {};
+        static uintptr_t svTenTable[2] = {};
+        static uint8_t svTenHdr[0x40] = {};
+        putP(svTenChunk, 0, reinterpret_cast<uintptr_t>(svObjs[0]));
+        Aura::InitWithExtendedLayout(header(svTenHdr, svTenTable, svTenChunk), 0);
+        check("STRIDEVERDICT ⭐: one validated item of 200 is a TENTATIVE stride, and says so with its count",
+              strcmp(Aura::GetItemDetect(), "tentative") == 0 && Aura::GetItemDetectValidated() == 1,
+              Aura::GetItemDetect());
+
+        // UNDETECTED, and the reset: a previous run left packed mode on; this re-init cannot even read its
+        // chunk table (Objects == 0), so it returns at the first early return.
+        Aura::SetPackedConsts(0, 0, true, -1);
+        check("STRIDEVERDICT setup: packed mode is on before the re-init", Aura::IsPacked());
+        static uint8_t svBadHdr[0x40] = {};
+        Aura::InitWithExtendedLayout(reinterpret_cast<uintptr_t>(svBadHdr), 0);
+        check("STRIDEVERDICT ⭐: a re-init that cannot read its chunk table resets the layout (reset at ENTRY)",
+              !Aura::IsPacked());
+        check("STRIDEVERDICT ⭐: ...and reads \"undetected\", not the previous run's verdict",
+              strcmp(Aura::GetItemDetect(), "undetected") == 0, Aura::GetItemDetect());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        check("STRIDEVERDICT control: the main pool is back, classic", !Aura::IsPacked() && Aura::GetCount() == kCount);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

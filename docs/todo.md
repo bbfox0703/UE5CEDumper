@@ -1300,10 +1300,43 @@ The engine lens's fourteen `clean_areas` are the real product. The ones that clo
 
 **MED** — 5 rows.
 
-1. ⬜ **`[W4-STRIDE-TENTATIVE]`** `Aura.cpp:1235`. `DetectItemSize` has **four** outcomes and
+1. ✅ **`[W4-STRIDE-TENTATIVE]`** (FIXED IN SOURCE 2026-09-12, batch B27) `Aura.cpp:1235`. `DetectItemSize` has **four** outcomes and
    publishes **one**. The packed verdict reaches the wire, the UI badge and every dump's
    `packed_unverified` stamp — but the **tentative** and **could-not-detect** verdicts are spent on
    log lines. A user cannot tell a confident detection from a guess.
+   ✅ **FIXED IN SOURCE 2026-09-12** (batch B27). The verdict has its own field, `item_detect`, ORTHOGONAL to
+   `item_layout_mode`. That is the recorded unsafe fix inverted: a guessed stride is still classed classic /
+   unpacked57 / packed57.
+   - **DLL.** `Aura::GetItemDetect()` returns one of four values, plus the validated count out of the
+     200-probe budget:
+     - `detected`: the preset hint, a direct pass, or the packed probe cleared the gate;
+     - `tentative`: the weak fallback;
+     - `undetected`: nothing validated, so the default stride is in use;
+     - `forced`: `InitWithExtendedLayout`.
+
+     Fern publishes `item_detect` / `item_detect_validated` / `item_detect_probes` beside
+     `item_layout_mode` at all three sites (get_pointers, set_packed_consts, get_offsets). An additive wire
+     key: no contract bump.
+   - **Reset at ENTRY** (the recorded requirement below). The verdict, the layout mode, the object-pointer
+     offset and the stride are reset at the top of `DetectItemSize`, BEFORE its early returns. A re-init that
+     cannot read its chunk table now reads `undetected` / classic, never the previous candidate's packed
+     layout.
+   - **UI.** `EngineState` carries it; "" from an older DLL reads as no warning.
+     - A top-bar badge beside the packed one names a tentative stride's "N of 200 probes validated", or says
+       the stride was not detected.
+     - Every dump's meta line gains `item_detect` and `stride_untrusted`, beside `packed_unverified`.
+   - **Tests, red first** against inert accessors and properties:
+     - dll_core_test re-initialises Aura on throwaway arrays: five clean items are `detected` (5
+       validated), one lone item is `tentative` (1 validated), and the main pool is `forced`. A re-init with
+       an unreadable chunk table, after packed mode was forced on, resets to classic and reads `undetected`.
+     - The parse, the badge (and its raise), and the dump stamp.
+
+     12/12 mutants killed; dll_core_test 237/237; UI 5129/5129.
+   - ⚠ **Documented survivors:** the preset-hint and packed `detected` lines (no fixture reaches either),
+     Fern's three publish sites (no test target compiles Fern.cpp), and the MainWindow mirror and AXAML
+     badge (no MainWindow harness). The real `UE5Dumper` build and the live check cover them.
+   - ⬜ **Not in this row:** CE XML / CSX exports do not yet carry a stride note the way they carry
+     `PackedLayoutNotice`.
 2. ✅ **`[W4-RELATED-STOPS]`** (FIXED IN SOURCE 2026-09-11, batch B26) `Aura.cpp:9092`. `GetRelatedObjects` has **four** stop conditions
    (`maxResults` 128, `kMaxOwnedSubs` 128, `kMaxVisited` 200000, and an 8 s deadline *or*
    `Tot::Requested()`) and publishes **none** — it returns a bare `std::vector<RelatedObject>` with
@@ -1895,7 +1928,7 @@ is itself a useful rule for the fix pass.
   `g_offsetsFallbackReason`. A second `UE5_Init` (CE Disable → Enable) taking an early return after a
   validated run would report **`validated = true` alongside a non-empty `fallback_reason`, over
   default offsets**. Practically unreachable today; ⬜ store false explicitly in the same fix.
-- **`[W4-STRIDE-TENTATIVE]`'s fix must reset at entry.** `DetectLayout`'s early returns (`:1061`,
+- ✅ **`[W4-STRIDE-TENTATIVE]`'s fix must reset at entry** (done, batch B27: the verdict and the layout are reset at the top of `DetectItemSize`). `DetectLayout`'s early returns (`:1061`,
   `:1077`) fire before `s_layoutMode` / `s_itemObjOffset` / `s_itemSize` are touched, so on a re-init
   (heap-fallback loop `Frieren.cpp:299`, restore `:349`, `apply_rescan` `Fern.cpp:5215`)
   `item_layout_mode` can describe a **previous** candidate.
@@ -4499,6 +4532,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 44 | `[A4-USMAP-ENUM-UNDERLYING]` | MED | `git log --grep A4-USMAP-ENUM-UNDERLYING` (batch B24) | a Size theory (2/4/8 red first; 1 and the 3-byte fallback green both ways) and the TEnumAsByte shape red first; the plain-byte control green both ways; the round-trip reader now reads the underlying type. 4/4 mutants killed; UI 5098/5098 |
 | 45 | `[W3-XREF-CAP]` | MED | `git log --grep W3-XREF-CAP` (batch B25) | dll_core_test (the merge helper, and FindPropertyXrefs over the fake pool) and the UI (cell, clause, dialog status, batch loops, the parse) red first against inert stubs. 11/11 mutants killed; dll_core_test 214/214; UI 5112/5112. Five UI sites, not four |
 | 46 | `[W4-RELATED-STOPS]` | MED | `git log --grep W4-RELATED-STOPS` (batch B26) | dll_core_test (a fake owned graph tripping each bound) and the UI (parse, clause, panel status) red first against an inert stats param. 15/15 mutants killed; dll_core_test 230/230; UI 5120/5120. Five flags, one per cause |
+| 47 | `[W4-STRIDE-TENTATIVE]` | MED | `git log --grep W4-STRIDE-TENTATIVE` (batch B27) | dll_core_test (re-inits over throwaway arrays: detected, tentative, undetected, forced, and the reset at entry) and the UI (parse, badge, dump stamp) red first against inert accessors. 12/12 mutants killed; dll_core_test 237/237; UI 5129/5129. Its own field, not a fourth layout mode |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4604,6 +4638,10 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 | L32 | `[W4-RELATED-STOPS]` | A connected game, the Related Objects panel:
 1. **A normal actor:** the status is "N related object(s)." with no ⚠ clause.
 2. **The PersistentLevel** (any actor's Outer; it owns every actor): the list fills its 128 rows, and the status says "full at its 128-row limit and more related objects exist", with no time budget named unless the walk also timed out. | a game + UI |
+| L33 | `[W4-STRIDE-TENTATIVE]` | A connected game:
+1. **Normal game:** `get_pointers` carries `item_detect: "detected"` with a validated count near 200. No stride badge appears, and a Dump All meta line reads `"stride_untrusted":false`.
+2. **A game on the forced static-stride path** (Obsidian-style UE 5.3): `item_detect` is `"forced"` and there is no badge.
+3. A tentative or undetected game is rare. If one turns up, the orange "stride is a guess" badge names its validated count. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4654,7 +4692,7 @@ completeness critic.
 | ✅ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
 | ✅ B25 xref cap | `[W3-XREF-CAP]` | |
 | ✅ B26 related stops | `[W4-RELATED-STOPS]` | |
-| ⬜ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
+| ✅ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
 | ⬜ B28 B30 stale flag | `[A3-B30-STALE-FLAG]` | CE |
 | ⬜ B29 pose parent-relative | `[W2-MARKER-PARENTREL]` + `[W2-TPREL-TRANSPORTS]` | CE |
 | ⬜ B30 ST1 super drain | `[A3-ST1-SUPER-DRAIN]` | CE |

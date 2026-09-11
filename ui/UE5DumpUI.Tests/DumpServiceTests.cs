@@ -1969,6 +1969,56 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task InitAsync_ParsesTheStrideVerdict()
+    {
+        // [W4-STRIDE-TENTATIVE] The verdict DetectItemSize used to spend on log lines, now on the wire.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 505 };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x7FF600A12340",
+                    ["object_count"] = 1024,
+                    ["item_detect"] = "tentative",
+                    ["item_detect_validated"] = 3,
+                    ["item_detect_probes"] = 200,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("tentative", state.ItemDetect);
+        Assert.Equal(3, state.ItemDetectValidated);
+        Assert.Equal(200, state.ItemDetectProbes);
+        Assert.True(state.ItemStrideUntrusted);
+    }
+
+    [Fact]
+    public async Task InitAsync_AnOlderDllWithoutTheStrideVerdict_IsNotUntrusted()
+    {
+        // The control, green before and after: absent evidence must not become a warning.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 505 };
+            if (cmd == "get_pointers")
+                return new JsonObject { ["ok"] = true, ["gobjects"] = "0x7FF600A12340", ["object_count"] = 1024 };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("", state.ItemDetect);
+        Assert.False(state.ItemStrideUntrusted);
+    }
+
+    [Fact]
     public async Task GetCePointerInfo_PackedLayout_DegradesToAbsoluteAddress()
     {
         _pipe.SetHandler(req => new JsonObject

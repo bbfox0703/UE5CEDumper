@@ -70,6 +70,34 @@ public sealed class EngineState
     /// <summary>Within-item UObject* offset for the two direct layouts (0x00 classic, 0x08 unpacked). 0 under packed.</summary>
     public int ItemObjOffset { get; init; }
 
+    // --- [W4-STRIDE-TENTATIVE] the stride VERDICT, orthogonal to ItemLayoutMode ---
+    /// <summary>
+    /// How the FUObjectItem stride was arrived at: "detected", "tentative", "undetected" or "forced". A guessed
+    /// stride is still classed classic / unpacked57 / packed57, so this is its own field. "" from an older DLL,
+    /// which reads as no warning (the "absent reads as fine" convention <see cref="OffsetsValidated"/> uses).
+    /// </summary>
+    public string ItemDetect { get; init; } = "";
+
+    /// <summary>Items the winning probe pass validated, of <see cref="ItemDetectProbes"/>.</summary>
+    public int ItemDetectValidated { get; init; }
+    public int ItemDetectProbes { get; init; }
+
+    /// <summary>True when the stride is a guess: object counts and names may be an alias of the real pool.</summary>
+    public bool ItemStrideUntrusted => IsStrideUntrusted(ItemDetect);
+
+    /// <summary>The rule, shared by the badge and the dump stamp: tentative and undetected are guesses.</summary>
+    public static bool IsStrideUntrusted(string detect) => detect is "tentative" or "undetected";
+
+    /// <summary>The badge's words for a guessed stride; "" when the stride is not a guess.</summary>
+    public static string StrideGuessText(string detect, int validated, int probes) => detect switch
+    {
+        "tentative"  => $"⚠ Object-array stride is a guess ({validated} of {probes} probes validated) — "
+                        + "object counts and names may be wrong",
+        "undetected" => "⚠ Object-array stride not detected — the default is in use; "
+                        + "object counts and names are untrustworthy",
+        _ => "",
+    };
+
     // --- Dynamic offset validation (get_offsets) -------------------------------
     //
     // The DLL has always computed and published this verdict and the UI never asked

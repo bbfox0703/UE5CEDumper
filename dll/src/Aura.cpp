@@ -88,6 +88,10 @@ static int         s_hintItemObjOff = 0;
 // is *** UNVERIFIED *** (no shipping game uses it yet). Process-lifetime constant after
 // Init() → the GetByIndex Packed57 branch is perfectly predicted on the hot path.
 static Lineal::ItemLayoutMode s_layoutMode = Lineal::ItemLayoutMode::Classic;
+// [W4-STRIDE-TENTATIVE] How DetectItemSize arrived at s_itemSize -- see Aura.h's GetItemDetect. Published, where it
+// used to be spent on log lines; reset at the ENTRY of every detection run.
+static const char* s_itemDetect          = "undetected";
+static int         s_itemDetectValidated = 0;
 // Calibratable packed reconstruction constants. ⭐ The defaults are DERIVED from the vendored
 // UE 5.7 source, not assumed — alignBits 3 and ptrMask 0x3FFF are read out of
 // UObjectArray.h:84-88 plus ObjectMacros.h:705; Lineal.h's header carries the line-by-line
@@ -1072,6 +1076,15 @@ static void LogPackedDiagnosticNegative() {
 // named > bad: a correct layout resolves nearly every non-null slot (bad ≈ 0), so a
 // bad-dominated pass is rejected and the +0x08 pass gets its turn.
 static void DetectItemSize() {
+    // [W4-STRIDE-TENTATIVE] Reset at ENTRY, BEFORE the early returns below. They used to fire before any of
+    // this was touched, so on a re-init (the heap-fallback loop, its restore, apply_rescan) a failed run
+    // kept publishing a PREVIOUS candidate's layout and stride as its own. Every exit below either sets a
+    // verdict or leaves this one: nothing validated, the default stride in use.
+    s_itemDetect          = "undetected";
+    s_itemDetectValidated = 0;
+    s_layoutMode          = Lineal::ItemLayoutMode::Classic;
+    s_itemObjOffset       = 0;
+    s_itemSize            = 16;   // the static default: what "keeping default" below has always meant
     uintptr_t chunkTable = 0;
     if (!Macht::ReadSafe(s_arrayAddr + s_layout.objectsOffset, chunkTable) || !chunkTable) {
         LOG_WARN("ObjectArray: Cannot read chunk table for item size detection");
@@ -1094,10 +1107,8 @@ static void DetectItemSize() {
         return;
     }
 
-    // Reset the layout mode each detection run (Init may be called again on re-attach).
-    // The two direct passes below keep it non-packed; only the last-resort packed branch
-    // promotes it to Packed57.
-    s_layoutMode = Lineal::ItemLayoutMode::Classic;
+    // (The layout mode, and the verdict, were reset at ENTRY above -- before the early returns, not here.
+    // The two direct passes below keep it non-packed; only the last-resort packed branch promotes it.)
 
     // Preset-bound item hint (licensee forks). Tried FIRST and ONLY when the winning
     // layout preset carried one, so the shared sweep below is byte-for-byte unchanged for
@@ -1116,6 +1127,8 @@ static void DetectItemSize() {
         // (it is 50% bad by construction).
         if (hGood >= 8 && hBad * 4 <= hGood) {
             s_itemSize   = s_hintItemStride;
+            s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE] the hint cleared the gate
+            s_itemDetectValidated = hGood;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             LOG_INFO("ObjectArray: FUObjectItem size=%d, object-ptr offset=+0x%02X (preset item hint) — %d named, %d total, %d bad",
@@ -1217,6 +1230,8 @@ static void DetectItemSize() {
                          bestStride, bestNull, bestCount, bestBad, bestStride);
             }
             s_itemSize = bestStride;   // s_itemObjOffset / s_isFlat already reflect this pass
+            s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE]
+            s_itemDetectValidated = bestHasNames ? bestNamed : bestCount;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             if (s_itemObjOffset != 0) {
@@ -1248,6 +1263,8 @@ static void DetectItemSize() {
         s_layoutMode = (gObjOff != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                       : Lineal::ItemLayoutMode::Classic;
         const int validated = gHasNames ? gNamed : gCount;
+        s_itemDetect = "tentative";   // [W4-STRIDE-TENTATIVE] published -- it used to reach only the log
+        s_itemDetectValidated = validated;
         LOG_WARN("ObjectArray: FUObjectItem size tentatively set to %d bytes, object-ptr offset +0x%02X (only %d items validated)",
                  gStride, gObjOff, validated);
         // Say what "tentative" COSTS, because the previous wording read as routine and the
@@ -1277,6 +1294,10 @@ static void DetectItemSize() {
         s_itemSize      = packed.stride;   // 24 expected
         s_itemObjOffset = 0;               // unused for the object read under packing
         s_isFlat        = packed.isFlat;
+        // [W4-STRIDE-TENTATIVE] The packed probe validated the stride; that the LAYOUT is unverified is
+        // item_packed's to say (orthogonal).
+        s_itemDetect = "detected";
+        s_itemDetectValidated = packed.good;
         LOG_WARN("ObjectArray: *** UNVERIFIED UE5.7+ PACKED FUObjectItem layout ACTIVATED *** "
                  "stride=%d %s, %d reconstructed (%d named) of %d probed. This packed encoding "
                  "has NEVER been validated against a real game — object addresses, serial numbers "
@@ -1318,6 +1339,8 @@ void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize) {
         s_itemSize = forcedItemSize;
         s_itemObjOffset = 0;
         s_layoutMode = Lineal::ItemLayoutMode::Classic;
+        s_itemDetect = "forced";   // [W4-STRIDE-TENTATIVE] the caller verified this stride by content
+        s_itemDetectValidated = 0;
         LOG_INFO("ObjectArray: Initialized (forced UE5-Extended, stride=%d) at 0x%llX, Count=%d",
                  forcedItemSize, static_cast<unsigned long long>(gobjectsAddr), GetCount());
     } else {
@@ -1359,6 +1382,11 @@ int GetItemObjOffset() {
 bool IsPacked() {
     return s_layoutMode == Lineal::ItemLayoutMode::Packed57;
 }
+
+// [W4-STRIDE-TENTATIVE] The stride verdict (see Aura.h). Set by DetectItemSize / InitWithExtendedLayout only.
+const char* GetItemDetect() { return s_itemDetect; }
+int GetItemDetectValidated() { return s_itemDetectValidated; }
+int GetItemDetectProbes() { return kStrideProbeBudget; }
 
 // Runtime calibration for the *** UNVERIFIED *** packed reconstruction. Lets the first
 // real packed game tune alignBits / ptrMaskBits (and optionally the serial offset) and

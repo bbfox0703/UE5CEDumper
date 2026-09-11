@@ -1330,6 +1330,10 @@ static void FillPointerSnapshot(json& data) {
     data["item_size"]            = Aura::GetItemSize();
     data["item_layout_mode"]     = Aura::IsPacked() ? "packed57"
                                    : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+    // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+    data["item_detect"]           = Aura::GetItemDetect();
+    data["item_detect_validated"] = Aura::GetItemDetectValidated();
+    data["item_detect_probes"]    = Aura::GetItemDetectProbes();
     data["gobjects_method"]         = g_cachedGObjectsMethod;
     data["gnames_method"]           = g_cachedGNamesMethod;
     data["gworld_method"]           = g_cachedGWorldMethod;
@@ -5071,6 +5075,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["item_size"]        = Aura::GetItemSize();
             data["item_layout_mode"] = Aura::IsPacked() ? "packed57"
                                        : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+            // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+            data["item_detect"]           = Aura::GetItemDetect();
+            data["item_detect_validated"] = Aura::GetItemDetectValidated();
+            data["item_detect_probes"]    = Aura::GetItemDetectProbes();
             // Echo reconstructed samples so the operator can eyeball-calibrate live.
             json samples = json::array();
             int n = Aura::GetCount();
@@ -5107,6 +5115,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["item_size"]          = Aura::GetItemSize();
             data["item_layout_mode"]   = Aura::IsPacked() ? "packed57"
                                          : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+            // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+            data["item_detect"]           = Aura::GetItemDetect();
+            data["item_detect_validated"] = Aura::GetItemDetectValidated();
+            data["item_detect_probes"]    = Aura::GetItemDetectProbes();
             if (DynOff::bUseFProperty) {
                 data["ffield_class"]       = DynOff::FFIELD_CLASS;
                 data["ffield_next"]        = DynOff::FFIELD_NEXT;

@@ -120,6 +120,19 @@ void SetPackedConsts(int alignBits, uint64_t ptrMaskBits, bool force, int serial
 // Flat arrays were used in UE4.11-4.20; chunked arrays in UE4.21+ and all UE5.
 bool IsFlat();
 
+// [W4-STRIDE-TENTATIVE] How the FUObjectItem stride was arrived at -- ORTHOGONAL to the layout mode (a guessed
+// stride is still classed classic / unpacked57 / packed57, which is why this is not a fourth mode):
+//   "detected"   -- a probe pass cleared the confidence gate (or the preset hint, or the packed probe, did)
+//   "tentative"  -- no pass cleared it; the strongest weak pass was taken. Counts and names may be an ALIAS
+//                   of the real pool (a stride that divides the real one reads every k-th object).
+//   "undetected" -- nothing validated; the default stride is in use. Counts and names are untrustworthy.
+//   "forced"     -- the caller fixed the stride (InitWithExtendedLayout) after verifying it by content.
+// Reset at the ENTRY of every detection run, so a re-init that returns early never reports a previous one.
+const char* GetItemDetect();
+// Items the winning pass validated, of GetItemDetectProbes() probed (0 when undetected or forced).
+int GetItemDetectValidated();
+int GetItemDetectProbes();
+
 // Search objects by partial name (case-insensitive), returns up to maxResults
 struct SearchResult {
     uintptr_t addr;

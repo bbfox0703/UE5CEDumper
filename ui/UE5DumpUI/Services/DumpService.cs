@@ -176,6 +176,10 @@ public sealed class DumpService : IDumpService
             ItemLayoutMode = ptrs["item_layout_mode"]?.GetValue<string>() ?? "classic",
             ItemPacked = ptrs["item_packed"]?.GetValue<bool>() ?? false,
             ItemObjOffset = ptrs["item_obj_offset"]?.GetValue<int>() ?? 0,
+            // [W4-STRIDE-TENTATIVE] the stride verdict; an older DLL omits it -> "" (no warning)
+            ItemDetect          = ptrs["item_detect"]?.GetValue<string>() ?? "",
+            ItemDetectValidated = ptrs["item_detect_validated"]?.GetValue<int>() ?? 0,
+            ItemDetectProbes    = ptrs["item_detect_probes"]?.GetValue<int>() ?? 0,
             GObjectsMethod = ptrs["gobjects_method"]?.GetValue<string>() ?? "aob",
             GNamesMethod = ptrs["gnames_method"]?.GetValue<string>() ?? "aob",
             GWorldMethod = ptrs["gworld_method"]?.GetValue<string>() ?? "aob",

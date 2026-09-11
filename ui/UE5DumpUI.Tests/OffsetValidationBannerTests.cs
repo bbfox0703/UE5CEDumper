@@ -168,4 +168,67 @@ public class OffsetValidationBannerTests
         Assert.Contains(nameof(PointerPanelViewModel.OffsetsUnvalidatedText), raised);
         Assert.True(vm.ShowOffsetsUnvalidatedWarning);
     }
+
+    // ── [W4-STRIDE-TENTATIVE] the stride verdict's badge ──────────────────────────────────
+
+    private static PointerPanelViewModel VmWithStride(string detect, int validated = 0, int probes = 200)
+    {
+        var vm = new PointerPanelViewModel(new MockPlatformService(System.IO.Path.GetTempPath()));
+        vm.Update(new EngineState
+        {
+            GObjectsAddr = "0x1000",
+            UEVersion = 505,
+            ItemDetect = detect,
+            ItemDetectValidated = validated,
+            ItemDetectProbes = probes,
+        });
+        return vm;
+    }
+
+    [Fact]
+    public void TentativeStride_ShowsTheBadge_WithTheValidatedCount()
+    {
+        var vm = VmWithStride("tentative", validated: 3);
+        Assert.True(vm.ShowStrideGuessBadge);
+        Assert.Contains("3 of 200", vm.StrideGuessBadgeText);
+    }
+
+    [Fact]
+    public void UndetectedStride_ShowsTheBadge()
+    {
+        var vm = VmWithStride("undetected");
+        Assert.True(vm.ShowStrideGuessBadge);
+        Assert.Contains("not detected", vm.StrideGuessBadgeText);
+    }
+
+    [Theory]
+    [InlineData("detected")]
+    [InlineData("forced")]
+    [InlineData("")]          // an older DLL: absent reads as fine
+    public void ADetectedForcedOrUnsaidStride_ShowsNoBadge(string detect)
+    {
+        // The control, green before and after.
+        Assert.False(VmWithStride(detect).ShowStrideGuessBadge);
+    }
+
+    [Fact]
+    public void Update_RaisesTheStrideBadgePair()
+    {
+        // The same trap as the offsets banner: a computed pair nobody raises never reaches the top bar.
+        var vm = VmWithStride("detected");
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
+
+        vm.Update(new EngineState
+        {
+            GObjectsAddr = "0x1000",
+            UEVersion = 505,
+            ItemDetect = "tentative",
+            ItemDetectValidated = 1,
+            ItemDetectProbes = 200,
+        });
+
+        Assert.Contains(nameof(PointerPanelViewModel.ShowStrideGuessBadge), raised);
+        Assert.Contains(nameof(PointerPanelViewModel.StrideGuessBadgeText), raised);
+    }
 }
