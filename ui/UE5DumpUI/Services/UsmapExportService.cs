@@ -15,6 +15,11 @@ namespace UE5DumpUI.Services;
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
+/// <para>⚠ One place still differs, and knowingly: both canonical writers write an enum's REAL underlying
+/// property. This one derives it from the enum's size (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a
+/// consumer deserializes but not its signedness. A container's enum inner is still written as Byte: 5.8
+/// serializes container enums as FName, so that desync is doubtful. The exact fix is a DLL-side underlying-type
+/// key on walk_class. [A4-USMAP-ENUM-UNDERLYING]</para>
 /// </summary>
 public static class UsmapExportService
 {
@@ -304,14 +309,28 @@ public static class UsmapExportService
     /// </summary>
     internal static void WritePropertyType(BinaryWriter w, FieldInfoModel f, NameTable nameTable)
     {
+        // [A4-USMAP-ENUM-UNDERLYING] arm 3: a ByteProperty carrying an enum (TEnumAsByte) takes the canonical
+        // fake shape [26][0][enumName], as both vendored writers emit. A bare ByteProperty made every consumer
+        // show its number instead of its name.
+        if (f.TypeName == "ByteProperty" && !string.IsNullOrEmpty(f.EnumName))
+        {
+            w.Write((byte)EPropertyType.EnumProperty);
+            w.Write((byte)EPropertyType.ByteProperty);
+            w.Write(nameTable.IndexOf(f.EnumName));
+            return;
+        }
+
         var propType = MapPropertyType(f.TypeName);
         w.Write((byte)propType);
 
         switch (propType)
         {
             case EPropertyType.EnumProperty:
-                // EnumProperty: write underlying type + enum name
-                WriteInnerPropertyType(w, "ByteProperty");
+                // EnumProperty: underlying type + enum name. [A4-USMAP-ENUM-UNDERLYING] arm 1: the underlying
+                // type is the enum's REAL width -- unversioned cooked data serializes an enum UPROPERTY as an
+                // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte made a
+                // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
+                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.Size));
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.EnumName) ? f.EnumName : "None"));
                 break;
@@ -346,15 +365,6 @@ public static class UsmapExportService
                     f.InnerObjClass, f.EnumName, nameTable);
                 break;
 
-            case EPropertyType.ByteProperty:
-                // If ByteProperty has an enum, write it as EnumProperty instead
-                if (!string.IsNullOrEmpty(f.EnumName))
-                {
-                    // Already wrote ByteProperty type byte — that's correct for USMAP
-                    // ByteProperty with enum name is separate from EnumProperty
-                }
-                break;
-
             // Simple types: no extra data needed
             default:
                 break;
@@ -365,6 +375,18 @@ public static class UsmapExportService
     {
         w.Write((byte)MapPropertyType(innerTypeName));
     }
+
+    /// <summary>[A4-USMAP-ENUM-UNDERLYING] An EnumProperty's underlying integer type, from its element size:
+    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. The width is what a consumer deserializes; the signedness
+    /// needs a DLL-side underlying-type key. Anything else is Byte -- never the unmapped 0xFF, which no reader
+    /// can skip.</summary>
+    internal static string EnumUnderlyingTypeFor(int size) => size switch
+    {
+        2 => "UInt16Property",
+        4 => "IntProperty",
+        8 => "Int64Property",
+        _ => "ByteProperty",
+    };
 
     private static void WriteInnerPropertyTypeFromField(
         BinaryWriter w, string innerType, string structType, string objClass,
@@ -381,6 +403,8 @@ public static class UsmapExportService
                 break;
 
             case EPropertyType.EnumProperty:
+                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING], left as is: an inner carries no size to derive the
+                // underlying type from, and 5.8 serializes a container's enums as FName, so the desync is doubtful.
                 WriteInnerPropertyType(w, "ByteProperty");
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(enumName) ? enumName : "None"));

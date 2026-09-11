@@ -412,6 +412,73 @@ public class UsmapExportServiceTests
         var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], structs));
         Assert.Single(f.Structs);
     }
+
+    // ---- [A4-USMAP-ENUM-UNDERLYING] an enum's underlying type is its REAL width ----
+    //
+    // In unversioned cooked data an enum UPROPERTY is serialized as an integer of its own size, and CUE4Parse
+    // takes that size from the mapping. Every EnumProperty was written with a Byte underlying type, so a
+    // `: uint32` enum read 1 byte of 4 and misaligned every later property of its object.
+
+    [Theory]
+    [InlineData(1, (byte)0)]    // ByteProperty
+    [InlineData(2, (byte)20)]   // UInt16Property
+    [InlineData(4, (byte)2)]    // IntProperty
+    [InlineData(8, (byte)21)]   // Int64Property
+    [InlineData(3, (byte)0)]    // no enum is 3 bytes: Byte, never the unmapped 0xFF
+    public void BuildUsmap_EnumProperty_WritesTheUnderlyingTypeOfItsSize(int size, byte underlying)
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "EGameMode", Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        var p = Assert.Single(Assert.Single(f.Structs).Props);
+        Assert.Equal((byte)26, p.Type);
+        Assert.Equal(underlying, p.Underlying);
+        Assert.Equal("EGameMode", p.EnumName);
+    }
+
+    [Fact]
+    public void BuildUsmap_ByteEnum_IsWrittenAsTheCanonicalEnumShape()
+    {
+        // Arm 3: a TEnumAsByte (a ByteProperty carrying an enum) was written as a bare ByteProperty, so every
+        // consumer showed its number, not its name. Both canonical writers emit [26][0][enumName].
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FHolder",
+                Fields = [ new FieldInfoModel { Name = "Mode", TypeName = "ByteProperty", EnumName = "EGameMode", Offset = 0, Size = 1 } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        var p = Assert.Single(Assert.Single(f.Structs).Props);
+        Assert.Equal((byte)26, p.Type);
+        Assert.Equal((byte)0, p.Underlying);
+        Assert.Equal("EGameMode", p.EnumName);
+    }
+
+    [Fact]
+    public void BuildUsmap_PlainByte_StaysAByteProperty()
+    {
+        // The control, green before and after: a ByteProperty with no enum is a plain byte.
+        var structs = new List<ClassInfoModel>
+        {
+            new() { Name = "FHolder", Fields = [ new FieldInfoModel { Name = "Count", TypeName = "ByteProperty", Offset = 0, Size = 1 } ] },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        Assert.Equal((byte)0, Assert.Single(Assert.Single(f.Structs).Props).Type);
+    }
 }
 
 // ---- USMAP round-trip reader -------------------------------------------------
@@ -429,7 +496,8 @@ public class UsmapExportServiceTests
 internal sealed class UsmapFile
 {
     internal sealed record UsmapEnum(string Name, List<(long Value, string Name)> Members);
-    internal sealed record UsmapProp(ushort SchemaIndex, byte ArrayDim, string Name);
+    internal sealed record UsmapProp(ushort SchemaIndex, byte ArrayDim, string Name,
+        byte Type = 0, byte Underlying = 0xFF, string? EnumName = null);
     internal sealed record UsmapStruct(string Name, string? Super, ushort SlotCount, List<UsmapProp> Props);
 
     public byte Version;
@@ -490,29 +558,33 @@ internal sealed class UsmapFile
             f.Enums.Add(new UsmapEnum(enumName, members));
         }
 
-        // Mirrors WritePropertyType / WriteInnerPropertyTypeFromField.
-        void SkipInner()
+        // Mirrors WritePropertyType / WriteInnerPropertyTypeFromField. An enum's underlying type is itself a
+        // property type, read through the inner reader -- it was skipped as ONE byte, so nothing could see
+        // what was written there. [A4-USMAP-ENUM-UNDERLYING]
+        (byte Type, byte Underlying, string? EnumName) ReadInner()
         {
             var t = r.ReadByte();
             switch (t)
             {
-                case 9:  r.ReadInt32(); break;                    // StructProperty -> name index
-                case 26: r.ReadByte(); r.ReadInt32(); break;      // EnumProperty -> underlying + name
+                case 9:  r.ReadInt32(); break;                                   // StructProperty -> name index
+                case 26: { var u = ReadInner().Type; return (t, u, NameAt(r.ReadInt32())); }   // Enum -> underlying + name
             }
+            return (t, 0xFF, null);
         }
 
-        void SkipPropertyType()
+        (byte Type, byte Underlying, string? EnumName) ReadPropertyType()
         {
             var t = r.ReadByte();
             switch (t)
             {
-                case 26: r.ReadByte(); r.ReadInt32(); break;      // EnumProperty
+                case 26: { var u = ReadInner().Type; return (t, u, NameAt(r.ReadInt32())); }   // EnumProperty
                 case 9:  r.ReadInt32(); break;                    // StructProperty
                 case 8:                                            // ArrayProperty
                 case 25:                                           // SetProperty
-                case 28: SkipInner(); break;                       // OptionalProperty
-                case 24: SkipInner(); SkipInner(); break;          // MapProperty (key, value)
+                case 28: ReadInner(); break;                       // OptionalProperty
+                case 24: ReadInner(); ReadInner(); break;          // MapProperty (key, value)
             }
+            return (t, 0xFF, null);
         }
 
         var structCount = r.ReadUInt32();
@@ -531,8 +603,8 @@ internal sealed class UsmapFile
                 var schemaIdx = r.ReadUInt16();
                 var arrayDim = r.ReadByte();     // ONE byte
                 var propName = NameAt(r.ReadInt32());
-                SkipPropertyType();
-                props.Add(new UsmapProp(schemaIdx, arrayDim, propName));
+                var (type, underlying, enumName) = ReadPropertyType();
+                props.Add(new UsmapProp(schemaIdx, arrayDim, propName, type, underlying, enumName));
             }
             f.Structs.Add(new UsmapStruct(name, super, slotCount, props));
         }

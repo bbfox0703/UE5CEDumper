@@ -4062,7 +4062,7 @@ applied to it. A GWorld spine passes the AA script's `FieldOffset >= 0` gate too
       passed both ways as pins should. Mutation-checked: 4 mutants were all killed, restored by
       sha256.
 
-##### ⛔ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty
+##### ✅ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty (FIXED IN SOURCE 2026-09-11)
 
 `UsmapExportService.cs:312-317` (hand-verified). The band header claims the file was *"checked byte for
 byte against the two canonical writers"* (21ca54f8, audit #5 W1). But both vendored writers write the
@@ -4089,6 +4089,22 @@ enum's REAL underlying property: Dumper-7 `MappingGenerator.cpp:203-208` and RE-
   - The exact fix is a DLL-side underlying-type key on `walk_class`.
 - ✅ **Register:** add a step that PARSES an asset with a non-uint8 enum, using both our `.usmap` and a
   Dumper-7 one.
+- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe fix** (batch B24).
+  - **Arm 1:** the underlying type comes from the enum's `Size`: 1/2/4/8 map to Byte / UInt16 / Int /
+    Int64 (`EnumUnderlyingTypeFor`). Anything else falls back to Byte, never the unmapped 0xFF. That is
+    the width a consumer deserializes; the signedness still needs the DLL-side key.
+  - **Arm 3:** a ByteProperty carrying an enum (TEnumAsByte) is written as the canonical
+    `[26][0][enumName]`. The old ByteProperty arm, whose comment called the bare byte "correct for
+    USMAP", is gone.
+  - **Arm 2** (a container's enum inner) is left as recorded, with a comment. An inner carries no size,
+    and 5.8 serializes container enums as FName.
+  - The band header's "checked byte for byte" claim now names this one known difference. The audit
+    note at `docs/audit-2026-09-05-vendor-ue582.md:430` carries an inline correction.
+  - **Tests, red first:** a Size theory (2 / 4 / 8 red; 1 and the 3-byte fallback green both ways) and
+    the TEnumAsByte shape. A plain ByteProperty is the control.
+  - The round-trip reader now reads an enum's underlying type through its inner reader, not as one
+    byte, and records each property's type, underlying type and enum name, as the fix asked.
+  - 4/4 mutants killed; UI 5098/5098.
 
 ##### `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class
 
@@ -4392,6 +4408,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 41 | `[W2-POSEATTACH-QUIETPOLL]` | MED | `git log --grep W2-POSEATTACH-QUIETPOLL` (batch B22b) | 4 tests red first (the quiet poll, a directional TP keeping the state, the disconnect clearing it, the chip bound in the panel); a healthy read clearing it is the control. 5/5 mutants killed; UI 5068/5068 |
 | 42 | `[W5-CEXML-FSTRING]` | MED | `git log --grep W5-CEXML-FSTRING` (batch B23) | 7 tests red first (the 3-row array theory, map key + value, flatten key, struct member, FText array, fabricated tail); the TSet control green both ways. 10/10 mutants killed; UI 5077/5077. The walk's own TArray elements came with `[W5-STRARRAY-ELEMENTS]` (row 43, B23b); the review of 110cbb4e corrected "inert" |
 | 43 | `[W5-STRARRAY-ELEMENTS]` | MED | `git log --grep W5-STRARRAY-ELEMENTS` (batch B23b) | the dll_core_test reader block and the STRARRAYWALK walker block red first against inert stubs; a CSX pin green both ways. 5/5 mutants killed, 2 documented survivors (the UE4 UProperty-mode call site, and Fern.cpp, which no test target compiles); dll_core_test 204/204; UI 5091/5091 |
+| 44 | `[A4-USMAP-ENUM-UNDERLYING]` | MED | `git log --grep A4-USMAP-ENUM-UNDERLYING` (batch B24) | a Size theory (2/4/8 red first; 1 and the 3-byte fallback green both ways) and the TEnumAsByte shape red first; the plain-byte control green both ways; the round-trip reader now reads the underlying type. 4/4 mutants killed; UI 5098/5098 |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4490,6 +4507,7 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Live Walker:** the array shows its elements, each with its text, and drilling in shows the text too, including past the Array Limit. Before B23b the drill showed hex with an empty value.
 2. **Copy CE XML** (⚠ needs CE): each element is a CE String showing its live text. This is `[W5-CEXML-FSTRING]`'s TArray half.
 3. **Export CSX:** each element is a pointer with a Unicode String child. | a game + UI (+ CE for 2) |
+| L30 | `[A4-USMAP-ENUM-UNDERLYING]` | In the throwaway CUE4Parse console: parse an asset whose object has a non-uint8 enum UPROPERTY (a `: uint32` enum such as `ENiagaraCoordinateSpace`), once with our `.usmap` and once with a Dumper-7 one. The property values must match, and the properties AFTER the enum must too (the misalignment was what the old Byte underlying type caused). A `TEnumAsByte` field shows its enumerator name, not a number. | a game + UI + CUE4Parse |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4537,7 +4555,7 @@ completeness critic.
 | ✅ B22b quiet-poll warning | `[W2-POSEATTACH-QUIETPOLL]` (filed 2026-09-11) | |
 | ✅ B23 CE XML FString | `[W5-CEXML-FSTRING]` | CE |
 | ✅ B23b string-array elements | `[W5-STRARRAY-ELEMENTS]` (filed 2026-09-11 while fixing B23) | |
-| ⬜ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
+| ✅ B24 USMAP enum | `[A4-USMAP-ENUM-UNDERLYING]` | |
 | ⬜ B25 xref cap | `[W3-XREF-CAP]` | |
 | ⬜ B26 related stops | `[W4-RELATED-STOPS]` | |
 | ⬜ B27 stride tentative | `[W4-STRIDE-TENTATIVE]` | |
