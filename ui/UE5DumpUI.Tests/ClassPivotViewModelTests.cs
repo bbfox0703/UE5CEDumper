@@ -576,6 +576,104 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.NotEmpty(vm.Results);        // pivot auto-ran on the chosen target
     }
 
+    // ---- [W1-DISCOVER-ARRAY] "Use →" on a struct-array element candidate ----
+    //
+    // Discovery ranks struct-array elements ("Cargo[1].Quantity") beside scalars, but "Use →" looked
+    // the rendered name up in the SCALAR field list, which never holds an array row. Both lookups came
+    // back null with no branch that said so, and the pivot ran on 0-3 unrelated pre-ticked fields under
+    // a status line that read like success.
+
+    /// <summary>One PlayerState with a constant scalar (so the class IS in the scalar list, as in the
+    /// recorded case), a "Bags" array that sorts FIRST (so it is the load's auto-pick), and the "Cargo"
+    /// array whose second element holds <paramref name="oreQty"/>.</summary>
+    private static SnapshotCapturedObject CargoOwner(int oreQty)
+    {
+        var ps = new SnapshotCapturedObject
+        {
+            Index = 9, Addr = "0x9000", Name = "PS_9", ClassName = "PlayerState",
+            OuterClassName = "World", Path = "/G.M:L.PlayerState_0",
+        };
+        ps.Fields.Add(new SnapshotCapturedField { Name = "Level", Type = "IntProperty", Hex = IntHex(5), Offset = 0x10 });
+        var bags = new SnapshotCapturedArray { Field = "Bags" };
+        bags.Elements.Add(MakeSlot(0, "Pouch", 1));
+        ps.Arrays.Add(bags);
+        var cargo = new SnapshotCapturedArray { Field = "Cargo" };
+        cargo.Elements.Add(MakeSlot(0, "Fuel", 100));
+        cargo.Elements.Add(MakeSlot(1, "Ore", oreQty));
+        ps.Arrays.Add(cargo);
+        return ps;
+    }
+
+    private async Task SeedCargoBeforeAfterAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long s1 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "before" }, ct);
+        await _store.WriteChunkAsync(s1, new[] { CargoOwner(50) }, ct);
+        await _store.FinalizeSnapshotAsync(s1, 1, 4, ct);
+        long s2 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "after" }, ct);
+        await _store.WriteChunkAsync(s2, new[] { CargoOwner(40) }, ct);
+        await _store.FinalizeSnapshotAsync(s2, 1, 4, ct);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAStructArrayElement_PivotsItThroughTheArraySource()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        await vm.RunDiscoverCommand.ExecuteAsync(null);
+        var cand = vm.DiscoverResults.First(c => c.PropName == "Cargo[1].Quantity");
+
+        await vm.UseDiscoverCandidateAsync(cand);
+
+        Assert.Equal("Snapshot Array", vm.SelectedSource);
+        Assert.Equal("Cargo", vm.SelectedArrayField?.ArrayField);   // the candidate's array, not the auto-pick
+        Assert.True(vm.Fields.First(f => f.Name == "Quantity").IsValue);
+        Assert.Contains(vm.Results, r => r.KeyValue == "Ore");       // the element that changed
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_WithAPropNotInTheClass_SaysSoAndRunsNothing()
+    {
+        // The scalar twin: a lookup that finds nothing must not run a pivot of the pre-ticked fields.
+        await SeedBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate { ClassName = "PlayerState", PropName = "Ghost" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Ghost", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAnArrayNotInTheSnapshot_SaysSoAndRunsNothing()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
+            { ClassName = "PlayerState", PropName = "Nope[0].Quantity", ArrayField = "Nope", InnerProp = "Quantity" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Array 'Nope'", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAnInnerPropNotCaptured_SaysSoAndRunsNothing()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
+            { ClassName = "PlayerState", PropName = "Cargo[0].Ghost", ArrayField = "Cargo", InnerProp = "Ghost" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Cargo[0].Ghost", vm.StatusText);
+    }
+
     [Fact]
     public async Task CanDiscover_RequiresTwoDistinctSnapshots()
     {

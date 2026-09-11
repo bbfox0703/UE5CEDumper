@@ -1949,6 +1949,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 changed.Add(new DiscoveryInput
                 {
                     ClassName = cls, PropName = DiscoverDisplayProp(prop, arr, elem),
+                    ArrayField = arr, InnerProp = arr.Length > 0 ? prop : "",   // [W1-DISCOVER-ARRAY]
                     DeclaredType = type, NormPath = norm, ObjAddr = addr, Hex = hex, Num = num,
                 });
             }
@@ -2290,8 +2291,12 @@ public sealed class SnapshotStore : ISnapshotStore
         var list = new List<PivotArrayFieldInfo>();
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // [W1-ARRAYCOUNT] One row is stored per inner prop per ELEMENT, so COUNT(*) grew with every
+        // inner numeric prop. Count distinct (owner, element) pairs -- the identity the array pivot
+        // itself keys on (gobjects_index, elem_index).
         cmd.CommandText = """
-            SELECT array_field, COALESCE(inner_key_name, ''), COUNT(*) AS elems
+            SELECT array_field, COALESCE(inner_key_name, ''),
+                   COUNT(DISTINCT COALESCE(gobjects_index, -1) || ':' || COALESCE(elem_index, -1)) AS elems
             FROM fields WHERE snapshot_id=$s AND class_fqn=$c AND array_field IS NOT NULL
             GROUP BY array_field, inner_key_name ORDER BY array_field;
             """;

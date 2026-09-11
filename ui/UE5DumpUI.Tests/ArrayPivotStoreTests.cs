@@ -87,7 +87,41 @@ public class ArrayPivotStoreTests : IDisposable
         var cargo = Assert.Single(fields);
         Assert.Equal("Cargo", cargo.ArrayField);
         Assert.Equal("ItemID", cargo.InnerKeyName);
-        Assert.Equal(3, cargo.ElementCount);   // 3 element rows (one Quantity each)
+        Assert.Equal(3, cargo.ElementCount);   // 3 elements -- one inner prop each, so rows agree here
+    }
+
+    [Fact]
+    public async Task ListArrayFields_CountsElements_NotInnerPropRows()
+    {
+        // [W1-ARRAYCOUNT] One row is stored per inner prop per element, and the count was COUNT(*)
+        // over those rows, so the picker's "elements" grew with every inner numeric prop. The test
+        // above pinned it with a ONE-prop fixture, where rows and elements happen to agree.
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "cargo2" }, ct);
+        await _store.WriteChunkAsync(id, new[] { TwoPropCargo(1, 2), TwoPropCargo(2, 1) }, ct);
+        await _store.FinalizeSnapshotAsync(id, 2, 6, ct);
+
+        var cargo = Assert.Single(await _store.ListPivotArrayFieldsAsync(id, "PlayerState", ct));
+        Assert.Equal(3, cargo.ElementCount);   // 3 elements, 6 inner-prop rows
+    }
+
+    private static SnapshotCapturedObject TwoPropCargo(int idx, int elements)
+    {
+        var o = new SnapshotCapturedObject
+        {
+            Index = idx, Addr = $"0x{0x3000 + idx:X}", Name = $"PS_{idx}",
+            ClassName = "PlayerState", OuterClassName = "World", Path = $"/G.M:L.PlayerState_{idx}",
+        };
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        for (int e = 0; e < elements; e++)
+        {
+            var el = new SnapshotCapturedArrayElement { Index = e, KeyName = "ItemID", KeyValue = $"Item{e}" };
+            el.Fields.Add(new SnapshotCapturedField { Name = "Quantity", Type = "IntProperty", Hex = IntHex(10 + e), Offset = 0x8 });
+            el.Fields.Add(new SnapshotCapturedField { Name = "Weight",   Type = "IntProperty", Hex = IntHex(20 + e), Offset = 0xC });
+            arr.Elements.Add(el);
+        }
+        o.Arrays.Add(arr);
+        return o;
     }
 
     [Fact]

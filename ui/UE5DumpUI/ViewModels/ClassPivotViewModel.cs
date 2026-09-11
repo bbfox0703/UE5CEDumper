@@ -1132,6 +1132,13 @@ public partial class ClassPivotViewModel : ViewModelBase
         try
         {
             ClearError();
+            // [W1-DISCOVER-ARRAY] A struct-array element lives in the array's rows, never in the
+            // scalar field list, so it pivots through the Snapshot Array source.
+            if (!string.IsNullOrEmpty(cand.ArrayField))
+            {
+                await UseArrayDiscoverCandidateAsync(cand);
+                return;
+            }
             SelectedSource = "Snapshot";
             var target = _discoverNewest ?? SelectedSnapshot;
             if (target != null && !ReferenceEquals(SelectedSnapshot, target))
@@ -1153,7 +1160,14 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // mode / collapse it in Field mode.)
                 SelectedKeyMode = "Identity (object path)";
                 var pick = Fields.FirstOrDefault(f => f.Name == cand.PropName);
-                if (pick != null) pick.IsValue = true;
+                if (pick == null)
+                {
+                    // [W1-DISCOVER-ARRAY] Say so, and run nothing: a pivot of the pre-ticked fields
+                    // under a normal status line read as the candidate's own result.
+                    StatusText = $"'{cand.PropName}' is not a pivotable field of {cand.ClassName} in this snapshot.";
+                    return;
+                }
+                pick.IsValue = true;
                 await RunPivotAsync();        // show the grouped pivot of the target now
             }
         }
@@ -1161,6 +1175,68 @@ public partial class ClassPivotViewModel : ViewModelBase
         {
             _log.Error(Constants.LogCatView, $"Pivot: use discovery candidate {cand.ClassName}.{cand.PropName} failed", ex);
             SetError(ex);
+        }
+    }
+
+    // [W1-DISCOVER-ARRAY] "Use →" for a struct-array element ("Cargo[1].Quantity"): select the class in
+    // the Snapshot Array source, then the candidate's OWN array (the array-field load auto-selects the
+    // first one), tick its inner prop and run. Every step that finds nothing says so and runs nothing.
+    private async Task UseArrayDiscoverCandidateAsync(DiscoveryCandidate cand)
+    {
+        if (!string.IsNullOrEmpty(ClassFilter))
+        {
+            _classFilterMemory.Flush();
+            ClassFilter = "";   // the target class must be visible in the picker
+        }
+        SelectedSource = "Snapshot Array";          // reloads the class list to array classes
+        var target = _discoverNewest ?? SelectedSnapshot;
+        if (target != null && !ReferenceEquals(SelectedSnapshot, target))
+            SelectedSnapshot = target;
+        await SettleLoadsAsync();
+        if (SelectedSnapshot == null)
+        {
+            StatusText = "No snapshot selected — capture one first.";
+            return;
+        }
+
+        var cls = _allClasses.FirstOrDefault(c => c.ClassName == cand.ClassName);
+        if (cls == null)
+        {
+            StatusText = $"'{cand.ClassName}' has no captured struct arrays in the selected snapshot.";
+            return;
+        }
+        if (!ReferenceEquals(SelectedClass, cls)) SelectedClass = cls;   // loads its array fields
+        await SettleLoadsAsync();
+
+        var arr = ArrayFields.FirstOrDefault(a => a.ArrayField == cand.ArrayField);
+        if (arr == null)
+        {
+            StatusText = $"Array '{cand.ArrayField}' of {cand.ClassName} is not in the selected snapshot.";
+            return;
+        }
+        if (!ReferenceEquals(SelectedArrayField, arr)) SelectedArrayField = arr;   // loads its props
+        await SettleLoadsAsync();
+
+        var pick = Fields.FirstOrDefault(f => f.Name == cand.InnerProp);
+        if (pick == null)
+        {
+            StatusText = $"'{cand.PropName}' has no pivotable inner field in the selected snapshot.";
+            return;
+        }
+        pick.IsValue = true;
+        await RunPivotAsync();
+    }
+
+    // A load can start the next one (the array-field load auto-selects a field, which loads its
+    // props), so await until PendingLoad stops changing. Bounded: the chain is at most three deep.
+    private async Task SettleLoadsAsync()
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            var pending = PendingLoad;
+            if (pending == null) return;
+            try { await pending; } catch { /* surfaced via SetError */ }
+            if (ReferenceEquals(pending, PendingLoad)) return;
         }
     }
 

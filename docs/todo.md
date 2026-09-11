@@ -557,7 +557,7 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
      - `SetEngineState` now keeps its refresh task (`PendingRefresh`), a behaviour-neutral test seam
        as in SnapshotViewModel.
 
-5. ⬜ **`[W1-DISCOVER-ARRAY]` "Use →" on a struct-array discovery candidate ticks nothing.**
+5. ✅ **`[W1-DISCOVER-ARRAY]` "Use →" on a struct-array discovery candidate ticks nothing.** (FIXED IN SOURCE 2026-09-11, batch B16)
    `ClassPivotViewModel.cs:1122`. `BuildDiscoverSql` puts `array_field, elem_index` in the
    identity key and renders `Array[N].Inner`, but `ListPivotFieldsAsync` is `… AND array_field IS
    NULL`, so the name can never match; both lookups return null with no branch that reports it,
@@ -565,6 +565,21 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    status line that reads like success. Array rows rank HIGH by construction —
    `SelectivityWeight = 3.0` rewards exactly the few-instance change an array element produces,
    and `PivotDiscoveryEngine` contains no occurrence of "array" anywhere.
+   ✅ **FIXED IN SOURCE 2026-09-11** (batch B16, one commit with `[W1-ARRAYCOUNT]`).
+   - Discovery already read `array_field` and the inner prop separately, and flattened them into
+     the display name. `DiscoveryInput` / `DiscoveryCandidate` now carry `ArrayField` + `InnerProp`,
+     and the engine copies them from the group's representative.
+   - "Use →" on an array element pivots it through the **Snapshot Array** source: the class, then
+     the candidate's OWN array (the array-field load auto-selects the first one), its inner prop,
+     then Run.
+   - Every lookup that finds nothing says so and runs nothing, the scalar path included: a pivot of
+     the pre-ticked fields under a normal status line read as the candidate's own result.
+   - Left as is: array elements still rank high by construction (`SelectivityWeight` rewards their
+     few-instance change). That is ranking, not this row's silent failure.
+   - **Tests, red first:** "Use →" on `Cargo[1].Quantity` (the fixture's `Bags` array sorts first, so
+     the auto-pick is the wrong one) and the scalar "Ghost" prop. The two array refusals construct a
+     candidate with the new fields, so they cannot compile before the fix; their red is the mutation
+     check.
 
 6. ✅ **`[W1-CONTAINER-STALE]` TMap/TSet/TArray previews are frozen at the first walk — and the
    staleness reaches EXPORT.** `LiveFieldValue.cs:294/324`. `UpdateDisplay` takes the in-place
@@ -598,7 +613,7 @@ to see or clear (the *applying* is documented design — `docs/snapshot-group-ma
 only the non-disclosure survives, and `GroupStatusText` already discloses the sibling
 `PerSlotCapHit` cause) · `[W1-ARRAYCOUNT]` the Class Pivot array-field picker's element count is a
 ROW count, inflated by inner numeric props, and `ArrayPivotStoreTests.cs:90` pins the wrong value
-with a one-inner-prop fixture · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
+with a one-inner-prop fixture (✅ FIXED IN SOURCE 2026-09-11, batch B16: it counts distinct (owner, element) pairs now, red first with a two-prop fixture) · `[W1-PARTIAL-MARK]` a cap/low-disk partial has no PERSISTED marker
 (⛔ **the fix is a new marker, NOT `is_usable=0`** — see the refuted-fix note below) ·
 `[W1-PIVOT-LOADCTS]` one shared `_loadCts` lets a field load cancel an in-flight class load with
 no restart, leaving a stale picker · `[W1-DT-TRUNC]` DataTable pivot Run overwrites its own
@@ -4093,6 +4108,8 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 29 | `[A4-AB4-UINT64]` | LOW | same commit as row 27 (batch B13) | 5 ⭐ red first; 4 controls, one of them the narrow boundary. 3/3 mutants killed, including `>= 2^63` weakened to `>`. Filed `[A4-AB4-BETWEEN]` for the records gap |
 | 30 | `[W1-PIVOT-SESSION]` | MED | `git log --grep W1-PIVOT-SESSION` (batch B14) | 3 red first (no session, a previous launch, disconnect); 2 controls (the current launch, DataTable rows under an old pick). `check_session_gate` registered, 20/20 gated. 7/7 mutants killed, the two AXAML ones through the registered gate; UI 5016/5016 |
 | 31 | `[W1-SPC-JOINMODE]` | MED | `git log --grep W1-SPC-JOINMODE` (batch B15) | the source pin red first (the wiring is in `MainWindowViewModel`, which no test constructs); 4 behaviour tests whose red is the mutation check. 6/6 mutants killed; UI 5021/5021 |
+| 32 | `[W1-DISCOVER-ARRAY]` | MED | `git log --grep W1-DISCOVER-ARRAY` (batch B16) | "Use →" on an array element and the scalar "Ghost" prop red first; the two array refusals take their red from the mutation check. 7/7 (one first tried in a form that did not compile; its compiling form went red) mutants killed across both rows; UI 5026/5026 |
+| 33 | `[W1-ARRAYCOUNT]` | LOW | same commit as row 32 (batch B16) | `ListArrayFields_CountsElements_NotInnerPropRows` red first (6 rows, 3 elements); the old one-prop test kept, its comment corrected |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -4165,6 +4182,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 1. **Auto In-session is not kept:** open the SPC tab with two snapshots from ONE launch (the combo shows In-session), close the app, and check `ui-options.json`: it holds `Strict`, not `In-session`.
 2. **The fallback works after a restart:** restart, capture a snapshot in a NEW launch, and tick one old and one new pick. The combo moves to Strict.
 3. **A user's Loose is kept:** pick Loose, restart: still Loose. | UI + a game (for the second launch) |
+| L20 | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | Class Pivot on a game with a struct array that changes (an inventory, cargo, a party list):
+1. **Discover:** capture before and after an action that changes one array element, run Suggest Targets, pick the `Array[N].Inner` row and press Use →. The source switches to Snapshot Array, the right array is selected, and the pivot shows the changed element's key.
+2. **Element count:** the array-field picker's count equals the array's element count, not elements × inner props. | a game + UI |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -4202,7 +4222,7 @@ completeness critic.
 | ✅ B13 group width | `[W2-ORDEN-FINDENTRY]` `[W2-GROUPMATCH-WIDTH]` `[A4-AB4-UINT64]` | |
 | ✅ B14 Class Pivot session gate | `[W1-PIVOT-SESSION]` + register `check_session_gate` | |
 | ✅ B15 SPC join mode | `[W1-SPC-JOINMODE]` | |
-| ⬜ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
+| ✅ B16 pivot array fields | `[W1-DISCOVER-ARRAY]` `[W1-ARRAYCOUNT]` | |
 | ⬜ B17 related race | `[W4-RELATED-RACE]` (before B26) | |
 | ⬜ B18 lookup filter | `[W4-LOOKUP-FILTER]` | |
 | ⬜ B19 bookmark DataTable | `[W4-BOOKMARK-DT]` | |
