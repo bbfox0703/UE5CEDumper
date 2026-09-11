@@ -991,7 +991,7 @@ filed, so Track A's "P7: 0 new" counted a row that did not exist:
 **LOW** — 4 rows: `[W2-MS-PROMISE]` Move Speed Apply promises *"the override applies once a pawn
 exists"* when `Laufen` returned before storing anything, so the queued override silently does not
 exist (`TeleportViewModel.cs:2169`; its two siblings at `:2588`/`:3053` word it correctly) — ✅ FIXED IN SOURCE 2026-09-11 (batch B21): the clause is deleted, the recorded safe fix. **A twin was found and fixed with it:** the time-dilation status promised the same for both levers, and `Hemmung::SetDilation` also returns before storing anything when its owner does not resolve ·
-`[W2-CEGEN-MODAL]` the GodMode and Debug-Camera `[DISABLE]` blocks bail with `showMessage` instead
+✅ `[W2-CEGEN-MODAL]` (FIXED IN SOURCE 2026-09-12, batch L37: both generators' `[DISABLE]` bails now go through `SilentReturn` / `dbg`, as Movement's already did, and `[ENABLE]` is unchanged; red first) the GodMode and Debug-Camera `[DISABLE]` blocks bail with `showMessage` instead
 of the documented `SilentReturn`, so unticking pops a modal over a fullscreen game — **twice** on
 the contract-check path (`ProtectionScriptGenerator.cs:64`) · ✅ `[W2-BETWEEN-PREVIEW]` (FIXED IN SOURCE 2026-09-12, batch L28: Value Search's Between preview parses with the DLL's grammar, so a bound the DLL refuses previews nothing. SPC keeps its own query's grammar, which is unchanged. Red first) the Between
 live preview parses with `NumberStyles.Any`, so for FVector/FRotator/FTransform it concatenates the
@@ -5252,6 +5252,7 @@ disconnect branch resets"*. Stealth is reset with a tuple assignment and never p
 | 88 | `[A1-LOG-RESUME]` | LOW | `git log --grep A1-LOG-RESUME` (batch L35) | LogRetentionTests, red first: rolled `-0_NNN.log` files beside a `-0.log`, or alone, are archived at startup oldest first; another category's are untouched. 2/2 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5264/5264. Residual: the in-session compression rule, not built |
 | 89 | `[A3-RECYCLE-GUID-FAILOPEN]` | LOW | `git log --grep A3-RECYCLE-GUID-FAILOPEN` (batch L38) | RecycleBinPolicyTests, red first: a failed volume-GUID lookup fails closed where the per-volume flag would decide; `UseGlobalSettings` or a policy still decides on its own (control); a source pin checks the platform caller. 3/3 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5267/5267 |
 | 90 | `[A3-COORD-NONFINITE]` | LOW | `git log --grep A3-COORD-NONFINITE` (batch L39) | CoordCsvCodecTests + CoordLuaParserTests, red first: `NaN`, `Infinity`, `-Infinity` and `1e400` in a CSV row, and `x=1e400` in a Lua entry, are rejected and visible, not stored as the origin. 1/1 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5272/5272 |
+| 91 | `[W2-CEGEN-MODAL]` | LOW | `git log --grep W2-CEGEN-MODAL` (batch L37) | ProtectionScriptGeneratorTests + DebugCameraScriptGeneratorTests, red first: `[DISABLE]` contains no `showMessage` but still has a `dbg` reason, and `[ENABLE]` still announces and unticks (control). 6/6 mutants killed; dll_core_test 320/320, dll_helpers_test 2721/2721; UI 5276/5276. Scoped to the two named generators; no repo-wide `[DISABLE]` pin was added |
 
 #### Live-check backlog — run at the end of the pass
 
@@ -5515,6 +5516,9 @@ Watch the `IsEditing` latch experiment (UNDECIDED, same loop) in the same sessio
 2. Run Proxy Deploy's cleanup. It refuses to "recycle" the DLL, failing closed, instead of claiming "moved to the Recycle Bin".
 3. On a normal fixed volume, the DLL is still recycled. | UI + a SUBST volume |
 | L76 | `[A3-COORD-NONFINITE]` | UI only. In the Teleport card's coordinate library, import a CSV with a row whose x is `NaN`, and one whose x is `1e400`. The preview lists both as rejected rows on column x, and neither is imported. | UI only |
+| L77 | `[W2-CEGEN-MODAL]` | CE and a game, with the GodMode and Debug Camera records. ⚠ Announce CE use first.
+1. With the DLL not injected, untick each record. No dialog appears over the game. With `UE5_DEBUG=1`, the Lua Engine shows the dbg reason.
+2. Tick one with the DLL not injected. The ENABLE dialog still appears, and the record unticks. | CE + a game |
 
 #### Batch plan — the inventory of 2026-09-11
 
@@ -5609,7 +5613,7 @@ completeness critic.
 - ✅ **L34:** `[P8-BOOKMARK-TIP]`
 - ✅ **L35:** `[A1-LOG-RESUME]`
 - **L36:** `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]` (CE)
-- **L37:** `[W2-CEGEN-MODAL]` (CE)
+- ✅ **L37:** `[W2-CEGEN-MODAL]` (CE)
 - ✅ **L38:** `[A3-RECYCLE-GUID-FAILOPEN]`
 - ✅ **L39:** `[A3-COORD-NONFINITE]`
 - **L40:** `[A2-TOPTIONAL-STRUCT-DESCENT]` (filed 2026-09-11 by the review of cc430176)

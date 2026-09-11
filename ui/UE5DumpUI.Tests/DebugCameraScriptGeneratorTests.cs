@@ -63,4 +63,26 @@ public class DebugCameraScriptGeneratorTests
     {
         Assert.DoesNotContain("\r", DebugCameraScriptGenerator.Generate());
     }
+
+    // [W2-CEGEN-MODAL] Unticking must not put a modal over a fullscreen game (MailboxTimeout.SilentReturn's own doc).
+    // Both blocks came from one emitter, so every [ENABLE] bail -- the missing mailbox, the contract check (two
+    // messages), the idle wait, the timeout, the result check -- was a showMessage in [DISABLE] too.
+    [Fact]
+    public void Disable_block_never_pops_a_modal()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        Assert.DoesNotContain("showMessage", disable);
+        Assert.Contains("dbg('[DebugCamera]", disable);   // a DEBUG session still sees why it gave up
+    }
+
+    // The control: ticking keeps every announced, unticking bail -- the fix is [DISABLE]-only.
+    [Fact]
+    public void Enable_block_still_announces_and_unticks_its_bails()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        Assert.Contains("showMessage('[DebugCamera] g_invokeMailbox not found", enable);
+        Assert.Contains("memrec.Active = false", enable);
+    }
 }
