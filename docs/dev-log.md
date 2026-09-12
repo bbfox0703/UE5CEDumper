@@ -25,6 +25,102 @@ builds ≤696 in
 
 -----
 
+## 2026-09-12 (builds 3508 → 3546) — the fix pass closed, then reviewed against itself, and a flake that was the test all along
+
+184 commits. Every recorded bug row repaired one commit at a time, HIGH → MED → LOW, each one red
+before green and each one mutation-checked. Then a 14-agent adversarial review **of that pass**,
+whose confirmed findings became four more rows. Then a load-flaky test that turned out to be loose
+in precisely the way its own fix commit had claimed to have fixed.
+
+### `[FIXPASS-2026-09-10]` — one row, one commit, forty-five batches
+
+The ledger and the live-check backlog are `docs/todo.md` `[FIXPASS-2026-09-10]`; each row's commit is
+`git log --grep <TAG>`. Three of the later batches are worth naming here because they moved a
+contract or a wire format:
+
+- **`[W5-OFFSETS-MAILBOX]`** (L45) gave CE Lua a way to ask whether the DynOff offsets were
+  MEASURED — `CMD_OFFSETS_VERDICT = 16`, result 1/0 plus the reason in `paramsData`. That is
+  `MAILBOX_CONTRACT` **4 → 5**, additive: a new Cmd at an unused number, `MAILBOX_CONTRACT_MIN`
+  stays 1, so every saved `.CT` keeps working. The command is the SECOND init-exempt one, because
+  its answer *is* the init state — gating it would return `-10` in exactly the case the caller asked
+  about.
+- **`[A2-TOPTIONAL-STRUCT-DESCENT]`** (L40) and **`[A2-TOPTIONAL-VALUESCAN]`** (L41) stopped Find
+  Refs, the Address Finder and Value Scan from reading a reset `TOptional` as live data. UE's
+  `MarkUnset` clears the flag and zeroes **nothing**, so the old "an unset slot is zero" comment was
+  false in both places.
+- **`[A4-AB4-BETWEEN]`** (L42) builds a Between scan's two bounds jointly, clamped per width, in
+  both matchers.
+
+### Review 6 — the pass, read adversarially
+
+A read-only 14-agent review of `76f93b94..HEAD` (24 commits, 126 files, +6844 / −631): six area
+finders, then one skeptic per finding, each defaulting to REFUTED. **11 raw findings, 8 verified, 4
+confirmed, 4 refuted**, and 3 lower-ranked LOWs checked by hand. All four confirmed rows are fixed:
+
+- **`[A2-TOPTIONAL-REFINE]`** (MED) — the lead L41 recorded but did not trace, now traced and closed:
+  `RefineCandidates` re-read every candidate by absolute address with no optional gate, so a Next
+  Scan with **Unchanged** kept a reset optional's stale value forever. ⚠ The finding's own verifier
+  corrected two overstatements, and both are recorded in the row rather than smoothed away.
+- **`[A2-SENTINEL-OVERREAD]`** (LOW) — L41's intrusive gate read a flat 16 bytes from a field that is
+  `sizeof(T)`; an 8-byte `TOptional<FName>` at a page edge therefore dropped a **set** optional.
+- **`[A1-VERDICT-STALEMB]`** (MED) — L45's new CE wrapper cleared the busy flag after a timeout
+  without the AA19 stale-mailbox latch, so the next invoke could overwrite a command the DLL still
+  owned. Fixed for **both** small wrappers through one shared guard.
+- **`[A1-REVIEW6-PINS]`** (LOW) — two decision comments that still claimed one init exemption after
+  there were two, and a `%ls` gate with no guard against its own scan matching nothing.
+
+The four refuted findings are recorded with their refutations under `#### ⛔ REFUTED — do not
+re-raise (review 6)`, including one whose *test-strength* half stands as a lead even though the
+shipped behaviour was proven correct.
+
+### `[TESTFLAKE-2026-09-12]` — the flake was the test, and its own fix commit had said otherwise
+
+`ConcurrentRescores_SettleOnTheNewestMode_NotTheLastToFinish` failed 1 in a 5204-test run and 1 of 3
+class-isolated runs. ⭐ `3ad4f524` parked this test's two siblings with `GatedEntryList` and its
+message says it parked this one too — **it did not**. Both toggles still fired straight after
+`ExecuteAsync`, and since the fake dump service returns `Task.FromResult`, `LoadAsync`'s tail resumes
+on a pool thread: the toggle had FOUR landing zones, and in three of them the scenario never formed
+(`PendingRescore` null, both `if (… != null)` drains skipped, the assertions proving nothing) while
+the single-slot `PendingToggleRescore` orphaned the first re-score, which could still be rebuilding
+`Results` under the assertion's own enumeration.
+
+Measured before concluding, because "it passes in isolation" is exactly what got this filed as a
+test-suite flake once before and was wrong then: the OLD test passed **15/15 idle and 25/25 under
+deliberate CPU contention** — its end state was never wrong, only which zone it hit. The fix enforces
+the interleaving with a multi-pass `PhasedEntryList`, releasing the NEWER request first and the OLDER
+request's scoring LAST, and pins both re-scores in flight at once. Shown able to fail: deleting the
+generation guard reds it in **50 ms** with the original `Assert.DoesNotContain() Failure: Filter
+matched in collection`. **22/22** consecutive isolated runs green. No retries anywhere.
+
+⬜ **Recorded, not claimed:** `RescoreAsync`'s generation check is still not atomic with its publish,
+and `ApplyFilter` rebuilds `Results` unsynchronised. Avalonia's dispatcher serialises both in the
+shipped app, and no seam can suspend a run between its guard and its publish — so that window has
+**no reproduction** and was deliberately left unfixed rather than passed off as the cause.
+
+### ⚠ What the mutation step caught that reading did not
+
+Three pins written this session were **vacuous**, and none was caught by review:
+
+- two in L48, asserting strings that also exist elsewhere in the same file — `invokeUFunction`'s
+  pre-existing AA19 latch, and my own doc comment — so deleting the code they claimed to pin left
+  them green. Fixed by counting occurrences and by asserting the executable line;
+- one in L49, where the guard-the-guard added *against* a vacuous scan was itself cleared by half the
+  scan: `scannedFiles >= 25` is met by `dll/src`'s ~31 `.cpp` files alone once `.h` is dropped.
+
+Each was found by a mutant SURVIVING. That is the mutation step earning its cost, and the reason a
+"red: 0" line is never to be waved through.
+
+### Evidence
+
+- UI suite **5298 / 0 failed**; `dll_core_test` **332 checks / 0**; `dll_helpers_test` **2752 / 0**;
+  gates **22 run, 0 failed** (final close-out, batch L49).
+- `build.ps1 -NoBumpBuildNumber` SUCCESS, then `-Mode Publish -NoBumpBuildNumber` SUCCESS.
+  `dist\UE5DumpUI.exe` **55.0 MB, sha256 `e278e02a`** — AOT-trimmed, which is the binary to hand
+  over. (Before: 54.8 MB / `628552a1`.)
+- ⬜ **Live checks are DEFERRED by the maintainer's direction**, not skipped: the backlog is
+  `[FIXPASS-2026-09-10]` rows L2…L89 in `todo.md`, and **nothing above is closed until its check
+  passes on a running game**. Several need Cheat Engine, which is announced before use.
+
 ## 2026-09-09 (builds 3462 → 3508) — a delegate layout that only holds in Shipping, nine register rows driven to a verdict, and 166 claims sliced down to 30 hand-reads
 
 43 commits. Two engine versions of UE4 exercised for the first time, a wire field that never left
