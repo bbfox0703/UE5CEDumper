@@ -25,6 +25,80 @@ builds ≤696 in
 
 -----
 
+## 2026-09-12 (build 3546, no bump) — the three HIGH live checks, run on a game
+
+No product change: three verification runs and their evidence. `[FIXPASS-2026-09-10]`'s ledger has
+exactly **three HIGH rows** — 1 `[W1-QUOTA-UNLIMITED]`, 2 `[W1-SNAP-FAULT]`, 3
+`[P4-OTHER-INSTANCE]` — and L1/L2/L3 in the live-check backlog are their checks. All three now
+pass, so **HIGH is closed** and the backlog resumes at L4, the first MED.
+
+Fixture throughout: DumperTest Shipping, DLL `1.0.0.3546`, 24,497 objects, UE 504, driven by the
+**AOT-trimmed** `dist\UE5DumpUI.exe` (55.0 MB, sha `e278e02a`). The build matters for L1 in
+particular: a `ComboBox.SelectedItem` bound to a boxed value plus a JSON round trip is exactly the
+shape that works untrimmed and fails only after trimming.
+
+### L1 `[W1-QUOTA-UNLIMITED]` — `df7681d4`
+
+Picking *Unlimited* rewrote `experimental.json` to `"snapshotQuotaMb": 0` immediately rather than on
+exit, and the setting survived a clean `WM_CLOSE` + relaunch — and then, unplanned, a full machine
+reboot. Nothing was FIFO-deleted, the DB kept its row, usage read "4.2 MB (no limit)".
+
+### L3 `[P4-OTHER-INSTANCE]` — `5b5971f3`
+
+Two `StaticMeshActor` instances opened through Instance Finder with no GWorld click between them:
+A = `0x29254B67C00`, B = `0x29254B67EC0`.
+
+  * **addressing** — every one of 16 `walk_instance` replies echoed B's address and B's
+    `struct_data_addr`, so it holds ACROSS Auto ticks, not merely on the initial open;
+  * **write** — the half a read-only check cannot cover, because a base mix-up that READS right can
+    still WRITE wrong. Editing `bCanBeDamaged` produced exactly ONE `write_mem` in the whole
+    session, `{"addr":"0x29254B67F1A","bytes":"24"}`, and A's corresponding byte address
+    `0x29254B67C5A` appears ZERO times in the log. An independent pipe re-read — deliberately not
+    the UI's own grid — gave B `24`/true and A `20`/false, with B's sibling bits in that same packed
+    byte untouched, so the read-modify-write set bit 2 and nothing else;
+  * **scroll** — 7 Auto ticks before the write and 9 after, the grid held at 0x59/0x5A throughout,
+    which also means the value read back after the write was a fresh memory read and not a stale
+    cell. `IsEditing` visibly suppressed the tick ("paused (editing)") during the edit.
+
+### L2 `[W1-SNAP-FAULT]` — `4715dbe5`
+
+`9f86f7b6` fixed this in source and said so itself: *"the DLL half has no unit seam"*, because
+`dll_core_test` can only fault `ParallelGObjectsScan` through its own stub. This is the run that
+exercises the real one — a hardware access violation inside a scan worker, reaching the `/EHa`
+`catch (...)` at `Aura.cpp:285` — by pointing `UE5_SetObjectDecryption` at `0x1000` and restoring it.
+
+A control ran first, because "everything is marked unusable" would satisfy the assertion while
+proving nothing: an unarmed capture finalised `is_usable=1`, 1700 objects. Armed, the capture
+finalised `is_usable=0` with `partial_reason=''` — correctly NOT `cap`/`disklow`, since a fault
+lands in `is_usable`; the status named a worker FAULT and never a deadline; `offsets-0.log` carried
+16 `ParallelGObjectsScan: worker tid=N [a,b) faulted` lines covering `[0,8192)` with no gap, i.e.
+one whole chunk and only that chunk, so the capture genuinely STOPPED there; and the snapshot was
+excluded from the SPC Query, Class Pivot and Diff pickers alike.
+
+**Two limits, recorded rather than glossed.** The capture came back EMPTY, not partial: the window
+is ~150 ms — 4 chunks, because `SnapshotChunkSize >= ScanThreadCount`'s 8192 threshold — and cannot
+be entered from outside the process, so the arm must precede the capture and then all 16 workers of
+chunk 1 fault. The "some rows survived" variant is **not** exercised and is not claimed. A game with
+~1M objects (EVERSPACE 2 with a save loaded) would give ~122 chunks and a window wide enough to arm
+mid-capture; that is how to close it. Second, the row's "the armed scan must be the process's FIRST
+parallel scan" was inherited from the value-scan rig, where the no-fault-on-a-second-scan effect was
+pinned on `ScanForValue`'s index builder; `CaptureSnapshotChunk` has no such reuse, so the
+constraint probably does not apply to this path at all.
+
+### Method notes worth keeping
+
+  * **the only `ParallelGObjectsScan` log line is the fault `LOG_ERROR`**, so its ABSENCE says
+    nothing about whether a parallel scan has run — a reading that briefly sent this session the
+    wrong way. Seven entry points reach that function (`FindInContainers`, `FindInContainersDeep`,
+    `FindReferencesToUObject`, `FindPropertyXrefs`, `FindFunctionsByClassParam`, `ScanForValue`,
+    `CaptureSnapshotChunk`); the object tree, ListClasses and FindInstances are NOT among them, so
+    connecting the UI does not spend a "first scan";
+  * `sw1_worker_fault.py` resolves the module BEFORE it starts counting `--delay`, and that
+    resolution costs ~4.6 s here — the first L2 attempt therefore armed 6 s after the capture had
+    already finished. A rig that must hit a sub-second window has to pre-resolve.
+
+-----
+
 ## 2026-09-12 (builds 3508 → 3546) — the fix pass closed, then reviewed against itself, and a flake that was the test all along
 
 184 commits. Every recorded bug row repaired one commit at a time, HIGH → MED → LOW, each one red
