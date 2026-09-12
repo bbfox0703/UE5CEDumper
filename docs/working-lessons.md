@@ -40,6 +40,40 @@ The same trap in its most common local form: **`build.ps1 -Target Test` does not
 It builds two header-only test executables, so a syntax error in `Fern.cpp` passes it clean. A green
 `-Target Test` after editing a `.cpp` measures nothing about that file.
 
+### 1.1a ⭐ "The call SUCCEEDED" is not "the effect HAPPENED" — validate the instrument in the condition where it MUST work
+
+§1.1 is about a harness that cannot see the code path. This is its live-game twin: a harness that
+issues a real call, gets a real success, and still observes nothing — because the *thing being
+called* is inert.
+
+**2026-09-12, L15 `[W3-CONSOLE-REINVOKE]`.** The row asks whether a command that timed out against a
+stalled game thread then runs **once**, not twice, when the thread frees. The obvious instrument was
+a CheatManager exec with a countable effect: `SpawnServerStatReplicator`, then count
+`ServerStatReplicator` instances over the pipe.
+
+With the UE game thread frozen (`suspend.py suspend-tid`, game thread only — a whole-process suspend
+stops Fern and Mimic too and measures a different branch), the invoke returned exactly the wording
+the row wants: *"ProcessEvent error code -5 (game-thread dispatch timeout) — still queued: it will
+run when the game thread is free (not re-sent)"*. Resume the thread, count again: **still 0**.
+
+That reads as the fix failing. **It is not.** The control — the same command with the thread
+**running** — returned `ProcessEvent OK` and *also* left 0 instances. `UCheatManager` function bodies
+are body-stripped in cooked builds, so every CheatManager exec reports success and does nothing. The
+UI even warns about it (*"Result=0 + no in-game effect … try a game-specific exec"*), which is easy
+to walk past until the wrong conclusion is already written down.
+
+**The rule: before reading anything into the failing/blocked condition, run the same measurement in
+the condition where it MUST work.** A `0` that means "no effect" and a `0` that means "no instrument"
+are indistinguishable from inside the failing run — only the positive control separates them. This
+is the mirror of §1.2's negative control: that one proves the assertion *can* fail, this one proves
+the measurement *can* succeed.
+
+⚠ **Local corollary, and it blocks rows today:** DumperTest declares **no** `UFUNCTION(Exec)` of its
+own, and a cooked build's `UCheatManager` is inert, so **no exec on DumperTest or on a shipped title
+can carry a countable effect**. ES2's 93 execs are engine ones plus `ESGameInstance` achievement
+commands that must not be fired. Any row that needs "the effect happened exactly once" needs a
+**game-specific exec added to DumperTest** first.
+
 ### 1.2 Prove the assertion FAILS when it should — negative controls
 
 When `extract_patterns.py --check` was added (build 2530) the work did not stop at "it passes":
