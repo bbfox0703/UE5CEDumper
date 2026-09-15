@@ -23,6 +23,11 @@
 #include "Kismet/GameplayStatics.h"    // GetPlayerPawn
 #include "Components/SceneComponent.h" // Spawn_ManyComponents (ActorComponent is abstract)
 #include "UObject/UObjectGlobals.h"     // ForceGarbageCollection
+#include "Misc/FileHelper.h"           // InvokeGate's per-call log (Shipping-safe, unlike UE_LOG)
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "CoreGlobals.h"               // GFrameCounter
 
 #define LOCTEXT_NAMESPACE "DumperTest"
 
@@ -379,6 +384,14 @@ void ADumperTestActor::BeginPlay()
 	Arr_Name.Add(FName(TEXT("NameA")));
 	Arr_Name.Add(FName(TEXT("NameBB")));
 	Arr_Name.Add(FName(TEXT("NameCCC")));
+
+	// ---- InvokeGate: publish the log path, and mark where this session's lines begin ----
+	// Absolute, because a Shipping package may resolve Saved\ under %LOCALAPPDATA% rather than
+	// beside the exe, and a harness that guesses wrong reads an empty file as "no call".
+	InvokeGate_LogPath = FPaths::ConvertRelativePathToFull(
+		FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("DumperTest-InvokeGate.log"));
+	InvokeGateLog(FString::Printf(TEXT("session start actor=0x%llX"),
+	                              static_cast<uint64>(reinterpret_cast<UPTRINT>(this))));
 
 	// ---- A1 lazy array: needs REAL actors, so it spawns three of its own ------------
 	// ⚠ Three DISTINCT actors, because the failure fingerprint of the old stride is three
@@ -986,6 +999,88 @@ int32 ADumperTestActor::Hook_ReleaseTrampolineVM()
 	const int32 Freed = ReleaseReservedVm();
 	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] released %d reserved VM block(s)"), Freed);
 	return Freed;
+}
+
+// ============================================================
+// InvokeGate — hosts for the invoke paths' unwritable-param gate (see the header banner).
+//
+// ⚠ Every recorder bumps its counter BEFORE reading the argument, and none of them dereferences
+// Data: Num and the Data pointer are read as numbers only. A garbage FString or TArray must be
+// recordable, because recording it is the point.
+// ============================================================
+void ADumperTestActor::InvokeGateLog(const FString& Line) const
+{
+	if (InvokeGate_LogPath.IsEmpty())
+	{
+		return;
+	}
+	// pid + GFrameCounter on every line: the file is appended across sessions, so a harness
+	// filters by pid, and the frame number orders lines that share a millisecond.
+	const FString Stamped = FString::Printf(TEXT("%s pid=%u frame=%llu %s\n"),
+		*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S.%s")),
+		FPlatformProcess::GetCurrentProcessId(), static_cast<uint64>(GFrameCounter), *Line);
+	FFileHelper::SaveStringToFile(Stamped, *InvokeGate_LogPath,
+		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
+}
+
+int32 ADumperTestActor::InvokeGateRecordArray(const TArray<int32>& Values, const TCHAR* Which)
+{
+	++InvokeGate_ArrayCalls;
+	InvokeGate_LastArrayNum  = Values.Num();
+	InvokeGate_LastArrayData = static_cast<int64>(reinterpret_cast<UPTRINT>(Values.GetData()));
+	InvokeGateLog(FString::Printf(TEXT("%s calls=%d num=%d data=0x%llX"), Which,
+		InvokeGate_ArrayCalls, InvokeGate_LastArrayNum, static_cast<uint64>(InvokeGate_LastArrayData)));
+	return InvokeGate_ArrayCalls;
+}
+
+int32 ADumperTestActor::InvokeGateRecordStruct(const FDumperTestInvokeProbe& Probe, const TCHAR* Which)
+{
+	++InvokeGate_StructCalls;
+	InvokeGate_LastHead      = Probe.Head;
+	InvokeGate_LastTail      = Probe.Tail;
+	InvokeGate_LastLabelNum  = Probe.Label.GetCharArray().Num();
+	InvokeGate_LastLabelData = static_cast<int64>(reinterpret_cast<UPTRINT>(Probe.Label.GetCharArray().GetData()));
+	InvokeGateLog(FString::Printf(TEXT("%s calls=%d head=%d tail=%d label_num=%d label_data=0x%llX"), Which,
+		InvokeGate_StructCalls, InvokeGate_LastHead, InvokeGate_LastTail, InvokeGate_LastLabelNum,
+		static_cast<uint64>(InvokeGate_LastLabelData)));
+	return InvokeGate_StructCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeIntArray(TArray<int32> Values)
+{
+	return InvokeGateRecordArray(Values, TEXT("TakeIntArray"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeIntArrayRef(const TArray<int32>& Values)
+{
+	return InvokeGateRecordArray(Values, TEXT("TakeIntArrayRef"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeDelegate(FDumperTestUnicastSignature Callback)
+{
+	++InvokeGate_DelegateCalls;
+	InvokeGate_LastDelegateBound = Callback.IsBound() ? 1 : 0;
+	InvokeGateLog(FString::Printf(TEXT("TakeDelegate calls=%d bound=%d"),
+		InvokeGate_DelegateCalls, InvokeGate_LastDelegateBound));
+	return InvokeGate_DelegateCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeText(FText InText)
+{
+	// ⛔ Do not read InText. See the header banner.
+	++InvokeGate_TextCalls;
+	InvokeGateLog(FString::Printf(TEXT("TakeText calls=%d"), InvokeGate_TextCalls));
+	return InvokeGate_TextCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeStruct(FDumperTestInvokeProbe Probe)
+{
+	return InvokeGateRecordStruct(Probe, TEXT("TakeStruct"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeStructRef(const FDumperTestInvokeProbe& Probe)
+{
+	return InvokeGateRecordStruct(Probe, TEXT("TakeStructRef"));
 }
 
 // ============================================================

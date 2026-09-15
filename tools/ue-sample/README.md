@@ -518,6 +518,34 @@ Ten fixtures added in one packaging cycle, each closing a register row that had 
   `Hook_ReleaseTrampolineVM()` is the recovery half. ⚠ Call it within **~40 s** (8 attempts × 5 s
   cooldown) or the retry ladder is spent and `hook RECOVERED on attempt N` can never appear.
 
+### InvokeGate (2026-09-15) — hosts for the invoke paths' unwritable-param gate
+
+Added for FIX PASS live check **L10** (`[P3-INVOKE-Y11-CEFORM]`, `[P3-INVOKE-STRUCT-FSTRING]`). No
+UFUNCTION on this fixture took a `TArray`, a delegate, an `FText`, or a struct with an `FString`
+member, so the gate had no host short of borrowing an engine library function whose effect cannot be
+read back. Six `InvokeGate_Take*` UFUNCTIONs now take exactly those, and **record what they
+received two independent ways**: the reflected fields below (read them over the pipe), and one line
+per call appended to the file named by `InvokeGate_LogPath`.
+
+| field | value | check |
+|---|---|---|
+| `InvokeGate_LogPath` | absolute path, set in BeginPlay | ⭐ **Read it, never guess it.** A Shipping package may resolve `Saved\` under `%LOCALAPPDATA%` rather than beside the exe. Written with `FFileHelper`, **not `UE_LOG`**, which compiles to nothing in Shipping. Every line carries `pid=` and `frame=`; the file is appended across sessions, so filter by pid. BeginPlay writes a `session start` line |
+| `InvokeGate_ArrayCalls` · `InvokeGate_DelegateCalls` · `InvokeGate_TextCalls` · `InvokeGate_StructCalls` | 0 | Bumped **first**, before the argument is read, by `InvokeGate_TakeIntArray` / `…Ref`, `InvokeGate_TakeDelegate`, `InvokeGate_TakeText`, `InvokeGate_TakeStruct` / `…Ref`. Each function also **returns** its counter. ⭐ An absence claim ("the refused FIRE sent nothing") is only valid beside an accepted FIRE in the same session that DID move the same counter |
+| `InvokeGate_LastArrayNum` · `InvokeGate_LastArrayData` | -1 until called | `Num()` and the raw `Data` pointer as numbers, never dereferenced. The empty array reads `0` / `0` |
+| `InvokeGate_LastDelegateBound` | -1 until called | `IsBound()` as 0/1. Safe on a zeroed `FScriptDelegate`: serial 0 resolves to null without a dereference |
+| `InvokeGate_LastHead` · `InvokeGate_LastTail` · `InvokeGate_LastLabelNum` · `InvokeGate_LastLabelData` | -1 until called | The struct host's receipt. `Head` and `Tail` (on `FDumperTestInvokeProbe`) are the **control**: they must arrive exactly as typed while `Label` between them arrives as the all-zero empty FString — `Num` 0, `Data` 0. A zeroed buffer would pass the string half by accident; a Head/Tail that also read 0 would mean nothing was written at all |
+
+⚠ **By-value and const-ref both exist for the array and the struct, deliberately.** Through
+ProcessEvent a by-value param is **copied** out of the params buffer (`P_GET_TARRAY` / `P_GET_STRUCT`),
+and copying a `TArray` or `FString` whose `Num` is 0 never reads `Data` — so the by-value callee sees a
+clean null even if the buffer held garbage. The const-ref variant (`P_GET_*_REF`) aliases the buffer, so
+**its** recorded `Data` is what the dumper actually wrote. Check whether the running game flags a
+const-ref param as `out` before choosing one: UHT may set `CPF_OutParm` on a const reference, and the
+invoke dialog treats `out` params differently.
+
+⛔ **`InvokeGate_TakeText` never reads its argument.** A zeroed `FText` has no `TextData`, and every
+accessor dereferences it. It only counts.
+
 ### Group Scan / Snapshot Mode B (temporal)
 
 A 1 Hz timer drives exactly the documented hard case — *groups need `Unchanged`*:

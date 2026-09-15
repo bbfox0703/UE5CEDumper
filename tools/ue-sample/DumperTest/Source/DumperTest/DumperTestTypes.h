@@ -211,3 +211,28 @@ struct FDumperTestTuneBlock
 	UPROPERTY() FName BlockName;
 	UPROPERTY() TArray<int32> Tunes;
 };
+
+// ============================================================
+// FDumperTestInvokeProbe — the host for [P3-INVOKE-STRUCT-FSTRING] (FIX PASS live check L10).
+//
+// A struct PARAM with an FString MEMBER. Before that fix, the app's FIRE sent a string member's
+// typed text down the scalar route, i.e. as a raw int32 over FString.Data -- so a typed "42"
+// handed the callee Data = 0x2A. The fix refuses typed text in a string member and leaves its
+// 16 bytes zeroed, which is the valid empty FString {null, 0, 0}.
+//
+// ⭐ The two int32s are the CONTROL, not decoration: they must arrive exactly as typed while the
+// string member between them arrives empty. A zeroed buffer would pass the string half by
+// accident; a Head/Tail that also read 0 would say nothing was written at all.
+//
+// Layout on x64: Head +0, Label +8 (16 bytes), Tail +24 -- 32 bytes, 8-aligned. Read the
+// offsets off the running game's param walk rather than trusting this line.
+// ============================================================
+USTRUCT(BlueprintType)
+struct FDumperTestInvokeProbe
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32   Head = 0;
+	UPROPERTY() FString Label;
+	UPROPERTY() int32   Tail = 0;
+};

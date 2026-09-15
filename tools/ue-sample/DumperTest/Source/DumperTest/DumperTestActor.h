@@ -673,6 +673,80 @@ public:
 	/// rather than needing a game. Deliberately distinct lengths.
 	UPROPERTY() TArray<FName> Arr_Name;
 
+	// ========================================================
+	// InvokeGate — hosts for the invoke paths' unwritable-param gate:
+	// [P3-INVOKE-Y11-CEFORM] and [P3-INVOKE-STRUCT-FSTRING], FIX PASS live check L10.
+	//
+	// Nothing on this fixture took a TArray, a delegate, an FText, or a struct with an FString
+	// member, so the gate had no host short of borrowing an engine library function -- whose
+	// effect cannot be read back. These RECORD what they received, two independent ways, so a
+	// check never has to infer a call from the absence of a crash:
+	//   * the reflected counters and last-seen values below, readable over the pipe; and
+	//   * one line per call appended to InvokeGate_LogPath with FFileHelper.
+	//     ⚠ Not UE_LOG: that compiles to nothing in Shipping (see the note at the end of BeginPlay).
+	//
+	// ⭐ An ABSENCE claim ("the refused FIRE sent nothing") needs a counter that DID move on an
+	// accepted FIRE in the same session. Every function bumps its counter FIRST, before it looks
+	// at any argument, so a call that misbehaves afterwards is still counted.
+	//
+	// ⚠ BY-VALUE and CONST-REF both exist for the array and the struct, and that is deliberate.
+	// Through ProcessEvent a by-value param is COPIED out of the params buffer (P_GET_TARRAY /
+	// P_GET_STRUCT), and copying a TArray or FString whose Num is 0 never reads Data -- so the
+	// callee sees a clean null even when the buffer held garbage. The const-ref variant
+	// (P_GET_*_REF) aliases the buffer itself, so ITS recorded Data pointer is what the dumper
+	// actually wrote. Check whether the running game flags the const-ref params as `out` before
+	// choosing one: UHT's CPF_OutParm on a const reference changes how the invoke dialog treats it.
+	//
+	// ⚠ InvokeGate_TakeText never reads its argument. A zeroed FText has no TextData and every
+	// accessor dereferences it, so the function only counts.
+	// ========================================================
+
+	/// Where the per-call lines go, as an absolute path. Filled in BeginPlay so a harness READS it
+	/// rather than guessing where a Shipping package puts Saved\.
+	UPROPERTY() FString InvokeGate_LogPath;
+
+	/// Every counter starts at 0 and every last-seen value at -1, so "never called" can never be
+	/// mistaken for "called with an empty argument" (Num 0, Data 0).
+	UPROPERTY() int32 InvokeGate_ArrayCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastArrayNum = -1;
+	UPROPERTY() int64 InvokeGate_LastArrayData = -1;
+
+	UPROPERTY() int32 InvokeGate_DelegateCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastDelegateBound = -1;
+
+	UPROPERTY() int32 InvokeGate_TextCalls = 0;
+
+	UPROPERTY() int32 InvokeGate_StructCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastHead = -1;
+	UPROPERTY() int32 InvokeGate_LastTail = -1;
+	UPROPERTY() int32 InvokeGate_LastLabelNum = -1;
+	UPROPERTY() int64 InvokeGate_LastLabelData = -1;
+
+	/// The TArray host, by value. @return the array call count after this call.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeIntArray(TArray<int32> Values);
+
+	/// The TArray host, by const reference -- records the buffer's own Data pointer.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeIntArrayRef(const TArray<int32>& Values);
+
+	/// The delegate host. Records IsBound() as 0/1 -- safe on a zeroed FScriptDelegate, whose
+	/// weak object pointer has serial 0 and resolves to null without a dereference.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeDelegate(FDumperTestUnicastSignature Callback);
+
+	/// The FText host. Counts, and never touches InText -- see the banner above.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeText(FText InText);
+
+	/// The struct-with-an-FString-member host, by value.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeStruct(FDumperTestInvokeProbe Probe);
+
+	/// The same, by const reference -- records Label's Data pointer as the buffer held it.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeStructRef(const FDumperTestInvokeProbe& Probe);
+
 	/// Bumped on every spawn/destroy round so a harness can prove churn ACTUALLY
 	/// HAPPENED rather than assuming its invoke landed. A changed count with a flat
 	/// generation means something other than these functions moved the numbers.
@@ -791,6 +865,15 @@ private:
 
 	/// Build a UDataTable at runtime with `Rows` rows. No cooked asset involved.
 	UDataTable* BuildTable(const TCHAR* Name, int32 Rows);
+
+	/// InvokeGate's shared recorders, so the by-value and const-ref variants cannot drift apart.
+	/// Each takes the argument by reference: for the const-ref UFUNCTION that is the params buffer,
+	/// for the by-value one it is the thunk's copy.
+	int32 InvokeGateRecordArray(const TArray<int32>& Values, const TCHAR* Which);
+	int32 InvokeGateRecordStruct(const FDumperTestInvokeProbe& Probe, const TCHAR* Which);
+
+	/// Append one line to InvokeGate_LogPath. No-op until BeginPlay has set the path.
+	void InvokeGateLog(const FString& Line) const;
 
 private:
 	void OnSecondTick();
