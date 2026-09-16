@@ -47,7 +47,15 @@ sys.path.insert(0, str(HERE))
 from pipe_client import PipeClient  # noqa: E402
 from mailbox_poke import Mem, pid_of  # noqa: E402
 
-LOG = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs/DumperTest"
+LOG_ROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
+# [ST1RIG-LOGPATH-STALE] Resolved in main() from the injected process's IMAGE, never
+# hardcoded. This used to read `Logs/DumperTest`, which is the DEVELOPMENT flavour's
+# folder -- a Shipping run writes to `Logs/DumperTest-Win64-Shipping`. So on the flavour
+# the house rules say to reach for FIRST, count() globbed a stale folder, both crash
+# signatures came back 0 on every run, and the gates below passed VACUOUSLY. Measured
+# 2026-09-16: Logs/DumperTest-Win64-Shipping was current while Logs/DumperTest had not
+# been written since 09-12.
+LOG = None
 OFF_BHIDDEN, MASK_BHIDDEN = 0x58, 0x80
 FUNC_NATIVE, FUNC_STATIC = 0x400, 0x2000
 DRAIN_WAIT_S = 180
@@ -59,6 +67,45 @@ def say(s):
     # Flush: a backgrounded rig's stdout is a FILE, which Python block-buffers --
     # a long run then shows an EMPTY output file and looks hung.
     sys.stdout.flush()
+
+
+def resolve_log_dir(pid):
+    """The folder the DLL is writing to for THIS process.
+
+    Mirrors `Sein::InitProcessMirror` (dll/src/Sein.cpp:581-601): the image name with its
+    extension dropped and the reserved characters replaced by '_'.
+
+    ⛔ It FAILS rather than returning a plausible-looking empty folder. A rig whose crash
+    gates compare a before-count with an after-count reports a clean PASS when both are 0,
+    so a wrong path is indistinguishable from 'no crash happened' -- which is precisely how
+    this went unnoticed.
+    """
+    out = subprocess.run(["tasklist", "/fi", "PID eq %d" % pid, "/fo", "csv", "/nh"],
+                         capture_output=True, text=True, errors="replace").stdout
+    image = ""
+    for line in out.splitlines():
+        parts = [x.strip('"') for x in line.split('","')]
+        if len(parts) >= 2 and parts[1].isdigit() and int(parts[1]) == pid:
+            image = parts[0]
+            break
+    if not image:
+        raise SystemExit("st1 rig: tasklist gave no image name for pid %d" % pid)
+
+    safe = image.rsplit(".", 1)[0]
+    for ch in '/' + chr(92) + ':*?"<>|':
+        safe = safe.replace(ch, "_")
+    d = LOG_ROOT / safe
+
+    if not d.is_dir():
+        raise SystemExit("st1 rig: %s does not exist -- the DLL is not logging there, so the "
+                         "crash gates below would compare 0 against 0 and pass vacuously" % d)
+    logs = sorted(d.glob("*-0.log"))
+    if not logs:
+        raise SystemExit("st1 rig: %s holds no *-0.log -- same vacuous-pass hazard" % d)
+    newest = max(f.stat().st_mtime for f in logs)
+    say("log dir  : %s  (%d live file(s), newest %s)"
+        % (d, len(logs), time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(newest))))
+    return d
 
 
 def count(needle):
@@ -86,8 +133,11 @@ def freeze(tid, on):
 
 
 def main():
+    global LOG
     fails = []
-    m = Mem(pid_of("DumperTest"))
+    pid = pid_of("DumperTest")
+    LOG = resolve_log_dir(pid)   # [ST1RIG-LOGPATH-STALE] before any count()
+    m = Mem(pid)
 
     with PipeClient() as c:
         c.assert_build()
