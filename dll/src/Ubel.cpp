@@ -2394,6 +2394,126 @@ ReadArrayResult ReadStringArrayElements(
 }
 
 // ============================================================
+// Phase M: TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout and
+// the 2026-09-16 measurement that produced it.
+// ============================================================
+bool IsFieldPathArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "FieldPathProperty";
+}
+
+ReadArrayResult ReadFieldPathArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // ⛔ REFUSE rather than walk a stride we cannot justify. The smallest legal FFieldPath is
+    // 8 (ResolvedField) + 8 (ResolvedOwner) + 16 (Path) = 32; anything under 24 could not even hold
+    // the trailing TArray, so it is a garbage FPROPERTY_ELEMSIZE read and stepping by it would land
+    // every element after [0] on an address that means nothing.
+    constexpr int32_t kPathTailBytes = 16;   // sizeof(TArray<FName>) on x64
+    if (elemSize < 24) {
+        result.error = "FieldPath ElementSize " + std::to_string(elemSize) + " is too small to hold a path";
+        Sein::Warn("WALK", "ReadFieldPathArrayElements: ElementSize=%d cannot hold FFieldPath's "
+                           "trailing TArray -- refusing rather than guessing a stride", elemSize);
+        return result;
+    }
+    const int32_t pathOffset = elemSize - kPathTailBytes;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;
+
+    const int32_t nameSize = DynOff::SizeofFName();
+    // A path is a field's chain to its outermost owner; more than a handful of hops is a garbage
+    // read, and printing hundreds would drown the row either way.
+    constexpr int32_t kMaxHops = 8;
+
+    result.elements.reserve(end - offset);
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+        const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // The element itself unread is "???", never an affirmative "(unset)" -- the rule D3/D5
+        // settled for delegates and lazy pointers.
+        std::vector<uint8_t> raw(static_cast<size_t>(elemSize), 0);
+        if (!Macht::ReadBytesSafe(elemAddr, raw.data(), elemSize)) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        std::string hex;
+        hex.reserve(static_cast<size_t>(elemSize) * 2);
+        for (int32_t b = 0; b < elemSize; ++b) {
+            char two[3];
+            snprintf(two, sizeof(two), "%02X", raw[static_cast<size_t>(b)]);
+            hex += two;
+        }
+        elem.hex = hex;
+
+        Macht::TArrayView path;
+        if (!Macht::ReadTArray(elemAddr + pathOffset, path)) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        if (path.Count <= 0 || !path.Data) {
+            // An EMPTY path is a genuine state: the field path was never set, or was reset.
+            elem.value = "(unset)";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // The path runs innermost FField first, outermost owner last (UE's own comment on
+        // FFieldPath::Path), so hop 0 is the property's own name -- what a reader wants first.
+        int32_t hops = path.Count < kMaxHops ? path.Count : kMaxHops;
+        std::string rendered;
+        bool anyUnread = false;
+        for (int32_t h = 0; h < hops; ++h) {
+            std::vector<uint8_t> nameBytes(static_cast<size_t>(nameSize), 0);
+            if (!Macht::ReadBytesSafe(path.Data + static_cast<int64_t>(h) * nameSize,
+                                      nameBytes.data(), nameSize)) {
+                anyUnread = true;
+                break;
+            }
+            if (!rendered.empty()) rendered += ".";
+            rendered += DecodeFNameBytes(nameBytes.data(), nameSize);
+        }
+        if (rendered.empty()) {
+            elem.value = "???";
+        } else {
+            if (anyUnread) rendered += ".???";
+            else if (path.Count > hops) rendered += " (+" + std::to_string(path.Count - hops) + " more)";
+            elem.value = rendered;
+        }
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // ReadArrayElements — read scalar elements from a TArray (Phase B).
 //
 // Reads up to `limit` elements starting at index `offset`.
@@ -4818,6 +4938,25 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // Phase M: TArray<TFieldPath<...>> [WALK-FIELDPATH-ARRAY-NOELEMS]
+                // ⛔ The stride stays the ENGINE's ElementSize -- unlike Phase L, this one is not a
+                // fixed header: the same FFieldPath is 32 bytes in a game build and 48 in an editor
+                // build (WITH_EDITORONLY_DATA members), and the reader derives Path from it.
+                if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto fpResult = ReadFieldPathArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (fpResult.ok && !fpResult.elements.empty()) {
+                        fv.arrayElements = std::move(fpResult.elements);
+                        Sein::Debug("WALK:ArrayP", "FieldPath elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!fpResult.ok && !fpResult.error.empty()) {
+                        // A refused stride is SAID, not silently dropped -- the arm the delegate
+                        // readers learned to add ([A4-DELEGATE-ARRAY-PAD]).
+                        fv.typedValue = "(field-path array — " + fpResult.error + ", not read)";
+                    }
+                }
+
                 if (!innerFound) {
                     // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
                     uint8_t dumpBuf[64] = {};
@@ -4985,6 +5124,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayInnerType, fv.arrayElemSize, 0, arrayLimit);
                     if (strResult.ok && !strResult.elements.empty()) {
                         fv.arrayElements = std::move(strResult.elements);
+                    }
+                }
+
+                // Phase M: TArray<TFieldPath<...>> (UProperty mode) [WALK-FIELDPATH-ARRAY-NOELEMS]
+                if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto fpResult = ReadFieldPathArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (fpResult.ok && !fpResult.elements.empty()) {
+                        fv.arrayElements = std::move(fpResult.elements);
+                    } else if (!fpResult.ok && !fpResult.error.empty()) {
+                        fv.typedValue = "(field-path array — " + fpResult.error + ", not read)";
                     }
                 }
 

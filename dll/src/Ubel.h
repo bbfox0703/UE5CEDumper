@@ -1254,6 +1254,26 @@ ReadArrayResult ReadStringArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+// Phase M: TFieldPath arrays (`TArray<TFieldPath<FProperty>>`). [WALK-FIELDPATH-ARRAY-NOELEMS]
+//
+// The walk published such an array with its count and NOT ONE element: no phase claimed
+// `FieldPathProperty`, exactly as no phase claimed a string array before `[W5-STRARRAY-ELEMENTS]`.
+// Found 2026-09-16 on the fixture's `Arr_FieldPath` — `num=2` on the wire, zero elements rendered.
+//
+// ⭐ THE STRIDE IS THE ENGINE'S `ElementSize`, NOT A CONSTANT, and `Path` is found from it rather
+// than at a fixed offset. `FFieldPath` is
+//     { FField* ResolvedField; [FFieldClass* InitialFieldClass; int32 SerialNumber;] TWeakObjectPtr
+//       ResolvedOwner; TArray<FName> Path; }
+// and the two bracketed members are `WITH_EDITORONLY_DATA` (UE 5.4 `FieldPath.h:56-63`), so a game
+// build is **32 bytes** and an editor build **48**. Measured 2026-09-16 on DumperTest Shipping 5.4:
+// the wire reported `array_elem_size 32` and the raw element read `[ptr][ObjectIndex 0x8A0,
+// Serial 0x5D8][TArray{data, 1, 2}]`. `Path` is the LAST member in both shapes, so its offset is
+// `elemSize - 16` — which is why this reader takes the size instead of pinning one.
+bool IsFieldPathArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadFieldPathArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 /// Render ONE FScriptDelegate binding, from the four things any reader can observe.
 ///
 /// ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM — it says a target WAS bound and has since been

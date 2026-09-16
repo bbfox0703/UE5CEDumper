@@ -2577,12 +2577,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the elem_size checks below guard a SCALAR stride -- a string's is the fixed header, and a
             // zeroed or garbage elem_size is exactly what that pinned stride exists to survive.
             const bool stringInner = Ubel::IsStringArrayType(innerType);
+            // [WALK-FIELDPATH-ARRAY-NOELEMS] A TFieldPath element is a struct whose LAST member is the
+            // path; its reader needs the engine's ElementSize, so it keeps the elem_size requirement
+            // (unlike a string's pinned header) and only bypasses the scalar 256-byte ceiling.
+            const bool fieldPathInner = Ubel::IsFieldPathArrayType(innerType);
             if (innerType.empty() || (!stringInner && elemSize <= 0))
                 return Renge::MakeError(id, "missing inner_type or invalid elem_size").dump();
 
             // Validate elemSize from UI — may have cached garbage from older sessions.
             // ReadArrayElements already caps at 256, but validate explicitly here too.
-            if (!stringInner && elemSize > 256) {
+            if (!stringInner && !fieldPathInner && elemSize > 256) {
                 Sein::Warn("PIPE:cmd", "read_array_elements: elemSize=%d too large for '%s', rejecting",
                     elemSize, innerType.c_str());
                 return Renge::MakeError(id, "elem_size too large (max 256)").dump();
@@ -2590,6 +2594,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             auto result = stringInner
                 ? Ubel::ReadStringArrayElements(addr, fieldOffset, innerType, elemSize, offset, limit)
+                : fieldPathInner
+                ? Ubel::ReadFieldPathArrayElements(addr, fieldOffset, elemSize, offset, limit)
                 : Ubel::ReadArrayElements(addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
 
             if (!result.ok)

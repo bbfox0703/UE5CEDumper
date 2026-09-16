@@ -2012,6 +2012,117 @@ int main() {
         DynOff::bUseFProperty       = savedFPropO;
     }
 
+    // -- FIELDPATHARR-2026-09-16 -- a TArray<TFieldPath> publishes its elements ---------------------
+    //
+    // ⛔ POOL-FAKING BLOCK: it installs its OWN UE4 name pool, like IFACEREAD / UNREADVAL / OPTLAYOUT
+    // above, and depends on nothing they leave behind.
+    //
+    // [WALK-FIELDPATH-ARRAY-NOELEMS]. No phase claimed `FieldPathProperty`, so the walk sent such an
+    // array with its count and NOT ONE element -- the same hole `[W5-STRARRAY-ELEMENTS]` closed for
+    // strings. Found live 2026-09-16: the fixture's `Arr_FieldPath` read `num=2` on the wire with
+    // zero elements rendered.
+    //
+    // ⭐ THE STRIDE IS THE ENGINE'S, AND `Path` IS FOUND FROM IT. `InitialFieldClass` and
+    // `FieldPathSerialNumber` are WITH_EDITORONLY_DATA (UE 5.4 FieldPath.h:56-63), so the same struct
+    // is 32 bytes in a game build and 48 in an editor build -- and `Path` is the LAST member in both.
+    // Both shapes are asserted here with the SAME expected values, which is what pins
+    // `pathOffset = elemSize - 16` rather than a constant.
+    {
+        blk("FIELDPATHARR - a TArray<TFieldPath> reads each element's path name");
+
+        static uint8_t fpEntry[3][0x40] = {};
+        const char* fpNames[3] = { "", "TickCount", "FrozenInt" };
+        static uintptr_t fpChunk[4] = {};
+        for (int i = 1; i <= 2; ++i) {
+            memcpy(fpEntry[i] + 0x10, fpNames[i], strlen(fpNames[i]) + 1);
+            fpChunk[i] = reinterpret_cast<uintptr_t>(fpEntry[i]);
+        }
+        static uintptr_t fpChunks[2] = { reinterpret_cast<uintptr_t>(fpChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fpChunks), 0x10);
+        check("FIELDPATHARR setup: the pool resolves TickCount",
+              Serie::GetString(1) == "TickCount", Serie::GetString(1).c_str());
+
+        const bool savedCpnF = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;          // sizeof(FName) == 8
+
+        struct FakeName  { int32_t Comparison; int32_t Number; };
+        struct FakeTArr  { uintptr_t Data; int32_t Num; int32_t Max; };
+        static_assert(sizeof(FakeName) == 8, "FName is two int32 without case preservation");
+
+        static FakeName nTick { 1, 0 };
+        static FakeName nFroz { 2, 0 };
+        static FakeTArr pTick { reinterpret_cast<uintptr_t>(&nTick), 1, 1 };
+        static FakeTArr pFroz { reinterpret_cast<uintptr_t>(&nFroz), 1, 1 };
+        static FakeTArr pNone { 0, 0, 0 };            // a path that was never set
+
+        // The GAME shape: 32 bytes, Path last.
+        static uint8_t game[3][32] = {};
+        memcpy(game[0] + 16, &pTick, sizeof(pTick));
+        memcpy(game[1] + 16, &pFroz, sizeof(pFroz));
+        memcpy(game[2] + 16, &pNone, sizeof(pNone));
+        static FakeTArr gameArr { reinterpret_cast<uintptr_t>(game), 3, 3 };
+
+        auto g = Ubel::ReadFieldPathArrayElements(
+            reinterpret_cast<uintptr_t>(&gameArr), 0, 32, 0, 64);
+        check("FIELDPATHARR: a TArray<TFieldPath> is read at all",
+              g.ok && g.elements.size() == 3, std::to_string(g.elements.size()).c_str());
+        check("FIELDPATHARR ⭐: each element resolves its own path name",
+              g.elements.size() == 3 && g.elements[0].value == "TickCount"
+                                     && g.elements[1].value == "FrozenInt",
+              g.elements.size() == 3 ? g.elements[1].value.c_str() : "(count)");
+        check("FIELDPATHARR ⭐: an EMPTY path is (unset), not a name and not a refusal",
+              g.elements.size() == 3 && g.elements[2].value == "(unset)",
+              g.elements.size() == 3 ? g.elements[2].value.c_str() : "(count)");
+        check("FIELDPATHARR: ...each with its index and its raw bytes",
+              g.elements.size() == 3 && g.elements[2].index == 2 && g.elements[0].hex.size() == 64);
+
+        // The EDITOR shape: 48 bytes, the same Path at the same distance from the END.
+        static uint8_t edit[2][48] = {};
+        memcpy(edit[0] + 32, &pTick, sizeof(pTick));
+        memcpy(edit[1] + 32, &pFroz, sizeof(pFroz));
+        static FakeTArr editArr { reinterpret_cast<uintptr_t>(edit), 2, 2 };
+        auto e = Ubel::ReadFieldPathArrayElements(
+            reinterpret_cast<uintptr_t>(&editArr), 0, 48, 0, 64);
+        check("FIELDPATHARR ⭐: the 48-byte editor shape reads the same names "
+              "(Path is found at elemSize-16, not at a pinned offset)",
+              e.ok && e.elements.size() == 2 && e.elements[0].value == "TickCount"
+                   && e.elements[1].value == "FrozenInt",
+              e.elements.size() == 2 ? e.elements[1].value.c_str() : "(count)");
+
+        // A garbage ElementSize must REFUSE, not step by it.
+        auto bad = Ubel::ReadFieldPathArrayElements(
+            reinterpret_cast<uintptr_t>(&gameArr), 0, 8, 0, 64);
+        check("FIELDPATHARR ⭐: an ElementSize too small to hold the path is refused, not walked",
+              !bad.ok && bad.elements.empty() && bad.error.find("too small") != std::string::npos,
+              bad.error.c_str());
+
+        // An unreadable element is "???" -- never an affirmative "(unset)".
+        static FakeTArr deadArr { 0x1000, 2, 2 };     // 0x1000 is never mapped
+        auto d = Ubel::ReadFieldPathArrayElements(
+            reinterpret_cast<uintptr_t>(&deadArr), 0, 32, 0, 64);
+        check("FIELDPATHARR ⭐: an unreadable element is ???, not (unset)",
+              d.ok && d.elements.size() == 2 && d.elements[0].value == "???",
+              d.elements.empty() ? "(none)" : d.elements[0].value.c_str());
+
+        // A readable element whose Path POINTER is dead: the element is not a name either.
+        static FakeTArr pDead { 0x1000, 1, 1 };
+        static uint8_t half[32] = {};
+        memcpy(half + 16, &pDead, sizeof(pDead));
+        static FakeTArr halfArr { reinterpret_cast<uintptr_t>(half), 1, 1 };
+        auto h = Ubel::ReadFieldPathArrayElements(
+            reinterpret_cast<uintptr_t>(&halfArr), 0, 32, 0, 64);
+        check("FIELDPATHARR ⭐: a readable element with an unreadable path is ???, not a name",
+              h.ok && h.elements.size() == 1 && h.elements[0].value == "???",
+              h.elements.empty() ? "(none)" : h.elements[0].value.c_str());
+
+        check("FIELDPATHARR: the type predicate admits FieldPathProperty and nothing else",
+              Ubel::IsFieldPathArrayType("FieldPathProperty")
+              && !Ubel::IsFieldPathArrayType("StrProperty")
+              && !Ubel::IsFieldPathArrayType("DelegateProperty"));
+
+        DynOff::bCasePreservingName = savedCpnF;
+    }
+
     // -- REFINEOPT-2026-09-12 -- a refine applies the same TOptional gate the first scan did -------
     //
     // [A2-TOPTIONAL-REFINE] (adversarial review 6). The first scan skips a TOptional whose bIsSet byte is 0,
