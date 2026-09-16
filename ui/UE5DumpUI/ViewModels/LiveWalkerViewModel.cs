@@ -4761,7 +4761,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
-                format: format, ct: cts.Token);
+                // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
+                format: format, ceStringLength: CeStringLength, ct: cts.Token);
 
             // Write to file (overwrite if exists — user already confirmed via dialog). No
             // token here on purpose: cancel aborts the slow resolve above; once we have the

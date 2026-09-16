@@ -1,4 +1,5 @@
 ﻿using UE5DumpUI.Core;
+using UE5DumpUI;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -402,7 +403,44 @@ public class CsxExportServiceTests
         Assert.Contains("Description=\"PlayerName\"", csx);
         // Child structure with Unicode String
         Assert.Contains("Vartype=\"Unicode String\"", csx);
-        Assert.Contains("Bytesize=\"18\"", csx);
+        // [CSX-STRCHILD-BYTESIZE] was the literal 18 -- 9 wide characters for every string in
+        // every export. The window is the export's String Len now, defaulted like the CE XML path.
+        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength}\"", csx);
+        Assert.DoesNotContain("Bytesize=\"18\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_StringChild_WindowIsTheCeStringLengthOption()
+    {
+        // [CSX-STRCHILD-BYTESIZE] The toolbar's String Len drives BOTH exporters, so a CSX and a
+        // CE XML of the same object cannot disagree about how much of a string the user sees.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PlayerName", TypeName = "StrProperty", Offset = 0x30, Size = 8,
+                     HexValue = "0000018AF21C3E20" }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(
+            _dump, "TestStruct", fields, ceStringLength: 128, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Bytesize=\"128\"", csx);
+        Assert.DoesNotContain("Bytesize=\"18\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_StringChild_NonPositiveLengthFallsBackToTheDefault()
+    {
+        // Same rule as CeXmlExportService.EmitStringLeaf: 0 (unset) is the default, never a
+        // zero-byte window that would show nothing at all.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Utf8Name", TypeName = "Utf8StrProperty", Offset = 0x10, Size = 16 }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(
+            _dump, "TestStruct", fields, ceStringLength: 0, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength}\"", csx);
     }
 
     [Fact]

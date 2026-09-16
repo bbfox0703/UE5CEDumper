@@ -57,8 +57,14 @@ public static class CsxExportService
         int arrayLimit = 64,
         int drilldownDepth = 0,
         CsxFormat format = CsxFormat.PreCe77,
+        // [CSX-STRCHILD-BYTESIZE] The display window for every string CHILD element. The same
+        // toolbar "String Len" the CE XML exporter already honours, so the two cannot disagree
+        // about how much of a string a user sees; 0 or less falls back to the default, as
+        // CeXmlExportService.EmitStringLeaf does.
+        int ceStringLength = Constants.DefaultCeStringLength,
         CancellationToken ct = default)
     {
+        _csxStringLength = ceStringLength > 0 ? ceStringLength : Constants.DefaultCeStringLength;
         // Unified drilldown resolve (docs/ce-export-drilldown-spec.md Phase B): structs
         // (flatten, depth-free) + pointers + CONTAINER ELEMENT VALUES that are structs
         // (Map&lt;…,Struct&gt; / Set&lt;Struct&gt; / struct-array), recursively to drilldownDepth.
@@ -400,6 +406,10 @@ public static class CsxExportService
     /// UTF-8 FUtf8String falls back to "String" — CE renders it byte-wise and cannot decode
     /// multibyte UTF-8 (a CSX format limitation; CE XML's CodePage flag has no CSX equivalent).
     /// </summary>
+    /// [CSX-STRCHILD-BYTESIZE] The string child's display window, in BYTES. Set once per export
+    /// from the caller's "String Len"; never read before GenerateCsxAsync assigns it.
+    private static int _csxStringLength = Constants.DefaultCeStringLength;
+
     private static string BuildStrChildStructure(string typeName, string? addr)
     {
         var vartype = typeName == "StrProperty" ? "Unicode String" : "String";
@@ -408,7 +418,12 @@ public static class CsxExportService
         sb.Append("        <Structure Name=\"").Append(EscapeXml(name))
           .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
         sb.AppendLine("          <Elements>");
-        sb.AppendLine($"            <Element Offset=\"0\" Vartype=\"{vartype}\" Bytesize=\"18\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
+        // ⛔ NOT A LITERAL ANY MORE. This was `Bytesize="18"` -- 9 wide characters -- for every
+        // string in every export, whatever its length, so CE's Structure Dissect silently cut
+        // anything longer. Measured 2026-09-16 on the fixture's Arr_Str, whose elements are 12, 15
+        // and 22 characters: all three rendered 9 characters wide. The window is now the export's
+        // String Len, which is what the CE XML path has always used (EmitStringLeaf).
+        sb.AppendLine($"            <Element Offset=\"0\" Vartype=\"{vartype}\" Bytesize=\"{_csxStringLength}\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
         sb.AppendLine("          </Elements>");
         sb.AppendLine("        </Structure>");
         return sb.ToString();
