@@ -9007,7 +9007,7 @@ red-before-green on a running game** — not a green test, a measured difference
 | **`[SOLIDE-REFUSAL]`** 🟡 | ✅ **VERIFIED, before/after** | rebuilt DLLs, pre-fix vs post-fix |
 | **`[BADGEPRIME]`** 🟠 | ✅ **VERIFIED** | six badges, against phase 3's own before |
 | `[R3-SEETHRU]` 🟠 | 🟡 regression only | the hazard needs a command in flight |
-| `[POSEATTACH]` 🟠 | 🟡 control only | needs an attached pawn + a failed invoke |
+| `[POSEATTACH]` 🟠 | ✅ **VERIFIED 2026-09-16** (was 🟡 control only) | the two conditions were MANUFACTURED, not waited for — see L27, L37 and L38 |
 | `[TPREL-ZEROPOSE]` 🟡 | ⬜ not reachable | needs the pawn/world to vanish mid-call |
 | `[B33-SPELLING]` 🟡 | ✅ implied | the serving branch resolved and fired (below) |
 | `[B21-DOCROW]` 🟡 | — | a document fix; nothing to run |
@@ -9089,10 +9089,22 @@ the Write tool, never a heredoc — that is now a habit to keep, not a lesson to
 
 #### ⬜ What is still NOT verified live, and why
 
-- **`[POSEATTACH]`** — needs an **attached possessed pawn** whose `K2_GetActorLocation` invoke
-  fails; two coincident conditions this fixture cannot stage. Only the anti-over-shout control ran
-  (a healthy pose does **not** claim parent-relative). ⚠ Also note the CE mailbox still cannot
-  express the flag at all — a recorded contract gap.
+- ~~**`[POSEATTACH]`** — needs an **attached possessed pawn** whose `K2_GetActorLocation` invoke
+  fails; two coincident conditions this fixture cannot stage.~~ ✅ **SUPERSEDED 2026-09-16 — both
+  conditions were MANUFACTURED and the row is verified live three times over** (L27, then L37 and
+  L38 in one session). *"This fixture cannot stage"* was the wrong conclusion: the fixture cannot
+  **find** an attached pawn, but it can be **made** to have one — `K2_AttachToActor` with KeepWorld
+  rules onto a live `StaticMeshActor` (a parent with a root component; `DumperTestActor` has none
+  and returns false), plus `set_invoke_timeout 200` and a freeze of the UE game thread ALONE so the
+  world-space invoke times out while the pipe keeps answering. Measured on the same pawn minutes
+  apart: healthy `source: invoke`, `(900.000, 1110.000, 92.013)`, no `parent_relative`; degraded
+  `source: raw`, `parent_relative: true`, `(30.000, 31.714, 284.025)`. The anti-over-shout control
+  (a healthy pose does **not** claim parent-relative) still holds and is now one half of a measured
+  pair rather than the only thing that ran.
+  ⚠ **And the second sentence is stale too:** the CE mailbox CAN express the flag since batch
+  B29b — pose-block `paramsData[178]` bit0, contract 4 (now 5, MIN 1), filed as
+  `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) and verified live in L38, where
+  the Save / BugIt / Get-current-coords records each printed the PARENT-RELATIVE warning.
 - **`[TPREL-ZEROPOSE]`** — needs the pawn or world to vanish **inside one locked call**.
 - **`[R3-SEETHRU]`** — the hazard needs another command in flight at the instant of the untick.
   What was checked is that See-through still reads cleanly after its code moved.
