@@ -82,7 +82,7 @@ public class ProxyOrphanGateTests
         public Task<IReadOnlyList<string>> GetSteamLibraryFoldersAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<string>>>();
         public Task<IReadOnlyList<DetectedGame>> FindUeGamesAsync(IReadOnlyList<string> libraryPaths, CancellationToken ct = default) => No<Task<IReadOnlyList<DetectedGame>>>();
         public Task<IReadOnlyList<DriveDescriptor>> GetScannableDrivesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<DriveDescriptor>>>();
-        public Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(IReadOnlyList<DriveDescriptor> selectedDrives, IProgress<DriveScanProgress>? progress = null, CancellationToken ct = default) => No<Task<IReadOnlyList<DetectedGame>>>();
+        public Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(IReadOnlyList<DriveDescriptor> selectedDrives, IProgress<DriveScanProgress>? progress = null, IReadOnlyList<string>? excludedFolderNames = null, CancellationToken ct = default) => No<Task<IReadOnlyList<DetectedGame>>>();
         public Task<IReadOnlyList<GameProcessInfo>> ListGameProcessesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<GameProcessInfo>>>();
         public Task<InjectResult> InjectDllAsync(int pid, string dllPath, CancellationToken ct = default) => No<Task<InjectResult>>();
         public Task<InjectResult> InjectDllElevatedAsync(int pid, string dllPath, CancellationToken ct = default) => No<Task<InjectResult>>();

@@ -335,6 +335,20 @@ public static class Constants
     // exponent slider floors at 2^4 = 16. Applies to Copy CE XML / Copy CE Field only.
     public const int DefaultCeStringLength = 256;
 
+    // [PROXYDEPLOY-SCANDRIVES-CORPUS] Folder NAMES the Scan Drives walk prunes at, whatever
+    // their depth. That scan exists to find UE games Steam does not know about (Epic, GOG, a manual
+    // install) and recognises a game by FOLDER SHAPE alone -- so a tree full of unpacked game copies
+    // looks exactly like a drive full of games. This machine's AOB corpus is one: `UE_Analyze_data`
+    // holds `Varies Version builds\`, `Game archive\DropIn\` and `For Testing\`, and
+    // tools/ue-sample/repackage.py already REFUSES to write into it by name (FORBIDDEN_ARCHIVE),
+    // because inventory_builds.py / preflight.py assert its row counts.
+    // ⭐ Measured 2026-09-16 (live check L13): a D: scan returned 28 "games", most of them corpus
+    // folders, and one All + Deploy there would have put a proxy DLL in every one.
+    // ⚠ A NAME, not a path: the same corpus is reachable through any drive letter or junction.
+    // Extend it through ui-options.json (`proxyDeploy.scanExcludedFolderNames`). The assumption it
+    // rests on, stated so it can be argued with: nobody installs a game into UE_Analyze_data.
+    public static readonly string[] DefaultScanExcludedFolderNames = { "UE_Analyze_data" };
+
     // Default instance-search result cap (InstanceFinderUiOptions.InstanceSearchCap
     // and the InstanceFinder panel's own default).
     public const int DefaultInstanceSearchCap = 5000;

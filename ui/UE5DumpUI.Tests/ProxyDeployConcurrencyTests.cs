@@ -122,7 +122,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         public Task<IReadOnlyList<OrphanProxy>> FindOrphanProxiesAsync(OrphanScanSources s, IReadOnlySet<string> l, IProgress<OrphanScanProgress>? p = null, CancellationToken ct = default) => No<Task<IReadOnlyList<OrphanProxy>>>();
         public Task<OrphanRemovalResult> RemoveOrphanProxyAsync(OrphanProxy r, IReadOnlySet<string> l, CancellationToken ct = default) => No<Task<OrphanRemovalResult>>();
         public Task<IReadOnlyList<DriveDescriptor>> GetScannableDrivesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<DriveDescriptor>>>();
-        public Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(IReadOnlyList<DriveDescriptor> d, IProgress<DriveScanProgress>? p = null, CancellationToken ct = default) => No<Task<IReadOnlyList<DetectedGame>>>();
+        public Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(IReadOnlyList<DriveDescriptor> d, IProgress<DriveScanProgress>? p = null, IReadOnlyList<string>? excludedFolderNames = null, CancellationToken ct = default) => No<Task<IReadOnlyList<DetectedGame>>>();
         public Task<IReadOnlyList<GameProcessInfo>> ListGameProcessesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<GameProcessInfo>>>();
         public Task<InjectResult> InjectDllAsync(int pid, string dllPath, CancellationToken ct = default) => No<Task<InjectResult>>();
         public bool IsElevated() => false;

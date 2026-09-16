@@ -578,6 +578,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>Triggered by the source-generated ScanDrivesMode setter. Keeps
     /// the radio mirror props in sync and lazily loads drives the first time the
     /// user switches to Scan Drives mode.</summary>
+    /// [PROXYDEPLOY-SCANDRIVES-CORPUS] Folder names the drive scan prunes; loaded from
+    /// ui-options.json and defaulted to Constants.DefaultScanExcludedFolderNames.
+    public IReadOnlyList<string> ScanExcludedFolderNames { get; set; } =
+        Constants.DefaultScanExcludedFolderNames;
+
     partial void OnScanDrivesModeChanged(bool value)
     {
         OnPropertyChanged(nameof(IsSteamSource));
@@ -642,7 +647,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
             var progress = new Progress<DriveScanProgress>(p =>
                 StatusText = $"{p.CurrentDrive} {p.Phase} — {p.GamesFound} found");
 
-            var found = await _deploy.FindUeGamesOnDrivesAsync(selected, progress, ct);
+            var found = await _deploy.FindUeGamesOnDrivesAsync(
+                selected, progress, ScanExcludedFolderNames, ct);
 
             Games.Clear();
             foreach (var g in found) Games.Add(g);

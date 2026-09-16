@@ -2561,6 +2561,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ProxyDeploy.SelectedProxyType = o.ProxyDeploy.SelectedProxyType;
             ProxyDeploy.ForceOverwrite = o.ProxyDeploy.ForceOverwrite;
             ProxyDeploy.ScanDrivesMode = o.ProxyDeploy.ScanDrivesMode;
+            // [PROXYDEPLOY-SCANDRIVES-CORPUS] absent -> the default list; an explicit empty list is
+            // the user turning the exclusion off, so it is honoured rather than re-defaulted.
+            if (o.ProxyDeploy.ScanExcludedFolderNames is { } names)
+                ProxyDeploy.ScanExcludedFolderNames = names;
             ProxyDeploy.LkgSuggestEnabled = o.ProxyDeploy.LkgSuggestEnabled;
             ProxyDeploy.LastManualProxyByGame.Clear();
             foreach (var (name, type) in o.ProxyDeploy.LastManualProxyByGame)
@@ -2707,6 +2711,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             o.ProxyDeploy.SelectedProxyType = ProxyDeploy.SelectedProxyType;
             o.ProxyDeploy.ForceOverwrite = ProxyDeploy.ForceOverwrite;
             o.ProxyDeploy.ScanDrivesMode = ProxyDeploy.ScanDrivesMode;
+            o.ProxyDeploy.ScanExcludedFolderNames = ProxyDeploy.ScanExcludedFolderNames.ToList();
             o.ProxyDeploy.LkgSuggestEnabled = ProxyDeploy.LkgSuggestEnabled;
             o.ProxyDeploy.LastManualProxyByGame =
                 new Dictionary<string, ProxyType>(ProxyDeploy.LastManualProxyByGame, StringComparer.OrdinalIgnoreCase);

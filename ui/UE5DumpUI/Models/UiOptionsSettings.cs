@@ -221,6 +221,12 @@ public sealed class ProxyDeployUiOptions
     /// <summary>Scan source: false = Steam library (default), true = generic drive scan.</summary>
     public bool ScanDrivesMode { get; set; }
 
+    /// [PROXYDEPLOY-SCANDRIVES-CORPUS] Folder NAMES the drive scan prunes at any depth. Absent (the
+    /// usual case) means Constants.DefaultScanExcludedFolderNames; an explicit empty list means the
+    /// user turned the exclusion off. Kept in the settings file rather than the UI because it is a
+    /// machine fact ("this folder is not a game library"), not a per-session choice.
+    public List<string>? ScanExcludedFolderNames { get; set; }
+
     /// <summary>Opt-in (default ON): show the per-game suggested-proxy column.</summary>
     public bool LkgSuggestEnabled { get; set; } = true;
 

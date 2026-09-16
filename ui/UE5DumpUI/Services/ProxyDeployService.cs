@@ -479,8 +479,15 @@ public sealed class ProxyDeployService : IProxyDeployService
     public Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(
         IReadOnlyList<DriveDescriptor> selectedDrives,
         IProgress<DriveScanProgress>? progress = null,
+        IReadOnlyList<string>? excludedFolderNames = null,
         CancellationToken ct = default)
     {
+        // [PROXYDEPLOY-SCANDRIVES-CORPUS] Resolved ONCE, outside the walk: null means the default
+        // list, an empty list means the caller deliberately excludes nothing.
+        var excludedNames = new HashSet<string>(
+            excludedFolderNames ?? Constants.DefaultScanExcludedFolderNames,
+            StringComparer.OrdinalIgnoreCase);
+
         return Task.Run(async () =>
         {
             // Requirement 5: resolve Steam library roots ONCE for exclusion.
@@ -524,7 +531,8 @@ public sealed class ProxyDeployService : IProxyDeployService
                             ct.ThrowIfCancellationRequested();
                             string label = $"{drive.Letter}:";
                             progress?.Report(new DriveScanProgress(local.Count, label, "scanning"));
-                            WalkDrive(drive.Root, 0, local, localSeen, steamRoots, progress, label, ct);
+                            WalkDrive(drive.Root, 0, local, localSeen, steamRoots, excludedNames,
+                                      progress, label, ct);
                         }
                     }
                     finally
@@ -564,6 +572,7 @@ public sealed class ProxyDeployService : IProxyDeployService
         string dir, int depth,
         List<DetectedGame> games, HashSet<string> seenBinDirs,
         IReadOnlyList<string> steamRoots,
+        IReadOnlySet<string> excludedNames,
         IProgress<DriveScanProgress>? progress, string driveLabel,
         CancellationToken ct)
     {
@@ -584,6 +593,16 @@ public sealed class ProxyDeployService : IProxyDeployService
 
         if (IsExcludedBySteam(dir, steamRoots))
             return;
+
+        // [PROXYDEPLOY-SCANDRIVES-CORPUS] Prune by folder NAME, before the game-shape test: a corpus
+        // of unpacked game copies IS game-shaped, so a detector cannot tell it apart -- only its name
+        // can. Checked on this directory alone; every child is unreachable once we return.
+        if (excludedNames.Count > 0 && excludedNames.Contains(Path.GetFileName(dir.TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))))
+        {
+            _log.Info("ProxyDeploy", $"Scan: pruned excluded folder '{dir}'");
+            return;
+        }
 
         // Prune-on-match: reuse the Steam-path per-game-dir detector, then stop.
         if (LooksLikeUeGameRoot(dir))
@@ -616,7 +635,7 @@ public sealed class ProxyDeployService : IProxyDeployService
             ct.ThrowIfCancellationRequested();
             if (HardSkipDirs.Contains(Path.GetFileName(child)))
                 continue;
-            WalkDrive(child, depth + 1, games, seenBinDirs, steamRoots, progress, driveLabel, ct);
+            WalkDrive(child, depth + 1, games, seenBinDirs, steamRoots, excludedNames, progress, driveLabel, ct);
         }
     }
 
