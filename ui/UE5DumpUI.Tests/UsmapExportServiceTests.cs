@@ -645,6 +645,155 @@ public class UsmapExportServiceTests
 
         Assert.Equal((byte)0, Assert.Single(Assert.Single(f.Structs).Props).Type);
     }
+
+    // ---- [USMAP-INHERITED-DUPES] ------------------------------------------------
+    //
+    // The DLL prepends the ENTIRE SuperStruct chain to ClassInfoModel.Fields. The writer used to
+    // emit all of it AND the super pointer, so every child repeated its whole ancestry and every
+    // own-property schema index was shifted by the size of that ancestry. A consumer decodes an
+    // unversioned cooked object BY SCHEMA INDEX over the chain, so it then lands on a different
+    // property: measured on the DumperTest 5.4 fixture, 1,919 of 2,407 cooked exports (79.7%)
+    // parsed differently under our mapping than under Dumper-7's.
+
+    /// <summary>Two classes, one deriving from the other: the child must list ONLY its own
+    /// properties, and its schema indices must restart at 0 — which is what the canonical writer
+    /// does (vendor/Dumper-7/.../MappingGenerator.cpp restarts its index for every struct).</summary>
+    [Fact]
+    public void BuildUsmap_ChildWithAnExportedSuper_EmitsOnlyItsOwnProperties()
+    {
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], InheritancePair()));
+
+        var parent = f.Structs.Single(s => s.Name == "AParent");
+        var child = f.Structs.Single(s => s.Name == "AChild");
+
+        Assert.Null(parent.Super);
+        Assert.Equal("AParent", child.Super);
+
+        // The parent is untouched: it declares two properties and keeps them.
+        Assert.Equal(new[] { "BaseA", "BaseB" }, parent.Props.Select(p => p.Name));
+
+        // The child declares one. Before the fix it emitted three -- BaseA, BaseB and Own -- and
+        // Own sat at schema index 2 instead of 0.
+        Assert.Equal(new[] { "Own" }, child.Props.Select(p => p.Name));
+        Assert.Equal(new ushort[] { 0 }, child.Props.Select(p => p.SchemaIndex));
+
+        // The slot count follows the records it actually wrote, not the flattened list.
+        Assert.Equal(1, child.SlotCount);
+    }
+
+    /// <summary>⛔ The CONTROL, and it is the one that stops the fix from losing data: when the
+    /// super is NOT in the export, a reader has nowhere to walk to, so the flattened list must be
+    /// kept. Dropping it there would turn an over-reporting bug into a silent data loss.</summary>
+    [Fact]
+    public void BuildUsmap_SuperMissingFromTheExport_KeepsTheFlattenedList()
+    {
+        // Same child, but the parent is not exported alongside it.
+        var orphan = InheritancePair().Where(c => c.Name == "AChild").ToList();
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], orphan));
+
+        var child = Assert.Single(f.Structs);
+        Assert.Equal(new[] { "BaseA", "BaseB", "Own" }, child.Props.Select(p => p.Name));
+        Assert.Equal(new ushort[] { 0, 1, 2 }, child.Props.Select(p => p.SchemaIndex));
+    }
+
+    /// <summary>⚠ An EMPTY base reports PropertiesSize 1 while empty-base optimisation puts the
+    /// derived struct's first member at offset 0, so the super's size is one too HIGH to use as a
+    /// floor. OwnPropertiesStart is what lowers it — see Core/PropertyOwnership.</summary>
+    [Fact]
+    public void BuildUsmap_EmptyBase_KeepsTheDerivedMemberAtOffsetZero()
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new() { Name = "FEmptyBase", PropertiesSize = 1 },
+            new()
+            {
+                Name = "FDerived", SuperName = "FEmptyBase",
+                SuperPropertiesSize = 1,     // UE reports 1 for an empty USTRUCT
+                OwnPropertiesStart = 0,      // ...but EBO really put the member at 0
+                PropertiesSize = 4,
+                Fields = [ new FieldInfoModel { Name = "Value", TypeName = "IntProperty", Offset = 0, Size = 4 } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], structs));
+
+        var derived = f.Structs.Single(s => s.Name == "FDerived");
+        Assert.Equal(new[] { "Value" }, derived.Props.Select(p => p.Name));
+    }
+
+    /// <summary>⚠ A negative OwnPropertiesStart means NO INFORMATION, and must not enter the
+    /// comparison: folding -1 in re-emits the whole inherited chain (audit #5 W2).</summary>
+    [Fact]
+    public void BuildUsmap_NoOwnPropertiesStart_StillSplitsOnTheSuperSize()
+    {
+        var structs = InheritancePair();
+        structs[1] = new ClassInfoModel
+        {
+            Name = "AChild", SuperName = "AParent",
+            SuperPropertiesSize = 8, OwnPropertiesStart = -1, PropertiesSize = 12,
+            Fields = structs[1].Fields,
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], structs));
+
+        Assert.Equal(new[] { "Own" }, f.Structs.Single(s => s.Name == "AChild").Props.Select(p => p.Name));
+    }
+
+    /// <summary>Packed bitfield bools all arrive at the SAME offset, and the DLL sorts its field
+    /// list with a non-stable std::sort on offset alone (Ubel.cpp), so their order on the wire is
+    /// arbitrary. The engine's schema order is declaration order, which for a packed byte is
+    /// ascending bit position — so the writer orders ties by FieldMask rather than trusting the
+    /// order it was handed.</summary>
+    [Fact]
+    public void BuildUsmap_PackedBools_AreOrderedByBitPositionNotByArrivalOrder()
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FFlags", PropertiesSize = 1,
+                Fields =
+                [
+                    // deliberately handed over out of order
+                    new FieldInfoModel { Name = "bThird",  TypeName = "BoolProperty", Offset = 0, Size = 1, BoolFieldMask = 0x04 },
+                    new FieldInfoModel { Name = "bFirst",  TypeName = "BoolProperty", Offset = 0, Size = 1, BoolFieldMask = 0x01 },
+                    new FieldInfoModel { Name = "bSecond", TypeName = "BoolProperty", Offset = 0, Size = 1, BoolFieldMask = 0x02 },
+                ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], structs));
+
+        Assert.Equal(new[] { "bFirst", "bSecond", "bThird" },
+                     Assert.Single(f.Structs).Props.Select(p => p.Name));
+    }
+
+    /// <summary>A parent with two properties at 0 and 4, and a child adding one at 8.</summary>
+    private static List<ClassInfoModel> InheritancePair() =>
+    [
+        new()
+        {
+            Name = "AParent", PropertiesSize = 8,
+            Fields =
+            [
+                new FieldInfoModel { Name = "BaseA", TypeName = "IntProperty", Offset = 0, Size = 4 },
+                new FieldInfoModel { Name = "BaseB", TypeName = "IntProperty", Offset = 4, Size = 4 },
+            ],
+        },
+        new()
+        {
+            Name = "AChild", SuperName = "AParent",
+            SuperPropertiesSize = 8, OwnPropertiesStart = 8, PropertiesSize = 12,
+            // the DLL prepends the whole chain, so the child arrives carrying all three
+            Fields =
+            [
+                new FieldInfoModel { Name = "BaseA", TypeName = "IntProperty", Offset = 0, Size = 4 },
+                new FieldInfoModel { Name = "BaseB", TypeName = "IntProperty", Offset = 4, Size = 4 },
+                new FieldInfoModel { Name = "Own",   TypeName = "IntProperty", Offset = 8, Size = 4 },
+            ],
+        },
+    ];
 }
 
 // ---- USMAP round-trip reader -------------------------------------------------

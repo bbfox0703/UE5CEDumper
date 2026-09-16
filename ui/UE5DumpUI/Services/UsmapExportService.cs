@@ -290,29 +290,64 @@ public static class UsmapExportService
 
     private static void WriteStructs(BinaryWriter w, IReadOnlyList<ClassInfoModel> classInfos, NameTable nameTable)
     {
+        // [USMAP-INHERITED-DUPES] A child may drop its inherited properties only if a reader can
+        // actually REACH them, i.e. if its super is in this file. The struct set is every
+        // Class-like/ScriptStruct object in GObjects, so a super is normally here -- but a walk
+        // that threw was skipped, and dropping a child's ancestry when the ancestor is missing
+        // would turn an over-reporting bug into silent data loss.
+        var exported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in classInfos)
+            if (!string.IsNullOrEmpty(c.Name)) exported.Add(c.Name);
+
         w.Write((uint)classInfos.Count);
         foreach (var ci in classInfos)
         {
             w.Write(nameTable.IndexOf(ci.Name));            // int32: struct name index
 
             // Super struct index: -1 if none
+            bool superReachable = !string.IsNullOrEmpty(ci.SuperName)
+                                  && nameTable.Contains(ci.SuperName)
+                                  && exported.Contains(ci.SuperName);
             if (!string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
                 w.Write(nameTable.IndexOf(ci.SuperName));
             else
                 w.Write(-1);                                // int32: super index (-1 = none)
+
+            // [USMAP-INHERITED-DUPES] Order is not the writer's to invent, and it is not the
+            // DLL's to be trusted with either: `Ubel.cpp` sorts its field list with a NON-stable
+            // std::sort on Offset alone, and packed bitfield bools all share one Offset, so their
+            // arrival order is arbitrary between runs. The engine's schema order is PropertyLink
+            // order -- declaration order -- which for a packed byte is ascending bit position, so
+            // ties break on the field mask. Same ordering the SDK emitter already uses.
+            var ordered = ci.Fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolFieldMask).ToList();
+
+            // [USMAP-INHERITED-DUPES] The DLL prepends the ENTIRE SuperStruct chain, and this
+            // writer used to emit all of it AND the super pointer -- so every child repeated its
+            // ancestry and every own-property schema index was shifted by the size of it. A
+            // consumer decodes an unversioned cooked object BY SCHEMA INDEX over the chain, so it
+            // then landed on a different property. Core/PropertyOwnership holds the boundary rule,
+            // shared with the SDK header emitter so there is one copy of it.
+            var fields = ordered;
+            if (superReachable)
+            {
+                int ownStart = PropertyOwnership.OwnStartOffset(
+                    ci.SuperName, ci.SuperPropertiesSize, ci.OwnPropertiesStart,
+                    ordered.Count > 0 ? ordered[0].Offset : null);
+                fields = ordered.Where(f => f.Offset >= ownStart).ToList();
+            }
 
             // These two counts are NOT the same number. The first is the sum of every property's
             // ArrayDim -- a static array Foo[4] occupies four schema slots -- and the second is
             // how many property RECORDS follow. Writing Fields.Count for both makes a reader that
             // walks schema slots disagree with the records it is actually handed.
             int totalSlots = 0;
-            foreach (var f in ci.Fields) totalSlots += ArrayDimOf(f);
+            foreach (var f in fields) totalSlots += ArrayDimOf(f);
 
             w.Write((ushort)Math.Min(totalSlots, ushort.MaxValue));       // uint16: schema slot count
-            w.Write((ushort)Math.Min(ci.Fields.Count, ushort.MaxValue));  // uint16: record count
+            w.Write((ushort)Math.Min(fields.Count, ushort.MaxValue));     // uint16: record count
 
             int slot = 0;
-            foreach (var f in ci.Fields)
+            foreach (var f in fields)
             {
                 var dim = ArrayDimOf(f);
                 w.Write((ushort)Math.Min(slot, ushort.MaxValue)); // uint16: this property's schema index
