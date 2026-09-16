@@ -37,6 +37,7 @@ using CUE4Parse.FileProvider;
 using CUE4Parse.MappingsProvider.Usmap;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Versions;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 
 if (args.Length < 3)
@@ -111,11 +112,29 @@ var shared = a.Keys.Intersect(b.Keys).ToList();
 var differ = shared.Where(k => a[k] != b[k]).ToList();
 Console.WriteLine($"\nshared exports: {shared.Count}   IDENTICAL: {shared.Count - differ.Count}   " +
                   $"DIFFER: {differ.Count}");
+
+// A doubled enumerator prefix -- "EFoo::EFoo::Bar" against "EFoo::Bar" -- is the same VALUE
+// rendered differently, not a misread: it means one writer stored the member name fully
+// qualified and the other stored it bare, and the consumer qualifies it again. Report it
+// separately so a cosmetic difference is never counted as a misalignment.
+var doubled = new Regex(@"([A-Za-z_][A-Za-z0-9_]*)::\1::");
+string Collapse(string s) { string p; do { p = s; s = doubled.Replace(s, "$1::"); } while (s != p); return s; }
+var realDiffer = differ.Where(k => Collapse(a[k]) != Collapse(b[k])).ToList();
+Console.WriteLine($"   of those, differ ONLY by a doubled enumerator prefix: {differ.Count - realDiffer.Count}");
+Console.WriteLine($"   DIFFER for any other reason                        : {realDiffer.Count}");
+differ = realDiffer.Count > 0 ? realDiffer : differ;
+// Show the region AROUND the first difference, not the first 500 characters: two readings of the
+// same export usually agree for a long prefix, and a prefix dump then looks identical and says
+// nothing about what actually diverged.
 foreach (var k in differ.Take(8))
 {
-    Console.WriteLine($"\nDIFF {k}");
-    Console.WriteLine($"   A: {a[k][..Math.Min(500, a[k].Length)]}");
-    Console.WriteLine($"   B: {b[k][..Math.Min(500, b[k].Length)]}");
+    string x = a[k], y = b[k];
+    int i = 0;
+    while (i < x.Length && i < y.Length && x[i] == y[i]) i++;
+    int from = Math.Max(0, i - 80);
+    Console.WriteLine($"\nDIFF {k}   (first difference at char {i} of {x.Length}/{y.Length})");
+    Console.WriteLine($"   A: …{x[from..Math.Min(x.Length, i + 160)]}");
+    Console.WriteLine($"   B: …{y[from..Math.Min(y.Length, i + 160)]}");
 }
 return 0;
 
