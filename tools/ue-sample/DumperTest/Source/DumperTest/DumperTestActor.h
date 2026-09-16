@@ -749,10 +749,10 @@ public:
 	/// is `CPF_NonNullable`, which this is not.
 	UPROPERTY() TOptional<TObjectPtr<AActor>> Opt_Obj;
 
-	/// L12 step 2's host, for the day the zoo is ported to 5.8 (containers are intrusive from 5.5).
-	/// On 5.4 both are non-intrusive, which makes them a control rather than the subject.
-	UPROPERTY() TOptional<TArray<int32>> Opt_Arr_Set;
-	UPROPERTY() TOptional<TArray<int32>> Opt_Arr_Unset;
+	// ⛔ NO CONTAINER OPTIONAL HERE, and not by choice: UE 5.4's UHT REFUSES one outright —
+	// `TOptional<TArray<int32>>` fails with *"The type 'TArray<int32>' can not be used as a value
+	// in a TOptional"* (measured 2026-09-16, DumperTestActor.h:754). So L12 step 2 is not merely
+	// behaviourally 5.5+, it is UNDECLARABLE on 5.4, and that host has to come from the 5.8 port.
 
 	/// L29. Three deliberately DIFFERENT texts, so an element read at the wrong stride cannot
 	/// pass by looking plausible, plus one empty element as the `""`-is-not-unset control.

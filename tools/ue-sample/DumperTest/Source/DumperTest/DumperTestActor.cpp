@@ -386,10 +386,8 @@ void ADumperTestActor::BeginPlay()
 	Arr_Name.Add(FName(TEXT("NameCCC")));
 
 	// ---- L12 / L29 / L44 hosts (see the header banner) --------------------------------
-	// ⚠ Opt_Str_Unset, Opt_Arr_Unset and Arr_SoftClass[2] are seeded by NOT being touched.
+	// ⚠ Opt_Str_Unset and Arr_SoftClass[2] are seeded by NOT being touched.
 	// Writing them "empty" would destroy what they are for.
-	Opt_Arr_Set = TArray<int32>({ 41, 42, 43 });
-
 	Arr_Str.Reset();
 	Arr_Str.Add(TEXT("StrElemAlpha"));
 	Arr_Str.Add(TEXT("StrElemBetaBeta"));

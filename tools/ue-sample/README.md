@@ -552,10 +552,32 @@ accessor dereferences it. It only counts.
 |---|---|---|
 | `Opt_Str_Unset` | never assigned | **L12 step 3, the 5.4 half.** On 5.3/5.4 a string optional is **non-intrusive** (a trailing `bIsSet`), so a reader that trusts the build-530 sentinel arms reports this as a SET empty string. It must read `(unset)`, never `""` |
 | `Opt_Obj` | seeded to `LazyAnchors[0]` in BeginPlay | ⭐ **L12 step 1.** `TOptional<TObjectPtr<AActor>>`, non-intrusive unless `CPF_NonNullable`. Three states, and the two that discriminate are only reachable through the mutators: `Opt_ResetObject()` writes **no value bytes**, so a value-derived reader still publishes the old actor and a drillable stale pointer (it must read `(unset)` with no →), and `Opt_SetObjectNull()` is SET-and-null, which the same reader calls `(unset)` (it must read `(set: null)`). `Opt_SetObject()` returns to the start. **Step 4:** while reset, Find Refs to that actor must NOT hit this field; once set, the hit is back |
-| `Opt_Arr_Set` · `Opt_Arr_Unset` | `41` · `42` · `43`, and never assigned | **L12 step 2's host, for the 5.8 port.** Container optionals are intrusive only from **5.5**, so on 5.4 both are non-intrusive and serve as a control, not the subject |
+| *(no container optional)* | — | ⛔ **L12 step 2 has no 5.4 host at all, measured 2026-09-16:** UE 5.4's UHT REFUSES `TOptional<TArray<int32>>` as a UPROPERTY — *"The type 'TArray<int32>' can not be used as a value in a TOptional"*. The row's container half is therefore undeclarable here, not just behaviourally 5.5+; it waits for the 5.8 port |
 | `Arr_Str` | `StrElemAlpha` · `StrElemBetaBeta` · `StrElemGammaGammaGamma` · one EMPTY element | **L29** (`[W5-STRARRAY-ELEMENTS]`). Deliberately different lengths so an element read at the wrong stride cannot look plausible; the empty fourth element is the `""`-is-not-missing control. Live Walker must show each element's text (before B23b the drill showed the 16-byte header's hex with an empty value), and Export CSX must give each a Unicode String child |
 | `Arr_SoftClass` | `DumperTestHolder` · `DumperTestDerivedHolder` · default | **L44 step 2**, the `TSoftClassPtr` inner. The SDK header must spell the element type, not `uint8_t`. Element [2] is the `(none)` control |
 | `Arr_FieldPath` | paths to `TickCount` and `FrozenInt` | **L44 step 2**, the `TFieldPath` inner — two DIFFERENT properties, because one repeated name reads the same at a right and a wrong stride. `Arr_LazyPtr` and `Arr_Delegates` already cover the other two inner types the header declared as `uint8_t` |
+
+### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
+
+⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value
+is two places for them to drift. It carries only what 5.4 **cannot host**, measured rather than
+assumed: UE 5.4's UHT refuses `TOptional<TArray<int32>>` outright (*"The type 'TArray&lt;int32&gt;' can
+not be used as a value in a TOptional"*), and string / name optionals are **non-intrusive** before 5.5.
+Sources: `tools/ue-sample/DumperTest58/Source/DumperTest58/` (mirrored from `D:\Unreal Projects\DumperTest58`).
+
+⚠ The class is `ADumperTest58Actor`, spawned by `UDumperTest58Subsystem` into every game world, and it
+is **named differently from the 5.4 actor on purpose** — a session points the dumper at a class by
+name, and two `DumperTestActor`s on two engines is how a run reports the wrong fixture's values.
+
+| field | value | check |
+|---|---|---|
+| `Opt_Arr_Set` · `Opt_Arr_Unset` | `5801` · `5802` · `5803`, and never assigned | ⭐ **L12 step 2**, the case 5.4 cannot declare. Intrusive from 5.5: **no trailing flag**, so a walker reading `field + innerSize` reads the next property instead. Mutators `Opt_SetArray(N)` / `Opt_ResetArray()` move it at runtime |
+| `Opt_Arr_Neighbour` | `0x7F` | ⭐ **The neighbour that makes step 2 falsifiable.** A wrong walker reads this field's first byte as the optional's `bIsSet`; seeded non-zero, because with a zero neighbour a right and a wrong read of an unset optional agree |
+| `Opt_Str_Set` · `Opt_Str_Unset` | `Opt58StringPresent`, and never assigned | **L12 step 3 on 5.8** — the intrusive sentinel, where 5.4's copy is non-intrusive |
+| `Opt_Name_Set` · `Opt_Name_Unset` | `Opt58NamePresent`, and never assigned | Hosts for `[A2-TOPTIONAL-VALUESCAN]` and `[A2-SENTINEL-OVERREAD]`, both 5.5+: an intrusive optional whose value is **8 bytes** (12 under case-preserving names), not 16 |
+| `Opt_Struct_Set` · `Opt_Struct_Unset` | `Tag` `58001` with the actor in `Obj` and in `Objs`, and never assigned | `[A2-TOPTIONAL-STRUCT-DESCENT]` — a reset struct optional must report neither the pointer nor the array |
+| `Opt_Obj` + `Anchor` | seeded to `ADumperTest58Anchor` (`AnchorIndex` `58000`) | **L12 steps 1 and 4** on 5.8. Non-intrusive on every version. `Opt_SetObject()` / `Opt_ResetObject()` / `Opt_SetObjectNull()` reach the three states; `Reset()` writes no value bytes, and set-to-null is still *set* |
+| `FrameCountReflected` | counts Ticks | Liveness, as on 5.4: a frozen count separates "the fixture never spawned" from "the engine is not ticking" |
 
 ### Group Scan / Snapshot Mode B (temporal)
 

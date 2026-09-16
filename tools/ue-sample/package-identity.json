@@ -1,22 +1,22 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "be54a993",
-  "source_sha256": "616a0ccd17963a528d6b5921005f95f8227cb0e6849a1e48a868de1091056d62",
-  "captured_utc": "2026-09-15T05:12:35+00:00",
+  "source_commit": "d5d4e6e0",
+  "source_sha256": "1b6ab3f7b7b9a659841b138932b29cd84dfda6fbf3087dceffa89679bcf60aa4",
+  "captured_utc": "2026-09-16T03:12:21+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279284736,
-      "sha256": "aac0cde6f33fcab0fc27b135922ba9228ada0575995a5b227639160625498d0b",
+      "size": 279290880,
+      "sha256": "200a3830d0a6d9dc13971a2bf9b7dcd621d75d97c6fe6d49320f295333402671",
       "reflected_present": {
         "DumperTestActor": 7,
         "DumperTestSubsystem": 2,
         "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
         "Opt_Int_Unset": 1,
-        "FrozenInt": 2,
+        "FrozenInt": 3,
         "InvokeGate_TakeStructRef": 1,
         "InvokeGate_LastLabelData": 1
       },
@@ -25,19 +25,19 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-15T05:08:31+00:00"
+      "exe_mtime": "2026-09-16T03:11:37+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132359680,
-      "sha256": "160117adc19bdcacc6bdf5682c6d21d1e0a429b2baaa19e6dcb876d953e9dbbb",
+      "size": 132367360,
+      "sha256": "a159581739045f4857cb8b8363ff8d8da2c22e12e63edffef857c0f477496c62",
       "reflected_present": {
         "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
         "DumperTestPayload": 3,
         "Text_Even2_TwoNull": 1,
         "Opt_Int_Unset": 1,
-        "FrozenInt": 2,
+        "FrozenInt": 3,
         "InvokeGate_TakeStructRef": 1,
         "InvokeGate_LastLabelData": 1
       },
@@ -46,7 +46,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-15T05:06:43+00:00"
+      "exe_mtime": "2026-09-16T03:10:12+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
@@ -77,6 +77,6 @@
   ],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "616a0ccd17963a528d6b5921005f95f8227cb0e6849a1e48a868de1091056d62"
+    "source_sha256": "1b6ab3f7b7b9a659841b138932b29cd84dfda6fbf3087dceffa89679bcf60aa4"
   }
 }
