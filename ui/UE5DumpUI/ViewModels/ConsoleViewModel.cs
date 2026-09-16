@@ -474,13 +474,49 @@ public partial class ConsoleViewModel : ViewModelBase
             _stickyInstance.TryGetValue(entry.ClassName, out var pinnedAddr);
             bool usedPin = !string.IsNullOrEmpty(pinnedAddr);
 
-            var result = await _dump.InvokeFunctionAsync(
-                funcName: entry.FuncName,
-                instanceAddr: usedPin ? pinnedAddr : null,
-                className: entry.ClassName,
-                parmsSize: 0,
-                paramsHex: null,
-                directCall: false);
+            bool reResolved = false;
+            InvokeFunctionResult result;
+            try
+            {
+                result = await _dump.InvokeFunctionAsync(
+                    funcName: entry.FuncName,
+                    instanceAddr: usedPin ? pinnedAddr : null,
+                    className: entry.ClassName,
+                    parmsSize: 0,
+                    paramsHex: null,
+                    directCall: false);
+            }
+            catch (Exception ex) when (usedPin && ex is not OperationCanceledException)
+            {
+                // [CONSOLE-PIN-THROWS] A dead pin does NOT come back as a failed result, which is
+                // what the retry below was written to catch. The DLL reads the class from the
+                // instance (Fern.cpp:5530) and then the function from that class (:5537), and on
+                // freed-and-reused memory the class read SUCCEEDS with a garbage pointer while the
+                // lookup fails -- so :5539 answers `ok:false, "Function not found"`, and
+                // DumpService.CheckResponse THROWS. Control jumped straight to the catch below,
+                // `_stickyInstance.Remove` never ran, and the command stayed broken until the user
+                // pressed Load. Measured 2026-09-17 on DumperTest Development: a level change moved
+                // CheatManager, and SpawnServerStatReplicator then failed identically twice in a row
+                // while the same command succeeded immediately after a Load cleared the pin.
+                //
+                // ⭐ RETRYING HERE CANNOT RUN THE COMMAND TWICE, and that is not an assumption:
+                // EVERY `ok:false` in the invoke handler is returned at Fern.cpp:5508-5585, and the
+                // dispatch does not begin until :5718. An `ok:false` therefore always means the
+                // function was never dispatched. The queued case -- `ok:true` with result -5 -- is a
+                // RESULT, not a throw, and is still excluded by `!dispatchTimedOut` below.
+                _log.Info($"Console.Run: pinned invoke threw for {entry.ClassName}::{entry.FuncName} " +
+                          $"(pin {pinnedAddr}) — dropping the pin and re-resolving once: {ex.Message}");
+                _stickyInstance.Remove(entry.ClassName);
+                reResolved = true;
+                usedPin = false;
+                result = await _dump.InvokeFunctionAsync(
+                    funcName: entry.FuncName,
+                    instanceAddr: null,
+                    className: entry.ClassName,
+                    parmsSize: 0,
+                    paramsHex: null,
+                    directCall: false);
+            }
 
             // A pinned address can go stale (object freed, level change, pipe
             // reconnect). If the pinned call failed, drop the pin and retry
@@ -489,12 +525,16 @@ public partial class ConsoleViewModel : ViewModelBase
             //
             // [W3-CONSOLE-REINVOKE] EXCEPT on a dispatch timeout: the DLL leaves that request
             // QUEUED and it will still run, so a retry ran the command twice -- a stateful give /
-            // spawn / teleport, twice. A stale pin produces -2 / -4, never -5, so the self-heal
-            // still covers exactly the case it was written for; and the pin stays, because the
-            // queued call is on it.
+            // spawn / teleport, twice. The pin stays too, because the queued call is on it.
+            //
+            // ⚠ [CONSOLE-PIN-THROWS] This comment used to assert "a stale pin produces -2 / -4,
+            // never -5, so the self-heal still covers exactly the case it was written for". The
+            // first half is wrong and was measured wrong on 2026-09-17: a stale pin produces a
+            // THROWN "Function not found", not a result code at all, so this branch never saw it.
+            // That case is handled where the call is made, above; this branch remains for a failure
+            // the DLL does report as a result.
             bool dispatchTimedOut = result.Result == Constants.InvokeDispatchTimeoutResult;
-            bool reResolved = false;
-            if (!result.Success && usedPin && !dispatchTimedOut)
+            if (!reResolved && !result.Success && usedPin && !dispatchTimedOut)
             {
                 _stickyInstance.Remove(entry.ClassName);
                 reResolved = true;

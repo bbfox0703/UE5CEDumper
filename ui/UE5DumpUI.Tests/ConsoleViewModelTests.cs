@@ -45,6 +45,13 @@ public class ConsoleViewModelTests
         /// while still pinning on an earlier success.</summary>
         public Queue<InvokeFunctionResult>? InvokeResultQueue { get; set; }
 
+        /// <summary>[CONSOLE-PIN-THROWS] Per-call exceptions, dequeued BEFORE
+        /// <see cref="InvokeResultQueue"/>. A null entry means "do not throw on this call".
+        /// A dead pin does not come back as a failed result: DumpService.CheckResponse throws
+        /// on the DLL's `ok:false, "Function not found"`, so a fake that can only return
+        /// results cannot express the defect at all.</summary>
+        public Queue<Exception?>? InvokeThrowQueue { get; set; }
+
         // ── Debug Camera helper plumbing (logic now lives DLL-side; the VM
         //    is a thin bridge over these two pipe calls) ─────────────────
         public int NextDebugCameraState { get; set; }          // get_debug_camera_state
@@ -83,6 +90,8 @@ public class ConsoleViewModelTests
             LastInvokeParmsSize = parmsSize;
             LastInvokeInstanceAddr = instanceAddr;
             InstanceAddrHistory.Add(instanceAddr);
+            if (InvokeThrowQueue is { Count: > 0 } && InvokeThrowQueue.Dequeue() is { } boom)
+                throw boom;
             var result = (InvokeResultQueue is { Count: > 0 })
                 ? InvokeResultQueue.Dequeue()
                 : NextInvokeResult;
@@ -710,6 +719,101 @@ public class ConsoleViewModelTests
         Assert.Equal(3, fake.InvokeCallCount);
         Assert.Null(fake.InstanceAddrHistory[2]);                                 // the self-heal re-resolve
         Assert.DoesNotContain("queued", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StalePin_that_THROWS_still_self_heals()
+    {
+        // [CONSOLE-PIN-THROWS] The defect: a pin whose object is gone does not come back as a
+        // failed RESULT. The DLL reads the class from the instance and then the function from
+        // that class, and on freed-and-reused memory the class read succeeds with a garbage
+        // pointer while the lookup fails -- so it answers `ok:false, "Function not found"` and
+        // DumpService.CheckResponse THROWS. The retry was gated on `!result.Success`, so control
+        // jumped to the outer catch, the pin was never dropped, and the command stayed broken
+        // until the user pressed Load. Measured live on 2026-09-17.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeThrowQueue = new Queue<Exception?>(new Exception?[]
+            {
+                null,                                                            // 1st: pins
+                new InvalidOperationException("DLL error: Function not found: God"),  // 2nd: the dead pin
+                null,                                                            // 3rd: the re-resolve
+            }),
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0, Message = "OK", InstanceAddr = "0x1234" },
+                new InvokeFunctionResult { Result = 0, Message = "OK", InstanceAddr = "0x5678" },
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);   // pins 0x1234
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);   // pinned attempt throws -> re-resolve
+
+        Assert.Equal(3, fake.InvokeCallCount);
+        Assert.Equal("0x1234", fake.InstanceAddrHistory[1]);   // the pinned attempt really was pinned
+        Assert.Null(fake.InstanceAddrHistory[2]);              // ...and the retry dropped it
+        Assert.Contains("re-resolved", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("\u2713", vm.StatusText);                 // and it SUCCEEDED, not "failed:"
+    }
+
+    [Fact]
+    public async Task UnpinnedInvoke_that_throws_is_NOT_retried()
+    {
+        // ⭐ The control. The self-heal exists for a DEAD PIN, so a throw on a call that used no
+        // pin must not be retried -- otherwise every transport failure runs the command twice.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeThrowQueue = new Queue<Exception?>(new Exception?[]
+            {
+                new InvalidOperationException("DLL error: pipe closed"),
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, fake.InvokeCallCount);                 // exactly once
+        Assert.Null(fake.InstanceAddrHistory[0]);
+        Assert.Contains("failed", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StalePin_that_throws_TWICE_reports_the_failure_and_does_not_loop()
+    {
+        // ⭐ The other control: the re-resolve gets ONE attempt. If it throws too, the failure is
+        // reported -- it must not retry again, and it must not leave the pin in place.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeThrowQueue = new Queue<Exception?>(new Exception?[]
+            {
+                null,                                                            // pins
+                new InvalidOperationException("DLL error: Function not found: God"),
+                new InvalidOperationException("DLL error: No instance found for class: CheatManager"),
+            }),
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0, Message = "OK", InstanceAddr = "0x1234" },
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(3, fake.InvokeCallCount);                 // pin, dead-pin attempt, one retry
+        Assert.Contains("failed", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
