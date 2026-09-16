@@ -394,6 +394,20 @@ void ADumperTestActor::BeginPlay()
 	Arr_Str.Add(TEXT("StrElemGammaGammaGamma"));
 	Arr_Str.Add(FString());          // the empty-string control: "" is not "unset"
 
+	Arr_StrRows.Reset();
+	{
+		FDumperTestStrRow R0;
+		R0.Text = TEXT("RowStrAlpha");
+		R0.Num  = 5101;
+		R0.Note = FText::FromString(TEXT("RowNoteAlpha"));
+		FDumperTestStrRow R1;
+		R1.Text = TEXT("RowStrBetaBeta");
+		R1.Num  = 5102;
+		R1.Note = FText::FromString(TEXT("RowNoteBeta"));
+		Arr_StrRows.Add(MoveTemp(R0));
+		Arr_StrRows.Add(MoveTemp(R1));
+	}
+
 	Arr_SoftClass.Reset();
 	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestHolder::StaticClass()));
 	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestDerivedHolder::StaticClass()));
@@ -479,6 +493,13 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 			++ContestWrites;
 		}
 	}
+
+	// ⛔ [FIXTURE-FRAMECOUNT-DEAD], fixed 2026-09-16. This line did not exist, so the REFLECTED
+	// counter read 0 forever while the header said "Mirrored every Tick" and the README said
+	// "mirrors FrameCount each Tick" -- and it is Linie's cadence DENOMINATOR, so every cadence
+	// row that used it was dividing by zero. Measured on 5.4 Shipping: TickCount advanced 97 -> 100
+	// over 3 s while FrameCountReflected stayed 0. Keep the mirror next to the increment above.
+	FrameCountReflected = FrameCount;
 
 	EnsureHeartbeatHud();
 }

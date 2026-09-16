@@ -227,6 +227,27 @@ struct FDumperTestTuneBlock
 // Layout on x64: Head +0, Label +8 (16 bytes), Tail +24 -- 32 bytes, 8-aligned. Read the
 // offsets off the running game's param walk rather than trusting this line.
 // ============================================================
+// ============================================================
+// FDumperTestStrRow — a struct ARRAY ELEMENT with an FString MEMBER (live check L28).
+//
+// `[W5-CEXML-FSTRING]`'s fourth entrance is exactly this shape: a struct-array element's string
+// member, which the broken exporter turned into an empty placeholder folder. Nothing here had it —
+// FDumperTestStat carries FName / int32 / FText — and widening THAT struct would have moved every
+// offset the README quotes for `Arr_Struct`. A new type instead.
+//
+// ⚠ `Note` is an FText, so the same element also exercises the FText arm the fix folded in, and
+// `Num` is the control: a plain scalar beside the string members must still export as a value.
+// ============================================================
+USTRUCT(BlueprintType)
+struct FDumperTestStrRow
+{
+	GENERATED_BODY()
+
+	UPROPERTY() FString Text;
+	UPROPERTY() int32   Num = 0;
+	UPROPERTY() FText   Note;
+};
+
 USTRUCT(BlueprintType)
 struct FDumperTestInvokeProbe
 {

@@ -758,6 +758,11 @@ public:
 	/// pass by looking plausible, plus one empty element as the `""`-is-not-unset control.
 	UPROPERTY() TArray<FString> Arr_Str;
 
+	/// L28, the fourth entrance of `[W5-CEXML-FSTRING]`: a struct-ARRAY element with a string MEMBER,
+	/// which the broken exporter wrote as an empty placeholder folder. Two elements, so an element
+	/// read at the wrong stride shows the wrong text rather than the right one twice.
+	UPROPERTY() TArray<FDumperTestStrRow> Arr_StrRows;
+
 	/// L44 step 2. The two container inners the SDK header declared as `uint8_t` and that no other
 	/// field here supplies (`Arr_LazyPtr` and `Arr_Delegates` cover the other two).
 	UPROPERTY() TArray<TSoftClassPtr<AActor>> Arr_SoftClass;
