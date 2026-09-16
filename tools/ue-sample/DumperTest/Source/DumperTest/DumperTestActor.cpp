@@ -385,6 +385,31 @@ void ADumperTestActor::BeginPlay()
 	Arr_Name.Add(FName(TEXT("NameBB")));
 	Arr_Name.Add(FName(TEXT("NameCCC")));
 
+	// ---- L12 / L29 / L44 hosts (see the header banner) --------------------------------
+	// ⚠ Opt_Str_Unset, Opt_Arr_Unset and Arr_SoftClass[2] are seeded by NOT being touched.
+	// Writing them "empty" would destroy what they are for.
+	Opt_Arr_Set = TArray<int32>({ 41, 42, 43 });
+
+	Arr_Str.Reset();
+	Arr_Str.Add(TEXT("StrElemAlpha"));
+	Arr_Str.Add(TEXT("StrElemBetaBeta"));
+	Arr_Str.Add(TEXT("StrElemGammaGammaGamma"));
+	Arr_Str.Add(FString());          // the empty-string control: "" is not "unset"
+
+	Arr_SoftClass.Reset();
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestHolder::StaticClass()));
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestDerivedHolder::StaticClass()));
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>());   // the (none) control
+
+	Arr_FieldPath.Reset();
+	if (UClass* Self = GetClass())
+	{
+		// Two DIFFERENT properties: a field path read at the wrong stride would otherwise
+		// print the same name twice and look correct.
+		if (FProperty* P = Self->FindPropertyByName(TEXT("TickCount")))   { Arr_FieldPath.Add(TFieldPath<FProperty>(P)); }
+		if (FProperty* P = Self->FindPropertyByName(TEXT("FrozenInt")))   { Arr_FieldPath.Add(TFieldPath<FProperty>(P)); }
+	}
+
 	// ---- InvokeGate: publish the log path, and mark where this session's lines begin ----
 	// Absolute, because a Shipping package may resolve Saved\ under %LOCALAPPDATA% rather than
 	// beside the exe, and a harness that guesses wrong reads an empty file as "no call".
@@ -409,6 +434,9 @@ void ADumperTestActor::BeginPlay()
 			{
 				H->HolderIndex = 90000 + i;   // out of Spawn_Holders' range, so they never collide
 				LazyAnchors.Add(H);
+				// L12 step 1's starting state. Seeded HERE and not earlier: the optional must
+				// point at an actor that really exists, so Find Refs (step 4) has a live target.
+				if (!Opt_Obj.IsSet()) { Opt_Obj = TObjectPtr<AActor>(H); }
 				Arr_LazyPtr.Add(TLazyObjectPtr<AActor>(H));
 			}
 		}
@@ -999,6 +1027,31 @@ int32 ADumperTestActor::Hook_ReleaseTrampolineVM()
 	const int32 Freed = ReleaseReservedVm();
 	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] released %d reserved VM block(s)"), Freed);
 	return Freed;
+}
+
+// ============================================================
+// L12 — the object optional's three states. Mutators, not constructor states: Reset() and
+// set-to-null are exactly the two a value-derived reader gets wrong, and they have to be
+// reachable while the dumper is watching.
+// ============================================================
+void ADumperTestActor::Opt_SetObject()
+{
+	if (LazyAnchors.Num() > 0 && LazyAnchors[0])
+	{
+		Opt_Obj = TObjectPtr<AActor>(LazyAnchors[0]);
+	}
+}
+
+void ADumperTestActor::Opt_ResetObject()
+{
+	// ⭐ Writes NO bytes to the value. Only the trailing bIsSet flag changes.
+	Opt_Obj.Reset();
+}
+
+void ADumperTestActor::Opt_SetObjectNull()
+{
+	// SET, and null. A reader that derives "set" from the pointer calls this "(unset)".
+	Opt_Obj = TObjectPtr<AActor>(nullptr);
 }
 
 // ============================================================

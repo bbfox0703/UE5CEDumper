@@ -722,6 +722,60 @@ public:
 	UPROPERTY() int32 InvokeGate_LastLabelNum = -1;
 	UPROPERTY() int64 InvokeGate_LastLabelData = -1;
 
+	// ========================================================
+	// L12 / L29 / L44 hosts, added 2026-09-16. Three live checks had no subject here:
+	//
+	//  * `[A2-TOPTIONAL-INTRUSIVE]` (L12) needs a NON-INTRUSIVE optional whose state the walker has
+	//    to read from the trailing flag rather than from the value bytes. On 5.3/5.4 object AND
+	//    string optionals are non-intrusive (containers become intrusive only at 5.5), so the
+	//    object optional below is the 5.4 subject and `Opt_Str_Unset` closes the gap the row names
+	//    outright ("add Opt_Str_Unset if it is still missing").
+	//    ⭐ The discriminating states are the ones a WRONG walker gets wrong:
+	//    Reset() writes no bytes, so a value-derived reader still publishes the stale pointer; and a
+	//    set-to-null optional is "set", which a value-derived reader calls unset. Both are reachable
+	//    through the mutators below, never at construction only.
+	//  * `[W5-STRARRAY-ELEMENTS]` (L29) needs a `TArray<FString>`; there was none.
+	//  * `[P3-SDK-INNERS]` (L44) needs container inners of the four types the SDK header used to
+	//    declare as `uint8_t`. `Arr_LazyPtr` and `Arr_Delegates` already cover two; a soft CLASS
+	//    pointer and a field path did not exist here at all.
+	// ========================================================
+
+	/// L12 step 3, the 5.4 half. Deliberately LEFT UNSET: on 5.4 a string optional is non-intrusive,
+	/// so a reader that trusts the build-530 sentinel arms reads this as a SET empty string.
+	UPROPERTY() TOptional<FString> Opt_Str_Unset;
+
+	/// L12 step 1. Seeded in BeginPlay to the first `LazyAnchors` holder, and moved between the
+	/// three states by the mutators below. ⚠ An object optional is non-intrusive unless the property
+	/// is `CPF_NonNullable`, which this is not.
+	UPROPERTY() TOptional<TObjectPtr<AActor>> Opt_Obj;
+
+	/// L12 step 2's host, for the day the zoo is ported to 5.8 (containers are intrusive from 5.5).
+	/// On 5.4 both are non-intrusive, which makes them a control rather than the subject.
+	UPROPERTY() TOptional<TArray<int32>> Opt_Arr_Set;
+	UPROPERTY() TOptional<TArray<int32>> Opt_Arr_Unset;
+
+	/// L29. Three deliberately DIFFERENT texts, so an element read at the wrong stride cannot
+	/// pass by looking plausible, plus one empty element as the `""`-is-not-unset control.
+	UPROPERTY() TArray<FString> Arr_Str;
+
+	/// L44 step 2. The two container inners the SDK header declared as `uint8_t` and that no other
+	/// field here supplies (`Arr_LazyPtr` and `Arr_Delegates` cover the other two).
+	UPROPERTY() TArray<TSoftClassPtr<AActor>> Arr_SoftClass;
+	UPROPERTY() TArray<TFieldPath<FProperty>> Arr_FieldPath;
+
+	/// L12 step 1 — set the object optional to `LazyAnchors[0]`, the state the row starts from.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_SetObject();
+
+	/// L12 step 1 — `Reset()`. ⭐ Writes NO bytes, so a walker that derives "set" from the value
+	/// still sees the old pointer; that is the defect this state exists to expose.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_ResetObject();
+
+	/// L12 step 1 — set-but-NULL, which must read `(set: null)` and not `(unset)`.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_SetObjectNull();
+
 	/// The TArray host, by value. @return the array call count after this call.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
 	int32 InvokeGate_TakeIntArray(TArray<int32> Values);

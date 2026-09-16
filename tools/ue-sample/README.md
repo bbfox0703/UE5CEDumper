@@ -546,6 +546,17 @@ invoke dialog treats `out` params differently.
 ⛔ **`InvokeGate_TakeText` never reads its argument.** A zeroed `FText` has no `TextData`, and every
 accessor dereferences it. It only counts.
 
+### L12 / L29 / L44 hosts (2026-09-16) — a non-intrusive optional, a string array, two container inners
+
+| field | value | check |
+|---|---|---|
+| `Opt_Str_Unset` | never assigned | **L12 step 3, the 5.4 half.** On 5.3/5.4 a string optional is **non-intrusive** (a trailing `bIsSet`), so a reader that trusts the build-530 sentinel arms reports this as a SET empty string. It must read `(unset)`, never `""` |
+| `Opt_Obj` | seeded to `LazyAnchors[0]` in BeginPlay | ⭐ **L12 step 1.** `TOptional<TObjectPtr<AActor>>`, non-intrusive unless `CPF_NonNullable`. Three states, and the two that discriminate are only reachable through the mutators: `Opt_ResetObject()` writes **no value bytes**, so a value-derived reader still publishes the old actor and a drillable stale pointer (it must read `(unset)` with no →), and `Opt_SetObjectNull()` is SET-and-null, which the same reader calls `(unset)` (it must read `(set: null)`). `Opt_SetObject()` returns to the start. **Step 4:** while reset, Find Refs to that actor must NOT hit this field; once set, the hit is back |
+| `Opt_Arr_Set` · `Opt_Arr_Unset` | `41` · `42` · `43`, and never assigned | **L12 step 2's host, for the 5.8 port.** Container optionals are intrusive only from **5.5**, so on 5.4 both are non-intrusive and serve as a control, not the subject |
+| `Arr_Str` | `StrElemAlpha` · `StrElemBetaBeta` · `StrElemGammaGammaGamma` · one EMPTY element | **L29** (`[W5-STRARRAY-ELEMENTS]`). Deliberately different lengths so an element read at the wrong stride cannot look plausible; the empty fourth element is the `""`-is-not-missing control. Live Walker must show each element's text (before B23b the drill showed the 16-byte header's hex with an empty value), and Export CSX must give each a Unicode String child |
+| `Arr_SoftClass` | `DumperTestHolder` · `DumperTestDerivedHolder` · default | **L44 step 2**, the `TSoftClassPtr` inner. The SDK header must spell the element type, not `uint8_t`. Element [2] is the `(none)` control |
+| `Arr_FieldPath` | paths to `TickCount` and `FrozenInt` | **L44 step 2**, the `TFieldPath` inner — two DIFFERENT properties, because one repeated name reads the same at a right and a wrong stride. `Arr_LazyPtr` and `Arr_Delegates` already cover the other two inner types the header declared as `uint8_t` |
+
 ### Group Scan / Snapshot Mode B (temporal)
 
 A 1 Hz timer drives exactly the documented hard case — *groups need `Unchanged`*:
