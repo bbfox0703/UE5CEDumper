@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NOT part of any solution and NOT built by CI or build.ps1.
+
+    build.ps1 names ui/UE5DumpUI/UE5DumpUI.csproj and ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj
+    explicitly rather than globbing, and ui/UE5DumpUI.sln lists only those two, so this project
+    is invisible to `build.ps1 -Mode Publish` and to the CI job that runs it. Keep it that way:
+    it pulls a third-party NuGet package, and nothing a gate depends on may need a restore.
+
+    Build it by hand when a usmap row needs it; Program.cs's header carries the usage line
+    (an XML comment cannot contain a double hyphen, so it is not repeated here).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>usmap_probe</AssemblyName>
+    <RootNamespace>UsmapProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- CUE4Parse IS FModel's parsing engine; pinning the version matters, because
+         "checked in FModel" and "checked under CUE4Parse 1.2.2.202609" are not the
+         same claim. -->
+    <PackageReference Include="CUE4Parse" Version="1.2.2.202609" />
+  </ItemGroup>
+
+</Project>
