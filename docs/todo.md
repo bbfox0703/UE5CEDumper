@@ -9009,7 +9009,7 @@ red-before-green on a running game** — not a green test, a measured difference
 | **`[B30-REOPEN]`** 🔴 | ✅ **VERIFIED, before/after** | real CE tick on a serving pipe |
 | **`[SOLIDE-REFUSAL]`** 🟡 | ✅ **VERIFIED, before/after** | rebuilt DLLs, pre-fix vs post-fix |
 | **`[BADGEPRIME]`** 🟠 | ✅ **VERIFIED** | six badges, against phase 3's own before |
-| `[R3-SEETHRU]` 🟠 | 🟡 regression only | the hazard needs a command in flight |
+| `[R3-SEETHRU]` 🟠 | ✅ **VERIFIED 2026-09-10** (was 🟡 regression only) — corrected here 2026-09-17 | `567b9afc`, both arms measured; `verification-register.md`'s **FP3** has said CLOSED since that day and only THIS file was stale |
 | `[POSEATTACH]` 🟠 | ✅ **VERIFIED 2026-09-16** (was 🟡 control only) | the two conditions were MANUFACTURED, not waited for — see L27, L37 and L38 |
 | `[TPREL-ZEROPOSE]` 🟡 | ⬜ not reachable | needs the pawn/world to vanish mid-call |
 | `[B33-SPELLING]` 🟡 | ✅ implied | the serving branch resolved and fired (below) |
@@ -9109,8 +9109,7 @@ the Write tool, never a heredoc — that is now a habit to keep, not a lesson to
   `[W2-TPREL-TRANSPORTS]` + `[W2-MARKER-PARENTREL]` (mailbox half) and verified live in L38, where
   the Save / BugIt / Get-current-coords records each printed the PARENT-RELATIVE warning.
 - **`[TPREL-ZEROPOSE]`** — needs the pawn or world to vanish **inside one locked call**.
-- **`[R3-SEETHRU]`** — the hazard needs another command in flight at the instant of the untick.
-  What was checked is that See-through still reads cleanly after its code moved.
+- ~~**`[R3-SEETHRU]`** — the hazard needs another command in flight at the instant of the untick.~~ ✅ **SUPERSEDED — it was verified on 2026-09-10, `567b9afc` (`[FP3-SEETHRU-UNTICK-2026-09-10]`), and `docs/verification-register.md`'s FP3 row has said CLOSED ever since. Only this file was never updated; found 2026-09-17 while preparing to re-run it.** ⭐ **The vacuity trap shaped that rig, which is why it is worth reading before designing anything similar:** unticking against an IDLE mailbox proves nothing — the wait exits on its first read and looks exactly like having no wait at all — so the busy state was MANUFACTURED (write a sentinel `cmd`, then SUSPEND the game so Mimic's poller cannot clear it) rather than raced. Measured on both arms with the shipped emitter's own text: **pre-fix (0fac36e9^, rebuilt) wrote `cmd = 14` straight over the command in flight and cleared status too; post-fix left the sentinel `cmd = 999` and `status = 255` UNTOUCHED** and the Lua said *"the mailbox is busy"*. Three independent signals agreed on each side, and the read-back showed `status = 255 = STATUS_PROCESSING` — so the mailbox was genuinely MID-DISPATCH, not merely non-zero. ⬜ **The ONE half that run did NOT prove, in its own words, and it is still open:** the Add-to-CE button needs the AOBMaker plugin (offline that day), so the chunk was pasted into CE's Lua Engine rather than run from a real memory record — **`memrec` was nil there, so the deferred-untick tail was inert**. The block's MAILBOX DISCIPLINE is proven; **CE's record bookkeeping around it is not**. That is the only thing a re-run should target, and it needs the AOBMaker bridge online.
 
 ⭐ **FILED 2026-09-10 as `verification-register.md`'s FP1 / FP2 / FP3** — a new `### ⬜` batch
 (open batch headings 8 → 9, both pinned copies updated from the tree). Each row names the
