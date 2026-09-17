@@ -1,15 +1,15 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "8c54998c",
-  "source_sha256": "5465064b00b92d4dde70bcadcb9b50f77f1099ac68c4bb584b7e977e5431938a",
-  "captured_utc": "2026-09-17T01:47:46+00:00",
+  "source_commit": "ff45c8bf",
+  "source_sha256": "74d1b89267c981f1b55f643648b561f01cc8561c3129875d1f6580c0f64e9e5a",
+  "captured_utc": "2026-09-17T01:58:13+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
       "size": 279297024,
-      "sha256": "c63758622d9c968daa5f120c121063aaeb0e9cd302462b2ae0b53b721154e7a3",
+      "sha256": "a07e2d7cf8e70097542c72f071a7911fe9a218895caaa8bae125fb2706235590",
       "reflected_present": {
         "DumperTestActor": 7,
         "DumperTestSubsystem": 2,
@@ -25,12 +25,12 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-17T01:37:51+00:00"
+      "exe_mtime": "2026-09-17T01:56:10+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132362240,
-      "sha256": "808b217b3383f1a7f4e3a1b960e405fdd337b278860db9c44dbbcd9b496400fb",
+      "size": 132365824,
+      "sha256": "cea15efbb2936e6038aa21de821d701854649a375180de3f5b46eb161539757c",
       "reflected_present": {
         "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
@@ -46,37 +46,33 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-17T01:47:14+00:00"
+      "exe_mtime": "2026-09-17T01:55:16+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
-      "size": 279420928,
-      "sha256": "de0d8f49a48298b94cdfea2edcea08b48c72174035ffa11a39097926a5c344be",
+      "size": 279476224,
+      "sha256": "b79dcba09749b7592af4436000f988e0aaef9a2bcdc8942ceb7163ec6b3e5b90",
       "reflected_present": {
-        "DumperTestActor": 6,
+        "DumperTestActor": 11,
         "DumperTestSubsystem": 3,
         "DumperTestPayload": 5,
         "Text_Even2_TwoNull": 1,
         "Opt_Int_Unset": 2,
-        "FrozenInt": 2,
-        "InvokeGate_TakeStructRef": 0,
-        "InvokeGate_LastLabelData": 0
+        "FrozenInt": 3,
+        "InvokeGate_TakeStructRef": 3,
+        "InvokeGate_LastLabelData": 1
       },
       "raw_absent": {
         "RawInt": 0,
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-07T05:49:42+00:00"
+      "exe_mtime": "2026-09-17T01:57:41+00:00"
     }
   },
-  "problems": [
-    "STALE BINARY: DebugGame was built before 'DumperTest.rc' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it",
-    "DebugGame: reflected name 'InvokeGate_TakeStructRef' is MISSING from the binary",
-    "DebugGame: reflected name 'InvokeGate_LastLabelData' is MISSING from the binary"
-  ],
+  "problems": [],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "5465064b00b92d4dde70bcadcb9b50f77f1099ac68c4bb584b7e977e5431938a"
+    "source_sha256": "74d1b89267c981f1b55f643648b561f01cc8561c3129875d1f6580c0f64e9e5a"
   }
 }
