@@ -3,6 +3,7 @@ r"""Controlled single-variable rewrites of a USMAP, so a consumer can be A/B'd a
     py tools/verify/usmap_rewrite.py identity  <in.usmap> <out.usmap>
     py tools/verify/usmap_rewrite.py degrade   <in.usmap> <out.usmap>
     py tools/verify/usmap_rewrite.py flipwidth <in.usmap> <out.usmap>
+    py tools/verify/usmap_rewrite.py bytewidth <in.usmap> <out.usmap>
     py tools/verify/usmap_rewrite.py promote   <in.usmap> <out.usmap> --truth <truth.usmap>
 
 ⛔ NOT A GATE, and no path has a default -- see `usmap_reader.py`'s header for why.
@@ -36,6 +37,17 @@ THE MODES, and what each one is for
              `Enum != nullptr`, so the declared width should change nothing. Measured
              2026-09-16 on a commercial title: flipping all 535 inner widths changed 0 of
              3,003 exports, over the very same packages where `degrade` changed 3.
+  bytewidth  every TOP-LEVEL `EnumProperty`'s declared underlying width becomes Byte, and
+             nothing else moves -- not the type, not the enum name, not one container
+             inner. That is exactly the pre-`[A4-USMAP-ENUM-UNDERLYING]` shape: the old
+             writer emitted Byte for EVERY enum slot, a single bucket over all 3,704 of
+             them, which no correct writer can produce. ⭐ It is the only mode aimed at
+             L30; `degrade` and `flipwidth` both touch CONTAINER INNERS, which is L39's
+             variable, and using one for the other's row measures the wrong thing.
+             ⚠ A 1-byte enum is ALREADY `under=Byte`, so this mode is a no-op on it --
+             which is the same fact that makes a `TEnumAsByte` witness useless for L30.
+             If `descriptors changed` comes back 0, the mapping has no wide enum and the
+             A/B below would be vacuous.
   promote    the inverse of `degrade`, driven by a second mapping: a bare ByteProperty inner
              is promoted to `[26][0][E]` when the truth mapping names that same
              `Struct.Prop` as an enum inner. Use it to ask whether a PRE-fix mapping actually
@@ -108,6 +120,10 @@ def rewrite(src, dst, mode, truth=None):
             idx = p.i32()
             if not inner:
                 stats["toplevel_enums"] += 1
+                if mode == "bytewidth" and under != BYTE:
+                    out.append(bytes([T_ENUM, BYTE]) + struct.pack("<i", idx))
+                    stats["changed"] += 1
+                    return
                 out.append(p.b[start:p.i])
                 return
             if mode == "degrade":
@@ -177,7 +193,9 @@ def rewrite(src, dst, mode, truth=None):
     print("   descriptors changed        : %d" % stats["changed"])
     if mode == "promote":
         print("   skipped, name not in table : %d" % stats["skipped_no_name"])
-    print("   top-level enums untouched  : %d" % stats["toplevel_enums"])
+    print("   top-level enums %s: %d"
+          % ("seen           " if mode == "bytewidth" else "untouched  ",
+             stats["toplevel_enums"]))
     print("   payload %d -> %d bytes%s"
           % (len(body), len(payload),
              "   (identity: these MUST be equal)" if mode == "identity" else ""))
@@ -186,7 +204,7 @@ def rewrite(src, dst, mode, truth=None):
 
 
 def main():
-    if len(sys.argv) < 4 or sys.argv[1] not in ("identity", "degrade", "flipwidth", "promote"):
+    if len(sys.argv) < 4 or sys.argv[1] not in ("identity", "degrade", "flipwidth", "bytewidth", "promote"):
         raise SystemExit(__doc__)
     mode, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
     truth = None

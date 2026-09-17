@@ -74,7 +74,7 @@ def parse_constants():
     """AfterWideEnum / AfterLanes out of DumperTestTypes.h, plus the enumerator names."""
     text = open(TYPES_H, encoding="utf-8-sig").read()
     out = {}
-    for name in ("AfterWideEnum", "AfterLanes"):
+    for name in ("AfterWideEnum", "AfterLanes", "AfterRawBytes"):
         m = re.search(r"constexpr\s+int32\s+%s\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*;" % name, text)
         if not m:
             raise SystemExit("make_usmap_probe: %s is not declared in DumperTestTypes.h -- the "
@@ -124,6 +124,10 @@ WIDE = unreal.DumperTestWideGrade.%(wide)s
 LANES = [%(lanes)s]
 AFTER_WIDE = %(after_wide)d
 AFTER_LANES = %(after_lanes)d
+# The CONTROL holds the same three bytes as the lanes -- see DumperTestActor.h.
+# ⚠ `.value`, not int(): an unreal enum value is not a real number to Python.
+RAW_BYTES = [l.value for l in LANES]
+AFTER_RAW = %(after_raw)d
 VERIFY_ONLY = %(verify_only)s
 
 
@@ -154,6 +158,8 @@ if not VERIFY_ONLY:
     cdo.set_editor_property("probe_after_wide_enum", AFTER_WIDE)
     cdo.set_editor_property("probe_lanes", LANES)
     cdo.set_editor_property("probe_after_lanes", AFTER_LANES)
+    cdo.set_editor_property("probe_raw_bytes", RAW_BYTES)
+    cdo.set_editor_property("probe_after_raw_bytes", AFTER_RAW)
 
     unreal.BlueprintEditorLibrary.compile_blueprint(bp)
     saved = unreal.EditorAssetLibrary.save_asset(FULL, only_if_is_dirty=False)
@@ -169,6 +175,8 @@ else:
     got_after_wide = cdo.get_editor_property("probe_after_wide_enum")
     got_lanes = list(cdo.get_editor_property("probe_lanes"))
     got_after_lanes = cdo.get_editor_property("probe_after_lanes")
+    got_raw = [int(b) for b in cdo.get_editor_property("probe_raw_bytes")]
+    got_after_raw = cdo.get_editor_property("probe_after_raw_bytes")
 
     say("class      :", bp.generated_class().get_name())
     # ⚠ NEITHER `Class.get_super_class()` NOR `Blueprint.parent_class` exists -- both
@@ -181,9 +189,12 @@ else:
     say("after_wide : 0x%%08X" %% int(got_after_wide), "want 0x%%08X" %% AFTER_WIDE)
     say("lanes      :", got_lanes, "want", LANES)
     say("after_lanes: 0x%%08X" %% int(got_after_lanes), "want 0x%%08X" %% AFTER_LANES)
+    say("raw_bytes  :", got_raw, "want", RAW_BYTES)
+    say("after_raw  : 0x%%08X" %% int(got_after_raw), "want 0x%%08X" %% AFTER_RAW)
 
     ok = (is_child and got_wide == WIDE and int(got_after_wide) == AFTER_WIDE
-          and got_lanes == LANES and int(got_after_lanes) == AFTER_LANES)
+          and got_lanes == LANES and int(got_after_lanes) == AFTER_LANES
+          and got_raw == RAW_BYTES and int(got_after_raw) == AFTER_RAW)
     say("VERDICT:", "OK" if ok else "MISMATCH")
 '''
 
@@ -207,8 +218,8 @@ def main():
             raise SystemExit("make_usmap_probe: not found: %s" % p)
 
     consts = parse_constants()
-    print("contract   : AfterWideEnum=0x%08X  AfterLanes=0x%08X"
-          % (consts["AfterWideEnum"], consts["AfterLanes"]))
+    print("contract   : AfterWideEnum=0x%08X  AfterLanes=0x%08X  AfterRawBytes=0x%08X"
+          % (consts["AfterWideEnum"], consts["AfterLanes"], consts["AfterRawBytes"]))
     print("            (parsed from DumperTestTypes.h, not spelled in this script)")
 
     if not args.verify_only:
@@ -221,6 +232,7 @@ def main():
         "lanes": ", ".join("unreal.DumperTestLane.%s" % m.upper() for m in LANE_MEMBERS),
         "after_wide": consts["AfterWideEnum"],
         "after_lanes": consts["AfterLanes"],
+        "after_raw": consts["AfterRawBytes"],
         "verify_only": "True" if args.verify_only else "False",
     }
     tmpdir = tempfile.mkdtemp(prefix="usmap_probe_")

@@ -1,8 +1,8 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "f58c1193",
+  "source_commit": "8c54998c",
   "source_sha256": "5465064b00b92d4dde70bcadcb9b50f77f1099ac68c4bb584b7e977e5431938a",
-  "captured_utc": "2026-09-17T01:39:48+00:00",
+  "captured_utc": "2026-09-17T01:47:46+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
@@ -29,8 +29,8 @@
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132359168,
-      "sha256": "08d29fd75299717fdfc1bb6d0cb00676bbd057d27a0db1abce26c3c56af5c9bc",
+      "size": 132362240,
+      "sha256": "808b217b3383f1a7f4e3a1b960e405fdd337b278860db9c44dbbcd9b496400fb",
       "reflected_present": {
         "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
@@ -46,7 +46,7 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-09-16T03:53:13+00:00"
+      "exe_mtime": "2026-09-17T01:47:14+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
@@ -71,10 +71,12 @@
     }
   },
   "problems": [
+    "STALE BINARY: DebugGame was built before 'DumperTest.rc' was last edited in <PROJECT>\\Source\\DumperTest -- re-package before trusting any value from it",
     "DebugGame: reflected name 'InvokeGate_TakeStructRef' is MISSING from the binary",
     "DebugGame: reflected name 'InvokeGate_LastLabelData' is MISSING from the binary"
   ],
-  "checks_skipped": [
-    "freshness (mtime) check skipped: pass --project <the UE project this package was built from> to enable it. The repo working tree cannot stand in -- git stamps checkout time, not edit time."
-  ]
+  "built_from": {
+    "path": "<PROJECT>\\Source\\DumperTest",
+    "source_sha256": "5465064b00b92d4dde70bcadcb9b50f77f1099ac68c4bb584b7e977e5431938a"
+  }
 }

@@ -818,6 +818,24 @@ public:
 	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
 	int32 Probe_AfterLanes = 0;
 
+	/// ⭐ L39 step 3's CONTROL -- *"a plain TArray<uint8> stays a byte array"* -- and it
+	/// deliberately holds the SAME three byte values as Probe_Lanes. Identical bytes,
+	/// different declared inner type, one object: a consumer that renders one as
+	/// enumerator NAMES and the other as NUMBERS is reading the descriptor and nothing
+	/// else. Without the co-location, "the elements show names" is also what a consumer
+	/// that name-renders EVERY byte array would print.
+	///
+	/// ⚠ The two do not occupy the same number of bytes in a cooked package and must not
+	/// be expected to: `CanBulkSerialize()` is FALSE for a ByteProperty carrying an Enum,
+	/// so the lanes go through SerializeItem one FName at a time while these three are
+	/// bulk-written raw. That asymmetry IS the misalignment the row is about.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	TArray<uint8> Probe_RawBytes;
+
+	/// The control's own alignment witness, for Probe_AfterWideEnum's reason.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterRawBytes = 0;
+
 	/// L12 step 1 — set the object optional to `LazyAnchors[0]`, the state the row starts from.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
 	void Opt_SetObject();

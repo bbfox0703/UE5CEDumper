@@ -1,7 +1,12 @@
 // Parse the SAME cooked assets under TWO .usmap mappings and diff every property reading.
 //
 //   dotnet run -c Release --project tools/verify/usmap_probe -- \
-//       <paks-dir> <a.usmap> <b.usmap> [maxExports] [pathFilter] [EGame]
+//       <paks-dir> <a.usmap> <b.usmap> [maxExports] [pathFilter] [EGame] [showKey]
+//
+// `showKey` prints the actual JSON READING of every export whose key contains it, under
+// both mappings. Agreement is not the whole question: L30 and L39 ask what a consumer
+// READS -- "the elements show enum NAMES", "the property after it stays aligned" -- and
+// two mappings can agree on a wrong answer.
 //
 // ⛔ NOT A GATE, and every path is an argument with no default. The inputs are a game's
 // cooked content and two exports under the gitignored out/ -- none of it is in the repo, so a
@@ -43,7 +48,7 @@ using Newtonsoft.Json;
 if (args.Length < 3)
 {
     Console.Error.WriteLine(
-        "usage: usmap_probe <paks-dir> <a.usmap> <b.usmap> [maxExports] [pathFilter] [EGame]");
+        "usage: usmap_probe <paks-dir> <a.usmap> <b.usmap> [maxExports] [pathFilter] [EGame] [showKey]");
     return 2;
 }
 
@@ -55,6 +60,7 @@ string filter = args.Length > 4 ? args[4] : "";
 EGame game = args.Length > 5 && Enum.TryParse<EGame>(args[5], out var parsed)
     ? parsed
     : EGame.GAME_UE5_4;
+string show = args.Length > 6 ? args[6] : "";
 
 Dictionary<string, string> Run(string usmap, out Stats st)
 {
@@ -108,6 +114,19 @@ if (sa.Unversioned == 0 && sa.Ok > 0)
     Console.WriteLine("\n*** NO package carries PKG_UnversionedProperties -- this cook is VERSIONED, " +
                       "the .usmap is never consulted, and any agreement below is meaningless. ***");
 
+// ⛔ A KEY IN ONLY ONE SIDE IS NOT A NON-EVENT. The intersection below silently drops
+// every export that threw under one mapping and parsed under the other -- which is the
+// LOUDEST failure a wrong descriptor can produce -- and the run then reports DIFFER: 0.
+var onlyA = a.Keys.Except(b.Keys).ToList();
+var onlyB = b.Keys.Except(a.Keys).ToList();
+if (onlyA.Count > 0 || onlyB.Count > 0)
+{
+    Console.WriteLine($"\n*** exports produced by ONLY ONE mapping: A-only={onlyA.Count} " +
+                      $"B-only={onlyB.Count} -- these are NOT in the diff below ***");
+    foreach (var k in onlyA.Take(5)) Console.WriteLine($"   A-only: {k}");
+    foreach (var k in onlyB.Take(5)) Console.WriteLine($"   B-only: {k}");
+}
+
 var shared = a.Keys.Intersect(b.Keys).ToList();
 var differ = shared.Where(k => a[k] != b[k]).ToList();
 Console.WriteLine($"\nshared exports: {shared.Count}   IDENTICAL: {shared.Count - differ.Count}   " +
@@ -136,6 +155,26 @@ foreach (var k in differ.Take(8))
     Console.WriteLine($"   A: …{x[from..Math.Min(x.Length, i + 160)]}");
     Console.WriteLine($"   B: …{y[from..Math.Min(y.Length, i + 160)]}");
 }
+if (show.Length > 0)
+{
+    var keys = a.Keys.Union(b.Keys)
+                .Where(k => k.Contains(show, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(k => k).ToList();
+    Console.WriteLine($"\n=== readings for keys containing '{show}': {keys.Count} ===");
+    foreach (var k in keys.Take(20))
+    {
+        Console.WriteLine($"\n{k}");
+        Console.WriteLine($"   A: {(a.TryGetValue(k, out var av) ? av : "<absent: the " +
+                                    "package did not parse under A>")}");
+        if (!b.TryGetValue(k, out var bv))
+            Console.WriteLine("   B: <absent: the package did not parse under B>");
+        else if (a.TryGetValue(k, out var av2) && av2 == bv)
+            Console.WriteLine("   B: (identical)");
+        else
+            Console.WriteLine($"   B: {bv}");
+    }
+}
+
 return 0;
 
 struct Stats

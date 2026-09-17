@@ -85,6 +85,10 @@ namespace DumperTestUsmapProbe
 	/// from the one above on purpose -- equal guards could mask a shift from one onto the
 	/// other.
 	inline constexpr int32 AfterLanes = 0x44556677;
+
+	/// The int32 after the CONTROL array. Three distinct guards, so a shift from any one
+	/// onto any other cannot look like a correct read.
+	inline constexpr int32 AfterRawBytes = 0x778899AA;
 }
 
 /// Two-float struct in the shape of a GAS `FGameplayAttributeData`
