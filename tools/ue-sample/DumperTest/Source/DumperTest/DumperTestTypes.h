@@ -43,6 +43,50 @@ enum class EDumperTestWideGrade : int32
 	Wide_High   = 0x007F0000,   // byte 2 set, so a 2-byte mis-width is caught too
 };
 
+/// L39 -- the element type of `Probe_Lanes`, the `TArray<TEnumAsByte<E>>` this zoo had
+/// nowhere. Three things about it are forced:
+///   * a RAW `enum`, not `enum class`. `TEnumAsByte<>` only accepts an unscoped enum, and
+///     an unscoped UENUM is also what makes a UEnum store its members UNPREFIXED
+///     (`Lane_Left`, not `EDumperTestLane::Lane_Left`) -- so this doubles as the control
+///     arm for `[USMAP-ENUM-NAME-QUALIFIED]`, whose fix strips the prefix a SCOPED enum
+///     carries. EDumperTestWideGrade above is the scoped half of that pair.
+///   * `: int` explicitly. UE 5.4 UHT wants an underlying type spelled out, and `int` is
+///     what the engine's own TEnumAsByte hosts use (`ECollisionChannel`).
+///   * every value <= 255. `TEnumAsByte` stores ONE byte; a larger enumerator would be
+///     silently truncated and the fixture would document a value it does not hold.
+/// Values are non-contiguous and non-sorted so an element read at the wrong stride cannot
+/// land on a plausible-looking neighbour.
+UENUM()
+enum EDumperTestLane : int
+{
+	Lane_None   = 0,
+	Lane_Left   = 11,
+	Lane_Center = 33,
+	Lane_Right  = 22,
+};
+
+/// L30 + L39 -- the values BP_UsmapProbe's CDO must carry, as CODE rather than as prose.
+///
+/// ⛔ They are NOT the actor's constructor defaults, and cannot be: unversioned property
+/// serialization writes only what differs from the archetype, so a probe seeded to the
+/// same value in C++ would be ABSENT from the cooked stream and both mappings would
+/// "agree" on nothing at all. The constructor leaves the probes quiet; the ASSET is loud.
+///
+/// Declaring them here rather than in the authoring script gives the three readers that
+/// must not drift -- the asset, README.md's table and check_ue_sample_values.py -- one
+/// source of truth. tools/ue-sample/make_usmap_probe.py parses these two lines.
+namespace DumperTestUsmapProbe
+{
+	/// The int32 declared immediately AFTER the 4-byte enum. Its whole job is to be read
+	/// at the wrong offset when the enum's width is described wrongly.
+	inline constexpr int32 AfterWideEnum = 0x11223344;
+
+	/// The int32 declared immediately AFTER the TEnumAsByte array. A DIFFERENT constant
+	/// from the one above on purpose -- equal guards could mask a shift from one onto the
+	/// other.
+	inline constexpr int32 AfterLanes = 0x44556677;
+}
+
 /// Two-float struct in the shape of a GAS `FGameplayAttributeData`
 /// (BaseValue / CurrentValue). Exists for the nested-StructProperty capture and
 /// the "Flatten GAS attributes" CE-export toggle, which special-cases exactly

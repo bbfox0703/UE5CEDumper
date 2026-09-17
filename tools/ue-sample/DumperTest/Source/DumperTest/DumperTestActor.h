@@ -768,6 +768,56 @@ public:
 	UPROPERTY() TArray<TSoftClassPtr<AActor>> Arr_SoftClass;
 	UPROPERTY() TArray<TFieldPath<FProperty>> Arr_FieldPath;
 
+	// ========================================================
+	// L30 + L39 -- THE COOKED-WITNESS PROBE.
+	//
+	// Both rows need the same thing and neither could get it: a COOKED .uasset whose
+	// object carries a non-1-byte enum (L30) and a TArray<TEnumAsByte<E>> (L39). Every
+	// such property this fixture already had is unreachable from an asset -- ADumperTestActor
+	// is SPAWNED at runtime (DumperTestSubsystem.cpp), never placed, so nothing it owns is
+	// ever written into a package. These four exist to be overridden on the CDO of a
+	// Blueprint SUBCLASS, which IS cooked (Content/UsmapProbe/BP_UsmapProbe).
+	//
+	// ⛔ EditAnywhere is not decoration -- it is the whole mechanism. A specifier-less
+	//   UPROPERTY cannot be set on a Blueprint's Class Defaults, nor by Python's
+	//   set_editor_property, so the probe would cook with the native defaults and write
+	//   NOTHING. (And do not spell that empty macro out in a comment here: 
+	//   check_ue_sample_values.py's UPROPERTY regex is [^;]+ and swallowed the next 12
+	//   lines, reporting a field called 'rows' from the prose below.)
+	//
+	// ⛔⛔ THE DEFAULTS BELOW ARE THE BORING HALF ON PURPOSE. Unversioned property
+	//   serialization writes only what DIFFERS from the archetype, so a probe left at its
+	//   CDO value is ABSENT from the cooked stream entirely -- and two mappings then
+	//   "agree" on an empty stream, which is the false pass this whole exercise exists to
+	//   avoid. The asset must set all four to the loud values in README.md.
+	//
+	// ⛔ WideGrade / WideGuard are deliberately NOT reused. Their flags and values are
+	//   pinned by README.md and by Y15's live rows; a probe must not move a documented one.
+	// ========================================================
+
+	/// L30 -- the 4-byte enum a cooked asset can carry. `Wide_High` (0x007F0000) is the
+	/// loud value because BYTE 2 is set: a 1-byte misread AND a 2-byte one both lose it,
+	/// where Wide_Base/Wide_Target were designed to share a low byte and would not.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	EDumperTestWideGrade Probe_WideEnum = EDumperTestWideGrade::Wide_Zero;
+
+	/// L30's ALIGNMENT witness, and the reason the row is not vacuous. It is declared
+	/// IMMEDIATELY after the enum, so a consumer that reads the enum at the wrong width
+	/// starts this read at the wrong offset and cannot return 0x11223344.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterWideEnum = 0;
+
+	/// L39 -- the `TArray<TEnumAsByte<E>>` itself. Three elements, unsorted and distinct,
+	/// so a wrong-stride read cannot produce the right sequence by luck.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	TArray<TEnumAsByte<EDumperTestLane>> Probe_Lanes;
+
+	/// L39's ALIGNMENT witness, for Probe_AfterWideEnum's reason. A different constant
+	/// from that one on purpose: if a misread shifted one guard onto the other's bytes,
+	/// equal guards would hide it.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterLanes = 0;
+
 	/// L12 step 1 — set the object optional to `LazyAnchors[0]`, the state the row starts from.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
 	void Opt_SetObject();
