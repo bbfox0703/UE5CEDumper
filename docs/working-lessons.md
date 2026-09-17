@@ -670,6 +670,22 @@ costs one wasted session; a stale pointer at the entry point costs every session
 notices.** Fixing a pointer file is therefore worth more per line than fixing the register, and it
 is the one place where a status line is worth duplicating — with its tag, so it can be re-derived.
 
+#### 1.ab-3 ⭐ A CAVEAT INSIDE A SECTION IS OFTEN CLOSED BY THE **NEXT HEADING** — read to the end of the section
+
+Added 2026-09-17. The two rules above are about searching the WHOLE TREE. This one is the opposite failure and it is cheaper to commit: I searched correctly, opened the right file, read the right section — **and stopped at a paragraph inside it.**
+
+`[R3-SEETHRU]` / register **FP3**. Its closure block ends with an honest caveat: *“Add to CE needs the AOBMaker plugin, which was offline, so the chunk was pasted into CE's Lua Engine — `memrec` is nil there, so the deferred-untick tail was inert… A run through a real ticked record would close that last inch.”* I read that, believed the row had an open half, corrected `docs/todo.md` to say so, and started staging a live run to bring the AOBMaker bridge up. **The very next line of the file is `##### ✅ FP3's LAST INCH CLOSED 2026-09-10 — the REAL untick, through a pushed CE record`**, and it also retracts the “plugin was offline” reading twice over (the plugin was installed and enabled; the UI said *Offline* because **Cheat Engine was not running**, and a follow-up probe's `err 3` was a shell eating a backslash in `py -c`).
+
+⭐ **Why this shape is specific to these documents, and so worth naming:** a good verification record states what it did NOT prove, in its own words, near the end. That paragraph reads exactly like an open item — and the follow-up run that closes it is appended AFTER it, as a deeper heading, because these files are append-only in spirit. **So the most quotable sentence in a section is systematically the one most likely to be superseded by the lines below it.**
+
+**The rule:** before planning a run off a caveat, read to the **end of the section** — every deeper heading under it, not just the paragraph. Cheap check:
+
+```bash
+grep -n "^#\{4,6\} " docs/verification-register.md | sed -n '/<the heading you are in>/,+6p'
+```
+
+⚠ And the cost is asymmetric in the direction that hurts: §1.ab's stale HEADING makes you re-do closed work; a stale CAVEAT makes you re-do closed work **and** write a wrong “still open” line into the file the next session will read. Mine survived one commit before the retraction.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
