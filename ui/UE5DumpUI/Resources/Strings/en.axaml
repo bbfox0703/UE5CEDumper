@@ -992,6 +992,7 @@
     <sys:String x:Key="str.TP.Loc">Location (X / Y / Z):</sys:String>
     <sys:String x:Key="str.TP.Rot">Rotation (Pitch / Yaw / Roll):</sys:String>
     <sys:String x:Key="str.TP.Map">Map:</sys:String>
+    <sys:String x:Key="str.TP.ParentRelative">⚠ parent-relative</sys:String>
     <sys:String x:Key="str.TP.Pawn">Pawn:</sys:String>
     <sys:String x:Key="str.TP.Locate">🌍 Locate</sys:String>
     <sys:String x:Key="str.TP.LocateGameEngine">⚙ Locate</sys:String>
@@ -1042,6 +1043,7 @@
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
     <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort, per the design spec (docs/teleport-spec.md): the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
     <sys:String x:Key="str.Tip.TP.Refresh">Read the current pawn's world location and control rotation (DLL resolves the local PlayerController → Pawn → RootComponent via reflection).</sys:String>
+    <sys:String x:Key="str.Tip.TP.ParentRelative">These numbers are NOT world coordinates. The pawn is attached (vehicle / mount / moving platform) and the world-space read failed, so the DLL fell back to the raw RelativeLocation, which is relative to the parent. Do not save them as a marker or a library entry.</sys:String>
     <sys:String x:Key="str.Tip.TP.Auto">Re-read the pose every 0.5s, and the camera POV too (POV is skipped silently on games where it isn't available). Off by default; stops automatically on disconnect.</sys:String>
     <sys:String x:Key="str.Tip.TP.Locate">Find this pawn (the object whose Current Pose is shown) in the Live Walker and select it — switches to Live Walker, walks the GWorld → … → pawn path, and lands on it. Reads a fresh pose first to get the live pawn address. World-Partition / streaming pawns resolve via the level back-reference (Live Walker shows 'via level'); a just-spawned, unreferenced pawn may be unreachable.</sys:String>
     <sys:String x:Key="str.Tip.TP.LocateGameEngine">Locate in GameEngine: find this pawn via the live UGameEngine graph instead of GWorld. NOTE: a pawn is a world actor and usually lives BELOW GWorld, so this is typically unreachable — use the 🌍 Locate in GWorld button for pawns. Provided only for parity.</sys:String>

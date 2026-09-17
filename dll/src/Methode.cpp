@@ -388,9 +388,21 @@ static void __stdcall OnInjectAndConnect()
     //      * "Failed executing the function of the dll" → EInjectDLLFunctionFailure,
     //        which is a SIBLING of EInjectError rather than a subclass, so it also
     //        escapes → FALSE.
-    //    So the BOOL can be true on a real failure and false while the DLL is
-    //    loaded and working. We already have a direct observation — the same
-    //    module-list walk used above — so use it and stop guessing.
+    //    So the BOOL can be false while the DLL is loaded and working -- and TRUE with
+    //    the module ABSENT is AMBIGUOUS, not "a real failure". [A2-METHODE-MANUALMAP]
+    //      * After EInjectError, forceLoadModule RE-RAISES on every failure
+    //        (CEFuncProc.pas:768-811), so TRUE there means the forced load SUCCEEDED:
+    //        CE's manual PE mapper, which never links the image into the PEB, so the
+    //        module walk below cannot see it. CE's Settings -> "Always force load
+    //        modules" (HKCU value `Always Force Load`) takes that path for EVERY
+    //        injection. The mapper processes neither TLS nor .pdata (measured on
+    //        dist\UE5Dumper.dll), so no SEH or C++ exception can be dispatched inside
+    //        the image, and ReadSafe's everyday __except makes a game crash the likely end.
+    //      * The APC path and a GetExitCodeThread failure ALSO return TRUE with nothing
+    //        mapped.
+    //    Nothing here tells those apart, so the message names both; a manually mapped
+    //    image is not supported. The direct observation -- the same module-list walk
+    //    used above -- still decides everything else.
     //
     //    Short retry window: on the APC path CE only sleeps 1 s and does not wait
     //    on the loader at all, so the module can still be appearing.
@@ -403,19 +415,31 @@ static void __stdcall OnInjectAndConnect()
     LOG_INFO("CEPlugin: post-inject module check: %s (ok=%d)",
              present ? loadedPath.c_str() : "NOT PRESENT", ok ? 1 : 0);
 
+    if (!present && ok) {
+        // [A2-METHODE-MANUALMAP] TRUE, and the module list does not show it: AMBIGUOUS (see
+        // above). Either nothing was mapped, or CE's force-load manual-mapped it -- invisible
+        // to the walk, unable to dispatch an exception. Say both; name the setting.
+        LOG_WARN("CEPlugin: InjectDLL TRUE but the module is absent — ambiguous: nothing was "
+                 "mapped, or CE's 'Always force load modules' manual-mapped it");
+        g_CE.ShowMessage(const_cast<char*>(
+            "UE5CEDumper: Cheat Engine reported success, but the DLL is not in the target's\n"
+            "module list. That means one of two things:\n\n"
+            "  - the load failed after all (anti-cheat, a 32-bit target, or CE not running\n"
+            "    as administrator), or\n"
+            "  - CE force-loaded it by manual mapping, which it does for every injection\n"
+            "    when Settings -> \"Always force load modules\" is ticked. A manually mapped\n"
+            "    UE5Dumper.dll cannot handle exceptions, so the game is likely to crash:\n"
+            "    untick that setting, restart the game, and inject again.\n\n"
+            "Details: Logs\\UE5Dumper-*.log"));
+        return;
+    }
     if (!present) {
-        char msg[1024];
-        snprintf(msg, sizeof(msg),
+        g_CE.ShowMessage(const_cast<char*>(
             "UE5CEDumper: Injection failed — the DLL is not mapped in the target.\n\n"
-            "%s\n\n"
+            "(Cheat Engine also reported failure.)\n\n"
             "Usual causes: the target is 32-bit, anti-cheat blocked the load, or CE\n"
             "needs to run as administrator.\n"
-            "Details: Logs\\UE5Dumper-*.log",
-            ok ? "(Cheat Engine reported success, but the module is absent — CE\n"
-                 "swallows \"Failed injecting the DLL\" internally and still returns\n"
-                 "true, so its result cannot be trusted on its own.)"
-               : "(Cheat Engine also reported failure.)");
-        g_CE.ShowMessage(msg);
+            "Details: Logs\\UE5Dumper-*.log"));
         return;
     }
 

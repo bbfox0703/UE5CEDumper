@@ -242,7 +242,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`8` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`9` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -1199,6 +1199,142 @@ artefact leaves this program entirely and is pasted into another tool.
 
 -----
 
+### ⬜ SHIPPED 2026-09-10, NEEDS A LIVE CHECK — the audit-#4 fix pass's three unreachable arms: FP1 attached-pose · FP2 landing re-read · FP3 See-through untick race
+
+The `[A4-ASSESS-2026-09-09]` fix pass closed **eight** defect rows. Five are done: `[B30-REOPEN]`,
+`[SOLIDE-REFUSAL]` and `[BADGEPRIME]` were verified on DumperTest **Shipping** with a real
+before/after (the first two with the pre-fix binary measured beside the post-fix one), `[B33-SPELLING]`
+rode along with B30, and `[B21-DOCROW]` is a document fix with nothing to run.
+
+**These three are what is left, and each is here because the FAILURE it guards could not be staged
+on the fixture — not because nobody looked.** All three are held today by unit tests, gates and code
+reading. ⚠ Two of them are ANTI-OVER-SHOUT-verified only: the healthy path was measured live and
+does **not** fire the new warning, which is the half that stops a fix crying wolf and is *not* the
+half that proves it fires when it should.
+
+⛔ **Read the charter above before closing any of these on a green screen.** Every row below names
+the producer-side observable as well as the screen, because the whole reason this register exists is
+that a green panel is equally consistent with the DLL being right and with the UI rendering
+something the DLL never sent.
+
+| # | what is unproven | acceptance — BOTH sides |
+|---|---|---|
+| **FP1** | `[POSEATTACH-2026-09-10]` (`242d48c4`) — on an **attached** pawn whose `K2_GetActorLocation` invoke fails, the pose degrades to a parent-relative `RelativeLocation` read. `teleport-spec.md:218-220` requires a warning flag with it; the fallback shipped in 2026-07 and the flag did not, so a degraded read was byte-identical to a healthy one and those numbers were saved into markers and later driven back as a WORLD destination. Only the *absence* on a healthy pawn is measured. | **DLL side:** `teleport_get_pose` must carry `parent_relative: true` **and** the WALK log must show `Teleport: attached pawn but K2_GetActorLocation failed — falling back to RelativeLocation (parent-relative!)` (`Wirbel.cpp:443`) in the same second. **UI side:** the Teleport tab's status must read `⚠ PARENT-RELATIVE, not world coordinates` and name the marker consequence — not merely `Pose read (raw).` ⭐ **The pairing is the test**: `source` must still be `"raw"` while `parent_relative` is `true`, because that combination is exactly what used to be indistinguishable from a healthy read. **Staging:** possess a pawn attached to a vehicle / mount / moving platform, then make the invoke fail — the game thread idle (alt-tab on a title that pauses unfocused) or a title that cooks `K2_GetActorLocation` out of reflection, the shape Octopath is already recorded for. ⚠ **The CE mailbox cannot express this at all** and that is deliberate: widening `[176] source (0=raw, 1=invoke)` would change the MEANING of a contract field, which `Mimic.h` says the surface hash cannot see. A CE-side row is separate work, not part of closing this one. |
+| **FP2** | `[TPREL-ZEROPOSE-2026-09-10]` (`5058e971`) — when the post-move pose re-read fails, `TeleportRelative` used to publish a landing of exactly `(0,0,0,0,0,0)`, indistinguishable from arriving at the world origin, and the panel overwrote its live X/Y/Z with zeros the user could copy or save. It now emits `landing_unknown` and publishes no coordinates. Only the healthy path is measured. | **DLL side:** `teleport_relative` must return `code: 0` **with `landing_unknown: true` and NO `x`/`y`/`z` keys at all** — the absence of the coordinate keys is the assertion, not a zero in them. **UI side:** the status must say the move happened but the coordinates are unchanged, and the panel's live X/Y/Z must still hold their PREVIOUS values — capture them before the move and compare, because "not zero" is a weaker claim than "unchanged". ⛔ **The negative control is mandatory**: an ordinary relative teleport in the same session must publish real coordinates and NO `landing_unknown`, or the row proves only that the field can be set. **Staging:** the re-read fails when `ResolveChain` or the `RelativeLocation` read fails *inside the same locked call* as the move — a large jump that puts the pawn into the void and gets it destroyed/unpossessed is the realistic trigger, which is exactly what this feature invites. |
+| **FP3** | ✅ **CLOSED 2026-09-10 `[FP3-SEETHRU-UNTICK-2026-09-10]`** — `[R3-SEETHRU-2026-09-10]` (`0fac36e9`) — See-through's `[DISABLE]` block wrote the mailbox with **no** bounded wait-for-IDLE, because the `AppendIdleWaitOrBail` call sat inside `if (enable)` while the `cmd` store below is emitted for both blocks. Unticking while another command was in flight could clobber it. The emitted script and the source shape are now pinned by a Theory over all 11 generators and by gate 17c; **the RACE itself has never been observed either way.** | **CE side:** with `UE5_DEBUG = 1`, untick the See-through record while a long command is in flight (a full `walk_world` or a snapshot started from the UI) and the Lua Engine must show the idle wait actually spinning — `_idleCmd` non-zero at least once before the operand write — rather than falling straight through. **DLL side:** the in-flight command must complete with its OWN result in the pipe log; the failure this guards is Mimic's `cmd` being overwritten mid-flight, which surfaces as the first command reporting a status that belongs to the second, or timing out with "the DLL never saw this command". ⚠ **A quiet pass proves nothing here** — if the mailbox was idle at the moment of the untick the wait exits immediately and the run is VACUOUS. The rig must show the wait was entered, or report the attempt as undecided. **Staging:** `UE5_DEBUG=1`, start a long command from the UI, untick the CE record inside its window. |
+
+⭐ **FP3 is the one to attempt first**, and not because it is the most severe — it is the only one of
+the three whose staging needs no special game: a long command and a well-timed untick on the same
+DumperTest fixture. FP1 needs a title with an attached possessed pawn; FP2 needs the pawn or world
+to vanish inside one locked call.
+
+
+#### ✅ FP3 CLOSED 2026-09-10 `[FP3-SEETHRU-UNTICK-2026-09-10]` — both arms measured, on a real mailbox
+
+`tools/verify/fp3_seethrough_untick.py`, DumperTest **Shipping**, real Cheat Engine, the
+**shipped** emitter's own `[DISABLE]` text on both sides.
+
+| | the Lua Engine said | mailbox `cmd` after | `status` after |
+|---|---|---|---|
+| **PRE-FIX** emitter (`0fac36e9^`, rebuilt) | *"timed out and the DLL never saw this command"* | ⛔ **14 = `CMD_SEETHROUGH`** — written straight over the command in flight | 0 — it cleared the status too |
+| **POST-FIX** emitter (shipped) | *"the DLL mailbox is busy with another command — try again in a moment"* | ✅ **999 = the sentinel, untouched** | 255 — untouched |
+
+⭐ **THE ROW'S OWN VACUITY TRAP IS WHAT SHAPED THE RIG.** Unticking against an IDLE mailbox
+proves nothing — the wait exits on its first read and is indistinguishable from having no wait.
+So the busy state is **manufactured deterministically**: write a sentinel `cmd`, then **SUSPEND the
+game** so Mimic's poller cannot clear it. Racing a real command would have been a lottery; a frozen
+process is repeatable.
+
+⭐⭐ **AND THE MANUFACTURE TURNED OUT MORE FAITHFUL THAN DESIGNED.** After arming, `status` read
+**255 = `STATUS_PROCESSING`** — the poller had run once between the write and the suspend, so the
+mailbox was genuinely *mid-dispatch*, not merely "non-zero". That was not planned; it was noticed
+because the read-back was checked instead of assumed.
+
+⭐ **THREE INDEPENDENT SIGNALS AGREE ON EACH SIDE**, which is why this is a measurement and not a
+screenshot: the Lua's own message, `cmd`, and `status`. Post-fix, the emitted
+`writeInteger(mb + 0x04, 0)` (the status clear, line 87 of the block) never ran either — so the
+script is proven to have touched **nothing**, not merely to have skipped the `cmd` store.
+
+⛔ **THE PRE-FIX FAILURE IS WORSE THAN CLOBBERING, AND THAT IS NEW.** Having overwritten the
+in-flight command, it then waited for a status that could never come and blamed **the wrong
+cause**: *"Most likely a stale g_invokeMailbox address: re-inject UE5Dumper.dll…"*. The address was
+perfect. That is the guessing-diagnosis shape `CeMailboxBailoutTests.TheOldGuessingTimeoutMessage_IsGone`
+exists to forbid, reached through a different door — a user following that advice would re-inject a
+healthy DLL. ⚠ Worth a look when the CE-Lua bail-out texts are next touched; it is **not** filed as
+a new row, because the fix already removes the path that reaches it.
+
+⚠ **A FOURTH DETECTOR FIRED FOR FREE.** Reverting the generator to capture the pre-fix text turned
+`CeMailboxBailoutTests.Disable_block_waits_for_IDLE_before_it_writes_the_mailbox` **RED** — the
+Theory added with the fix. So the source shape, the emitted script and the live mailbox all
+disagree with the pre-fix build, independently.
+
+⚠ **HOW THE SCRIPT GOT INTO CE, said because it bears on what was tested.** The card's *Add to CE*
+button needs the AOBMaker plugin, which was offline, so the `[DISABLE]` chunk was taken from the
+**generator itself** (a throwaway dump test, removed afterwards) and pasted into CE's Lua Engine.
+⛔ That is the shipped artifact's exact text — but it is **not** the untick PATH: `memrec` is nil in
+the Lua Engine, so the deferred-untick tail was inert. What is proven is the block's mailbox
+discipline, not CE's record bookkeeping around it. A run through a real ticked record would close
+that last inch.
+
+⚠ **`dist/` was rebuilt afterwards** — capturing the pre-fix text left the pre-fix generator in the
+published exe. Republished AOT-trimmed and re-verified: 54.8 MB `628552A1`, build 3546.
+
+##### ✅ FP3's LAST INCH CLOSED 2026-09-10 — the REAL untick, through a pushed CE record
+
+The first FP3 run proved the `[DISABLE]` block's mailbox discipline but **not the untick PATH**:
+the chunk was pasted into CE's Lua Engine, where `memrec` is nil, so the record bookkeeping around
+it never ran. That inch is now closed, and it took correcting two of my own mistakes to get there.
+
+**The run.** DumperTest Shipping (pid 34864, 24,497 objects) → UI *Add to CE* on the See-through
+card → the plugin logged `CreateAAScript: desc='See-through occluders (toggle)', scriptLen=17543,
+success (verified)`. ⭐ **17,543 bytes is byte-for-byte the generator's own output**, so the record
+CE received is the shipped artifact, not a copy. Ticked it: `seethrough_get_state` → `active: true,
+has_target: true, hidden_count: 1`. Armed the busy mailbox (sentinel + suspend). **Unticked the
+record by hand.**
+
+| after the real untick | |
+|---|---|
+| mailbox `cmd` | **999 — the sentinel, untouched** |
+| mailbox `status` | **1 — unchanged**; the block's own `writeInteger(mb + 0x04, 0)` never ran |
+| `seethrough_get_state` | **still `active: true, hidden_count: 1`** |
+
+⭐ **That third row is the corroboration the Lua-Engine run could not give**: the DLL never received
+the OFF, which is precisely correct when the mailbox is busy — the disable refused rather than
+clobbering. Four independent signals now agree (the Lua's message, `cmd`, `status`, and the DLL's
+own state).
+
+⛔ **CORRECTION — "the AOBMaker plugin was offline" WAS WRONG, twice over.** The plugin is installed
+(`C:\Program Files\Cheat Engine\plugins\AOBMaker_CEPlugin.dll`), **enabled** in CE's plugin list, and
+serving. Both of my readings were my own errors:
+
+1. The UI's header genuinely said *AOBMaker Offline* — because **Cheat Engine was not running** at
+   that moment. With CE up it reads **● AOBMaker Connected**.
+2. My follow-up pipe probe reported "NOT present (err 3)" for a pipe that was serving: the path
+   literal went through `py -c "…"` and the **shell ate a backslash**, so it probed `\.\pipe\…`
+   instead of `\\.\pipe\…`. ERROR_PATH_NOT_FOUND reads exactly like "the plugin is down" and is
+   nothing of the kind. The plugin's own log said `PipeServer: listening` the whole time.
+   ⚠ **Probe paths belong in a FILE, never in a shell-quoted `-c` string** — the same escaping
+   hazard that mangled a heredoc three times in this stream.
+
+⛔⛔ **AND THE OPERATIONAL TRAP THAT WASTED THE MOST TIME: `open_application` LAUNCHES A NEW CHEAT
+ENGINE EVERY CALL.** CE does not single-instance itself, so using `open_application` to *front* it
+silently accumulated **three** instances. Only one can own `\\.\pipe\AOBMakerCEBridge`; the others
+retry-spam `CreateNamedPipe failed, err=231` (ERROR_PIPE_BUSY) forever, and the bridge is unusable
+even though every instance looks fine on screen. ⭐ **The maintainer spotted it from the screen
+before the logs did**, twice.
+
+⚠ **The fix is already in the repo**: `py tools/verify/front_window.py front cheatengine` moves
+focus without launching anything. Use `open_application` **once** to start CE and never again in the
+same session; verify with
+`tasklist /FI "IMAGENAME eq cheatengine-x86_64.exe"` before trusting any bridge result.
+`front_window.py`'s header says `open_application` "will not re-front an already-running
+single-instance app" — CE is **not** single-instance, and that is the case it does not cover.
+
+⚠ **One thing still unexplained and deliberately not smoothed over**: the fixture died twice while I
+was cycling windows, and once with no `taskkill` of mine in between. A later controlled run held it
+alive for 30 s idle and 30 s with CE attached, and the pipe stayed up — so **CE attachment is not
+the cause**, and the deaths remain unattributed. Not chased further because the measurement it would
+have blocked has since been taken cleanly.
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
 
 *L12 closed **25 of the 26 INFO rows**; only these seven changed runtime behaviour. The other

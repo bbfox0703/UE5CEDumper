@@ -576,49 +576,68 @@ Fallback strings when the walker can't deliver:
 `(sparse, bound — function name not in storage)`. The bare
 `(sparse, unbound)` continues to mean `bIsBound == 0`.
 
-### OptionalProperty (UE 5.2+)
+### OptionalProperty (UE 5.3+)
 
 `FOptionalProperty` wraps `TOptional<T>` and is laid out as
-`FProperty + FProperty* ValueProperty` — the same shape as
+`FProperty + FProperty* ValueProperty`, the same shape as
 `FArrayProperty`, so `WalkClassEx` reuses the `FARRAYPROP_INNER` probe
-to populate `innerType`. Two storage layouts exist depending on `T`:
+to populate `innerType`. The property first appears in UE 5.3.
 
-- **Intrusive** (UE 5.4+ for pointer types `Object/Class/Interface` and
-  the FWeakObjectPtr-shaped `Weak/Soft/Lazy`): `T` occupies the field
-  directly; "unset" is encoded as null/zero (or `{ idx=0, serial=0 }`
-  for weak-like). `sizeof(TOptional<T>) == sizeof(T)`.
-- **Intrusive via `FIntrusiveUnsetOptionalState` specialization** for
-  heap-backed types — the unset flag lives *inside* T's normal fields
-  rather than as a trailing byte. The DLL hand-codes the sentinel checks
-  (which mirror each type's `UEOpEquals(FIntrusiveUnsetOptionalState)`):
+**The layout is UE's, and the SIZE says which one.** This is [A2-TOPTIONAL-INTRUSIVE],
+corrected 2026-09-11. UE decides "set" through `ValueProperty->HasIntrusiveUnsetOptionalState()`
+and sizes the property by `FOptionalPropertyLayout::CalcSize` (UE 5.8 `PropertyOptional.h`):
 
-  | Inner type     | Sentinel              | Field offset (within `T`) | UE source |
-  |----------------|------------------------|---------------------------|-----------|
-  | `StrProperty`  | `int32 Max == -1`     | +12 (FString.Max)         | UnrealString.h.inl |
-  | `NameProperty` | `uint32 ComparisonIndex == 0xFFFFFFFF` | +0 | NameTypes.h |
-  | `TextProperty` | `uintptr_t TextData == nullptr` | +0 | Internationalization/Text.h |
+- **Intrusive:** the value property has an intrusive unset state. The optional **is**
+  `sizeof(T)`, and "unset" is a special value of `T` itself:
 
-  For these, `sizeof(TOptional<T>) == sizeof(T)` (no trailing flag) and
-  reading `bIsSet` past `T` would land on the next UPROPERTY's memory —
-  source of subtle false positives until the sentinel paths shipped.
-- **Non-intrusive** (older + non-pointer T like Int/Float/Bool/Byte/Enum
-  and StructProperty): `{ T value; uint8 bIsSet; }` with the trailing
-  flag at `field + sizeof(T)`.
+  | Inner type | Intrusive | Unset state | Read at |
+  |---|---|---|---|
+  | `ArrayProperty` (TArray) | from 5.5 | `ArrayMax == -1` | +12 |
+  | `StrProperty` (FString, a TArray) | from 5.5 | `ArrayMax == -1` | +12 |
+  | `NameProperty` | from 5.5 | `ComparisonIndex == 0xFFFFFFFF` | +0 |
+  | `TextProperty` | from 5.5 | `TextData == nullptr` | +0 |
+  | `ObjectProperty` / `ClassProperty` | only under `CPF_NonNullable` | `nullptr` | +0 |
+  | `SetProperty` / `MapProperty` | from 5.5 | differs between UE 5.8's sparse and compact sets | **refused** |
+  | `StructProperty` | per `CppStructOps` | struct-specific | **refused** |
 
-`WalkInstance` dispatches by inner type: pointer-shaped innners use the
-null-sentinel test, scalars/structs read the trailing `bIsSet` byte at
-`field + ResolveInnerSize(inner)`. The display string is `(unset)` when
-not set, otherwise the rendered inner value (resolved UObject*, scalar
-text, etc.). Drill-down into struct-typed Optional is not yet wired —
-the inner struct fields aren't surfaced.
+- **Trailing flag:** everything else. That covers every pointer, weak / soft / lazy, interface
+  and scalar `T`, and normally a struct `T`. The layout is `{ T value; bool bIsSet; }`, of size
+  `Align(sizeof(T) + 1, alignof(T))`, with the flag at `+sizeof(T)`.
+  - A reset optional **keeps its old value bytes**: `Reset()` writes only the flag. So the value
+    means something only when the flag is set.
+  - On 5.3 and 5.4, FString / FName / FText optionals are trailing-flag too.
 
-Find Refs v2 covers `OptionalProperty<Object/Class/Interface>` (treated
-as direct pointers) and `OptionalProperty<Weak/Soft/Lazy>` (resolved
-through the embedded FWeakObjectPtr). For UE 5.2–5.3 non-intrusive
-pointer optionals, an unset slot's value is typically zero so it
-trivially fails the comparison; the rare uninitialized-memory false
-positive isn't filtered out (would require caching the inner size
-alongside the cache entry).
+**The classifier.** `Ubel::ClassifyOptionalLayout` matches `CalcSize` exactly:
+- intrusive only when `fi.Size == sizeof(T)`;
+- trailing flag only when `fi.Size == Align(sizeof(T)+1, alignof(T))`;
+- anything else is **refused** with a reason.
+
+It never uses a version gate, because intrusiveness is per type and per flag. It never uses a
+loose "bigger than `T`" either: a garbage `sizeof(T)` would send an intrusive field back to its
+neighbour's first byte.
+
+**The resolver.** `Ubel::ResolveOptionalLayout` resolves the value property, its size
+(`ResolveInnerSize`) and its alignment (`ResolveElementAlignment`: `MinAlignment` for a struct,
+Scharf's rule otherwise). The walker and Find Refs share it.
+
+**The walker.** `WalkInstance` decides set / unset from that layout and decodes the value **only
+when set**. It renders:
+- a `TOptional<UObject*>` set to null as `(set: null)`;
+- a refusal as `(optional layout not recognised: ...)` or
+  `(optional: the unset state of an intrusive ... is not decoded)`.
+
+An unreadable discriminator still renders as `unreadable at +0x...`, ahead of all of these.
+
+**Find Refs.** `Aura.cpp` `CollectRefMetaRecursive` buckets a pointer-shaped optional together
+with its `bIsSet` offset (`setFlagOffset`), and every scan over those entries checks it
+(`OptionalGateOpen`). So a reset optional's stale pointer is not reported as a reference. A layout
+it cannot prove (unknown, or intrusive with no null state) is not bucketed.
+
+⬜ Two paths do not follow the rule yet:
+- the Value Scan V1c `optionalFlagOffset` gate;
+- Find Refs' descent into a `TOptional<FStruct>`'s pointers.
+
+Both still assume a trailing flag or a zeroed unset slot.
 
 ### Validating element stride
 

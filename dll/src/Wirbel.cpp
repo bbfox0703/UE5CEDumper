@@ -413,12 +413,13 @@ void CopyMapName(uintptr_t world, char* buf, int32_t cap) {
 // ---- pose read (§5.4) ----
 
 int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
-                    MovementState* move = nullptr) {
+                    MovementState* move = nullptr, bool* outParentRelative = nullptr) {
     Chain c;
     int32_t rc = ResolveChain(c);
     if (rc != TP_OK) return rc;
 
     if (outSource) *outSource = 0;
+    if (outParentRelative) *outParentRelative = false;
     double xyz[3] = {};
     bool got = false;
 
@@ -439,9 +440,26 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
                 if (outSource) *outSource = 1;
             }
         }
-        if (!got)
+        if (!got) {
+            // ⛔⛔ THE DEGRADATION HAS TO LEAVE THIS FUNCTION, not just this log.
+            // docs/teleport-spec.md:218-220 says it in as many words: "If the invoke
+            // fails (game-thread idle), return the raw values anyway with `source = raw`
+            // AND A WARNING FLAG". The fallback shipped; the flag never did. So a healthy
+            // unattached world-space read and a degraded PARENT-RELATIVE one both left
+            // here as source=0 -- and the UI's own model documents "raw" as MEANING
+            // not-attached, so those numbers were displayed as world coordinates, saved
+            // into a marker that passes the map guard, and later driven back into the
+            // pawn as a world-space destination. [POSEATTACH-2026-09-10].
+            //
+            // ⚠ It is a separate flag rather than a third `source` value on purpose: the
+            // CE mailbox publishes that byte as `[176] source (0=raw, 1=invoke)`, and
+            // adding a value would change the MEANING of a contract field -- exactly the
+            // change Mimic.h says the surface hash cannot see. The mailbox is deliberately
+            // left alone here; the pipe carries the flag.
+            if (outParentRelative) *outParentRelative = true;
             LOG_WARN("Teleport: attached pawn but K2_GetActorLocation failed — "
                      "falling back to RelativeLocation (parent-relative!)");
+        }
     }
     if (!got && !ReadVec3Mem(c.root + static_cast<uintptr_t>(c.relLocOff),
                              c.relLocSize, xyz))
@@ -1331,7 +1349,7 @@ int32_t RecallTo(const Pose& p, bool restoreRot, uint8_t* tierOut) {
 // s_opMutex (uses the lock-free GetPoseImpl, not the public GetPose export).
 void SaveLastImpl() {
     Marker m{};
-    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr) != TP_OK) return;
+    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) != TP_OK) return;
     m.Valid = true;
     s_lastMarker = m;
     LOG_INFO("Teleport: last position auto-saved (%.1f, %.1f, %.1f) map='%s'",
@@ -1342,16 +1360,18 @@ void SaveLastImpl() {
 
 namespace Wirbel {
 
-int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource) {
+int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
-    return GetPoseImpl(out, mapName, mapNameCap, outSource, nullptr);
+    return GetPoseImpl(out, mapName, mapNameCap, outSource, nullptr, outParentRelative);
 }
 
 int32_t GetPoseAndMovement(Pose& out, char* mapName, int32_t mapNameCap,
-                           uint8_t* outSource, MovementState& move) {
+                           uint8_t* outSource, MovementState& move,
+                           bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     move = MovementState{};
-    return GetPoseImpl(out, mapName, mapNameCap, outSource, &move);
+    return GetPoseImpl(out, mapName, mapNameCap, outSource, &move, outParentRelative);
 }
 
 int32_t GetPov(Pov& out) {
@@ -1467,10 +1487,15 @@ int32_t SaveMarker(int32_t slot) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     if (slot < 0 || slot >= Grimoire::TELEPORT_SLOTS) return TP_ERR_EMPTY_MARKER;
     Marker m{};
-    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr);
+    // [W2-MARKER-PARENTREL] Capture the read's parent-relative flag with the pose: the pose card warns "do not
+    // save these as a marker", and the save path used to have no way to know.
+    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative);
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_markers[slot] = m;
+    if (m.ParentRelative)
+        LOG_WARN("Teleport: marker %d saved from a PARENT-RELATIVE read -- its pose is not world coordinates",
+                 slot);
     LOG_INFO("Teleport: marker %d saved (%.1f, %.1f, %.1f) map='%s'",
              slot, m.P.X, m.P.Y, m.P.Z, m.MapName);
     return TP_OK;
@@ -1731,14 +1756,17 @@ int32_t GetLast(Marker& out) {
     return out.Valid ? TP_OK : TP_ERR_EMPTY_MARKER;
 }
 
-int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource) {
+int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                  bool* outParentRelative) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     Marker m{};
-    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), outSource);
+    int32_t rc = GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), outSource, nullptr,
+                             &m.ParentRelative);   // [W2-MARKER-PARENTREL]
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_bugItMarker = m;
     out = m.P;
+    if (outParentRelative) *outParentRelative = m.ParentRelative;   // [W2-MARKER-PARENTREL]
     if (mapName && mapNameCap > 0) {
         int32_t n = 0;
         for (; n < mapNameCap - 1 && m.MapName[n]; ++n) mapName[n] = m.MapName[n];
@@ -1761,7 +1789,7 @@ int32_t BugItGo(uint8_t* tierOut) {
 }
 
 int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
-                         uint8_t* tierOut) {
+                         uint8_t* tierOut, bool* outLandingKnown) {
     std::lock_guard<std::mutex> lock(s_opMutex);
     Chain c;
     int32_t rc = ResolveChain(c);
@@ -1785,7 +1813,18 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     rc = TeleportPawnTo(c, dest, nullptr, /*preferTeleportTo=*/false, tierOut);
     if (rc != TP_OK) return rc;
     StopMovement(c);
-    GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read of the landing
+    // ⛔ THE RE-READ CAN FAIL, AND SILENCE MADE THAT LOOK LIKE ARRIVING AT THE ORIGIN.
+    // GetPoseImpl leaves `out` untouched on every failure path, and all three transports
+    // zero-initialise the Pose and publish it whenever code == 0 -- so a failed re-read
+    // was emitted as a landing at exactly (0,0,0,0,0,0), indistinguishable from really
+    // standing at the world origin, and the panel overwrote its live X/Y/Z with those
+    // zeros for the user to copy or save. The move itself SUCCEEDED, so this is not an
+    // error code -- the caller is told the landing is unknown and publishes nothing
+    // rather than a number nobody measured. [TPREL-ZEROPOSE-2026-09-10]
+    if (outLandingKnown)
+        *outLandingKnown = (GetPoseImpl(outNewPose, nullptr, 0, nullptr) == TP_OK);
+    else
+        GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read
     LOG_INFO("Teleport: relative %.1f uu (%s) fwd=(%.3f, %.3f, %.3f) -> (%.1f, %.1f, %.1f)",
              distance, horizontalOnly ? "horizontal" : "3D",
              fwd[0], fwd[1], fwd[2], dest[0], dest[1], dest[2]);

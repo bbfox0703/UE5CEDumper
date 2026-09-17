@@ -38,6 +38,12 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     // selection-changed handler doesn't double-load what DetectTarget already loaded.
     private bool _suppressCandidateLoad;
 
+    // [W4-RELATED-RACE] Generation ticket, as ObjectTreeViewModel / InstanceFinderViewModel keep one.
+    // LoadAsync clears before its await and appends after, and a handoff or candidate pick can start a
+    // load while one is in flight: without the ticket both passed their Clear() and both appended.
+    // ⛔ Not `if (IsBusy) return;` -- DetectTargetAsync sets IsBusy and then awaits this very load.
+    private int _loadGen;
+
     /// <summary>Navigate the selected row's object into the Live Walker.</summary>
     public event Action<string>? NavigateToLiveWalker;
 
@@ -67,6 +73,11 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     /// selection-changed pipe walk while we null the selection.</summary>
     public void ClearOnDisconnect()
     {
+        _loadGen++;   // [W4-RELATED-RACE] a load still in flight must not repopulate the cleared grid
+        // ...and whoever bumps the generation takes over the busy flag. The superseded load's finally skips
+        // it by design, so without this a load in flight at disconnect left IsBusy stuck on -- the trap
+        // InstanceFinderViewModel.SupersedeClassSearch documents. (Review of c1c30d51.)
+        IsBusy = false;
         _suppressCandidateLoad = true;
         try
         {
@@ -98,6 +109,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             StatusText = "Enter or hand off a UObject address.";
             return;
         }
+        int gen = ++_loadGen;
         try
         {
             IsBusy = true;
@@ -106,6 +118,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             Related.Clear();
             QueryClassName = "";
             var result = await _dump.GetRelatedObjectsAsync(addr);
+            if (gen != _loadGen) return;   // superseded: a newer load owns the grid, the header and the status
             foreach (var r in result.Related)
             {
                 Related.Add(r);
@@ -114,19 +127,21 @@ public partial class RelatedObjectsViewModel : ViewModelBase
                 if (QueryClassName.Length == 0 && r.Relation == "Self")
                     QueryClassName = r.ClassName;
             }
-            StatusText = Related.Count > 0
-                ? $"{Related.Count} related object(s)."
-                : "No related objects found (is the address a live UObject?).";
+            StatusText = (Related.Count > 0
+                    ? $"{Related.Count} related object(s)."
+                    : "No related objects found (is the address a live UObject?).")
+                // [W4-RELATED-STOPS] a cut-off graph says so, and why -- never read as the whole one
+                + UE5DumpUI.Core.PartialResultNotice.RelatedStopsClause(result.Stops);
             _log.Info($"GetRelatedObjects: {addr} -> {Related.Count}");
         }
         catch (Exception ex)
         {
-            StatusText = $"Error: {ex.Message}";
             _log.Error($"GetRelatedObjects failed for {addr}", ex);
+            if (gen == _loadGen) StatusText = $"Error: {ex.Message}";   // a superseded failure is not news
         }
         finally
         {
-            IsBusy = false;
+            if (gen == _loadGen) IsBusy = false;   // never clear the newer load's busy state
         }
     }
 
@@ -188,6 +203,11 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     [RelayCommand]
     private async Task DetectTargetAsync()
     {
+        // [W4-RELATED-RACE] Detect takes a ticket too (review of c1c30d51). A handoff that starts while the
+        // detector runs, or a disconnect, supersedes it: it then neither repopulates the candidates, nor
+        // auto-loads over the newer graph, nor clears the newer load's busy state. Its own auto-load takes
+        // the next ticket, and that load's finally clears IsBusy.
+        int gen = ++_loadGen;
         try
         {
             IsBusy = true;
@@ -196,6 +216,7 @@ public partial class RelatedObjectsViewModel : ViewModelBase
             TargetCandidates.Clear();
             HasCandidates = false;
             var r = await _dump.DetectCurrentTargetAsync();
+            if (gen != _loadGen) return;   // superseded: a newer load (or the disconnect) owns the panel
             foreach (var c in r.Candidates) TargetCandidates.Add(c);
             HasCandidates = TargetCandidates.Count > 0;
             StatusText = r.Note;
@@ -213,12 +234,12 @@ public partial class RelatedObjectsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusText = $"Error: {ex.Message}";
+            if (gen == _loadGen) StatusText = $"Error: {ex.Message}";   // a superseded failure is not news
             _log.Error("DetectCurrentTarget failed", ex);
         }
         finally
         {
-            IsBusy = false;
+            if (gen == _loadGen) IsBusy = false;   // never clear a newer load's busy state
         }
     }
 

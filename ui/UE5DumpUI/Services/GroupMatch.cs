@@ -80,20 +80,26 @@ public static class GroupMatch
     }
 
     // ---- width / type helpers (mirror SnapshotNumeric's declared-type set) ----
+    //
+    // [W2-GROUPMATCH-ENUM] EnumProperty is a 1-byte UNSIGNED leaf, exactly as the live matcher sees
+    // it: Radar maps EnumProperty -> UInt8 and admits it under kNumericAll but NOT kNumericNoByte.
+    // So it joins ALL THREE predicates below together. ⛔ Adding it to WidthBytes alone was the
+    // recorded harmful fix: IsOneByte keys on the same set, and NumericNoByte would then admit enums
+    // the live scan excludes.
 
     private static int WidthBytes(string t) => t switch
     {
-        "Int8Property" or "ByteProperty" => 1,
+        "Int8Property" or "ByteProperty" or "EnumProperty" => 1,
         "Int16Property" or "UInt16Property" => 2,
         "IntProperty" or "UInt32Property" or "FloatProperty" => 4,
         "Int64Property" or "UInt64Property" or "DoubleProperty" => 8,
         _ => 0, // non-numeric — never a group leaf
     };
 
-    private static bool IsOneByte(string t) => t is "Int8Property" or "ByteProperty";
+    private static bool IsOneByte(string t) => t is "Int8Property" or "ByteProperty" or "EnumProperty";
     private static bool IsFloat(string t) => t is "FloatProperty" or "DoubleProperty";
     private static bool IsUnsigned(string t) =>
-        t is "ByteProperty" or "UInt16Property" or "UInt32Property" or "UInt64Property";
+        t is "ByteProperty" or "EnumProperty" or "UInt16Property" or "UInt32Property" or "UInt64Property";
 
     /// <summary>Is <paramref name="t"/> a numeric field eligible under <paramref name="scope"/>?
     /// Public so source-agnostic callers (e.g. the SPC group matcher, which evaluates
@@ -107,7 +113,8 @@ public static class GroupMatch
     }
 
     /// <summary>Does an absolute target value fit the leaf's declared width? Mirrors the
-    /// live matcher's <c>NumericTargetSet.Find(width) != null</c> gate — an integer leaf
+    /// live matcher's "has an Encoded entry" test (<c>NumericTargetSet.Find(width) != null</c>;
+    /// the ordered-predicate verdict is <see cref="EveryValueSatisfies"/>) — an integer leaf
     /// rejects a non-integral or out-of-range target; a float leaf accepts any finite
     /// double. This is what stops "70000" from matching an Int16 field.</summary>
     private static bool TargetFitsWidth(double target, string t)
@@ -117,22 +124,50 @@ public static class GroupMatch
 
         // Integer types: target must be integral and within range.
         if (Math.Floor(target) != target) return false;
-        int w = WidthBytes(t);
+        return IntegerRange(t, out double min, out double max) && target >= min && target <= max;
+    }
+
+    /// <summary>[A4-AB4-BETWEEN] Does the inclusive range [a, b] -- either order -- meet the leaf's width at all? The
+    /// live matcher now clamps each bound into the width's range instead of requiring both to encode, so a width is
+    /// lost only when the range misses it entirely. A float leaf takes any finite pair, as TargetFitsWidth did.</summary>
+    private static bool BetweenOverlapsWidth(double a, double b, string t)
+    {
+        if (double.IsNaN(a) || double.IsNaN(b)) return false;
+        double lo = Math.Min(a, b), hi = Math.Max(a, b);
+        if (IsFloat(t)) return double.IsFinite(lo) && double.IsFinite(hi);
+        if (!IntegerRange(t, out double min, out double max)) return false;
+        return hi >= min && lo <= max;
+    }
+
+    /// <summary>Inclusive range of an integer leaf type, per width and signedness.</summary>
+    private static bool IntegerRange(string t, out double min, out double max)
+    {
         bool uns = IsUnsigned(t);
-        // Range per width/signedness.
-        double min, max;
-        switch (w)
+        switch (WidthBytes(t))
         {
-            case 1: (min, max) = uns ? (0, 255) : (-128, 127); break;
-            case 2: (min, max) = uns ? (0, 65535) : (-32768, 32767); break;
-            case 4: (min, max) = uns ? (0, 4294967295d) : (-2147483648d, 2147483647d); break;
+            case 1: (min, max) = uns ? (0, 255) : (-128, 127); return true;
+            case 2: (min, max) = uns ? (0, 65535) : (-32768, 32767); return true;
+            case 4: (min, max) = uns ? (0, 4294967295d) : (-2147483648d, 2147483647d); return true;
             // 8-byte: clamp to the exactly-representable double range; values beyond
             // 2^53 lose precision (same caveat SPC's numeric_value carries). Accept the
             // full 64-bit range conceptually — direction/magnitude stay correct.
-            case 8: (min, max) = uns ? (0, 18446744073709551615d) : (-9223372036854775808d, 9223372036854775807d); break;
-            default: return false;
+            case 8: (min, max) = uns ? (0, 18446744073709551615d) : (-9223372036854775808d, 9223372036854775807d); return true;
+            default: min = max = 0; return false;
         }
-        return target >= min && target <= max;
+    }
+
+    /// <summary>[W2-GROUPMATCH-WIDTH] The mirror of Radar's <c>Fit::AlwaysTrue</c> verdict
+    /// (audit #5 AB4): an ordered target with no encoding at an integer leaf's width still
+    /// holds for EVERY value of that width when it lies beyond the range on the predicate's
+    /// side -- Smaller above the max, Bigger below the min.</summary>
+    private static bool EveryValueSatisfies(double target, string t, bool bigger)
+    {
+        // +/-Infinity lies beyond every integer range, exactly as in Radar's verdict; only NaN has no
+        // answer. (review of aaf6a022) Float leaves never get here: TargetFitsWidth accepts any finite
+        // target for them and rejects a non-finite one, which the DLL does not -- older and separate.
+        if (double.IsNaN(target) || IsFloat(t)) return false;
+        if (!IntegerRange(t, out double min, out double max)) return false;
+        return bigger ? target < min : target > max;
     }
 
     /// <summary>True when <paramref name="leaf"/> satisfies <paramref name="slot"/>.
@@ -164,15 +199,27 @@ public static class GroupMatch
                 // integer value (the live DLL coerces identically in BuildNumericTargets).
                 bool isFloat = SnapshotNumeric.IsFloatType(leaf.DeclaredType);
                 double fitTarget = isFloat ? target : SnapshotNumeric.CoerceIntTarget(target, slot.RoundMode);
-                if (!TargetFitsWidth(fitTarget, leaf.DeclaredType)) return false;
+                // [A4-AB4-BETWEEN] Between asks "does the RANGE meet this width", not "does each bound encode at it":
+                // the live matcher now clamps both bounds into the width (Between is inclusive), so only a range that
+                // misses the width entirely excludes it. BetweenMatch already normalises reversed bounds.
+                if (slot.Predicate == Predicate.Between)
+                    return slot.Target2 is double hi
+                        && BetweenOverlapsWidth(fitTarget, isFloat ? hi : SnapshotNumeric.CoerceIntTarget(hi, slot.RoundMode),
+                                                leaf.DeclaredType)
+                        && SnapshotNumeric.BetweenMatch(v, target, hi, leaf.DeclaredType, slot.RoundMode);
+                // [W2-GROUPMATCH-WIDTH] No encoding at this width ends it for Exact, but for
+                // Bigger/Smaller it can mean the opposite: EVERY value of the width satisfies
+                // (every Int16 < 70000, every unsigned > -5). The live matcher keeps the width
+                // through that verdict; skipping it lost a whole width class, and one lost
+                // width drops the group.
+                if (!TargetFitsWidth(fitTarget, leaf.DeclaredType))
+                    return slot.Predicate is Predicate.Bigger or Predicate.Smaller
+                        && EveryValueSatisfies(fitTarget, leaf.DeclaredType, slot.Predicate == Predicate.Bigger);
                 return slot.Predicate switch
                 {
                     Predicate.Exact   => SnapshotNumeric.ExactMatch(v, target, leaf.DeclaredType, slot.RoundMode),
                     Predicate.Bigger  => SnapshotNumeric.OrderedMatch(v, target, leaf.DeclaredType, slot.RoundMode, bigger: true),
                     Predicate.Smaller => SnapshotNumeric.OrderedMatch(v, target, leaf.DeclaredType, slot.RoundMode, bigger: false),
-                    Predicate.Between => slot.Target2 is double hi
-                        && TargetFitsWidth(isFloat ? hi : SnapshotNumeric.CoerceIntTarget(hi, slot.RoundMode), leaf.DeclaredType)
-                        && SnapshotNumeric.BetweenMatch(v, target, hi, leaf.DeclaredType, slot.RoundMode),
                     _ => false,
                 };
             }

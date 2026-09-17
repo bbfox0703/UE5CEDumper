@@ -252,7 +252,9 @@ public partial class ConsoleViewModel : ViewModelBase
             _stickyInstance.Clear();
             StatusText = "Scanning all UFunctions for exec flag (FUNC_Exec=0x200)...";
 
-            var result = await _dump.ListAllFunctionsAsync(gameOnly: GameOnly);
+            // [A4-GAMEONLY-ADVICE] Captured before the await: the advice below describes THIS scan, not the checkbox now.
+            bool gameOnly = GameOnly;
+            var result = await _dump.ListAllFunctionsAsync(gameOnly: gameOnly);
 
             _allExec = await Task.Run(() =>
             {
@@ -288,8 +290,10 @@ public partial class ConsoleViewModel : ViewModelBase
                 ? PartialResultNotice.Cancelled("scan")
                 : result.Truncated
                     ? PartialResultNotice.RowCap(result.Limit, "functions",
-                          "tick \"Game classes only\" to skip engine classes so the cap "
-                          + "reaches further into the game's own classes")
+                          // [A4-GAMEONLY-ADVICE] By this panel's label, and never a lever the scan already used.
+                          gameOnly ? "\"Game Only\" is already on, so the rest are the game's own classes past the cap"
+                                   : "tick \"Game Only\" to skip engine classes so the cap "
+                                     + "reaches further into the game's own classes")
                     : "";
 
             if (_allExec.Count == 0)
@@ -470,20 +474,67 @@ public partial class ConsoleViewModel : ViewModelBase
             _stickyInstance.TryGetValue(entry.ClassName, out var pinnedAddr);
             bool usedPin = !string.IsNullOrEmpty(pinnedAddr);
 
-            var result = await _dump.InvokeFunctionAsync(
-                funcName: entry.FuncName,
-                instanceAddr: usedPin ? pinnedAddr : null,
-                className: entry.ClassName,
-                parmsSize: 0,
-                paramsHex: null,
-                directCall: false);
+            bool reResolved = false;
+            InvokeFunctionResult result;
+            try
+            {
+                result = await _dump.InvokeFunctionAsync(
+                    funcName: entry.FuncName,
+                    instanceAddr: usedPin ? pinnedAddr : null,
+                    className: entry.ClassName,
+                    parmsSize: 0,
+                    paramsHex: null,
+                    directCall: false);
+            }
+            catch (Exception ex) when (usedPin && ex is not OperationCanceledException)
+            {
+                // [CONSOLE-PIN-THROWS] A dead pin does NOT come back as a failed result, which is
+                // what the retry below was written to catch. The DLL reads the class from the
+                // instance (Fern.cpp:5530) and then the function from that class (:5537), and on
+                // freed-and-reused memory the class read SUCCEEDS with a garbage pointer while the
+                // lookup fails -- so :5539 answers `ok:false, "Function not found"`, and
+                // DumpService.CheckResponse THROWS. Control jumped straight to the catch below,
+                // `_stickyInstance.Remove` never ran, and the command stayed broken until the user
+                // pressed Load. Measured 2026-09-17 on DumperTest Development: a level change moved
+                // CheatManager, and SpawnServerStatReplicator then failed identically twice in a row
+                // while the same command succeeded immediately after a Load cleared the pin.
+                //
+                // ⭐ RETRYING HERE CANNOT RUN THE COMMAND TWICE, and that is not an assumption:
+                // EVERY `ok:false` in the invoke handler is returned at Fern.cpp:5508-5585, and the
+                // dispatch does not begin until :5718. An `ok:false` therefore always means the
+                // function was never dispatched. The queued case -- `ok:true` with result -5 -- is a
+                // RESULT, not a throw, and is still excluded by `!dispatchTimedOut` below.
+                _log.Info($"Console.Run: pinned invoke threw for {entry.ClassName}::{entry.FuncName} " +
+                          $"(pin {pinnedAddr}) — dropping the pin and re-resolving once: {ex.Message}");
+                _stickyInstance.Remove(entry.ClassName);
+                reResolved = true;
+                usedPin = false;
+                result = await _dump.InvokeFunctionAsync(
+                    funcName: entry.FuncName,
+                    instanceAddr: null,
+                    className: entry.ClassName,
+                    parmsSize: 0,
+                    paramsHex: null,
+                    directCall: false);
+            }
 
             // A pinned address can go stale (object freed, level change, pipe
             // reconnect). If the pinned call failed, drop the pin and retry
             // once with a fresh classname resolution so a dead pin self-heals
             // instead of permanently breaking the command.
-            bool reResolved = false;
-            if (!result.Success && usedPin)
+            //
+            // [W3-CONSOLE-REINVOKE] EXCEPT on a dispatch timeout: the DLL leaves that request
+            // QUEUED and it will still run, so a retry ran the command twice -- a stateful give /
+            // spawn / teleport, twice. The pin stays too, because the queued call is on it.
+            //
+            // ⚠ [CONSOLE-PIN-THROWS] This comment used to assert "a stale pin produces -2 / -4,
+            // never -5, so the self-heal still covers exactly the case it was written for". The
+            // first half is wrong and was measured wrong on 2026-09-17: a stale pin produces a
+            // THROWN "Function not found", not a result code at all, so this branch never saw it.
+            // That case is handled where the call is made, above; this branch remains for a failure
+            // the DLL does report as a result.
+            bool dispatchTimedOut = result.Result == Constants.InvokeDispatchTimeoutResult;
+            if (!reResolved && !result.Success && usedPin && !dispatchTimedOut)
             {
                 _stickyInstance.Remove(entry.ClassName);
                 reResolved = true;
@@ -507,6 +558,11 @@ public partial class ConsoleViewModel : ViewModelBase
                 : (string.IsNullOrEmpty(result.Error)
                     ? $"Result code {result.Result}"
                     : result.Error);
+            // From the FINAL result, not `dispatchTimedOut`: the self-heal retry goes through the
+            // same queued dispatch and can time out too, and that queued retry needs the note just
+            // as much. `dispatchTimedOut` only gates the retry. (review of 3561c93c)
+            if (result.Result == Constants.InvokeDispatchTimeoutResult)
+                resultText += " — still queued: it will run when the game thread is free (not re-sent)";
 
             AppendHistory(entry, result.Success, resultText);
 
@@ -662,10 +718,18 @@ public partial class ConsoleViewModel : ViewModelBase
         };
     }
 
-    /// <summary>Map the DLL's tri-state Debug Camera result (1=on, 0=off,
-    /// -1=unknown) onto the badge.</summary>
+    /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
+    /// -5=toggle queued) onto the badge.</summary>
     private void ApplyDebugCameraState(int state)
-        => SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+    {
+        // [W3-DEBUGCAM-QUEUED] A queued toggle is neither ON nor OFF yet -- and not "unknown": it WILL run.
+        if (state == Constants.DebugCameraToggleQueuedResult)
+        {
+            (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");   // amber — pending
+            return;
+        }
+        SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+    }
 
     /// <summary>↻ — re-read and display the live Debug Camera state. The
     /// two-hop reflection read lives DLL-side (get_debug_camera_state); this
@@ -736,6 +800,11 @@ public partial class ConsoleViewModel : ViewModelBase
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
+                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
+                Constants.DebugCameraToggleQueuedResult =>
+                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
+                      $"It will run when the game thread is free. Do not press Force {want} again: " +
+                      "a second toggle would undo the first.",
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

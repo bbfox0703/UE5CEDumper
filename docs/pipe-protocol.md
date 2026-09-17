@@ -682,6 +682,11 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
   "id": 61, "ok": true,
   "total":   58432,
   "scanned": 100,          // ← advance offset by this, NOT objects.length
+  "worker_faulted": false, // true = a DLL scan worker FAULTED on this chunk, so part of the
+                           //   window was never captured although `scanned` reports all of
+                           //   it. The UI finalises the snapshot UNUSABLE. Its own key: a
+                           //   fault is not a deadline. Absent on older DLLs = false.
+                           //   [W1-SNAP-FAULT]
   "objects": [
     {
       "index":       12345,
@@ -791,6 +796,22 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
       "value":         "false",
       "bool_mask":     4,
       "bool_bit_idx":  2
+    },
+    // --- BoolProperty, NATIVE (a whole byte: FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF,
+    //     which is what every engine's SetBoolSize writes: `ByteMask = true; FieldMask = 255;`) ---
+    // [A3-BOOL-NATIVE-NOWRITE] "bool_native": true is emitted ONLY when the DLL read UE's native
+    // layout — every Blueprint bool, a plain `UPROPERTY() bool bFoo;`. Absent means PACKED (it then
+    // carries bool_mask) or UNRESOLVED (no bool_mask: the probe missed) — NEVER native. The UI writes
+    // 0x01 / 0x00 only for bool_native, read-modify-writes a bool_mask, and refuses otherwise.
+    // Additive and pipe-only (kept in lean mode too): older UIs and CSX ignore it; no contract bump.
+    {
+      "name":          "bIsActive",
+      "type":          "BoolProperty",
+      "offset":        345,
+      "size":          1,
+      "hex":           "01",
+      "value":         "true",
+      "bool_native":   true
     },
     // --- ObjectProperty (pointer) ---
     {
@@ -1500,6 +1521,13 @@ including StructProperty sub-field layouts discovered by walking the UScriptStru
   ]
 }
 ```
+
+**`struct_fields[].bool_mask`** (optional, uint8) — [A3-FIRE-STRUCT-BOOLMASK]: a
+`BoolProperty` sub-field PACKED into a byte it shares with sibling bools (`FHitResult`'s
+`bBlockingHit` / `bStartPenetrating`) carries its single-bit FieldMask, and FIRE and Copy AA
+Script read-modify-write that bit instead of stamping the whole byte. Absent = native or
+unresolved: the whole-byte write. On UE5 the mask now comes from the FField walk itself
+(`WalkFFieldChain`), which never collected it before.
 
 **`struct_fields`** (optional): Present only for `StructProperty` params where the DLL
 successfully walked the UScriptStruct's FField chain. Used by the UI as fallback when

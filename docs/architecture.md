@@ -66,7 +66,7 @@ UE5CEDumper/
 │       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
-│       ├── Frieren.cpp / .h        ← ExportAPI — 59 C ABI exports for CE Lua bridge
+│       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
 │       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (99 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
@@ -90,7 +90,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (188 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (195 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
 │       ├── Program.cs              ← Avalonia entry point

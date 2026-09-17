@@ -240,6 +240,57 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     // ==================================================================
+    // [W3-BATCH-METHOD] a function that was never analysed must not read as "0".
+    // ==================================================================
+
+    /// <summary>A props walk whose method tag the test controls, with no props.</summary>
+    private sealed class MethodPropsDump : StubDumpService
+    {
+        public string Method { get; set; } = "bytecode";
+
+        public override Task<FunctionPropRefsResult> WalkFunctionPropsAsync(
+            string funcAddr, CancellationToken ct = default)
+            => Task.FromResult(new FunctionPropRefsResult { Method = Method });
+    }
+
+    /// <summary>
+    /// Two of the DLL's four method tags mean nothing was analysed: "none" (the Func offset is
+    /// unresolved on this build) and "blueprint_no_script" (refused: disassembling would read the shared
+    /// interpreter). The batch read Props and BudgetHit and never Method, so both wrote a bare "0" --
+    /// "analysed, touches no class fields", the conclusion the user acts on. The single-function dialog
+    /// already says "NOTHING was analysed".
+    /// </summary>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("blueprint_no_script")]
+    [InlineData("bytecode_unreadable")]   // review of 0de62ec1: a Script header whose buffer did not read
+    public async Task Functions_props_batch_marks_a_not_analysed_row_as_such(string method)
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("NativeOrEmptyBlueprint") };
+        var vm = new InterestingFunctionsViewModel(new MethodPropsDump { Method = method }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.Equal("n/a", rows[0].XrefInfo);
+        Assert.Contains("NOT analysed", vm.StatusText);
+    }
+
+    /// <summary>The control: an analysed function with no class fields still writes a bare "0".</summary>
+    [Theory]
+    [InlineData("bytecode")]
+    [InlineData("disasm")]
+    public async Task Functions_props_batch_keeps_a_real_zero(string method)
+    {
+        var rows = new List<ScoredFunctionRow> { FuncRow("Analysed") };
+        var vm = new InterestingFunctionsViewModel(new MethodPropsDump { Method = method }, new NoopLog());
+
+        await vm.BatchFindFuncPropsCommand.ExecuteAsync(rows);
+
+        Assert.Equal("0", rows[0].XrefInfo);
+        Assert.DoesNotContain("NOT analysed", vm.StatusText);
+    }
+
+    // ==================================================================
     // Z9 — the deadline flag must reach the cell and the roll-up.
     // ==================================================================
 
@@ -451,5 +502,118 @@ public class BatchXrefCancelVsDisconnectTests
 
         Assert.Contains("cancelled", vm.StatusText);
         Assert.DoesNotContain("failed", vm.StatusText);
+    }
+
+    // ==================================================================
+    // [W3-XREF-CAP] a row cut off at the result cap is a lower bound -- its own cause, not the deadline's --
+    // at all four batch loops (Property Search and Interesting Properties hit the same 200-result cap).
+    // ==================================================================
+
+    private static List<PropertyXrefMatch> Matches(int n)
+    {
+        var list = new List<PropertyXrefMatch>();
+        for (int i = 0; i < n; i++) list.Add(new PropertyXrefMatch { FunctionName = $"Fn{i}" });
+        return list;
+    }
+
+    private sealed class CappedDump : StubDumpService
+    {
+        private static FindPropertyXrefsResult Capped() => new()
+        {
+            Xrefs = Matches(200),
+            Scan = new PropertyXrefScanStats { CapHit = true, Cap = 200 },
+        };
+
+        public override Task<FindPropertyXrefsResult> FindPropertyXrefsAsync(
+            string propAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default)
+            => Task.FromResult(Capped());
+
+        public override Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(
+            string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default)
+            => Task.FromResult(Capped());
+    }
+
+    private static void AssertCappedCell(string cell, string status)
+    {
+        Assert.StartsWith("200+ ·", cell);
+        Assert.False(Helpers.XrefFormat.IsPartialCell(cell));   // a re-run asks for the same 200: not partial
+        Assert.Contains("result cap", status);
+        Assert.DoesNotContain("deadline", status);
+    }
+
+    [Fact]
+    public async Task Properties_batch_marks_a_capped_row_as_a_lower_bound_not_partial()
+    {
+        var rows = new List<ScoredPropertyRow> { PropRow("Health") };
+        var vm = new InterestingPropertiesViewModel(new CappedDump(), new NoopLog());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PropertySearch_batch_marks_a_capped_row_as_a_lower_bound()
+    {
+        var rows = new List<PropertySearchMatch>
+        {
+            new() { ClassName = "BP_Enemy_C", PropName = "Health", FieldAddr = "0xDEAD0000" },
+        };
+        var vm = new PropertySearchViewModel(new CappedDump(), new NoopLog());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_batch_marks_a_capped_class_as_a_lower_bound()
+    {
+        var rows = new List<InstanceResult>
+        {
+            new() { Address = "0x1000", Name = "E_0", ClassName = "BP_Enemy_C", ClassAddress = "0xC1A550" },
+        };
+        var vm = new InstanceFinderViewModel(new CappedDump(), new NoopLog(), new NoopPlatform());
+
+        await vm.BatchFindFuncsCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ClassFilter_batch_marks_a_capped_cell_as_a_lower_bound()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        var vm = new GameClassFilterViewModel(new CappedDump(), new NoopLog(), new NoopPlatform());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        AssertCappedCell(rows[0].XrefInfo, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Xref_scan_parse_carries_the_cap()
+    {
+        // cap_hit / cap are new wire keys; a DLL that sends them must be heard at both commands.
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(req => new System.Text.Json.Nodes.JsonObject
+        {
+            ["ok"] = true,
+            ["scan"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["functions_scanned"] = 1, ["cap_hit"] = true, ["cap"] = 200,
+            },
+            ["xrefs"] = new System.Text.Json.Nodes.JsonArray(),
+        });
+        var svc = new DumpService(pipe, new MockLoggingService());
+        var ct = TestContext.Current.CancellationToken;
+
+        var byProp  = await svc.FindPropertyXrefsAsync("0x1", true, 200, ct);
+        var byClass = await svc.FindFunctionsByClassAsync("0x2", true, 200, ct);
+
+        Assert.True(byProp.Scan!.CapHit);
+        Assert.Equal(200, byProp.Scan.Cap);
+        Assert.True(byClass.Scan!.CapHit);
+        Assert.Equal(200, byClass.Scan.Cap);
     }
 }

@@ -39,7 +39,14 @@ struct FieldInfo {
     std::string elemType;        // SetProperty -> element FProperty type name
     std::string elemStructType;  // SetProperty element struct name (if StructProperty)
     std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
+    // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner's FBYTEPROP_ENUM, or an EnumProperty
+    // inner's FENUMPROP_ENUM. Each its OWN field -- enumName above is the field's own enum, never an inner's.
+    std::string innerEnumName;   // ArrayProperty / OptionalProperty inner
+    std::string elemEnumName;    // SetProperty element
+    std::string keyEnumName;     // MapProperty key
+    std::string valueEnumName;   // MapProperty value
     uint8_t     boolFieldMask = 0; // BoolProperty -> FieldMask byte (0 = not resolved)
+    bool        boolNative = false; // BoolProperty -> native whole-byte layout (FieldMask 0xFF) [A3-BOOL-NATIVE-NOWRITE]
 };
 
 struct ClassInfo {
@@ -93,6 +100,7 @@ struct FunctionParam {
         std::string typeName;
         int32_t     offset = 0;
         int32_t     size = 0;
+        uint8_t     boolFieldMask = 0;  // packed bool's single-bit mask, 0 otherwise [A3-FIRE-STRUCT-BOOLMASK]
     };
     std::vector<StructSubField> structFields;
 };
@@ -413,6 +421,7 @@ struct LiveFieldValue {
     int32_t     boolBitIndex = -1;  // Bit index (0-7) within the byte; -1 = not a bool
     uint8_t     boolFieldMask = 0;  // Raw FieldMask byte from FBoolProperty
     uint8_t     boolByteOffset = 0; // ByteOffset within the property offset
+    bool        boolNative = false; // native whole-byte bool (FieldMask 0xFF) [A3-BOOL-NATIVE-NOWRITE]
 
     // For ArrayProperty: TArray header info
     int32_t     arrayCount = -1;  // -1 = not an array
@@ -446,6 +455,11 @@ struct LiveFieldValue {
     // another language is a second thing to get wrong (measured: the first pad survey
     // re-implemented it in Python and therefore verified the copy, not the shipped rule).
     int32_t     delegatePad = 0;
+    // [A4-DELEGATE-ARRAY-PAD] The SAME detector, per ELEMENT of a TArray<FScriptDelegate>: its elements are the
+    // standalone unicast delegate, which carries the pad on a checked build. ⛔ Never folded into delegatePad above --
+    // that one is added to the FIELD offset, and an array field's own bytes are its TArray header. 0 for every other
+    // array, and always for a multicast (its invocation-list elements are the NotChecked variant, never padded).
+    int32_t     arrayElemDelegatePad = 0;
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
@@ -637,6 +651,9 @@ struct InstanceWalkResult {
     std::string outerClassName;    // Class name of the outer object
     bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
     bool        isStale = false;   // True when classAddr looks recycled/garbage (implausible PropertiesSize)
+    // [P1-WALK-UNREADABLE] The instance's own header could not be read (freed?), so nothing was walked. Distinct from
+    // isStale, which means a class pointer that read back implausible -- a narrower verdict.
+    bool        unreadable = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
     // The reflected walk RAN and its fields below are real; only the Guess-What
     // raw-byte pass was skipped, because PropertiesSize exceeds kMaxGapFillBytes.
@@ -807,7 +824,8 @@ inline std::string FormatPreviewNumber(double v) {
 /// Returns "" for properties that need process state (Name / Object / Class) or
 /// are not previewable — the caller supplies those, which is what keeps this pure.
 inline std::string PreviewScalarValue(const std::string& typeName,
-                                      const uint8_t* p, int32_t size) {
+                                      const uint8_t* p, int32_t size,
+                                      uint8_t boolMask = 0) {
     if (!p || size <= 0) return "";
     if (typeName == "FloatProperty"  && size == 4) { float  v; memcpy(&v, p, 4); return FormatPreviewNumber(v); }
     if (typeName == "DoubleProperty" && size == 8) { double v; memcpy(&v, p, 8); return FormatPreviewNumber(v); }
@@ -817,9 +835,128 @@ inline std::string PreviewScalarValue(const std::string& typeName,
     if (typeName == "UInt64Property" && size == 8) { uint64_t v; memcpy(&v, p, 8); return std::to_string(v); }
     if (typeName == "Int16Property"  && size == 2) { int16_t v; memcpy(&v, p, 2); return std::to_string(v); }
     if (typeName == "UInt16Property" && size == 2) { uint16_t v; memcpy(&v, p, 2); return std::to_string(v); }
-    if (typeName == "BoolProperty")                 return p[0] ? "true" : "false";
+    // [A2-STRUCT-PREVIEW-BOOLMASK] A PACKED bool owns one bit of a byte its siblings share
+    // (AActor::ReplicatedMovement's bSimulatedPhysicSleep / bRepPhysics): read that bit. Mask 0
+    // means UNRESOLVED (the probe missed, e.g. DQ XI S) — fall back to the whole byte rather than
+    // read every bool as false. ⛔ Never a bare (p[0] & mask) != 0.
+    if (typeName == "BoolProperty")
+        return (boolMask != 0 ? (p[0] & boolMask) != 0 : p[0] != 0) ? "true" : "false";
     if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
     return "";   // needs process state, or not previewable
+}
+
+/// What an FBoolProperty / UBoolProperty's {FieldSize, ByteOffset, ByteMask, FieldMask} say.
+/// [A3-BOOL-NATIVE-NOWRITE]
+enum class BoolLayout { Unresolved, Packed, Native };
+
+/// Classify a bool property's layout bytes. NATIVE is UE's own `bIsNativeBool` layout: every
+/// engine's SetBoolSize (PropertyBool.cpp, 4.11 -> 5.8, and the UE4-era UBoolProperty) does
+/// `ByteOffset = 0; if (bIsNativeBool) { ByteMask = true; FieldMask = 255; }`, so the bytes are
+/// {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} — a whole-byte bool, the layout of
+/// every Blueprint bool and container element, written 0x01 / 0x00. UE's own IsNativeBool() tests
+/// FieldMask alone; ByteMask 0x01 is held as well, so an all-0xFF read (a probe landing on fill)
+/// is not taken for one. ⚠ The first version required ByteMask 0xFF, which no engine writes, and
+/// so refused every native bool on a real game (B05 review). PACKED is a bitfield bool that owns
+/// exactly one bit. Anything else — including all-zero, which is what a missed probe reads — is
+/// UNRESOLVED and must never be treated as either.
+inline BoolLayout ClassifyBoolLayout(uint8_t fieldSize, uint8_t byteOffset,
+                                     uint8_t byteMask, uint8_t fieldMask) {
+    if (fieldSize != 1) return BoolLayout::Unresolved;
+    if (fieldMask == 0xFF && byteMask == 0x01 && byteOffset == 0) return BoolLayout::Native;
+    if (fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) return BoolLayout::Packed;
+    return BoolLayout::Unresolved;
+}
+
+/// Which of UE's two TOptional layouts an FOptionalProperty uses. [A2-TOPTIONAL-INTRUSIVE]
+/// INTRUSIVE: the value property has an intrusive unset state, the optional is exactly sizeof(T),
+/// and "unset" is a special value of T itself. TRAILING FLAG: `{ T value; bool bIsSet; }`, the flag
+/// at +sizeof(T). UNKNOWN: the size matches neither, so the set state is refused, never guessed.
+enum class OptionalLayout { Unknown, Intrusive, TrailingFlag };
+
+/// UE's own CalcSize (UE 5.8 PropertyOptional.h, FOptionalPropertyLayout::CalcSize): intrusive ->
+/// ValueProperty->GetSize(); otherwise Align(ValueProperty->GetSize() + 1, GetMinAlignment()).
+/// Matched EXACTLY. ⛔ Never a loose "optionalSize > innerSize means a trailing flag": a garbage
+/// innerSize would send an intrusive field back to reading its neighbour's first byte. And never a
+/// version gate: from 5.5 intrusiveness is per type and per CPF_NonNullable, so only the size says.
+inline OptionalLayout ClassifyOptionalLayout(int32_t optionalSize, int32_t innerSize,
+                                             int32_t innerAlign) {
+    if (optionalSize <= 0 || innerSize <= 0) return OptionalLayout::Unknown;
+    if (optionalSize == innerSize) return OptionalLayout::Intrusive;
+    if (innerAlign > 0 && (innerAlign & (innerAlign - 1)) == 0) {
+        const int64_t want = ((static_cast<int64_t>(innerSize) + innerAlign) / innerAlign) * innerAlign;
+        if (optionalSize == want) return OptionalLayout::TrailingFlag;
+    }
+    return OptionalLayout::Unknown;
+}
+
+/// An OptionalProperty's layout, resolved from the live property: the wrapped value property,
+/// its type, size and alignment, and the verdict of ClassifyOptionalLayout. Shared by the walker
+/// and Find Refs so the two cannot hold different beliefs again. [A2-TOPTIONAL-INTRUSIVE]
+struct OptionalLayoutInfo {
+    OptionalLayout layout = OptionalLayout::Unknown;
+    uintptr_t      innerProp = 0;
+    std::string    innerType;
+    int32_t        innerSize = 0;
+    int32_t        innerAlign = 0;
+};
+OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optionalSize,
+                                         const std::string& knownInnerType);
+
+/// [A2-TOPTIONAL-VALUESCAN] How an INTRUSIVE optional's unset state is spelled in its value bytes, per wrapped type.
+/// None = no known sentinel: Value Scan cannot read that optional's set state and skips it.
+enum class OptionalUnsetSentinel : int8_t {
+    None,
+    FStringMaxNone,   // FString (TArray<TCHAR>): ArrayMax == INDEX_NONE (-1) at +12
+    FNameIndexNone,   // FName: ComparisonIndex == ~0u at +0
+    FTextNull,        // FText: the TextData pointer null at +0
+};
+
+inline uint32_t OptionalLoadLe32(const uint8_t* p) {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+
+/// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c's decision for one TOptional<T> leaf, from its RESOLVED layout (never the
+/// loose "bigger than T means a trailing flag" rule). TrailingFlag: gate on the byte at sizeof(T). Intrusive: gate on
+/// the wrapped type's unset sentinel -- FString / FName / FText. Anything else -- Unknown, or an intrusive T with no
+/// known sentinel -- has an unreadable set state, so its bytes are not a value: false = SKIP the field.
+/// ⛔ Not "skip every intrusive optional": that would drop 5.5+ string optionals from every scan.
+inline bool V1cOptionalGate(OptionalLayout layout, const std::string& innerType, int32_t innerSize,
+                            int32_t& flagOffset, OptionalUnsetSentinel& sentinel) {
+    flagOffset = -1;
+    sentinel = OptionalUnsetSentinel::None;
+    if (layout == OptionalLayout::TrailingFlag && innerSize > 0) { flagOffset = innerSize; return true; }
+    if (layout == OptionalLayout::Intrusive) {
+        if (innerType == "StrProperty")  { sentinel = OptionalUnsetSentinel::FStringMaxNone; return true; }
+        if (innerType == "NameProperty") { sentinel = OptionalUnsetSentinel::FNameIndexNone; return true; }
+        if (innerType == "TextProperty") { sentinel = OptionalUnsetSentinel::FTextNull;      return true; }
+    }
+    return false;   // Unknown, or intrusive with no sentinel: skip
+}
+
+/// [A2-SENTINEL-OVERREAD] How many bytes from the value start IntrusiveOptionalIsUnset actually reads for this
+/// sentinel. An intrusive optional is exactly sizeof(T), so a fixed 16-byte read runs PAST an 8-byte
+/// TOptional<FName> (12 under case-preserving names) -- and a read that crosses into an unmapped page fails, which
+/// the caller cannot tell apart from "unset", so a SET optional is silently dropped. None = 0: nothing to read.
+inline int32_t SentinelBytesNeeded(OptionalUnsetSentinel s) {
+    switch (s) {
+        case OptionalUnsetSentinel::FStringMaxNone: return 16;   // ArrayMax at +12
+        case OptionalUnsetSentinel::FNameIndexNone: return 4;    // ComparisonIndex at +0
+        case OptionalUnsetSentinel::FTextNull:      return 8;    // the TextData pointer at +0
+        default: return 0;
+    }
+}
+
+/// [A2-TOPTIONAL-VALUESCAN] True when an intrusive optional's value bytes spell "unset" for its sentinel. The
+/// buffer must hold at least SentinelBytesNeeded(s) bytes from the value start -- 16 only for FString.
+/// [A2-SENTINEL-OVERREAD] Little-endian loads spelled out, so no header is needed and no alignment assumed.
+inline bool IntrusiveOptionalIsUnset(OptionalUnsetSentinel s, const uint8_t* value16) {
+    switch (s) {
+        case OptionalUnsetSentinel::FStringMaxNone: return OptionalLoadLe32(value16 + 12) == 0xFFFFFFFFu;
+        case OptionalUnsetSentinel::FNameIndexNone: return OptionalLoadLe32(value16) == 0xFFFFFFFFu;
+        case OptionalUnsetSentinel::FTextNull:
+            return OptionalLoadLe32(value16) == 0 && OptionalLoadLe32(value16 + 4) == 0;
+        default: return false;
+    }
 }
 
 /// True when the first 8 bytes look like a real vtable pointer: non-null,
@@ -1109,6 +1246,34 @@ ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+// Phase L: FString-family arrays (TArray<FString> / <FUtf8String> / <FAnsiString>). Each element is an
+// inline string header { Data*, int32 Num, int32 Max } -- 16 bytes -- decoded to UTF-8. An element whose
+// header cannot be read is "???", never "". [W5-STRARRAY-ELEMENTS]
+bool IsStringArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadStringArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase M: TFieldPath arrays (`TArray<TFieldPath<FProperty>>`). [WALK-FIELDPATH-ARRAY-NOELEMS]
+//
+// The walk published such an array with its count and NOT ONE element: no phase claimed
+// `FieldPathProperty`, exactly as no phase claimed a string array before `[W5-STRARRAY-ELEMENTS]`.
+// Found 2026-09-16 on the fixture's `Arr_FieldPath` — `num=2` on the wire, zero elements rendered.
+//
+// ⭐ THE STRIDE IS THE ENGINE'S `ElementSize`, NOT A CONSTANT, and `Path` is found from it rather
+// than at a fixed offset. `FFieldPath` is
+//     { FField* ResolvedField; [FFieldClass* InitialFieldClass; int32 SerialNumber;] TWeakObjectPtr
+//       ResolvedOwner; TArray<FName> Path; }
+// and the two bracketed members are `WITH_EDITORONLY_DATA` (UE 5.4 `FieldPath.h:56-63`), so a game
+// build is **32 bytes** and an editor build **48**. Measured 2026-09-16 on DumperTest Shipping 5.4:
+// the wire reported `array_elem_size 32` and the raw element read `[ptr][ObjectIndex 0x8A0,
+// Serial 0x5D8][TArray{data, 1, 2}]`. `Path` is the LAST member in both shapes, so its offset is
+// `elemSize - 16` — which is why this reader takes the size instead of pinning one.
+bool IsFieldPathArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadFieldPathArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 /// Render ONE FScriptDelegate binding, from the four things any reader can observe.
 ///
 /// ⛔ "(stale)" IS AN AFFIRMATIVE CLAIM — it says a target WAS bound and has since been
@@ -1176,6 +1341,9 @@ inline std::string DescribeUnreadableField(const char* what, int32_t offset) {
 // Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
 // Stride derives from CasePreservingName: 16 (8B FName) or 20 (12B FName; alignof 4, no pad).
 bool IsDelegateArrayType(const std::string& innerTypeName);
+// [A4-DELEGATE-ARRAY-PAD] The access-detector pad of ONE element of a TArray<FScriptDelegate>, from the inner's own
+// ElementSize: 8 on a checked UE 5.3+ build, else 0 -- and 0, never negative, for a size that matches neither.
+int32_t DelegateArrayElemPad(int32_t elemSize);
 ReadArrayResult ReadDelegateArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);

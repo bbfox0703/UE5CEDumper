@@ -78,6 +78,7 @@ public abstract class ManagedDialogWindow : Window
         try
         {
             _restore.SetScreens(CurrentScreens());
+            _restore.SetScale(RenderScaling);   // [W3-DIP-PIXELS] the stash is DIPs; the guard is physical px
             _previousWindowState = WindowState;
             if (WindowState == WindowState.Normal)
                 _restore.Seed(Position, Width, Height);
@@ -139,6 +140,7 @@ public abstract class ManagedDialogWindow : Window
         // Refresh the monitors backing the restore-state position guard — the window may
         // have been dragged to another screen before this transition.
         _restore.SetScreens(CurrentScreens());
+        _restore.SetScale(RenderScaling);   // [W3-DIP-PIXELS] ...and the scale of the monitor it is on now
 
         // Leaving Normal: the snapshot is already kept fresh by the change handlers above.
         if (oldState == WindowState.Normal && newState != WindowState.Normal)

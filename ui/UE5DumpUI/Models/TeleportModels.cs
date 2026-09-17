@@ -22,8 +22,47 @@ public sealed class TeleportPose
     public string Map { get; init; } = "";
 
     /// <summary>"raw" (direct property read) or "invoke"
-    /// (K2_GetActorLocation, used for attached/vehicle pawns).</summary>
+    /// (K2_GetActorLocation, used for attached/vehicle pawns).
+    /// <para>⚠ "raw" does NOT mean "not attached" — read <see cref="ParentRelative"/>
+    /// before treating these numbers as world coordinates.</para></summary>
     public string Source { get; init; } = "raw";
+
+    /// <summary>TRUE when the pawn is ATTACHED (vehicle / mount / moving platform) and
+    /// the world-space invoke failed, so X/Y/Z are the raw RelativeLocation —
+    /// <b>parent-relative numbers, not world coordinates</b>.</summary>
+    /// <remarks>docs/teleport-spec.md:218-220 required this flag when the fallback was
+    /// designed; the fallback shipped in 2026-07 and the flag did not, so a degraded
+    /// read arrived as the same <c>source = "raw"</c> as a healthy unattached one. The
+    /// XML above this property used to document exactly that wrong inverse. Those
+    /// numbers were displayed as world coordinates, saved into a marker that passes the
+    /// map guard, and later driven back into the pawn as a world-space destination.
+    /// [POSEATTACH-2026-09-10]</remarks>
+    public bool ParentRelative { get; init; }
+
+    /// <summary>The reply CARRIED <c>parent_relative</c> at all, true or false. The save reply has no <c>source</c>
+    /// key, so without this the card could not tell "healthy" from "an older DLL that never says". Review 5 of
+    /// 7490c24e.</summary>
+    public bool ParentRelativeKnown { get; init; }
+
+    /// <summary>TRUE when a move SUCCEEDED but the post-move pose re-read failed, so
+    /// X/Y/Z carry nothing — <b>not</b> a landing at the origin.</summary>
+    /// <remarks>The DLL leaves the Pose untouched when the re-read fails, and every
+    /// transport zero-initialises it, so a failed re-read used to be published as exactly
+    /// (0,0,0,0,0,0) and the panel overwrote its live readout with zeros the user could
+    /// copy or save as a marker. The move still worked — only the landing is unknown.
+    /// [TPREL-ZEROPOSE-2026-09-10]</remarks>
+    public bool LandingUnknown { get; init; }
+
+    /// <summary>TRUE when the reply carried NO <c>map</c> key at all -- <c>teleport_relative</c> has
+    /// none, nor does a save whose marker read-back failed. That is "not reported", NOT an empty map
+    /// name, and the Teleport panel keeps its last-known map rather than blanking it.</summary>
+    /// <remarks>Blanking it re-flagged every Coordinate Library row as another map's, and let "Add
+    /// from fields" persist <c>map = ""</c> to disk. [W2-TPREL-MAP]</remarks>
+    public bool MapAbsent { get; init; }
+
+    /// <summary>TRUE when the reply carried no <c>source</c> key. <see cref="Source"/> then holds
+    /// its "raw" default, which is not a reading. [W2-TPREL-MAP] twin.</summary>
+    public bool SourceAbsent { get; init; }
 
     /// <summary>Resolved pawn object address as a hex string ("0x0"/"" when
     /// unavailable) — the object whose coordinates this pose reports. Used by the
@@ -358,6 +397,15 @@ public sealed class SeeThroughStatus
     /// install can fail transiently (MinHook trampoline allocation) and recover on
     /// a later attempt, so this is polled rather than remembered.</summary>
     public bool HookActive { get; init; } = true;
+
+    /// <summary>[P1-SEETHRU-GIVEUP] A leftover-hidden restore is still WAITING for the game thread
+    /// (<c>restore_pending</c>): clicking back into the game restores the actors.</summary>
+    public bool RestorePending { get; init; }
+
+    /// <summary>[P1-SEETHRU-GIVEUP] The restore GAVE UP after the restore window (<c>restore_abandoned</c>): those
+    /// actors stay hidden until See-through is turned on and off again with the game running. False from an older
+    /// DLL.</summary>
+    public bool RestoreAbandoned { get; init; }
 }
 
 /// <summary>Result of a teleport action (recall / cursor).</summary>
@@ -393,6 +441,11 @@ public sealed class TeleportMarker
     public double Yaw { get; init; }
     public double Roll { get; init; }
     public string Map { get; init; } = "";
+
+    /// <summary>[W2-MARKER-PARENTREL] The marker was saved from a PARENT-RELATIVE read (an attached pawn whose
+    /// world-space read failed): X/Y/Z are not world coordinates, and recalling it drives the pawn there as if
+    /// they were. The key is absent on a healthy marker and from an older DLL.</summary>
+    public bool ParentRelative { get; init; }
 }
 
 /// <summary>

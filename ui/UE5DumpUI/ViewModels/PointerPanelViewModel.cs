@@ -242,6 +242,20 @@ public partial class PointerPanelViewModel : ViewModelBase
     public string PackedLayoutBadgeText =>
         "⚠ Unverified UE5.7+ packed layout — addresses best-effort";
 
+    // --- [W4-STRIDE-TENTATIVE] the stride verdict, orthogonal to the layout mode ---
+    [ObservableProperty] private string _itemDetect = "";
+    [ObservableProperty] private int _itemDetectValidated;
+    [ObservableProperty] private int _itemDetectProbes;
+
+    /// <summary>Drives the GLOBAL "stride is a guess" badge in the top bar: a tentative or undetected stride
+    /// means object counts and names may be an alias of the real pool (a stride dividing the real one reads
+    /// every k-th object).</summary>
+    public bool ShowStrideGuessBadge => HasData && EngineState.IsStrideUntrusted(ItemDetect);
+
+    /// <summary>Text for the global stride-guess badge.</summary>
+    public string StrideGuessBadgeText =>
+        EngineState.StrideGuessText(ItemDetect, ItemDetectValidated, ItemDetectProbes);
+
     // --- Self-Test state ---
     [ObservableProperty] private bool _isSelfTesting;
     [ObservableProperty] private string _selfTestResultText = "";
@@ -579,6 +593,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         ItemPacked = state.ItemPacked;
         ItemLayoutMode = state.ItemLayoutMode;
         ItemObjOffset = state.ItemObjOffset;
+        ItemDetect = state.ItemDetect;                     // [W4-STRIDE-TENTATIVE]
+        ItemDetectValidated = state.ItemDetectValidated;
+        ItemDetectProbes = state.ItemDetectProbes;
         // Ambient flag so static export utilities can embed the best-effort note.
         Services.PackedLayoutNotice.IsActive = state.ItemPacked;
         GObjectsMethod = state.GObjectsMethod;
@@ -748,6 +765,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         // Global top-bar unverified-packed-layout badge mirror (MainWindowViewModel).
         OnPropertyChanged(nameof(ShowPackedLayoutBadge));
         OnPropertyChanged(nameof(PackedLayoutBadgeText));
+        // ...and the stride-guess badge beside it (the same computed-pair trap). [W4-STRIDE-TENTATIVE]
+        OnPropertyChanged(nameof(ShowStrideGuessBadge));
+        OnPropertyChanged(nameof(StrideGuessBadgeText));
         OnPropertyChanged(nameof(CanSelfTest));
         NotifyAobMakerProperties();
     }

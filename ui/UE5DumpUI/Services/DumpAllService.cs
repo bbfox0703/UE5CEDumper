@@ -369,6 +369,10 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"item_layout\":", es.ItemLayoutMode);
         sb.Append(",\"item_obj_offset\":").Append(es.ItemObjOffset);
         sb.Append(",\"packed_unverified\":").Append(es.ItemPacked ? "true" : "false");
+        // [W4-STRIDE-TENTATIVE] The stride verdict beside it: a dump taken on a guessed stride may hold an
+        // alias of the real pool (every k-th object), and offline analysis must be able to tell.
+        AppendJsonString(sb, ",\"item_detect\":", es.ItemDetect);
+        sb.Append(",\"stride_untrusted\":").Append(es.ItemStrideUntrusted ? "true" : "false");
         AppendJsonString(sb, ",\"pe_hash\":", es.PeHash ?? "");
         AppendJsonString(sb, ",\"publisher_thumbprint\":", es.PublisherThumbprint ?? "");
         sb.Append(",\"dumper_build\":").Append(opts.DumperBuildNumber);

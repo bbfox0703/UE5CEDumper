@@ -420,18 +420,8 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                 : await _dump.FindPropertyXrefsAsync(_propAddr, gameOnly);
             _grid.ItemsSource = res.Xrefs;
 
-            var s = res.Scan;
-            var stats = s == null
-                ? ""
-                : (_classMode
-                    ? $" — scanned {s.FunctionsScanned:N0} funcs ({s.FunctionsWithScript:N0} matched) "
-                    : $" — scanned {s.FunctionsScanned:N0} funcs ({s.FunctionsWithScript:N0} with bytecode) ")
-                + $"over {s.ObjectsTotal:N0} objects in {s.DurationMs}ms"
-                + (s.DeadlineHit ? " [DEADLINE HIT — partial]" : "");
-
-            _statusLabel.Text = _classMode
-                ? $"{res.Xrefs.Count} function(s) take this class{stats}"
-                : $"{res.Xrefs.Count} function(s) reference this field{stats}";
+            // [W3-XREF-CAP] one pure formatter, so the cap and the deadline are pinned by tests.
+            _statusLabel.Text = UE5DumpUI.Helpers.XrefFormat.XrefDialogStatus(res, _classMode);
             _statusLabel.Foreground = new SolidColorBrush(Color.Parse(
                 res.Xrefs.Count > 0 ? "#4EC9B0" : "#D4D4D4"));
         }

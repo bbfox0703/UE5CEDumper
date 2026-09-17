@@ -24,6 +24,20 @@ public class SnapshotNumericTests
         Assert.Equal(expected, v, precision: 6);
     }
 
+    // [P3-SNAPNUM-ENUM] No EnumProperty arm, so every enum field captured since AB14 made enums
+    // scannable got numeric_value NULL: every SPC numeric predicate and every Group Match slot
+    // skipped it, and the grid showed raw hex. The DLL stores an enum as ONE unsigned byte
+    // (Radar.cpp: EnumProperty -> UInt8); decode unsigned at the captured length.
+    [Theory]
+    [InlineData("EnumProperty", "03", 3.0)]
+    [InlineData("EnumProperty", "FF", 255.0)]      // unsigned, never -1
+    [InlineData("EnumProperty", "0001", 256.0)]    // a wider capture, zero-extended little-endian
+    public void TryFromHex_DecodesAnEnumUnsigned(string type, string hex, double expected)
+    {
+        Assert.True(SnapshotNumeric.TryFromHex(type, hex, out var v));
+        Assert.Equal(expected, v);
+    }
+
     [Theory]
     // Float fields with the DEFAULT Round mode: a WHOLE-NUMBER target matches any
     // float that ROUNDS to it (the GAS 513.36 BaseValue found by searching "513").
@@ -125,6 +139,12 @@ public class SnapshotNumericTests
     {
         Assert.Equal(expected, SnapshotNumeric.Render(type, hex));
     }
+
+    [Theory]
+    [InlineData("EnumProperty", "07", "7")]
+    [InlineData("EnumProperty", "FF", "255")]
+    public void Render_ShowsAnEnumAsItsNumber_NotRawHex(string type, string hex, string expected)
+        => Assert.Equal(expected, SnapshotNumeric.Render(type, hex));
 
     [Theory]
     [InlineData("BoolProperty", "01")]      // not a captured numeric type

@@ -1,4 +1,5 @@
 ﻿using UE5DumpUI.Core;
+using UE5DumpUI;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -84,7 +85,7 @@ public class StubDumpService : IDumpService
     public virtual Task<IReadOnlyList<InstanceWalkResult>> WalkInstanceBatchAsync(IReadOnlyList<(string Addr, string? ClassAddr)> items, int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<DiagnosticsResult> GetDiagnosticsAsync(int limit = 25, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task ResetDiagnosticsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<byte[]> ReadMemAsync(string addr, int size, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<byte[]> ReadMemAsync(string addr, int size, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task WriteMemAsync(string addr, byte[] data, CancellationToken ct = default) => throw new NotImplementedException();
     public Task WatchAsync(string addr, int size, int intervalMs, CancellationToken ct = default) => throw new NotImplementedException();
     public Task UnwatchAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
@@ -97,7 +98,7 @@ public class StubDumpService : IDumpService
     public virtual Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PackedConstsResult> SetPackedConstsAsync(int alignBits = 0, ulong ptrMaskBits = 0, bool force = false, int serialOff = -1, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<AddressLookupResult> FindByAddressAsync(string addr, int containerElemCap = 256, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<RelatedObjectsResult> GetRelatedObjectsAsync(string addr, int maxResults = 128, CancellationToken ct = default) => throw new NotImplementedException();
@@ -402,7 +403,44 @@ public class CsxExportServiceTests
         Assert.Contains("Description=\"PlayerName\"", csx);
         // Child structure with Unicode String
         Assert.Contains("Vartype=\"Unicode String\"", csx);
-        Assert.Contains("Bytesize=\"18\"", csx);
+        // [CSX-STRCHILD-BYTESIZE] was the literal 18 -- 9 wide characters for every string in
+        // every export. The window is the export's String Len now, defaulted like the CE XML path.
+        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength}\"", csx);
+        Assert.DoesNotContain("Bytesize=\"18\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_StringChild_WindowIsTheCeStringLengthOption()
+    {
+        // [CSX-STRCHILD-BYTESIZE] The toolbar's String Len drives BOTH exporters, so a CSX and a
+        // CE XML of the same object cannot disagree about how much of a string the user sees.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PlayerName", TypeName = "StrProperty", Offset = 0x30, Size = 8,
+                     HexValue = "0000018AF21C3E20" }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(
+            _dump, "TestStruct", fields, ceStringLength: 128, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Bytesize=\"128\"", csx);
+        Assert.DoesNotContain("Bytesize=\"18\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_StringChild_NonPositiveLengthFallsBackToTheDefault()
+    {
+        // Same rule as CeXmlExportService.EmitStringLeaf: 0 (unset) is the default, never a
+        // zero-byte window that would show nothing at all.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Utf8Name", TypeName = "Utf8StrProperty", Offset = 0x10, Size = 16 }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(
+            _dump, "TestStruct", fields, ceStringLength: 0, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength}\"", csx);
     }
 
     [Fact]
@@ -928,6 +966,33 @@ public class CsxExportServiceTests
     }
 
     [Fact]
+    public async Task GenerateCsx_ArrayProperty_StringInner_ShowsElementsAsStrings()
+    {
+        // [W5-STRARRAY-ELEMENTS] The DLL now sends a TArray<FString>'s elements. CSX's scalar-element path
+        // already types each one as the string's Data pointer with a string child -- a pin, green both
+        // ways, because until now no string array ever reached it WITH elements.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Names", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "StrProperty", ArrayElemSize = 16,
+                     ArrayDataAddr = "0x6000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "Alice" },
+                         new() { Index = 1, Value = "Bob" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Alice\"", csx);
+        Assert.Contains("Description=\"[1] Bob\"", csx);
+        Assert.Contains("Offset=\"16\"", csx);                 // [1] at 1 * 16, the header's size
+        Assert.Contains("Vartype=\"Unicode String\"", csx);    // FString's child: the wide text behind Data
+    }
+
+    [Fact]
     public async Task GenerateCsx_ArrayProperty_ScalarInner_DrilldownOne_ShowsElements()
     {
         // ArrayProperty with FloatProperty inner type — each element is a simple scalar
@@ -1384,6 +1449,100 @@ public class CsxExportServiceTests
         Assert.Contains("Offset=\"16\"", csx);
         // MulticastInlineDelegateProperty maps to "Array of byte" in CSX
         Assert.Contains("Vartype=\"Array of byte\"", csx);
+    }
+
+    // ---- [W5-CSX-DELEGATEPAD] the UE 5.3+ access-detector pad (DelegatePad, derived by the DLL) ----
+
+    [Theory]
+    [InlineData(0, 256)]   // Shipping / Test, or UE <= 5.2: no detector
+    [InlineData(8, 264)]   // a checked build: the FWeakObjectPtr starts 8 bytes in
+    public async Task GenerateCsx_UnicastDelegate_LeafSitsOnThePayload(int pad, int expected)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "OnPicked", TypeName = "DelegateProperty", Offset = 0x100, Size = 16 + pad, DelegatePad = pad },
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains($"<Element Offset=\"{expected}\" Vartype=\"8 Bytes\"", csx);
+    }
+
+    private static LiveFieldValue MulticastWithOneBinding(int pad) => new()
+    {
+        Name = "OnClicked", TypeName = "MulticastInlineDelegateProperty", Offset = 0x2C0, Size = 16 + pad,
+        DelegatePad = pad, ArrayCount = 1, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+        ArrayDataAddr = "0xC000",
+        ArrayElements = new List<ArrayElementValue>
+        {
+            new() { Index = 0, PtrAddress = "0xE01", PtrName = "Button", PtrClassName = "UButton" },
+        },
+    };
+
+    [Fact]
+    public async Task GenerateCsx_MulticastDelegate_CheckedBuild_RawBlockStays_DrillIsAPointerOnThePayload()
+    {
+        // ⛔ Not a blanket "+ DelegatePad". The raw block is the WHOLE field, detector included, so it stays at 704;
+        // the drill must be a POINTER on InvocationList.Data (704 + 8) -- CE follows a child only from a pointer.
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { MulticastWithOneBinding(pad: 8) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Array of byte\" Bytesize=\"24\"", csx);   // the field
+        Assert.Contains("<Element Offset=\"712\" Vartype=\"Pointer\"", csx);                         // the drill
+        Assert.DoesNotContain("<Element Offset=\"712\" Vartype=\"Array of byte\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_MulticastDelegate_ShippingBuild_DrillIsAPointerOnTheField()
+    {
+        // No detector: the drill pointer sits on the field offset itself. Before the fix the child hung on the raw
+        // "Array of byte" block, which CE cannot expand (StructuresFrm2.pas: isPointer is vartype = vtPointer).
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { MulticastWithOneBinding(pad: 0) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Array of byte\" Bytesize=\"16\"", csx);
+        Assert.Contains("<Element Offset=\"704\" Vartype=\"Pointer\"", csx);
+    }
+
+    // ---- [A4-DELEGATE-ARRAY-PAD] a TArray<FScriptDelegate>'s element leaves carry the per-element pad ----
+
+    private static LiveFieldValue DelegateArrayWithTwoBindings(string type, int elemSize, int elemPad) => new()
+    {
+        Name = "Handlers", TypeName = type, Offset = 0xA0, Size = 16,
+        ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = elemSize, ArrayElemDelegatePad = elemPad,
+        ArrayDataAddr = "0xC000",
+        ArrayElements = new List<ArrayElementValue>
+        {
+            new() { Index = 0, PtrAddress = "0xE01", PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+            new() { Index = 1, PtrAddress = "0xE02", PtrName = "EnemyActor", PtrClassName = "BP_Enemy_C" },
+        },
+    };
+
+    [Fact]
+    public async Task GenerateCsx_DelegateArray_CheckedBuild_ElementLeavesSitOnEachPayload()
+    {
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { DelegateArrayWithTwoBindings("ArrayProperty", 24, 8) }, drilldownDepth: 1,
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"8\" Vartype=\"8 Bytes\"", csx);     // [0]: 0*24 + 8
+        Assert.Contains("<Element Offset=\"32\" Vartype=\"8 Bytes\"", csx);    // [1]: 1*24 + 8
+        Assert.DoesNotContain("<Element Offset=\"24\" Vartype=\"8 Bytes\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_MulticastInvocationList_ElementsAreNeverPadded()
+    {
+        // A multicast's invocation list converts through the same element path, and its elements are never padded:
+        // the pad applies to an ArrayProperty only.
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct",
+            new List<LiveFieldValue> { DelegateArrayWithTwoBindings("MulticastInlineDelegateProperty", 16, 8) },
+            drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("<Element Offset=\"16\" Vartype=\"8 Bytes\"", csx);    // [1]: 1*16, unpadded
+        Assert.DoesNotContain("<Element Offset=\"24\" Vartype=\"8 Bytes\"", csx);
     }
 
     [Fact]

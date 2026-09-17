@@ -66,6 +66,13 @@ public partial class ClassPivotViewModel : ViewModelBase
     private readonly IPlatformService? _platform;
     private readonly IDumpService? _dump;
     private EngineState? _engineState;
+    // [W1-PIVOT-SESSION] Live game session id (PeHash-CreationTime), kept exactly as Snapshot and SPC
+    // keep theirs. A result row's ObjAddr is an address in the launch that captured it.
+    private string _currentSessionId = "";
+    // The launch the CURRENT results belong to ("" = none). Stamped when the results are set, not read
+    // from SelectedSnapshot: a DataTable run walks the LIVE process whatever the snapshot picker shows,
+    // and the picker can move after a run.
+    private string _resultsSessionId = "";
     private readonly List<PivotClassInfo> _allClasses = new();
     /// <summary>Rows of the selected DataTable, cached so Run projects without a
     /// second pipe round-trip (Phase C4).</summary>
@@ -80,7 +87,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     private int _classLoadId;
     private int _fieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
-    private CancellationTokenSource? _loadCts;    // class / field list loads (GROUP BY over ~1.7M rows)
+    // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
+    // nothing restarts, leaving the previous snapshot's classes in the picker.
+    private CancellationTokenSource? _classLoadCts;   // class list loads (GROUP BY over ~1.7M rows)
+    private CancellationTokenSource? _fieldLoadCts;   // field list loads
+    // [A4-PIVOT-CROSSGAME-ID] The game (PeHash) whose snapshot list is on screen. Snapshot ids are per-game-DB
+    // AUTOINCREMENT, so an id only names "the same snapshot" within one game.
+    private string? _listedPe;
+    private string CurrentPe => _engineState?.PeHash ?? "";
 
     [ObservableProperty] private string _selectedSource = "Snapshot";
     [ObservableProperty] private SnapshotMeta? _selectedSnapshot;
@@ -161,15 +175,27 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// reaches engine-layer objects the GWorld graph can't.</summary>
     public event Action<string>? LocateInGameEngine;
 
-    /// <summary>A result row is selected, so its representative object can be located.</summary>
-    public bool CanLocateResult => SelectedResult != null;
+    /// <summary>[W1-PIVOT-SESSION] A result row is selected AND the results belong to the CURRENT live
+    /// session, so the row's ObjAddr is still an address in the running game. Gates all four row
+    /// handoffs (Open in Live Walker, Copy Address, both Locates), as Snapshot Diff and SPC gate theirs.
+    /// Class Pivot shipped before that gate and never got it: right after a reconnect its DEFAULT
+    /// snapshot is a previous launch's, and the handoffs gave the running game a dead process's address.</summary>
+    public bool CanUseResultRowActions =>
+        SelectedResult != null
+        && !string.IsNullOrEmpty(_currentSessionId)
+        && _resultsSessionId == _currentSessionId;
+    /// <summary>The selected row can be located: <see cref="CanUseResultRowActions"/>.</summary>
+    public bool CanLocateResult => CanUseResultRowActions;
     /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
     /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
     /// flag disabled this button on games where GWorld WAS resolved (audit #5 AE10).</summary>
-    public bool CanLocateResultInGWorld => SelectedResult != null;
+    public bool CanLocateResultInGWorld => CanUseResultRowActions;
 
-    partial void OnSelectedResultChanged(PivotResultRow? value)
+    partial void OnSelectedResultChanged(PivotResultRow? value) => RaiseResultRowActionGates();
+
+    private void RaiseResultRowActionGates()
     {
+        OnPropertyChanged(nameof(CanUseResultRowActions));
         OnPropertyChanged(nameof(CanLocateResult));
         OnPropertyChanged(nameof(CanLocateResultInGWorld));
     }
@@ -200,6 +226,11 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// fire-and-forget chain deterministically; the live UI ignores it.</summary>
     public Task? PendingLoad { get; private set; }
 
+    /// <summary>The snapshot-list refresh <see cref="SetEngineState"/> kicked off. A test seam only,
+    /// exactly as in SnapshotViewModel: a test that awaited a SECOND refresh instead ran two rebuilds
+    /// of the same collection concurrently.</summary>
+    public Task? PendingRefresh { get; private set; }
+
     /// <summary>Per-session remembered class-filter keywords (LRU) surfaced as the
     /// class-filter box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.</summary>
     private readonly KeywordSearchMemory _classFilterMemory;
@@ -224,13 +255,15 @@ public partial class ClassPivotViewModel : ViewModelBase
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
+        _currentSessionId = state.GameSessionId;   // PeHash-CreationTime; matches capture-time GameSessionId
+        RaiseResultRowActionGates();
         _store.SetActiveGame(state.PeHash);
         LoadDenylistFromStore();
         // A new connection invalidates any DataTable list/rows from a prior game.
         DataTables.Clear();
         _dataTable = null;
         SelectedDataTable = null;
-        _ = RefreshAsync();
+        PendingRefresh = RefreshAsync();
         if (IsDataTableSource) PendingLoad = RefreshDataTablesAsync();
     }
 
@@ -243,6 +276,9 @@ public partial class ClassPivotViewModel : ViewModelBase
         DataTables.Clear();
         _dataTable = null;
         SelectedDataTable = null;   // handler early-returns on null (no pipe call)
+        // [W1-PIVOT-SESSION] No live session: the row handoffs close until the next connect.
+        _currentSessionId = "";
+        RaiseResultRowActionGates();
     }
 
     // --- N1: Pivot-scope class denylist (right-click "Hide this class") ---
@@ -400,14 +436,73 @@ public partial class ClassPivotViewModel : ViewModelBase
                 return;
             }
 
-            if (await SelectClassAndTickPropAsync(className, propName) && !string.IsNullOrEmpty(propName))
-                StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+            if (!await SelectClassAndTickPropAsync(className, propName))
+            {
+                // Review 3 of c294e314: a class whose captured objects hold ONLY struct arrays has no scalar row,
+                // so it is missing from the class list -- and the helper's "not in the selected snapshot" was
+                // false for it. Its arrays pivot under the Snapshot Array source.
+                var onlyArrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
+                if (onlyArrays.Count > 0)
+                    StatusText = ArraysOnlyStatus(className, propName, onlyArrays.Select(a => a.ArrayField).ToList());
+                return;
+            }
+            if (!string.IsNullOrEmpty(propName))
+            {
+                // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
+                // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
+                // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
+                if (Fields.Any(f => f.Name == propName))
+                    StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+                else
+                {
+                    // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
+                    // Array source -- the scalar field list just never shows it. Review 3 of c294e314: Value
+                    // Search hands off a struct-array inner value by its display name ("Cargo[3].Quantity"),
+                    // which names its array before the '['.
+                    var arrays = await Task.Run(() => _store.ListPivotArrayFieldsAsync(SelectedSnapshot!.Id, className));
+                    var arrayName = ArrayFieldOf(propName);
+                    var what = arrayName == propName ? "a struct array" : "an element of the struct array " + arrayName;
+                    StatusText = arrays.Any(a => a.ArrayField == arrayName)
+                        ? $"'{propName}' is {what} of {className}: pivot it under the Snapshot Array source "
+                          + $"({className} → {arrayName})."
+                        : $"'{propName}' is not a pivotable field of {className} in this snapshot "
+                          + "— only captured numeric fields and struct arrays can be pivoted.";
+                }
+            }
         }
         catch (Exception ex)
         {
             _log.Error(Constants.LogCatView, $"Pivot: handoff for {className}.{propName} failed", ex);
             SetError(ex);
         }
+    }
+
+    /// <summary>The struct-array field a handoff prop belongs to: "Cargo" for "Cargo", "Cargo[3].Quantity" or
+    /// "Cargo[].Quantity" -- Value Search names an array element's inner value that way. Review 3 of c294e314.</summary>
+    internal static string ArrayFieldOf(string propName)
+    {
+        int i = propName.IndexOf('[');
+        return i > 0 ? propName[..i] : propName;
+    }
+
+    /// <summary>The hint for a class whose captured objects hold ONLY struct arrays (<paramref name="arrays"/>, by
+    /// name). Review 4 of c5511519: it named the first array whatever was handed off, so "Cargo[3].Quantity" was sent
+    /// to "Ammo", and a prop that is no array at all was never told it is not pivotable. It now reads the prop the
+    /// way the class-found branch does.</summary>
+    internal static string ArraysOnlyStatus(string className, string? propName, IReadOnlyList<string> arrays)
+    {
+        if (string.IsNullOrEmpty(propName))
+            return $"{className} has only struct arrays in this snapshot: pivot them under the "
+                   + $"Snapshot Array source ({className} → {arrays[0]}).";
+        var arrayName = ArrayFieldOf(propName);
+        if (arrays.Contains(arrayName))
+        {
+            var what = arrayName == propName ? "a struct array" : "an element of the struct array " + arrayName;
+            return $"'{propName}' is {what} of {className}, which has only struct arrays in this snapshot: pivot it "
+                   + $"under the Snapshot Array source ({className} → {arrayName}).";
+        }
+        return $"'{propName}' is not a pivotable field of {className} in this snapshot — it has only struct arrays, "
+               + $"which pivot under the Snapshot Array source ({className} → {arrays[0]}).";
     }
 
     /// <summary>Select <paramref name="className"/> in the CURRENTLY selected
@@ -443,7 +538,10 @@ public partial class ClassPivotViewModel : ViewModelBase
         var pending = PendingLoad;
         if (pending != null) { try { await pending; } catch { /* surfaced via SetError */ } }
 
-        if (!string.IsNullOrEmpty(propName) && SelectedKeyField != propName)
+        // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
+        // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
+        // under a "Ready" status.
+        if (!string.IsNullOrEmpty(propName) && !(IsFieldKeyMode && SelectedKeyField == propName))
         {
             var pick = Fields.FirstOrDefault(f => f.Name == propName);
             if (pick != null) pick.IsValue = true;
@@ -463,6 +561,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     public async Task RefreshAsync()
     {
         if (_refreshing) return;   // coalesce overlapping refreshes (rapid tab re-entry / clicks)
+        var pe = CurrentPe;        // [A4-PIVOT-CROSSGAME-ID] the game this list is read from
         // Off the UI thread: Microsoft.Data.Sqlite "*Async" runs synchronously on the
         // caller, so awaiting it on the UI thread would block + run the collection
         // rebuild inline inside a binding event (the crash).
@@ -476,10 +575,15 @@ public partial class ClassPivotViewModel : ViewModelBase
         // repopulates with NEW instances, so this must round-trip by Id — never by
         // reference or index. A refresh used to hard-reset the picker to "newest"
         // plus the two-newest ticks, silently discarding a deliberate choice.
-        long? keepSnapshotId = SelectedSnapshot?.Id;
-        var keepTicked = DiscoverPicks.Where(p => p.IsSelected)
-                                      .Select(p => p.Id)
-                                      .ToHashSet();
+        //
+        // [A4-PIVOT-CROSSGAME-ID] ...but only within ONE game: after a reconnect to a different game the same Id names
+        // some other snapshot. SetEngineState also runs on a same-game Extra Scan, which must keep the pick (AF5), so
+        // the test is "did the game change", not "was there a connect".
+        bool sameGame = pe == _listedPe;
+        long? keepSnapshotId = sameGame ? SelectedSnapshot?.Id : null;
+        var keepTicked = sameGame
+            ? DiscoverPicks.Where(p => p.IsSelected).Select(p => p.Id).ToHashSet()
+            : new HashSet<long>();
 
         _refreshing = true;
         try
@@ -490,9 +594,10 @@ public partial class ClassPivotViewModel : ViewModelBase
             // Drop cache entries for snapshots that no longer exist (deleted) so a
             // recaptured Id can't ever read a stale class/field list.
             var liveIds = new HashSet<long>(list.Select(s => s.Id));
-            foreach (var k in _classCache.Keys.Where(k => !liveIds.Contains(k.Item1)).ToList())
+            // [A4-PIVOT-CROSSGAME-ID] Scoped to THIS game: another game's entries are keyed apart and stay valid.
+            foreach (var k in _classCache.Keys.Where(k => k.Item1 == pe && !liveIds.Contains(k.Item2)).ToList())
                 _classCache.Remove(k);
-            foreach (var k in _fieldCache.Keys.Where(k => !liveIds.Contains(k.Item1)).ToList())
+            foreach (var k in _fieldCache.Keys.Where(k => k.Item1 == pe && !liveIds.Contains(k.Item2)).ToList())
                 _fieldCache.Remove(k);
             // Restore the previous selection, falling back to the newest. A snapshot
             // that was deleted between refreshes simply isn't in `list`, so the
@@ -505,6 +610,7 @@ public partial class ClassPivotViewModel : ViewModelBase
             // build (nothing ticked yet) falls back to the two newest — the common
             // "capture before/after an action" flow.
             RebuildDiscoverPicks(keepTicked);
+            _listedPe = pe;
         }
         catch (Exception ex)
         {
@@ -559,7 +665,8 @@ public partial class ClassPivotViewModel : ViewModelBase
     // change. Keyed by (snapshotId, arrayMode); pruned in RefreshAsync when a
     // snapshot is deleted. The denylist filter is applied on top of the cached
     // list (so hiding a class never needs a re-scan).
-    private readonly Dictionary<(long, bool), IReadOnlyList<PivotClassInfo>> _classCache = new();
+    // [A4-PIVOT-CROSSGAME-ID] Keyed by GAME too: snapshot ids repeat across per-game DBs.
+    private readonly Dictionary<(string, long, bool), IReadOnlyList<PivotClassInfo>> _classCache = new();
 
     private async Task LoadClassesAsync()
     {
@@ -574,7 +681,9 @@ public partial class ClassPivotViewModel : ViewModelBase
         if (SelectedSnapshot == null) { _allClasses.Clear(); Classes.Clear(); return; }
         long snapId = SelectedSnapshot.Id;
         bool arrayMode = IsArraySource;
-        var key = (snapId, arrayMode);
+        // [A4-PIVOT-CROSSGAME-ID] The game is captured HERE, at load start: a load in flight across a game switch then
+        // caches under the game it read from, never under the new one.
+        var key = (CurrentPe, snapId, arrayMode);
 
         // Cache hit → apply instantly, no scan, no thread.
         if (_classCache.TryGetValue(key, out var cachedList))
@@ -586,9 +695,9 @@ public partial class ClassPivotViewModel : ViewModelBase
 
         // Cache miss → scan once. Cancel a prior in-flight load so rapidly
         // changing the snapshot doesn't stack several heavy scans on the pool.
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        var cts = _loadCts = new CancellationTokenSource();
+        _classLoadCts?.Cancel();
+        _classLoadCts?.Dispose();
+        var cts = _classLoadCts = new CancellationTokenSource();
         var ct = cts.Token;
         StatusText = "Loading classes… (first time for this snapshot)";
         try
@@ -669,7 +778,7 @@ public partial class ClassPivotViewModel : ViewModelBase
 
     // Per-(snapshot, class) field-list cache — same immutability rationale as the
     // class cache: a snapshot's fields for a class never change, so scan once.
-    private readonly Dictionary<(long, string), IReadOnlyList<PivotFieldInfo>> _fieldCache = new();
+    private readonly Dictionary<(string, long, string), IReadOnlyList<PivotFieldInfo>> _fieldCache = new();   // + game
 
     private async Task LoadFieldsAsync()
     {
@@ -687,7 +796,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         }
         long snapId = SelectedSnapshot.Id;
         string cls = SelectedClass.ClassName;
-        var key = (snapId, cls);
+        var key = (CurrentPe, snapId, cls);   // [A4-PIVOT-CROSSGAME-ID] captured at load start
 
         // Cache hit → rebuild the picker instantly (no scan).
         if (_fieldCache.TryGetValue(key, out var cachedFields))
@@ -696,9 +805,9 @@ public partial class ClassPivotViewModel : ViewModelBase
             return;
         }
 
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        var cts = _loadCts = new CancellationTokenSource();
+        _fieldLoadCts?.Cancel();   // [W1-PIVOT-LOADCTS] never the class load's
+        _fieldLoadCts?.Dispose();
+        var cts = _fieldLoadCts = new CancellationTokenSource();
         var ct = cts.Token;
         StatusText = "Loading fields…";
         try
@@ -943,6 +1052,23 @@ public partial class ClassPivotViewModel : ViewModelBase
         return keys;
     }
 
+    /// <summary>[P5-PIVOT-FETCHCAP] The Run status for a snapshot / array pivot. Two caps, two sentences, and both can
+    /// fire on one run: the GROUP cap (PivotEngine: the top N groups of a COMPLETE input, every count exact) and the row
+    /// FETCH cap (SnapshotStore: the pivot was built over a PREFIX in gobjects_index order, so the instance count, the
+    /// group count and every group's count are undercounts -- and a mid-instance break can make a bogus "(missing)"
+    /// group). The fetch cap used to fold into the group cap's "(capped at 5,000)", presenting the prefix as totals.
+    /// "Tick only the fields you need", not "fewer": with NO value field ticked every prop is fetched.</summary>
+    internal static string PivotRunStatus(PivotResult r, int maxGroups, string groupsNoun, string instancesNoun, string tail)
+    {
+        var groupCap = r.Truncated ? $" (capped at {maxGroups:N0})" : "";
+        var atLeast  = r.FetchCapped ? "≥ " : "";
+        var fetch    = r.FetchCapped
+            ? $"  ⚠ the snapshot read stopped at its {r.FetchCap:N0}-row fetch cap, so these counts cover a prefix and "
+              + "are not totals — tick only the fields you need"
+            : "";
+        return $"{atLeast}{r.GroupCount:N0} {groupsNoun}{groupCap} from {atLeast}{r.InstanceCount:N0} {instancesNoun} · {tail}{fetch}";
+    }
+
     [RelayCommand]
     private async Task RunPivotAsync()
     {
@@ -958,7 +1084,11 @@ public partial class ClassPivotViewModel : ViewModelBase
         StatusText = "Running pivot…";
         SelectedResult = null;   // detach before clearing the bound results grid
         _allResults.Clear();
+        _resultsSessionId = "";
         Results.Clear();
+        // [W1-PIVOT-SESSION] The launch this run's addresses belong to, taken BEFORE the first await:
+        // a DataTable run walks the live process; a snapshot run reads the snapshot's launch.
+        string runSession = IsDataTableSource ? _currentSessionId : (SelectedSnapshot?.GameSessionId ?? "");
         try
         {
             if (IsDataTableSource)
@@ -966,8 +1096,12 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // Zero-config: RowName is the key, every row its own group.
                 var valueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList();
                 var res = DataTablePivotEngine.Build(_dataTable!, valueFields);
-                SetResults(res.Rows);
-                StatusText = $"{res.GroupCount:N0} rows · key = RowName · {_dataTable!.RowStructName}";
+                SetResults(res.Rows, runSession);
+                // [W1-DT-TRUNC] The load said "(showing N of M)" for a capped page; the Run used to print a bare row
+                // count over it. Same wording as the load, 17 lines above an array branch that gets it right.
+                var dtTrunc = _dataTable!.RowCount > _dataTable.Rows.Count
+                    ? $" (showing {_dataTable.Rows.Count:N0} of {_dataTable.RowCount:N0})" : "";
+                StatusText = $"{res.GroupCount:N0} rows{dtTrunc} · key = RowName · {_dataTable!.RowStructName}";
                 return;
             }
 
@@ -982,11 +1116,10 @@ public partial class ClassPivotViewModel : ViewModelBase
                     ValueProps = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
                 };
                 var arrRes = await Task.Run(() => _store.PivotArrayAsync(aq, ct), ct);
-                SetResults(arrRes.Rows);
-                var arrTrunc = arrRes.Truncated ? $" (capped at {aq.MaxGroups:N0})" : "";
+                SetResults(arrRes.Rows, runSession);
                 string keyName = string.IsNullOrEmpty(SelectedArrayField.InnerKeyName)
                     ? "elem index" : SelectedArrayField.InnerKeyName;
-                StatusText = $"{arrRes.GroupCount:N0} {keyName} group(s){arrTrunc} from {arrRes.InstanceCount:N0} elements · {aq.ArrayField}";
+                StatusText = PivotRunStatus(arrRes, aq.MaxGroups, $"{keyName} group(s)", "elements", aq.ArrayField);
                 return;
             }
 
@@ -1000,11 +1133,10 @@ public partial class ClassPivotViewModel : ViewModelBase
                 ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
             };
             var snapRes = await Task.Run(() => _store.PivotAsync(query, ct), ct);
-            SetResults(snapRes.Rows);
+            SetResults(snapRes.Rows, runSession);
 
-            var snapTrunc = snapRes.Truncated ? $" (capped at {query.MaxGroups:N0})" : "";
             var keyDesc = IsFieldKeyMode ? $"key={string.Join(" · ", query.EffectiveKeyFields)}" : "identity";
-            StatusText = $"{snapRes.GroupCount:N0} groups{snapTrunc} from {snapRes.InstanceCount:N0} instances · {keyDesc}";
+            StatusText = PivotRunStatus(snapRes, query.MaxGroups, "groups", "instances", keyDesc);   // [P5-PIVOT-FETCHCAP]
         }
         catch (OperationCanceledException)
         {
@@ -1099,6 +1231,13 @@ public partial class ClassPivotViewModel : ViewModelBase
         try
         {
             ClearError();
+            // [W1-DISCOVER-ARRAY] A struct-array element lives in the array's rows, never in the
+            // scalar field list, so it pivots through the Snapshot Array source.
+            if (!string.IsNullOrEmpty(cand.ArrayField))
+            {
+                await UseArrayDiscoverCandidateAsync(cand);
+                return;
+            }
             SelectedSource = "Snapshot";
             var target = _discoverNewest ?? SelectedSnapshot;
             if (target != null && !ReferenceEquals(SelectedSnapshot, target))
@@ -1120,7 +1259,14 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // mode / collapse it in Field mode.)
                 SelectedKeyMode = "Identity (object path)";
                 var pick = Fields.FirstOrDefault(f => f.Name == cand.PropName);
-                if (pick != null) pick.IsValue = true;
+                if (pick == null)
+                {
+                    // [W1-DISCOVER-ARRAY] Say so, and run nothing: a pivot of the pre-ticked fields
+                    // under a normal status line read as the candidate's own result.
+                    StatusText = $"'{cand.PropName}' is not a pivotable field of {cand.ClassName} in this snapshot.";
+                    return;
+                }
+                pick.IsValue = true;
                 await RunPivotAsync();        // show the grouped pivot of the target now
             }
         }
@@ -1131,25 +1277,91 @@ public partial class ClassPivotViewModel : ViewModelBase
         }
     }
 
+    // [W1-DISCOVER-ARRAY] "Use →" for a struct-array element ("Cargo[1].Quantity"): select the class in
+    // the Snapshot Array source, then the candidate's OWN array (the array-field load auto-selects the
+    // first one), tick its inner prop and run. Every step that finds nothing says so and runs nothing.
+    private async Task UseArrayDiscoverCandidateAsync(DiscoveryCandidate cand)
+    {
+        if (!string.IsNullOrEmpty(ClassFilter))
+        {
+            _classFilterMemory.Flush();
+            ClassFilter = "";   // the target class must be visible in the picker
+        }
+        SelectedSource = "Snapshot Array";          // reloads the class list to array classes
+        var target = _discoverNewest ?? SelectedSnapshot;
+        if (target != null && !ReferenceEquals(SelectedSnapshot, target))
+            SelectedSnapshot = target;
+        await SettleLoadsAsync();
+        if (SelectedSnapshot == null)
+        {
+            StatusText = "No snapshot selected — capture one first.";
+            return;
+        }
+
+        var cls = _allClasses.FirstOrDefault(c => c.ClassName == cand.ClassName);
+        if (cls == null)
+        {
+            StatusText = $"'{cand.ClassName}' has no captured struct arrays in the selected snapshot.";
+            return;
+        }
+        if (!ReferenceEquals(SelectedClass, cls)) SelectedClass = cls;   // loads its array fields
+        await SettleLoadsAsync();
+
+        var arr = ArrayFields.FirstOrDefault(a => a.ArrayField == cand.ArrayField);
+        if (arr == null)
+        {
+            StatusText = $"Array '{cand.ArrayField}' of {cand.ClassName} is not in the selected snapshot.";
+            return;
+        }
+        if (!ReferenceEquals(SelectedArrayField, arr)) SelectedArrayField = arr;   // loads its props
+        await SettleLoadsAsync();
+
+        var pick = Fields.FirstOrDefault(f => f.Name == cand.InnerProp);
+        if (pick == null)
+        {
+            StatusText = $"'{cand.PropName}' has no pivotable inner field in the selected snapshot.";
+            return;
+        }
+        pick.IsValue = true;
+        await RunPivotAsync();
+    }
+
+    // A load can start the next one (the array-field load auto-selects a field, which loads its
+    // props), so await until PendingLoad stops changing. Bounded: the chain is at most three deep.
+    private async Task SettleLoadsAsync()
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            var pending = PendingLoad;
+            if (pending == null) return;
+            try { await pending; } catch { /* surfaced via SetError */ }
+            if (ReferenceEquals(pending, PendingLoad)) return;
+        }
+    }
+
     /// <summary>Cancel an in-flight pivot run, discovery, AND any class/field list
     /// load — called when the user navigates away from the Class Pivot tab so a
     /// heavy GROUP BY / scan doesn't keep burning CPU.</summary>
     public void CancelPendingWork()
     {
         _pivotCts?.Cancel();
-        _loadCts?.Cancel();
+        _classLoadCts?.Cancel();
+        _fieldLoadCts?.Cancel();
         _discoverCts?.Cancel();
     }
 
     // Full (unfiltered) result set; Results is the filtered view bound to the grid.
     private readonly List<PivotResultRow> _allResults = new();
 
-    // Store the pivot output + apply the current result filter into the bound grid.
-    private void SetResults(IEnumerable<PivotResultRow> rows)
+    // Store the pivot output + apply the current result filter into the bound grid. `sessionId` is the
+    // launch the rows' addresses belong to ([W1-PIVOT-SESSION]).
+    private void SetResults(IEnumerable<PivotResultRow> rows, string sessionId)
     {
         _allResults.Clear();
         _allResults.AddRange(rows);
+        _resultsSessionId = sessionId;
         ApplyResultFilter();
+        RaiseResultRowActionGates();
     }
 
     // Filter the results grid by space-separated AND terms over key + values (each term

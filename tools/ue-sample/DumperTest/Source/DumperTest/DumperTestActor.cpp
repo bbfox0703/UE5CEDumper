@@ -23,6 +23,11 @@
 #include "Kismet/GameplayStatics.h"    // GetPlayerPawn
 #include "Components/SceneComponent.h" // Spawn_ManyComponents (ActorComponent is abstract)
 #include "UObject/UObjectGlobals.h"     // ForceGarbageCollection
+#include "Misc/FileHelper.h"           // InvokeGate's per-call log (Shipping-safe, unlike UE_LOG)
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "CoreGlobals.h"               // GFrameCounter
 
 #define LOCTEXT_NAMESPACE "DumperTest"
 
@@ -380,6 +385,51 @@ void ADumperTestActor::BeginPlay()
 	Arr_Name.Add(FName(TEXT("NameBB")));
 	Arr_Name.Add(FName(TEXT("NameCCC")));
 
+	// ---- L12 / L29 / L44 hosts (see the header banner) --------------------------------
+	// ⚠ Opt_Str_Unset and Arr_SoftClass[2] are seeded by NOT being touched.
+	// Writing them "empty" would destroy what they are for.
+	Arr_Str.Reset();
+	Arr_Str.Add(TEXT("StrElemAlpha"));
+	Arr_Str.Add(TEXT("StrElemBetaBeta"));
+	Arr_Str.Add(TEXT("StrElemGammaGammaGamma"));
+	Arr_Str.Add(FString());          // the empty-string control: "" is not "unset"
+
+	Arr_StrRows.Reset();
+	{
+		FDumperTestStrRow R0;
+		R0.Text = TEXT("RowStrAlpha");
+		R0.Num  = 5101;
+		R0.Note = FText::FromString(TEXT("RowNoteAlpha"));
+		FDumperTestStrRow R1;
+		R1.Text = TEXT("RowStrBetaBeta");
+		R1.Num  = 5102;
+		R1.Note = FText::FromString(TEXT("RowNoteBeta"));
+		Arr_StrRows.Add(MoveTemp(R0));
+		Arr_StrRows.Add(MoveTemp(R1));
+	}
+
+	Arr_SoftClass.Reset();
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestHolder::StaticClass()));
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>(ADumperTestDerivedHolder::StaticClass()));
+	Arr_SoftClass.Add(TSoftClassPtr<AActor>());   // the (none) control
+
+	Arr_FieldPath.Reset();
+	if (UClass* Self = GetClass())
+	{
+		// Two DIFFERENT properties: a field path read at the wrong stride would otherwise
+		// print the same name twice and look correct.
+		if (FProperty* P = Self->FindPropertyByName(TEXT("TickCount")))   { Arr_FieldPath.Add(TFieldPath<FProperty>(P)); }
+		if (FProperty* P = Self->FindPropertyByName(TEXT("FrozenInt")))   { Arr_FieldPath.Add(TFieldPath<FProperty>(P)); }
+	}
+
+	// ---- InvokeGate: publish the log path, and mark where this session's lines begin ----
+	// Absolute, because a Shipping package may resolve Saved\ under %LOCALAPPDATA% rather than
+	// beside the exe, and a harness that guesses wrong reads an empty file as "no call".
+	InvokeGate_LogPath = FPaths::ConvertRelativePathToFull(
+		FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("DumperTest-InvokeGate.log"));
+	InvokeGateLog(FString::Printf(TEXT("session start actor=0x%llX"),
+	                              static_cast<uint64>(reinterpret_cast<UPTRINT>(this))));
+
 	// ---- A1 lazy array: needs REAL actors, so it spawns three of its own ------------
 	// ⚠ Three DISTINCT actors, because the failure fingerprint of the old stride is three
 	// IDENTICAL garbage GUIDs -- with one element that is indistinguishable from success.
@@ -396,6 +446,9 @@ void ADumperTestActor::BeginPlay()
 			{
 				H->HolderIndex = 90000 + i;   // out of Spawn_Holders' range, so they never collide
 				LazyAnchors.Add(H);
+				// L12 step 1's starting state. Seeded HERE and not earlier: the optional must
+				// point at an actor that really exists, so Find Refs (step 4) has a live target.
+				if (!Opt_Obj.IsSet()) { Opt_Obj = TObjectPtr<AActor>(H); }
 				Arr_LazyPtr.Add(TLazyObjectPtr<AActor>(H));
 			}
 		}
@@ -440,6 +493,13 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 			++ContestWrites;
 		}
 	}
+
+	// ⛔ [FIXTURE-FRAMECOUNT-DEAD], fixed 2026-09-16. This line did not exist, so the REFLECTED
+	// counter read 0 forever while the header said "Mirrored every Tick" and the README said
+	// "mirrors FrameCount each Tick" -- and it is Linie's cadence DENOMINATOR, so every cadence
+	// row that used it was dividing by zero. Measured on 5.4 Shipping: TickCount advanced 97 -> 100
+	// over 3 s while FrameCountReflected stayed 0. Keep the mirror next to the increment above.
+	FrameCountReflected = FrameCount;
 
 	EnsureHeartbeatHud();
 }
@@ -986,6 +1046,113 @@ int32 ADumperTestActor::Hook_ReleaseTrampolineVM()
 	const int32 Freed = ReleaseReservedVm();
 	UE_LOG(LogTemp, Warning, TEXT("[DumperTest] released %d reserved VM block(s)"), Freed);
 	return Freed;
+}
+
+// ============================================================
+// L12 — the object optional's three states. Mutators, not constructor states: Reset() and
+// set-to-null are exactly the two a value-derived reader gets wrong, and they have to be
+// reachable while the dumper is watching.
+// ============================================================
+void ADumperTestActor::Opt_SetObject()
+{
+	if (LazyAnchors.Num() > 0 && LazyAnchors[0])
+	{
+		Opt_Obj = TObjectPtr<AActor>(LazyAnchors[0]);
+	}
+}
+
+void ADumperTestActor::Opt_ResetObject()
+{
+	// ⭐ Writes NO bytes to the value. Only the trailing bIsSet flag changes.
+	Opt_Obj.Reset();
+}
+
+void ADumperTestActor::Opt_SetObjectNull()
+{
+	// SET, and null. A reader that derives "set" from the pointer calls this "(unset)".
+	Opt_Obj = TObjectPtr<AActor>(nullptr);
+}
+
+// ============================================================
+// InvokeGate — hosts for the invoke paths' unwritable-param gate (see the header banner).
+//
+// ⚠ Every recorder bumps its counter BEFORE reading the argument, and none of them dereferences
+// Data: Num and the Data pointer are read as numbers only. A garbage FString or TArray must be
+// recordable, because recording it is the point.
+// ============================================================
+void ADumperTestActor::InvokeGateLog(const FString& Line) const
+{
+	if (InvokeGate_LogPath.IsEmpty())
+	{
+		return;
+	}
+	// pid + GFrameCounter on every line: the file is appended across sessions, so a harness
+	// filters by pid, and the frame number orders lines that share a millisecond.
+	const FString Stamped = FString::Printf(TEXT("%s pid=%u frame=%llu %s\n"),
+		*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S.%s")),
+		FPlatformProcess::GetCurrentProcessId(), static_cast<uint64>(GFrameCounter), *Line);
+	FFileHelper::SaveStringToFile(Stamped, *InvokeGate_LogPath,
+		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append);
+}
+
+int32 ADumperTestActor::InvokeGateRecordArray(const TArray<int32>& Values, const TCHAR* Which)
+{
+	++InvokeGate_ArrayCalls;
+	InvokeGate_LastArrayNum  = Values.Num();
+	InvokeGate_LastArrayData = static_cast<int64>(reinterpret_cast<UPTRINT>(Values.GetData()));
+	InvokeGateLog(FString::Printf(TEXT("%s calls=%d num=%d data=0x%llX"), Which,
+		InvokeGate_ArrayCalls, InvokeGate_LastArrayNum, static_cast<uint64>(InvokeGate_LastArrayData)));
+	return InvokeGate_ArrayCalls;
+}
+
+int32 ADumperTestActor::InvokeGateRecordStruct(const FDumperTestInvokeProbe& Probe, const TCHAR* Which)
+{
+	++InvokeGate_StructCalls;
+	InvokeGate_LastHead      = Probe.Head;
+	InvokeGate_LastTail      = Probe.Tail;
+	InvokeGate_LastLabelNum  = Probe.Label.GetCharArray().Num();
+	InvokeGate_LastLabelData = static_cast<int64>(reinterpret_cast<UPTRINT>(Probe.Label.GetCharArray().GetData()));
+	InvokeGateLog(FString::Printf(TEXT("%s calls=%d head=%d tail=%d label_num=%d label_data=0x%llX"), Which,
+		InvokeGate_StructCalls, InvokeGate_LastHead, InvokeGate_LastTail, InvokeGate_LastLabelNum,
+		static_cast<uint64>(InvokeGate_LastLabelData)));
+	return InvokeGate_StructCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeIntArray(TArray<int32> Values)
+{
+	return InvokeGateRecordArray(Values, TEXT("TakeIntArray"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeIntArrayRef(const TArray<int32>& Values)
+{
+	return InvokeGateRecordArray(Values, TEXT("TakeIntArrayRef"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeDelegate(FDumperTestUnicastSignature Callback)
+{
+	++InvokeGate_DelegateCalls;
+	InvokeGate_LastDelegateBound = Callback.IsBound() ? 1 : 0;
+	InvokeGateLog(FString::Printf(TEXT("TakeDelegate calls=%d bound=%d"),
+		InvokeGate_DelegateCalls, InvokeGate_LastDelegateBound));
+	return InvokeGate_DelegateCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeText(FText InText)
+{
+	// ⛔ Do not read InText. See the header banner.
+	++InvokeGate_TextCalls;
+	InvokeGateLog(FString::Printf(TEXT("TakeText calls=%d"), InvokeGate_TextCalls));
+	return InvokeGate_TextCalls;
+}
+
+int32 ADumperTestActor::InvokeGate_TakeStruct(FDumperTestInvokeProbe Probe)
+{
+	return InvokeGateRecordStruct(Probe, TEXT("TakeStruct"));
+}
+
+int32 ADumperTestActor::InvokeGate_TakeStructRef(const FDumperTestInvokeProbe& Probe)
+{
+	return InvokeGateRecordStruct(Probe, TEXT("TakeStructRef"));
 }
 
 // ============================================================

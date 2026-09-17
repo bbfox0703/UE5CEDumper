@@ -40,6 +40,40 @@ The same trap in its most common local form: **`build.ps1 -Target Test` does not
 It builds two header-only test executables, so a syntax error in `Fern.cpp` passes it clean. A green
 `-Target Test` after editing a `.cpp` measures nothing about that file.
 
+### 1.1a ⭐ "The call SUCCEEDED" is not "the effect HAPPENED" — validate the instrument in the condition where it MUST work
+
+§1.1 is about a harness that cannot see the code path. This is its live-game twin: a harness that
+issues a real call, gets a real success, and still observes nothing — because the *thing being
+called* is inert.
+
+**2026-09-12, L15 `[W3-CONSOLE-REINVOKE]`.** The row asks whether a command that timed out against a
+stalled game thread then runs **once**, not twice, when the thread frees. The obvious instrument was
+a CheatManager exec with a countable effect: `SpawnServerStatReplicator`, then count
+`ServerStatReplicator` instances over the pipe.
+
+With the UE game thread frozen (`suspend.py suspend-tid`, game thread only — a whole-process suspend
+stops Fern and Mimic too and measures a different branch), the invoke returned exactly the wording
+the row wants: *"ProcessEvent error code -5 (game-thread dispatch timeout) — still queued: it will
+run when the game thread is free (not re-sent)"*. Resume the thread, count again: **still 0**.
+
+That reads as the fix failing. **It is not.** The control — the same command with the thread
+**running** — returned `ProcessEvent OK` and *also* left 0 instances. `UCheatManager` function bodies
+are body-stripped in cooked builds, so every CheatManager exec reports success and does nothing. The
+UI even warns about it (*"Result=0 + no in-game effect … try a game-specific exec"*), which is easy
+to walk past until the wrong conclusion is already written down.
+
+**The rule: before reading anything into the failing/blocked condition, run the same measurement in
+the condition where it MUST work.** A `0` that means "no effect" and a `0` that means "no instrument"
+are indistinguishable from inside the failing run — only the positive control separates them. This
+is the mirror of §1.2's negative control: that one proves the assertion *can* fail, this one proves
+the measurement *can* succeed.
+
+⚠ **Local corollary, and it blocks rows today:** DumperTest declares **no** `UFUNCTION(Exec)` of its
+own, and a cooked build's `UCheatManager` is inert, so **no exec on DumperTest or on a shipped title
+can carry a countable effect**. ES2's 93 execs are engine ones plus `ESGameInstance` achievement
+commands that must not be fired. Any row that needs "the effect happened exactly once" needs a
+**game-specific exec added to DumperTest** first.
+
 ### 1.2 Prove the assertion FAILS when it should — negative controls
 
 When `extract_patterns.py --check` was added (build 2530) the work did not stop at "it passes":
@@ -421,6 +455,76 @@ said no".
   "3 defects" when one of them was already refuted has re-inflated the very number the sweep's
   three rounds spent their effort deflating.
 
+### 1.w3 A COVERAGE report names the files it found — and then the next run counts them as covered
+
+2026-09-09, `[A4-ASSESS-2026-09-09]`. `tools/verify/audit_coverage.py blank` answers *"which files
+carry lines from this audit's window that **no later audit document ever names**?"* The corpus it
+matches against includes `docs/todo.md`, because that is where this repo's sweeps live.
+
+The section reporting the answer was written **into `docs/todo.md`**, and it lists all 31 filenames.
+The very next run of the same command reported **22 files / 1,178 lines** where the run that
+produced the section had reported **31 / 3,409**. Nothing changed in the code. **The report of the
+blank is what erased the blank.**
+
+⛔ **THE GENERAL SHAPE, and it is not specific to coverage tools.** Any check whose predicate is
+*"X is not mentioned anywhere in corpus C"* will start passing the moment its own output is filed
+into C — and the direction of the failure is the dangerous one: **the gap silently shrinks**, so the
+tool reports progress that never happened. It is the same family as the anti-vacuity guard (an
+assertion of the form *"X is ABSENT"* is satisfied for free by an empty run), but it arrives later
+and looks like success rather than like nothing.
+
+⭐ **The fix that generalises**: exclude the reporting artefact from the corpus **by tag, in the tool,
+with the measurement in the comment** — `SELF_REFERENTIAL_TAGS` in `audit_coverage.py` carries both
+numbers so the next reader can see what the guard is worth. Not by pointing the tool at an older
+commit (fragile, and it silently stops seeing genuinely new coverage), and not by keeping the report
+out of the repo (the report is the deliverable).
+
+⚠ **And the check that catches it**: a coverage number must be **re-derived after the write-up
+lands**, not only before. If the two disagree, one of them is measuring the write-up.
+
+### 1.w4 A DISCARDED RETURN IS A STRUCTURE, NOT A DEFECT — and §1.w2 applies to AGENTS too
+
+2026-09-10, `[A4-ASSESS-2026-09-09]` phase 2. A four-agent hunt for *"the DLL knows it and tells no
+channel"* returned **17 findings, 8 of them HIGH**. A refute-mandated pass killed **14**.
+
+⛔ **AND I HAD HAND-VERIFIED FOUR OF THE FOURTEEN BEFORE THE SKEPTICS RAN.** Every structural claim I
+checked was TRUE: `Dunste.cpp:830` really does `return 0` and really does skip the
+`modeRestoreFailed` check below it; `Schlacht.cpp:366` really is `Invoke(actor, fi, buf); return
+true;` with two siblings in the same file that DO check their result; `Solide.cpp:265` really returns
+success without restoring. I read the code, confirmed the mechanism, and concluded the defect.
+**All four verdicts were wrong.**
+
+⭐ **THE DISCRIMINATOR, and it is not subtle once named**: a discarded return is a defect only if the
+CONSEQUENCE survives too. Each of those four died on the consequence, never on the structure:
+
+- `Dunste.cpp:830` — the collision branch is **PENDING, not failed**: `StartPendingLocked()` is
+  called and the record deliberately kept, so `return 0` means *"fly is off and the restore is in
+  hand"*, which is true. `Dunste.cpp:604-612` records that this is the **COMMON** path, because the
+  click that disables Fly is what backgrounds the game. Escalating would false-alarm on nearly every
+  Noclip disable, about a state that self-heals on the user's very next action.
+- `Schlacht.cpp:366` — `Invoke() == 0` means *ProcessEvent dispatched without faulting*, **not** that
+  `bHidden` moved. The repo answers the real question with the published actor **addresses**
+  (`Fern.cpp:6062-6069`, consumed by four rigs) so a verifier re-reads each bit. Gating `applied` on
+  the return code would reproduce audit #4's own root cause — the report and the reality computed by
+  the same code path.
+- `Solide.cpp:265` — the irreversibility of an object-null hold is static, documented in
+  `Solide.h:181-184`, and **confirmed by the user before the act**.
+
+⚠ **So "I read the code myself" is NOT the check.** Reading the code verifies the MECHANISM. What
+decides a defect is *what does the user end up believing, and is it false* — and that needs the
+consumer, the sibling channels, and the module's stated design, not just the site.
+
+⛔⛔ **AND ONE OF THE 17 WAS ON THIS REPO'S OWN "Refuted (8) — do not re-raise" LIST, TWICE** —
+`docs/todo.md:1183` and `:1302`, both naming `Schlacht.cpp:366`, each killed on ≥4 routes. §1.w2 was
+written about a **mechanical scanner** doing exactly this. **It generalises to LLM agents, for the
+same structural reason: the refutation lives in prose and the code is left deliberately unchanged, so
+anything that reads code and not history re-derives the same plausible finding forever.**
+
+⭐ **The fix is one sentence, and it was measured in the same session.** Phase 1's brief told agents
+to grep the docs for the finding id before concluding — phase 1 re-raised **nothing** refuted. Phase
+2's no-channel brief omitted that line and re-raised a twice-refuted row, costing a 17-agent pass to
+put back down. **Put "grep the refuted lists first" in every hunting brief.**
+
 ### 1.z "No pre-fix baseline exists" is sometimes DISSOLVABLE — and the oracle must be computed FIRST
 
 Three lessons from closing `AC15` (2026-08-22), which two earlier sessions had left half-open with
@@ -565,6 +669,22 @@ grep -rn "<FINDING-ID>\|\[<TAG>" docs/          # the WHOLE tree, archive includ
 costs one wasted session; a stale pointer at the entry point costs every session until someone
 notices.** Fixing a pointer file is therefore worth more per line than fixing the register, and it
 is the one place where a status line is worth duplicating — with its tag, so it can be re-derived.
+
+#### 1.ab-3 ⭐ A CAVEAT INSIDE A SECTION IS OFTEN CLOSED BY THE **NEXT HEADING** — read to the end of the section
+
+Added 2026-09-17. The two rules above are about searching the WHOLE TREE. This one is the opposite failure and it is cheaper to commit: I searched correctly, opened the right file, read the right section — **and stopped at a paragraph inside it.**
+
+`[R3-SEETHRU]` / register **FP3**. Its closure block ends with an honest caveat: *“Add to CE needs the AOBMaker plugin, which was offline, so the chunk was pasted into CE's Lua Engine — `memrec` is nil there, so the deferred-untick tail was inert… A run through a real ticked record would close that last inch.”* I read that, believed the row had an open half, corrected `docs/todo.md` to say so, and started staging a live run to bring the AOBMaker bridge up. **The very next line of the file is `##### ✅ FP3's LAST INCH CLOSED 2026-09-10 — the REAL untick, through a pushed CE record`**, and it also retracts the “plugin was offline” reading twice over (the plugin was installed and enabled; the UI said *Offline* because **Cheat Engine was not running**, and a follow-up probe's `err 3` was a shell eating a backslash in `py -c`).
+
+⭐ **Why this shape is specific to these documents, and so worth naming:** a good verification record states what it did NOT prove, in its own words, near the end. That paragraph reads exactly like an open item — and the follow-up run that closes it is appended AFTER it, as a deeper heading, because these files are append-only in spirit. **So the most quotable sentence in a section is systematically the one most likely to be superseded by the lines below it.**
+
+**The rule:** before planning a run off a caveat, read to the **end of the section** — every deeper heading under it, not just the paragraph. Cheap check:
+
+```bash
+grep -n "^#\{4,6\} " docs/verification-register.md | sed -n '/<the heading you are in>/,+6p'
+```
+
+⚠ And the cost is asymmetric in the direction that hurts: §1.ab's stale HEADING makes you re-do closed work; a stale CAVEAT makes you re-do closed work **and** write a wrong “still open” line into the file the next session will read. Mine survived one commit before the retraction.
 
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
@@ -1718,6 +1838,44 @@ rebuild). ⚠ And the flag's own warning — *"packaging would build the REAL pr
 was printed and lost, because the log was read with `| tail`. **When a tool prints a warning
 about a mode you are not in, `tail` is the wrong reader.**
 
+### 2.20 ⭐ A FIX PASS'S WRITTEN CLAIM IS A NEW THING TO VERIFY — Track B measured it: 34 of 41
+
+The >2026-08-03 blank (31,784 lines; `docs/todo.md` `[TRACKB-A1-2026-09-10]` … `[TRACKB-A4-2026-09-10]`)
+was mostly FIX code: audit #5's repairs, D1–D5 and the blind-spot sweeps. **34 of its 41 confirmed
+defects were repairs that state a claim the code does not keep.** The claim lived in one of four
+places:
+- a comment: *"stable across all UE versions"*, *"checked byte for byte against the two canonical
+  writers"*;
+- a commit body: *"our calls stop entering the detour at all"*;
+- a closing doc row;
+- a test that pins the claim rather than the behaviour.
+
+Three of A3's four MEDs broke the very fix they sat in, one of them fixed the same day.
+
+The recurring mechanism is §2.17's, generalised: **the fix reached some of its twins and not the
+others.** The twins it missed were:
+- the third producer of a crumb shape;
+- the third CE-facing handler;
+- the batch form of a per-row button;
+- the other two DLL exits;
+- the sibling panel;
+- the C# emitter of the same Lua idiom the helper was fixed for;
+- the ancestor preview class;
+- the badge reset with a tuple instead of the helper the gate greps for.
+
+The mechanical pattern sweeps found few of these, because the twin relation is written in PROSE,
+not in a symbol a matcher can follow. (It is also why every gate here needs a negative control on
+the population, not just on the rule: gate 17d went green over the Stealth badge it was written for.)
+
+**How to apply.**
+1. When verifying or auditing a fix, do not stop at "the cited site now behaves". Find the sentence
+   the fix wrote: `git show -s <sha>`, the comment above the change, the row that closed it.
+2. Treat each quantifier in it as a claim to enumerate: *every* badge, *both* handlers, *the only*
+   decoder, *all* versions, *nothing here needs to know*.
+3. List the population that word ranges over, and check each member.
+4. A fix should write its claim so it is enumerable. Name the set, and pin it with a test that
+   iterates the set rather than one that names the members the author remembered.
+
 
 ## 3. Traps in our own stack
 
@@ -2338,13 +2496,19 @@ hardcode `+0x3C` or any "+8 from ElementSize" form.
 > **For CE's *plugin* API, read the Pascal, not the header.** `ce_InjectDLL` is the worked example
 > (`pluginexports.pas:622-640` + `CEFuncProc.pas:1050-1051`, `1391-1396`): it returns `false` only if
 > an exception *escapes*, and CE catches one of the three it can raise. So it returns **true** on
-> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule`) and **false** on the
+> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule` — which RE-RAISES on
+> every failure, `CEFuncProc.pas:768-811`, so a TRUE there means the forced load **succeeded**, as a
+> manual map the module list cannot show; `[A2-METHODE-MANUALMAP]`) and **false** on the
 > >10 s timeout (a plain `Exception`) and on "Failed executing the function of the dll"
 > (`EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so
 > `on e:EInjectError` misses it). The BOOL is therefore *inverted for the common cases*, and a UI that
 > trusted it told users to check that the target is 64-bit while the DLL was loaded and running
 > (audit #5 AB2). **Where CE hands back an ambiguous status, prefer something you can observe** — the
-> plugin now re-walks the target's module list instead.
+> plugin now re-walks the target's module list instead. ⚠ **And when the observation is ambiguous
+> too, say so:** TRUE with the module absent is either a failed load (the APC path, a
+> `GetExitCodeThread` failure) or CE's manual map ("Always force load modules"), which the walk
+> cannot see and which cannot dispatch an exception. The plugin's message names both
+> (`[A2-METHODE-MANUALMAP]`, 2026-09-12).
 >
 > **CE's Lua has no `bAnd` / `bOr` / `bNot`.** Single-bit set/clear is done with pure arithmetic
 > (`math.floor(b / mask) % 2` to test, `b + mask` / `b - mask` to set/clear), which is also version-
@@ -2732,9 +2896,12 @@ both read as a healthy scan.
    every `Int16` field is smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was
    emitted and every 2-byte field was skipped. **The tell is that the loss is by TYPE, not by object**
    — all byte fields gone, or all unsigned fields gone, while the same scan finds 32-bit fields on the
-   same objects. Two live gaps of the same shape remain: **`Between`** still drops widths its upper
-   bound cannot encode (its two bounds are built independently — see todo.md), and a **hex** input
-   (`0x1F4`) still emits no Float/Double entries.
+   same objects. One live gap of the same shape remains: a **hex** input (`0x1F4`) still emits no
+   Float/Double entries. (**`Between`** was the other. Its two bounds were built independently and
+   dropped any width either could not encode, until `[A4-AB4-BETWEEN]` built them jointly, clamped
+   per width, on 2026-09-12.) The group matchers (live and
+   snapshot) and the 64-bit members only got the verdict on 2026-09-11 (`[W2-ORDEN-FINDENTRY]`,
+   `[A4-AB4-UINT64]`).
    The lesson underneath: **a range gate that is correct for equality is usually wrong for ordering,
    and it is invisible because it is right half the time** — pruning `Bigger 70000` off Int16 is a
    genuine optimisation produced by the very same line, so the code reads as working.

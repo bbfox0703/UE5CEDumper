@@ -1168,6 +1168,7 @@ static void Test_Mimic_CommandNumbering() {
     EXPECT("CMD_QUERY_PTR = 13",       static_cast<int>(Mimic::CMD_QUERY_PTR)        == 13);
     EXPECT("CMD_SEETHROUGH = 14",      static_cast<int>(Mimic::CMD_SEETHROUGH)       == 14);
     EXPECT("CMD_TIME = 15",            static_cast<int>(Mimic::CMD_TIME)             == 15);
+    EXPECT("CMD_OFFSETS_VERDICT = 16", static_cast<int>(Mimic::CMD_OFFSETS_VERDICT)  == 16);
 
     // InitState -- polled as a bare memory read by the CE bootstrap, so these
     // are as load-bearing as the offsets above.
@@ -1180,7 +1181,9 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    EXPECT("contract is 3",          Mimic::MAILBOX_CONTRACT     == 3);
+    // 5 since [W5-OFFSETS-MAILBOX] (batch L45) added CMD_OFFSETS_VERDICT. ADDITIVE -- a new Cmd, so MIN stays 1 and
+    // every saved .CT is still accepted. (4 was 76f93b94, [W2-TPREL-TRANSPORTS]: the parent-relative pose flag.)
+    EXPECT("contract is 5",          Mimic::MAILBOX_CONTRACT     == 5);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -1201,6 +1204,21 @@ static void Test_Mimic_CommandNumbering() {
 // two places a mailbox command can pick the WRONG behaviour without failing:
 // MB1 runs a stateful UFunction on the wrong thread, MB2 refuses a command that
 // would have worked.
+
+// [A3-MIMIC-INIT-FASTPATH] The mailbox's init fast path. UE5_Init publishes GObjects/GNames right after FindAll, before
+// Serie / Aura init, decoy recovery and ValidateAndFixOffsets -- so "both set" skipped B5's serialization for the last
+// 30-45% of every init, and a CE hotkey in that tail ran on unprobed DynOff with no "waiting" line.
+static void Test_Mimic_InitFastPath() {
+    EXPECT("INITFAST: both globals set and no init running takes the fast path",
+           Mimic::InitFastPathOk(true, true, /*initInProgress=*/false));
+    EXPECT("INITFAST: both globals set WHILE an init runs does not -- it waits in UE5_Init",
+           !Mimic::InitFastPathOk(true, true, /*initInProgress=*/true));
+    EXPECT("INITFAST control: a missing global never takes it, init running or not",
+           !Mimic::InitFastPathOk(true, false, false) && !Mimic::InitFastPathOk(false, true, false)
+           && !Mimic::InitFastPathOk(false, false, false) && !Mimic::InitFastPathOk(true, false, true)
+           && !Mimic::InitFastPathOk(false, true, true) && !Mimic::InitFastPathOk(false, false, true));
+    static_assert(Mimic::InitFastPathOk(true, true, false), "InitFastPathOk must be constexpr-evaluable");
+}
 
 static void Test_Mimic_InvokeRouting() {
     constexpr uint32_t N = Mimic::FUNC_FLAG_NATIVE;   // 0x0400
@@ -1251,6 +1269,10 @@ static void Test_Mimic_CommandRequiresInit() {
     // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
     // the pipe path gates it on nothing.
     EXPECT("CMD_FOREGROUND is exempt", !Mimic::CommandRequiresInit(Mimic::CMD_FOREGROUND));
+    // [W5-OFFSETS-MAILBOX] The second exemption. Its whole job is to report that the offsets are NOT measured --
+    // including the case where no probe ran at all -- so gating it would replace the answer with "-10 not initialized".
+    EXPECT("CMD_OFFSETS_VERDICT is init-exempt",
+           !Mimic::CommandRequiresInit(Mimic::CMD_OFFSETS_VERDICT));
 
     // Negative control — everything else must still be gated. This is the half
     // that matters: over-exempting turns "-10 DLL not initialized" into a handler
@@ -1278,12 +1300,15 @@ static void Test_Mimic_CommandRequiresInit() {
     // and the gate is the cheaper refusal.
     EXPECT("an unknown cmd is gated", Mimic::CommandRequiresInit(9999));
 
-    // Exactly ONE exemption across the whole declared command space. A future
-    // handler that quietly adds itself to the exemption list trips this.
+    // Exactly TWO exemptions across the whole declared command space — CMD_FOREGROUND (pure Win32) and
+    // CMD_OFFSETS_VERDICT (its answer IS the init state). A future handler that quietly adds itself to the
+    // exemption list trips this. ⚠ The count and this comment must move together: they said ONE while the
+    // EXPECT below said two, which is how a reader gets the wrong answer from the file that pins it.
+    // [A1-REVIEW6-PINS]
     int exempt = 0;
-    for (int32_t c = 0; c <= Mimic::CMD_TIME; ++c)
+    for (int32_t c = 0; c <= Mimic::CMD_OFFSETS_VERDICT; ++c)
         if (!Mimic::CommandRequiresInit(c)) ++exempt;
-    EXPECT("exactly one command is init-exempt", exempt == 1);
+    EXPECT("exactly two commands are init-exempt", exempt == 2);
 }
 
 // ----- Flamme: the hint-cache publish gate (audit #5 FL1) ----------------------
@@ -1747,6 +1772,78 @@ static void Test_ValueScan_BuildNumericTargets() {
                Radar::ComparePredicate(DT::Int32, ST::Smaller,
                                        reinterpret_cast<const uint8_t*>(&v32),
                                        lo.FindEntry(DT::Int32)));
+
+        // The exact boundary of a small width: every int16 is smaller than 32768.
+        Radar::NumericTargetSet b16;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "32768", b16,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4 Smaller(32768) keeps Int16 as AlwaysTrue (the boundary itself)",
+               b16.FindEntry(DT::Int16) &&
+               b16.FindEntry(DT::Int16)->fit == Fit::AlwaysTrue);
+
+        // [A4-AB4-UINT64] The 64-bit members got no verdict at all. The range table listed only
+        // 8/16/32-bit, on the premise that a string which parsed fits the 64-bit ones -- false for
+        // a negative string (never parsed as unsigned) and for one above INT64_MAX.
+        EXPECT("AB4-U64 ⭐ Bigger(-5) keeps UInt64 as AlwaysTrue",
+               neg.FindEntry(DT::UInt64) &&
+               neg.FindEntry(DT::UInt64)->fit == Fit::AlwaysTrue);
+        uint64_t u64max = UINT64_MAX;
+        EXPECT("AB4-U64 ⭐ predicate: UINT64_MAX > -5 via AlwaysTrue",
+               Radar::ComparePredicate(DT::UInt64, ST::Bigger,
+                                       reinterpret_cast<const uint8_t*>(&u64max),
+                                       neg.FindEntry(DT::UInt64)));
+        EXPECT("AB4-U64 control: Smaller(-5) still drops UInt64", neg2.FindEntry(DT::UInt64) == nullptr);
+
+        // 2^63 is the first value above INT64_MAX, and INT64_MAX has no double: it rounds UP to
+        // 2^63. So `scalar > (double)INT64_MAX` is `2^63 > 2^63` and misses exactly this target.
+        Radar::NumericTargetSet i63;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "9223372036854775808", i63,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4-U64 ⭐ Smaller(2^63) keeps Int64 as AlwaysTrue",
+               i63.FindEntry(DT::Int64) &&
+               i63.FindEntry(DT::Int64)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4-U64 control: Smaller(2^63) is a real Encoded target for UInt64",
+               i63.FindEntry(DT::UInt64) &&
+               i63.FindEntry(DT::UInt64)->fit == Fit::Encoded);
+        Radar::NumericTargetSet i63b;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "9223372036854775808", i63b,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4-U64 control: Bigger(2^63) still drops Int64", i63b.FindEntry(DT::Int64) == nullptr);
+
+        // The same boundary one width up: UINT64_MAX rounds up to 2^64.
+        Radar::NumericTargetSet u64;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "18446744073709551616", u64,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4-U64 ⭐ Smaller(2^64) keeps UInt64 as AlwaysTrue",
+               u64.FindEntry(DT::UInt64) &&
+               u64.FindEntry(DT::UInt64)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4-U64 ⭐ Smaller(2^64) keeps Int64 as AlwaysTrue",
+               u64.FindEntry(DT::Int64) &&
+               u64.FindEntry(DT::Int64)->fit == Fit::AlwaysTrue);
+        // Exact never carries a verdict, whatever the width.
+        Radar::NumericTargetSet exNeg;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", exNeg);
+        EXPECT("AB4-U64 control: Exact(-5) still has no UInt64", exNeg.FindEntry(DT::UInt64) == nullptr);
+
+        // (review of aaf6a022) A '-'-prefixed target whose integer value is 0 ("-0", or a negative
+        // fraction that rounds to 0) never got an unsigned reading: the sign CHARACTER suppressed the
+        // unsigned parse, so every unsigned width was dropped, even under Exact, while the snapshot
+        // matcher kept them.
+        Radar::NumericTargetSet mz;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-0", mz);
+        EXPECT("AB4-SIGN ⭐ Exact(-0) has an encoded UInt16 target",
+               mz.FindEntry(DT::UInt16) && mz.FindEntry(DT::UInt16)->fit == Fit::Encoded);
+        uint16_t zero16 = 0;
+        EXPECT("AB4-SIGN ⭐ predicate: a UInt16 holding 0 equals -0",
+               Radar::ComparePredicate(DT::UInt16, ST::Exact,
+                                       reinterpret_cast<const uint8_t*>(&zero16), mz.FindEntry(DT::UInt16)));
+        Radar::NumericTargetSet mzf;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-0.3", mzf, Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4-SIGN ⭐ Bigger(-0.3) rounds to 0 and keeps UInt32 as an encoded target",
+               mzf.FindEntry(DT::UInt32) && mzf.FindEntry(DT::UInt32)->fit == Fit::Encoded);
+        Radar::NumericTargetSet m1;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-1", m1);
+        EXPECT("AB4-SIGN control: Exact(-1) still has no UInt16", m1.FindEntry(DT::UInt16) == nullptr);
     }
 
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
@@ -2602,30 +2699,73 @@ static void Test_ValueScan_FieldDisplayName() {
            FieldDisplayName(structArrNested, 1) == "SaveSlotList[1].MsTuneData.GP2");
 }
 
-// V1c — TOptional<T> bIsSet flag offset. A non-intrusive optional is laid out
-// { T value; bool bIsSet; } padded to alignof(T), so the flag sits at
-// offset == sizeof(T). OptionalFlagOffset returns that offset when the optional
-// is larger than its value (room for the bool), else -1 (intrusive / unknown).
-static void Test_ValueScan_OptionalFlagOffset() {
-    using namespace Radar;
-    // Non-intrusive numerics: flag at sizeof(T).
-    EXPECT("TOptional<int8>  -> flag at 1", OptionalFlagOffset(2, 1)  == 1);
-    EXPECT("TOptional<int16> -> flag at 2", OptionalFlagOffset(4, 2)  == 2);
-    EXPECT("TOptional<int32> -> flag at 4", OptionalFlagOffset(8, 4)  == 4);
-    EXPECT("TOptional<int64> -> flag at 8", OptionalFlagOffset(16, 8) == 8);
-    EXPECT("TOptional<float> -> flag at 4", OptionalFlagOffset(8, 4)  == 4);
-    EXPECT("TOptional<double>-> flag at 8", OptionalFlagOffset(16, 8) == 8);
-    // FVector (double, 24B) -> 24 value + bool padded to 32.
-    EXPECT("TOptional<FVector>-> flag at 24", OptionalFlagOffset(32, 24) == 24);
-    // FString (16B) -> 16 value + bool padded to 24.
-    EXPECT("TOptional<FString>-> flag at 16", OptionalFlagOffset(24, 16) == 16);
-    // Intrusive / pointer-shaped: optional size == value size, no flag.
-    EXPECT("Intrusive (size==inner) -> -1", OptionalFlagOffset(8, 8) == -1);
-    // Unknown / unresolved inner size -> no gate.
-    EXPECT("Zero inner size -> -1",     OptionalFlagOffset(8, 0)  == -1);
-    EXPECT("Negative inner size -> -1", OptionalFlagOffset(8, -1) == -1);
-    // Defensive: a value somehow larger than the optional -> no gate.
-    EXPECT("inner > optional -> -1", OptionalFlagOffset(4, 8) == -1);
+// [A2-TOPTIONAL-VALUESCAN] Value Scan V1c sized the TOptional flag with Radar::OptionalFlagOffset's loose "bigger than
+// T" rule and never gated an intrusive optional: on 5.5+ an unset FString / FName / FText optional was scanned as a
+// value, and its "flag" read from the neighbour's byte. The decision is now the resolved layout's.
+static void Test_ValueScan_V1cOptionalGate() {
+    using Ubel::OptionalLayout;
+    using Ubel::OptionalUnsetSentinel;
+    int32_t off = 0;
+    OptionalUnsetSentinel sen = OptionalUnsetSentinel::None;
+
+    EXPECT("V1C trailing-flag optional gates on the byte at sizeof(T)",
+           Ubel::V1cOptionalGate(OptionalLayout::TrailingFlag, "IntProperty", 4, off, sen)
+           && off == 4 && sen == OptionalUnsetSentinel::None);
+    EXPECT("V1C intrusive FString gates on its ArrayMax sentinel",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "StrProperty", 16, off, sen)
+           && off == -1 && sen == OptionalUnsetSentinel::FStringMaxNone);
+    EXPECT("V1C intrusive FName gates on its ComparisonIndex sentinel",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "NameProperty", 8, off, sen)
+           && sen == OptionalUnsetSentinel::FNameIndexNone);
+    EXPECT("V1C intrusive FText gates on its null TextData",
+           Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "TextProperty", 24, off, sen)
+           && sen == OptionalUnsetSentinel::FTextNull);
+    EXPECT("V1C an Unknown layout is skipped, never guessed",
+           !Ubel::V1cOptionalGate(OptionalLayout::Unknown, "IntProperty", 4, off, sen));
+    EXPECT("V1C an intrusive T with no known sentinel is skipped",
+           !Ubel::V1cOptionalGate(OptionalLayout::Intrusive, "IntProperty", 4, off, sen));
+
+    // [A2-SENTINEL-OVERREAD] Each sentinel says how many bytes it reads: an intrusive optional is exactly
+    // sizeof(T), so a fixed 16-byte read runs past an 8-byte TOptional<FName> and a page-edge failure is
+    // indistinguishable from "unset" -- the SET optional is dropped.
+    EXPECT("V1C the FString sentinel needs all 16 bytes (ArrayMax at +12)",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FStringMaxNone) == 16);
+    EXPECT("V1C the FName sentinel needs 4 bytes, not 16",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FNameIndexNone) == 4);
+    EXPECT("V1C the FText sentinel needs 8 bytes, not 16",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::FTextNull) == 8);
+    EXPECT("V1C no sentinel reads nothing",
+           Ubel::SentinelBytesNeeded(OptionalUnsetSentinel::None) == 0);
+
+    uint8_t s16[16] = {};
+    s16[12] = s16[13] = s16[14] = s16[15] = 0xFF;                 // ArrayMax = -1
+    EXPECT("V1C an FString with ArrayMax -1 reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FStringMaxNone, s16));
+    s16[12] = 16; s16[13] = s16[14] = s16[15] = 0;                 // ArrayMax = 16
+    EXPECT("V1C control: an FString with ArrayMax 16 is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FStringMaxNone, s16));
+    uint8_t n16[16] = {};
+    n16[0] = n16[1] = n16[2] = n16[3] = 0xFF;                      // ComparisonIndex = ~0u
+    EXPECT("V1C an FName with ComparisonIndex ~0 reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FNameIndexNone, n16));
+    n16[0] = 7; n16[1] = n16[2] = n16[3] = 0;
+    EXPECT("V1C control: an FName with ComparisonIndex 7 is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FNameIndexNone, n16));
+    uint8_t t16[16] = {};                                          // TextData = null
+    EXPECT("V1C an FText with null TextData reads as unset",
+           Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
+    t16[5] = 0x12;
+    EXPECT("V1C control: an FText with TextData is set",
+           !Ubel::IntrusiveOptionalIsUnset(OptionalUnsetSentinel::FTextNull, t16));
+}
+
+// [W3-DEBUGCAM-QUEUED] UE5_SetDebugCamera folded every failed toggle call into -1 -- a TIMED-OUT one (-5) included,
+// which STAYS QUEUED and still runs. Read as "nothing happened", it invited a second toggle; the two drained ON then OFF.
+static void Test_Stark_StatefulToggleFailure() {
+    EXPECT("DBGCAMQ a timed-out toggle passes through as queued (-5)", Stark::StatefulToggleFailure(-5) == -5);
+    EXPECT("DBGCAMQ the queued code is EnqueueInvoke's timeout", Stark::kInvokeTimedOutStillQueued == -5);
+    EXPECT("DBGCAMQ control: an SEH fault is a plain failure", Stark::StatefulToggleFailure(-4) == -1);
+    EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
 }
 
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
@@ -3877,6 +4017,39 @@ static void Test_Denken_FollowsCallHandoff() {
     if (a) EXPECT("follow: @0x40 high-conf in impl", a->highConfidence && a->writeCount == 1);
 }
 
+static void Test_Denken_FollowedImplOutlivesItsAlias() {
+    // [W5-DENKEN-DEADGUARD] Denken.cpp's "bail to save budget in a followed impl" guard was dead: TryFollow counts the
+    // follow BEFORE recursing, so `callsFollowed == 0` never held at depth 1. The obvious repair -- drop that term --
+    // would make a followed impl stop the moment its this-alias dies, and lose everything after it. This pins the
+    // behaviour the code has always had: the impl is decoded to its end.
+    // Thunk @ B0 (as FollowsCallHandoff): mov rbx, rcx ; mov rcx, rbx ; call impl ; ret
+    // Impl  @ B1: mov ecx, 5    B9 05 00 00 00   the this-alias dies
+    //             mov eax, [rdx+0x30]   8B 42 30   a low-confidence read AFTER it
+    //             ret                   C3
+    const uintptr_t B0 = 0x140000000ULL;
+    const uintptr_t B1 = 0x140001000ULL;
+    const int32_t rel = static_cast<int32_t>(B1 - (B0 + 11));
+    std::vector<uint8_t> thunk = {
+        0x48, 0x89, 0xCB,
+        0x48, 0x89, 0xD9,
+        0xE8,
+        static_cast<uint8_t>(rel & 0xFF),
+        static_cast<uint8_t>((rel >> 8) & 0xFF),
+        static_cast<uint8_t>((rel >> 16) & 0xFF),
+        static_cast<uint8_t>((rel >> 24) & 0xFF),
+        0xC3,
+    };
+    std::vector<DenkenRegion> regions = {
+        { B0, thunk },
+        { B1, { 0xB9, 0x05, 0x00, 0x00, 0x00, 0x8B, 0x42, 0x30, 0xC3 } },
+    };
+    auto r = Denken::Analyze(B0, MakeReader(&regions));
+    EXPECT("deadguard: ran and followed the impl", r.ok && r.callsFollowed == 1);
+    const auto* a = FindAccess(r, 0x30);
+    EXPECT("DEADGUARD: a followed impl is decoded past the death of its this-alias",
+           a != nullptr && !a->highConfidence);
+}
+
 static void Test_Denken_DoesNotFollowNonThisCall() {
     // call rel32 with a NON-this rcx (rcx was clobbered by a load) must NOT
     // follow. Sequence: mov rcx, [rdx] (clobbers rcx) ; call impl ; ret.
@@ -4969,6 +5142,157 @@ static void Test_Orden_BetweenFirstScan() {
     }
 }
 
+static void Test_ValueScan_BetweenTargets_ClampPerWidth() {
+    using DT  = Radar::DataType;
+    using ST  = Radar::ScanType;
+    using Fit = Radar::NumericTargetSet::Fit;
+    // [A4-AB4-BETWEEN] Between's two bounds were built by two independent BuildNumericTargets calls, and every consumer
+    // needs BOTH encoded at a width -- so `Between -5 10` (no unsigned -5) skipped every UInt16 / UInt32 holding 0..10,
+    // and `Between 10 70000` (no int16 70000) every Int16 >= 10. Silently. Built jointly now: each bound CLAMPED into
+    // the width (Between is inclusive, so nothing is lost), a width the range misses skipped, on exact integers.
+    auto sval = [](const Radar::NumericTargetSet& s, DT dt, int64_t& v) {
+        const uint8_t* p = s.Find(dt);
+        if (!p) return false;
+        switch (dt) {
+            case DT::Int8:  v = *reinterpret_cast<const int8_t*>(p);  return true;
+            case DT::Int16: v = *reinterpret_cast<const int16_t*>(p); return true;
+            case DT::Int32: v = *reinterpret_cast<const int32_t*>(p); return true;
+            case DT::Int64: v = *reinterpret_cast<const int64_t*>(p); return true;
+            default:        return false;
+        }
+    };
+    auto uval = [](const Radar::NumericTargetSet& s, DT dt, uint64_t& v) {
+        const uint8_t* p = s.Find(dt);
+        if (!p) return false;
+        switch (dt) {
+            case DT::UInt8:  v = *reinterpret_cast<const uint8_t*>(p);  return true;
+            case DT::UInt16: v = *reinterpret_cast<const uint16_t*>(p); return true;
+            case DT::UInt32: v = *reinterpret_cast<const uint32_t*>(p); return true;
+            case DT::UInt64: v = *reinterpret_cast<const uint64_t*>(p); return true;
+            default:         return false;
+        }
+    };
+    auto srange = [&](const Radar::NumericTargetSet& l, const Radar::NumericTargetSet& h, DT dt, int64_t a, int64_t b) {
+        int64_t x = 0, y = 0;
+        return sval(l, dt, x) && sval(h, dt, y) && x == a && y == b;
+    };
+    auto urange = [&](const Radar::NumericTargetSet& l, const Radar::NumericTargetSet& h, DT dt, uint64_t a, uint64_t b) {
+        uint64_t x = 0, y = 0;
+        return uval(l, dt, x) && uval(h, dt, y) && x == a && y == b;
+    };
+    Radar::NumericTargetSet lo, hi;
+
+    EXPECT("BETWEEN setup: -5..10 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "-5", "10", lo, hi));
+    EXPECT("BETWEEN -5..10 keeps UInt16, clamped to 0..10", urange(lo, hi, DT::UInt16, 0, 10));
+    EXPECT("BETWEEN -5..10 keeps UInt32, clamped to 0..10", urange(lo, hi, DT::UInt32, 0, 10));
+    EXPECT("BETWEEN control: -5..10 on Int32 is unchanged", srange(lo, hi, DT::Int32, -5, 10));
+    uint16_t seven = 7;
+    EXPECT("BETWEEN a UInt16 of 7 satisfies -5..10",
+           Radar::ComparePredicate(DT::UInt16, ST::Between, reinterpret_cast<const uint8_t*>(&seven),
+                                   lo.FindEntry(DT::UInt16), hi.Find(DT::UInt16)));
+    bool allEncoded = true;
+    for (const auto& e : lo.entries) if (e.fit != Fit::Encoded) allEncoded = false;
+    for (const auto& e : hi.entries) if (e.fit != Fit::Encoded) allEncoded = false;
+    EXPECT("BETWEEN control: only Encoded bounds, never a verdict", allEncoded);
+
+    EXPECT("BETWEEN setup: 10..70000 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "70000", lo, hi));
+    EXPECT("BETWEEN 10..70000 keeps Int16, clamped to 10..32767", srange(lo, hi, DT::Int16, 10, 32767));
+    int16_t edge = 32767, below = 9;
+    EXPECT("BETWEEN an Int16 of 32767 satisfies 10..70000",
+           Radar::ComparePredicate(DT::Int16, ST::Between, reinterpret_cast<const uint8_t*>(&edge),
+                                   lo.FindEntry(DT::Int16), hi.Find(DT::Int16)));
+    EXPECT("BETWEEN control: an Int16 of 9 does not",
+           !Radar::ComparePredicate(DT::Int16, ST::Between, reinterpret_cast<const uint8_t*>(&below),
+                                    lo.FindEntry(DT::Int16), hi.Find(DT::Int16)));
+
+    EXPECT("BETWEEN setup: reversed 10..-5 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "-5", lo, hi));
+    EXPECT("BETWEEN reversed 10..-5 is normalised: UInt16 0..10", urange(lo, hi, DT::UInt16, 0, 10));
+
+    EXPECT("BETWEEN setup: 70000..80000 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "70000", "80000", lo, hi));
+    EXPECT("BETWEEN control: a range that misses Int16 leaves no Int16 entry",
+           !lo.FindEntry(DT::Int16) && !hi.FindEntry(DT::Int16));
+    EXPECT("BETWEEN control: ...and it still bounds Int32", srange(lo, hi, DT::Int32, 70000, 80000));
+
+    EXPECT("BETWEEN setup: -1..18446744073709551615 builds",
+           Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "-1", "18446744073709551615", lo, hi));
+    EXPECT("BETWEEN 64-bit: UInt64 0..UINT64_MAX, exact", urange(lo, hi, DT::UInt64, 0, UINT64_MAX));
+    EXPECT("BETWEEN 64-bit: Int64 -1..INT64_MAX, exact", srange(lo, hi, DT::Int64, -1, INT64_MAX));
+
+    EXPECT("BETWEEN setup: 10..1e30 builds", Radar::BuildNumericBetweenTargets(DT::NumericNoByte, "10", "1e30", lo, hi));
+    EXPECT("BETWEEN a float bound beyond 64 bits still bounds Int32: 10..INT32_MAX",
+           srange(lo, hi, DT::Int32, 10, INT32_MAX));
+    double dlo = 0.0, dhi = 0.0;
+    const uint8_t* pd = lo.Find(DT::Double);
+    const uint8_t* qd = hi.Find(DT::Double);
+    if (pd) std::memcpy(&dlo, pd, 8);
+    if (qd) std::memcpy(&dhi, qd, 8);
+    EXPECT("BETWEEN control: Double keeps the typed bounds 10..1e30", pd && qd && dlo == 10.0 && dhi == 1e30);
+}
+
+static void Test_Orden_OrderedVerdictWidths() {
+    // [W2-ORDEN-FINDENTRY] LeafSatisfiesSlot looked the slot's target up with Find(), which hides
+    // an AlwaysTrue entry (audit #5 AB4: EVERY value of this width satisfies the predicate). So a
+    // Bigger/Smaller group slot skipped a whole width class the single-value scan keeps -- and a
+    // group needs ALL slots at DISTINCT leaves, so one lost width drops the object. Fern builds a
+    // group slot's targets with the slot's own predicate, so the verdict is there to read.
+    using ST = Radar::ScanType;
+    Radar::NumericTargetSet neg5, t24, lt70k, gt70k;
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "-5", neg5,
+                               Radar::RoundMode::Round, ST::Bigger);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "24", t24);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "70000", lt70k,
+                               Radar::RoundMode::Round, ST::Smaller);
+    Radar::BuildNumericTargets(Radar::DataType::NumericNoByte, "70000", gt70k,
+                               Radar::RoundMode::Round, ST::Bigger);
+
+    // Slot 1 (Exact 24) can only take the Int32 leaf, so slot 0 must take the other one.
+    uint16_t u16 = 3;
+    std::vector<Orden::Leaf> unsignedPair = {
+        OrdenLeaf(Radar::DataType::UInt16, 0x10, &u16, 2), OrdenLeafI32(0x14, 24),
+    };
+    {
+        std::vector<Orden::SlotTarget> slots = {
+            { &neg5, ST::Bigger, Radar::RoundMode::Round },
+            { &t24,  ST::Exact,  Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY ⭐ Bigger(-5) takes an unsigned leaf (3 > -5), so the group matches",
+               Orden::MatchGroup(unsignedPair, slots, out));
+        EXPECT("ORDEN-FINDENTRY ⭐ ...slot 0 lists BOTH leaves",
+               out.size() == 2 && out[0].leafIdx.size() == 2);
+    }
+    // Smaller 70000 over Int16: every int16 is smaller, including the edge 32767 clamping drops.
+    std::vector<Orden::Leaf> int16Pair = { OrdenLeafI16(0x10, 32767), OrdenLeafI32(0x14, 24) };
+    {
+        std::vector<Orden::SlotTarget> slots = {
+            { &lt70k, ST::Smaller, Radar::RoundMode::Round },
+            { &t24,   ST::Exact,   Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY ⭐ Smaller(70000) takes the Int16 edge 32767",
+               Orden::MatchGroup(int16Pair, slots, out));
+    }
+    {   // control: nothing 16-bit exceeds 70000, so skipping the width is still right
+        std::vector<Orden::SlotTarget> slots = {
+            { &gt70k, ST::Bigger, Radar::RoundMode::Round },
+            { &t24,   ST::Exact,  Radar::RoundMode::Round },
+        };
+        std::vector<Orden::SlotMatches> out;
+        EXPECT("ORDEN-FINDENTRY control: Bigger(70000) still skips the Int16 leaf",
+               !Orden::MatchGroup(int16Pair, slots, out));
+    }
+    {   // control: Between needs BOTH bounds, so a verdict entry must never satisfy it on its own
+        Radar::NumericTargetSet always;
+        Radar::NumericTargetSet::Entry e{};
+        e.dt  = Radar::DataType::UInt16;
+        e.fit = Radar::NumericTargetSet::Fit::AlwaysTrue;
+        always.entries.push_back(e);
+        Orden::SlotTarget slot{ &always, ST::Between, Radar::RoundMode::Round, &t24 };
+        EXPECT("ORDEN-FINDENTRY control: an AlwaysTrue entry never satisfies Between",
+               !Orden::LeafSatisfiesSlot(unsignedPair[0], slot));
+    }
+}
+
 static void Test_Orden_RoundedFloatExact() {
     // Multi-value (group / "multi value search") scan inherits the CE-style rounded
     // float Exact through LeafSatisfiesSlot -> Radar::ComparePredicate: a whole-number
@@ -5683,6 +6007,25 @@ static void Test_SoftObjectPathSize() {
 }
 
 static void Test_FunctionFlagsOffset() {
+    // [A2-UFUNC-TAIL-4X] the tail behind FunctionFlags: a uint16 RepOffset on 4.11-4.17 ONLY.
+    for (unsigned v = 411; v <= 417; ++v)
+        EXPECT("UFUNC-TAIL: 4.11-4.17 carry RepOffset -> shift 2", DynOff::FunctionTailShiftFor(v) == 2);
+    for (unsigned v : { 418u, 419u, 421u, 422u, 424u, 425u, 427u, 500u, 505u, 508u })
+        EXPECT("UFUNC-TAIL: 4.18+ has no RepOffset -> shift 0", DynOff::FunctionTailShiftFor(v) == 0);
+    EXPECT("UFUNC-TAIL: an UNKNOWN version (0) keeps the old reads", DynOff::FunctionTailShiftFor(0) == 0);
+    EXPECT("UFUNC-TAIL: below the 4.11 floor is not guessed", DynOff::FunctionTailShiftFor(410) == 0);
+    // ...and the UProperty subclass start WalkFunctions' Struct / PropertyClass reads use.
+    EXPECT("UFUNC-TAIL: 4.15 subclass start 0x50 -> 0x78",
+           DynOff::UPropertySubclassStartFor(0x50, 415, false) == 0x78);
+    EXPECT("UFUNC-TAIL: 4.18 subclass start 0x44 -> 0x70",
+           DynOff::UPropertySubclassStartFor(0x44, 418, false) == 0x70);
+    EXPECT("UFUNC-TAIL: an unknown version keeps the old +0x2C",
+           DynOff::UPropertySubclassStartFor(0x44, 0, false) == 0x70);
+    for (unsigned v = 411; v <= 509; ++v)
+        for (bool cpn : { false, true })
+            EXPECT("UFUNC-TAIL: the subclass start IS UBoolPropFieldSizeFor at every known version",
+                   DynOff::UPropertySubclassStartFor(0x50, v, cpn) == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
+
     // A3: both readers carried `>= 550 -> 0xC0`. 550 is not producible (versions are
     // major*100+minor, capped at 509), so the band was dead -- but it had to be DELETED,
     // not retargeted, because 0xC0 is FirstPropertyToInit (an FProperty*) from UE 5.x.
@@ -6469,11 +6812,24 @@ static void Test_Dunste_ShouldCommitCollision() {
            Dunste::ShouldCommitCollision(CA::Absent));
 
     // The D1 half. The dispatcher refused (-8 off-game-thread while the PE hook is down,
-    // -5 game-thread timeout, -3 no usable PE offset): NOTHING reached the game, so
-    // committing records a disable that never happened -- and on the restore path it
-    // wipes the record that keeps a ghosted pawn tracked.
+    // -3 no usable PE offset -- and, since [W3-DUNSTE-QUEUED], NOT -5, which stays queued
+    // and lands; see below): NOTHING reached the game, so committing records a disable
+    // that never happened -- and on the restore path it wipes the record that keeps a
+    // ghosted pawn tracked.
     EXPECT("D1 *: a REFUSED invoke does NOT commit",
            !Dunste::ShouldCommitCollision(CA::Refused));
+
+    // [W3-DUNSTE-QUEUED] -5 is the dispatcher's "the game thread did not drain in time" -- and the request STAYS
+    // QUEUED and runs later (Frieren.h, Stark.cpp). Filed under Refused, a queued disable landed after the record
+    // said collision was ON, with nothing tracking it: the pawn fell through the world once Fly was off.
+    EXPECT("DUNSTE-QUEUED *: a -5 timeout is QUEUED, not refused",
+           Dunste::CollisionApplyFromRc(-5) == CA::Queued);
+    EXPECT("DUNSTE-QUEUED *: ...and a queued request commits the record (the next toggle emits the undo)",
+           Dunste::ShouldCommitCollision(Dunste::CollisionApplyFromRc(-5)));
+    EXPECT("DUNSTE-QUEUED control: rc 0 is Applied", Dunste::CollisionApplyFromRc(0) == CA::Applied);
+    for (int32_t rc : { -8, -7, -3, -2, -4 })
+        EXPECT("DUNSTE-QUEUED control: -8 / -7 / -3 / -2 / -4 stay Refused (nothing was queued)",
+               Dunste::CollisionApplyFromRc(rc) == CA::Refused);
 }
 
 static void Test_Aura_DescribeSparseDelegateState() {
@@ -7282,12 +7638,32 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
     EXPECT("modular anchor admits the producer",
            admit(AnchorState::ForeignDll, false, true) == ModuleAdmission::Accept);
 
+    // --- [A2-HEAP-ANCHOR-TEXT] a HEAP anchor: validated, and in no module --------------
+    // A data-scan GObjects is a heap FUObjectArray by design, so it has no module. It classified as None, and every
+    // later refusal printed "GObjects never validated this run" on a run where it DID. Refused where None refuses -- a
+    // heap anchor is never modular, which would re-admit the Bitdefender GWorld candidate -- with its own verdict.
+    EXPECT("HEAPANCHOR: a validated anchor in no module is HEAP, not None",
+           Genau::ClassifyAnchor(/*haveAnchor=*/true, /*inAnyModule=*/false, /*inMainExe=*/false)
+               == AnchorState::Heap);
+    EXPECT("HEAPANCHOR control: no anchor at all is still None",
+           Genau::ClassifyAnchor(false, false, false) == AnchorState::None);
+    EXPECT("HEAPANCHOR control: an anchor in the exe is MainExe",
+           Genau::ClassifyAnchor(true, true, true) == AnchorState::MainExe);
+    EXPECT("HEAPANCHOR control: an anchor in a DLL is ForeignDll",
+           Genau::ClassifyAnchor(true, true, false) == AnchorState::ForeignDll);
+    EXPECT("HEAPANCHOR: a heap anchor refuses a foreign candidate, with its own verdict",
+           admit(AnchorState::Heap, false, false) == ModuleAdmission::RefuseHeapAnchored);
+    EXPECT("HEAPANCHOR: a heap anchor admits the producer, as None does",
+           admit(AnchorState::Heap, false, /*producesAnchor=*/true) == ModuleAdmission::Accept);
+    static_assert(Genau::ClassifyAnchor(true, true, true) == AnchorState::MainExe,
+                  "ClassifyAnchor must be constexpr-evaluable");
+
     // --- a MAIN-MODULE candidate is admitted in every state -------------------
     // This is what keeps the FORBIDDEN fix forbidden. GWLD_DI427_1/2 are UE4.27
     // write-site patterns that resolve &GWorld from a `GWorld = nullptr` store before
     // any world exists, so a main-module hit whose *GWorld reads 0 MUST be accepted —
     // tightening `world == 0` globally would delete two Tier-1 patterns.
-    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll }) {
+    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll, AnchorState::Heap }) {
         for (bool prod : { false, true }) {
             EXPECT("main-module candidate is always admitted",
                    admit(st, /*candIsMainExe=*/true, prod) == ModuleAdmission::Accept);
@@ -7372,6 +7748,69 @@ static void Test_Macht_ParsePattern_Nibble() {
 // declared width, which is what this reads. Everything below is the case U3's
 // test 6 had to leave asserted-as-broken.
 // ================================================================
+// ================================================================
+// Ubel::ClassifyBoolLayout — [A3-BOOL-NATIVE-NOWRITE]. The DLL published a mask only for a single
+// bit, so a NATIVE bool (FieldMask 0xFF) arrived as "no mask", indistinguishable from a missed
+// probe, and the UI's write was a no-op that printed "Written".
+// ================================================================
+static void Test_Ubel_ClassifyBoolLayout() {
+    std::printf("Test_Ubel_ClassifyBoolLayout\n");
+    using Ubel::BoolLayout;
+    // The REAL native layout. Every engine's SetBoolSize (PropertyBool.cpp, 4.11 → 5.8, and the
+    // UE4-era UBoolProperty) does `if (bIsNativeBool) { ByteMask = true; FieldMask = 255; }`, so
+    // ByteMask is 0x01, NOT 0xFF. The first version of this test pinned {1,0,FF,FF}, a tuple no
+    // engine writes, and the classifier then refused every native bool on a real game (B05 review).
+    EXPECT("native: 1 / 0 / 01 / FF (SetBoolSize)", Ubel::ClassifyBoolLayout(1, 0, 0x01, 0xFF) == BoolLayout::Native);
+    // ByteMask is held strict: an all-FF read is what a probe landing on 0xFF fill presents,
+    // and no engine writes it for a bool.
+    EXPECT("1 / 0 / FF / FF is NOT native (no engine writes it)",
+           Ubel::ClassifyBoolLayout(1, 0, 0xFF, 0xFF) == BoolLayout::Unresolved);
+    EXPECT("native layout at a non-zero byte offset is not native",
+           Ubel::ClassifyBoolLayout(1, 2, 0x01, 0xFF) == BoolLayout::Unresolved);
+    EXPECT("packed: one bit",         Ubel::ClassifyBoolLayout(1, 0, 0x04, 0x04) == BoolLayout::Packed);
+    EXPECT("packed: bit 7",           Ubel::ClassifyBoolLayout(1, 3, 0x80, 0x80) == BoolLayout::Packed);
+    EXPECT("all-zero (a missed probe) is UNRESOLVED, never native",
+           Ubel::ClassifyBoolLayout(0, 0, 0, 0) == BoolLayout::Unresolved);
+    EXPECT("FieldSize 1 but mask 0 is unresolved", Ubel::ClassifyBoolLayout(1, 0, 0, 0) == BoolLayout::Unresolved);
+    EXPECT("two bits is not a bool mask", Ubel::ClassifyBoolLayout(1, 0, 0x06, 0x06) == BoolLayout::Unresolved);
+    EXPECT("a wider native bool is not the 1-byte layout", Ubel::ClassifyBoolLayout(4, 0, 0xFF, 0xFF) == BoolLayout::Unresolved);
+    EXPECT("FF mask at a non-zero byte offset is not native", Ubel::ClassifyBoolLayout(1, 2, 0xFF, 0xFF) == BoolLayout::Unresolved);
+}
+
+// ================================================================
+// Ubel::ClassifyOptionalLayout -- [A2-TOPTIONAL-INTRUSIVE]. UE's CalcSize, matched exactly:
+// intrusive == sizeof(T); trailing flag == Align(sizeof(T) + 1, alignof(T)); anything else refused.
+// ================================================================
+static void Test_Ubel_ClassifyOptionalLayout() {
+    std::printf("Test_Ubel_ClassifyOptionalLayout\n");
+    using Ubel::OptionalLayout;
+    using Ubel::ClassifyOptionalLayout;
+    // Intrusive: the optional IS sizeof(T).
+    EXPECT("intrusive TArray / FString (5.5+): 16 == 16", ClassifyOptionalLayout(16, 16, 8) == OptionalLayout::Intrusive);
+    EXPECT("intrusive non-nullable object: 8 == 8",      ClassifyOptionalLayout(8, 8, 8) == OptionalLayout::Intrusive);
+    // Trailing flag: Align(sizeof(T) + 1, alignof(T)).
+    EXPECT("TOptional<int32>: Align(5,4) = 8",           ClassifyOptionalLayout(8, 4, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<UObject*>: Align(9,8) = 16",       ClassifyOptionalLayout(16, 8, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FString> (5.3/5.4): Align(17,8) = 24", ClassifyOptionalLayout(24, 16, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FName> (5.3/5.4): Align(9,4) = 12", ClassifyOptionalLayout(12, 8, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<uint8>: Align(2,1) = 2",           ClassifyOptionalLayout(2, 1, 1) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FVector> UE5 (doubles): Align(25,8) = 32", ClassifyOptionalLayout(32, 24, 8) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<FVector> UE4 (floats): Align(13,4) = 16",  ClassifyOptionalLayout(16, 12, 4) == OptionalLayout::TrailingFlag);
+    // Refused.
+    EXPECT("a size fitting neither layout is Unknown",   ClassifyOptionalLayout(20, 8, 8) == OptionalLayout::Unknown);
+    EXPECT("a loose 'bigger than T' is NOT a trailing flag", ClassifyOptionalLayout(40, 16, 8) == OptionalLayout::Unknown);
+    EXPECT("an unknown alignment cannot prove a trailing flag", ClassifyOptionalLayout(24, 16, 0) == OptionalLayout::Unknown);
+    EXPECT("a non-power-of-two alignment is refused",    ClassifyOptionalLayout(24, 16, 3) == OptionalLayout::Unknown);
+    EXPECT("an unresolved value size is Unknown",        ClassifyOptionalLayout(16, 0, 8) == OptionalLayout::Unknown);
+    EXPECT("a zero optional size is Unknown",            ClassifyOptionalLayout(0, 8, 8) == OptionalLayout::Unknown);
+    // Review of cc430176: TOptional<TLazyObjectPtr>. FLazyObjectPtr is FWeakObjectPtr {int32, int32}
+    // (+ the pre-5.3 int32 TagAtLastTest) + a bare FGuid -- alignof 4 in every era.
+    EXPECT("TOptional<TLazyObjectPtr> 5.3+: Align(0x19,4) = 0x1C", ClassifyOptionalLayout(0x1C, 0x18, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("TOptional<TLazyObjectPtr> 5.2:  Align(0x1D,4) = 0x20", ClassifyOptionalLayout(0x20, 0x1C, 4) == OptionalLayout::TrailingFlag);
+    EXPECT("Scharf: alignof(FLazyObjectPtr) is 4, not 8",
+           Scharf::RequiredAlignment("LazyObjectProperty", 0x18, false) == 4);
+}
+
 static void Test_Ubel_PreviewScalarValue() {
     std::printf("Test_Ubel_PreviewScalarValue\n");
 
@@ -7422,6 +7861,20 @@ static void Test_Ubel_PreviewScalarValue() {
         EXPECT("BoolProperty true",  Ubel::PreviewScalarValue("BoolProperty", b, 1) == "true");
         b[0] = 200;
         EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
+    }
+
+    // --- [A2-STRUCT-PREVIEW-BOOLMASK] packed bools read THEIR bit, not the byte. A physics actor's
+    //     bSimulatedPhysicSleep (0x01) and bRepPhysics (0x02) share a byte; both previewed "true".
+    {
+        uint8_t b[1] = { 0x02 };                     // bit 1 set, bit 0 clear
+        EXPECT("packed bool, its bit set",   Ubel::PreviewScalarValue("BoolProperty", b, 1, 0x02) == "true");
+        EXPECT("packed bool, its bit clear", Ubel::PreviewScalarValue("BoolProperty", b, 1, 0x01) == "false");
+        // Mask 0 is UNRESOLVED, not "no bits": the whole byte, never a bare (p & 0) == false.
+        EXPECT("mask 0 falls back to the byte", Ubel::PreviewScalarValue("BoolProperty", b, 1, 0) == "true");
+        uint8_t z[1] = { 0x00 };
+        EXPECT("mask 0, zero byte",          Ubel::PreviewScalarValue("BoolProperty", z, 1, 0) == "false");
+        uint8_t one[1] = { 0x01 };
+        EXPECT("native mask 0xFF",           Ubel::PreviewScalarValue("BoolProperty", one, 1, 0xFF) == "true");
     }
 
     // --- Impure types return "" so the caller supplies them. This is the seam that
@@ -7964,12 +8417,14 @@ int main() {
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
+    RUN(Test_Stark_StatefulToggleFailure);
     RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_InitFastPath);
     RUN(Test_Mimic_CommandRequiresInit);
     RUN(Test_Flamme_AtomicPublishGate);
 
@@ -8019,7 +8474,7 @@ int main() {
 
     RUN(Test_ValueScan_SessionLifecycle);
     RUN(Test_ValueScan_FieldDisplayName);
-    RUN(Test_ValueScan_OptionalFlagOffset);
+    RUN(Test_ValueScan_V1cOptionalGate);
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);
@@ -8041,6 +8496,7 @@ int main() {
     RUN(Test_Denken_BasicAccesses);
     RUN(Test_Denken_ExcludesStackAndZeroDisp);
     RUN(Test_Denken_FollowsCallHandoff);
+    RUN(Test_Denken_FollowedImplOutlivesItsAlias);
     RUN(Test_Denken_DoesNotFollowNonThisCall);
     RUN(Test_Denken_TerminatesAndGuards);
 
@@ -8093,6 +8549,8 @@ int main() {
     RUN(Test_Orden_ConvergenceAndAssignment);
     RUN(Test_Orden_OrderedFirstScan);
     RUN(Test_Orden_BetweenFirstScan);
+    RUN(Test_ValueScan_BetweenTargets_ClampPerWidth);
+    RUN(Test_Orden_OrderedVerdictWidths);
     RUN(Test_Orden_RoundedFloatExact);
     RUN(Test_Orden_PrevValueRejectedOnFirstScan);
 
@@ -8157,6 +8615,8 @@ int main() {
 
     // Ubel — reflected struct preview: member width comes from the property (U17)
     RUN(Test_Ubel_PreviewScalarValue);
+    RUN(Test_Ubel_ClassifyBoolLayout);
+    RUN(Test_Ubel_ClassifyOptionalLayout);
 
     // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
     RUN(Test_Ubel_InterpretStructBytes);

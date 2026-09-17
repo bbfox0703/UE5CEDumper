@@ -45,6 +45,11 @@ struct SeeThroughStatus {
     int32_t hiddenCount = 0;      // occluders currently hidden
     int32_t pierceCount = 1;      // how many nearest occluders to hide along the ray
     int32_t state       = -1;     // last enable/disable result (1/0/neg); -1 = poll-only
+    // [P1-SEETHRU-GIVEUP] The leftover-hidden record, split: a restore still WAITING for the game thread, and one that
+    // GAVE UP after PENDING_RESTORE_MAX_MS. hiddenCount > 0 with active == false used to mean both, and the card
+    // promised "they reappear" for the one that never will.
+    bool    restorePending   = false;
+    bool    restoreAbandoned = false;
 
     // WHICH actors are hidden, not merely how many.
     //

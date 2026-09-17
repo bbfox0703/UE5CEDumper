@@ -472,6 +472,12 @@ walk may simply never have reached them.
 | `Grade` | `Elite` (=2) | enum with a **hole** at 3..6 (`Legend`=7), so index≠value cannot pass by accident |
 | `WideGrade` | `Wide_Base` (=24000) | **Y15 step 6** — a **4-byte** EnumProperty (`enum class : int32`); `Grade` is `: uint8`, i.e. ONE byte, and cannot stand in. ⭐ A freeze targets `Wide_Target` (=16064), which **shares its low byte `0xC0`** with 24000 — so a 1-byte write leaves the field **bit-identical** and FAIL cannot be confused with "the write never landed". Byte 1 of 24000 is `0x5D`, non-zero, so a short write is not hidden by zero neighbours |
 | `WideGuard` | `0x7F7F7F7F` | the **over**-wide-write guard ONLY. ⚠ It cannot detect a SHORT write — a 1-byte write leaves bytes +1..+3 of `WideGrade` itself stale and never reaches this field |
+| `Probe_WideEnum` | `Wide_High` (`0x007F0000`) | ⭐ **L30's cooked witness, and it lives on the ASSET, not here.** The constructor leaves it `Wide_Zero`; `Content/UsmapProbe/BP_UsmapProbe`'s CDO sets it. That split is forced — unversioned serialization omits any property equal to its archetype, so a probe seeded in C++ writes NOTHING into the cook and two mappings then agree on an empty stream. `Wide_High` has **byte 2** set, so a 1-byte *and* a 2-byte misread both lose it |
+| `Probe_AfterWideEnum` | `0x11223344` | L30's **alignment** witness. Declared immediately after the enum, so a consumer that reads a 4-byte enum as 1 byte starts here 3 bytes early and cannot return this. Without it the row is vacuous: a lone property proves a value, never an alignment |
+| `Probe_Lanes` | `Lane_Left` · `Lane_Center` · `Lane_Right` (11 · 33 · 22) | ⭐ **L39's cooked witness** — the `TArray<TEnumAsByte<E>>` this zoo had nowhere. Also set on the BP CDO. Unsorted and non-contiguous so a wrong-stride read cannot reproduce the sequence. `EDumperTestLane` is UNSCOPED, so its members are stored bare (`Lane_Left`) — the control arm for `[USMAP-ENUM-NAME-QUALIFIED]`, whose fix strips the prefix a scoped enum carries |
+| `Probe_AfterLanes` | `0x44556677` | L39's **alignment** witness, for `Probe_AfterWideEnum`'s reason. A different constant, so a shift from one guard onto the other cannot hide |
+| `Probe_RawBytes` | 11 · 33 · 22 | ⭐ **L39 step 3's CONTROL, and the same three bytes as `Probe_Lanes` on purpose.** Identical values, different declared inner type, one object — so a consumer rendering one as enumerator names and the other as numbers is reading the descriptor, not guessing from the bytes. ⚠ They are not the same LENGTH in the cook and must not be expected to be: a ByteProperty with an Enum is not bulk-serializable, so the lanes are written one FName each |
+| `Probe_AfterRawBytes` | `0x778899AA` | the control's own alignment witness — three distinct guards, so a shift from any one onto another cannot look like a correct read |
 | `FixedArr` (8 elements) | 100..800 | `ArrayDim > 1` — a different property shape from TArray |
 | `Health` — `BaseValue` / `CurrentValue` | Base 100, Current ticking | nested StructProperty in GAS-attribute shape → also the "Flatten GAS attributes" CE-export toggle |
 | `EmptyBasePayload` → `Description` | A7EmptyBase | ⭐ **audit A7's only vehicle.** `FDumperTestBracketPayload : FDumperTestEmptyBase` — an empty native USTRUCT whose `PropertiesSize` UE reports as **1**, so the child's offset-0 field falls below the SDK emitter's `Offset >= superPropsSize` floor and used to be replaced by `Pad_0000`. Measured 2026-09-05: **no** installed title supplies this shape (EVERSPACE 2, 3,808 loaded classes → zero structs with `PropertiesSize == 1`). Expect base `props_size 1` / `own_props_start -1`, child `super_props_size 1` / `own_props_start 0`, and **no leading pad** in the exported header |
@@ -497,7 +503,7 @@ Ten fixtures added in one packaging cycle, each closing a register row that had 
 | `LazyAnchors` | the same three actors | GC roots. A `TLazyObjectPtr` does not keep its target alive, so without these the row would measure a dangling read |
 | `Deep_Buckets` → `Subs` → `Leaves` | empty until `A9_BuildDeepContainers(300,300,300)` | **A9.** Three levels, because a flat 500×500 cannot work: every container is clamped at 256 *before* the budget is consulted, so 500×500 visits 65,792 elements. Three levels gives ≈16.8M against a 50,000 budget — a ~335× ratio, measurable on a wall clock. **Negative control `(30,30,30)`** = 27,930 visits, under budget, so every leaf must be reached. ⚠ Compare deep-on vs deep-off TIME; `scanned_objects` has no discriminating power on a one-object fixture |
 | `Arr_TuneBlocks` → `BlockName` · `Tunes` | 3 blocks × 5 ints | **Multi-`[N]` drill.** `Arr_TuneBlocks[2].Tunes[4]` must read **7204**; a parser that resolves only the last `[N]` lands on 7104 and is visibly wrong. ⚠ The outer container must stay a `TArray` — a top-level `TSet`/`TMap` of structs has its element direct-fields collected by neither capture path |
-| `FrameCountReflected` | mirrors `FrameCount` each Tick | **Linie's denominator.** `GetFrameCount()` is not a UFUNCTION and `FrameCount` is deliberately not a UPROPERTY, so neither is reachable over the pipe — which left the cadence rows with nothing to divide by |
+| `FrameCountReflected` | mirrors `FrameCount` each Tick | **Linie's denominator.** `GetFrameCount()` is not a UFUNCTION and `FrameCount` is deliberately not a UPROPERTY, so neither is reachable over the pipe — which left the cadence rows with nothing to divide by ⛔ **It was DEAD until 2026-09-16** (`[FIXTURE-FRAMECOUNT-DEAD]`): `Tick` incremented the private `FrameCount` and never wrote this one, so the denominator read **0** forever while this row and the header both claimed the mirror. Measured before the fix: `TickCount` 97 → 100 over 3 s with this stuck at 0; the 5.8 fixture's own copy ticked, which is the control |
 | `HolderHealth` (on `ADumperTestHolder`) | `BaseValue` 100, `CurrentValue` in **five buckets** | ⭐ **Class Pivot grouping / Suggest Targets.** Deliberately NOT distinct per instance: `HolderValue` already is, and a unique key gives 300 groups of 1, which proves a key is applied but not that grouping is useful. `Spawn_Holders(300)` then gives many instances in few groups — the shape a real game's HP/team/state field has |
 | `Arr_Name` | `NameA` · `NameBB` · `NameCCC` | Three FNames of deliberately different lengths, so any future FName-stride question has a subject whose entries cannot be confused by size |
 
@@ -517,6 +523,68 @@ Ten fixtures added in one packaging cycle, each closing a register row that had 
   already-installed detour, so by the time a UFUNCTION could run the hook has already succeeded.
   `Hook_ReleaseTrampolineVM()` is the recovery half. ⚠ Call it within **~40 s** (8 attempts × 5 s
   cooldown) or the retry ladder is spent and `hook RECOVERED on attempt N` can never appear.
+
+### InvokeGate (2026-09-15) — hosts for the invoke paths' unwritable-param gate
+
+Added for FIX PASS live check **L10** (`[P3-INVOKE-Y11-CEFORM]`, `[P3-INVOKE-STRUCT-FSTRING]`). No
+UFUNCTION on this fixture took a `TArray`, a delegate, an `FText`, or a struct with an `FString`
+member, so the gate had no host short of borrowing an engine library function whose effect cannot be
+read back. Six `InvokeGate_Take*` UFUNCTIONs now take exactly those, and **record what they
+received two independent ways**: the reflected fields below (read them over the pipe), and one line
+per call appended to the file named by `InvokeGate_LogPath`.
+
+| field | value | check |
+|---|---|---|
+| `InvokeGate_LogPath` | absolute path, set in BeginPlay | ⭐ **Read it, never guess it.** A Shipping package may resolve `Saved\` under `%LOCALAPPDATA%` rather than beside the exe. Written with `FFileHelper`, **not `UE_LOG`**, which compiles to nothing in Shipping. Every line carries `pid=` and `frame=`; the file is appended across sessions, so filter by pid. BeginPlay writes a `session start` line |
+| `InvokeGate_ArrayCalls` · `InvokeGate_DelegateCalls` · `InvokeGate_TextCalls` · `InvokeGate_StructCalls` | 0 | Bumped **first**, before the argument is read, by `InvokeGate_TakeIntArray` / `…Ref`, `InvokeGate_TakeDelegate`, `InvokeGate_TakeText`, `InvokeGate_TakeStruct` / `…Ref`. Each function also **returns** its counter. ⭐ An absence claim ("the refused FIRE sent nothing") is only valid beside an accepted FIRE in the same session that DID move the same counter |
+| `InvokeGate_LastArrayNum` · `InvokeGate_LastArrayData` | -1 until called | `Num()` and the raw `Data` pointer as numbers, never dereferenced. The empty array reads `0` / `0` |
+| `InvokeGate_LastDelegateBound` | -1 until called | `IsBound()` as 0/1. Safe on a zeroed `FScriptDelegate`: serial 0 resolves to null without a dereference |
+| `InvokeGate_LastHead` · `InvokeGate_LastTail` · `InvokeGate_LastLabelNum` · `InvokeGate_LastLabelData` | -1 until called | The struct host's receipt. `Head` and `Tail` (on `FDumperTestInvokeProbe`) are the **control**: they must arrive exactly as typed while `Label` between them arrives as the all-zero empty FString — `Num` 0, `Data` 0. A zeroed buffer would pass the string half by accident; a Head/Tail that also read 0 would mean nothing was written at all |
+
+⚠ **By-value and const-ref both exist for the array and the struct, deliberately.** Through
+ProcessEvent a by-value param is **copied** out of the params buffer (`P_GET_TARRAY` / `P_GET_STRUCT`),
+and copying a `TArray` or `FString` whose `Num` is 0 never reads `Data` — so the by-value callee sees a
+clean null even if the buffer held garbage. The const-ref variant (`P_GET_*_REF`) aliases the buffer, so
+**its** recorded `Data` is what the dumper actually wrote. Check whether the running game flags a
+const-ref param as `out` before choosing one: UHT may set `CPF_OutParm` on a const reference, and the
+invoke dialog treats `out` params differently.
+
+⛔ **`InvokeGate_TakeText` never reads its argument.** A zeroed `FText` has no `TextData`, and every
+accessor dereferences it. It only counts.
+
+### L12 / L29 / L44 hosts (2026-09-16) — a non-intrusive optional, a string array, two container inners
+
+| field | value | check |
+|---|---|---|
+| `Opt_Str_Unset` | never assigned | **L12 step 3, the 5.4 half.** On 5.3/5.4 a string optional is **non-intrusive** (a trailing `bIsSet`), so a reader that trusts the build-530 sentinel arms reports this as a SET empty string. It must read `(unset)`, never `""` |
+| `Opt_Obj` | seeded to `LazyAnchors[0]` in BeginPlay | ⭐ **L12 step 1.** `TOptional<TObjectPtr<AActor>>`, non-intrusive unless `CPF_NonNullable`. Three states, and the two that discriminate are only reachable through the mutators: `Opt_ResetObject()` writes **no value bytes**, so a value-derived reader still publishes the old actor and a drillable stale pointer (it must read `(unset)` with no →), and `Opt_SetObjectNull()` is SET-and-null, which the same reader calls `(unset)` (it must read `(set: null)`). `Opt_SetObject()` returns to the start. **Step 4:** while reset, Find Refs to that actor must NOT hit this field; once set, the hit is back |
+| *(no container optional)* | — | ⛔ **L12 step 2 has no 5.4 host at all, measured 2026-09-16:** UE 5.4's UHT REFUSES `TOptional<TArray<int32>>` as a UPROPERTY — *"The type 'TArray<int32>' can not be used as a value in a TOptional"*. The row's container half is therefore undeclarable here, not just behaviourally 5.5+; it waits for the 5.8 port |
+| `Arr_Str` | `StrElemAlpha` · `StrElemBetaBeta` · `StrElemGammaGammaGamma` · one EMPTY element | **L29** (`[W5-STRARRAY-ELEMENTS]`). Deliberately different lengths so an element read at the wrong stride cannot look plausible; the empty fourth element is the `""`-is-not-missing control. Live Walker must show each element's text (before B23b the drill showed the 16-byte header's hex with an empty value), and Export CSX must give each a Unicode String child |
+| `Arr_StrRows` → `Text` · `Num` · `Note` | `RowStrAlpha` / `5101` / `RowNoteAlpha`, then `RowStrBetaBeta` / `5102` / `RowNoteBeta` | **L28**, `[W5-CEXML-FSTRING]`'s fourth entrance: a struct-ARRAY element with a string MEMBER, which the broken exporter wrote as an empty placeholder folder. ⚠ A NEW struct type on purpose — widening `FDumperTestStat` would have moved every offset the `Arr_Struct` rows quote. `Note` exercises the FText arm folded into the same fix; `Num` is the control, a plain scalar beside the string members. Two elements, so a wrong stride shows the wrong text instead of the right one twice |
+| `Arr_SoftClass` | `DumperTestHolder` · `DumperTestDerivedHolder` · default | **L44 step 2**, the `TSoftClassPtr` inner. The SDK header must spell the element type, not `uint8_t`. Element [2] is the `(none)` control |
+| `Arr_FieldPath` | paths to `TickCount` and `FrozenInt` | **L44 step 2**, the `TFieldPath` inner — two DIFFERENT properties, because one repeated name reads the same at a right and a wrong stride. `Arr_LazyPtr` and `Arr_Delegates` already cover the other two inner types the header declared as `uint8_t` |
+
+### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
+
+⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value
+is two places for them to drift. It carries only what 5.4 **cannot host**, measured rather than
+assumed: UE 5.4's UHT refuses `TOptional<TArray<int32>>` outright (*"The type 'TArray&lt;int32&gt;' can
+not be used as a value in a TOptional"*), and string / name optionals are **non-intrusive** before 5.5.
+Sources: `tools/ue-sample/DumperTest58/Source/DumperTest58/` (mirrored from `D:\Unreal Projects\DumperTest58`).
+
+⚠ The class is `ADumperTest58Actor`, spawned by `UDumperTest58Subsystem` into every game world, and it
+is **named differently from the 5.4 actor on purpose** — a session points the dumper at a class by
+name, and two `DumperTestActor`s on two engines is how a run reports the wrong fixture's values.
+
+| field | value | check |
+|---|---|---|
+| `Opt_Arr_Set` · `Opt_Arr_Unset` | `5801` · `5802` · `5803`, and never assigned | ⭐ **L12 step 2**, the case 5.4 cannot declare. Intrusive from 5.5: **no trailing flag**, so a walker reading `field + innerSize` reads the next property instead. Mutators `Opt_SetArray(N)` / `Opt_ResetArray()` move it at runtime |
+| `Opt_Arr_Neighbour` | `0x7F` | ⭐ **The neighbour that makes step 2 falsifiable.** A wrong walker reads this field's first byte as the optional's `bIsSet`; seeded non-zero, because with a zero neighbour a right and a wrong read of an unset optional agree |
+| `Opt_Str_Set` · `Opt_Str_Unset` | `Opt58StringPresent`, and never assigned | **L12 step 3 on 5.8** — the intrusive sentinel, where 5.4's copy is non-intrusive |
+| `Opt_Name_Set` · `Opt_Name_Unset` | `Opt58NamePresent`, and never assigned | Hosts for `[A2-TOPTIONAL-VALUESCAN]` and `[A2-SENTINEL-OVERREAD]`, both 5.5+: an intrusive optional whose value is **8 bytes** (12 under case-preserving names), not 16 |
+| `Opt_Struct_Set` · `Opt_Struct_Unset` | `Tag` `58001` with the actor in `Obj` and in `Objs`, and never assigned | `[A2-TOPTIONAL-STRUCT-DESCENT]` — a reset struct optional must report neither the pointer nor the array |
+| `Opt_Obj` + `Anchor` | seeded to `ADumperTest58Anchor` (`AnchorIndex` `58000`) | **L12 steps 1 and 4** on 5.8. Non-intrusive on every version. `Opt_SetObject()` / `Opt_ResetObject()` / `Opt_SetObjectNull()` reach the three states; `Reset()` writes no value bytes, and set-to-null is still *set* |
+| `FrameCountReflected` | counts Ticks | Liveness, as on 5.4: a frozen count separates "the fixture never spawned" from "the engine is not ticking" |
 
 ### Group Scan / Snapshot Mode B (temporal)
 

@@ -84,6 +84,33 @@ public class RoundModePreviewTests
         Assert.Equal("", RoundModePreview.Between(lo, hi, FloatRoundMode.Round, RoundModePreview.Scope.Both));
     }
 
+    // ---- [W2-BETWEEN-PREVIEW] a bound the real parser refuses previews NOTHING ----
+    // NumberStyles.Any read an FVector's "1,2,3" as the single number 123 and accepted "1,000", "(5)" and "5-" -- all of
+    // which the DLL (std::stod / std::stoll, the whole string consumed) refuses. A preview of a number nobody will match
+    // is worse than no preview.
+    [Theory]
+    [InlineData("1,2,3", "4,5,6")]   // an FVector / FRotator / FTransform bound -- NOT one number
+    [InlineData("1,000", "2,000")]   // thousands separators
+    [InlineData("(5)", "10")]        // an accounting-style negative
+    [InlineData("5-", "10")]         // a trailing sign
+    public void Between_BoundsTheDllRefuses_PreviewNothing(string lo, string hi)
+    {
+        foreach (var scope in new[] { RoundModePreview.Scope.Both, RoundModePreview.Scope.IntOnly, RoundModePreview.Scope.FloatOnly })
+            Assert.Equal("", RoundModePreview.Between(lo, hi, FloatRoundMode.Round, scope));
+    }
+
+    // The control: SPC's absolute window is NOT read by the DLL -- SpcQueryViewModel's own Lo() / Hi() parse it, with
+    // NumberStyles.Any -- so its preview keeps THAT grammar. Tightening SPC's preview would hide values SPC matches.
+    [Fact]
+    public void SpcAbsolute_KeepsTheSpcQuerysOwnGrammar()
+    {
+        Assert.Equal("→ 1000", RoundModePreview.SpcAbsolute("Exact", "1,000", "", FloatRoundMode.Round, RoundModePreview.Scope.Both));
+        Assert.Equal("→ 1000~2000",
+            RoundModePreview.SpcAbsolute("Between", "1,000", "2,000", FloatRoundMode.Round, RoundModePreview.Scope.Both));
+        Assert.Equal("→ -5", RoundModePreview.SpcAbsolute("Exact", "(5)", "", FloatRoundMode.Round, RoundModePreview.Scope.Both));
+        Assert.Equal("→ ≥-5", RoundModePreview.SpcAbsolute("≥", "(5)", "", FloatRoundMode.Round, RoundModePreview.Scope.Both));
+    }
+
     // ---- SPC absolute kinds ----
     [Fact]
     public void SpcAbsolute_AnyValue_IsEmpty()

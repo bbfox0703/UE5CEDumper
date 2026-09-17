@@ -314,7 +314,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFields = 0, cached = 0, budgetTruncated = 0;
+        int done = 0, withFields = 0, cached = 0, budgetTruncated = 0, notAnalysed = 0;
         try
         {
             foreach (var row in targets)
@@ -328,21 +328,33 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                 try
                 {
                     var res = await _dump.WalkFunctionPropsAsync(row.FuncAddr, ct);
-                    var fields = res.Props.Where(p => p.IsClassField).ToList();
-                    // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
-                    // a disasm that stopped at its instruction budget yields a SHORT
-                    // list, and a bare "0" then reads as "this function touches no class
-                    // fields" — the conclusion the user acts on. Mark it.
-                    var partial = res.BudgetHit ? PartialResultNotice.CellMarker : "";
-                    if (fields.Count > 0)
+                    if (res.NotAnalysed)
                     {
-                        withFields++;
-                        var preview = string.Join(", ", fields.Take(2).Select(p => p.Name));
-                        row.XrefInfo = (fields.Count > 2 ? $"{fields.Count} · {preview}, …"
-                                                         : $"{fields.Count} · {preview}") + partial;
+                        // [W3-BATCH-METHOD] Nothing was looked at ("none" / "blueprint_no_script" /
+                        // "bytecode_unreadable" -- see FunctionPropRefsResult.NotAnalysed), so a
+                        // bare "0" would read as "analysed, touches no class fields". The single-function
+                        // dialog already says "NOTHING was analysed"; the batch never read the tag.
+                        row.XrefInfo = PartialResultNotice.NotAnalysedCell;
+                        notAnalysed++;
                     }
-                    else row.XrefInfo = "0" + partial;
-                    if (res.BudgetHit) budgetTruncated++;
+                    else
+                    {
+                        var fields = res.Props.Where(p => p.IsClassField).ToList();
+                        // AF7, and the same cell-level lie Z9 fixed for the scan deadline:
+                        // a disasm that stopped at its instruction budget yields a SHORT
+                        // list, and a bare "0" then reads as "this function touches no class
+                        // fields" — the conclusion the user acts on. Mark it.
+                        var partial = res.BudgetHit ? PartialResultNotice.CellMarker : "";
+                        if (fields.Count > 0)
+                        {
+                            withFields++;
+                            var preview = string.Join(", ", fields.Take(2).Select(p => p.Name));
+                            row.XrefInfo = (fields.Count > 2 ? $"{fields.Count} · {preview}, …"
+                                                             : $"{fields.Count} · {preview}") + partial;
+                        }
+                        else row.XrefInfo = "0" + partial;
+                        if (res.BudgetHit) budgetTruncated++;
+                    }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -358,7 +370,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                        + (cached > 0 ? $" ({cached} cached)." : ".")
                        + PartialResultNotice.BatchPartialClause(
                              budgetTruncated, targets.Count,
-                             cause: "hit the disassembler's instruction budget");
+                             cause: "hit the disassembler's instruction budget")
+                       + PartialResultNotice.BatchNotAnalysedClause(notAnalysed, targets.Count);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -455,7 +468,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             IsLoading = true;
             StatusText = "Loading all UFunctions (this can take 2-10s on large games)...";
 
-            var result = await _dump.ListAllFunctionsAsync(gameOnly: GameOnly);
+            // [A4-GAMEONLY-ADVICE] The scan-time Game Only, captured before the await: the status line advises from
+            // what this scan did, never from the live checkbox.
+            bool gameOnly = GameOnly;
+            var result = await _dump.ListAllFunctionsAsync(gameOnly: gameOnly);
 
             // Cache the raw entries so the Gameplay-Action opt-in can
             // re-score without re-fetching (see RescoreAsync).
@@ -471,7 +487,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             // rather than leaving the previous scoring's numbers on screen. (Z15)
             _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
                                           result.ClassesWithFunctions, result.ScannedObjects,
-                                          result.Truncated, result.Aborted, result.Limit);
+                                          result.Truncated, result.Aborted, result.Limit, GameOnly: gameOnly);
 
             // Build the class histogram over the FULL scored set, then filter.
             // countsPartial: a capped/aborted walk makes the picker's per-class counts
@@ -626,7 +642,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// struct, so a re-score cannot accidentally quote HALF of a newer scan.</summary>
     internal readonly record struct LoadScanFacts(
         int Total, int ScannedClasses, int ClassesWithFunctions, int ScannedObjects,
-        bool Truncated, bool Aborted, int Limit)
+        bool Truncated, bool Aborted, int Limit, bool GameOnly = false)
     {
         /// <summary>The DLL walk stopped early — the row count is a page, not the pool.</summary>
         public bool IsPartial => Truncated || Aborted;
@@ -653,7 +669,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             ? PartialResultNotice.Cancelled()
             : f.Truncated
                 ? PartialResultNotice.RowCap(f.Limit, "functions",
-                      "tick \"Game classes only\" to skip engine classes, or scan a narrower game")
+                      // [A4-GAMEONLY-ADVICE] Only while it was OFF, and by this panel's own label ("Game Only").
+                      f.GameOnly ? "scan a narrower game"
+                                 : "tick \"Game Only\" to skip engine classes, or scan a narrower game")
                 : "";
         // "from M of N classes", not "across N classes": the second number is the
         // EXAMINED count and reads as provenance, which overstated coverage 2.6x on

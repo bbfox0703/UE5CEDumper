@@ -55,20 +55,33 @@ enum FlyResult : int32_t {
 //   Absent  — the pawn's class has no SetActorEnableCollision (cooked out of a stripped
 //             Shipping build). PERMANENT: retrying cannot conjure a setter, so the caller
 //             COMMITS and stops re-emitting. That is audit #4 B8 and it must survive.
-//   Refused — the dispatcher did not run it: -8 (an off-game-thread worker while the PE
-//             hook is down, Frieren.cpp), -5 (the game thread did not drain in time),
-//             -3 (no usable PE offset), -2/-4. TRANSIENT: the caller must NOT commit, and
-//             must retry.
+//   Refused — the dispatcher did not run it and never will: -8 (an off-game-thread worker
+//             while the PE hook is down, Frieren.cpp), -7 (shutdown), -3 (no usable PE offset),
+//             -2/-4. TRANSIENT: the caller must NOT commit, and must retry.
+//   Queued  — -5: the game thread did not drain within the timeout, but the request STAYS
+//             QUEUED and WILL run when it does (Frieren.h, Stark.cpp). The caller COMMITS, so
+//             the next opposite toggle emits the undo. [W3-DUNSTE-QUEUED] -- it used to be
+//             filed under Refused, and a queued disable then landed after the record said
+//             collision was ON, with nothing tracking it.
 enum class CollisionApply : int32_t {
     Applied = 0,   // the dispatcher ran it and returned 0
     Absent  = 1,   // no setter on this pawn class
     Refused = 2,   // the dispatcher refused or failed
+    Queued  = 3,   // -5: not run YET, but it will be -- commit (see above)
 };
 
 /// May the caller commit its collision record from this outcome? Pure, so
 /// `dll_helpers_test` can pin the B8 rule without linking Dunste.cpp.
 inline bool ShouldCommitCollision(CollisionApply a) {
-    return a != CollisionApply::Refused;      // Applied AND Absent both commit (B8)
+    return a != CollisionApply::Refused;      // Applied, Absent (B8) AND Queued all commit
+}
+
+/// The dispatcher's return code, as an outcome. Pure, so `dll_helpers_test` pins it without Dunste.cpp.
+/// [W3-DUNSTE-QUEUED] -5 is Queued, never Refused: it is the one non-zero code whose request still runs.
+inline CollisionApply CollisionApplyFromRc(int32_t rc) {
+    if (rc == 0)  return CollisionApply::Applied;
+    if (rc == -5) return CollisionApply::Queued;
+    return CollisionApply::Refused;
 }
 
 // Keyboard preset — which physical keys drive movement (forward/back, strafe

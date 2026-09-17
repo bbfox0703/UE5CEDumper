@@ -36,9 +36,15 @@ public interface IProxyDeployService
     /// trees are excluded; inaccessible folders are skipped and the walk
     /// continues. Reuses the same per-game-dir detection as the Steam path.
     /// </summary>
+    /// <param name="excludedFolderNames">
+    /// [PROXYDEPLOY-SCANDRIVES-CORPUS] Folder NAMES pruned at any depth, on top of the Steam and
+    /// system exclusions. Null takes <see cref="Constants.DefaultScanExcludedFolderNames"/>; an
+    /// EMPTY list means "exclude nothing", which is how a caller opts out deliberately.
+    /// </param>
     Task<IReadOnlyList<DetectedGame>> FindUeGamesOnDrivesAsync(
         IReadOnlyList<DriveDescriptor> selectedDrives,
         IProgress<DriveScanProgress>? progress = null,
+        IReadOnlyList<string>? excludedFolderNames = null,
         CancellationToken ct = default);
 
     /// <summary>

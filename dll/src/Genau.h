@@ -118,7 +118,20 @@ enum class AnchorState : uint8_t {
     None = 0,    // GObjects has not validated this run: we do not know what this process IS
     MainExe,     // anchor is in the main executable  => monolithic build
     ForeignDll,  // anchor is in a DLL                => genuinely modular build
+    // [A2-HEAP-ANCHOR-TEXT] anchor VALIDATED but in no module: a data-scan FUObjectArray is a HEAP object by design.
+    // Not None (GObjects did validate), and never modular -- refused where None refuses, with its own text.
+    Heap,
 };
+
+/// [A2-HEAP-ANCHOR-TEXT] Where the anchor lives, from the three facts the impure caller asks Windows. Pure, so
+/// dll_helpers_test pins the mapping.
+constexpr AnchorState ClassifyAnchor(bool haveAnchor, bool inAnyModule, bool inMainExe) {
+    if (!haveAnchor) return AnchorState::None;
+    // Validated, but in no module: the data-scan fallback's heap FUObjectArray. It used to fall into None, so every
+    // later refusal said "GObjects never validated this run" on a run where it had.
+    if (!inAnyModule) return AnchorState::Heap;
+    return inMainExe ? AnchorState::MainExe : AnchorState::ForeignDll;
+}
 
 /// Verdict for one Pass-2 candidate. Three values because "refused because the build
 /// is monolithic" and "refused because we have no idea what this process is" are
@@ -127,6 +140,7 @@ enum class ModuleAdmission : uint8_t {
     Accept,
     RefuseForeignMonolithic,
     RefuseUnanchored,
+    RefuseHeapAnchored,   // [A2-HEAP-ANCHOR-TEXT] GObjects validated, on the heap: no module anchors this build
 };
 
 /// May a multi-module (Pass 2) candidate be published?
@@ -161,8 +175,15 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
             return ModuleAdmission::RefuseForeignMonolithic;
         case AnchorState::ForeignDll:
             return ModuleAdmission::Accept;   // modular build: GNames legitimately in a DLL
+        case AnchorState::Heap:
+            // [A2-HEAP-ANCHOR-TEXT] Refused exactly where None refuses -- a heap anchor is NEVER modular, which
+            // would re-admit the Bitdefender GWorld candidate -- but with a verdict whose text is true.
+            return producesAnchor ? ModuleAdmission::Accept
+                                  : ModuleAdmission::RefuseHeapAnchored;
     }
-    return ModuleAdmission::Accept;   // unreachable; keeps every compiler quiet
+    // Unreachable for every value above; keeps every compiler quiet. [A2-HEAP-ANCHOR-TEXT] It used to ACCEPT, so a
+    // new AnchorState added without its case was silently admitted. It fails closed now.
+    return ModuleAdmission::RefuseUnanchored;
 }
 
 struct EnginePointers {
@@ -364,8 +385,10 @@ uintptr_t ExtraScanGObjects();
 // GObjects yielded 0 usable objects (e.g. Avowed / Obsidian UE5.x, where a .data
 // structure coincidentally matches but contains no objects). Skips `avoid`.
 // Appends up to `maxCandidates` UNIQUE addresses to `out`; returns the number added.
+// outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested() -- the candidate list is then
+// PARTIAL, and the caller must not latch an init on it. [P1-GENAU-ABORT]
 size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 0,
-                                 size_t maxCandidates = 16);
+                                 size_t maxCandidates = 16, bool* outCancelled = nullptr);
 
 // Locate a STATIC FUObjectArray living in the module's .data/BSS, for games where
 // GUObjectArray is a static global that NO AOB pattern matches (Avowed / Obsidian
@@ -377,7 +400,9 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 
 // outItemStride (optional) receives the FUObjectItem stride that decoded cleanly
 // (e.g. 0x14 for Obsidian's packed item, 0x18 standard) — pass it to
 // Aura::InitWithExtendedLayout so the stride isn't re-detected (and mis-picked).
-uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr);
+// outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested(), so a 0 return says nothing about
+// whether a static array exists. [P1-GENAU-ABORT]
+uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr, bool* outCancelled = nullptr);
 
 // Find GWorld by iterating GObjects for UWorld instance, then scanning .data
 // for a static pointer to that instance.  Requires GObjects + GNames already initialized.

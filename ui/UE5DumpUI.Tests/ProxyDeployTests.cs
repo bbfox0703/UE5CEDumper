@@ -1340,6 +1340,67 @@ public class ProxyDeployTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // ---- [PROXYDEPLOY-SCANDRIVES-CORPUS] the AOB corpus is game-SHAPED, so only its name saves it ----
+
+    [Fact]
+    public async Task FindUeGamesOnDrives_PrunesTheConfiguredFolderName()
+    {
+        string root = MakeTempDir();
+        try
+        {
+            // The control: an ordinary non-Steam game, which must still be found.
+            string cool = Path.Combine(root, "Games", "CoolGame");
+            MakeEmptyFile(Path.Combine(cool, "Engine", "Binaries", "Win64", "CrashReportClient.exe"));
+            MakeEmptyFile(Path.Combine(cool, "CoolGame", "Binaries", "Win64", "CoolGame-Win64-Shipping.exe"));
+
+            // The corpus: an UNPACKED GAME COPY, nested exactly as the real one is. It is a real UE
+            // layout -- that is the whole problem -- so nothing but the folder name can exclude it.
+            string corpus = Path.Combine(root, "UE_Analyze_data", "Varies Version builds", "4.15.3", "CorpusGame");
+            MakeEmptyFile(Path.Combine(corpus, "Engine", "Binaries", "Win64", "CrashReportClient.exe"));
+            MakeEmptyFile(Path.Combine(corpus, "CorpusGame", "Binaries", "Win64", "CorpusGame-Win64-Shipping.exe"));
+
+            var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
+            var drive = new DriveDescriptor { Root = root, Letter = 'X', PhysicalDiskNumber = 0 };
+            var found = await svc.FindUeGamesOnDrivesAsync(
+                new[] { drive }, progress: null, ct: TestContext.Current.CancellationToken);
+
+            Assert.Contains(found, g => g.Name == "CoolGame");
+            Assert.DoesNotContain(found, g => g.Name == "CorpusGame");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task FindUeGamesOnDrives_EmptyExclusionList_FindsTheCorpusToo()
+    {
+        // ⭐ THE ANTI-VACUITY CONTROL. Without this, the test above would also pass if the corpus
+        // tree simply did not look like a game -- and then the exclusion would be untested. With the
+        // exclusion switched off the same tree IS detected, which is what makes the prune meaningful.
+        string root = MakeTempDir();
+        try
+        {
+            string corpus = Path.Combine(root, "UE_Analyze_data", "Varies Version builds", "4.15.3", "CorpusGame");
+            MakeEmptyFile(Path.Combine(corpus, "Engine", "Binaries", "Win64", "CrashReportClient.exe"));
+            MakeEmptyFile(Path.Combine(corpus, "CorpusGame", "Binaries", "Win64", "CorpusGame-Win64-Shipping.exe"));
+
+            var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
+            var drive = new DriveDescriptor { Root = root, Letter = 'X', PhysicalDiskNumber = 0 };
+            var found = await svc.FindUeGamesOnDrivesAsync(
+                new[] { drive }, progress: null, excludedFolderNames: System.Array.Empty<string>(),
+                ct: TestContext.Current.CancellationToken);
+
+            Assert.Contains(found, g => g.Name == "CorpusGame");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void ScanExclusion_DefaultList_NamesTheCorpusRoot()
+    {
+        // The name is the whole mechanism, so it is pinned: a rename here is a silent regression.
+        Assert.Contains("UE_Analyze_data", Constants.DefaultScanExcludedFolderNames);
+    }
+
     // ── Post-inject connect retry ────────────────────────────────────────────
     // The injected DLL scans BEFORE opening its pipe, so a single immediate connect
     // cannot succeed. These pin the two halves that matter: it keeps trying, and it

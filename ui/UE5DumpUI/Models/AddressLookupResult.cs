@@ -36,6 +36,11 @@ public sealed class ContainerHop
 public sealed class ContainerMatch
 {
     public string OwnerAddress { get; init; } = "";
+    /// <summary>[W4-HEXSORT] <see cref="OwnerAddress"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong OwnerAddressValue =>
+        ulong.TryParse(OwnerAddress.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
     public int OwnerIndex { get; init; }
     public string OwnerName { get; init; } = "";
     public string OwnerClassName { get; init; } = "";
@@ -119,6 +124,11 @@ public sealed class ContainerScanStats
     public long DurationMs { get; init; }
     public bool DeadlineHit { get; init; }
 
+    /// <summary>[P1-SPARSEDELEGATE-REFS] Find References only: sparse delegates the sweep found but could not read. Their
+    /// bindings are missing from the result, so "none found" beside a non-zero count is not a negative. 0 from an older
+    /// DLL.</summary>
+    public int SparseUnlocated { get; init; }
+
     /// <summary>
     /// The recursive DEEP descent ran (the shallow pass found nothing and the caller
     /// opted in via <c>container_depth &gt; 1</c>). It matters to the reader because the
@@ -130,7 +140,7 @@ public sealed class ContainerScanStats
     /// </summary>
     public bool DeepScan { get; init; }
 
-    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal;
+    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal && SparseUnlocated == 0;
 }
 
 /// <summary>

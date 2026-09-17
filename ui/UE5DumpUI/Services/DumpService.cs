@@ -176,6 +176,10 @@ public sealed class DumpService : IDumpService
             ItemLayoutMode = ptrs["item_layout_mode"]?.GetValue<string>() ?? "classic",
             ItemPacked = ptrs["item_packed"]?.GetValue<bool>() ?? false,
             ItemObjOffset = ptrs["item_obj_offset"]?.GetValue<int>() ?? 0,
+            // [W4-STRIDE-TENTATIVE] the stride verdict; an older DLL omits it -> "" (no warning)
+            ItemDetect          = ptrs["item_detect"]?.GetValue<string>() ?? "",
+            ItemDetectValidated = ptrs["item_detect_validated"]?.GetValue<int>() ?? 0,
+            ItemDetectProbes    = ptrs["item_detect_probes"]?.GetValue<int>() ?? 0,
             GObjectsMethod = ptrs["gobjects_method"]?.GetValue<string>() ?? "aob",
             GNamesMethod = ptrs["gnames_method"]?.GetValue<string>() ?? "aob",
             GWorldMethod = ptrs["gworld_method"]?.GetValue<string>() ?? "aob",
@@ -402,6 +406,11 @@ public sealed class DumpService : IDumpService
                     ElemType = fo["elem_type"]?.GetValue<string>() ?? "",
                     ElemStructType = fo["elem_struct_type"]?.GetValue<string>() ?? "",
                     EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    // [A4-USMAP-CONTAINER-ENUM] each container inner's own UEnum; absent from an older DLL
+                    InnerEnumName = fo["inner_enum"]?.GetValue<string>() ?? "",
+                    ElemEnumName  = fo["elem_enum"]?.GetValue<string>() ?? "",
+                    KeyEnumName   = fo["key_enum"]?.GetValue<string>() ?? "",
+                    ValueEnumName = fo["value_enum"]?.GetValue<string>() ?? "",
                     BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
                     PropertyFlags = ParseFlagsHex(fo["prop_flags"]?.GetValue<string>()),
                     ArrayDim = fo["array_dim"]?.GetValue<int>() ?? 1,
@@ -545,6 +554,7 @@ public sealed class DumpService : IDumpService
             OuterClassName = o["outer_class"]?.GetValue<string>() ?? "",
             IsDefinition = o["is_definition"]?.GetValue<bool>() ?? false,
             IsStale = o["stale"]?.GetValue<bool>() ?? false,
+            IsUnreadable = o["unreadable"]?.GetValue<bool>() ?? false,   // [P1-WALK-UNREADABLE] additive
             GapFillSkipped = o["gap_fill_skipped"]?.GetValue<bool>() ?? false,
             PropertiesSize = o["props_size"]?.GetValue<int>() ?? 0,
         };
@@ -965,6 +975,7 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                SparseUnlocated = scanNode["sparse_unlocated"]?.GetValue<int>() ?? 0,   // [P1-SPARSEDELEGATE-REFS]
             };
         }
 
@@ -1030,10 +1041,29 @@ public sealed class DumpService : IDumpService
             }
         }
 
+        // [W4-RELATED-STOPS] One key per cause; absent from an older DLL, so Stops stays null ("not said").
+        RelatedObjectsStops? stops = null;
+        if (res["stops"] is JsonObject stopsNode)
+        {
+            stops = new RelatedObjectsStops
+            {
+                ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
+                OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
+                VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
+                DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
+                MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
+                MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
+                MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
+                DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
+            };
+        }
+
         return new RelatedObjectsResult
         {
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
             Related = related,
+            Stops = stops,
         };
     }
 
@@ -1189,6 +1219,8 @@ public sealed class DumpService : IDumpService
                 ObjectsTotal        = scanNode["objects_total"]?.GetValue<int>() ?? 0,
                 DurationMs          = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit         = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                CapHit              = scanNode["cap_hit"]?.GetValue<bool>() ?? false,   // [W3-XREF-CAP]
+                Cap                 = scanNode["cap"]?.GetValue<int>() ?? 0,
             };
         }
 
@@ -1245,6 +1277,8 @@ public sealed class DumpService : IDumpService
                 ObjectsTotal        = scanNode["objects_total"]?.GetValue<int>() ?? 0,
                 DurationMs          = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit         = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                CapHit              = scanNode["cap_hit"]?.GetValue<bool>() ?? false,   // [W3-XREF-CAP]
+                Cap                 = scanNode["cap"]?.GetValue<int>() ?? 0,
             };
         }
 
@@ -1435,6 +1469,9 @@ public sealed class DumpService : IDumpService
             BoolBitIndex = fo["bool_bit"]?.GetValue<int>() ?? -1,
             BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
             BoolByteOffset = fo["bool_byte_offset"]?.GetValue<int>() ?? 0,
+            // [A3-BOOL-NATIVE-NOWRITE] Additive: absent on an older DLL = false, which the edit
+            // path treats as UNRESOLVED (refuse), never as native.
+            BoolNative = fo["bool_native"]?.GetValue<bool>() ?? false,
             ArrayCount = fo["count"]?.GetValue<int>() ?? -1,
             ArrayInnerType = fo["array_inner_type"]?.GetValue<string>() ?? "",
             ArrayStructType = fo["array_struct_type"]?.GetValue<string>() ?? "",
@@ -1443,6 +1480,7 @@ public sealed class DumpService : IDumpService
             ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
             ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
             DelegatePad = fo["delegate_pad"]?.GetValue<int>() ?? 0,
+            ArrayElemDelegatePad = fo["array_elem_delegate_pad"]?.GetValue<int>() ?? 0,   // [A4-DELEGATE-ARRAY-PAD] additive
             SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
             SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
             // Absent from a pre-fix DLL. 0x10 is the pre-fix behaviour, so it is the
@@ -1578,6 +1616,10 @@ public sealed class DumpService : IDumpService
     }
 
     public async Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+        => (await ListEnumsDetailedAsync(ct)).Enums;
+
+    /// <summary>[P1-ENUMNAMES] list_enums with the two flags the list alone cannot carry.</summary>
+    public async Task<EnumListResult> ListEnumsDetailedAsync(CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "list_enums" };
         var res = await _pipe.SendAsync(req, ct);
@@ -1598,8 +1640,14 @@ public sealed class DumpService : IDumpService
                 });
             }
         }
-        return result;
+        return new EnumListResult
+        {
+            Enums = result,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            EnumNamesFailed = res["enum_names_failed"]?.GetValue<bool>() ?? false,
+        };
     }
+
 
     public async Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
     {
@@ -1635,7 +1683,9 @@ public sealed class DumpService : IDumpService
                                     sfo["name"]?.GetValue<string>() ?? "",
                                     sfo["type"]?.GetValue<string>() ?? "",
                                     sfo["offset"]?.GetValue<int>() ?? 0,
-                                    sfo["size"]?.GetValue<int>() ?? 0));
+                                    sfo["size"]?.GetValue<int>() ?? 0,
+                                    // [A3-FIRE-STRUCT-BOOLMASK] additive; absent = 0 (whole-byte write)
+                                    sfo["bool_mask"]?.GetValue<int>() ?? 0));
                             }
                         }
 
@@ -2495,6 +2545,9 @@ public sealed class DumpService : IDumpService
             ReadMs      = res["_t_read_ms"]?.GetValue<long>() ?? 0,
             RxLogMs     = res["_t_rxlog_ms"]?.GetValue<long>() ?? 0,
             ParseMs     = res["_t_parse_ms"]?.GetValue<long>() ?? 0,
+            // [W1-SNAP-FAULT] A DLL scan worker faulted on this chunk. Absent on an older DLL
+            // = false, the pre-fix behaviour (the fault then stays invisible, exactly as before).
+            WorkerFaulted = res["worker_faulted"]?.GetValue<bool>() ?? false,
         };
 
         var buildSw = System.Diagnostics.Stopwatch.StartNew();
@@ -3511,6 +3564,9 @@ public sealed class DumpService : IDumpService
         State       = res?["state"]?.GetValue<int>() ?? -1,
         // Older DLLs don't send it; assume healthy so their behaviour is unchanged.
         HookActive  = res?["hook_active"]?.GetValue<bool>() ?? true,
+        // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the old "still waiting" card.
+        RestorePending   = res?["restore_pending"]?.GetValue<bool>() ?? false,
+        RestoreAbandoned = res?["restore_abandoned"]?.GetValue<bool>() ?? false,
     };
 
     // === Teleport (Wirbel) — docs/teleport-spec.md §7 ===
@@ -3597,6 +3653,7 @@ public sealed class DumpService : IDumpService
                     Yaw   = m["yaw"]?.GetValue<double>() ?? 0,
                     Roll  = m["roll"]?.GetValue<double>() ?? 0,
                     Map   = m["map"]?.GetValue<string>() ?? "",
+                    ParentRelative = m["parent_relative"]?.GetValue<bool>() ?? false,   // [W2-MARKER-PARENTREL]
                 });
             }
         }
@@ -3694,6 +3751,17 @@ public sealed class DumpService : IDumpService
         Roll  = res["roll"]?.GetValue<double>() ?? 0,
         Map    = res["map"]?.GetValue<string>() ?? "",
         Source = res["source"]?.GetValue<string>() ?? "raw",
+        // ABSENT, not empty: teleport_relative's reply carries neither key, and the defaults above
+        // are not readings. The KEY decides -- a reply of map = "" did report a map. [W2-TPREL-MAP]
+        MapAbsent    = res["map"] is null,
+        SourceAbsent = res["source"] is null,
+        // Absent on a healthy read; the DLL only emits it when the pose degraded to a
+        // parent-relative fallback. [POSEATTACH-2026-09-10]
+        ParentRelative = res["parent_relative"]?.GetValue<bool>() ?? false,
+        // Review 5 of 7490c24e: false is an answer, absence (an older DLL) is not.
+        ParentRelativeKnown = res["parent_relative"] is not null,
+        // Emitted only when a move succeeded and its landing re-read did not.
+        LandingUnknown = res["landing_unknown"]?.GetValue<bool>() ?? false,
         PawnAddr    = res["pawn_addr"]?.GetValue<string>() ?? "",
         HasMovement = res["has_movement"]?.GetValue<bool>() ?? false,
         VelX  = res["vel_x"]?.GetValue<double>() ?? 0,

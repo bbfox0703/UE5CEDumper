@@ -222,8 +222,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>Drop search results + the forced-fields mirror so a reconnect never
     /// shows rows (and live UClass* addresses) from the previous game (audit X5).
-    /// Client-side ONLY: the DLL's force-holds die with the process, so this clears
-    /// the mirror without calling the (gone) pipe — do NOT reset holds here.</summary>
+    /// Client-side ONLY: this clears the mirror without calling the (gone) pipe — do NOT reset holds here. The DLL's
+    /// force-holds SURVIVE a pipe drop for as long as the game lives (they die only with the process), which is why
+    /// the Stealth card re-reads them on connect. [A4-STEALTH-PRIME]</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();
@@ -792,7 +793,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0, partial = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0, cappedRows = 0, xrefCap = 0;
         try
         {
             foreach (var match in targets)
@@ -812,9 +813,11 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                     // written as a bare "0" reads as "no function touches this field, so
                     // freezing it is safe". (audit #5 Z9)
                     bool deadline = res.Scan?.DeadlineHit ?? false;
-                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
+                    bool capped = res.Scan?.CapHit ?? false;   // [W3-XREF-CAP] its own cause, never the deadline's
+                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     if (res.Xrefs.Count > 0) withFuncs++;
                     if (deadline) partial++;
+                    if (capped) { cappedRows++; xrefCap = res.Scan!.Cap; }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -827,7 +830,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             }
             StatusText = $"Find Funcs done: {withFuncs}/{targets.Count} referenced by a function"
                        + (cached > 0 ? $" ({cached} cached)." : ".")
-                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count)
+                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

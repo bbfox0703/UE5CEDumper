@@ -49,6 +49,16 @@ bool IsHookActive();
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize);
 
+/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
+/// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
+constexpr int32_t kInvokeTimedOutStillQueued = -5;
+/// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
+/// passes through as kInvokeTimedOutStillQueued: the toggle WILL run, so the caller must say "queued, do not re-send" --
+/// a re-send queues a second toggle that drains after the first and undoes it. Every other failure ran nothing: -1.
+constexpr int32_t StatefulToggleFailure(int32_t callResult) {
+    return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
+}
+
 /// Default invoke timeout (compile-time baseline, used when no override is set).
 constexpr int32_t kDefaultInvokeTimeoutMs = 5000;
 /// Clamp band for a user-supplied invoke timeout (100ms .. 10min). Enforced by
@@ -157,8 +167,10 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // tree and nothing resolves GIsGameThreadId, so any gate would be guessing --
 // and a gate that guesses wrong never drains, which times out every game-thread
 // invoke and is strictly worse than the defect. Instead we do what Grausam
-// already does for its own hooks: call the TRAMPOLINE we are holding, so our
-// calls never enter the detour in the first place.
+// already does for its own hooks: call the TRAMPOLINE we are holding, so a call
+// through it never enters the detour. A fail-open call to an OVERRIDE does (its
+// Super::ProcessEvent is the patched address), so it runs under the own-PE-call
+// mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -174,8 +186,15 @@ bool HasOriginal();
 /// nested dispatch that DOES re-enter the detour is recognised as ours.
 int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
-/// True while this thread is inside CallOriginalSEH.
+/// True while this thread is inside CallOriginalSEH or CallAddressAsOwnSEH.
 bool InOwnPeCall();
+
+/// [A3-ST1-SUPER-DRAIN] Call a resolved ProcessEvent address that is NOT the hooked one -- a class's own
+/// override -- with the same SEH protection and the same "inside our own PE call" mark as CallOriginalSEH.
+/// An override (every AActor's) calls Super::ProcessEvent, which IS the patched address, so an unmarked
+/// call re-entered our detour off the game thread and drained the invoke queue there.
+/// Returns 0 on success, -3 on a null address, -4 on an SEH exception.
+int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 /// Should a caller that resolved `resolvedPeAddr` out of an instance's vtable
 /// route through the trampoline instead of calling that address directly?
@@ -193,7 +212,8 @@ inline bool ShouldUseTrampoline(uintptr_t resolvedPeAddr,
 
 /// Should HookedProcessEvent drain the queue on this entry?
 ///
-/// `entryIsOurs` is true when this thread is inside our own CallOriginalSEH --
+/// `entryIsOurs` is true when this thread is inside our own CallOriginalSEH or
+/// CallAddressAsOwnSEH --
 /// i.e. the detour was re-entered by a nested dispatch underneath a call WE
 /// issued, which is not a game-thread tick and must not drain. This is the
 /// shipped gate, not a mirror of it: HookedProcessEventBody calls exactly this.

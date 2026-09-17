@@ -87,12 +87,20 @@ public class ContainerTruncationTests
 
     // ── Part B: real Live Walker drill, per container kind ───────────────────
 
-    private static LiveWalkerViewModel MakeVm()
+    private static LiveWalkerViewModel MakeVm(LiveFieldValue field)
     {
-        var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
-                                         new MockPlatformService(Path.GetTempPath()));
         // A real drill always has a walked parent instance; give it one so the container crumb
         // carries a genuine address (the log helper FormatBreadcrumbTrace reads Address[^4..]).
+        // Since [P4-CONTAINER-BASE] the drill also RE-READS that parent before opening the
+        // container, so the stub answers that walk with the same row.
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000",
+            Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
         vm.CurrentAddress = "0x10000000";
         return vm;
     }
@@ -142,8 +150,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedSet_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(SetField(total: 199, loaded: 128));
+        var field = SetField(total: 199, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 199", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 199", vm.CurrentObjectName);
@@ -153,8 +162,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_FullSet_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(SetField(total: 3, loaded: 3));
+        var field = SetField(total: 3, loaded: 3);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
@@ -164,8 +174,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedMap_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(MapField(total: 500, loaded: 128));
+        var field = MapField(total: 500, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 500", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 500", vm.CurrentObjectName);
@@ -175,8 +186,9 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_FullMap_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(MapField(total: 2, loaded: 2));
+        var field = MapField(total: 2, loaded: 2);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
@@ -186,19 +198,64 @@ public class ContainerTruncationTests
     [Fact]
     public async Task Drill_TruncatedPointerArray_BadgesBreadcrumbHeaderAndStatus()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(PtrArrayField(total: 199, loaded: 128));
+        var field = PtrArrayField(total: 199, loaded: 128);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.Contains("showing 128 of 199", vm.Breadcrumbs[^1].Label);
         Assert.Contains("showing 128 of 199", vm.CurrentObjectName);
         Assert.Contains("Array Limit", vm.StatusText);
     }
 
+    // ---- [A3-CONTAINER-4096-ADVICE] a DLL-capped reply is not a slider-capped one ----
+    //
+    // The scalar re-fetch asks for the FULL count, and the DLL clamps every request (4,096 today). The status then
+    // advised "raise the Array Limit slider", which cannot raise that cap. Derived from the reply, never a hardcoded 4096.
+
+    private sealed class ClampingArrayStub : StubDumpService
+    {
+        public int Clamp { get; init; } = 4096;
+        public override Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr,
+            string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            int n = Math.Min(limit, Clamp);
+            return Task.FromResult(new ArrayElementsResult
+            {
+                TotalCount = limit, ReadCount = n, InnerType = innerType, ElemSize = elemSize,
+                Elements = Enumerable.Range(0, n).Select(i => new ArrayElementValue { Index = i }).ToList(),
+            });
+        }
+    }
+
+    [Fact]
+    public async Task Drill_ScalarArray_ClampedByTheDll_DoesNotBlameTheSlider()
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "Samples", TypeName = "ArrayProperty", ArrayCount = 10_000,
+            ArrayInnerType = "FloatProperty", ArrayElemSize = 4, ArrayInnerAddr = "0x7FF600001000",
+        };
+        var dump = new ClampingArrayStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Contains("showing 4,096 of 10,000", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+    }
+
     [Fact]
     public async Task Drill_FullPointerArray_NoBadge()
     {
-        var vm = MakeVm();
-        await vm.NavigateToContainerCommand.ExecuteAsync(PtrArrayField(total: 4, loaded: 4));
+        var field = PtrArrayField(total: 4, loaded: 4);
+        var vm = MakeVm(field);
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
 
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);

@@ -63,4 +63,49 @@ public class DebugCameraScriptGeneratorTests
     {
         Assert.DoesNotContain("\r", DebugCameraScriptGenerator.Generate());
     }
+
+    // [W2-CEGEN-MODAL] Unticking must not put a modal over a fullscreen game (MailboxTimeout.SilentReturn's own doc).
+    // Both blocks came from one emitter, so every [ENABLE] bail -- the missing mailbox, the contract check (two
+    // messages), the idle wait, the timeout, the result check -- was a showMessage in [DISABLE] too.
+    [Fact]
+    public void Disable_block_never_pops_a_modal()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        Assert.DoesNotContain("showMessage", disable);
+        Assert.Contains("dbg('[DebugCamera]", disable);   // a DEBUG session still sees why it gave up
+    }
+
+    // The control: ticking keeps every announced, unticking bail -- the fix is [DISABLE]-only.
+    [Fact]
+    public void Enable_block_still_announces_and_unticks_its_bails()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        Assert.Contains("showMessage('[DebugCamera] g_invokeMailbox not found", enable);
+        Assert.Contains("memrec.Active = false", enable);
+    }
+
+    // [W3-DEBUGCAM-QUEUED] -5: the toggle STAYS QUEUED and will run. Read as "state ~= 1", [ENABLE] said the game refused
+    // and UNTICKED -- and a second tick queued a second toggle, the two draining ON then OFF. EveryEnableBailout's 8-line
+    // window cannot tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
+    [Fact]
+    public void A_queued_toggle_is_reported_and_never_unticks()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        int d = s.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        var enable = s[..d];
+        int q = enable.IndexOf("if state == -5 then", System.StringComparison.Ordinal);
+        Assert.True(q >= 0, "no queued branch in [ENABLE]");
+        int f = enable.IndexOf("elseif state ~= 1 then", q, System.StringComparison.Ordinal);
+        Assert.True(f > q, "the queued test must come BEFORE the failure test, or -5 reads as a failure");
+        var queued = enable[q..f];
+        Assert.Contains("showMessage('[DebugCamera] ON queued", queued);
+        Assert.DoesNotContain("memrec.Active = false", queued);    // nothing to untick: the toggle WILL run
+        Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);     // not a clean success either
+
+        var disable = s[d..];
+        Assert.Contains("if state == -5 then", disable);
+        Assert.Contains("dbg('[DebugCamera] OFF queued", disable);
+    }
 }

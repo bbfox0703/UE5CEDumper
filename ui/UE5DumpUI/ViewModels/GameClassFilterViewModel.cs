@@ -339,7 +339,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0, partial = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0, cappedRows = 0, xrefCap = 0;
         try
         {
             foreach (var entry in targets)
@@ -360,9 +360,11 @@ public partial class GameClassFilterViewModel : ViewModelBase
                     // "no function takes this class" — the opposite of what a timeout
                     // establishes. (audit #5 AE17 / AE18)
                     bool deadline = res.Scan?.DeadlineHit ?? false;
-                    entry.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
+                    bool capped = res.Scan?.CapHit ?? false;   // [W3-XREF-CAP] its own cause, never the deadline's
+                    entry.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     if (res.Xrefs.Count > 0) withFuncs++;
                     if (deadline) partial++;
+                    if (capped) { cappedRows++; xrefCap = res.Scan!.Cap; }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -375,7 +377,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
             }
             StatusText = $"Find Func done: {withFuncs}/{targets.Count} taken by a function"
                        + (cached > 0 ? $" ({cached} cached)." : ".")
-                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count)
+                       + PartialResultNotice.BatchCapClause(cappedRows, targets.Count, xrefCap);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

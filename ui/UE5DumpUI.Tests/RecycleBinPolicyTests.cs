@@ -86,6 +86,43 @@ public class RecycleBinPolicyTests
         Assert.False(RecycleBinPolicy.IsDisabled(null, null, 0, 1, 0));
     }
 
+    // ── [A3-RECYCLE-GUID-FAILOPEN] a FAILED volume lookup is not "absent" ───────────────
+    // The docs promised a failed lookup fails closed; it failed OPEN: the caller passed null, IsDisabled tests `== 1`,
+    // null read as "bin enabled", and the verdict fell to SHQueryRecycleBin -- measured blind to NukeOnDelete. Exposure:
+    // SUBST and RAM-disk-style volumes (no fixed volume on the measuring machine fails the lookup).
+
+    [Fact]
+    public void FailedVolumeLookup_WhereTheVolumeFlagWouldDecide_FailsClosed()
+    {
+        Assert.True(RecycleBinPolicy.IsDisabled(null, null, null, null, null, volumeLookupFailed: true));
+        Assert.True(RecycleBinPolicy.IsDisabled(null, null, 0, 0, null, volumeLookupFailed: true));
+    }
+
+    [Fact]
+    public void FailedVolumeLookup_DoesNotOverrideWhatDecidesWithoutTheVolumeFlag()
+    {
+        // The control, and the reason a refuse-everything fix is wrong: under "use one setting for all locations"
+        // Explorer never reads the volume flag, so its lookup cannot matter -- a global 0 keeps the bin, a global 1
+        // disables it. A policy disables regardless.
+        Assert.False(RecycleBinPolicy.IsDisabled(null, null, 1, 0, null, volumeLookupFailed: true));
+        Assert.True(RecycleBinPolicy.IsDisabled(null, null, 1, 1, null, volumeLookupFailed: true));
+        Assert.True(RecycleBinPolicy.IsDisabled(1, null, null, null, null, volumeLookupFailed: true));
+    }
+
+    [Fact]
+    public void ThePlatformService_ReportsAFailedLookup_RatherThanPassingNullAlone()
+    {
+        string? src = null;
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null && src is null; i++, dir = dir.Parent)
+        {
+            var c = System.IO.Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Services", "WindowsPlatformService.cs");
+            if (System.IO.File.Exists(c)) src = System.IO.File.ReadAllText(c);
+        }
+        Assert.NotNull(src);
+        Assert.Contains("volumeLookupFailed: guid.Length == 0", src!);
+    }
+
     // ── Group Policy outranks the property sheet ─────────────────────────────
 
     [Fact]

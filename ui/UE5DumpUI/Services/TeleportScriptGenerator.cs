@@ -186,6 +186,22 @@ public static class TeleportScriptGenerator
             Line(sb, "      readDouble(mb + 0x340), readDouble(mb + 0x348), readDouble(mb + 0x350)))");
             Line(sb, "  end");
         }
+        if (op == 0 || op == 1 || op == 9)
+        {
+            // [W2-MARKER-PARENTREL] contract 4: paramsData[178] carries pose flags, bit 0 = the pose came from the raw
+            // parent-relative fallback (an attached pawn whose world-space read failed). Its numbers are NOT world
+            // coordinates, and the pose card's "do not save these" warning never reached CE -- a genuine problem the
+            // user must see, so an ungated message, and hadError keeps the window open.
+            Line(sb, "  if not hadError and code == 0 then");
+            Line(sb, "    local pb = readBytes(mb + 0x3DA, 1, true)   -- paramsData[178]: pose flags");
+            Line(sb, "    local poseFlags = (pb and pb[1]) or 0");
+            Line(sb, "    if poseFlags % 2 == 1 then");
+            Line(sb, "      hadError = true");
+            Line(sb, $"      showMessage('[Teleport] {label}: the pose came from a PARENT-RELATIVE read (an attached pawn). ' ..");
+            Line(sb, "        'These numbers are NOT world coordinates -- do not save or recall them as a marker.')");
+            Line(sb, "    end");
+            Line(sb, "  end");
+        }
         // Both arms are gated on `not hadError`: a timeout BREAKS out of the wait, so
         // `code` then holds whatever the PREVIOUS command left in the mailbox. Ungated,
         // a stale -7 would pop "marker saved on another map" on top of the timeout

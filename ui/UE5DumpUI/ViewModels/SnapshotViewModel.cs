@@ -33,6 +33,8 @@ public partial class SnapshotViewModel : ViewModelBase
     // are only valid when the New (DiffB) snapshot belongs to the current live
     // session. See EngineState.GameSessionId.
     private string _currentSessionId = "";
+    // [A4-PIVOT-CROSSGAME-ID] The game whose snapshot list is shown: ids are per-game-DB AUTOINCREMENT.
+    private string? _listedPe;
     private CancellationTokenSource? _cts;        // capture (streaming) op
     private CancellationTokenSource? _diffCts;    // diff (heavy in-memory) op
 
@@ -626,10 +628,16 @@ public partial class SnapshotViewModel : ViewModelBase
     {
         try
         {
+            var pe = _engineState?.PeHash ?? "";   // [A4-PIVOT-CROSSGAME-ID] the game this list is read from
             var list = await Task.Run(() => _store.ListSnapshotsAsync());
             // Preserve the diff picks across a refresh (a capture finishes -> this
-            // runs) by id, since Reset detaches every selection bound to Snapshots.
-            long? keepA = DiffA?.Id, keepB = DiffB?.Id, keepG = GroupSnapshot?.Id, keepGC = GroupCompareSnapshot?.Id;
+            // runs) by id, since Reset detaches every selection bound to Snapshots --
+            // but only within ONE game: after a reconnect to a different game the same
+            // id names some other snapshot. [A4-PIVOT-CROSSGAME-ID]
+            bool sameGame = pe == _listedPe;
+            _listedPe = pe;
+            long? keepA  = sameGame ? DiffA?.Id : null,         keepB  = sameGame ? DiffB?.Id : null,
+                  keepG  = sameGame ? GroupSnapshot?.Id : null, keepGC = sameGame ? GroupCompareSnapshot?.Id : null;
             UiCollection.Reset(Snapshots, list,
                 () => { SelectedSnapshot = null; DiffA = null; DiffB = null; GroupSnapshot = null; GroupCompareSnapshot = null; });
             if (keepA.HasValue) DiffA = Snapshots.FirstOrDefault(s => s.Id == keepA.Value);
@@ -832,6 +840,10 @@ public partial class SnapshotViewModel : ViewModelBase
             // read after WhenAll (the await is the memory barrier).
             int minTotal = total, maxTotal = total;
             bool driftDetected = false;
+            // [W1-SNAP-FAULT] Same ownership as driftDetected (written by the producer, read after
+            // WhenAll): a DLL scan worker FAULTED on a chunk, so that chunk is missing an index
+            // range the DLL still reports as scanned.
+            bool faultDetected = false;
             await using (var session = await _store.BeginCaptureSessionAsync(ct))
             using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
@@ -873,6 +885,15 @@ public partial class SnapshotViewModel : ViewModelBase
                                 if (chunk.Total > maxTotal) maxTotal = chunk.Total;
                             }
                             await channel.Writer.WriteAsync(chunk, lct);
+                            // [W1-SNAP-FAULT] Keep the chunk -- its objects are real -- but the
+                            // snapshot now has a hole: finalise it UNUSABLE, the same verdict as
+                            // drift, and stop. A faulting object-decryption stub is usually
+                            // deterministic, so every later chunk would fault the same way.
+                            if (chunk.WorkerFaulted)
+                            {
+                                faultDetected = true;
+                                break;
+                            }
                             if (!driftDetected &&
                                 SnapshotConsistency.IsDriftSuspect(total, minTotal, maxTotal))
                             {
@@ -950,7 +971,16 @@ public partial class SnapshotViewModel : ViewModelBase
                 // Incremental pivot counts on the session connection — replaces the ~10s
                 // COUNT(DISTINCT) GROUP BY ×2 the lazy build runs (the documented finalize
                 // freeze). Dispose then restores pragmas + closes.
-                await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount, !driftDetected, ct);
+                // [W1-PARTIAL-MARK] A cap / low-disk stop KEEPS the partial and finalises it usable (by
+                // design: is_usable=0 would auto-delete it). Persist WHY it is partial, so the grid and
+                // every picker still say so once this capture's status line is gone. Low disk first: its
+                // stop also sets capReached.
+                string partialReason =
+                    Volatile.Read(ref diskLowReached) != 0 ? Constants.SnapshotPartialDiskLow
+                    : Volatile.Read(ref capReached) != 0   ? Constants.SnapshotPartialCap
+                    : "";
+                await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount,
+                    isUsable: !driftDetected && !faultDetected, partialReason: partialReason, ct: ct);
             }
 
             // FIFO eviction: drop oldest snapshots of this game until the DB fits the
@@ -1003,8 +1033,16 @@ public partial class SnapshotViewModel : ViewModelBase
             var driftNote = driftDetected
                 ? $" — ⚠ GObjects changed mid-capture ({total:N0}→{maxTotal:N0}); marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture)"
                 : "";
+            // Name the cause that happened -- a worker FAULT -- never a deadline or a cancel
+            // (P5: one wording must not carry several causes). [W1-SNAP-FAULT]
+            var faultNote = faultDetected
+                ? " — ⚠ a DLL scan worker FAULTED on part of the object list; the snapshot is partial and marked UNUSABLE (excluded from SPC/Pivot, auto-removed before next capture) — the DLL's logs name the fault"
+                : "";
+            if (faultDetected)
+                _log.Warn(Constants.LogCatView,
+                    "Capture: a DLL scan worker faulted on a snapshot chunk; the snapshot was finalised UNUSABLE [W1-SNAP-FAULT]");
             outcome = (wasCapped || wasDiskLow) ? CaptureOutcome.Partial : CaptureOutcome.Success;
-            StatusText = $"Captured {objectCount:N0} objects, {fieldCount:N0} fields{driftNote}{cappedNote}{diskLowNote}{evicted}";
+            StatusText = $"Captured {objectCount:N0} objects, {fieldCount:N0} fields{driftNote}{faultNote}{cappedNote}{diskLowNote}{evicted}";
             Label = "";
             await RefreshAsync();
         }

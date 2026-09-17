@@ -18,6 +18,9 @@ public sealed class InstanceWalkResult
     public bool IsDefinition { get; init; }
     /// <summary>True when the DLL judged the class pointer recycled/garbage (implausible PropertiesSize) — the instance was freed and its slot reused. No fields are returned and fill_gaps must NOT be retried.</summary>
     public bool IsStale { get; init; }
+    /// <summary>[P1-WALK-UNREADABLE] The DLL could not read the object's own header (freed, most likely), so nothing was
+    /// walked. Distinct from <see cref="IsStale"/>, a narrower verdict. False from an older DLL.</summary>
+    public bool IsUnreadable { get; init; }
     /// <summary>
     /// The reflected walk RAN and <see cref="Fields"/> is complete; only the DLL's
     /// Guess-What raw-byte pass was skipped, because the class is larger than the

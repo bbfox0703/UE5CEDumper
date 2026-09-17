@@ -91,6 +91,13 @@ public sealed class AobUsageRecord
 public sealed class AobUsageFile
 {
     /// <summary>Schema version for forward compatibility.</summary>
+    /// <remarks>Always written, and said so explicitly: the context below omits type-default
+    /// values (<c>WhenWritingDefault</c>), and a schema version must never be silently dropped and
+    /// re-initialized on reload. Behaviour-neutral today — 1 is not 0 — but it states the intent
+    /// tools/check_json_default_ignore.py enforces. ⚠ Do NOT drop <c>WhenWritingDefault</c> from this
+    /// context instead: the file is shared with the DLL's Flamme, and writing every zero-valued field
+    /// would change a cross-language file for no gain.</remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public int Version { get; set; } = 1;
 
     /// <summary>Machine name that generated this file.</summary>

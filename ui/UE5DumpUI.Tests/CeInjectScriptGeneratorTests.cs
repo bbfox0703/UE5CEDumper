@@ -317,4 +317,117 @@ public class CeInjectScriptGeneratorTests
             StringComparison.Ordinal);
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // [B30-REOPEN-2026-09-10] — the disable must tear down only what THIS record
+    // started. The original B30 fix guarded on "is a DLL loaded", which is not the
+    // same question: all four proxy .def files export UE5_StopPipeServer, so in the
+    // exact case B30 was filed about — a proxy already loaded and serving — the probe
+    // SUCCEEDED and UE5_Shutdown ran against a pipe this record never started.
+    // ────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Disable_refuses_to_tear_down_a_pipe_this_record_did_not_start()
+    {
+        var d = Disable(CeInjectScriptGenerator.Generate(Dll));
+
+        // The ownership guard exists, and it is a REFUSAL with an early return.
+        Assert.Contains("if not UE5_StartedByThisRecord then", d, StringComparison.Ordinal);
+
+        // ⭐ And it comes BEFORE the shutdown call, which is the whole point — a guard
+        // below the teardown would document the hazard without preventing it.
+        var guard = d.IndexOf("UE5_StartedByThisRecord", StringComparison.Ordinal);
+        var kill = d.IndexOf("callDLL('UE5_Shutdown')", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && kill >= 0, "both the guard and the shutdown must be present");
+        Assert.True(guard < kill,
+            "the ownership guard must precede callDLL('UE5_Shutdown'), not follow it");
+
+        // The symbol probe stays: it answers a DIFFERENT question (nothing loaded at
+        // all) and it also stops a bare getAddress throwing. Losing it would be a
+        // regression of B40, so pin that both survive.
+        Assert.Contains("UE5_StopPipeServer", d, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Enable_claims_ownership_only_on_the_success_path()
+    {
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+
+        Assert.Contains("UE5_StartedByThisRecord = true", e, StringComparison.Ordinal);
+
+        // ⛔ THE ANTI-VACUITY HALF, and it is the assertion that actually decides this:
+        // the claim must sit AFTER the already-serving bail-out, or the serving path
+        // would set it on its way out and the guard would pass anyway.
+        var serving = e.IndexOf("already loaded AND serving", StringComparison.Ordinal);
+        var claim = e.IndexOf("UE5_StartedByThisRecord = true", StringComparison.Ordinal);
+        Assert.True(serving >= 0, "the already-serving branch must still exist");
+        Assert.True(claim > serving,
+            "ownership must be claimed after the serving bail-out, never before it");
+
+        // Exactly one claim site — a second one would be a way back into the defect.
+        Assert.Equal(1, CountOccurrences(e, "UE5_StartedByThisRecord = true"));
+    }
+
+    [Fact]
+    public void Serving_branch_clears_a_stale_ownership_flag_before_its_untick()
+    {
+        // [A3-B30-STALE-FLAG] The flag is ONE global in CE's Lua state, which outlives a File > Open: CE frees the
+        // records without running [DISABLE]. A reloaded record ticked while the old pipe still serves takes the
+        // serving branch -- and its deferred untick runs [DISABLE] with the PREVIOUS table's `true` still set.
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+        var serving = e.IndexOf("already loaded AND serving", StringComparison.Ordinal);
+        Assert.True(serving >= 0, "the already-serving branch must still exist");
+        var clear = e.IndexOf("UE5_StartedByThisRecord = false", serving, StringComparison.Ordinal);
+        var untick = e.IndexOf("memrec.Active = false", serving, StringComparison.Ordinal);
+        Assert.True(untick > serving, "the serving branch must still untick the record");
+        Assert.True(clear > serving && clear < untick,
+            "the serving branch must clear the flag BEFORE its deferred untick runs the disable block");
+    }
+
+    [Fact]
+    public void Enable_clears_a_stale_ownership_flag_before_its_first_bailout()
+    {
+        // [A3-B30-STALE-FLAG] review 4: File > Open is not the only stale origin. CE's process switch unticks every
+        // record WITHOUT running its disable block (MainUnit.pas: disableAllWithoutExecute), and the next tick can take
+        // the PARKED branch, whose failed UE5_AutoStart defers an untick too. An enable runs only on an unticked
+        // record, which owns nothing -- so the flag is cleared before the first bail-out of all.
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+        var clear = e.IndexOf("UE5_StartedByThisRecord = false", StringComparison.Ordinal);
+        var firstBail = e.IndexOf("if getOpenedProcessID() == 0 then", StringComparison.Ordinal);
+        Assert.True(firstBail >= 0, "the no-process bail-out must still exist");
+        Assert.True(clear >= 0 && clear < firstBail,
+            "the enable block must clear the flag before its first bail-out, not only in the serving branch");
+    }
+
+    [Fact]
+    public void Disable_releases_ownership_after_tearing_down()
+    {
+        var d = Disable(CeInjectScriptGenerator.Generate(Dll));
+        Assert.Contains("UE5_StartedByThisRecord = false", d, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Already_loaded_precheck_resolves_BOTH_mailbox_spellings()
+    {
+        // [B33] — this site and the autorun twin were the last two holdouts. A
+        // single-spelling miss leaves `pre` nil, so a SERVING DLL is misread as
+        // "parked" and UE5_AutoStart is fired at a pipe that is already up.
+        var e = Enable(CeInjectScriptGenerator.Generate(Dll));
+        Assert.Contains("getAddressSafe('g_invokeMailbox')", e, StringComparison.Ordinal);
+        Assert.Contains("getAddressSafe('UE5Dumper.g_invokeMailbox')", e, StringComparison.Ordinal);
+
+        // The throwing single-spelling form must be gone from this block.
+        Assert.DoesNotContain("pcall(getAddress, 'g_invokeMailbox')", e, StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        int n = 0, i = 0;
+        while ((i = haystack.IndexOf(needle, i, StringComparison.Ordinal)) >= 0)
+        {
+            n++;
+            i += needle.Length;
+        }
+        return n;
+    }
+
 }

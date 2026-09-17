@@ -67,6 +67,11 @@ FLAVOURS = {
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
     "debug": ROOT / "DebugGame/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-DebugGame.exe",
     # ⚠⚠ THE 5.8 FIXTURE IS A DIFFERENT PROJECT, NOT ANOTHER FLAVOUR OF THIS ONE.
+    # ⭐ UPDATED 2026-09-16: it is no longer the bare template. It now carries
+    # ADumperTest58Actor + UDumperTest58Subsystem with the 5.5+ OPTIONAL FAMILY ONLY
+    # (container / string / name / struct optionals, which are intrusive from 5.5, plus
+    # the object optional and its mutators). Everything else below still holds: there is
+    # no property zoo here, no Spawn_*, no heartbeat HUD, and no DumperTestActor.
     # DumperTest58 is the STOCK UE 5.8 Third Person template (with the Combat /
     # Platforming / SideScrolling variants). It does NOT contain the property zoo --
     # no ADumperTestActor, no Spawn_*, no mutators, no heartbeat HUD. Measured

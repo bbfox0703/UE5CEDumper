@@ -391,6 +391,83 @@ public class ClassPivotViewModelTests : IDisposable
             });
     }
 
+    // ---- [W1-DT-TRUNC] the DataTable Run keeps the truncation notice its load printed ----
+
+    private sealed class TruncatedDtDumpService : StubDumpService
+    {
+        public override Task<FindInstancesResult> FindInstancesAsync(
+            string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default)
+            => Task.FromResult(new FindInstancesResult
+            {
+                Instances = new() { new InstanceResult { Name = "DT_Big", Address = "0xDA7A", ClassName = "DataTable" } },
+            });
+
+        public override Task<DataTableWalkResult> WalkDataTableRowsAsync(
+            string addr, int offset = 0, int limit = 64, CancellationToken ct = default)
+            => Task.FromResult(new DataTableWalkResult
+            {
+                RowCount = 500, RowStructName = "FItemRow",   // the table holds 500; the page fetched 2
+                Rows = new()
+                {
+                    new DataTableRowInfo { RowName = "Sword", DataAddr = "0x1000",
+                        Fields = new() { new LiveFieldValue { Name = "Damage", TypeName = "IntProperty", TypedValue = "50" } } },
+                    new DataTableRowInfo { RowName = "Shield", DataAddr = "0x2000",
+                        Fields = new() { new LiveFieldValue { Name = "Damage", TypeName = "IntProperty", TypedValue = "0" } } },
+                },
+            });
+    }
+
+    [Fact]
+    public async Task DataTableRun_KeepsTheTruncationNotice_ItsLoadPrinted()
+    {
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new TruncatedDtDumpService());
+        vm.SelectedSource = "DataTable";
+        await vm.PendingLoad!;
+        vm.SelectedDataTable = vm.DataTables[0];
+        await vm.PendingLoad!;
+        Assert.Contains("showing 2 of 500", vm.StatusText);   // the load says so...
+
+        await vm.RunPivotCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing 2 of 500", vm.StatusText);   // ...and the Run no longer overwrites it
+    }
+
+    // ---- [P5-PIVOT-FETCHCAP] two caps, two sentences ----
+
+    private static PivotResult Res(int groups, int instances, bool groupCap, int fetchCap)
+        => new() { GroupCount = groups, InstanceCount = instances, Truncated = groupCap, FetchCap = fetchCap };
+
+    [Fact]
+    public void PivotRunStatus_GroupCapAlone_KeepsItsSentence_AndExactCounts()
+    {
+        // The control: the group cap is the top N of a COMPLETE input, every count exact. Green both ways.
+        var s = ClassPivotViewModel.PivotRunStatus(Res(5_000, 80_000, groupCap: true, fetchCap: 0),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.Equal("5,000 groups (capped at 5,000) from 80,000 instances · identity", s);
+    }
+
+    [Fact]
+    public void PivotRunStatus_FetchCap_SaysPrefix_AndStopsCallingTheCountsTotals()
+    {
+        var s = ClassPivotViewModel.PivotRunStatus(Res(812, 204_800, groupCap: false, fetchCap: 2_000_000),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.StartsWith("≥ 812 groups", s);
+        Assert.Contains("from ≥ 204,800 instances", s);
+        Assert.Contains("2,000,000-row fetch cap", s);
+        Assert.Contains("not totals", s);
+        Assert.Contains("tick only the fields you need", s);
+        Assert.DoesNotContain("capped at 5,000", s);   // the GROUP cap did not fire
+    }
+
+    [Fact]
+    public void PivotRunStatus_BothCaps_ShowBothSentences()
+    {
+        var s = ClassPivotViewModel.PivotRunStatus(Res(5_000, 2_000_000, groupCap: true, fetchCap: 2_000_000),
+                                                   5_000, "groups", "instances", "identity");
+        Assert.Contains("capped at 5,000", s);
+        Assert.Contains("2,000,000-row fetch cap", s);
+    }
+
     [Fact]
     public async Task DataTableSource_ListsTables_FiltersNonDataTables()
     {
@@ -524,6 +601,174 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains("not in the selected snapshot", vm.StatusText);
     }
 
+    [Fact]
+    public async Task PivotForAsync_UnpivotableProperty_SaysSo_NotReady()
+    {
+        // Review of 4920cb89: the shared helper ticks nothing for a prop that is not a captured numeric field
+        // (right-click hands off ANY field: an object, a string, an array), and "Ready" read like the handoff
+        // had worked -- Run then pivoted the unrelated pre-ticked fields.
+        await SeedInventoryAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Item_C", "NotACapturedField");
+
+        Assert.Equal("BP_Item_C", vm.SelectedClass?.ClassName);
+        Assert.DoesNotContain("Ready", vm.StatusText);
+        Assert.Contains("not a pivotable field", vm.StatusText);
+    }
+
+    // ---- the second review of 4880a779: the handoff's two remaining misses ----
+
+    // A class with no good key: no field scores >= 0.5 as one, so the field load opens it in Identity mode with
+    // the key picker on its alphabetically FIRST field -- a field that then plays no part in grouping.
+    private async Task SeedKeylessClassAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "loot" }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            Obj(1, "BP_Loot_C", "/G.M:L.Loot_0", ("Amount", 5), ("Level", 1)),
+            Obj(2, "BP_Loot_C", "/G.M:L.Loot_1", ("Amount", 6), ("Level", 1)),
+            Obj(3, "BP_Loot_C", "/G.M:L.Loot_2", ("Amount", 7), ("Level", 1)),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 3, 6, ct);
+    }
+
+    [Fact]
+    public async Task AKeylessClass_OpensInIdentityMode_KeyedOnItsFirstField()
+    {
+        // The control, green before and after -- and the precondition of the next test, kept apart so a fixture
+        // that stopped reaching Identity mode fails HERE instead of letting the next test pass for free.
+        await SeedKeylessClassAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Loot_C", "");
+
+        Assert.Equal("Identity (object path)", vm.SelectedKeyMode);
+        Assert.Equal("Amount", vm.SelectedKeyField);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_InIdentityMode_TicksAPropThatHappensToBeTheKeyPick()
+    {
+        // In Identity mode the key picker's field groups nothing, yet the handoff skipped ticking it and still
+        // said "Ready" -- the pivot then left the handed-off prop out entirely.
+        await SeedKeylessClassAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("BP_Loot_C", "Amount");
+
+        Assert.True(vm.Fields.First(f => f.Name == "Amount").IsValue);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_StructArrayField_PointsAtTheSnapshotArraySource()
+    {
+        // "Only captured numeric fields can be pivoted" was false for a captured struct array: it pivots under
+        // the Snapshot Array source, which the scalar field list never shows.
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "ps" }, ct);
+        var ps = Obj(9, "PlayerState", "/G.M:L.PlayerState_0", ("Gold", 100));
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        arr.Elements.Add(MakeSlot(0, "Fuel", 100));
+        ps.Arrays.Add(arr);
+        await _store.WriteChunkAsync(id, new[] { ps }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("PlayerState", "Cargo");
+
+        Assert.DoesNotContain("Ready", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);
+    }
+
+    // ---- review 3 of c294e314: two routes the struct-array redirect still missed ----
+
+    private async Task SeedCargoAsync(string cls, bool withScalar)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "cargo" }, ct);
+        var o = withScalar ? Obj(9, cls, $"/G.M:L.{cls}_0", ("Gold", 100)) : Obj(9, cls, $"/G.M:L.{cls}_0");
+        var arr = new SnapshotCapturedArray { Field = "Cargo" };
+        arr.Elements.Add(MakeSlot(0, "Fuel", 100));
+        o.Arrays.Add(arr);
+        await _store.WriteChunkAsync(id, new[] { o }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_AStructArrayElementHandoff_PointsAtItsArray()
+    {
+        // Value Search hands off a struct-array inner value by its display name ("Cargo[0].Fuel", Radar's
+        // FieldDisplayName), which matched no array -- so the handoff still said "not a pivotable field".
+        await SeedCargoAsync("PlayerState", withScalar: true);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("PlayerState", "Cargo[0].Fuel");
+
+        Assert.Contains("Snapshot Array", vm.StatusText);
+        Assert.Contains("PlayerState → Cargo", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_AClassWithOnlyStructArrays_IsNotCalledMissing()
+    {
+        // No scalar field means no row in the class list, so the helper said the class "is not in the selected
+        // snapshot" -- while its array pivots under Snapshot Array.
+        await SeedCargoAsync("CargoHold", withScalar: false);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Cargo");
+
+        Assert.DoesNotContain("not in the selected snapshot", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);
+    }
+
+    // ---- review 4 of c5511519: the arrays-only branch ignored the handed-off prop ----
+
+    private async Task SeedHoldAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "hold" }, ct);
+        var o = Obj(9, "CargoHold", "/G.M:L.CargoHold_0");
+        foreach (var field in new[] { "Ammo", "Cargo" })   // the store lists arrays by name: Ammo first
+        {
+            var arr = new SnapshotCapturedArray { Field = field };
+            arr.Elements.Add(MakeSlot(0, "Quantity", 100));
+            o.Arrays.Add(arr);
+        }
+        await _store.WriteChunkAsync(id, new[] { o }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_ArraysOnlyClass_NamesTheHandedOffArray_NotTheFirst()
+    {
+        // Value Search hands off ("CargoHold", "Cargo[3].Quantity"). The branch named the first array by name,
+        // "Ammo", and sent the user to the wrong one.
+        await SeedHoldAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Cargo[3].Quantity");
+
+        Assert.Contains("CargoHold → Cargo)", vm.StatusText);
+        Assert.DoesNotContain("Ammo", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PivotForAsync_ArraysOnlyClass_APropThatIsNoArray_IsCalledNotPivotable()
+    {
+        // A handed-off scalar that was never captured got the same "pivot them" line, and was never told that it
+        // is not pivotable itself.
+        await SeedHoldAsync();
+        var vm = NewVm();
+
+        await vm.PivotForAsync("CargoHold", "Gold");
+
+        Assert.Contains("'Gold' is not a pivotable field of CargoHold", vm.StatusText);
+        Assert.Contains("Snapshot Array", vm.StatusText);   // ...and the class's arrays are still pointed at
+    }
+
     // ---- C3: change-driven discovery (the automatic front-door) ----
 
     // Seed a before/after pair on one PlayerState: Gold drops, Level is constant.
@@ -574,6 +819,104 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Equal("PlayerState", vm.SelectedClass?.ClassName);
         Assert.True(vm.Fields.First(f => f.Name == "Gold").IsValue);
         Assert.NotEmpty(vm.Results);        // pivot auto-ran on the chosen target
+    }
+
+    // ---- [W1-DISCOVER-ARRAY] "Use →" on a struct-array element candidate ----
+    //
+    // Discovery ranks struct-array elements ("Cargo[1].Quantity") beside scalars, but "Use →" looked
+    // the rendered name up in the SCALAR field list, which never holds an array row. Both lookups came
+    // back null with no branch that said so, and the pivot ran on 0-3 unrelated pre-ticked fields under
+    // a status line that read like success.
+
+    /// <summary>One PlayerState with a constant scalar (so the class IS in the scalar list, as in the
+    /// recorded case), a "Bags" array that sorts FIRST (so it is the load's auto-pick), and the "Cargo"
+    /// array whose second element holds <paramref name="oreQty"/>.</summary>
+    private static SnapshotCapturedObject CargoOwner(int oreQty)
+    {
+        var ps = new SnapshotCapturedObject
+        {
+            Index = 9, Addr = "0x9000", Name = "PS_9", ClassName = "PlayerState",
+            OuterClassName = "World", Path = "/G.M:L.PlayerState_0",
+        };
+        ps.Fields.Add(new SnapshotCapturedField { Name = "Level", Type = "IntProperty", Hex = IntHex(5), Offset = 0x10 });
+        var bags = new SnapshotCapturedArray { Field = "Bags" };
+        bags.Elements.Add(MakeSlot(0, "Pouch", 1));
+        ps.Arrays.Add(bags);
+        var cargo = new SnapshotCapturedArray { Field = "Cargo" };
+        cargo.Elements.Add(MakeSlot(0, "Fuel", 100));
+        cargo.Elements.Add(MakeSlot(1, "Ore", oreQty));
+        ps.Arrays.Add(cargo);
+        return ps;
+    }
+
+    private async Task SeedCargoBeforeAfterAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long s1 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "before" }, ct);
+        await _store.WriteChunkAsync(s1, new[] { CargoOwner(50) }, ct);
+        await _store.FinalizeSnapshotAsync(s1, 1, 4, ct);
+        long s2 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "after" }, ct);
+        await _store.WriteChunkAsync(s2, new[] { CargoOwner(40) }, ct);
+        await _store.FinalizeSnapshotAsync(s2, 1, 4, ct);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAStructArrayElement_PivotsItThroughTheArraySource()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        await vm.RunDiscoverCommand.ExecuteAsync(null);
+        var cand = vm.DiscoverResults.First(c => c.PropName == "Cargo[1].Quantity");
+
+        await vm.UseDiscoverCandidateAsync(cand);
+
+        Assert.Equal("Snapshot Array", vm.SelectedSource);
+        Assert.Equal("Cargo", vm.SelectedArrayField?.ArrayField);   // the candidate's array, not the auto-pick
+        Assert.True(vm.Fields.First(f => f.Name == "Quantity").IsValue);
+        Assert.Contains(vm.Results, r => r.KeyValue == "Ore");       // the element that changed
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_WithAPropNotInTheClass_SaysSoAndRunsNothing()
+    {
+        // The scalar twin: a lookup that finds nothing must not run a pivot of the pre-ticked fields.
+        await SeedBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate { ClassName = "PlayerState", PropName = "Ghost" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Ghost", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAnArrayNotInTheSnapshot_SaysSoAndRunsNothing()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
+            { ClassName = "PlayerState", PropName = "Nope[0].Quantity", ArrayField = "Nope", InnerProp = "Quantity" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Array 'Nope'", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_OnAnInnerPropNotCaptured_SaysSoAndRunsNothing()
+    {
+        await SeedCargoBeforeAfterAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
+            { ClassName = "PlayerState", PropName = "Cargo[0].Ghost", ArrayField = "Cargo", InnerProp = "Ghost" });
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Cargo[0].Ghost", vm.StatusText);
     }
 
     [Fact]
@@ -672,7 +1015,7 @@ public class ClassPivotViewModelTests : IDisposable
     }
 
     [Fact]
-    public void LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
+    public async Task LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
     {
         // audit #5 AE10 — this used to assert the command was gated off when
         // IsGWorldAvailable was false. That flag is EngineState.HasGWorld, i.e. "the
@@ -680,19 +1023,239 @@ public class ClassPivotViewModelTests : IDisposable
         // exists": the DLL has world-recovery fallbacks that work when the scan did
         // not, so the gate disabled the button on games where locate worked. The DLL
         // answers authoritatively; the client must not pre-refuse.
-        var vm = NewVm();
+        //
+        // [W1-PIVOT-SESSION] The selection is no longer the ONLY precondition: the results must also
+        // belong to the running launch (the RowHandoffs_* tests below). This test keeps the AE10
+        // half, under a same-session connect whose EngineState.HasGWorld is false.
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
         string? hit = null;
         vm.LocateInGWorld += a => hit = a;
-        var row = new PivotResultRow { ObjAddr = "0xABC", KeyValue = "K" };
-        vm.SelectedResult = row;
+        var row = vm.SelectedResult!;
+        Assert.False(string.IsNullOrEmpty(row.ObjAddr));
 
-        Assert.True(vm.CanLocateResultInGWorld);   // selection is the only precondition
+        Assert.True(vm.CanLocateResultInGWorld);
         vm.LocateResultInGWorldCommand.Execute(row);
-        Assert.Equal("0xABC", hit);
+        Assert.Equal(row.ObjAddr, hit);
 
         hit = null;
         vm.LocateResultInGWorldCommand.Execute(row);
-        Assert.Equal("0xABC", hit);                // and repeatable
+        Assert.Equal(row.ObjAddr, hit);            // and repeatable
+    }
+
+    // ---- [W1-PIVOT-LOADCTS] a field load must not cancel an in-flight CLASS load ----
+    //
+    // One shared _loadCts let a field load cancel the class load in flight, and nothing restarts it: the picker kept the
+    // previous snapshot's classes. This store's class list for snapshot 2 is GATED and honours its token, as SQLite does.
+
+    private sealed class ClassGatedStore : ISnapshotStore
+    {
+        public readonly TaskCompletionSource<IReadOnlyList<PivotClassInfo>> Snap2Classes =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string DatabasePath => "";
+        public void SetActiveGame(string? peHash) { }
+        public Task<IReadOnlyList<SnapshotMeta>> ListSnapshotsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<SnapshotMeta>>(new[]
+            {
+                new SnapshotMeta { Id = 2, Label = "new" },
+                new SnapshotMeta { Id = 1, Label = "old" },
+            });
+        public Task<IReadOnlyList<PivotClassInfo>> ListPivotClassesAsync(long snapshotId, CancellationToken ct = default)
+            => snapshotId == 2
+                ? Snap2Classes.Task.WaitAsync(ct)
+                : Task.FromResult<IReadOnlyList<PivotClassInfo>>(new[] { new PivotClassInfo { ClassName = "A", InstanceCount = 2 } });
+        public Task<IReadOnlyList<PivotFieldInfo>> ListPivotFieldsAsync(long snapshotId, string className, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PivotFieldInfo>>(new[] { Field("AlphaField") });
+
+        public Task<long> CreateSnapshotAsync(SnapshotMeta meta, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<int> WriteChunkAsync(long id, IReadOnlyList<SnapshotCapturedObject> o, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ICaptureSession> BeginCaptureSessionAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task FinalizeSnapshotAsync(long id, int oc, int fc, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteSnapshotAsync(long id, bool reclaim = false, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteAllSnapshotsAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotUsage> GetUsageAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotDiffResult> DiffSnapshotsAsync(long a, long b, SnapshotDiffFilter f, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotGroupResult> GroupMatchAsync(SnapshotGroupQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SpcResult> SpcQueryAsync(SpcQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SpcGroupResult> SpcGroupQueryAsync(SpcGroupQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<DiscoveryResult> DiscoverChangesAsync(DiscoveryQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PivotResult> PivotAsync(PivotQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<int> EnforceQuotaAsync(long bytes, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<PivotClassInfo>> ListPivotArrayClassesAsync(long s, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<PivotArrayFieldInfo>> ListPivotArrayFieldsAsync(long s, string c, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<PivotFieldInfo>> ListPivotArrayPropsAsync(long s, string c, string af, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PivotResult> PivotArrayAsync(ArrayPivotQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public HashSet<string> GetClassDenylist(DenylistScope scope) => new(StringComparer.Ordinal);
+        public void SetClassDenylist(DenylistScope scope, HashSet<string> classes) { }
+    }
+
+    [Fact]
+    public async Task AFieldLoad_DoesNotCancel_AnInFlightClassLoad()
+    {
+        var store = new ClassGatedStore();
+        var vm = new ClassPivotViewModel(store, new MockLoggingService());
+        await vm.RefreshAsync();                                    // the newest (#2) is selected: its class load is gated
+        vm.SelectedSnapshot = vm.Snapshots.First(s => s.Id == 1);
+        await vm.PendingLoad!;                                      // #1's classes: [A]
+        vm.SelectedSnapshot = vm.Snapshots.First(s => s.Id == 2);
+        var classLoad = vm.PendingLoad!;                            // #2's class load, in flight
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "A");   // picked from the list still shown
+        await vm.PendingLoad!;                                      // the field load
+
+        store.Snap2Classes.SetResult(new[] { new PivotClassInfo { ClassName = "C", InstanceCount = 1 } });
+        await classLoad;
+
+        Assert.Contains(vm.Classes, c => c.ClassName == "C");       // the field load did not cancel it
+    }
+
+    // ---- [A4-PIVOT-CROSSGAME-ID] a reconnect to a DIFFERENT game carries neither its pick nor its class list ----
+    //
+    // Snapshot ids are per-game-DB AUTOINCREMENT: after a reconnect to another game, "#2" names a different snapshot.
+
+    private static EngineState Game(string pe) =>
+        new() { PeHash = pe, UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" };
+
+    private async Task SeedGameAsync(string pe, int count, string cls)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame(pe);
+        for (int i = 0; i < count; i++)
+        {
+            long id = await _store.CreateSnapshotAsync(
+                new SnapshotMeta { Label = $"{pe}{i}", PeHash = pe, GameSessionId = pe + "-S" }, ct);
+            await _store.WriteChunkAsync(id, new[] { Obj(1, cls, "/G.M:L.X_0", ("ItemID", 1)) }, ct);
+            await _store.FinalizeSnapshotAsync(id, 1, 1, ct);
+        }
+    }
+
+    [Fact]
+    public async Task ADifferentGame_GetsItsNewestPick_AndNeverTheOtherGamesClassList()
+    {
+        await SeedGameAsync("A", 2, "BP_A_C");
+        await SeedGameAsync("B", 3, "BP_B_C");
+        var vm = NewVm();
+        vm.SetEngineState(Game("A"));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+        Assert.Equal(2, vm.SelectedSnapshot!.Id);                   // A's newest -- and its class list is now cached
+
+        vm.SetEngineState(Game("B"));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+
+        Assert.Equal(3, vm.SelectedSnapshot!.Id);                   // B's newest, not "B#2" by A's id
+        vm.SelectedSnapshot = vm.Snapshots.First(s => s.Id == 2);   // B#2 -- the id A's cache holds a list for
+        await vm.PendingLoad!;
+        Assert.Contains(vm.Classes, c => c.ClassName == "BP_B_C");
+        Assert.DoesNotContain(vm.Classes, c => c.ClassName == "BP_A_C");
+    }
+
+    // ---- [W1-PIVOT-SESSION] the row handoffs are gated on the game session ----
+    //
+    // A result row's ObjAddr is an address in the launch that captured its snapshot. Class Pivot
+    // shipped (e554639c) before the session gate (534314f4) and never got it, and right after a
+    // reconnect its DEFAULT selection is a previous launch's snapshot -- so Open in Live Walker,
+    // Copy Address and both Locates handed a dead process's address to the running game.
+
+    private static EngineState Live(string creation) =>
+        new() { PeHash = "G", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = creation };
+
+    private async Task SeedSessionAsync(string session)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(
+            new SnapshotMeta { Label = session, PeHash = "G", GameSessionId = session }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            Obj(1, "BP_Item_C", "/G.M:L.Item_0", ("ItemID", 1), ("Quantity", 10)),
+            Obj(2, "BP_Item_C", "/G.M:L.Item_1", ("ItemID", 2), ("Quantity", 20)),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 2, 4, ct);
+    }
+
+    /// <summary>Connect to a launch, pivot the default (newest) snapshot and select its first row.</summary>
+    private async Task<ClassPivotViewModel> PivotAfterConnectAsync(string liveCreation)
+    {
+        var vm = NewVm();
+        vm.SetEngineState(Live(liveCreation));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "BP_Item_C");
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[0];
+        return vm;
+    }
+
+    [Fact]
+    public void RowHandoffs_AreDisabled_WithNoLiveSession()
+    {
+        // Never connected, or disconnected: no row address is known to be live.
+        var vm = NewVm();
+        vm.SelectedResult = new PivotResultRow { ObjAddr = "0xABC", KeyValue = "K" };
+
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_AreDisabled_ForAPreviousLaunchSnapshot()
+    {
+        await SeedSessionAsync("G-OLD");
+        var vm = await PivotAfterConnectAsync("NEW");
+
+        Assert.Equal("G-OLD", vm.SelectedSnapshot!.GameSessionId);   // the post-connect DEFAULT is the old launch
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_AreEnabled_ForTheCurrentLaunch()
+    {
+        // The control, green before and after.
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
+
+        Assert.True(vm.CanLocateResult);
+        Assert.True(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_Close_OnDisconnect()
+    {
+        await SeedSessionAsync("G-NEW");
+        var vm = await PivotAfterConnectAsync("NEW");
+        Assert.True(vm.CanLocateResult);
+
+        vm.ClearOnDisconnect();
+
+        Assert.False(vm.CanLocateResult);
+        Assert.False(vm.CanLocateResultInGWorld);
+    }
+
+    [Fact]
+    public async Task RowHandoffs_OnDataTableRows_FollowTheLiveWalk_NotTheSnapshotPicker()
+    {
+        // A DataTable run walks the LIVE process, so its rows belong to the running launch even while
+        // the snapshot picker still shows an old one. A gate keyed on the picker would disable them;
+        // the gate follows the launch the RESULTS came from. Green before and after.
+        await SeedSessionAsync("G-OLD");
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
+        vm.SetEngineState(Live("NEW"));
+        await vm.PendingRefresh!;
+        await vm.PendingLoad!;
+        await vm.PendingLoad!;   // and any field load the class load started
+        Assert.Equal("G-OLD", vm.SelectedSnapshot!.GameSessionId);
+
+        vm.SelectedSource = "DataTable";
+        await vm.PendingLoad!;
+        vm.SelectedDataTable = vm.DataTables[0];
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[0];
+
+        Assert.True(vm.CanLocateResult);
     }
 
     [Fact]

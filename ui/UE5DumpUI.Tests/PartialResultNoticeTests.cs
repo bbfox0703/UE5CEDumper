@@ -37,6 +37,109 @@ public class PartialResultNoticeTests
         Assert.True(s.Trim().Length > 40, "the note collapsed to nothing: " + s);
     }
 
+    // ---- [W3-XREF-CAP] a result cut off at the cap is a lower bound, with its own cause ----
+
+    [Fact]
+    public void BatchCapClause_NamesTheCapAsTheCause_AndCallsTheCountsLowerBounds()
+    {
+        var s = PartialResultNotice.BatchCapClause(2, 5, 200);
+        Assert.Contains("200-result cap", s, StringComparison.Ordinal);
+        Assert.Contains("lower bound", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadline", s, StringComparison.Ordinal);
+        Assert.Equal("", PartialResultNotice.BatchCapClause(0, 5, 200));   // nothing capped, nothing said
+    }
+
+    [Fact]
+    public void BatchCapClause_ClaimsOnlyWhatTheDllKnows()
+    {
+        // Review 3 of 640e7364: capHit fires when ONE worker reached the cap -- even a worker whose 200th match
+        // was its range's last object, with exactly 200 in total. The DLL knows "more MAY exist", never
+        // "matched more than" -- the dialog's own "[CAP HIT ... more may exist]" wording.
+        var s = PartialResultNotice.BatchCapClause(1, 1, 200);
+        Assert.DoesNotContain("more than", s, StringComparison.Ordinal);
+        Assert.Contains("reached the 200-result cap", s, StringComparison.Ordinal);
+        Assert.Contains("more may exist", s, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FunctionsSummary_CappedCell_ShowsALowerBound_AndIsNotAPartialCell()
+    {
+        var xrefs = new List<PropertyXrefMatch>
+        {
+            new() { FunctionName = "A" }, new() { FunctionName = "B" }, new() { FunctionName = "C" },
+        };
+        var cell = XrefFormat.FunctionsSummary(xrefs, deadlineHit: false, capHit: true);
+        Assert.StartsWith("3+ ·", cell, StringComparison.Ordinal);
+        Assert.False(XrefFormat.IsPartialCell(cell));   // a re-run asks for the same cap: it cannot find more
+    }
+
+    [Fact]
+    public void XrefDialogStatus_Capped_SaysOnlyTheFirstNAreListed()
+    {
+        var res = new FindPropertyXrefsResult
+        {
+            Xrefs = new List<PropertyXrefMatch> { new() { FunctionName = "A" } },
+            Scan = new PropertyXrefScanStats
+            {
+                FunctionsScanned = 10, FunctionsWithScript = 900, ObjectsTotal = 100, CapHit = true, Cap = 1,
+            },
+        };
+        var s = XrefFormat.XrefDialogStatus(res, classMode: true);
+        Assert.Contains("1+ function(s)", s, StringComparison.Ordinal);
+        Assert.Contains("CAP HIT", s, StringComparison.Ordinal);
+        Assert.Contains("900+ matched", s, StringComparison.Ordinal);   // summed over workers that each self-capped
+    }
+
+    [Fact]
+    public void XrefDialogStatus_DeadlineOnly_HasNoCapWording()
+    {
+        // The control, green before and after: the deadline keeps its own words, and a scan that was not
+        // capped says nothing about a cap.
+        var res = new FindPropertyXrefsResult
+        {
+            Xrefs = new List<PropertyXrefMatch>(),
+            Scan = new PropertyXrefScanStats { FunctionsScanned = 10, ObjectsTotal = 100, DeadlineHit = true },
+        };
+        var s = XrefFormat.XrefDialogStatus(res, classMode: false);
+        Assert.Contains("DEADLINE HIT", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("CAP", s, StringComparison.Ordinal);
+    }
+
+    // ---- [W4-RELATED-STOPS] each cause the related-object walk stopped for, in its own words ----
+
+    [Fact]
+    public void RelatedStopsClause_NamesEachCauseSeparately()
+    {
+        var all = PartialResultNotice.RelatedStopsClause(new RelatedObjectsStops
+        {
+            ResultCapHit = true, OwnedCapHit = true, VisitCapHit = true, DeadlineHit = true, Cancelled = true,
+            MaxResults = 128, MaxOwned = 64, MaxVisited = 200000, DeadlineMs = 8000,
+        });
+        Assert.Contains("128-row limit", all, StringComparison.Ordinal);
+        Assert.Contains("64 owned sub-objects", all, StringComparison.Ordinal);
+        Assert.Matches(@"following 200\D?000 pointers", all);   // the group separator is the culture's
+        Assert.Contains("8 s time budget", all, StringComparison.Ordinal);
+        Assert.Contains("cancelled", all, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RelatedStopsClause_OneCauseSaysOnlyThatCause()
+    {
+        var capOnly = PartialResultNotice.RelatedStopsClause(
+            new RelatedObjectsStops { ResultCapHit = true, MaxResults = 128, DeadlineMs = 8000 });
+        Assert.Contains("128-row limit", capOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("time budget", capOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("cancelled", capOnly, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RelatedStopsClause_AFinishedWalk_OrAnOlderDll_SaysNothing()
+    {
+        // The control, green before and after.
+        Assert.Equal("", PartialResultNotice.RelatedStopsClause(null));
+        Assert.Equal("", PartialResultNotice.RelatedStopsClause(new RelatedObjectsStops { MaxResults = 128 }));
+    }
+
     // ==================================================================
     // Z10 — the advice must name a lever the panel actually has.
     // ==================================================================

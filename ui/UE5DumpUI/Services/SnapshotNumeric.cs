@@ -49,6 +49,12 @@ public static class SnapshotNumeric
             case "UInt64Property": if (byteLen < 8) return false; value = BitConverter.ToUInt64(b);  return true;
             case "Int8Property":   value = (sbyte)b[0]; return true;
             case "ByteProperty":   value = b[0];        return true;
+            // [P3-SNAPNUM-ENUM] An enum is captured as ONE unsigned byte (the DLL's
+            // Radar::TryDataTypeFromPropertyTypeName maps EnumProperty -> UInt8). Decode it unsigned
+            // at whatever length was captured -- `b` is zero-filled past byteLen, so this is the
+            // zero-extended little-endian value. Without this arm every enum field got a NULL
+            // numeric_value, so SPC and Group Match skipped it and the grid showed raw hex.
+            case "EnumProperty":   value = BitConverter.ToUInt64(b); return true;
             default:               return false;
         }
     }
@@ -193,6 +199,7 @@ public static class SnapshotNumeric
             "UInt64Property" when byteLen >= 8 => BitConverter.ToUInt64(b).ToString(CultureInfo.InvariantCulture),
             "Int8Property"  => ((sbyte)b[0]).ToString(CultureInfo.InvariantCulture),
             "ByteProperty"  => b[0].ToString(CultureInfo.InvariantCulture),
+            "EnumProperty"  => BitConverter.ToUInt64(b).ToString(CultureInfo.InvariantCulture),   // [P3-SNAPNUM-ENUM]
             _               => hex,
         };
     }

@@ -238,10 +238,17 @@ public partial class SnapshotViewModel
             // cap rather than the answer.
             var capNote = res.PerSlotCapHit
                 ? PartialResultNotice.PerSlotWitnessCap(res.PerSlotCap) : "";
+            // [W1-GROUP-DENYLIST] Group mode APPLIES the Diff-scope class denylist (documented design,
+            // snapshot-group-match-spec.md:255) but showed no trace of it -- its picker is diff-only. Say how many
+            // classes it hid and where to see or clear them, on the no-match line too: a hidden class is exactly when
+            // "no objects hold all N values" may be the denylist rather than the answer.
+            var denyNote = _excludedClasses.Count > 0
+                ? $"  ·  {_excludedClasses.Count:N0} class(es) hidden by the Diff denylist (switch to Diff mode to see or clear it)"
+                : "";
             GroupStatusText = (res.Total == 0
                 ? $"No objects hold all {GroupInputs.Count} values."
                 : $"{res.Total:N0} object(s) matched{trunc}  ·  scanned {res.ScannedObjects:N0}")
-                + capNote;
+                + capNote + denyNote;
         }
         catch (OperationCanceledException)
         {

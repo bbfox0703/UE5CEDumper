@@ -430,7 +430,7 @@
                   Foreground="#888" Cursor="Hand"
                   ToolTip.Tip="Hide references list"/>
         </StackPanel>
-        <DataGrid ItemsSource="{Binding References}"
+        <DataGrid x:Name="ReferencesGrid" ItemsSource="{Binding References}"
                   IsReadOnly="True"
                   CanUserResizeColumns="True"
                   GridLinesVisibility="Horizontal"

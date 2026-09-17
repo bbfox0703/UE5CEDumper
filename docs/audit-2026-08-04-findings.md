@@ -177,7 +177,7 @@ existing behaviour / perf.
 | B18 ✅ | 🟡 | S/low | Genau | ~~Extra Scan ignores `Tot::Requested()` ⇒ CE UI freezes on the unbounded join~~ **FIXED build 2603** |
 | B19 ✅ | 🟡 | S/low | Sein | ~~One shared `error_code` ⇒ the first undeletable entry aborts the whole retention sweep, forever~~ **FIXED build 2603** |
 | B20 ✅ | 🟡 | S/low | TeleportVM | ~~Filter keystroke reverts an uncommitted edit; `_coordFilterMemory` never disposed~~ **FIXED build 2610** |
-| B21 ✅ | 🟡 | S–M/low | Coord parsers | ~~Three independent import-parser holes (AllowThousands, quote-state, regex-in-literal)~~ **FIXED build 2621** |
+| B21 🟡 | 🟡 | S–M/low | Coord parsers | **1 of 3 shipped.** ~~AllowThousands~~ **FIXED build 2621**; the **quote-state** and **regex-in-literal** holes are UNTOUCHED at HEAD — see the correction below the table |
 | B22 ✅ | 🟡 | S/low | Laufen | ~~Base captured as 0 ⇒ the knob pins the CMC value at 0 against the game~~ **FIXED build 2603** |
 | B23 ✅ | 🟡 | S/low | CE Lua | ~~Autorun binds DEBUG at CE start (its own instruction can't work); non-finite double emitted as bare `Infinity`~~ **FIXED build 2610** |
 | B24 ✅ | 🟡 | S/low | Frieren | ~~Forced hook installs burn the automatic retry budget~~ **FIXED build 2603** |
@@ -199,6 +199,27 @@ existing behaviour / perf.
 | B46 ✅ | 🟡 | S/low | Renge | ~~`HexToBytes` maps non-hex chars to `0x00`, drops an odd trailing nibble, cannot report failure — `write_mem` answers `ok:true`~~ **FIXED build 2603** |
 | B47 ✅ | 🟡 | S/low | Heiter | ~~"First-proxy-wins" mutex is `Global\…` though the comment says per-process; without `SeCreateGlobalPrivilege` the dedup silently never fires~~ **FIXED build 2603** |
 | B48 ✅ | 🟡 | S/low | gen_proxy_forwarders | ~~No PE-machine check ⇒ under 32-bit Python, WOW64 redirection feeds the **x86** winmm into an x64-only target~~ **FIXED build 2603** |
+
+> ### ⚠ B21 CORRECTED 2026-09-10 — the row claimed three fixes and one shipped
+>
+> The status cell struck all three holes through as *"FIXED build 2621"*. Only the first
+> one was: `CoordPrecision.TryParse` drops `AllowThousands` and is pinned by
+> `CoordCsvCodecTests.CoordPrecision_RejectsAnyCommaInANumber`. Re-read at HEAD:
+>
+> * **Hole 2, quote-state — STILL PRESENT.** `CoordCsvCodec.SplitLines` flips `inQuotes`
+>   on **any** `"` wherever it sits, while `SplitCsvLine` enters quote mode **only at
+>   field start**. One unpaired mid-field quote therefore still swallows every following
+>   record to EOF, and there is no unterminated-quote diagnostic anywhere in the file.
+> * **Hole 3, regex-in-literal — STILL PRESENT**, surfacing in the import preview as a
+>   Changed row with a wrong coordinate.
+>
+> ⭐ **The dev-log entry for build 2621 is HONEST** — it describes only the AllowThousands
+> decision. The over-claim is in this tracker, which is the file a later reader greps, and
+> it is why the row survived two audits looking closed. Found by the audit-#4 assessment
+> phase 1 re-check (`[A4-ASSESS-2026-09-09]`), which classified B21 `WEAKENED`.
+>
+> ⛔ **Do not let a hole-1 green close this row.** Either re-scope it to hole 1 explicitly,
+> or reopen 2 and 3 as work — but the two remaining holes are real and are not "verified".
 
 ## Summary table — refactor & hygiene
 

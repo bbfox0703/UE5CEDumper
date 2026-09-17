@@ -53,6 +53,16 @@ import sys
 SAMPLE = os.path.join("tools", "ue-sample")
 SRC = os.path.join(SAMPLE, "DumperTest", "Source", "DumperTest")
 HEADERS = ["DumperTestActor.h", "DumperTestTypes.h"]
+
+# ⭐ THE SECOND FIXTURE, added 2026-09-16. `DumperTest58` carries only what 5.4 CANNOT host --
+# a container optional (5.4's UHT refuses one outright) and the intrusive string / name / struct
+# optionals that exist from 5.5. Its fields are documented in the same README, so this gate has to
+# know about them or every one of its rows reads as a phantom claim about the 5.4 headers.
+# ⚠ Both source sets are OPTIONAL-by-existence: the 5.8 mirror is a copy of a project that lives
+# outside the repo, and a checkout without it must not fail this gate for a file it never had.
+SRC58 = os.path.join(SAMPLE, "DumperTest58", "Source", "DumperTest58")
+HEADERS58 = ["DumperTest58Actor.h"]
+VALUE_SOURCES58 = ["DumperTest58Actor.cpp", "DumperTest58Actor.h"]
 # Value literals may live in any of these: the .cpp sets most of them, but an enum's
 # numeric value (Grade = Elite = 2) is only in the types header.
 VALUE_SOURCES = ["DumperTestActor.cpp", "DumperTestActor.h", "DumperTestTypes.h"]
@@ -109,8 +119,10 @@ def collect_fields(root):
     as a typo.
     """
     fields = {}
-    for hdr in HEADERS:
-        text = read(root, SRC, hdr)
+    for src, hdr in ([(SRC, h) for h in HEADERS]
+                     + [(SRC58, h) for h in HEADERS58
+                        if os.path.isfile(os.path.join(root, SRC58, h))]):
+        text = read(root, src, hdr)
         for m in UPROP_RE.finditer(text):
             decl = " ".join(m.group("decl").split())
             # Drop any initialiser first. `UPROPERTY() float BaseValue = 0.f;` otherwise
@@ -164,7 +176,9 @@ def check(root, verbose):
     # those blobs was the token '**'. Two of this gate's own bugs came from that single
     # oversight. Fences carry shell commands, never field claims -- drop them outright.
     readme = re.sub(r"```.*?```", "", read(root, SAMPLE, "README.md"), flags=re.S)
-    corpus = "\n".join(read(root, SRC, f) for f in VALUE_SOURCES)
+    corpus = "\n".join([read(root, SRC, f) for f in VALUE_SOURCES]
+                       + [read(root, SRC58, f) for f in VALUE_SOURCES58
+                          if os.path.isfile(os.path.join(root, SRC58, f))])
 
     if not fields:
         return ["parsed 0 UPROPERTY fields -- the header layout changed and this check is blind"]

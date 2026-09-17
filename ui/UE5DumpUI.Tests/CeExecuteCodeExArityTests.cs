@@ -158,6 +158,43 @@ public class CeExecuteCodeExArityTests
         Assert.Contains("Nothing loaded — nothing to shut down.", text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Shipped_cheat_table_clears_a_stale_ownership_flag_in_the_serving_branch()
+    {
+        // [A3-B30-STALE-FLAG] The same global, the same CE session, the same File > Open: ue5_inject's serving
+        // branch returns false, the [ENABLE] block defers an untick, and [DISABLE] runs ue5_shutdown -- whose
+        // guard a flag left true by the previous table would pass.
+        var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
+        Assert.NotNull(ct);
+        var text = File.ReadAllText(ct!);
+
+        var serving = text.IndexOf("already loaded and serving in this process as '", StringComparison.Ordinal);
+        Assert.True(serving >= 0, "the serving branch must still exist");
+        var ret = text.IndexOf("return false", serving, StringComparison.Ordinal);
+        var clear = text.IndexOf("UE5_StartedByThisRecord = false", serving, StringComparison.Ordinal);
+        Assert.True(clear > serving && clear < ret,
+            "ue5_inject's serving branch must clear the flag before it returns false");
+    }
+
+    [Fact]
+    public void Shipped_cheat_table_clears_a_stale_ownership_flag_before_its_first_bailout()
+    {
+        // [A3-B30-STALE-FLAG] review 4: ue5_inject's DLL-not-found bail-out ran BEFORE the serving check. A cancelled
+        // file picker there returned false with the previous table's flag still true, and the untick then passed
+        // ue5_shutdown's guard and tore a serving pipe down. The clear leads the function.
+        var ct = FindRepoFile(Path.Combine("scripts", "UE5CEDumper.CT"));
+        Assert.NotNull(ct);
+        var text = File.ReadAllText(ct!);
+
+        var fn = text.IndexOf("function ue5_inject()", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "ue5_inject must still exist");
+        var firstBail = text.IndexOf("return false", fn, StringComparison.Ordinal);
+        var dllCheck = text.IndexOf("if not DLL_PATH then", fn, StringComparison.Ordinal);
+        var clear = text.IndexOf("UE5_StartedByThisRecord = false", fn, StringComparison.Ordinal);
+        Assert.True(clear > fn && clear < dllCheck && clear < firstBail,
+            "ue5_inject must clear the flag before its DLL-path check and its first return false");
+    }
+
     [Theory]
     [InlineData("inject")]
     [InlineData("autorun")]

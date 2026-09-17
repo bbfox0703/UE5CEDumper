@@ -27,9 +27,14 @@ namespace UE5DumpUI.Models;
 ///     (e.g. "1000", "3.14", "0x7FF6CD120000", "true"). The generator parses
 ///     this once and emits a Lua number literal -- no runtime parsing in the
 ///     generated script.</param>
+/// <param name="BoolFieldMask">For a BoolProperty struct sub-field PACKED into a byte shared with
+///     siblings: its single-bit FieldMask, so the helper does a read-modify-write of that bit
+///     instead of stamping the whole byte (which zeroed a sibling or landed on bit 0). 0 = native
+///     or unresolved: today's whole-byte write. [A3-FIRE-STRUCT-BOOLMASK]</param>
 public sealed record BakedParamValue(
     string ParamName,
     string UeTypeName,
     int Size,
     int Offset,
-    string LiteralText);
+    string LiteralText,
+    int BoolFieldMask = 0);

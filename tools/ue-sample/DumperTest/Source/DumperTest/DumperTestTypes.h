@@ -43,6 +43,54 @@ enum class EDumperTestWideGrade : int32
 	Wide_High   = 0x007F0000,   // byte 2 set, so a 2-byte mis-width is caught too
 };
 
+/// L39 -- the element type of `Probe_Lanes`, the `TArray<TEnumAsByte<E>>` this zoo had
+/// nowhere. Three things about it are forced:
+///   * a RAW `enum`, not `enum class`. `TEnumAsByte<>` only accepts an unscoped enum, and
+///     an unscoped UENUM is also what makes a UEnum store its members UNPREFIXED
+///     (`Lane_Left`, not `EDumperTestLane::Lane_Left`) -- so this doubles as the control
+///     arm for `[USMAP-ENUM-NAME-QUALIFIED]`, whose fix strips the prefix a SCOPED enum
+///     carries. EDumperTestWideGrade above is the scoped half of that pair.
+///   * `: int` explicitly. UE 5.4 UHT wants an underlying type spelled out, and `int` is
+///     what the engine's own TEnumAsByte hosts use (`ECollisionChannel`).
+///   * every value <= 255. `TEnumAsByte` stores ONE byte; a larger enumerator would be
+///     silently truncated and the fixture would document a value it does not hold.
+/// Values are non-contiguous and non-sorted so an element read at the wrong stride cannot
+/// land on a plausible-looking neighbour.
+UENUM()
+enum EDumperTestLane : int
+{
+	Lane_None   = 0,
+	Lane_Left   = 11,
+	Lane_Center = 33,
+	Lane_Right  = 22,
+};
+
+/// L30 + L39 -- the values BP_UsmapProbe's CDO must carry, as CODE rather than as prose.
+///
+/// ⛔ They are NOT the actor's constructor defaults, and cannot be: unversioned property
+/// serialization writes only what differs from the archetype, so a probe seeded to the
+/// same value in C++ would be ABSENT from the cooked stream and both mappings would
+/// "agree" on nothing at all. The constructor leaves the probes quiet; the ASSET is loud.
+///
+/// Declaring them here rather than in the authoring script gives the three readers that
+/// must not drift -- the asset, README.md's table and check_ue_sample_values.py -- one
+/// source of truth. tools/ue-sample/make_usmap_probe.py parses these two lines.
+namespace DumperTestUsmapProbe
+{
+	/// The int32 declared immediately AFTER the 4-byte enum. Its whole job is to be read
+	/// at the wrong offset when the enum's width is described wrongly.
+	inline constexpr int32 AfterWideEnum = 0x11223344;
+
+	/// The int32 declared immediately AFTER the TEnumAsByte array. A DIFFERENT constant
+	/// from the one above on purpose -- equal guards could mask a shift from one onto the
+	/// other.
+	inline constexpr int32 AfterLanes = 0x44556677;
+
+	/// The int32 after the CONTROL array. Three distinct guards, so a shift from any one
+	/// onto any other cannot look like a correct read.
+	inline constexpr int32 AfterRawBytes = 0x778899AA;
+}
+
 /// Two-float struct in the shape of a GAS `FGameplayAttributeData`
 /// (BaseValue / CurrentValue). Exists for the nested-StructProperty capture and
 /// the "Flatten GAS attributes" CE-export toggle, which special-cases exactly
@@ -210,4 +258,50 @@ struct FDumperTestTuneBlock
 
 	UPROPERTY() FName BlockName;
 	UPROPERTY() TArray<int32> Tunes;
+};
+
+// ============================================================
+// FDumperTestInvokeProbe — the host for [P3-INVOKE-STRUCT-FSTRING] (FIX PASS live check L10).
+//
+// A struct PARAM with an FString MEMBER. Before that fix, the app's FIRE sent a string member's
+// typed text down the scalar route, i.e. as a raw int32 over FString.Data -- so a typed "42"
+// handed the callee Data = 0x2A. The fix refuses typed text in a string member and leaves its
+// 16 bytes zeroed, which is the valid empty FString {null, 0, 0}.
+//
+// ⭐ The two int32s are the CONTROL, not decoration: they must arrive exactly as typed while the
+// string member between them arrives empty. A zeroed buffer would pass the string half by
+// accident; a Head/Tail that also read 0 would say nothing was written at all.
+//
+// Layout on x64: Head +0, Label +8 (16 bytes), Tail +24 -- 32 bytes, 8-aligned. Read the
+// offsets off the running game's param walk rather than trusting this line.
+// ============================================================
+// ============================================================
+// FDumperTestStrRow — a struct ARRAY ELEMENT with an FString MEMBER (live check L28).
+//
+// `[W5-CEXML-FSTRING]`'s fourth entrance is exactly this shape: a struct-array element's string
+// member, which the broken exporter turned into an empty placeholder folder. Nothing here had it —
+// FDumperTestStat carries FName / int32 / FText — and widening THAT struct would have moved every
+// offset the README quotes for `Arr_Struct`. A new type instead.
+//
+// ⚠ `Note` is an FText, so the same element also exercises the FText arm the fix folded in, and
+// `Num` is the control: a plain scalar beside the string members must still export as a value.
+// ============================================================
+USTRUCT(BlueprintType)
+struct FDumperTestStrRow
+{
+	GENERATED_BODY()
+
+	UPROPERTY() FString Text;
+	UPROPERTY() int32   Num = 0;
+	UPROPERTY() FText   Note;
+};
+
+USTRUCT(BlueprintType)
+struct FDumperTestInvokeProbe
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32   Head = 0;
+	UPROPERTY() FString Label;
+	UPROPERTY() int32   Tail = 0;
 };

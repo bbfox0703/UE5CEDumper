@@ -38,6 +38,252 @@ public class AuditL11HonestyTests
     // Negative control: drop the BadgeSuffix calls in NavigateToDataTableContainer /
     // PopulateDataTableRowFields / DataTableFieldPreview -> all three Truncated facts fail.
 
+    // ══ [P1-WALK-UNREADABLE] / [A4-REROOT-STALE-WARNING] -- the walk's own warning survives the re-root ══
+    //
+    // A re-root (the Go box, every cross-tab handoff, Find Refs' Open) walked, let UpdateDisplay say the object was
+    // freed -- then set StatusText to the Back hint, or to "" on a first navigation. The report and the thing it reports
+    // on were produced by different code, which is this class's theme.
+
+    private static LiveWalkerViewModel WalkerWith(params (string addr, InstanceWalkResult r)[] walks)
+    {
+        var dump = new StubDumpService();
+        foreach (var (addr, r) in walks) dump.RegisterStruct(addr, r);
+        return new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+    }
+
+    private static InstanceWalkResult HealthyWalk(string addr) => new()
+    {
+        Address = addr, Name = "Pawn_0", ClassName = "Actor",
+        Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+    };
+
+    [Fact]
+    public async Task ReRoot_OntoAFreedObject_KeepsTheStaleWarning()
+    {
+        var vm = WalkerWith(("0x2000", new InstanceWalkResult { Address = "0x2000", IsStale = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x2000");
+
+        Assert.Contains("freed/recycled", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ReRoot_OntoAFreedObject_KeepsTheWarning_AndTheWayBack()
+    {
+        var vm = WalkerWith(("0x1000", HealthyWalk("0x1000")),
+                            ("0x2000", new InstanceWalkResult { Address = "0x2000", IsStale = true }));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x2000");
+
+        Assert.Contains("freed/recycled", vm.StatusText);
+        Assert.Contains("Back returns to", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Walk_OfAnUnreadableObject_SaysSo()
+    {
+        var vm = WalkerWith(("0x3000", new InstanceWalkResult { Address = "0x3000", IsUnreadable = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x3000");
+
+        Assert.Contains("no longer readable", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData("", "", "")]
+    [InlineData("W", "", "W")]
+    [InlineData("", "H", "H")]
+    [InlineData("W", "H", "W  ·  H")]
+    public void ComposeReRootStatus_NeverDropsEitherHalf(string walk, string hint, string expected)
+        => Assert.Equal(expected, LiveWalkerViewModel.ComposeReRootStatus(walk, hint));
+
+    // ══ [P1-SPARSEDELEGATE-REFS] -- Find References blames the game only after a complete scan ══
+    //
+    // A sparse delegate whose bindings the DLL could not read was skipped, and the sweep still called itself complete,
+    // so "No references found — likely held by a non-reflected pointer" blamed the game for our gap. The same hint
+    // printed over a scan that hit its deadline (the PATTERN-P5 widening).
+
+    private sealed class RefsStub : StubDumpService
+    {
+        public FindReferencesResult Result { get; set; } = new();
+        public override Task<FindReferencesResult> FindReferencesToUObjectAsync(
+            string addr, int maxResults = 32, CancellationToken ct = default) => Task.FromResult(Result);
+    }
+
+    private static LiveWalkerViewModel RefsWalker(FindReferencesResult result)
+    {
+        var vm = new LiveWalkerViewModel(new RefsStub { Result = result }, new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        return vm;
+    }
+
+    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0) => new()
+    {
+        ObjectsScanned = 10, ObjectsTotal = 10, DurationMs = 5, DeadlineHit = deadline, SparseUnlocated = unlocated,
+    };
+
+    [Theory]
+    [InlineData(false, 0, true)]
+    [InlineData(true, 0, false)]
+    [InlineData(false, 2, false)]
+    [InlineData(true, 2, false)]
+    public void NoReferencesStatus_BlamesTheGameOnlyAfterACompleteScan(bool deadline, int unlocated, bool blames)
+        => Assert.Equal(blames, LiveWalkerViewModel.NoReferencesStatus(RefScan(deadline, unlocated))
+                                    .Contains("non-reflected", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task FindRefs_None_WithUnreadableSparseDelegates_DoesNotBlameTheGame()
+    {
+        var vm = RefsWalker(new FindReferencesResult { Scan = RefScan(unlocated: 2) });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("non-reflected", vm.StatusText);
+        Assert.Contains("2 sparse delegate(s)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FindRefs_Found_WithUnreadableSparseDelegates_SaysSomeMayBeMissing()
+    {
+        var vm = RefsWalker(new FindReferencesResult
+        {
+            References = new List<ReferenceMatch> { new() { OwnerAddress = "0x2000", OwnerName = "Owner", FieldName = "Target" } },
+            Scan = RefScan(unlocated: 1),
+        });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 sparse delegate(s) unreadable", vm.StatusText);
+    }
+
+    // ══ [A4-LW-DISCONNECT-PARENT] / [A1-DETECT-REPUBLISH] -- ClearOnDisconnect keeps its promise ══
+    //
+    // Both methods promise "a reconnect never shows the previous game's ...". Live Walker's left the Parent button, the
+    // References header and the full function list; Detect Player Stats' was undone by a run already in flight.
+
+    private sealed class FuncsStub : StubDumpService
+    {
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+            => Task.FromResult(new List<FunctionInfoModel> { new() { Name = "ReceiveBeginPlay" } });
+    }
+
+    [Fact]
+    public async Task LiveWalker_ClearOnDisconnect_LeavesNoParent_NoReferencesHeader_AndNoFunctions()
+    {
+        var dump = new FuncsStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Pawn_0", ClassName = "Pawn", ClassAddr = "0x5000",
+            OuterAddr = "0x2000", OuterName = "PersistentLevel", OuterClassName = "Level",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        Assert.True(vm.HasParent);          // the fixture: a live Parent button...
+        Assert.NotEmpty(vm.Functions);      // ...and a loaded function list
+        vm.HasReferences = true;
+        vm.ReferencesHeader = "References to Pawn_0 (1)";
+
+        vm.ClearOnDisconnect();
+        vm.FunctionFilter = "R";            // the next filter edit rebuilds the visible list from the FULL one
+
+        Assert.False(vm.HasParent);
+        Assert.Equal("", vm.CurrentOuterAddr);
+        Assert.False(vm.HasReferences);
+        Assert.Equal("", vm.ReferencesHeader);
+        Assert.False(vm.HasFunctions);
+        Assert.Empty(vm.Functions);
+    }
+
+    private sealed class GatedBatchStub : StubDumpService
+    {
+        public TaskCompletionSource<PropertySearchBatchResult> Gate { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries,
+            string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default)
+            => Gate.Task;
+    }
+
+    [Fact]
+    public async Task DetectStats_ARunInFlightAtDisconnect_TouchesNeitherTheRowsNorTheStatus()
+    {
+        var dump = new GatedBatchStub();
+        var vm = new DetectStatsViewModel(dump, new MockLoggingService());
+        var run = vm.DetectCommand.ExecuteAsync(null);
+
+        vm.ClearOnDisconnect();
+        var reset = vm.StatusText;
+        dump.Gate.SetResult(new PropertySearchBatchResult());   // the suspended run resumes, into a new session
+        await run;
+
+        Assert.Equal(reset, vm.StatusText);
+        Assert.Empty(vm.Results);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task DetectStats_AFailureAfterDisconnect_DoesNotPrintOverTheReset()
+    {
+        var dump = new GatedBatchStub();
+        var vm = new DetectStatsViewModel(dump, new MockLoggingService());
+        var run = vm.DetectCommand.ExecuteAsync(null);
+
+        vm.ClearOnDisconnect();
+        var reset = vm.StatusText;
+        dump.Gate.SetException(new IOException("pipe broken"));
+        await run;
+
+        Assert.Equal(reset, vm.StatusText);
+    }
+
+    // ══ [W5-INSTEXPORT-TRUNC] -- Instance Finder's CE XML export says when it was truncated ══
+    //
+    // GenerateInstanceXml stops at its entry cap and says so through LastExportTruncated. Live Walker's two exports read
+    // it; Instance Finder's copied a truncated table without a word -- and then blanked its status.
+
+    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
+    {
+        var dump = new StubDumpService();
+        var fields = new List<LiveFieldValue>();
+        for (int i = 0; i < fieldCount; i++)
+            fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Big_0", ClassName = "Big", Fields = fields,
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Big_0", ClassName = "Big" };
+        return (vm, platform);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedAtTheEntryCap_SaysSo_WithThisPanelsLevers()
+    {
+        var (vm, platform) = FinderWith(61_000);   // past the 60,000-entry cap: one entry per int field
+        Assert.Equal(61_000, vm.Fields.Count);    // the walk landed
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);                     // it WAS copied...
+        Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
+        Assert.Contains("Collapse Pointer Nodes", vm.StatusText);   // a lever THIS panel has
+        Assert.DoesNotContain("Drill Depth", vm.StatusText);        // not Live Walker's
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_Complete_AddsNoWarning()
+    {
+        var (vm, platform) = FinderWith(3);
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Equal("", vm.StatusText);
+    }
+
     private static LiveWalkerViewModel MakeWalker()
     {
         var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
@@ -688,6 +934,129 @@ public class AuditL11HonestyTests
         Assert.True(ParamBufferBuilder.TryValidateScalar("ObjectProperty", 8, "0x7FF612340000", out _));
         Assert.False(ParamBufferBuilder.IsUnwritableParam("StrProperty"));
         Assert.False(ParamBufferBuilder.IsUnwritableParam("ObjectProperty"));
+    }
+
+    // ── [P3-INVOKE-STRUCT-FSTRING] a string MEMBER of a struct param ───────────────────
+    //
+    // A top-level FString goes through InvokeStringParam and the DLL builds it by value. A
+    // string SUB-FIELD took the scalar route instead: TryValidateScalar has no width for a
+    // 16-byte StrProperty and passed it, and WriteParam's size-driven default wrote the textbox
+    // as a raw integer over FString.Data -- a bogus pointer handed to ProcessEvent, a third hole
+    // beside Y11-OPAQUEDROP. The recorded safe shape: refuse a NON-EMPTY member; the all-zero
+    // FString {null,0,0} is the valid empty and must still pass. (TryValidateScalar itself keeps
+    // accepting strings -- Y11_StringAndPointerParamsAreStillAccepted -- because a TOP-LEVEL
+    // string is built for real.)
+
+    private static readonly DynamicStructField[] WithLabel =
+    [
+        new("Id",    "IntProperty", 0, 4),
+        new("Label", "StrProperty", 8, 16),
+    ];
+
+    [Theory]
+    [InlineData("StrProperty")]
+    [InlineData("Utf8StrProperty")]
+    [InlineData("AnsiStrProperty")]
+    public void StructFString_NonEmptyMember_IsRefusedAndNamed(string strType)
+    {
+        DynamicStructField[] fields = [new("Id", "IntProperty", 0, 4), new("Label", strType, 8, 16)];
+
+        var ok = ParamBufferBuilder.TryValidateStructSubFields(fields, ["7", "hello"], out var field, out var err);
+
+        Assert.False(ok);
+        Assert.Equal("Label", field);
+        Assert.Contains("string", err, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("42")]   // written as int32 42 over FString.Data
+    [InlineData("0")]    // the one-character string "0" -- NOT the zero default a number box has
+    [InlineData(" ")]    // a string of one space is still a string the user typed
+    public void StructFString_AnyTypedTextIsRefused(string text)
+    {
+        Assert.False(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["0", text], out var field, out _));
+        Assert.Equal("Label", field);
+    }
+
+    [Fact]
+    public void StructFString_EmptyMember_StillPasses()
+    {
+        // The control, green before and after: an untouched string box (GetDefaultValue gives
+        // "") sends the valid empty FString.
+        Assert.True(ParamBufferBuilder.TryValidateStructSubFields(WithLabel, ["7", ""], out _, out _));
+    }
+
+    // Review of d8a7f44f: FIRE now leaves a string member zeroed and refuses typed text, but Copy AA
+    // Script still baked it as an 'fstring' row, and the helper built a CE-allocated FString -- into
+    // an OUT struct too, where the callee's assignment frees memory UE never allocated. And Copy AA
+    // ran no gate at all, so a typed TFieldPath / TOptional value was baked as a raw int32. Both
+    // live on the Avalonia window, so they are pinned by reading the source back (the
+    // InvokeBoolMaskTests pattern).
+    private static string DialogSource()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Views", "InvokeParamDialog.cs");
+            if (File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        return File.ReadAllText(path!);
+    }
+
+    [Fact]
+    public void StructFString_CopyAAScript_SkipsStringMembersToo()
+    {
+        var src = DialogSource();
+        int at = src.IndexOf("internal IReadOnlyList<BakedParamValue> CollectBakedValues()", StringComparison.Ordinal);
+        Assert.True(at > 0, "CollectBakedValues not found — re-point this pin");
+        int add = src.IndexOf("list.Add(new BakedParamValue(", at, StringComparison.Ordinal);
+        Assert.True(add > at);
+
+        // The struct branch's first row add must be preceded by the string-member skip -- the exact
+        // statement, not just the predicate's name somewhere (review of cd73ec38).
+        Assert.Matches(new System.Text.RegularExpressions.Regex(
+            @"(?m)^\s*if \(ParamBufferBuilder\.IsStringType\(sf\.TypeName\)\) continue;\s*$"), src[at..add]);
+    }
+
+    [Fact]
+    public void CopyAAScript_RunsFiresGate_BeforeGenerating()
+    {
+        var src = DialogSource();
+        int h = src.IndexOf("private async void OnCopyBakedScriptClicked(", StringComparison.Ordinal);
+        Assert.True(h > 0, "OnCopyBakedScriptClicked not found — re-point this pin");
+        int gen = src.IndexOf("BakedScriptGenerator.Generate(", h, StringComparison.Ordinal);
+        Assert.True(gen > h);
+        // The call must be a REFUSAL that returns before anything is collected (review of cd73ec38):
+        // `if (!TryValidateInputsForInvoke(out var e)) { ... return; }`, ahead of CollectBakedValues().
+        var body = src[h..gen];
+        var refusal = System.Text.RegularExpressions.Regex.Match(body,
+            @"if\s*\(\s*!TryValidateInputsForInvoke\(out var \w+\)\)\s*\{[\s\S]*?\breturn;\s*\}");
+        Assert.True(refusal.Success, "the gate is not an if-refusal that returns");
+        // The lazy match stops at the FIRST `return; }`. If the refusal lost its return, that would
+        // be a later one -- past the collection -- so the block must not reach CollectBakedValues.
+        Assert.DoesNotContain("CollectBakedValues", refusal.Value, StringComparison.Ordinal);
+        int collect = body.IndexOf("CollectBakedValues()", StringComparison.Ordinal);
+        Assert.True(collect > refusal.Index, "the gate runs after the values are collected");
+
+        // ...and the gate is FIRE's shared predicates, not a copied type list.
+        int g = src.IndexOf("private bool TryValidateInputsForInvoke(", StringComparison.Ordinal);
+        Assert.True(g > 0, "TryValidateInputsForInvoke not found");
+        int gEnd = src.IndexOf("\n    }", g, StringComparison.Ordinal);
+        var gate = src[g..gEnd];
+        Assert.Contains("ParamBufferBuilder.TryValidateStructSubFields(", gate, StringComparison.Ordinal);
+        Assert.Contains("ParamBufferBuilder.TryValidateScalar(", gate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StructFString_WriteNeverStampsTheTextOverData()
+    {
+        // Belt and braces behind the gate: the builder itself leaves a string member's 16 bytes
+        // zeroed, so a caller that skips validation drops the text instead of sending a pointer.
+        var buf = new byte[24];
+        ParamBufferBuilder.WriteStructParam(buf, 0, WithLabel, ["0", "42"]);
+        Assert.All(buf[8..24], b => Assert.Equal(0, b));
     }
 
     // ══ Y14 — "N baked param(s)" was reported over params that failed to parse ══════

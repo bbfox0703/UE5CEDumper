@@ -10,6 +10,11 @@ public sealed class FunctionInfoModel
     public string FullName { get; init; } = "";
     public string Address { get; init; } = "";
     public uint FunctionFlags { get; init; }
+    /// <summary>[W4-HEXSORT] <see cref="Address"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong AddressValue =>
+        ulong.TryParse(Address.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
     public byte NumParms { get; init; }
     public ushort ParmsSize { get; init; }
     public ushort ReturnValueOffset { get; init; } = 0xFFFF;
@@ -67,4 +72,7 @@ public sealed class FunctionParamModel
 /// Sub-field of a struct param discovered by the DLL walking the UScriptStruct's FField chain.
 /// Used as fallback when KnownStructLayouts has no hardcoded layout for the struct type.
 /// </summary>
-public sealed record DynamicStructField(string Name, string TypeName, int Offset, int Size);
+/// <param name="BoolFieldMask">For a BoolProperty sub-field: its single-bit FieldMask when the
+/// bool is PACKED into a byte shared with siblings (e.g. FHitResult's bBlockingHit /
+/// bStartPenetrating); 0 when native or unresolved. [A3-FIRE-STRUCT-BOOLMASK]</param>
+public sealed record DynamicStructField(string Name, string TypeName, int Offset, int Size, int BoolFieldMask = 0);

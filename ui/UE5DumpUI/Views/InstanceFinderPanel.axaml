@@ -107,7 +107,7 @@
                    Text="{StaticResource str.InstanceFinder.ContainerMatches}"
                    Foreground="#CE9178" FontWeight="Bold" FontSize="12"
                    Margin="0,0,0,4"/>
-        <DataGrid ItemsSource="{Binding ContainerMatches}"
+        <DataGrid x:Name="ContainerMatchesGrid" ItemsSource="{Binding ContainerMatches}"
                   IsReadOnly="True"
                   CanUserResizeColumns="True"
                   GridLinesVisibility="Horizontal"
@@ -359,7 +359,7 @@
         <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                      IsVisible="{Binding IsLoadingFields}" Height="2" Margin="0,0,0,4"/>
 
-        <DataGrid ItemsSource="{Binding Fields}"
+        <DataGrid x:Name="InstanceFieldsGrid" ItemsSource="{Binding Fields}"
                   IsReadOnly="True"
                   CanUserResizeColumns="True"
                   CanUserSortColumns="True"

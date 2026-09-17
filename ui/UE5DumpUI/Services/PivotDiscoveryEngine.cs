@@ -189,6 +189,8 @@ public static class PivotDiscoveryEngine
                 rep.Hex.Select(h => SnapshotNumeric.Render(g.DeclaredType, h))),
             ObjAddr          = rep.ObjAddr,
             NormPath         = rep.NormPath,
+            ArrayField       = rep.ArrayField,     // [W1-DISCOVER-ARRAY] one array element per group
+            InnerProp        = rep.InnerProp,
             InterestScore    = score.FinalScore,
             CategoryName     = PropertyScoringTable.DisplayName(score.Category),
             CategoryColor    = PropertyScoringTable.CategoryColor(score.Category),

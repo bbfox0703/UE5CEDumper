@@ -74,27 +74,40 @@ public static class InvokeScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Invoke", MailboxTimeout.UntickAndReturn);
         Line(sb);
 
-        // Mailbox helpers
-        AppendMailboxHelpers(sb);
-
-        // Instance resolver via CMD_FIND_INSTANCE
-        AppendInstanceResolver(sb);
-
-        // Function resolver via CMD_FIND_FUNCTION
-        AppendFunctionResolver(sb);
-
-        // Print resolved info
-        Line(sb, "dbg(string.format('  Resolved: %s::%s', OWNER_CLASS, FUNC_NAME))");
-        Line(sb, "dbg(string.format('  Instance: 0x%X  |  UFunction: 0x%X', instanceAddr, ufuncPtr))");
-        Line(sb);
-
-        if (hasParams)
+        // [A3-CEFORM-4X-STALESLAB] review follow-up: a param at or past the slab's end cannot
+        // be written through the mailbox. Refuse before the first round-trip; nothing is applied.
+        long required = RequiredSpan(func);
+        if (required > CeMailboxLayout.ParamsDataBytes)
         {
-            AppendParamForm(sb, className, funcName, func, inputParams, func.ParmsSize);
+            AppendSlabRefusal(sb, className, funcName, required);
         }
         else
         {
-            AppendDirectInvoke(sb, className, funcName, func, func.ParmsSize);
+            // Mailbox helpers
+            AppendMailboxHelpers(sb);
+
+            // Instance resolver via CMD_FIND_INSTANCE
+            AppendInstanceResolver(sb);
+
+            // Function resolver via CMD_FIND_FUNCTION
+            AppendFunctionResolver(sb);
+
+            // Print resolved info
+            Line(sb, "dbg(string.format('  Resolved: %s::%s', OWNER_CLASS, FUNC_NAME))");
+            Line(sb, "dbg(string.format('  Instance: 0x%X  |  UFunction: 0x%X', instanceAddr, ufuncPtr))");
+            Line(sb);
+
+            // [A3-CEFORM-4X-STALESLAB] Zero-fill the span every param occupies, not just the reported
+            // ParmsSize -- see ZeroFillSpan. PARMS_SIZE above still reports the DLL's own number.
+            int zeroFill = ZeroFillSpan(func);
+            if (hasParams)
+            {
+                AppendParamForm(sb, className, funcName, func, inputParams, zeroFill);
+            }
+            else
+            {
+                AppendDirectInvoke(sb, className, funcName, func, zeroFill);
+            }
         }
 
         Line(sb, "{$asm}");
@@ -246,6 +259,56 @@ public static class InvokeScriptGenerator
         Line(sb);
     }
 
+    /// <summary>
+    /// [A3-CEFORM-4X-STALESLAB] How many bytes of the mailbox's params slab the script zero-fills
+    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every param INCLUDING the
+    /// return value, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
+    ///
+    /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
+    /// clears only the return slot itself. So every byte the callee reads, and every out-param
+    /// slot it assigns into, must be zeroed here: an out-FString assignment frees whatever Data
+    /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
+    /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
+    ///
+    /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
+    /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
+    /// the sum is taken in <c>long</c> so a garbage Offset cannot overflow into a small number.</para>
+    /// </summary>
+    internal static int ZeroFillSpan(FunctionInfoModel func)
+        => (int)Math.Min(RequiredSpan(func), CeMailboxLayout.ParamsDataBytes);
+
+    /// <summary>
+    /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
+    /// param, the return slot included, UNclamped. More than
+    /// <see cref="CeMailboxLayout.ParamsDataBytes"/> cannot go through the mailbox at all -- see
+    /// <see cref="AppendSlabRefusal"/>. (Review of 9abc03c8: the clamp alone covered only the
+    /// zero-fill, and a param past the slab was still written and the call fired.)
+    /// </summary>
+    internal static long RequiredSpan(FunctionInfoModel func)
+    {
+        long span = func.ParmsSize;
+        foreach (var p in func.Params)
+            if (p.Offset >= 0 && p.Size > 0)
+                span = Math.Max(span, (long)p.Offset + p.Size);
+        return span;
+    }
+
+    /// <summary>
+    /// [A3-CEFORM-4X-STALESLAB] review follow-up: the function's params do not fit Mimic's
+    /// paramsData slab, so the call cannot be made through the mailbox. Say so -- a real failure,
+    /// so the print is ungated and nothing auto-closes -- and untick through the deferred cleanup:
+    /// nothing was sent, and a ticked record would claim otherwise.
+    /// </summary>
+    private static void AppendSlabRefusal(StringBuilder sb, string className, string funcName, long required)
+    {
+        var what = $"{EscapeLua(className)}::{EscapeLua(funcName)} needs {required} bytes of parameters, " +
+                   $"but the mailbox holds {CeMailboxLayout.ParamsDataBytes}";
+        Line(sb, $"print('ERROR: {what} -- nothing was sent')");
+        Line(sb, $"showMessage('[Invoke] {what}.\\n\\nnothing was sent.')");
+        AppendCleanupTimer(sb, 0);
+        Line(sb, "return");
+    }
+
     private static void AppendDirectInvoke(StringBuilder sb, string className, string funcName,
         FunctionInfoModel func, int parmsSize)
     {
@@ -327,7 +390,12 @@ public static class InvokeScriptGenerator
             // Struct params keep their edit box so the `edits[i]` indices stay aligned with the
             // param list, but the label says the box is inert -- the alternative is a form that
             // silently ignores what the user typed (audit #5 Y6).
-            var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes" : "";
+            // [P3-INVOKE-Y11-CEFORM] The other unwritable params say so up front too, from the
+            // SAME predicates FIRE uses, so this label and the FIRE gate cannot disagree.
+            var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes"
+                : ParamBufferBuilder.IsRefusedParam(p.TypeName) ? ", CANNOT BE SENT - FIRE refuses it"
+                : ParamBufferBuilder.IsEmptyOnlyParam(p.TypeName) ? ", EMPTY ONLY - leave 0"
+                : "";
             var label = $"{p.Name}  [{ShortTypeName(p.TypeName)}{objClassSuffix}, {p.Size} B{(p.IsOut ? ", out" : "")}{structNote}]";
             var defaultVal = GetDefaultValue(p.TypeName);
             int idx = i + 1;
@@ -376,6 +444,7 @@ public static class InvokeScriptGenerator
 
         // Fire button logic — write params to mailbox, then CMD_INVOKE
         Line(sb, "btnFire.OnClick = function()");
+        AppendUnwritableParamGate(sb, inputParams);
         // The fourth guard, and the one whose bail shape genuinely differs: this is a
         // CLOSURE, so `return` leaves only the click handler — which is the right
         // behaviour here (the form stays open and the user can press FIRE again) but
@@ -422,6 +491,16 @@ public static class InvokeScriptGenerator
                 Line(sb, $"    -- {p.Name}: struct ({p.Size} B) left ZEROED - this form cannot edit a struct");
                 continue;
             }
+            // [P3-INVOKE-Y11-CEFORM] Every other type FIRE's WriteParam will not write either. The
+            // gate at the top of this handler refused a typed value (and an FText outright), so
+            // the zero-fill above IS the value sent -- the empty TArray, the unbound delegate.
+            // These used to fall through GetMailboxWriteStatement's size switch and write the
+            // textbox as a raw int32 over the structure's first pointer.
+            if (ParamBufferBuilder.IsUnwritableParam(p.TypeName))
+            {
+                Line(sb, $"    -- {p.Name}: {ShortTypeName(p.TypeName)} ({p.Size} B) left ZEROED - no textbox encoding");
+                continue;
+            }
             var parseExpr = GetParseExpression(p.TypeName, idx);
             var writeStmt = GetMailboxWriteStatement(p.TypeName, p.Size, p.Offset, parseExpr);
             Line(sb, $"    {writeStmt}");
@@ -465,6 +544,8 @@ public static class InvokeScriptGenerator
         // Guard the offset against the params buffer bounds (a bogus return
         // offset would otherwise read outside the mailbox's params_data).
         if (ret.Offset < 0 || (func.ParmsSize > 0 && ret.Offset >= func.ParmsSize)) return;
+        // ...and never past Mimic's paramsData slab, which ParmsSize 0 (unknown) does not bound.
+        if ((long)ret.Offset + Math.Max(ret.Size, 1) > CeMailboxLayout.ParamsDataBytes) return;
 
         Line(sb, $"{indent}if result == 0 and DEBUG ~= 0 then");
         Line(sb, $"{indent}    local _PDret = mb + {OffParamsData}");
@@ -504,6 +585,63 @@ public static class InvokeScriptGenerator
         Line(sb, $"{pad}t.Interval = 100");
         Line(sb, $"{pad}t.OnTimer = function(s) s.Enabled = false; s.destroy(); if memrec then memrec.Active = false end end");
         Line(sb, $"{pad}t.Enabled = true");
+    }
+
+    /// <summary>
+    /// Lua twin of <see cref="ParamBufferBuilder.IsZeroDefaultText"/>: empty, <c>0</c> or
+    /// <c>0x0</c> (any case), trimmed. The TYPE decision is never made in Lua -- only this text
+    /// test, because the text is what the user types into the form at FIRE time.
+    /// <c>InvokeScriptTests.CeForm_ZeroDefaultPredicate_IsTheLuaVerifiedSpelling</c> pins this
+    /// exact spelling, which was run through a Lua interpreter against that predicate's cases.
+    /// </summary>
+    private const string ZeroDefaultLua =
+        "local function _isZeroDefault(e) local t = ((e and e.Text) or ''):match('^%s*(.-)%s*$'); " +
+        "return t == '' or t == '0' or t:lower() == '0x0' end";
+
+    /// <summary>
+    /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate (audit #5 Y11), emitted into the CE
+    /// form's own FIRE handler. Three invoke paths build the same ProcessEvent params from the
+    /// same <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refused
+    /// these, and this form wrote them.
+    ///
+    /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
+    /// <see cref="ParamBufferBuilder.IsEmptyOnlyParam"/> -- the predicates FIRE calls -- never
+    /// a copied type list. An FText is refused whatever the box holds (a zeroed FText is a
+    /// crash, not a default); an empty-only type only when the user typed something, because
+    /// the slot is always sent zeroed and a typed value would be dropped.</para>
+    ///
+    /// <para>It runs BEFORE the idle wait and the zero-fill, so a refusal touches nothing, and
+    /// it bails the way the busy-mailbox bail beside it does: say so, leave the form open, no
+    /// untick (<c>frm.OnClose</c> owns that).</para>
+    /// </summary>
+    private static void AppendUnwritableParamGate(StringBuilder sb, List<FunctionParamModel> inputParams)
+    {
+        const string nothingSent = "\\n\\nnothing was sent -- the form stays open.";
+        bool helperEmitted = false;
+        for (int i = 0; i < inputParams.Count; i++)
+        {
+            var p = inputParams[i];
+            var what = $"{EscapeLua(p.Name)}: {ShortTypeName(p.TypeName)}";
+            if (ParamBufferBuilder.IsRefusedParam(p.TypeName))
+            {
+                Line(sb, $"    do showMessage('[Invoke] {what} parameters cannot be sent -- an FText " +
+                         "holds a shared reference the engine allocates, and a zeroed one crashes the " +
+                         $"game. Invoke a wrapper that takes an FString instead.{nothingSent}'); return end");
+                continue;
+            }
+            if (!ParamBufferBuilder.IsEmptyOnlyParam(p.TypeName)) continue;
+            if (!helperEmitted)
+            {
+                Line(sb, "    " + ZeroDefaultLua);
+                helperEmitted = true;
+            }
+            Line(sb, $"    if not _isZeroDefault(edits[{i + 1}]) then");
+            Line(sb, $"        showMessage('[Invoke] {what} parameters cannot be built from a textbox -- " +
+                     "a multi-word structure whose contents must be allocated inside the game, so the " +
+                     $"value you typed would be dropped. Clear the box (or leave 0) to send it empty.{nothingSent}')");
+            Line(sb, "        return");
+            Line(sb, "    end");
+        }
     }
 
     /// <summary>True for UE string property types (built as an FString by value).</summary>

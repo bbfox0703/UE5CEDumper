@@ -137,6 +137,30 @@ public class DumpAllServiceTests
         Assert.Contains("\"packed_unverified\":true", lines[0]);
     }
 
+    [Fact]
+    public void Generate_UndetectedStride_MetaCarriesTheVerdict()
+    {
+        // [W4-STRIDE-TENTATIVE] A dump taken on a guessed stride must say so, beside packed_unverified.
+        var dump = new FakeDumpForDump();
+        var guessed = new EngineState
+        {
+            UEVersion = 505,
+            ModuleName = "Guess-Win64-Shipping.exe",
+            ModuleBase = "0x7FF600000000",
+            GObjectsAddr = "0x7FF600100000",
+            GNamesAddr = "0x7FF600200000",
+            GWorldAddr = "0x7FF600300000",
+            ObjectCount = 10,
+            PeHash = "GUESS",
+            ItemDetect = "undetected",
+        };
+
+        var lines = Dump(dump, engineState: guessed);
+
+        Assert.Contains("\"item_detect\":\"undetected\"", lines[0]);
+        Assert.Contains("\"stride_untrusted\":true", lines[0]);
+    }
+
     // ==================================================================
     // Filter: accept Class + BPGC variants; drop everything else
     // ==================================================================

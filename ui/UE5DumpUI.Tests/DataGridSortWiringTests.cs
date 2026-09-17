@@ -336,6 +336,97 @@ public class DataGridSortWiringTests
     }
 
     /// <summary>
+    /// [W4-HEXSORT] The FOURTH rule: an address column sorts NUMERICALLY even when nothing is wrong with it under the
+    /// three above. A DataGridTextColumn whose Binding and SortMemberPath are both "Address" is binding-rooted (rule 1
+    /// passes) and wires no comparer (so the Ordinal rule has nothing to see) -- and the default sort orders the hex
+    /// TEXT: "0x9" after "0x10", a 12-character module address after every 13-character heap one. W4 found nine such
+    /// columns in the Instance Finder / Live Walker cluster; this pin found a tenth (Class / Struct's field Address).
+    /// </summary>
+    private static readonly Dictionary<string, string> AddressColumnNumericExemptions = new(StringComparer.Ordinal)
+    {
+        ["InstanceFinderPanel.axaml|HexValue"] =
+            "A raw byte dump in MEMORY order (\"Key | Value\" for a map element), not a number: text order is memcmp " +
+            "order, the right order for bytes, and a ulong parse fails on it -- the refuted [W4-HEXSORT] fix.",
+        ["LiveWalkerPanel.axaml|HexValue"] = "Same property, same reason, in Live Walker's field grid.",
+    };
+
+    [Fact]
+    public void Every_address_column_sorts_numerically_even_when_its_binding_roots_it()
+    {
+        var suspect = new Regex(@"(?:Addr|Address|Ptr|Hex)(?:Value)?$|^(?:Addr|Address)", RegexOptions.IgnoreCase);
+        var factories = ComparerFactoriesByGrid(ViewsDir());
+        var violations = new List<string>();
+        var hit = new HashSet<string>(StringComparer.Ordinal);
+        int seen = 0;
+
+        foreach (var file in Directory.GetFiles(ViewsDir(), "*.axaml").OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(file);
+            var baseName = Path.GetFileNameWithoutExtension(file);
+            foreach (var grid in XDocument.Load(file).Root!.DescendantsAndSelf().Where(e => e.Name.LocalName == "DataGrid"))
+            {
+                if (string.Equals((string?)grid.Attribute("CanUserSortColumns"), "False", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var gridName = (string?)grid.Attribute(Xaml + "Name") ?? (string?)grid.Attribute("Name");
+                if (gridName != null && SelfSortingGrids.Contains(gridName) && grid.Attribute("Sorting") != null)
+                    continue;   // a server-side sort: the header re-sorts the whole set in the DLL
+
+                foreach (var col in grid.DescendantsAndSelf().Where(IsColumn))
+                {
+                    var smp = (string?)col.Attribute("SortMemberPath");
+                    if (string.IsNullOrEmpty(smp) || !suspect.IsMatch(smp!)) continue;
+                    if (string.Equals((string?)col.Attribute("CanUserSort"), "False", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    seen++;
+                    var id = $"{name}|{smp}";
+                    if (AddressColumnNumericExemptions.ContainsKey(id)) { hit.Add(id); continue; }
+                    string? factory = null;
+                    if (gridName != null && factories.TryGetValue((baseName, gridName), out var f))
+                        f.TryGetValue(smp!, out factory);
+                    if (factory != "Hex")
+                        violations.Add($"{name} / {gridName ?? "(no x:Name)"} : SortMemberPath=\"{smp}\" sorts by " +
+                                       (factory ?? "its hex TEXT (no comparer wired)"));
+                }
+            }
+        }
+
+        // Guard the guard: a scan that silently matches nothing passes everything. 11 when this was written.
+        Assert.True(seen >= 10, $"only {seen} address-like sortable column(s) found -- the scan has stopped matching");
+        Assert.True(violations.Count == 0,
+            "Address column(s) that sort as text -- add a ulong accessor (the AddressValue idiom) and wire " +
+            "DataGridSortComparers.Hex, or add an exemption WITH A REASON:\n  " + string.Join("\n  ", violations));
+        var stale = AddressColumnNumericExemptions.Keys.Except(hit).ToList();
+        Assert.True(stale.Count == 0, "Exemption(s) no longer matched -- delete them: " + string.Join(", ", stale));
+    }
+
+    /// <summary>(panel, grid) -&gt; SortMemberPath -&gt; the DataGridSortComparers factory wired for it.</summary>
+    private static Dictionary<(string, string), Dictionary<string, string>> ComparerFactoriesByGrid(string viewsDir)
+    {
+        var map = new Dictionary<(string, string), Dictionary<string, string>>();
+        foreach (var cs in Directory.GetFiles(viewsDir, "*.axaml.cs"))
+        {
+            var text = File.ReadAllText(cs);
+            var panel = Path.GetFileName(cs)[..^".axaml.cs".Length];
+            var dicts = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+            foreach (Match d in Regex.Matches(text,
+                         @"IReadOnlyDictionary<string,\s*(?:System\.Collections\.)?IComparer>\s+(\w+)\s*=" +
+                         @"[\s\S]*?\{([\s\S]*?)\n\s*\};"))
+            {
+                var entries = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (Match m in Regex.Matches(d.Groups[2].Value,
+                             @"\[\s*""([^""]+)""\s*\]\s*=\s*(?:Helpers\.)?DataGridSortComparers\.(\w+)<"))
+                    entries[m.Groups[1].Value] = m.Groups[2].Value;
+                dicts[d.Groups[1].Value] = entries;
+            }
+            foreach (Match w in Regex.Matches(text,
+                         @"FindControl<DataGrid>\(""(\w+)""\)\s*\?\.\s*WireSortComparers\((\w+)\)"))
+                map[(panel, w.Groups[1].Value)] = dicts.TryGetValue(w.Groups[2].Value, out var k)
+                    ? k : new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+        return map;
+    }
+
+    /// <summary>
     /// name -&gt; "file:line, interpolates X, Y" for every computed <c>string</c> property in
     /// <c>Models/</c> whose expression body interpolates a numeric member declared in the
     /// same file. The same-file requirement is what keeps unrelated string labels out.

@@ -508,7 +508,8 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
 //   - FindGObjectsByDataScan       (maxWanted=1: original "first validated" fallback)
 //   - Genau::CollectGObjectsCandidates (maxWanted>1: post-init decoy recovery)
 // ─────────────────────────────────────────────────────────────────────────────
-static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxWanted) {
+static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxWanted,
+                                       bool* outCancelled = nullptr) {
     Sein::Info("SCAN:GObj", "DataScanGObjectsCandidates: Collecting static pointer references...");
 
     uintptr_t base = Macht::GetModuleBase(nullptr);
@@ -565,6 +566,9 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
         // decoration. void: the caller reads the (partial) bag and reports no winner.
         if ((scan & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("SCAN:GObj", "DataScanGObjectsCandidates: aborted (client gone / shutdown)");
+            // [P1-GENAU-ABORT] Recorded AT THE BAIL, never re-derived later: Fern::AcceptLoop resets the
+            // per-command flag on firstConn, so a later Tot::Requested() can no longer see this abort.
+            if (outCancelled) *outCancelled = true;
             return;
         }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
@@ -635,9 +639,9 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
 }
 
 // FindGObjectsByDataScan — fallback: first validated GObjects from the data scan.
-static uintptr_t FindGObjectsByDataScan() {
+static uintptr_t FindGObjectsByDataScan(bool* outCancelled = nullptr) {
     std::vector<uintptr_t> v;
-    DataScanGObjectsCandidates(v, /*avoid=*/0, /*maxWanted=*/1);
+    DataScanGObjectsCandidates(v, /*avoid=*/0, /*maxWanted=*/1, outCancelled);
     return v.empty() ? 0 : v[0];
 }
 
@@ -712,7 +716,7 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride) {
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
     if (outItemStride) *outItemStride = 0;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
@@ -749,6 +753,7 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride) {
         // so an aborted run memoizes nothing.
         if ((scan & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("SCAN:GObj", "FindGObjectsStaticStruct: aborted (client gone / shutdown)");
+            if (outCancelled) *outCancelled = true;   // [P1-GENAU-ABORT] recorded AT THE BAIL
             return 0;
         }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
@@ -1063,11 +1068,11 @@ static std::string ModuleNameOf(HMODULE h) {
 /// run yet" and "GObjects ran and failed" — from a scan-admission point of view those
 /// are the same fact: nothing has confirmed this process is the UE process.
 static Genau::AnchorState CurrentAnchorState() {
-    if (!s_moduleAnchor) return Genau::AnchorState::None;
-    const HMODULE anchorMod = ModuleOfAddress(s_moduleAnchor);
-    if (!anchorMod) return Genau::AnchorState::None;
-    return (anchorMod == GetModuleHandleW(nullptr)) ? Genau::AnchorState::MainExe
-                                                    : Genau::AnchorState::ForeignDll;
+    // [A2-HEAP-ANCHOR-TEXT] The mapping is Genau::ClassifyAnchor, pinned by dll_helpers_test; only the questions to
+    // Windows are asked here. An anchor in NO module (the data-scan fallback's heap FUObjectArray) is Heap, not None.
+    const HMODULE anchorMod = s_moduleAnchor ? ModuleOfAddress(s_moduleAnchor) : nullptr;
+    return Genau::ClassifyAnchor(s_moduleAnchor != 0, anchorMod != nullptr,
+                                 anchorMod != nullptr && anchorMod == GetModuleHandleW(nullptr));
 }
 
 /// May the multi-module candidate at `resolved` be published? Delegates the RULE to the
@@ -1496,7 +1501,7 @@ static uintptr_t ScanForTarget(
                     }
                 }
                 if (refusedCount) {
-                    // Two refusal reasons, two messages. The monolithic one ASSERTS a fact
+                    // Three refusal reasons, three messages. The monolithic one ASSERTS a fact
                     // about the build that the unanchored one has not established — reporting
                     // the unanchored case with the monolithic text is a claim we cannot back.
                     if (refusedWhy == Genau::ModuleAdmission::RefuseUnanchored) {
@@ -1504,6 +1509,14 @@ static uintptr_t ScanForTarget(
                                    "— GObjects never validated this run, so nothing has confirmed "
                                    "this process is the UE process; a match in an arbitrary loaded "
                                    "module is not admissible",
+                                   report.targetName, sig->id, refusedCount,
+                                   (unsigned long long)refusedAddr, refusedModule.c_str());
+                    } else if (refusedWhy == Genau::ModuleAdmission::RefuseHeapAnchored) {
+                        // [A2-HEAP-ANCHOR-TEXT] GObjects DID validate -- on the heap, where the data-scan fallback's
+                        // FUObjectArray lives. The unanchored text above said it never validated.
+                        Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
+                                   "— GObjects validated on the HEAP (a data-scan FUObjectArray lives in no module), "
+                                   "so no module anchors this build; a match in a foreign module is not admissible",
                                    report.targetName, sig->id, refusedCount,
                                    (unsigned long long)refusedAddr, refusedModule.c_str());
                     } else {
@@ -1657,18 +1670,24 @@ uintptr_t FindGObjects(const char* hintPatternId) {
     } else {
         // Fallback: exhaustive data-section pointer scan
         Sein::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
-        result = FindGObjectsByDataScan();
+        result = FindGObjectsByDataScan(&s_gobjectsReport.cancelled);   // [P1-GENAU-ABORT]
         if (result) s_gobjectsMethod = "data_scan";
     }
 
     // Anchor every LATER target's multi-module fallback to whichever module GObjects
     // came from. This is the only place that knows it, and it must be set however
-    // GObjects was found -- the data-scan fallback anchors just as well as the AOB.
+    // GObjects was found. [A2-HEAP-ANCHOR-TEXT] The data-scan fallback anchors too -- but to the HEAP: its
+    // FUObjectArray lives in no module (AnchorState::Heap), and later foreign matches are refused with that text.
     if (result) {
         SetModuleAnchor(result);
-        Sein::Info("SCAN:GObj", "Module anchor set to '%s' — later targets must resolve there "
-                   "unless this build is modular",
-                   ModuleNameOf(ModuleOfAddress(result)).c_str());
+        if (const HMODULE anchorMod = ModuleOfAddress(result)) {
+            Sein::Info("SCAN:GObj", "Module anchor set to '%s' — later targets must resolve there "
+                       "unless this build is modular",
+                       ModuleNameOf(anchorMod).c_str());
+        } else {
+            Sein::Info("SCAN:GObj", "Module anchor set on the HEAP (GObjects lives in no module) — a later "
+                       "target resolving into a foreign module will be refused");
+        }
     }
 
     if (!result) {
@@ -2119,7 +2138,13 @@ static uintptr_t FindGNamesByPointerScan() {
             // Cooperative cancel. UE5_Shutdown runs on the CE Lua caller's thread and
             // joins the accept thread, so an unbounded sweep here freezes CE's UI for its
             // whole duration. Aura's idiom: poll cheaply every 4096 slots. (B18)
-            if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;
+            if ((off & 0xFFF) == 0 && Tot::Requested()) {
+                // [A2-GNAMES-PTRSCAN-ABORT] This bail used to leave no log and no flag, so UE5_Init could latch
+                // with GNames missing. Recorded AT THE BAIL, in [P1-GENAU-ABORT]'s shape.
+                s_gnamesReport.cancelled = true;
+                Sein::Warn("SCAN:GNam", "FindGNamesByPointerScan: aborted (client gone / shutdown)");
+                return 0;
+            }
             if (!Macht::ReadSafe(secBase + off, ptr)) continue;
 
             // Plausible user-space 64-bit address (exclude null, low, kernel)
@@ -2302,6 +2327,7 @@ static uintptr_t FindGNamesByStringRef() {
         for (uintptr_t scan = rdataStart; scan + markerLen < rdataEnd; ++scan) {
             if ((scan & 0xFFF) == 0 && Tot::Requested()) {
                 Sein::Warn("SCAN:GNam", "FindGNamesByStringRef: aborted (client gone / shutdown)");
+                s_gnamesReport.cancelled = true;   // [P1-GENAU-ABORT] recorded AT THE BAIL
                 return 0;
             }
             char buf[64] = {};
@@ -2800,8 +2826,9 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
             unsigned maj = 0, min = 0;
             if (sscanf_s(s.c_str() + p, "%u.%u", &maj, &min) == 2) {
                 if (uint32_t code = Grimoire::UeVersionCode(maj, min)) {
-                    Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%ls' = '%s' -> %u",
-                               key, s.c_str(), code);
+                    // [A2-CRC-PATH-LS] convert first: Sein formats narrow.
+                    Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%s' = '%s' -> %u",
+                               Utf8Helpers::EncodeUtf16(key, wcslen(key)).c_str(), s.c_str(), code);
                     return code;
                 }
             }
@@ -2845,13 +2872,16 @@ static uint32_t DetectVersionFromCrashReportClient() {
         uint32_t v = ReadUeVersionFromFile(cand.c_str(),
                                            "CrashReportClient ProductVersion",
                                            "CrashReportClient FileVersion");
+        // [A2-CRC-PATH-LS] CONVERT FIRST, as this file's own note says: Sein formats narrow, and a wide install path
+        // with any character above 0xFF emptied the whole record. Byte-identical for an ASCII path.
+        const std::string candU8 = Utf8Helpers::EncodeUtf16(cand.c_str(), cand.size());
         if (v) {
-            Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' -> %u",
-                       cand.c_str(), v);
+            Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient at '%s' -> %u",
+                       candU8.c_str(), v);
             return v;
         }
-        Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient at '%ls' carries no usable "
-                   "version — ignoring it", cand.c_str());
+        Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient at '%s' carries no usable "
+                   "version — ignoring it", candU8.c_str());
     }
     return 0;
 }
@@ -3411,6 +3441,16 @@ static void DetectUPropertyMode(uint32_t ueVersion) {
     }
 }
 
+// A give-up: DynOff is SETTLED (probeRan, which the &GEngine gates key on) but NOT measured, and says why.
+// [W5-OFFSETS-UNMEASURED] validated=false is stored EXPLICITLY. Both early returns used to rely on the flag's initial
+// false, so a re-init taking one after a validated run kept the old TRUE beside this very reason.
+static bool PublishOffsetsGiveUp(const char* reason) {
+    DynOff::g_offsetsFallbackReason = reason;
+    DynOff::bOffsetsValidated.store(false, std::memory_order_release);
+    DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
+    return false;
+}
+
 bool ValidateAndFixOffsets(uint32_t ueVersion) {
     Sein::Info("DYNO", "ValidateAndFixOffsets: Starting dynamic offset detection...");
 
@@ -3736,9 +3776,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
         // The probe RAN but gave up — DynOff holds unmeasured defaults. Say so, so the
         // summary cannot claim validated=yes (it used to, three lines after this warning).
-        DynOff::g_offsetsFallbackReason = "no-guid-or-vector-struct";
-        DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
-        return false;
+        return PublishOffsetsGiveUp("no-guid-or-vector-struct");
     }
 
     uintptr_t testStruct = guidStruct ? guidStruct : vectorStruct;
@@ -3857,9 +3895,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     if (!childProps) {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
-        DynOff::g_offsetsFallbackReason = "childprops-probe-failed";
-        DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
-        return false;
+        return PublishOffsetsGiveUp("childprops-probe-failed");
     }
 
     // Which probes below GAVE UP and kept an unmeasured default (audit #5 G1).
@@ -4344,9 +4380,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 // Aura::Init + name resolution to reject count-only decoys that pass the
 // structural validator but contain no usable objects.
 // ============================================================
-size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxCandidates) {
+size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, size_t maxCandidates,
+                                 bool* outCancelled) {
     size_t before = out.size();
-    DataScanGObjectsCandidates(out, avoid, before + maxCandidates);
+    DataScanGObjectsCandidates(out, avoid, before + maxCandidates, outCancelled);
     return out.size() - before;
 }
 
@@ -5383,10 +5420,12 @@ bool DetectUEnumNames() {
     };
 
     // Search GObjects for each candidate
+    // [P1-ENUMNAMES] A search a cancel cut short proves nothing, so it must not latch FAILED below.
+    bool searchAborted = false;
     for (const auto& cand : candidates) {
         uintptr_t enumAddr = 0;
 
-        Aura::ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
+        const bool walked = Aura::ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
             std::string clsName = GetObjectClassName(obj);
             if (clsName != "Enum" && clsName != "UserDefinedEnum")
                 return true; // continue
@@ -5398,6 +5437,7 @@ bool DetectUEnumNames() {
             }
             return true; // continue
         });
+        if (!walked) searchAborted = true;
 
         if (!enumAddr) {
             Sein::Debug("DYNO:Enum", "  '%s' not found in GObjects", cand.name);
@@ -5465,6 +5505,14 @@ bool DetectUEnumNames() {
         }
 
         Sein::Debug("DYNO:Enum", "  '%s' found but no valid Names offset detected", cand.name);
+    }
+
+    // [P1-ENUMNAMES] A CANCELLED search found nothing because it did not look -- latching FAILED on it would disable
+    // enum names for the whole process. Leave both flags alone so the next call retries.
+    if (searchAborted) {
+        Sein::Warn("DYNO:Enum", "DetectUEnumNames: search cancelled (client gone / shutdown) -- "
+            "not latching FAILED; the next enum lookup retries");
+        return false;
     }
 
     // Mark as failed to prevent retry storm.

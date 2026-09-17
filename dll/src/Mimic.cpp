@@ -25,6 +25,7 @@
 #include "Genau.h"
 #include "Macht.h"
 #include "Grimoire.h"
+#include "Stark.h"      // Stark::kInvokeTimedOutStillQueued -- a queued Debug Camera toggle [W3-DEBUGCAM-QUEUED]
 #include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
 
@@ -46,6 +47,7 @@ extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
 extern uintptr_t    g_cachedGEngine;  // &GEngine (the static slot holding UEngine*), 0 if unresolved
+extern std::atomic<bool> g_initInProgress;   // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp: an init is scanning
 
 // The UE FunctionFlags bits and the routing predicate that reads them now live in
 // Mimic.h (FUNC_FLAG_NATIVE / FUNC_FLAG_STATIC / ShouldRouteDirectInvoke) so a test
@@ -106,6 +108,7 @@ static void HandleFly();
 static void HandleForeground();
 static void HandleQueryPtr();
 static void HandleSeeThrough();
+static void HandleOffsetsVerdict();
 static void SetError(int32_t code, const char* msg);
 static void SetDone(int32_t resultCode);
 static bool EnsureInitialized();
@@ -321,13 +324,22 @@ static void PollingThreadBody() {
             // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
             //
             // Skipped entirely for the commands CommandRequiresInit() exempts —
-            // today only CMD_FOREGROUND, whose handler is pure Win32 and which the
-            // PIPE path services with no init gate at all. Gating it made the
-            // CE-Lua Keep-Foreground toggle fail with -10 on any game whose AOB
-            // scan fails, and the generated script renders that as "hook error
-            // -10", naming MinHook — a subsystem the command never even reached.
-            // The exemption also skips the auto-init ATTEMPT, so the toggle no
-            // longer pays for a whole-image sweep it does not need. (audit #5 MB2)
+            // CMD_FOREGROUND and CMD_OFFSETS_VERDICT, for two different reasons.
+            //
+            // CMD_FOREGROUND: its handler is pure Win32 and the PIPE path services it
+            // with no init gate at all. Gating it made the CE-Lua Keep-Foreground
+            // toggle fail with -10 on any game whose AOB scan fails, and the generated
+            // script renders that as "hook error -10", naming MinHook — a subsystem the
+            // command never even reached. The exemption also skips the auto-init
+            // ATTEMPT, so the toggle no longer pays for a whole-image sweep it does not
+            // need. (audit #5 MB2)
+            //
+            // CMD_OFFSETS_VERDICT: its answer IS the init state — it reports whether the
+            // offsets were measured, and "no probe has run" is one of the answers. Gating
+            // it would return -10 in exactly the case the caller asked about, and
+            // auto-init would run a whole-image sweep to answer a question about whether
+            // that sweep has happened. ([W5-OFFSETS-MAILBOX]; Mimic.h carries the rule,
+            // and this comment is checked against it by a source pin — [A1-REVIEW6-PINS])
             if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
                 // Init failed — these commands all walk UE reflection.
                 if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {
@@ -403,6 +415,9 @@ static void PollingThreadBody() {
             case CMD_TIME:
                 HandleTime();
                 break;
+            case CMD_OFFSETS_VERDICT:
+                HandleOffsetsVerdict();
+                break;
             default:
                 SetError(-1, "Unknown command");
                 break;
@@ -467,7 +482,11 @@ uintptr_t GetAddress() {
 static bool EnsureInitialized() {
     // UE5_Init is idempotent (checks internal s_initialized flag)
     // Note: extern declarations are at file scope (above namespace)
-    if (g_cachedGObjects && g_cachedGNames) {
+    // [A3-MIMIC-INIT-FASTPATH] The globals alone are not "initialized": UE5_Init publishes them right after FindAll,
+    // 190-445 ms before Serie / Aura init and ValidateAndFixOffsets finish. While an init is scanning, fall through to
+    // UE5_Init, which waits on s_initMutex (and logs that it is waiting) and returns the first caller's result.
+    if (Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,
+                              g_initInProgress.load(std::memory_order_acquire))) {
         return true;  // Already initialized
     }
 
@@ -1021,7 +1040,8 @@ static void HandleListInstances() {
 
 // CMD_SET_DEBUG_CAMERA: robust Debug Camera force on/off, shared with the UI
 // pipe (set_debug_camera). instanceAddr carries the request: 0=OFF, 1=ON,
-// 2=query (read state, no change). result gets the resulting state (1/0/-1).
+// 2=query (read state, no change). result gets the resulting state (1/0/-1), or
+// -5 when the toggle is QUEUED (it will still run; errorMsg says not to re-send).
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
 static void HandleSetDebugCamera() {
@@ -1034,10 +1054,33 @@ static void HandleSetDebugCamera() {
                 "Debug Camera: no live CheatManager / unreadable state",
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+    } else if (state == Stark::kInvokeTimedOutStillQueued) {
+        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED: it will still run. Not a
+        // contract change (MB3 above: a new negative result code; every script treats non-zero as failure and renders
+        // errorMsg verbatim) -- so errorMsg carries the one thing that matters: do not send it again.
+        strncpy(g_invokeMailbox.errorMsg,
+                "Debug Camera: toggle queued -- it will run when the game thread is free; do not re-send",
+                sizeof(g_invokeMailbox.errorMsg) - 1);
+        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: SET_DEBUG_CAMERA req=%llu -> state=%d",
              (unsigned long long)req, state);
     SetDone(state);
+}
+
+// CMD_OFFSETS_VERDICT: were the DynOff offsets MEASURED? [W5-OFFSETS-MAILBOX]
+// The pipe (get_offsets) and the C ABI (UE5_GetOffsetsVerdict) both carry this verdict; the mailbox --
+// the path a CE script takes when executeCodeEx is unavailable -- did not, while ue5_dissect.lua builds
+// CE structures out of those very offsets. No input. result = 1 measured / 0 not; paramsData[0..127]
+// carries the reason ("" when measured, "probe-not-run" before any detection).
+// Init-EXEMPT (Mimic.h CommandRequiresInit): "no probe has run" is an ANSWER here, not a failure.
+static void HandleOffsetsVerdict() {
+    memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
+    char reason[128] = {};
+    const int32_t measured = UE5_GetOffsetsVerdict(reason, static_cast<int32_t>(sizeof(reason)));
+    memcpy(g_invokeMailbox.paramsData, reason, sizeof(reason));
+    LOG_INFO("Mailbox: OFFSETS_VERDICT -> measured=%d reason='%s'", measured, reason);
+    SetDone(measured);
 }
 
 // CMD_TELEPORT: marker save/recall + cursor teleport (Wirbel). Field usage
@@ -1049,9 +1092,10 @@ static void HandleTeleport() {
     const int32_t slot = static_cast<int32_t>(g_invokeMailbox.ufuncAddr);
 
     // Pose block writer: [0..47] 6 doubles, [48..175] mapName,
-    // [176] source, [177] tier. Zeroes the whole buffer first.
+    // [176] source, [177] tier, [178] pose flags (contract 4: bit0 parent-relative,
+    // bit1 landing unknown). Zeroes the whole buffer first.
     auto writePoseBlock = [](const Wirbel::Pose& p, const char* mapName,
-                             uint8_t source, uint8_t tier) {
+                             uint8_t source, uint8_t tier, uint8_t flags = 0) {
         memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
         double v[6] = { p.X, p.Y, p.Z, p.Pitch, p.Yaw, p.Roll };
         memcpy(g_invokeMailbox.paramsData, v, sizeof(v));
@@ -1063,6 +1107,7 @@ static void HandleTeleport() {
         }
         g_invokeMailbox.paramsData[176] = source;
         g_invokeMailbox.paramsData[177] = tier;
+        g_invokeMailbox.paramsData[178] = flags;   // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]
     };
 
     int32_t rc;
@@ -1071,8 +1116,9 @@ static void HandleTeleport() {
         Wirbel::Pose p{};
         char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
         uint8_t source = 0;
-        rc = Wirbel::GetPose(p, map, sizeof(map), &source);
-        if (rc == 0) writePoseBlock(p, map, source, 0);
+        bool parentRel = false;   // [W2-MARKER-PARENTREL]
+        rc = Wirbel::GetPose(p, map, sizeof(map), &source, &parentRel);
+        if (rc == 0) writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);
         break;
     }
     case TP_OP_SAVE: {
@@ -1080,7 +1126,7 @@ static void HandleTeleport() {
         if (rc == 0) {
             Wirbel::Marker m{};
             if (Wirbel::GetMarker(slot, m) == 0)
-                writePoseBlock(m.P, m.MapName, 0, 0);
+                writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         }
         break;
     }
@@ -1116,7 +1162,7 @@ static void HandleTeleport() {
     case TP_OP_GET_MARKER: {
         Wirbel::Marker m{};
         rc = Wirbel::GetMarker(slot, m);
-        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0);
+        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         break;
     }
     case TP_OP_CLEAR_MARKER:
@@ -1132,15 +1178,16 @@ static void HandleTeleport() {
     case TP_OP_GET_LAST: {
         Wirbel::Marker m{};
         rc = Wirbel::GetLast(m);
-        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0);
+        if (rc == 0) writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);
         break;
     }
     case TP_OP_BUGIT_SAVE: {
         Wirbel::Pose p{};
         char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
         uint8_t source = 0;
-        rc = Wirbel::BugItSave(p, map, sizeof(map), &source);
-        if (rc == 0) writePoseBlock(p, map, source, 0);
+        bool parentRel = false;   // [W2-MARKER-PARENTREL]
+        rc = Wirbel::BugItSave(p, map, sizeof(map), &source, &parentRel);
+        if (rc == 0) writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);
         break;
     }
     case TP_OP_BUGIT_GO: {
@@ -1173,8 +1220,17 @@ static void HandleTeleport() {
         bool horizontalOnly = g_invokeMailbox.paramsData[8] == 0;  // mode 0 = horizontal
         Wirbel::Pose p{};
         uint8_t tier = 0;
-        rc = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier);
-        if (rc == 0) writePoseBlock(p, nullptr, 0, tier);
+        bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
+        rc = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown);
+        if (rc == 0 && !landingKnown) {
+            // The move succeeded but its re-read failed: publish NaN (nobody measured it) and say so --
+            // never the zero-initialised Pose, a landing at the world origin. [TPREL-ZEROPOSE-2026-09-10]
+            const uint64_t nanBits = 0x7FF8000000000000ull;
+            double nan = 0;
+            memcpy(&nan, &nanBits, sizeof(nan));
+            p.X = p.Y = p.Z = p.Pitch = p.Yaw = p.Roll = nan;
+        }
+        if (rc == 0) writePoseBlock(p, nullptr, 0, tier, landingKnown ? 0 : 0x02);
         break;
     }
     case TP_OP_EXPLICIT: {

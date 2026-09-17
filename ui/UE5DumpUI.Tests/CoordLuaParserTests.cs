@@ -24,6 +24,16 @@ public class CoordLuaParserTests
     // ── Happy path + round trip ─────────────────────────────────────────
 
     [Fact]
+    public void Parse_OverflowingCoordinate_IsReported_NotImportedAsTheOrigin()
+    {
+        // [A3-COORD-NONFINITE] The number regex keeps the NaN / Infinity WORDS out, but 1e400 matches it and overflows to
+        // +Infinity -- which was stored as 0 without an issue.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='A', map='M', x=1e400, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        Assert.Contains(r.Issues, i => i.Column == "x");
+    }
+
+    [Fact]
     public void Parse_ReadsAGeneratedEntry()
     {
         var r = CoordLuaParser.Parse(Wrap(OneEntry));

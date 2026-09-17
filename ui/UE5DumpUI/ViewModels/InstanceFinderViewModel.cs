@@ -221,10 +221,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// separately-allocated containers). Set from the top Options flyout.</summary>
     [ObservableProperty] private int _deepScanElemCap = 256;
 
-    /// <summary>Full (capped) class-search result. <see cref="Instances"/> is a
-    /// class-noise-filtered projection of this; kept so the filter can re-project
-    /// without re-searching. Only the class-search path populates it — the
-    /// reverse-address lookup path clears it (its single result isn't a class set).</summary>
+    /// <summary>The backing list <see cref="Instances"/> is projected from (the class-noise and keyword
+    /// filters), kept so a filter can re-project without re-searching. A class search fills it with its
+    /// capped result; a reverse-address lookup REPLACES it with its single result, so the keyword filter
+    /// hides and restores that row like any other ([W4-LOOKUP-FILTER]). Whether a class search is active
+    /// is <c>_hasActiveClassSearch</c>, not whether this list is empty.</summary>
     private List<InstanceResult> _allInstances = new();
 
     /// <summary>Client-side class-noise filter: hides ticked classes (UI widgets,
@@ -660,6 +661,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                     ClassName = result.ClassName,
                     OuterAddr = result.OuterAddr,
                 };
+                // [W4-LOOKUP-FILTER] Into the BACKING list too. It was emptied just above, and every
+                // later ApplyInstanceFilter re-projects from it -- so a leftover keyword, or clearing it,
+                // erased the lookup result for good while the status line still reported a match.
+                // ⛔ The keyword is NOT cleared here: it is an [ObservableProperty], and the assignment
+                // re-enters the filter (harmless now that the backing list holds the row, but still
+                // not the lookup's call to make).
+                _allInstances.Add(instance);
                 Instances.Add(instance);
                 HasInstances = true;
 
@@ -830,6 +838,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength);
+            // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
+            // the synchronous Generate* call"), and after an await this method may resume on another thread.
+            bool truncated = CeXmlExportService.LastExportTruncated;
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
             {
@@ -839,8 +850,14 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                           $"refused the write for instance {SelectedInstance.Name}");
                 return;
             }
-            StatusText = "";
-            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");
+            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms. Live
+            // Walker's text names its own levers (Drill Depth, Copy CE Field), which this panel does not have.
+            StatusText = truncated
+                ? $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — the CE table "
+                  + "is incomplete; tick Collapse Pointer Nodes or lower the DropDown Limit"
+                : "";
+            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
+                      + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
         catch (Exception ex)
         {
@@ -959,7 +976,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
         var classCache = new Dictionary<string, string>();
-        int rows = 0, classesScanned = 0, reused = 0, partial = 0;
+        int rows = 0, classesScanned = 0, reused = 0, partial = 0, cappedClasses = 0, xrefCap = 0;
         try
         {
             foreach (var inst in targets)
@@ -976,11 +993,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 {
                     var res = await _dump.FindFunctionsByClassAsync(inst.ClassAddress, true, 200, ct);
                     bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
-                    var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
+                    bool capped = res.Scan?.CapHit ?? false;           // [W3-XREF-CAP] its own cause
+                    var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline, capped);
                     classCache[inst.ClassAddress] = summary;
                     inst.XrefInfo = summary;
                     classesScanned++;
                     if (deadline) partial++;
+                    if (capped) { cappedClasses++; xrefCap = res.Scan!.Cap; }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -995,7 +1014,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                        + (reused > 0 ? $" ({reused} reused/cached)." : ".")
                        // Counted per CLASS, not per row: one scan serves every row sharing
                        // a ClassAddress, so a partial verdict stamps all of them.
-                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class");
+                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class")
+                       + PartialResultNotice.BatchCapClause(cappedClasses, classesScanned, xrefCap, "class");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

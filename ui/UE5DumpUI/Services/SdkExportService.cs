@@ -326,6 +326,9 @@ public static class SdkExportService
             "ClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSubclassOf<class {objClass}>" : "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TWeakObjectPtr<class {objClass}>" : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftObjectPtr<class {objClass}>" : "TSoftObjectPtr<UObject>",
+            // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
+            "SoftClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftClassPtr<class {objClass}>" : "TSoftClassPtr<UObject>",
+            "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClass) ? $"TScriptInterface<class {objClass}>" : "TScriptInterface<IInterface>",
             _ => MapScalarInnerType(innerType),
         };
@@ -352,6 +355,8 @@ public static class SdkExportService
             "AnsiStrProperty" => "FAnsiString",
             "TextProperty" => "FText",
             "EnumProperty" => "uint8_t",
+            "DelegateProperty" => "FScriptDelegate",     // [P3-SDK-INNERS] as the scalar path
+            "FieldPathProperty" => "FFieldPath",
             _ => "uint8_t",
         };
     }
@@ -427,28 +432,29 @@ public static class SdkExportService
         // Order by offset, then by bit position so a packed byte reads low bit first.
         var sorted = fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolMask).ToList();
 
-        // Where this class's OWN properties start.
-        int ownStart = 0;
-        if (superPropsSize > 0)
-        {
-            ownStart = superPropsSize;
-            // ⚠ superPropsSize is one too HIGH when the super is an EMPTY USTRUCT. UE sets a
-            // native struct's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so
-            // an empty base reports 1 — while C++ empty-base optimisation puts the derived
-            // struct's first member at offset 0. `Offset >= 1` then silently dropped it, and
-            // the trailing-padding pass replaced it with `uint8_t Pad_0001[0x0003]`.
-            // UE 5.8.2 ships 62 such bases with 302 property-bearing children
-            // (FEmptyPayload, the FMassFragment family, FEditorDataStorageColumn, ...).
-            //
-            // A NEGATIVE ownPropsStart means the DLL said nothing (or the class declares no
-            // own properties) — it must NOT enter the comparison. Folding -1 or 0 in here
-            // re-emits the entire inherited chain, which is audit #5 W2 all over again.
-            if (ownPropsStart >= 0 && ownPropsStart < ownStart)
-                ownStart = ownPropsStart;
-        }
-        else if (sorted.Count > 0 && !string.IsNullOrEmpty(superName))
-            ownStart = sorted[0].Offset;   // legacy fallback — see the remark above
-
+        // Where this class's OWN properties start. [USMAP-INHERITED-DUPES] The rule itself now
+        // lives in Core/PropertyOwnership, because the USMAP writer needs the same boundary and
+        // this file's own remark -- "so the schema and live emitters share the layout logic
+        // instead of keeping two copies of it. They had two, and both carried the same two
+        // defects" -- applies just as well across services. The reasoning below is kept here
+        // because it is what the rule encodes.
+        int ownStart = PropertyOwnership.OwnStartOffset(
+            superName, superPropsSize, ownPropsStart,
+            sorted.Count > 0 ? sorted[0].Offset : null);
+        // ⚠ superPropsSize is one too HIGH when the super is an EMPTY USTRUCT. UE sets a
+        // native struct's PropertiesSize from CppStructOps->GetSize() (Class.cpp:947), so
+        // an empty base reports 1 — while C++ empty-base optimisation puts the derived
+        // struct's first member at offset 0. `Offset >= 1` then silently dropped it, and
+        // the trailing-padding pass replaced it with `uint8_t Pad_0001[0x0003]`.
+        // UE 5.8.2 ships 62 such bases with 302 property-bearing children
+        // (FEmptyPayload, the FMassFragment family, FEditorDataStorageColumn, ...).
+        //
+        // A NEGATIVE ownPropsStart means the DLL said nothing (or the class declares no
+        // own properties) — it must NOT enter the comparison. Folding -1 or 0 in here
+        // re-emits the entire inherited chain, which is audit #5 W2 all over again.
+        //
+        // With no superPropsSize at all the first field's offset is the legacy fallback, and it
+        // is a fallback precisely because it mis-splits when a derived class adds nothing.
         var own = sorted.Where(f => f.Offset >= ownStart).ToList();
         int cursor = ownStart;
 
@@ -558,7 +564,9 @@ public static class SdkExportService
 
         EmitStructBody(
             sb,
-            fields.Select(f => new SdkField(
+            // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from every export (commit 860245b0), and
+            // their "?0x..." names do not compile. Their bytes stay covered, as padding.
+            fields.Where(f => !f.IsGuessed).Select(f => new SdkField(
                 f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
             superName, superPropsSize, propsSize, ownPropsStart);
     }

@@ -61,6 +61,10 @@ public sealed class PersistedCrumb
     public string TargetClassName { get; set; } = "";
     public bool IsPointerDeref { get; set; }
     public bool IsContainerView { get; set; }
+    /// <summary>[W4-BOOKMARK-DT] A DataTable row view. Its rows are live-only and never persisted, so the
+    /// load path re-walks them; without this flag the restored crumb looked like a plain container and the
+    /// restore failed as "the game may have restarted". Absent in older files, where it reads false.</summary>
+    public bool IsDataTableView { get; set; }
 }
 
 /// <summary>A field row reference (name + byte offset) for re-selection / scroll restore.</summary>

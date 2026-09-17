@@ -167,6 +167,27 @@ GATES = [
      "Run 'py tools/check_ce_untick_placement.py --list' for every site and its "
      "verdict, or '--selftest' for the negative controls", False),
 
+    ("check_badge_prime_symmetry",
+     ["tools/check_badge_prime_symmetry.py"],
+     "a gameplay card's badge is reset to Unknown on disconnect and primed by NOTHING on "
+     "connect, so after a UI reconnect it reads 'never asked' over state the DLL is still "
+     "holding -- a live Fly or Move Speed hold with no sign the game is modified. Add the "
+     "read to TeleportViewModel.PrimeHeldBadgesAsync, quietly (no IsBusy, no StatusText). "
+     "It counts Apply*State SYMBOLS, so the two time lanes are one entry. "
+     "Run 'py tools/check_badge_prime_symmetry.py --list' or '--selftest'", False),
+
+    ("check_ce_idlewait_scope",
+     ["tools/check_ce_idlewait_scope.py"],
+     "a CE mailbox emitter's bounded wait-for-IDLE is conditioned on the "
+     "enable/disable discriminator, so only ONE of the two blocks gets it -- while the "
+     "cmd store below is emitted for both. The unguarded block then writes operands, "
+     "clears status and stores cmd while another command may still be in flight "
+     "(the AA10 hazard). Emit the call unconditionally and pass "
+     "'enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn'. "
+     "It deliberately does NOT flag a guard that is not the enable discriminator "
+     "(if (dll), if (verifyReturn)) -- that split is what keeps the check baseline-free. "
+     "Run 'py tools/check_ce_idlewait_scope.py --list' or '--selftest'", False),
+
     ("check_clipboard_delivery",
      ["tools/check_clipboard_delivery.py"],
      "a DELIVERY clipboard copy (the payload is a generated CE script / memory-record "
@@ -176,6 +197,22 @@ GATES = [
      "Convenience copies (an address, a name) are deliberately NOT flagged: that split "
      "is what keeps this check baseline-free. "
      "Run 'py tools/check_clipboard_delivery.py --list' or '--selftest'", False),
+
+    ("check_json_default_ignore",
+     ["tools/check_json_default_ignore.py"],
+     "a value-type property whose initializer differs from default(T) is serialized under "
+     "WhenWritingDefault, so a user choosing the type-default (0 / false) has the key OMITTED "
+     "and the next load silently re-runs the initializer -- [W1-QUOTA-UNLIMITED] deleted "
+     "snapshots that way. Drop WhenWritingDefault from the context (the spec rule), or mark a "
+     "property that can never take default(T) [JsonIgnore(Condition = JsonIgnoreCondition.Never)]. "
+     "Run 'py tools/check_json_default_ignore.py --list' or '--selftest'", False),
+
+    ("check_session_gate",
+     ["tools/check_session_gate.py"],
+     "a command hands a STORED snapshot's address (Live Walker / Locate / Copy) to the running game "
+     "with nothing enabling it that reaches the game session (GameSessionId / _currentSessionId), so a "
+     "previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do "
+     "([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'", False),
 ]
 
 

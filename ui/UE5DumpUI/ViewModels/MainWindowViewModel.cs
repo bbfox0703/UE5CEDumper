@@ -167,11 +167,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public bool ShowPackedLayoutBadge => IsConnected && Pointers.ShowPackedLayoutBadge;
     public string PackedLayoutBadgeText => Pointers.PackedLayoutBadgeText;
 
+    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the DLL said
+    /// the stride is tentative or undetected -- object counts and names may be wrong.</summary>
+    public bool ShowStrideGuessBadge => IsConnected && Pointers.ShowStrideGuessBadge;
+    public string StrideGuessBadgeText => Pointers.StrideGuessBadgeText;
+
     partial void OnIsConnectedChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowBuildMismatchBadge));
         OnPropertyChanged(nameof(ShowDllBuildOk));
         OnPropertyChanged(nameof(ShowPackedLayoutBadge));
+        OnPropertyChanged(nameof(ShowStrideGuessBadge));
     }
     [ObservableProperty] private bool _needsScan;       // True when connected but scan not yet done (proxy DLL mode)
     [ObservableProperty] private bool _isScanning;      // True while trigger_scan is in progress
@@ -690,6 +696,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 OnPropertyChanged(nameof(ShowPackedLayoutBadge));
                 OnPropertyChanged(nameof(PackedLayoutBadgeText));
+            }
+            if (e.PropertyName is nameof(PointerPanelViewModel.ShowStrideGuessBadge)
+                               or nameof(PointerPanelViewModel.StrideGuessBadgeText))
+            {
+                OnPropertyChanged(nameof(ShowStrideGuessBadge));
+                OnPropertyChanged(nameof(StrideGuessBadgeText));
             }
             if (e.PropertyName == nameof(PointerPanelViewModel.IsAobMakerAvailable))
                 IsAobMakerAvailable = Pointers.IsAobMakerAvailable;
@@ -2384,6 +2396,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private static readonly HashSet<string> PropertySearchPersist = new()
     {
         nameof(PropertySearchViewModel.GameClassesOnly), nameof(PropertySearchViewModel.DeepSearch),
+        // [W3-CAP-NOSAVE] ApplyOptions/BuildOptions round-trip the Max cap; without it here, raising it alone saved nothing.
+        nameof(PropertySearchViewModel.PropertySearchCap),
     };
     private static readonly HashSet<string> TeleportPersist = new()
     {
@@ -2415,7 +2429,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(InterestingPropertiesViewModel.ShowAll),
     };
     private static readonly HashSet<string> ConsolePersist = new() { nameof(ConsoleViewModel.GameOnly) };
-    private static readonly HashSet<string> GameClassFilterPersist = new() { nameof(GameClassFilterViewModel.GameClassesOnly) };
+    private static readonly HashSet<string> GameClassFilterPersist = new()
+    {
+        nameof(GameClassFilterViewModel.GameClassesOnly),
+        nameof(GameClassFilterViewModel.ClassListCap),   // [W3-CAP-NOSAVE] as PropertySearchPersist's Max cap
+    };
     private static readonly HashSet<string> ProxyDeployPersist = new()
     {
         nameof(ProxyDeployViewModel.SelectedProxyType), nameof(ProxyDeployViewModel.ForceOverwrite),
@@ -2529,7 +2547,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         if (Spc != null)
         {
-            Spc.SelectedJoinMode = o.Spc.SelectedJoinMode;
+            Spc.RestoreJoinModeFromOptions(o.Spc.SelectedJoinMode);   // [W1-SPC-JOINMODE] never replays In-session
             Spc.SelectedRoundingMode = o.Spc.RoundingMode;
         }
         if (Pivot != null)
@@ -2543,6 +2561,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ProxyDeploy.SelectedProxyType = o.ProxyDeploy.SelectedProxyType;
             ProxyDeploy.ForceOverwrite = o.ProxyDeploy.ForceOverwrite;
             ProxyDeploy.ScanDrivesMode = o.ProxyDeploy.ScanDrivesMode;
+            // [PROXYDEPLOY-SCANDRIVES-CORPUS] absent -> the default list; an explicit empty list is
+            // the user turning the exclusion off, so it is honoured rather than re-defaulted.
+            if (o.ProxyDeploy.ScanExcludedFolderNames is { } names)
+                ProxyDeploy.ScanExcludedFolderNames = names;
             ProxyDeploy.LkgSuggestEnabled = o.ProxyDeploy.LkgSuggestEnabled;
             ProxyDeploy.LastManualProxyByGame.Clear();
             foreach (var (name, type) in o.ProxyDeploy.LastManualProxyByGame)
@@ -2676,7 +2698,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         if (Spc != null)
         {
-            o.Spc.SelectedJoinMode = Spc.SelectedJoinMode;
+            o.Spc.SelectedJoinMode = Spc.JoinModeForOptions;          // [W1-SPC-JOINMODE] In-session is launch-scoped
             o.Spc.RoundingMode = Spc.SelectedRoundingMode;
         }
         if (Pivot != null)
@@ -2689,6 +2711,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             o.ProxyDeploy.SelectedProxyType = ProxyDeploy.SelectedProxyType;
             o.ProxyDeploy.ForceOverwrite = ProxyDeploy.ForceOverwrite;
             o.ProxyDeploy.ScanDrivesMode = ProxyDeploy.ScanDrivesMode;
+            o.ProxyDeploy.ScanExcludedFolderNames = ProxyDeploy.ScanExcludedFolderNames.ToList();
             o.ProxyDeploy.LkgSuggestEnabled = ProxyDeploy.LkgSuggestEnabled;
             o.ProxyDeploy.LastManualProxyByGame =
                 new Dictionary<string, ProxyType>(ProxyDeploy.LastManualProxyByGame, StringComparer.OrdinalIgnoreCase);
@@ -3660,11 +3683,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // Cancellation linked to the connection so a mid-export disconnect aborts
             // the service's walk (its ct checks were dead code before) (X6).
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
-            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token);
+            var warnings = new List<string>();
+            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress, cts.Token, warnings);
             await File.WriteAllBytesAsync(filePath, bytes, cts.Token);
 
-            StatusText = "USMAP exported";
+            // [P1-ENUMNAMES] review 5: the enum warning was a progress line, overwritten one round-trip later, so the
+            // export ended on a bare "USMAP exported" over a file whose enums were all empty. Keep it on the final
+            // status, and in the log.
+            StatusText = warnings.Count == 0 ? "USMAP exported" : "USMAP exported — " + string.Join(" — ", warnings);
             _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
+            foreach (var w in warnings) _log.Warn($"USMAP export: {w}");
         }
         catch (OperationCanceledException)
         {

@@ -49,6 +49,11 @@ public sealed class DiscoveryInput
     public string PropName     { get; set; } = "";
     public string DeclaredType { get; set; } = "";
     public string NormPath     { get; set; } = "";
+    /// <summary>[W1-DISCOVER-ARRAY] The struct-array field this row is an element of ("" for a scalar),
+    /// and the element's inner prop ("" for a leaf-container element). <see cref="PropName"/> is the
+    /// rendered "Array[N].Inner", which the scalar field list can never contain.</summary>
+    public string ArrayField   { get; set; } = "";
+    public string InnerProp    { get; set; } = "";
     /// <summary>Newest-snapshot live address — the Pivot / CE-export handoff target.</summary>
     public string ObjAddr      { get; set; } = "";
     /// <summary>Raw hex per snapshot, oldest → newest (exact change detection).</summary>
@@ -66,6 +71,10 @@ public sealed class DiscoveryCandidate
     public string ClassName    { get; set; } = "";
     public string PropName     { get; set; } = "";
     public string DeclaredType { get; set; } = "";
+    /// <summary>[W1-DISCOVER-ARRAY] Array identity of a struct-array element candidate (both "" for a
+    /// scalar), so "Use →" can pivot it through the Snapshot Array source.</summary>
+    public string ArrayField   { get; set; } = "";
+    public string InnerProp    { get; set; } = "";
 
     /// <summary>Instances of this (class, prop) present in ALL selected snapshots.</summary>
     public int InstancesTotal   { get; set; }

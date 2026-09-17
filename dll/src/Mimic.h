@@ -37,7 +37,9 @@ enum Cmd : int32_t {
                               //   identity witness has to travel per entry.
     CMD_SET_DEBUG_CAMERA = 7, // Robust Debug Camera force on/off / query.
                               //   Input:  instanceAddr = 0 (OFF) / 1 (ON) / 2 (query, no change)
-                              //   Output: result = resulting state (1=ON, 0=OFF, -1=error)
+                              //   Output: result = resulting state (1=ON, 0=OFF, -1=error,
+                              //           -5 = the toggle is QUEUED: it will still run -- do not re-send.
+                              //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR
@@ -46,11 +48,17 @@ enum Cmd : int32_t {
                               //             [9] u8 fallbackToCenter
                               //   Output: result = Wirbel code (0 OK, negatives per
                               //           docs/teleport-spec.md §8)
-                              //           paramsData pose block (GET_POSE/SAVE/GET_MARKER):
+                              //           paramsData pose block (GET_POSE/SAVE/GET_MARKER/
+                              //           GET_LAST/BUGIT_SAVE/RELATIVE):
                               //             [0..47]   6 doubles X,Y,Z,Pitch,Yaw,Roll
                               //             [48..175] mapName (null-terminated)
                               //             [176]     u8 source (0 raw / 1 invoke)
                               //             [177]     u8 tier (1 invoke / 2 raw write)
+                              //             [178]     u8 pose flags (contract 4+): bit0 = the
+                              //                       pose came from the raw parent-relative
+                              //                       fallback (NOT world coords); bit1 =
+                              //                       RELATIVE's landing is unknown (the 6
+                              //                       doubles are then NaN, never zeros)
                               //           op CURSOR output:
                               //             [0..23] 3 doubles hit point, [177] tier,
                               //             [178] u8 usedCenter
@@ -132,6 +140,15 @@ enum Cmd : int32_t {
                               //             [0..7] double value (1.0 normal, 0 frozen)
                               //   Output: result = 1 (active) / 0 (off) / negative
                               //           Hemmung::TimeResult
+    CMD_OFFSETS_VERDICT = 16, // [W5-OFFSETS-MAILBOX] Were the DynOff offsets MEASURED? CE Lua builds
+                              //   structures from them (ue5_dissect.lua), so a script that cannot ask
+                              //   is building on fallbacks without knowing. Read-only, and
+                              //   init-EXEMPT on purpose: when the probe never ran, "probe-not-run"
+                              //   IS the answer the caller needs -- a -10 refusal would hide it.
+                              //   Input:  none
+                              //   Output: result = 1 (measured) / 0 (not measured)
+                              //           paramsData[0..127] = reason, null-terminated ("" when
+                              //             measured, else e.g. "probe-not-run")
 };
 
 // CMD_TELEPORT op codes (written into instanceAddr by CE Lua / pipe bridge)
@@ -460,6 +477,17 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
                == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
 }
 
+/// [A3-MIMIC-INIT-FASTPATH] May a mailbox command skip EnsureInitialized's call into UE5_Init? UE5_Init publishes
+/// g_cachedGObjects / g_cachedGNames right after FindAll -- BEFORE Serie / Aura init, decoy recovery and
+/// ValidateAndFixOffsets -- so "both are set" is NOT "initialized" while an init is still scanning. Pure, so
+/// dll_helpers_test pins it.
+constexpr bool InitFastPathOk(bool haveGObjects, bool haveGNames, bool initInProgress) {
+    // While an init is scanning, the caller goes through UE5_Init, which waits on s_initMutex -- and says so -- and
+    // returns the first caller's result (Frieren.cpp's promise). Never "always call UE5_Init": a pathological rescan can
+    // pass the 10 s mailbox timeout.
+    return haveGObjects && haveGNames && !initInProgress;
+}
+
 /// Does `cmd` need the AOB scan (GObjects/GNames) to have succeeded?
 ///
 /// Everything that touches UE reflection does, so this is TRUE by default and the
@@ -476,8 +504,14 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
 /// Counter-examples that look exempt and are NOT: CMD_QUERY_PTR is "read-only and
 /// thread-agnostic" but reads the caches the scan fills and iterates GObjects;
 /// CMD_TIME is a "pure reflected memory write" — reflected means GObjects.
+///
+/// [W5-OFFSETS-MAILBOX] CMD_OFFSETS_VERDICT is the SECOND exemption, and for a reason the first does not
+/// share: its answer IS the init state. It reports whether the offsets were measured, and "no probe has
+/// run" is one of the answers; gating it would return -10 ("DLL not initialized") in exactly the case
+/// the caller asked about, and auto-init would run a whole-image sweep to answer a question about
+/// whether that sweep has happened. It reads two atomics and a fixed string — no UObject, no cache.
 constexpr bool CommandRequiresInit(int32_t cmd) {
-    return cmd != CMD_FOREGROUND;
+    return cmd != CMD_FOREGROUND && cmd != CMD_OFFSETS_VERDICT;
 }
 
 /// Start the mailbox polling thread.
@@ -546,7 +580,18 @@ namespace Mimic {
 ///       no old script can encounter it.
 ///   Note this bump DOES move the surface hash (the struct gained fields), unlike
 ///   version 2 which moved on meaning alone — see tools/check_mailbox_contract.py.
-constexpr int32_t MAILBOX_CONTRACT = 3;
+/// 4 ([W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS]): CMD_TELEPORT's pose block gains paramsData[178], pose
+///   flags -- bit0 the pose came from the raw parent-relative fallback, bit1 TP_OP_RELATIVE's landing is unknown
+///   (its 6 doubles are then NaN, never the zeros of a landing at the world origin). ADDITIVE: [178] was an
+///   unused output for every pose-block op (only CURSOR writes it, as its own usedCenter), so no contract-1..3
+///   script reads it, and MAILBOX_CONTRACT_MIN stays at 1. Like version 2 this moves on MEANING alone -- the
+///   surface hash does not change, and tools/check_mailbox_contract.py records why.
+/// 5 ([W5-OFFSETS-MAILBOX]): CMD_OFFSETS_VERDICT = 16 -- "were the DynOff offsets measured?", answered with
+///   result 1/0 plus the reason in paramsData[0..127]. ADDITIVE in the plainest sense: a NEW Cmd at a
+///   previously unused number, so no older script can send it or read its output, and
+///   MAILBOX_CONTRACT_MIN stays at 1. Unlike versions 2 and 4 this DOES move the surface hash -- a new
+///   enum member is layout -- so tools/check_mailbox_contract.py takes a new golden pair.
+constexpr int32_t MAILBOX_CONTRACT = 5;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

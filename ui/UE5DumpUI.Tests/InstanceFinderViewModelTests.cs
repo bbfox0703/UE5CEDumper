@@ -347,6 +347,52 @@ public class InstanceFinderViewModelTests
         Assert.Contains("retry", vm.LookupStatusText);
     }
 
+    // ==================================================================
+    // [W4-LOOKUP-FILTER] a lookup result survives the keyword filter's re-projection.
+    // ==================================================================
+    //
+    // The lookup empties _allInstances on purpose and added its one result straight into the bound
+    // Instances. The next ApplyInstanceFilter re-projects from _allInstances, so a leftover keyword --
+    // or even clearing it -- erased the result for good while LookupStatusText still reported a match.
+
+    private static AddressLookupResult FoundAt(string name, string cls) => new()
+    {
+        Found = true, Address = "0x7FF700001000", Index = 7, Name = name, ClassName = cls,
+        MatchKind = "exact",
+    };
+
+    [Fact]
+    public async Task Lookup_result_survives_a_filter_pass()
+    {
+        var dump = new FakeDump { NextLookup = FoundAt("Hero_0", "BP_Hero_C") };
+        var vm = NewVm(dump);
+        vm.LookupAddress = "0x7FF700001000";
+        await vm.LookupAddressCommand.ExecuteAsync(null);
+        Assert.Single(vm.Instances);
+
+        vm.ApplyInstanceFilter();   // any re-projection: a keyword edit, a class-noise tick
+
+        Assert.Equal("Hero_0", Assert.Single(vm.Instances).Name);
+    }
+
+    [Fact]
+    public async Task Lookup_result_hidden_by_a_leftover_keyword_comes_back_when_it_is_cleared()
+    {
+        var dump = new FakeDump { NextLookup = FoundAt("Hero_0", "BP_Hero_C") };
+        var vm = NewVm(dump);
+        vm.InstanceFilterText = "Rock";               // left over from an earlier class search
+        vm.LookupAddress = "0x7FF700001000";
+        await vm.LookupAddressCommand.ExecuteAsync(null);
+
+        vm.ApplyInstanceFilter();                     // the leftover keyword hides it...
+        Assert.Empty(vm.Instances);
+        Assert.Equal("1 hidden by filter", vm.ClassFilterNote);   // ...and says so
+
+        vm.InstanceFilterText = "";
+        vm.ApplyInstanceFilter();                     // ...and clearing it brings it back
+        Assert.Equal("Hero_0", Assert.Single(vm.Instances).Name);
+    }
+
     private static async Task WaitFor(Func<bool> cond)
     {
         for (int i = 0; i < 200 && !cond(); i++) await Task.Delay(5);

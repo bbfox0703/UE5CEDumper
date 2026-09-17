@@ -52,6 +52,10 @@ public sealed class WindowRestoreState
     // pure tests screen-agnostic). The caller refreshes this from Screens.All.
     private IReadOnlyList<(int X, int Y, int W, int H)> _screens = Array.Empty<(int, int, int, int)>();
 
+    // [W3-DIP-PIXELS] The window's RenderScaling. The stash's width/height are DIPs (Avalonia Width/Height), and
+    // WindowPlacement works in PHYSICAL pixels -- the AF21 unit fix MainWindow got and this twin never did.
+    private double _scale = 1.0;
+
     /// <summary>True once <see cref="Seed"/> has run (the window has opened in Normal
     /// state). Callers ignore size/position churn before this.</summary>
     public bool Seeded { get; private set; }
@@ -68,6 +72,11 @@ public sealed class WindowRestoreState
     /// window-state transition. Null is treated as "no screens" (accept everything).</summary>
     public void SetScreens(IReadOnlyList<(int X, int Y, int W, int H)> screens)
         => _screens = screens ?? Array.Empty<(int, int, int, int)>();
+
+    /// <summary>[W3-DIP-PIXELS] The window's current RenderScaling, pushed with <see cref="SetScreens"/>. The stashed size
+    /// stays in DIPs -- it is re-applied as Width/Height -- and only the visibility test converts it. A non-positive or
+    /// non-finite scale reads as 1.</summary>
+    public void SetScale(double scale) => _scale = scale > 0 && double.IsFinite(scale) ? scale : 1.0;
 
     /// <summary>Capture the initial normal-state rect (call once, after the window is
     /// open and still Normal). Both the committed snapshot and the pending stash start
@@ -137,11 +146,11 @@ public sealed class WindowRestoreState
 
     /// <summary>True when the (pos, size) rect shows a grabbable chunk on some current
     /// monitor. No screens (headless / pre-show) => accept, so the pure tests and the
-    /// not-yet-shown window keep their existing behaviour. Size is in DIPs; the small
-    /// <see cref="WindowPlacement.MinVisibleWidth"/>/<see cref="WindowPlacement.MinVisibleHeight"/>
-    /// tolerance absorbs the DIP↔physical-px rounding for the visibility verdict.</summary>
+    /// not-yet-shown window keep their existing behaviour. Size is in DIPs and is converted with the pushed
+    /// <see cref="SetScale"/> scale: WindowPlacement works in PHYSICAL pixels, and no min-visible tolerance absorbs a
+    /// 225% factor (it used to claim one did) [W3-DIP-PIXELS].</summary>
     private bool PositionAcceptable(PixelPoint pos, double w, double h)
         => _screens.Count == 0
            || WindowPlacement.IsVisibleEnough(
-                pos.X, pos.Y, (int)Math.Round(w), (int)Math.Round(h), _screens);
+                pos.X, pos.Y, (int)Math.Round(w * _scale), (int)Math.Round(h * _scale), _screens);
 }

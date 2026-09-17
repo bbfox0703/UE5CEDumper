@@ -367,6 +367,28 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
     return true;
 }
 
+// [P1-SEETHRU-NOPRODUCER] Can this build hide ANYTHING? Both producers must exist: KismetSystemLibrary::LineTraceSingle
+// (with its OutHit) to find an occluder, and AActor::SetActorHiddenInGame to hide it. Asked at ENABLE, so a build that
+// lacks either refuses with STR_ERR_REFLECTION through SetEnabled's return -- which reaches the pipe's state, the
+// mailbox result and the CE script alike -- instead of running a worker that hides nothing while the card reads
+// "Active -- nothing blocking the view". Two GObjects scans, once per enable (the worker re-resolves its trace per
+// enable anyway). "Actor" resolves on every build: at worst to its CDO, whose class is AActor itself.
+bool ProbeProducers(const char** missing) {
+    FunctionInfo fi;
+    const uintptr_t ksl = UE5_FindInstanceOfClass("KismetSystemLibrary");
+    if (!ksl || !FindFuncByName(Ubel::GetClass(ksl), "LineTraceSingle", fi) || fi.parmsSize <= 0
+        || !FindParam(fi, "OutHit")) {
+        *missing = "KismetSystemLibrary::LineTraceSingle";
+        return false;
+    }
+    const uintptr_t actor = UE5_FindInstanceOfClass("Actor");
+    if (!actor || !FindFuncByName(Ubel::GetClass(actor), "SetActorHiddenInGame", fi)) {
+        *missing = "AActor::SetActorHiddenInGame";
+        return false;
+    }
+    return true;
+}
+
 // Bumped by every SetEnabled(true). CollectOccluders keys its resolved-once
 // KismetSystemLibrary cache off it, so a re-enable (or a game that reloaded its
 // object pool between enables) re-resolves instead of trusting a stale CDO.
@@ -463,6 +485,7 @@ struct State {
     int32_t   hiddenCount = 0;
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
+    bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up; cleared by SetEnabled
 };
 State s_state;
 std::mutex s_mutex;
@@ -627,6 +650,9 @@ void PendingRestoreLoop() {
                              "leftover hidden actor(s) stay hidden until See-through is "
                              "enabled and disabled again with the game running",
                              Grimoire::PENDING_RESTORE_MAX_MS / 1000);
+                    // [P1-SEETHRU-GIVEUP] ...and say so on the status, not only in the log: the card still promised
+                    // "click back into the game and they reappear".
+                    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
                     done = true;
                 }
                 return;
@@ -671,6 +697,7 @@ int32_t SetEnabled(bool enable) {
     // itself, and a fresh disable re-decides. Joined here so only one path ever
     // owns hiddenActors.
     StopPendingLocked();
+    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = false; }   // either direction re-decides
     if (enable) {
         // Recover any actors left hidden by a prior stalled disable. Only pull the
         // leftover OUT of hiddenActors when we can actually un-hide it now (game thread
@@ -691,6 +718,22 @@ int32_t SetEnabled(bool enable) {
             LOG_WARN("SeeThrough: refusing to enable — game-thread hook unavailable "
                      "(the tracing invokes would have to run off the game thread)");
             return STR_ERR_NO_HOOK;
+        }
+
+        // [P1-SEETHRU-NOPRODUCER] Refuse a build that cannot hide anything, BEFORE a worker starts. The per-hit case (a
+        // hit that resolves to no actor) is per-tick and stays with its one-shot warning in CollectOccluders.
+        {
+            std::lock_guard<std::mutex> lk(s_mutex);
+            if (s_state.active) return 1;   // already on: nothing to probe
+        }
+        const char* missing = "";
+        if (!ProbeProducers(&missing)) {
+            std::lock_guard<std::mutex> lk(s_mutex);
+            s_state.code  = STR_ERR_REFLECTION;
+            s_state.state = STR_ERR_REFLECTION;
+            LOG_WARN("SeeThrough: refusing to enable — %s not found (cooked out?), so nothing could be hidden",
+                     missing);
+            return STR_ERR_REFLECTION;
         }
 
         bool responsive = Stark::IsGameThreadResponsive();
@@ -775,6 +818,8 @@ int32_t GetStatus(SeeThroughStatus& out) {
     out.hiddenCount = s_state.hiddenCount;
     out.pierceCount = s_state.pierceCount;
     out.state       = s_state.state;
+    out.restorePending   = s_pendingRunning.load();   // [P1-SEETHRU-GIVEUP]
+    out.restoreAbandoned = s_state.restoreAbandoned;
     // Under the same lock as hiddenCount, so a caller can never see a count that
     // disagrees with the list it came with.
     out.hiddenActors.assign(s_state.hiddenActors.begin(), s_state.hiddenActors.end());

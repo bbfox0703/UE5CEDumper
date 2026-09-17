@@ -84,7 +84,9 @@ int32_t GetSerialNumber(int32_t index);
 
 // Iterate all valid objects
 // Callback: return false to stop iteration
-void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);
+// Returns FALSE when a cancel (Tot::Requested) cut the walk short: the callback did NOT see every object, so a
+// "not found" from it means nothing. [P1-ENUMNAMES]
+bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);
 
 // Find first object matching name (linear scan)
 uintptr_t FindByName(const std::string& name);
@@ -119,6 +121,20 @@ void SetPackedConsts(int alignBits, uint64_t ptrMaskBits, bool force, int serial
 // Whether the GObjects array is a flat (non-chunked) FFixedUObjectArray.
 // Flat arrays were used in UE4.11-4.20; chunked arrays in UE4.21+ and all UE5.
 bool IsFlat();
+
+// [W4-STRIDE-TENTATIVE] How the FUObjectItem stride was arrived at -- ORTHOGONAL to the layout mode (a guessed
+// stride is still classed classic / unpacked57 / packed57, which is why this is not a fourth mode):
+//   "detected"   -- a probe pass cleared the confidence gate (or the preset hint, or the packed probe, did)
+//   "tentative"  -- no pass cleared it; the strongest weak pass was taken. Counts and names may be an ALIAS
+//                   of the real pool (a stride that divides the real one reads every k-th object).
+//   "undetected" -- nothing validated; the default stride is in use. Counts and names are untrustworthy.
+//   "forced"     -- the caller fixed the stride (InitWithExtendedLayout) after verifying it by content.
+// Reset at the ENTRY of every detection run, so a re-init that returns early never reports a previous one.
+const char* GetItemDetect();
+// Items the winning pass validated, of GetItemDetectProbes() probed (0 when undetected or forced).
+int GetItemDetectValidated();
+// That pass's OWN probe count: 200 in P1, 100 when only a deep phase found items; 0 when undetected or forced.
+int GetItemDetectProbes();
 
 // Search objects by partial name (case-insensitive), returns up to maxResults
 struct SearchResult {
@@ -319,6 +335,9 @@ struct ContainerScanStats {
     int32_t classesPrimed    = 0;   // Unique classes touched (cache built)
     int64_t durationMs       = 0;
     bool    deadlineHit      = false;
+    // [P1-SPARSEDELEGATE-REFS] Find References only: sparse delegates whose InvocationList could not be located. Their
+    // bindings are MISSING from the result, not absent from the game, so a sweep with any is not a complete one.
+    int32_t sparseUnlocated  = 0;
 };
 
 // Scan all UObjects' container fields for `addr`. Returns matches where
@@ -448,10 +467,36 @@ struct RelatedObject {
     uintptr_t   parentAddr  = 0;      // object holding the pointer to this one
 };
 
+// [W4-RELATED-STOPS] Why a related-object walk stopped short -- one flag PER CAUSE, never one "stopped early"
+// bool (P5: four conditions stop this walk, Tot::Requested() among them, and each needs its own advice).
+// A cap flag means a qualifying object was actually REFUSED: a list that exactly fills its cap is complete.
+struct RelatedObjectsStats {
+    bool    resultCapHit = false;   // a related object was found with the list already at maxResults
+    bool    ownedCapHit  = false;   // an owned sub-object was found past maxOwnedSubs
+    bool    visitCapHit  = false;   // the pointer-edge budget ran out (a huge container): more MAY exist
+    bool    deadlineHit  = false;   // the wall-clock budget ran out: more MAY exist
+    bool    cancelled    = false;   // Tot::Requested(): the client went away, or shutdown
+    int32_t maxResults   = 0;       // the effective bounds, so the UI can name them
+    int32_t maxOwnedSubs = 0;
+    int64_t maxVisited   = 0;
+    int64_t deadlineMs   = 0;
+};
+
+// The walk's bounds. The defaults ARE the shipped values, and no caller but a test passes this: it is the
+// seam that lets dll_core_test trip each bound with a handful of fake objects. [W4-RELATED-STOPS]
+struct RelatedObjectsLimits {
+    int32_t maxOwnedSubs = 128;
+    int64_t maxVisited   = 200000;
+    int64_t deadlineMs   = 8000;
+};
+
 // See the section comment above. `maxResults` caps the list (default 128 — far
 // above any real actor's owned-object count). Returns Self first, then
-// Class/Outer/counterpart, then owned sub-objects in BFS order.
-std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults = 128);
+// Class/Outer/counterpart, then owned sub-objects in BFS order. `stats`, when
+// given, says whether -- and why -- the list stopped short.
+std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults = 128,
+                                             RelatedObjectsStats* stats = nullptr,
+                                             const RelatedObjectsLimits& limits = RelatedObjectsLimits{});
 
 // === Outgoing object-pointer enumeration (public façade) ===
 //
@@ -601,7 +646,8 @@ struct PropertyMatch {
     //   - propOffset is informational only (no single class-absolute address
     //     once the path crosses a container) — the UI gates Copy Offset / Freeze
     //     off this flag.
-    //   - preview is never resolved (previewClassAddr stays 0 → Phase 2 skips).
+    //   - preview is never resolved: previewClassAddr stays 0, and ResolvePropertyPreviews skips isNested rows
+    //     even when a direct match put their class in the preview map. [A4-CDOSCOPE-NESTED-PREVIEW]
     bool        isNested = false;
 };
 
@@ -799,6 +845,25 @@ inline const char* PreviewSourceSuffix(PreviewSource src) {
         case PreviewSource::ClassDefault: return " (CDO default)";
         default:                          return "";
     }
+}
+
+// [A4-CDOSCOPE-ANCESTOR] The preview classes a live instance of `cls` is a DERIVED sample for: EVERY one on its super
+// chain, nearest first, STARTING FROM THE SUPER (the object's own class is its exact sample, credited by the caller). The
+// CDOSCOPE walk stopped at the NEAREST preview class, and an exact hit skipped the walk, so an ancestor row read
+// "(CDO default)" -- "subclasses were searched and none was live" -- while Force and Freeze on that same row acted on
+// its live instances. `superOf` returns 0 when the chain ends or cannot be read; bounded, because a malformed or
+// mid-teardown SuperStruct can self-loop.
+template <class IsPreviewFn, class SuperOfFn>
+inline std::vector<uintptr_t> PreviewAncestorsOf(uintptr_t cls, IsPreviewFn isPreview, SuperOfFn superOf) {
+    std::vector<uintptr_t> out;
+    uintptr_t cur = cls ? superOf(cls) : 0;
+    for (int depth = 0; cur && cur != cls && depth < 64; ++depth) {
+        if (isPreview(cur)) out.push_back(cur);
+        const uintptr_t next = superOf(cur);
+        if (next == cur) break;
+        cur = next;
+    }
+    return out;
 }
 
 bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::string>& baseNames);
@@ -1188,6 +1253,10 @@ struct PropertyXrefStats {
     int32_t objectsTotal        = 0;   // GObjects count
     int64_t durationMs          = 0;
     bool    deadlineHit         = false;
+    // [W3-XREF-CAP] A worker stopped at maxResults, or the merged total passed it: `xrefs` is a PREFIX and more
+    // may exist. Its own flag -- never folded into deadlineHit (P5: a different cause, different advice).
+    bool    capHit              = false;
+    int32_t cap                 = 0;       // the effective maxResults
 };
 
 struct PropertyXrefResult {
@@ -1252,6 +1321,10 @@ struct FunctionPropRefResult {
     // "bytecode" = Path 1 Kismet scan (exact). "disasm" = Path 2 native x64
     // disassembly (heuristic — see FunctionPropRef::confidence). "none" =
     // native but analysis unavailable (Func offset unresolved / unreadable).
+    // Two REFUSALS, which the UI must never render as "touches nothing":
+    // "blueprint_no_script" = a script UFunction with no usable Script (its Func is the
+    // shared interpreter, so Path 2 is not run); "bytecode_unreadable" = the Script
+    // header looked plausible but its buffer did not read, so nothing was scanned.
     std::string method;
     int32_t unmappedAccesses = 0;  // disasm: [reg+off] hits with no matching property
     // disasm: the decoder stopped at its instruction budget, so the property list
@@ -1696,6 +1769,12 @@ struct SnapshotChunkResult {
     int32_t total   = 0;   // GObjects count
     int32_t scanned = 0;   // indices iterated this chunk (advance offset by this)
     int64_t walkMs  = 0;   // Phase-0 telemetry: parallel walk+merge wall-time for this chunk
+    // A scan worker THREW while walking this chunk, so part of [offset, offset+scanned) was
+    // never captured. `scanned` still reports the full range (the pager must advance past the
+    // hole), which is exactly why this has to travel separately: without it a faulted chunk
+    // was stored and the snapshot finalised as complete and usable. [W1-SNAP-FAULT]
+    // Published as snapshot_chunk's `worker_faulted`; the UI finalises the snapshot UNUSABLE.
+    bool    workerFaulted = false;
     std::vector<SnapshotObject> objects;  // only objects with >=1 numeric field
 };
 

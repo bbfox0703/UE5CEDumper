@@ -91,6 +91,10 @@ int         g_cachedGEngineAobLen    = 0;
 // body so a second caller waits and returns the first caller's result. (B4/B5 audit #4)
 static std::atomic<bool> s_initialized{false};
 static std::mutex  s_initMutex;
+// [A3-MIMIC-INIT-FASTPATH] True, under s_initMutex, for the whole body of an init that is actually scanning -- from before
+// FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
+// the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
+std::atomic<bool> g_initInProgress{false};
 static Fern  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
@@ -150,6 +154,13 @@ bool UE5_Init() {
         LOG_WARN("UE5_Init: Already initialized");
         return true;
     }
+
+    // [A3-MIMIC-INIT-FASTPATH] From here to every return below, this thread is SCANNING under s_initMutex. The flag
+    // clears on every exit (RAII) -- before initLock releases, because it is declared after it.
+    struct InitInProgressScope {
+        InitInProgressScope()  { g_initInProgress.store(true,  std::memory_order_release); }
+        ~InitInProgressScope() { g_initInProgress.store(false, std::memory_order_release); }
+    } initInProgress;
 
     LOG_INFO("UE5_Init: Starting initialization...");
 
@@ -269,7 +280,9 @@ bool UE5_Init() {
             // base is content-validated (first objects resolve to clean names), so the
             // layout is known — force UE5-Extended so Aura reads NumElements at +0x24.
             int staticStride = 0;
-            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride);
+            bool staticCancelled = false;   // [P1-GENAU-ABORT]
+            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled);
+            if (staticCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             if (staticBase) {
                 Aura::InitWithExtendedLayout(staticBase, staticStride);
                 if (Aura::GetCount() > 0) {
@@ -290,7 +303,9 @@ bool UE5_Init() {
         // whose first slots resolve to names — a small partial list must not win.
         if (Aura::GetCount() == 0) {
             std::vector<uintptr_t> candidates;
-            Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects);
+            bool heapCancelled = false;   // [P1-GENAU-ABORT]
+            Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled);
+            if (heapCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             LOG_INFO("UE5_Init: Recovery (heap fallback) — evaluating %zu candidate(s)", candidates.size());
 
             uintptr_t best = 0;
@@ -666,6 +681,9 @@ void UE5_Shutdown() {
     // Tot::RequestShutdown() above is the interlock — a scan still running past this
     // point sees it and refuses to latch (see UE5_Init).
     s_initialized.store(false, std::memory_order_release);
+    // [W5-OFFSETS-UNMEASURED] ...and forget the offsets verdict: the next init re-derives it, and until then nothing
+    // may read this run's "validated" (a give-up used to keep a previous TRUE, over default offsets).
+    DynOff::ResetOffsetsVerdict();
     // The pipe is gone, so stop advertising READY — a CE Lua re-enable after a
     // Disable must wait for the fresh auto-start rather than read a stale flag.
     g_invokeMailbox.initState = Mimic::INIT_IDLE;
@@ -691,6 +709,15 @@ uint32_t UE5_GetVersion() {
         }
     }
     return g_cachedUEVersion;
+}
+
+int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
+    // [W5-OFFSETS-UNMEASURED] The pipe's get_offsets carried this verdict and nothing CE reads did -- while
+    // ue5_dissect.lua builds CE structures from these very offsets. 1 = MEASURED; 0 = not, and reasonBuf says why.
+    const bool ran       = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
+    const bool validated = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
+    CopyToBuffer(DynOff::OffsetsVerdictReason(ran, validated, DynOff::g_offsetsFallbackReason), reasonBuf, bufLen);
+    return (ran && validated) ? 1 : 0;
 }
 
 uintptr_t UE5_GetGObjectsAddr() {
@@ -1248,7 +1275,9 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
     int32_t r = UE5_CallProcessEvent(cm, ufunc, 0);
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
-        return -1;
+        // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
+        // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
+        return Stark::StatefulToggleFailure(r);
     }
 
     state = DbgCam_ReadState(cm, dcc);
@@ -1327,6 +1356,44 @@ int32_t UE5_TeleportGetLast(double* outPose6, char* outMapName, int32_t mapNameC
     return rc;
 }
 
+// [A2-CABI-TELEPORT-PARENTREL] The getters above plus the parent-relative flag they cannot carry. The pose read
+// passes the flag GetPose already computes; the marker reads copy the one the Marker already stores.
+int32_t UE5_TeleportGetPoseEx(double* outPose6, char* outMapName, int32_t mapNameCap,
+                              int32_t* outParentRelative) {
+    Wirbel::Pose p{};
+    bool parentRel = false;
+    int32_t rc = Wirbel::GetPose(p, outMapName, mapNameCap, nullptr, &parentRel);
+    if (rc == 0) Teleport_CopyPose(p, outPose6);
+    if (outParentRelative) *outParentRelative = (rc == 0 && parentRel) ? 1 : 0;
+    return rc;
+}
+
+int32_t UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6, char* outMapName, int32_t mapNameCap,
+                                int32_t* outParentRelative) {
+    Wirbel::Marker m{};
+    int32_t rc = Wirbel::GetMarker(slot, m);
+    if (rc == 0) {
+        Teleport_CopyPose(m.P, outPose6);
+        if (outMapName && mapNameCap > 0)
+            CopyToBuffer(m.MapName, outMapName, mapNameCap);
+    }
+    if (outParentRelative) *outParentRelative = (rc == 0 && m.ParentRelative) ? 1 : 0;   // the marker's flag
+    return rc;
+}
+
+int32_t UE5_TeleportGetLastEx(double* outPose6, char* outMapName, int32_t mapNameCap,
+                              int32_t* outParentRelative) {
+    Wirbel::Marker m{};
+    int32_t rc = Wirbel::GetLast(m);
+    if (rc == 0) {
+        Teleport_CopyPose(m.P, outPose6);
+        if (outMapName && mapNameCap > 0)
+            CopyToBuffer(m.MapName, outMapName, mapNameCap);
+    }
+    if (outParentRelative) *outParentRelative = (rc == 0 && m.ParentRelative) ? 1 : 0;   // the last pose's flag
+    return rc;
+}
+
 int32_t UE5_TeleportGetPov(double* outPov11) {
     Wirbel::Pov pov{};
     int32_t rc = Wirbel::GetPov(pov);
@@ -1343,7 +1410,16 @@ int32_t UE5_TeleportGetPov(double* outPov11) {
 int32_t UE5_TeleportRelative(double distance, int32_t horizontalOnly,
                              double* outNewPose6) {
     Wirbel::Pose p{};
-    int32_t rc = Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr);
+    bool landingKnown = true;   // [W2-TPREL-TRANSPORTS]
+    int32_t rc = Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown);
+    if (rc == 0 && !landingKnown) {
+        // The move succeeded, its re-read did not: NaN (nobody measured it), never zeros -- which read as a
+        // landing at the world origin. [TPREL-ZEROPOSE-2026-09-10]
+        const uint64_t nanBits = 0x7FF8000000000000ull;
+        double nan = 0;
+        memcpy(&nan, &nanBits, sizeof(nan));
+        p.X = p.Y = p.Z = p.Pitch = p.Yaw = p.Roll = nan;
+    }
     if (rc == 0) Teleport_CopyPose(p, outNewPose6);
     return rc;
 }
@@ -2228,9 +2304,12 @@ extern "C" int UE5_GetProcessEventOffset() {
 // address read out of the vtable lands in HookedProcessEvent — on a pipe lane or
 // the Mimic polling thread — and its drain then executed queued requests that
 // were queued precisely because they are NOT safe off-thread. Now true again,
-// because we route through the trampoline below.
-// Sharing the body via a static helper would tangle SEH+C++ object
-// lifetimes; the duplication is small.
+// on BOTH branches below: the patched address goes through the trampoline, and
+// an override's fail-open call runs under Stark::CallAddressAsOwnSEH's own-PE-call
+// mark -- so when AActor::ProcessEvent calls Super::ProcessEvent, which IS the
+// patched address, the detour sees InOwnPeCall() and does not drain
+// ([A3-ST1-SUPER-DRAIN]). The SEH frame and that mark live in Stark's helper pair
+// (CallAddressSEH / CallAddressAsOwnSEH).
 int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     if (!instance || !ufunc) return -1;
 
@@ -2266,23 +2345,21 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
         return Stark::CallOriginalSEH(instance, ufunc, params);
     }
 
-    typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
-    auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);
-
     LOG_INFO("UE5_CallProcessEventDirect: inst=0x%llX func=0x%llX pe=0x%llX (caller-asserted safe)",
              (unsigned long long)instance, (unsigned long long)ufunc,
              (unsigned long long)peAddr);
 
-    __try {
-        pProcessEvent(reinterpret_cast<void*>(instance),
-                      reinterpret_cast<void*>(ufunc),
-                      reinterpret_cast<void*>(params));
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
+    // [A3-ST1-SUPER-DRAIN] Failing open to the override is right -- but the override is not the end of
+    // the call. AActor::ProcessEvent (every actor) calls Super::ProcessEvent, which IS the address
+    // MinHook patched, so the unmarked call re-entered our detour here, on the mailbox thread, with
+    // InOwnPeCall() false -- and its drain ran every queued request off the game thread: ST1's crash
+    // class, one frame down. The helper holds the same "our own PE call" mark CallOriginalSEH does.
+    // ⛔ Not the trampoline (it skips AActor's world, GC and delegate checks), and not a queue (it
+    // brings back the idle-menu timeouts): the recorded harmful fixes.
+    const int32_t rc = Stark::CallAddressAsOwnSEH(peAddr, instance, ufunc, params);
+    if (rc == -4)
         LOG_ERROR("UE5_CallProcessEventDirect: EXCEPTION during direct ProcessEvent call!");
-        return -4;
-    }
-
-    return 0;
+    return rc;
 }
 
 // === Mailbox ===

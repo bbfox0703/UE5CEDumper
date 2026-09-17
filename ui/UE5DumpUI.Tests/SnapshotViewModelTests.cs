@@ -51,6 +51,46 @@ public class SnapshotViewModelTests : IDisposable
                string.Join(Environment.NewLine + "  ", tail);
     }
 
+    // ---- [A4-PIVOT-CROSSGAME-ID] the Diff / Group picks do not follow an id into a different game ----
+
+    private async Task SeedGameAsync(string pe, int count)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame(pe);
+        for (int i = 0; i < count; i++)
+        {
+            long id = await _store.CreateSnapshotAsync(
+                new SnapshotMeta { Label = $"{pe}{i}", PeHash = pe, GameSessionId = pe + "-S" }, ct);
+            var o = new SnapshotCapturedObject
+            {
+                Index = 1, Addr = "0x1000", Name = "O_1", ClassName = "C", OuterClassName = "World", Path = "/G.M:L.O_1",
+            };
+            o.Fields.Add(new SnapshotCapturedField { Name = "HP", Type = "IntProperty", Hex = "64000000", Offset = 0x10 });
+            await _store.WriteChunkAsync(id, new[] { o }, ct);
+            await _store.FinalizeSnapshotAsync(id, 1, 1, ct);
+        }
+    }
+
+    private static EngineState GameState(string pe) =>
+        new() { PeHash = pe, UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" };
+
+    [Fact]
+    public async Task ADifferentGame_GetsItsOwnDefaultDiffPicks_NotTheOtherGamesIds()
+    {
+        await SeedGameAsync("A", 2);
+        await SeedGameAsync("B", 3);
+        var vm = new SnapshotViewModel(new StubDumpService(), _store, new MockLoggingService());
+        vm.SetEngineState(GameState("A"));
+        await vm.PendingRefresh!;
+        Assert.Equal(2, vm.DiffB!.Id);   // A's two newest: A#1 -> A#2
+
+        vm.SetEngineState(GameState("B"));
+        await vm.PendingRefresh!;
+
+        Assert.Equal(3, vm.DiffB!.Id);   // B's newest, not B#2 by A's id
+        Assert.Equal(2, vm.DiffA!.Id);
+    }
+
     // Stub that streams 3 objects (4 fields) across two non-empty chunks, then a
     // terminal empty chunk — mirrors the DLL's stateless cursor pagination.
     private sealed class CaptureStub : StubDumpService
@@ -314,6 +354,91 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Equal("", vm.Label);
     }
 
+    // [W1-SNAP-FAULT] The first chunk comes back with a DLL scan worker FAULT: part of its window
+    // was never walked, although Scanned still covers all of it. Before the fix that chunk was
+    // stored and the snapshot finalised as complete and USABLE -- no warning badge, and
+    // auto-selected as a Diff / Group / SPC / Pivot source.
+    private sealed class FaultingCaptureStub : StubDumpService
+    {
+        public int ChunkCalls;
+
+        public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
+            => Task.FromResult(6);
+
+        public override Task<SnapshotChunkResult> SnapshotChunkAsync(
+            string dataType, bool gameOnly, int offset, int limit,
+            bool nativeC = false, bool autoSkipNoise = true,
+            string numericFamily = "Any", CancellationToken ct = default)
+        {
+            ChunkCalls++;
+            var r = new SnapshotChunkResult { Total = 6 };
+            if (offset == 0)
+            {
+                r.Scanned = 3;
+                r.WorkerFaulted = true;   // a worker threw inside [0, 3)
+                var o = new SnapshotCapturedObject
+                {
+                    Index = 0, Addr = "0x0", Name = "Obj_0",
+                    ClassName = "BP_Thing_C", OuterClassName = "World",
+                    Path = "/Game/Map.Map:PersistentLevel.Obj_0",
+                };
+                o.Fields.Add(new SnapshotCapturedField { Name = "A", Type = "IntProperty", Hex = "01000000" });
+                r.Objects.Add(o);
+            }
+            else if (offset == 3)
+            {
+                r.Scanned = 3;   // a clean chunk -- the capture must not reach it
+            }
+            return Task.FromResult(r);
+        }
+    }
+
+    [Fact]
+    public async Task Capture_WorkerFaultedChunk_IsFinalisedUnusable_AndSaysFault()
+    {
+        var dump = new FaultingCaptureStub();
+        _lastLog = new MockLoggingService();
+        var vm = new SnapshotViewModel(dump, _store, _lastLog)
+        {
+            SelectedScope = "NumericNoByte",
+            GameOnly = true,
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var list = await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken);
+        Assert.True(list.Count == 1, Diag("the partial snapshot is kept, not deleted", list.Count, vm));
+        Assert.False(list[0].IsUsable, Diag("a faulted chunk must NOT be finalised usable", list[0].IsUsable, vm));
+        Assert.Equal(1, list[0].ObjectCount);   // what was captured is still stored
+
+        // The status names the cause that happened -- a worker FAULT -- never a deadline.
+        Assert.Contains("FAULT", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("deadline", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+
+        // Stops at the faulted chunk: a faulting decrypt stub is usually deterministic.
+        Assert.Equal(1, dump.ChunkCalls);
+    }
+
+    // The control: the same stub shape with NO fault finalises usable, so the assert above is
+    // not satisfied by a capture that marks everything unusable.
+    [Fact]
+    public async Task Capture_CleanChunks_StayUsable()
+    {
+        var dump = new CaptureStub();
+        _lastLog = new MockLoggingService();
+        var vm = new SnapshotViewModel(dump, _store, _lastLog) { SelectedScope = "NumericNoByte", GameOnly = true };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var list = await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken);
+        Assert.True(list.Count == 1, Diag("expected 1 persisted snapshot", list.Count, vm));
+        Assert.True(list[0].IsUsable, Diag("a clean capture stays usable", list[0].IsUsable, vm));
+        Assert.Equal("", list[0].PartialReason);   // [W1-PARTIAL-MARK] a complete capture is not marked partial
+        Assert.DoesNotContain("FAULT", vm.StatusText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Capture_PassesIncludeNativeFields_ToSnapshotChunk()
     {
@@ -415,11 +540,61 @@ public class SnapshotViewModelTests : IDisposable
         Assert.True(saved.ObjectCount > 0, "partial snapshot should hold the captured objects");
     }
 
+    // ---- [W1-PARTIAL-MARK] a kept partial carries a PERSISTED marker, not only a status line ----
+
+    [Fact]
+    public async Task Capture_MaxDatasetCap_PersistsTheCapMarker_AndStaysUsable()
+    {
+        var dump = new ManyChunkStub();
+        var store = new CapDecoratorStore(_store, fakeBytes: 600L * 1024 * 1024);
+        var vm = new SnapshotViewModel(dump, store, new MockLoggingService())
+        {
+            SelectedMaxDataset = "512 MB",
+            Label = "capped",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var saved = Assert.Single(await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(Constants.SnapshotPartialCap, saved.PartialReason);
+        // Still usable: is_usable=0 would auto-delete the partial the cap deliberately keeps.
+        Assert.True(saved.IsUsable);
+    }
+
+    [Fact]
+    public async Task Capture_LowDiskMidCapture_PersistsTheDiskLowMarker_NotTheCapOne()
+    {
+        // Plenty of room at the pre-flight guard; the drive "fills" on the first chunk fetch, so the
+        // mid-capture poll -- not the pre-check -- is what stops it. Its stop ALSO sets capReached, so
+        // this is the test that tells the two reasons apart.
+        var platform = new DiskStubPlatformService(_tempDir)
+        {
+            FreeBytes  = 500L * 1024 * 1024 * 1024,
+            TotalBytes = 1024L * 1024 * 1024 * 1024,
+        };
+        var dump = new ManyChunkStub { OnFetch = () => platform.FreeBytes = 1L * 1024 * 1024 * 1024 };
+        var vm = new SnapshotViewModel(dump, _store, new MockLoggingService(), gate: null, platform: platform)
+        {
+            SelectedScope = "NumericNoByte", Label = "lowdisk",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        Assert.True(dump.FetchCount < 10, $"expected the low-disk stop, fetched {dump.FetchCount} chunks");
+        var saved = Assert.Single(await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(Constants.SnapshotPartialDiskLow, saved.PartialReason);
+        Assert.True(saved.IsUsable);
+    }
+
     // Streams 1 object per chunk over a 20-object total (10 chunks of scanned=2) so a
     // working max-dataset cap stops it EARLY; a broken cap still terminates at chunk 10.
     private sealed class ManyChunkStub : StubDumpService
     {
         public int FetchCount;
+        /// <summary>Runs on every chunk fetch -- lets a test change the world mid-capture.</summary>
+        public Action? OnFetch;
 
         public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
             => Task.FromResult(20);
@@ -430,6 +605,7 @@ public class SnapshotViewModelTests : IDisposable
             string numericFamily = "Any", CancellationToken ct = default)
         {
             FetchCount++;
+            OnFetch?.Invoke();
             var r = new SnapshotChunkResult { Total = 20, Scanned = 2 };
             if (offset < 20)
             {
@@ -492,7 +668,7 @@ public class SnapshotViewModelTests : IDisposable
         public CapSession(ICaptureSession inner, long fakeBytes) { _inner = inner; _fakeBytes = fakeBytes; }
         public long CurrentSizeBytes() => _fakeBytes;   // force the cap to trip on the first poll
         public int WriteChunk(long s, IReadOnlyList<SnapshotCapturedObject> o, CancellationToken ct = default) => _inner.WriteChunk(s, o, ct);
-        public Task CompleteSnapshotAsync(long s, int oc, int fc, bool isUsable = true, CancellationToken ct = default) => _inner.CompleteSnapshotAsync(s, oc, fc, isUsable, ct);
+        public Task CompleteSnapshotAsync(long s, int oc, int fc, bool isUsable = true, string partialReason = "", CancellationToken ct = default) => _inner.CompleteSnapshotAsync(s, oc, fc, isUsable, partialReason, ct);
         public ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
@@ -740,6 +916,42 @@ public class SnapshotViewModelTests : IDisposable
             pending!, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
         Assert.True(ReferenceEquals(finished, pending), $"{what} did not finish within 10s");
         await pending!;   // observe any fault it captured
+    }
+
+    // ---- [W1-GROUP-DENYLIST] group mode applies the Diff denylist -- and now says so ----
+
+    private async Task<SnapshotViewModel> GroupVmAsync(bool withDenylist, CancellationToken ct)
+    {
+        _store.SetActiveGame("GVM");
+        _store.SetClassDenylist(DenylistScope.Diff, withDenylist
+            ? new HashSet<string>(StringComparer.Ordinal) { "Noise_C" }
+            : new HashSet<string>(StringComparer.Ordinal));
+        var vm = await NewVmWithSnapshotAsync(ct);
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].ScanType = ValueScanType.Exact; vm.GroupInputs[0].Value = "24";
+        vm.GroupInputs[1].ScanType = ValueScanType.Exact; vm.GroupInputs[1].Value = "10";
+        return vm;
+    }
+
+    [Fact]
+    public async Task GroupMatch_WithADenylist_SaysClassesAreHidden_AndWhereToSeeThem()
+    {
+        var vm = await GroupVmAsync(withDenylist: true, TestContext.Current.CancellationToken);
+
+        await vm.RunGroupMatchCommand.ExecuteAsync(null);
+
+        Assert.Contains("1 class(es) hidden by the Diff denylist", vm.GroupStatusText);
+        Assert.Contains("Diff mode", vm.GroupStatusText);
+    }
+
+    [Fact]
+    public async Task GroupMatch_WithoutADenylist_SaysNothingAboutIt()
+    {
+        var vm = await GroupVmAsync(withDenylist: false, TestContext.Current.CancellationToken);
+
+        await vm.RunGroupMatchCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("denylist", vm.GroupStatusText);
     }
 
     [Fact]

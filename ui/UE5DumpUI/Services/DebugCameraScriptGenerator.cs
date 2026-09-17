@@ -51,14 +51,25 @@ public static class DebugCameraScriptGenerator
         Line(sb, "local mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, "  showMessage('[DebugCamera] g_invokeMailbox not found -- is " +
-                  "UE5Dumper.dll injected?')");
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, "  showMessage('[DebugCamera] g_invokeMailbox not found -- is " +
+                      "UE5Dumper.dll injected?')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [W2-CEGEN-MODAL] An untick never pops a modal over the game (MailboxTimeout.SilentReturn).
+            Line(sb, "  dbg('[DebugCamera] g_invokeMailbox not found -- nothing to turn off')");
+        }
         Line(sb, "  return");
         Line(sb, "end");
+        // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
+        // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
-        CeLuaHygiene.AppendContractCheck(sb, "DebugCamera", MailboxTimeout.UntickAndReturn);
+        CeLuaHygiene.AppendContractCheck(sb, "DebugCamera", bail);
         Line(sb);
 
         // Mailbox round-trip: write request, trigger CMD_SET_DEBUG_CAMERA=7, poll.
@@ -68,14 +79,14 @@ public static class DebugCameraScriptGenerator
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "DebugCamera");
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "DebugCamera", bail);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {req})   -- request: {req} = {label}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CeMailboxLayout.CmdSetDebugCamera})    -- CMD_SET_DEBUG_CAMERA (write LAST)");
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
-        CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera");
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error");
+        CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -83,11 +94,29 @@ public static class DebugCameraScriptGenerator
         // returns 0 on an ENABLE, with no error code. Checking only -1 read that as
         // success: no message, window closed, row left ticked on a camera that never
         // turned on.
-        Line(sb, $"if state ~= {req} then");
-        Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
-                  "-- no live CheatManager, or the game refused the toggle.')");
-        // Nothing was applied on this branch, so the record must not stay ticked.
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED -- it will still
+        // run. Not a failure, so no untick, and nothing to re-send: a second tick would queue a second toggle, and the
+        // two drain ON then OFF. [ENABLE] says so (a real warning, ungated); [DISABLE] dbg()s it (no modal on an untick,
+        // [W2-CEGEN-MODAL]). Neither is a clean success, so neither closes the window. Tested BEFORE `state ~= req`.
+        Line(sb, $"if state == {Constants.DebugCameraToggleQueuedResult} then");
+        if (enable)
+            Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
+                      "when it is free. Do not tick again: a second toggle would undo it.')");
+        else
+            Line(sb, $"  dbg('[DebugCamera] {label} queued -- the toggle will run when the game thread is free')");
+        Line(sb, $"elseif state ~= {req} then");
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
+                      "-- no live CheatManager, or the game refused the toggle.')");
+            // Nothing was applied on this branch, so the record must not stay ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [W2-CEGEN-MODAL] The camera may still be on -- visible in the game itself; no modal over it.
+            Line(sb, $"  dbg('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') -- the camera may still be on')");
+        }
         Line(sb, "elseif DEBUG == 0 then");
         Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
         Line(sb, "end");

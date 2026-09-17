@@ -218,13 +218,13 @@ void TraceBlock(Ctx& ctx, uintptr_t startAddr, ThisRegs tr, int depth) {
                 }
             }
 
-            if (tr.Empty() && ctx.callsFollowed == 0) {
-                // No live this-alias and nothing followed yet: the rest of the
-                // block can't yield high-confidence field accesses. For depth-0
-                // thunks keep going a little (param unpack may restore RCX before
-                // the impl call); for followed impls, bail to save budget.
-                if (depth > 0) return;
-            }
+            // [W5-DENKEN-DEADGUARD] A "bail to save budget in a followed impl" guard stood here --
+            // `if (tr.Empty() && ctx.callsFollowed == 0) { if (depth > 0) return; }` -- and it was DEAD
+            // in every reachable state: TryFollow counts the follow BEFORE it recurses, so callsFollowed
+            // is >= 1 whenever depth > 0. Removed, not "repaired": dropping the callsFollowed term would
+            // stop a followed impl the moment its this-alias dies and lose its later low-confidence
+            // accesses (dll_helpers_test's Test_Denken_FollowedImplOutlivesItsAlias). kInstrBudget and
+            // kBlockGuard bound the cost instead.
 
             consumed += instr.length;
             ip       += instr.length;

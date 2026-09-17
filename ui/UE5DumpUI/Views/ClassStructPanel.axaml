@@ -87,7 +87,7 @@
     </Border>
 
     <!-- Fields DataGrid -->
-    <DataGrid ItemsSource="{Binding Fields}"
+    <DataGrid x:Name="ClassFieldsGrid" ItemsSource="{Binding Fields}"
               SelectedItem="{Binding SelectedField}"
               IsReadOnly="True"
               CanUserSortColumns="True"

@@ -45,8 +45,14 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "package-identity
 # Class names are emitted as UTF-16 (TEXT() in the UHT registration), property names as
 # narrow strings in FPropertyParams -- so both encodings have to be searched. Checking
 # only ASCII makes every class name look missing from a Shipping build.
+#
+# ⚠ Keep the NEWEST fixture on this list. Every name above dates from the first package
+# (2026-08-05), so a package built weeks before the last addition still passed -- the exact
+# "stale package silently tests yesterday's zoo" this file exists to catch. The InvokeGate pair
+# (2026-09-15) is one UFUNCTION name and one property name, so both string tables are covered.
 MUST_EXIST = ["DumperTestActor", "DumperTestSubsystem", "DumperTestPayload",
-              "Text_Even2_TwoNull", "Opt_Int_Unset", "FrozenInt"]
+              "Text_Even2_TwoNull", "Opt_Int_Unset", "FrozenInt",
+              "InvokeGate_TakeStructRef", "InvokeGate_LastLabelData"]
 
 # The ABSENT list asks a NARROWER question than the EXIST list, and must be counted
 # differently or it answers a question nobody asked. "Is RawInt reflected?" is answered

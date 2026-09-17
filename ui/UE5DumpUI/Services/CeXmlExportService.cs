@@ -197,7 +197,7 @@ public static class CeXmlExportService
     /// Generous enough that any legitimate single-object export fits; only a runaway
     /// deep-drill on a dense graph trips it.
     /// </summary>
-    private const int MaxEmitEntries = 60_000;
+    internal const int MaxEmitEntries = 60_000;   // internal: Instance Finder's warning quotes it
 
     [ThreadStatic]
     private static int _emitEntryCount;
@@ -1049,6 +1049,7 @@ public static class CeXmlExportService
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
                     DelegatePad = f.DelegatePad,
+                    ArrayElemDelegatePad = f.ArrayElemDelegatePad,   // [A4-DELEGATE-ARRAY-PAD]
                     SoftArrayFNameSize = f.SoftArrayFNameSize,
                     SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
                     SoftArrayPathOffset = f.SoftArrayPathOffset,
@@ -1122,6 +1123,13 @@ public static class CeXmlExportService
     /// <c>FProperty::ElementSize</c> and sent as <c>delegate_pad</c>; do not re-derive the rule
     /// here, or there are two implementations to keep right.</summary>
     private static int CeOffset(LiveFieldValue field) => field.Offset + field.DelegatePad;
+
+    /// <summary>[A4-DELEGATE-ARRAY-PAD] The detector pad of each ELEMENT of a <c>TArray&lt;FScriptDelegate&gt;</c>,
+    /// added to an element leaf's offset from the dereferenced <c>TArray.Data</c>. Only an ArrayProperty has one: a
+    /// multicast's invocation-list elements are the NotChecked variant, never padded, and the array FIELD's own
+    /// group header stays on <see cref="CeOffset"/>.</summary>
+    private static int ElemDelegatePad(LiveFieldValue field) =>
+        field.TypeName == "ArrayProperty" ? field.ArrayElemDelegatePad : 0;
 
     public static string GenerateHierarchicalXml(
         string rootAddress,
@@ -2774,6 +2782,37 @@ public static class CeXmlExportService
             return;
         }
 
+        // [W5-CEXML-FSTRING] FString-family elements: a CE String per element. They fell through to
+        // the bare placeholder below, because MapInnerTypeToCeField has no arm for them on purpose.
+        if (IsStringProperty(field.ArrayInnerType)
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0
+            && field.ArrayElements is { Count: > 0 })
+        {
+            EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
+            var strIndent = indent + "  ";
+            foreach (var elem in field.ArrayElements)
+            {
+                int elemByteOffset = elem.Index * field.ArrayElemSize;
+                EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
+                    $"+{elemByteOffset:X}", field.ArrayInnerType);
+            }
+            // Copy CE Field's fabricated tail, by the generic path's rule below: rows for [Num .. target)
+            // read past-the-end headers (CE shows unknowns) until the game grows the array.
+            int walkedStr = field.ArrayElements.Count;
+            int targetStr = FabricateActive
+                ? Math.Min(Math.Max(_fabricateArrayCount, walkedStr), MaxFabricateElements)
+                : walkedStr;
+            for (int i = walkedStr; i < targetStr; i++)
+            {
+                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                int elemByteOffset = i * field.ArrayElemSize;
+                EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{i}]", elemByteOffset, null),
+                    $"+{elemByteOffset:X}", field.ArrayInnerType);
+            }
+            EmitGroupClose(sb, indent);
+            return;
+        }
+
         // Map inner type to CE type
         var ceElem = MapInnerTypeToCeField(field.ArrayInnerType, field.ArrayElemSize);
 
@@ -2887,6 +2926,9 @@ public static class CeXmlExportService
             ? Math.Min(Math.Max(_fabricateArrayCount, walkedLeaf), MaxFabricateElements)
             : walkedLeaf;
 
+        // [A4-DELEGATE-ARRAY-PAD] 0 but for a TArray<FScriptDelegate> on a checked build: its element leaf (the
+        // FWeakObjectPtr) starts past the detector. The description keeps the element's own offset.
+        int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
             // Element: simple offset from the already-dereferenced Data pointer.
@@ -2903,13 +2945,13 @@ public static class CeXmlExportService
             {
                 // All children link to the parent (or first occurrence's parent) Description
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
-                    $"+{elemByteOffset:X}", null,
+                    $"+{elemByteOffset + elemPad:X}", null,
                     dropDownListLink: dropDownLinkTarget);
             }
             else
             {
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
-                    $"+{elemByteOffset:X}", null);
+                    $"+{elemByteOffset + elemPad:X}", null);
             }
         }
 
@@ -2922,10 +2964,10 @@ public static class CeXmlExportService
             int elemByteOffset = i * field.ArrayElemSize;
             var elemDesc = DecorateDesc($"[{i}]", elemByteOffset, null);
             if (dropDownLinkTarget != null)
-                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null,
+                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset + elemPad:X}", null,
                     dropDownListLink: dropDownLinkTarget);
             else
-                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null);
+                EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset + elemPad:X}", null);
         }
 
         EmitGroupClose(sb, indent);
@@ -3208,6 +3250,13 @@ public static class CeXmlExportService
 
                 foreach (var sf in elem.StructFields)
                 {
+                    // [W5-CEXML-FSTRING] A string member is a CE String, not a placeholder folder.
+                    if (IsStringProperty(sf.TypeName))
+                    {
+                        EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc(sf.Name, sf.Offset, null),
+                            $"+{sf.Offset:X}", sf.TypeName);
+                        continue;
+                    }
                     var ceField = MapInnerTypeToCeField(sf.TypeName, sf.Size);
                     if (ceField != null)
                     {
@@ -3316,6 +3365,7 @@ public static class CeXmlExportService
         bool valScalar = !valStruct && !IsObjectPropertyType(field.MapValueType);
 
         var ceKey = MapInnerTypeToCeField(field.MapKeyType, field.MapKeySize);
+        bool keyString = IsStringProperty(field.MapKeyType);   // ceKey is null for these [W5-CEXML-FSTRING]
 
         // Shared value DropDownList (rawInt → name) for Name/Enum values.
         string? valueDropDown = null;
@@ -3370,6 +3420,10 @@ public static class CeXmlExportService
                     EmitLeaf(sb, elemIndent,
                         $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
                         ceKey, $"+{elemByteOffset:X}", null);
+                else if (keyString)
+                    EmitContainerStringLeaf(sb, elemIndent,
+                        $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
+                        $"+{elemByteOffset:X}", field.MapKeyType);
                 // Value record fields as flat "[i] key ▸ Field" siblings at the combined offset.
                 EmitFlattenedStruct(sb, elemIndent, new LiveFieldValue
                 {
@@ -3398,6 +3452,8 @@ public static class CeXmlExportService
             // Key leaf at +0 — label only, no baked-in dynamic value.
             if (ceKey != null)
                 EmitLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), ceKey, "+0", null);
+            else if (keyString)
+                EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0", field.MapKeyType);
 
             // Value at +valOffset.
             if (valStruct || IsObjectPropertyType(field.MapValueType))
@@ -3411,7 +3467,10 @@ public static class CeXmlExportService
             else
             {
                 var ceVal = MapInnerTypeToCeField(field.MapValueType, field.MapValueSize);
-                if (ceVal != null)
+                if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
+                    EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null),
+                        $"+{valOffset:X}", field.MapValueType);
+                else if (ceVal != null)
                     EmitLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null), ceVal,
                         $"+{valOffset:X}", null,
                         dropDownListLink: valueDropLink);
@@ -3753,6 +3812,19 @@ public static class CeXmlExportService
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
+
+    /// <summary>
+    /// [W5-CEXML-FSTRING] One FString-family ELEMENT of a container -- a TArray element, a TMap key or
+    /// value, a struct-array element's member. Its header is inline at <paramref name="address"/> and its
+    /// characters one Data-pointer hop away: the same Offsets=[0] encoding as a scalar string.
+    /// <para>⛔ These types are deliberately ABSENT from <see cref="MapInnerTypeToCeField"/>: routing
+    /// them through EmitLeaf would lose Length / Unicode / CodePage / ZeroTerminate, which a CE String
+    /// needs. Every container caller checks <see cref="IsStringProperty"/> first and comes here.</para>
+    /// </summary>
+    private static void EmitContainerStringLeaf(StringBuilder sb, string indent, string description,
+        string address, string typeName) =>
+        EmitStringLeaf(sb, indent, description, address, offsets: [0],
+            unicode: typeName == "StrProperty", codepage: typeName == "Utf8StrProperty");
 
     /// <summary>
     /// Emit a CE &lt;Color&gt; element for the entry currently being written, when an alternating
@@ -4135,8 +4207,9 @@ public static class CeXmlExportService
             // (16 without CasePreservingName, 20 with -- FScriptDelegate is alignof 4).
             // ⚠ "first 8 bytes" is relative to the PAYLOAD, not to the field: a checked build
             // (UE 5.3+, DO_CHECK on) puts an 8-byte access detector in front. The exporter's
-            // field projection folds LiveFieldValue.DelegatePad into Offset for exactly this,
-            // so nothing here needs to know -- but do not re-bake the assumption elsewhere.
+            // field projection folds LiveFieldValue.DelegatePad into Offset for exactly this -- for a FIELD. A
+            // TArray<FScriptDelegate>'s ELEMENTS carry their own pad (ArrayElemDelegatePad), which EmitArrayProperty
+            // adds per element through ElemDelegatePad. [A4-DELEGATE-ARRAY-PAD]
             "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase K: FMulticastScriptDelegate — the inner TArray<FScriptDelegate>::Data
@@ -4146,6 +4219,14 @@ public static class CeXmlExportService
             "MulticastDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "MulticastInlineDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // FText: the scalar path's encoding (MapCeField) -- its first 8 bytes, the ITextData
+            // pointer, as hex. No clean CE String encoding exists for it (IsTerminalLeafField), but an
+            // 8-byte leaf beats the placeholder / empty folder it got here before. [W5-CEXML-FSTRING]
+            "TextProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // ⛔ NOT the FString family (Str / Utf8Str / AnsiStr): a CE String needs Length / Unicode /
+            // CodePage / ZeroTerminate, which EmitLeaf cannot write. Every container caller routes them
+            // to EmitContainerStringLeaf before asking here. [W5-CEXML-FSTRING]
             _ => null // Non-scalar (StructProperty, etc.)
         };
     }

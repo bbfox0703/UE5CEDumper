@@ -164,6 +164,60 @@ public class SnapshotStoreTests : IDisposable
         Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
     }
 
+    // [W1-PARTIAL-MARK] A cap / low-disk partial is KEPT usable by design, so its marker is a column of its
+    // own. The refuted "obvious" repair (is_usable=0) would have handed it to the auto-clean below.
+    [Fact]
+    public async Task PartialReason_RoundTrips_AndAPartialSurvivesTheUnusableAutoClean()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("PARTIAL");
+
+        long capped = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "capped", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(capped, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(capped, 1, n, isUsable: true, partialReason: Constants.SnapshotPartialCap, ct: ct);
+        }
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(whole, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+            await s.CompleteSnapshotAsync(whole, 1, n, ct: ct);
+        }
+
+        var list = await _store.ListSnapshotsAsync(ct);
+        var c = list.Single(m => m.Id == capped);
+        Assert.Equal(Constants.SnapshotPartialCap, c.PartialReason);
+        Assert.True(c.IsPartial);
+        Assert.True(c.IsUsable);
+        Assert.Equal("", list.Single(m => m.Id == whole).PartialReason);
+
+        // The whole point of a separate marker: the auto-clean leaves the partial alone.
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+        Assert.Equal(2, (await _store.ListSnapshotsAsync(ct)).Count);
+    }
+
+    [Fact]
+    public void PartialMarker_ShowsInTheGridLabel_AndEveryPickerLine()
+    {
+        const string at = "2026-09-12T10:00:00Z";
+        var capped  = new SnapshotMeta { Label = "run", CapturedAt = at, PartialReason = Constants.SnapshotPartialCap };
+        var lowDisk = new SnapshotMeta { Label = "run", CapturedAt = at, PartialReason = Constants.SnapshotPartialDiskLow };
+        var whole   = new SnapshotMeta { Label = "run", CapturedAt = at };
+
+        Assert.Contains("partial: stopped at the size cap", capped.LabelDisplay);
+        Assert.Contains("partial: stopped at the size cap", capped.PickerDisplay);
+        Assert.Contains("partial: stopped on low disk", lowDisk.LabelDisplay);
+        Assert.Contains("partial: stopped on low disk", lowDisk.PickerDisplay);
+        Assert.Equal("run", whole.LabelDisplay);
+        Assert.DoesNotContain("partial", whole.PickerDisplay);
+
+        // An unusable partial keeps BOTH marks.
+        var both = new SnapshotMeta { Label = "run", IsUsable = false, PartialReason = Constants.SnapshotPartialCap };
+        Assert.StartsWith("⚠ ", both.LabelDisplay);
+        Assert.Contains("partial", both.LabelDisplay);
+    }
+
     [Fact]
     public async Task DeleteSnapshot_Reclaim_ShrinksDbFileOnDisk()
     {

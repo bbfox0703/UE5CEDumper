@@ -15,6 +15,13 @@ namespace UE5DumpUI.Services;
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
+/// <para>⚠ Two places still differ, and knowingly.
+/// (1) Both canonical writers write an enum's REAL underlying property. This one derives it from the enum's size
+/// (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a consumer deserializes but not its signedness. The exact
+/// fix is a DLL-side underlying-type key on walk_class. [A4-USMAP-ENUM-UNDERLYING]
+/// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
+/// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
+/// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
 /// </summary>
 public static class UsmapExportService
 {
@@ -86,17 +93,38 @@ public static class UsmapExportService
         Unknown = 0xFF,
     }
 
+    /// <summary>[P1-ENUMNAMES] What the enum list alone does not say, or null when it says it all: UEnum::Names was not
+    /// located (every enum in the .usmap is empty), or the list was cut short.</summary>
+    internal static string? EnumWarning(EnumListResult r)
+    {
+        var parts = new List<string>(2);
+        if (r.EnumNamesFailed)
+            parts.Add("⚠ enum member names are unavailable on this build (UEnum::Names was not located), "
+                      + "so every enum in the .usmap is empty");
+        if (r.Truncated)
+            parts.Add("⚠ the enum list was cut short (the scan was cancelled); re-export for a complete file");
+        return parts.Count == 0 ? null : string.Join(" — ", parts);
+    }
+
+    /// <summary>[P1-ENUMNAMES] The export's enum progress line, naming what the list alone does not say.</summary>
+    internal static string EnumCollectionNote(EnumListResult r)
+        => EnumWarning(r) is { } w ? $"Collected {r.Enums.Count} enums — {w}" : $"Collected {r.Enums.Count} enums";
+
     /// <summary>
     /// Generate a complete USMAP binary file from the connected game's data.
     /// </summary>
+    /// <param name="warnings">[P1-ENUMNAMES] review 5: collects what the finished export must still say -- the enum
+    /// warning, which a progress line alone lost one pipe round-trip later. Null to ignore.</param>
     public static async Task<byte[]> GenerateUsmapAsync(
         IDumpService dump, IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, ICollection<string>? warnings = null)
     {
         // 1. Collect enums
         progress?.Report("Collecting enums...");
-        var enums = await dump.ListEnumsAsync(ct);
-        progress?.Report($"Collected {enums.Count} enums");
+        var enumList = await dump.ListEnumsDetailedAsync(ct);   // [P1-ENUMNAMES]
+        var enums = enumList.Enums;
+        progress?.Report(EnumCollectionNote(enumList));
+        if (EnumWarning(enumList) is { } enumWarning) warnings?.Add(enumWarning);   // for the final status, not just progress
 
         // 2. Collect all Class/ScriptStruct objects
         var structTargets = new List<(string addr, string name)>();
@@ -178,7 +206,7 @@ public static class UsmapExportService
         {
             nameTable.GetOrAdd(e.Name);
             foreach (var entry in e.Entries)
-                nameTable.GetOrAdd(entry.Name);
+                nameTable.GetOrAdd(EnumMemberName(e.Name, entry.Name));   // [USMAP-ENUM-NAME-QUALIFIED]
         }
 
         foreach (var ci in classInfos)
@@ -255,36 +283,98 @@ public static class UsmapExportService
             for (int i = 0; i < count; i++)
             {
                 w.Write(e.Entries[i].Value);                   // int64: explicit value
-                w.Write(nameTable.IndexOf(e.Entries[i].Name)); // int32: member name index
+                w.Write(nameTable.IndexOf(EnumMemberName(e.Name, e.Entries[i].Name)));  // int32
             }
         }
     }
 
+    /// <summary>
+    /// [USMAP-ENUM-NAME-QUALIFIED] An enumerator as a consumer expects it: BARE, not
+    /// <c>EnumName::Member</c>.
+    ///
+    /// <para>UE stores an <c>enum class</c>'s entries fully qualified, and this writer passed them
+    /// through, so a consumer that qualifies them AGAIN printed the name twice —
+    /// <c>"EAngularDriveMode::EAngularDriveMode::TwistAndSwing"</c> where the canonical writer gives
+    /// <c>"EAngularDriveMode::TwistAndSwing"</c>. Same VALUE, but nobody string-matching an enum in
+    /// a CE script, a diff or a search would find it. Measured on the DumperTest 5.4 fixture
+    /// 2026-09-17: <b>7,399 of 9,294</b> members carried the prefix, against <b>0 of 9,294</b> in
+    /// Dumper-7's export of the same game, and it accounted for all 331 of the exports whose
+    /// readings still differed after <c>[USMAP-INHERITED-DUPES]</c> was fixed.</para>
+    ///
+    /// <para>⚠ The prefix is stripped ONLY when it is this enum's own name. A plain (unscoped)
+    /// <c>enum</c> already arrives bare — <c>EBlendMode</c>'s entries are <c>BLEND_Opaque</c> in
+    /// both writers — and must be left exactly as it is; and <c>EAngularDriveMode_MAX</c> keeps its
+    /// underscore tail, because only the <c>::</c> separator is removed.</para>
+    /// </summary>
+    internal static string EnumMemberName(string enumName, string memberName)
+    {
+        if (string.IsNullOrEmpty(enumName) || string.IsNullOrEmpty(memberName)) return memberName;
+        var prefix = enumName + "::";
+        return memberName.StartsWith(prefix, StringComparison.Ordinal)
+            ? memberName[prefix.Length..]
+            : memberName;
+    }
+
     private static void WriteStructs(BinaryWriter w, IReadOnlyList<ClassInfoModel> classInfos, NameTable nameTable)
     {
+        // [USMAP-INHERITED-DUPES] A child may drop its inherited properties only if a reader can
+        // actually REACH them, i.e. if its super is in this file. The struct set is every
+        // Class-like/ScriptStruct object in GObjects, so a super is normally here -- but a walk
+        // that threw was skipped, and dropping a child's ancestry when the ancestor is missing
+        // would turn an over-reporting bug into silent data loss.
+        var exported = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in classInfos)
+            if (!string.IsNullOrEmpty(c.Name)) exported.Add(c.Name);
+
         w.Write((uint)classInfos.Count);
         foreach (var ci in classInfos)
         {
             w.Write(nameTable.IndexOf(ci.Name));            // int32: struct name index
 
             // Super struct index: -1 if none
+            bool superReachable = !string.IsNullOrEmpty(ci.SuperName)
+                                  && nameTable.Contains(ci.SuperName)
+                                  && exported.Contains(ci.SuperName);
             if (!string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
                 w.Write(nameTable.IndexOf(ci.SuperName));
             else
                 w.Write(-1);                                // int32: super index (-1 = none)
+
+            // [USMAP-INHERITED-DUPES] Order is not the writer's to invent, and it is not the
+            // DLL's to be trusted with either: `Ubel.cpp` sorts its field list with a NON-stable
+            // std::sort on Offset alone, and packed bitfield bools all share one Offset, so their
+            // arrival order is arbitrary between runs. The engine's schema order is PropertyLink
+            // order -- declaration order -- which for a packed byte is ascending bit position, so
+            // ties break on the field mask. Same ordering the SDK emitter already uses.
+            var ordered = ci.Fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolFieldMask).ToList();
+
+            // [USMAP-INHERITED-DUPES] The DLL prepends the ENTIRE SuperStruct chain, and this
+            // writer used to emit all of it AND the super pointer -- so every child repeated its
+            // ancestry and every own-property schema index was shifted by the size of it. A
+            // consumer decodes an unversioned cooked object BY SCHEMA INDEX over the chain, so it
+            // then landed on a different property. Core/PropertyOwnership holds the boundary rule,
+            // shared with the SDK header emitter so there is one copy of it.
+            var fields = ordered;
+            if (superReachable)
+            {
+                int ownStart = PropertyOwnership.OwnStartOffset(
+                    ci.SuperName, ci.SuperPropertiesSize, ci.OwnPropertiesStart,
+                    ordered.Count > 0 ? ordered[0].Offset : null);
+                fields = ordered.Where(f => f.Offset >= ownStart).ToList();
+            }
 
             // These two counts are NOT the same number. The first is the sum of every property's
             // ArrayDim -- a static array Foo[4] occupies four schema slots -- and the second is
             // how many property RECORDS follow. Writing Fields.Count for both makes a reader that
             // walks schema slots disagree with the records it is actually handed.
             int totalSlots = 0;
-            foreach (var f in ci.Fields) totalSlots += ArrayDimOf(f);
+            foreach (var f in fields) totalSlots += ArrayDimOf(f);
 
             w.Write((ushort)Math.Min(totalSlots, ushort.MaxValue));       // uint16: schema slot count
-            w.Write((ushort)Math.Min(ci.Fields.Count, ushort.MaxValue));  // uint16: record count
+            w.Write((ushort)Math.Min(fields.Count, ushort.MaxValue));     // uint16: record count
 
             int slot = 0;
-            foreach (var f in ci.Fields)
+            foreach (var f in fields)
             {
                 var dim = ArrayDimOf(f);
                 w.Write((ushort)Math.Min(slot, ushort.MaxValue)); // uint16: this property's schema index
@@ -304,14 +394,28 @@ public static class UsmapExportService
     /// </summary>
     internal static void WritePropertyType(BinaryWriter w, FieldInfoModel f, NameTable nameTable)
     {
+        // [A4-USMAP-ENUM-UNDERLYING] arm 3: a ByteProperty carrying an enum (TEnumAsByte) takes the canonical
+        // fake shape [26][0][enumName], as both vendored writers emit. A bare ByteProperty made every consumer
+        // show its number instead of its name.
+        if (f.TypeName == "ByteProperty" && !string.IsNullOrEmpty(f.EnumName))
+        {
+            w.Write((byte)EPropertyType.EnumProperty);
+            w.Write((byte)EPropertyType.ByteProperty);
+            w.Write(nameTable.IndexOf(f.EnumName));
+            return;
+        }
+
         var propType = MapPropertyType(f.TypeName);
         w.Write((byte)propType);
 
         switch (propType)
         {
             case EPropertyType.EnumProperty:
-                // EnumProperty: write underlying type + enum name
-                WriteInnerPropertyType(w, "ByteProperty");
+                // EnumProperty: underlying type + enum name. [A4-USMAP-ENUM-UNDERLYING] arm 1: the underlying
+                // type is the enum's REAL width -- unversioned cooked data serializes an enum UPROPERTY as an
+                // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte made a
+                // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
+                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.Size));
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.EnumName) ? f.EnumName : "None"));
                 break;
@@ -323,19 +427,19 @@ public static class UsmapExportService
 
             case EPropertyType.ArrayProperty:
                 WriteInnerPropertyTypeFromField(w, f.InnerType, f.InnerStructType,
-                    f.InnerObjClass, f.EnumName, nameTable);
+                    f.InnerObjClass, f.InnerEnumName, nameTable);
                 break;
 
             case EPropertyType.SetProperty:
                 WriteInnerPropertyTypeFromField(w, f.ElemType, f.ElemStructType,
-                    "", "", nameTable);
+                    "", f.ElemEnumName, nameTable);
                 break;
 
             case EPropertyType.MapProperty:
                 WriteInnerPropertyTypeFromField(w, f.KeyType, f.KeyStructType,
-                    "", "", nameTable);
+                    "", f.KeyEnumName, nameTable);
                 WriteInnerPropertyTypeFromField(w, f.ValueType, f.ValueStructType,
-                    "", "", nameTable);
+                    "", f.ValueEnumName, nameTable);
                 break;
 
             case EPropertyType.OptionalProperty:
@@ -343,16 +447,7 @@ public static class UsmapExportService
                 // FOptionalProperty / CUE4Parse). The DLL fills InnerType/InnerStructType/
                 // InnerObjClass for OptionalProperty exactly as it does for ArrayProperty.
                 WriteInnerPropertyTypeFromField(w, f.InnerType, f.InnerStructType,
-                    f.InnerObjClass, f.EnumName, nameTable);
-                break;
-
-            case EPropertyType.ByteProperty:
-                // If ByteProperty has an enum, write it as EnumProperty instead
-                if (!string.IsNullOrEmpty(f.EnumName))
-                {
-                    // Already wrote ByteProperty type byte — that's correct for USMAP
-                    // ByteProperty with enum name is separate from EnumProperty
-                }
+                    f.InnerObjClass, f.InnerEnumName, nameTable);
                 break;
 
             // Simple types: no extra data needed
@@ -366,10 +461,33 @@ public static class UsmapExportService
         w.Write((byte)MapPropertyType(innerTypeName));
     }
 
+    /// <summary>[A4-USMAP-ENUM-UNDERLYING] An EnumProperty's underlying integer type, from its element size:
+    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. The width is what a consumer deserializes; the signedness
+    /// needs a DLL-side underlying-type key. Anything else is Byte -- never the unmapped 0xFF, which no reader
+    /// can skip.</summary>
+    internal static string EnumUnderlyingTypeFor(int size) => size switch
+    {
+        2 => "UInt16Property",
+        4 => "IntProperty",
+        8 => "Int64Property",
+        _ => "ByteProperty",
+    };
+
     private static void WriteInnerPropertyTypeFromField(
         BinaryWriter w, string innerType, string structType, string objClass,
         string enumName, NameTable nameTable)
     {
+        // [A4-USMAP-CONTAINER-ENUM] Arm 3 for an INNER: a TEnumAsByte inner takes the canonical [26][0][enumName], as
+        // both vendored writers emit (Dumper-7 recurses into the inner; RE-UE4SS maps it to EnumProperty). UE 5.8
+        // serializes each element of such an array BY NAME, so a bare [0] misaligned every consumer.
+        if (innerType == "ByteProperty" && !string.IsNullOrEmpty(enumName))
+        {
+            w.Write((byte)EPropertyType.EnumProperty);
+            w.Write((byte)EPropertyType.ByteProperty);
+            w.Write(nameTable.IndexOf(enumName));
+            return;
+        }
+
         var propType = MapPropertyType(innerType);
         w.Write((byte)propType);
 
@@ -381,6 +499,8 @@ public static class UsmapExportService
                 break;
 
             case EPropertyType.EnumProperty:
+                // Arm 2 of [A4-USMAP-ENUM-UNDERLYING], left as is for the UNDERLYING: an inner carries no size to
+                // derive it from. The enum NAME is now the inner's own ([A4-USMAP-CONTAINER-ENUM]), not "None".
                 WriteInnerPropertyType(w, "ByteProperty");
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(enumName) ? enumName : "None"));
@@ -450,6 +570,11 @@ public static class UsmapExportService
     {
         if (!string.IsNullOrEmpty(f.StructType)) table.GetOrAdd(f.StructType);
         if (!string.IsNullOrEmpty(f.EnumName)) table.GetOrAdd(f.EnumName);
+        // [A4-USMAP-CONTAINER-ENUM] every container inner's own enum, or IndexOf would find no entry for it
+        if (!string.IsNullOrEmpty(f.InnerEnumName)) table.GetOrAdd(f.InnerEnumName);
+        if (!string.IsNullOrEmpty(f.ElemEnumName)) table.GetOrAdd(f.ElemEnumName);
+        if (!string.IsNullOrEmpty(f.KeyEnumName)) table.GetOrAdd(f.KeyEnumName);
+        if (!string.IsNullOrEmpty(f.ValueEnumName)) table.GetOrAdd(f.ValueEnumName);
         if (!string.IsNullOrEmpty(f.InnerStructType)) table.GetOrAdd(f.InnerStructType);
         if (!string.IsNullOrEmpty(f.ElemStructType)) table.GetOrAdd(f.ElemStructType);
         if (!string.IsNullOrEmpty(f.KeyStructType)) table.GetOrAdd(f.KeyStructType);

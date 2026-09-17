@@ -88,6 +88,13 @@ static int         s_hintItemObjOff = 0;
 // is *** UNVERIFIED *** (no shipping game uses it yet). Process-lifetime constant after
 // Init() → the GetByIndex Packed57 branch is perfectly predicted on the hot path.
 static Lineal::ItemLayoutMode s_layoutMode = Lineal::ItemLayoutMode::Classic;
+// [W4-STRIDE-TENTATIVE] How DetectItemSize arrived at s_itemSize -- see Aura.h's GetItemDetect. Published, where it
+// used to be spent on log lines; reset at the ENTRY of every detection run.
+static const char* s_itemDetect          = "undetected";
+static int         s_itemDetectValidated = 0;
+// How many items the winning pass PROBED: 200 in P1, 100 in a deep phase. The badge divides by it, so it is that pass's
+// own count, never the budget constant. [W4-STRIDE-TENTATIVE] review 4
+static int         s_itemDetectProbes    = 0;
 // Calibratable packed reconstruction constants. ⭐ The defaults are DERIVED from the vendored
 // UE 5.7 source, not assumed — alignBits 3 and ptrMask 0x3FFF are read out of
 // UObjectArray.h:84-88 plus ObjectMacros.h:705; Lineal.h's header carries the line-by-line
@@ -314,6 +321,24 @@ std::vector<ElemT> ConcatTruncate(std::vector<PerThreadT>& perThread,
         }
     }
     return out;
+}
+
+// [W3-XREF-CAP] True when a capped parallel scan's merged result MAY be a prefix: a worker reached its own
+// maxResults and stopped there, so its index range may be unfinished -- or the workers together found more
+// than maxResults and ConcatTruncate dropped some. It cannot tell a worker cut short from one whose last object
+// happened to be its cap-th match, and flags both: conservative, so "more MAY exist", never "more exist"
+// (review 3). Every worker below its cap, with the total within it, is NOT capped. Ask it BEFORE
+// ConcatTruncate, which moves the elements out.
+template <typename PerThreadT, typename ElemT>
+bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
+                      std::vector<ElemT> PerThreadT::* member, int32_t maxResults) {
+    size_t total = 0;
+    for (const auto& tr : perThread) {
+        const size_t n = (tr.*member).size();
+        if (n >= static_cast<size_t>(maxResults)) return true;   // it reached the cap: its range MAY be unfinished
+        total += n;
+    }
+    return total > static_cast<size_t>(maxResults);              // the merge dropped some
 }
 
 } // namespace
@@ -836,10 +861,15 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
 static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chunk0,
                                             int candidates[], int numCandidates,
                                             int& bestStride, int& bestCount, int& bestNamed,
-                                            int& bestBad, bool& bestHasNames, int& bestNull) {
+                                            int& bestBad, bool& bestHasNames, int& bestNull,
+                                            int& bestProbes) {
     bestStride = 0; bestCount = 0; bestNamed = 0; bestBad = INT_MAX; bestHasNames = false;
     bestNull = 0;
     constexpr int MAX_ITEMS_PHASE1 = kStrideProbeBudget;
+    // The deep phases probe half as many. Each phase OVERWRITES best*, so the counts returned are the last phase
+    // run's, and bestProbes follows it. [W4-STRIDE-TENTATIVE] review 4
+    constexpr int MAX_ITEMS_DEEP = 100;
+    bestProbes = 0;
     bool detected = false;
 
     // --- Pre-check: detect flat (non-chunked) FFixedUObjectArray (UE4.11-4.20) ---
@@ -909,6 +939,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
         if (mightBeFlat) {
             // Try flat layout first: probe chunkTable itself as item base (no deref)
             s_isFlat = true;
+            bestProbes = MAX_ITEMS_PHASE1;
             ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P0-flat",
                             candidates, numCandidates,
                             bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
@@ -930,6 +961,7 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     // Phase 1: scan first 200 items of chunk[0] (standard chunked layout)
     // Use 200 items (not 100) to give sparse UE4 arrays enough items for correct stride detection.
     if (!detected) {
+        bestProbes = MAX_ITEMS_PHASE1;
         ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
@@ -939,7 +971,8 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
     // Some UE4 games have thousands of null slots at the start.
     if (!detected && bestCount == 0) {
         LOG_INFO("ObjectArray: Phase 1 found no items, trying deep scan from item 1000...");
-        ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, 100, "P2-deep",
+        bestProbes = MAX_ITEMS_DEEP;
+        ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, MAX_ITEMS_DEEP, "P2-deep",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
     }
@@ -953,13 +986,15 @@ static void DetectStrideForCurrentObjOffset(uintptr_t chunkTable, uintptr_t chun
 
         s_isFlat = true;  // Temporarily set for probing
 
+        bestProbes = MAX_ITEMS_PHASE1;
         ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P3-flat",
                         candidates, numCandidates,
                         bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
 
         if (bestCount == 0) {
             // Try deep scan on flat array too
-            ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, 100, "P3-flat-deep",
+            bestProbes = MAX_ITEMS_DEEP;
+            ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, MAX_ITEMS_DEEP, "P3-flat-deep",
                             candidates, numCandidates,
                             bestStride, bestCount, bestNamed, bestBad, bestHasNames, bestNull);
         }
@@ -1056,6 +1091,16 @@ static void LogPackedDiagnosticNegative() {
 // named > bad: a correct layout resolves nearly every non-null slot (bad ≈ 0), so a
 // bad-dominated pass is rejected and the +0x08 pass gets its turn.
 static void DetectItemSize() {
+    // [W4-STRIDE-TENTATIVE] Reset at ENTRY, BEFORE the early returns below. They used to fire before any of
+    // this was touched, so on a re-init (the heap-fallback loop, its restore, apply_rescan) a failed run
+    // kept publishing a PREVIOUS candidate's layout and stride as its own. Every exit below either sets a
+    // verdict or leaves this one: nothing validated, the default stride in use.
+    s_itemDetect          = "undetected";
+    s_itemDetectValidated = 0;
+    s_itemDetectProbes    = 0;
+    s_layoutMode          = Lineal::ItemLayoutMode::Classic;
+    s_itemObjOffset       = 0;
+    s_itemSize            = 16;   // the static default: what "keeping default" below has always meant
     uintptr_t chunkTable = 0;
     if (!Macht::ReadSafe(s_arrayAddr + s_layout.objectsOffset, chunkTable) || !chunkTable) {
         LOG_WARN("ObjectArray: Cannot read chunk table for item size detection");
@@ -1078,10 +1123,8 @@ static void DetectItemSize() {
         return;
     }
 
-    // Reset the layout mode each detection run (Init may be called again on re-attach).
-    // The two direct passes below keep it non-packed; only the last-resort packed branch
-    // promotes it to Packed57.
-    s_layoutMode = Lineal::ItemLayoutMode::Classic;
+    // (The layout mode, and the verdict, were reset at ENTRY above -- before the early returns, not here.
+    // The two direct passes below keep it non-packed; only the last-resort packed branch promotes it.)
 
     // Preset-bound item hint (licensee forks). Tried FIRST and ONLY when the winning
     // layout preset carried one, so the shared sweep below is byte-for-byte unchanged for
@@ -1100,6 +1143,9 @@ static void DetectItemSize() {
         // (it is 50% bad by construction).
         if (hGood >= 8 && hBad * 4 <= hGood) {
             s_itemSize   = s_hintItemStride;
+            s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE] the hint cleared the gate
+            s_itemDetectValidated = hGood;
+            s_itemDetectProbes = HINT_PROBE_ITEMS;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             LOG_INFO("ObjectArray: FUObjectItem size=%d, object-ptr offset=+0x%02X (preset item hint) — %d named, %d total, %d bad",
@@ -1151,18 +1197,18 @@ static void DetectItemSize() {
     const int objOffPasses[] = { 0x00, 0x08 };
 
     // Strongest result seen across passes, for the tentative fallback below.
-    int gStride = 0, gCount = 0, gNamed = 0, gBad = INT_MAX, gObjOff = 0;
+    int gStride = 0, gCount = 0, gNamed = 0, gBad = INT_MAX, gObjOff = 0, gProbes = 0;
     bool gHasNames = false, gFlat = false;
 
     for (int pass = 0; pass < 2; ++pass) {
         s_itemObjOffset = objOffPasses[pass];
         s_isFlat = false;
 
-        int bestStride, bestCount, bestNamed, bestBad, bestNull;
+        int bestStride, bestCount, bestNamed, bestBad, bestNull, bestProbes;
         bool bestHasNames;
         DetectStrideForCurrentObjOffset(chunkTable, chunk0, candidates, NUM_CANDIDATES,
                                         bestStride, bestCount, bestNamed, bestBad, bestHasNames,
-                                        bestNull);
+                                        bestNull, bestProbes);
 
         int threshold = bestHasNames ? 2 : 3;
         int bestTotal = bestHasNames ? bestNamed : bestCount;
@@ -1176,7 +1222,7 @@ static void DetectItemSize() {
         // Track the strongest pass (strictly-better, so ties keep the earlier/classic pass).
         if (bestNamed > gNamed || (bestNamed == gNamed && bestCount > gCount)) {
             gStride = bestStride; gCount = bestCount; gNamed = bestNamed; gBad = bestBad;
-            gHasNames = bestHasNames; gObjOff = s_itemObjOffset; gFlat = s_isFlat;
+            gHasNames = bestHasNames; gObjOff = s_itemObjOffset; gFlat = s_isFlat; gProbes = bestProbes;
         }
 
         if (bestTotal >= threshold && qualityOk) {
@@ -1201,6 +1247,9 @@ static void DetectItemSize() {
                          bestStride, bestNull, bestCount, bestBad, bestStride);
             }
             s_itemSize = bestStride;   // s_itemObjOffset / s_isFlat already reflect this pass
+            s_itemDetect = "detected";   // [W4-STRIDE-TENTATIVE]
+            s_itemDetectValidated = bestHasNames ? bestNamed : bestCount;
+            s_itemDetectProbes = bestProbes;
             s_layoutMode = (s_itemObjOffset != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                                   : Lineal::ItemLayoutMode::Classic;
             if (s_itemObjOffset != 0) {
@@ -1232,6 +1281,9 @@ static void DetectItemSize() {
         s_layoutMode = (gObjOff != 0) ? Lineal::ItemLayoutMode::Unpacked57
                                       : Lineal::ItemLayoutMode::Classic;
         const int validated = gHasNames ? gNamed : gCount;
+        s_itemDetect = "tentative";   // [W4-STRIDE-TENTATIVE] published -- it used to reach only the log
+        s_itemDetectValidated = validated;
+        s_itemDetectProbes = gProbes;
         LOG_WARN("ObjectArray: FUObjectItem size tentatively set to %d bytes, object-ptr offset +0x%02X (only %d items validated)",
                  gStride, gObjOff, validated);
         // Say what "tentative" COSTS, because the previous wording read as routine and the
@@ -1240,12 +1292,12 @@ static void DetectItemSize() {
         // stride, so every k-th probe hits a real object and the rest are garbage — which
         // surfaces later as a suspiciously round "N% of objects named" and a scan that walks
         // almost nothing. If that is what you are looking at, the missing stride is the bug.
-        if (validated * 4 < kStrideProbeBudget) {
+        if (validated * 4 < gProbes) {
             LOG_ERROR("ObjectArray: that is only %d of %d probes — treat every object count and "
                       "name below as UNTRUSTWORTHY. A real stride that is a MULTIPLE of %d "
                       "(e.g. %d) would validate all of them; if the object tree shows a round "
                       "fraction named, that multiple is missing from the candidate list.",
-                      validated, kStrideProbeBudget, gStride, gStride * 2);
+                      validated, gProbes, gStride, gStride * 2);
         }
         return;
     }
@@ -1261,6 +1313,11 @@ static void DetectItemSize() {
         s_itemSize      = packed.stride;   // 24 expected
         s_itemObjOffset = 0;               // unused for the object read under packing
         s_isFlat        = packed.isFlat;
+        // [W4-STRIDE-TENTATIVE] The packed probe validated the stride; that the LAYOUT is unverified is
+        // item_packed's to say (orthogonal).
+        s_itemDetect = "detected";
+        s_itemDetectValidated = packed.good;
+        s_itemDetectProbes = packed.probed;
         LOG_WARN("ObjectArray: *** UNVERIFIED UE5.7+ PACKED FUObjectItem layout ACTIVATED *** "
                  "stride=%d %s, %d reconstructed (%d named) of %d probed. This packed encoding "
                  "has NEVER been validated against a real game — object addresses, serial numbers "
@@ -1302,6 +1359,9 @@ void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize) {
         s_itemSize = forcedItemSize;
         s_itemObjOffset = 0;
         s_layoutMode = Lineal::ItemLayoutMode::Classic;
+        s_itemDetect = "forced";   // [W4-STRIDE-TENTATIVE] the caller verified this stride by content
+        s_itemDetectValidated = 0;
+        s_itemDetectProbes = 0;
         LOG_INFO("ObjectArray: Initialized (forced UE5-Extended, stride=%d) at 0x%llX, Count=%d",
                  forcedItemSize, static_cast<unsigned long long>(gobjectsAddr), GetCount());
     } else {
@@ -1343,6 +1403,11 @@ int GetItemObjOffset() {
 bool IsPacked() {
     return s_layoutMode == Lineal::ItemLayoutMode::Packed57;
 }
+
+// [W4-STRIDE-TENTATIVE] The stride verdict (see Aura.h). Set by DetectItemSize / InitWithExtendedLayout only.
+const char* GetItemDetect() { return s_itemDetect; }
+int GetItemDetectValidated() { return s_itemDetectValidated; }
+int GetItemDetectProbes() { return s_itemDetectProbes; }
 
 // Runtime calibration for the *** UNVERIFIED *** packed reconstruction. Lets the first
 // real packed game tune alignBits / ptrMaskBits (and optionally the serial offset) and
@@ -1461,18 +1526,21 @@ int32_t GetSerialNumber(int32_t index) {
     return serial;
 }
 
-void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
+bool ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
     int32_t count = GetCount();
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:scan", "Aura::ForEach: aborted (client gone / shutdown)");
-            break;  // stop walking; callers see partial/empty result
+            // [P1-ENUMNAMES] Say so: the callback did NOT see every object. Void, this let a cancelled
+            // DetectUEnumNames read "no known enum here" and latch FAILED for the process.
+            return false;
         }
         uintptr_t obj = GetByIndex(i);
         if (obj != 0) {
             if (!cb(i, obj)) break;
         }
     }
+    return true;   // walked to the end, or the callback stopped it on purpose
 }
 
 uintptr_t FindByName(const std::string& name) {
@@ -2220,6 +2288,9 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
 // DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
+// Defined with the ref-meta entries below; the container walks above them check the same gate.
+static bool OptionalGateOpen(uintptr_t fieldAddr, int32_t setFlagOffset);
+
 struct ContainerCacheEntry {
     int32_t       offset;       // Absolute byte offset within owner UObject
     std::string   name;         // Dotted name (e.g. "Stats.Levels")
@@ -2243,6 +2314,7 @@ struct ContainerCacheEntry {
     // values/keys as leaves — `innerType` is the "K -> V" label, NOT a leaf type.
     std::string   keyLeafType;       // P3 scalar-keyed maps
     std::string   valueLeafType;     // P3 scalar-valued maps
+    int32_t       setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
@@ -2257,7 +2329,8 @@ static void CollectContainersRecursive(
     int32_t baseOffset,
     const std::string& namePrefix,
     std::vector<ContainerCacheEntry>& out,
-    int depth)
+    int depth,
+    int32_t gateAbs = -1)   // [A2-TOPTIONAL-STRUCT-DESCENT] enclosing struct optional's bIsSet, ABSOLUTE; -1 = none
 {
     // Reasonable cap: most UE games nest at most 1–2 levels (UObject →
     // FStruct → TArray). Depth 3 covers struct-of-struct-of-struct.
@@ -2272,6 +2345,8 @@ static void CollectContainersRecursive(
             ? f.Name
             : (namePrefix + "." + f.Name);
         int32_t absOffset = baseOffset + f.Offset;
+        // [A2-TOPTIONAL-STRUCT-DESCENT] Inside a struct optional every entry carries its bIsSet, relative to the entry.
+        const int32_t underGate = (gateAbs >= 0) ? gateAbs - absOffset : -1;
 
         if (f.TypeName == "ArrayProperty") {
             int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
@@ -2279,6 +2354,7 @@ static void CollectContainersRecursive(
             ContainerCacheEntry e{ absOffset, fullName, f.innerType, es, ContainerKind::Array };
             if (f.innerType == "StructProperty")
                 e.elemStruct = Ubel::GetContainerInnerStructAddr(f.Address);
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "SetProperty") {
@@ -2287,6 +2363,7 @@ static void CollectContainersRecursive(
             ContainerCacheEntry e{ absOffset, fullName, f.elemType, st, ContainerKind::Set };
             if (f.elemType == "StructProperty")
                 e.elemStruct = Ubel::GetContainerInnerStructAddr(f.Address);
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "MapProperty") {
@@ -2302,6 +2379,7 @@ static void CollectContainersRecursive(
             // emit gate keys on *Struct == 0, and "StructProperty" is non-scalar.
             e.keyLeafType   = f.keyType;
             e.valueLeafType = f.valueType;
+            e.setFlagOffset = underGate;
             out.push_back(std::move(e));
         }
         else if (f.TypeName == "StructProperty") {
@@ -2312,26 +2390,24 @@ static void CollectContainersRecursive(
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectContainersRecursive(innerStruct, absOffset, fullName,
-                                           out, depth + 1);
+                                           out, depth + 1, gateAbs);
             }
         }
         else if (f.TypeName == "OptionalProperty"
                  && f.innerType == "StructProperty") {
-            // TOptional<FStruct> non-intrusive layout: { T value; uint8 bIsSet; }.
-            // Value lives at field+0, so offset accumulation is identical to
-            // a bare StructProperty. We can't tell at cache-build time which
-            // instances are set vs unset, but a container scan that hits an
-            // unset slot just sees zeros and naturally fails its address
-            // comparison.
-            uintptr_t innerProp = 0;
+            // [A2-TOPTIONAL-STRUCT-DESCENT] The value lives at field+0, but an unset slot is NOT zero:
+            // UE's MarkUnset destroys the value and clears bIsSet, and zeroes no bytes -- a TArray keeps
+            // its Data / Num after ~TArray, so the Address Finder read a destroyed array's header and freed
+            // buffer. Descend only into a TrailingFlag optional, handing every entry below its bIsSet
+            // (OptionalGateOpen). Intrusive / Unknown have no flag byte to test, and an optional inside a
+            // gated one would need two flags ANDed: both refused, like any layout we cannot prove.
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty");
             uintptr_t innerStruct = 0;
-            // Probe inner FProperty* (same offset as ArrayProperty::Inner).
-            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
-                && innerProp
-                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag && gateAbs < 0 && ol.innerProp
+                && Macht::ReadSafe(ol.innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectContainersRecursive(innerStruct, absOffset, fullName,
-                                           out, depth + 1);
+                                           out, depth + 1, absOffset + ol.innerSize);
             }
         }
     }
@@ -2494,6 +2570,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
     for (const auto& cfe : containers) {
         if (cfe.stride <= 0) continue;
         uintptr_t fieldAddr = structBase + cfe.offset;
+        if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
         uintptr_t bufData = 0;
         int32_t   capacity = 0;
@@ -2715,6 +2792,7 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
 
         for (const auto& cfe : containers) {
             uintptr_t fieldAddr = obj + cfe.offset;
+            if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
             if (cfe.kind == ContainerKind::Array) {
                 Macht::TArrayView arr;
@@ -2843,6 +2921,7 @@ static bool MatchAddrInStructContainers(
     for (const auto& cfe : containers) {
         if (cfe.stride <= 0) continue;
         uintptr_t fieldAddr = structBase + cfe.offset;
+        if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
 
         uintptr_t bufData = 0;
         int32_t   capacity = 0;       // Max (array) / MaxCapacity (sparse)
@@ -3095,6 +3174,7 @@ struct DirectPointerEntry {
     int32_t     offset;
     std::string name;
     std::string typeName;     // "ObjectProperty" / "ClassProperty" / "InterfaceProperty"
+    int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
 
 // FWeakObjectPtr-shaped single field: { int32 ObjectIndex, int32 Serial }
@@ -3106,18 +3186,30 @@ struct WeakLikePointerEntry {
     std::string name;
     std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
                               // / "SoftClassProperty" / "LazyObjectProperty"
+    int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
+
+// [A2-TOPTIONAL-INTRUSIVE] A trailing-flag TOptional keeps its old value bytes after Reset(): only
+// its bIsSet byte says whether they are live, so a reset optional's stale pointer is NOT a
+// reference. -1 = not an optional, or an intrusive one (whose null IS its unset state).
+static bool OptionalGateOpen(uintptr_t fieldAddr, int32_t setFlagOffset) {
+    if (setFlagOffset < 0) return true;
+    uint8_t isSet = 0;
+    return Macht::ReadSafe(fieldAddr + setFlagOffset, isSet) && isSet != 0;
+}
 
 struct ObjectArrayEntry {
     int32_t     offset;
     std::string name;
     std::string innerType;    // "ObjectProperty" / "ClassProperty"
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TArray<FScriptInterface>: 16-byte elements, UObject* at elem+0.
 struct InterfaceArrayEntry {
     int32_t     offset;
     std::string name;
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TArray<FWeakObjectPtr>/<FSoftObjectPtr>/<FLazyObjectPtr>: variable
@@ -3131,6 +3223,7 @@ struct WeakLikeArrayEntry {
     // and the access-detector pad for TArray<FScriptDelegate> on a checked build — the one
     // inner type whose payload does not start at the element's own address.
     int32_t     elemWeakOffset = 0;
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
@@ -3145,6 +3238,7 @@ struct ObjectMapEntry {
     std::string keyTypeName;    // "ObjectProperty" / "ClassProperty" (for matched side)
     std::string valueTypeName;
     std::string innerLabel;     // "<keyType> → <valueType>" for UI
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 // TSet with Object/Class element type.
@@ -3153,6 +3247,7 @@ struct ObjectSetEntry {
     std::string name;
     int32_t     elemStride;
     std::string elemTypeName;   // "ObjectProperty" / "ClassProperty"
+    int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
 };
 
 struct ClassReferenceMeta {
@@ -3190,7 +3285,8 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                                      int32_t baseOffset,
                                      const std::string& namePrefix,
                                      ClassReferenceMeta& out,
-                                     int depth)
+                                     int depth,
+                                     int32_t gateAbs = -1)   // [A2-TOPTIONAL-STRUCT-DESCENT] as CollectContainersRecursive
 {
     constexpr int kMaxDepth = 3;
     if (depth > kMaxDepth) return;
@@ -3203,31 +3299,47 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             ? f.Name
             : (namePrefix + "." + f.Name);
         int32_t absOffset = baseOffset + f.Offset;
+        // [A2-TOPTIONAL-STRUCT-DESCENT] Inside a struct optional every entry carries its bIsSet, relative to the entry.
+        const int32_t underGate = (gateAbs >= 0) ? gateAbs - absOffset : -1;
 
         // --- Single pointer fields ---
         if (IsDirectObjectProp(f.TypeName) || f.TypeName == "InterfaceProperty") {
             // All three layouts hold a UObject* at field+0 (FScriptInterface
             // also has ifacePtr at +8, but we ignore that — only objPtr is
             // the resolvable reference).
-            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         else if (IsWeakLikeProp(f.TypeName)) {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- TOptional<T> wrapping a pointer-shaped T ---
-        // For pointer-shaped T, FOptionalProperty stores T directly at
-        // field+0; "unset" is encoded as null/zero. So the comparison logic
-        // is identical to the bare pointer/weak-like field — only the
-        // type-name label changes (so the user can see it was reached via
-        // an Optional). innerType comes from WalkClassEx.
+        // [A2-TOPTIONAL-INTRUSIVE] The value sits at field+0 in both layouts, but the old belief
+        // here -- "unset is encoded as null/zero" -- holds only for the INTRUSIVE one (a
+        // non-nullable object). A TRAILING-FLAG optional keeps its pointer after Reset(), so the
+        // entry carries its bIsSet offset and every scan checks it (OptionalGateOpen). A layout
+        // that fits neither, or an intrusive one with no null state (weak/soft/lazy, interface),
+        // is not bucketed: a reference we cannot prove is live is not reported.
         else if (f.TypeName == "OptionalProperty"
-              && (IsDirectObjectProp(f.innerType)
-                  || f.innerType == "InterfaceProperty")) {
-            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
-        }
-        else if (f.TypeName == "OptionalProperty"
-              && IsWeakLikeProp(f.innerType)) {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+              && (IsDirectObjectProp(f.innerType) || f.innerType == "InterfaceProperty"
+                  || IsWeakLikeProp(f.innerType))) {
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, f.innerType);
+            int32_t gate = -1;
+            bool keep = false;
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag) {
+                gate = ol.innerSize;
+                // [A2-TOPTIONAL-STRUCT-DESCENT] Under a gated struct optional this would need TWO flags: refused.
+                keep = underGate < 0;
+            } else if (ol.layout == Ubel::OptionalLayout::Intrusive
+                       && (f.innerType == "ObjectProperty" || f.innerType == "ClassProperty")) {
+                gate = underGate;   // its own unset state is null; an enclosing optional's flag still applies
+                keep = true;
+            }
+            if (keep) {
+                if (IsWeakLikeProp(f.innerType))
+                    out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, gate });
+                else
+                    out.directPointers.push_back({ absOffset, fullName, f.TypeName, gate });
+            }
         }
         // --- DelegateProperty (single FScriptDelegate) ---
         // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(8/12B) }.
@@ -3236,7 +3348,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
         // typeName is preserved so the user sees this was reached via a
         // delegate (a "register on click" bind, not a property reference).
         else if (f.TypeName == "DelegateProperty") {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
         }
         // --- MulticastInline / MulticastDelegate (single field) ---
         // FMulticastScriptDelegate := TArray<FScriptDelegate> at field+0.
@@ -3251,21 +3363,21 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             int32_t fnameSize = DynOff::SizeofFName();
             int32_t stride    = 8 + fnameSize;
             out.weakLikeArrays.push_back({ absOffset, fullName,
-                                            f.TypeName, stride });
+                                            f.TypeName, stride, 0, underGate });
         }
         // --- Array of pointer-shaped types ---
         else if (f.TypeName == "ArrayProperty") {
             if (IsDirectObjectProp(f.innerType)) {
-                out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+                out.objectArrays.push_back({ absOffset, fullName, f.innerType, underGate });
             }
             else if (f.innerType == "InterfaceProperty") {
-                out.interfaceArrays.push_back({ absOffset, fullName });
+                out.interfaceArrays.push_back({ absOffset, fullName, underGate });
             }
             else if (IsWeakLikeProp(f.innerType)) {
                 int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
                 if (es > 0) {
                     out.weakLikeArrays.push_back({ absOffset, fullName,
-                                                    f.innerType, es });
+                                                    f.innerType, es, 0, underGate });
                 }
             }
             else if (f.innerType == "DelegateProperty") {
@@ -3293,7 +3405,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 }
                 const int32_t elemPad = (pad < 0) ? 0 : pad;
                 out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
-                                               base + elemPad, elemPad });
+                                               base + elemPad, elemPad, underGate });
             }
         }
         // --- Map with pointer-shaped key and/or value ---
@@ -3314,6 +3426,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                     e.keyTypeName   = f.keyType;
                     e.valueTypeName = f.valueType;
                     e.innerLabel    = f.keyType + " → " + f.valueType;
+                    e.setFlagOffset = underGate;
                     out.objectMaps.push_back(std::move(e));
                 }
             }
@@ -3324,7 +3437,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 int32_t st = Ubel::GetSetElementStride(f.Address);
                 if (st > 0) {
                     out.objectSets.push_back({ absOffset, fullName,
-                                                st, f.elemType });
+                                                st, f.elemType, underGate });
                 }
             }
         }
@@ -3334,23 +3447,23 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectRefMetaRecursive(innerStruct, absOffset, fullName,
-                                         out, depth + 1);
+                                         out, depth + 1, gateAbs);
             }
         }
         else if (f.TypeName == "OptionalProperty"
                  && f.innerType == "StructProperty") {
-            // TOptional<FStruct>: { T value; uint8 bIsSet; } — value at field+0,
-            // so absOffset is unchanged for sub-fields. The bIsSet trailing
-            // byte doesn't matter for reverse scan: an unset slot is zero
-            // and naturally fails pointer comparisons.
-            uintptr_t innerProp = 0;
+            // [A2-TOPTIONAL-STRUCT-DESCENT] The value lives at field+0, but the bIsSet byte DOES matter:
+            // UE's MarkUnset destroys the value and clears the flag, and zeroes no bytes, so a reset
+            // TOptional<FMyStruct{ AActor* Target }> still holds its Target -- reported as a live reference.
+            // Descend only into a TrailingFlag optional, carrying its flag to every entry below; Intrusive /
+            // Unknown, or an optional already under a gate (two flags), are refused.
+            const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty");
             uintptr_t innerStruct = 0;
-            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
-                && innerProp
-                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+            if (ol.layout == Ubel::OptionalLayout::TrailingFlag && gateAbs < 0 && ol.innerProp
+                && Macht::ReadSafe(ol.innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectRefMetaRecursive(innerStruct, absOffset, fullName,
-                                         out, depth + 1);
+                                         out, depth + 1, absOffset + ol.innerSize);
             }
         }
     }
@@ -3644,7 +3757,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
         for (const auto& pfe : meta.directPointers) {
             uintptr_t ptr = 0;
-            if (!Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
+            if (!OptionalGateOpen(obj + pfe.offset, pfe.setFlagOffset)
+                || !Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
             if (ptr != target) continue;
 
             ReferenceMatch m;
@@ -3665,7 +3779,8 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
 
         // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
         for (const auto& wpe : meta.weakLikePointers) {
-            uintptr_t resolved = ResolveWeakAt(obj + wpe.offset);
+            uintptr_t resolved = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
+                ? ResolveWeakAt(obj + wpe.offset) : 0;
             if (resolved != target) continue;
 
             ReferenceMatch m;
@@ -3687,7 +3802,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
         for (const auto& oae : meta.objectArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + oae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + oae.offset, oae.setFlagOffset) || !Macht::ReadTArray(obj + oae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data) continue;
 
             // Bulk-read the TArray's data buffer once and scan in-memory.
@@ -3722,7 +3837,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
         for (const auto& iae : meta.interfaceArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + iae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + iae.offset, iae.setFlagOffset) || !Macht::ReadTArray(obj + iae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data) continue;
 
             constexpr int32_t kElemBytes = 16;
@@ -3753,7 +3868,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
         for (const auto& wae : meta.weakLikeArrays) {
             Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + wae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
 
             for (int32_t e = 0; e < arr.Count; ++e) {
@@ -3784,7 +3899,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
         for (const auto& ome : meta.objectMaps) {
             Macht::TSparseArrayView sa;
-            if (!Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
+            if (!OptionalGateOpen(obj + ome.offset, ome.setFlagOffset) || !Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
             if (sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
 
             for (int32_t e = 0; e < sa.MaxIndex; ++e) {
@@ -3835,7 +3950,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TSet<UObject*> (allocated slots only) ---
         for (const auto& ose : meta.objectSets) {
             Macht::TSparseArrayView sa;
-            if (!Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
+            if (!OptionalGateOpen(obj + ose.offset, ose.setFlagOffset) || !Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
             if (sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
 
             for (int32_t e = 0; e < sa.MaxIndex; ++e) {
@@ -3882,6 +3997,9 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // scan.deadlineHit — that gate asks "should I keep spending time", which a fault in an
     // already-finished parallel phase does not answer.)
     bool deadlineHit = scan.incomplete();
+    // [P1-SPARSEDELEGATE-REFS] Sparse delegates the pass below found but could not read. Reported, because a sweep that
+    // skipped any is not complete, and the UI must not blame the game for what we missed.
+    int32_t sparseUnlocated = 0;
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -3959,10 +4077,13 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                         //
                         // The failure here is WORSE than a wrong count: `continue` makes the
                         // binding silently ABSENT from Find Refs, and an absence reads as
-                        // "nothing points here". Keep skipping (there is no per-entry channel
-                        // to report on), but stop doing it silently.
+                        // "nothing points here". There is no per-entry channel to report on, so
+                        // skip -- but COUNT it into the aggregate one: ContainerScanStats carries
+                        // it to the UI, which then neither calls the sweep complete nor blames
+                        // the game for the gap. [P1-SPARSEDELEGATE-REFS]
                         const InvocationListView inv = LocateInvocationList(mcdAddr);
                         if (!inv.found) {
+                            ++sparseUnlocated;
                             LOG_WARN("FindReferences: no coherent sparse InvocationList at "
                                      "0x%llX — this delegate's bindings are MISSING from the "
                                      "results, not absent from the game",
@@ -4014,7 +4135,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         stats->classesPrimed  = classesPrimed;
         stats->durationMs     = static_cast<int64_t>(dt);
         stats->deadlineHit    = deadlineHit;
+        stats->sparseUnlocated = sparseUnlocated;
     }
+    if (sparseUnlocated > 0)
+        LOG_WARN("FindReferencesToUObject: %d sparse delegate(s) had no readable InvocationList — "
+                 "their bindings are MISSING from these results", sparseUnlocated);
     LOG_INFO("FindReferencesToUObject: found %d matches in %lld ms (scanned %d/%d, %d classes with refs, %d thread(s)%s)",
              static_cast<int>(matches.size()), static_cast<long long>(dt),
              scanned, count, classesPrimed, scan.nthreads, deadlineHit ? ", DEADLINE HIT" : "");
@@ -4060,19 +4185,21 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
     for (const auto& pfe : meta.directPointers) {
         uintptr_t ptr = 0;
-        if (!Macht::ReadSafe(obj + pfe.offset, ptr) || !ptr) continue;
+        if (!OptionalGateOpen(obj + pfe.offset, pfe.setFlagOffset)
+            || !Macht::ReadSafe(obj + pfe.offset, ptr) || !ptr) continue;
         if (emit(ptr, pfe.offset, pfe.name, pfe.typeName, kEmpty, -1, 0, 0)) return;
     }
     // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
     for (const auto& wpe : meta.weakLikePointers) {
-        uintptr_t r = ResolveWeakAt(obj + wpe.offset);
+        uintptr_t r = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
+            ? ResolveWeakAt(obj + wpe.offset) : 0;
         if (!r) continue;
         if (emit(r, wpe.offset, wpe.name, wpe.typeName, kEmpty, -1, 0, 0)) return;
     }
     // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
     for (const auto& oae : meta.objectArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + oae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
+        if (!OptionalGateOpen(obj + oae.offset, oae.setFlagOffset) || !Macht::ReadTArray(obj + oae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
         std::vector<uintptr_t> buf(static_cast<size_t>(arr.Count), 0);
         if (!Macht::ReadBytesSafe(arr.Data, buf.data(), static_cast<size_t>(arr.Count) * 8)) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
@@ -4085,7 +4212,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
     for (const auto& iae : meta.interfaceArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + iae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
+        if (!OptionalGateOpen(obj + iae.offset, iae.setFlagOffset) || !Macht::ReadTArray(obj + iae.offset, arr) || arr.Count <= 0 || !arr.Data) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
             uintptr_t ptr = 0;
             if (!Macht::ReadSafe(arr.Data + static_cast<int64_t>(e) * 16, ptr) || !ptr) continue;
@@ -4097,7 +4224,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
     for (const auto& wae : meta.weakLikeArrays) {
         Macht::TArrayView arr;
-        if (!Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
+        if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
             uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride
                                         + wae.elemWeakOffset);
@@ -4108,7 +4235,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
     for (const auto& ome : meta.objectMaps) {
         Macht::TSparseArrayView sa;
-        if (!Macht::ReadTSparseArray(obj + ome.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
+        if (!OptionalGateOpen(obj + ome.offset, ome.setFlagOffset) || !Macht::ReadTSparseArray(obj + ome.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
         for (int32_t e = 0; e < sa.MaxIndex; ++e) {
             if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
             uintptr_t pair = sa.Data + static_cast<int64_t>(e) * ome.pairStride;
@@ -4127,7 +4254,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TSet<UObject*> (allocated slots only) ---
     for (const auto& ose : meta.objectSets) {
         Macht::TSparseArrayView sa;
-        if (!Macht::ReadTSparseArray(obj + ose.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
+        if (!OptionalGateOpen(obj + ose.offset, ose.setFlagOffset) || !Macht::ReadTSparseArray(obj + ose.offset, sa) || sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
         for (int32_t e = 0; e < sa.MaxIndex; ++e) {
             if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
             uintptr_t ptr = 0;
@@ -4152,7 +4279,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     //     container element cap; the BFS deadline / visited cap bound the rest. ---
     constexpr int32_t kDeepElemCap = 256;
     for (const auto& cfe : GetClassContainers(cls)) {
-        if (cfe.stride <= 0) continue;
+        if (cfe.stride <= 0 || !OptionalGateOpen(obj + cfe.offset, cfe.setFlagOffset)) continue;
 
         // The struct sides we can descend into for pointers, with the byte offset
         // of that side within the element/pair (0 for array/set element & map key;
@@ -4195,14 +4322,16 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
                 // Direct Object/Class/Interface pointers in the element struct.
                 for (const auto& pfe : emeta.directPointers) {
                     uintptr_t ptr = 0;
-                    if (!Macht::ReadSafe(structBase + pfe.offset, ptr) || !ptr) continue;
+                    if (!OptionalGateOpen(structBase + pfe.offset, pfe.setFlagOffset)
+                        || !Macht::ReadSafe(structBase + pfe.offset, ptr) || !ptr) continue;
                     if (emit(ptr, cfe.offset, cfe.name + sides[s].suffix,
                              fieldType, kStructProp, e, cfe.stride, sides[s].within + pfe.offset))
                         return;
                 }
                 // Weak/soft/lazy single pointers in the element struct.
                 for (const auto& wpe : emeta.weakLikePointers) {
-                    uintptr_t r = ResolveWeakAt(structBase + wpe.offset);
+                    uintptr_t r = OptionalGateOpen(structBase + wpe.offset, wpe.setFlagOffset)
+                        ? ResolveWeakAt(structBase + wpe.offset) : 0;
                     if (!r) continue;
                     if (emit(r, cfe.offset, cfe.name + sides[s].suffix,
                              fieldType, kStructProp, e, cfe.stride, sides[s].within + wpe.offset))
@@ -4981,24 +5110,19 @@ PropertySearchResult SearchProperties(
         // Same reasoning as FindInstancesDerivedFrom's derivedCache — GObjects holds 10^5-10^6
         // objects over 10^3-10^4 distinct classes, so caching by UClass* turns a per-OBJECT
         // chain walk into a per-CLASS one, which is what makes this affordable at all.
-        std::unordered_map<uintptr_t, uintptr_t> derivesFromCache;
-        auto previewBaseOf = [&](uintptr_t cls) -> uintptr_t {
-            auto it = derivesFromCache.find(cls);
-            if (it != derivesFromCache.end()) return it->second;
-            uintptr_t found = 0;
-            uintptr_t cur = cls;
-            // Bounded the same way Ubel::ResolveFunctionInChain and Dunste::FindFuncByName
-            // are: a malformed or mid-teardown SuperStruct can self-loop.
-            for (int depth = 0; cur && depth < 64; ++depth) {
-                if (needPreviewClasses.count(cur)) { found = cur; break; }
-                uintptr_t super = 0;
-                if (!Macht::ReadSafe(cur + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
-                    || super == 0 || super == cur)
-                    break;
-                cur = super;
-            }
-            derivesFromCache[cls] = found;
-            return found;
+        // [A4-CDOSCOPE-ANCESTOR] The memo now holds EVERY preview class on the chain (Aura::PreviewAncestorsOf, pinned in
+        // dll_core_test), not the nearest one: crediting only the nearest left every ancestor row at "(CDO default)".
+        std::unordered_map<uintptr_t, std::vector<uintptr_t>> ancestorsCache;
+        auto previewAncestorsOf = [&](uintptr_t cls) -> const std::vector<uintptr_t>& {
+            auto it = ancestorsCache.find(cls);
+            if (it != ancestorsCache.end()) return it->second;
+            auto ins = ancestorsCache.emplace(cls, PreviewAncestorsOf(cls,
+                [&](uintptr_t c) { return needPreviewClasses.count(c) != 0; },
+                [](uintptr_t c) -> uintptr_t {
+                    uintptr_t super = 0;
+                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) ? super : 0;
+                }));
+            return ins.first->second;
         };
 
         int32_t cnt = GetCount();
@@ -5021,13 +5145,17 @@ PropertySearchResult SearchProperties(
             if (obj == cls) continue;
 
             const bool exact = needPreviewClasses.count(cls) != 0;
-            // Only pay for the chain walk when the class is not one we already want, and
-            // only while some preview class still lacks a derived sample.
-            const uintptr_t base = exact ? cls
-                                 : (derivedMap.size() < needPreviewClasses.size()
-                                        ? previewBaseOf(cls) : 0);
-            if (!base) continue;
-            if (exact ? (instanceMap.count(base) != 0) : (derivedMap.count(base) != 0)) continue;
+            // [A4-CDOSCOPE-ANCESTOR] An object is the EXACT sample for its own class and a DERIVED sample for every
+            // preview class above it -- exact hits included. Only pay for the chain walk while some preview class
+            // still lacks a derived sample.
+            static const std::vector<uintptr_t> kNoAncestors;
+            const std::vector<uintptr_t>& ancestors =
+                derivedMap.size() < needPreviewClasses.size() ? previewAncestorsOf(cls) : kNoAncestors;
+            const bool wantsExact = exact && instanceMap.count(cls) == 0;
+            bool wantsDerived = false;
+            for (uintptr_t anc : ancestors)
+                if (derivedMap.count(anc) == 0) { wantsDerived = true; break; }
+            if (!wantsExact && !wantsDerived) continue;
 
             uint32_t nameIdx = 0;
             if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
@@ -5035,12 +5163,12 @@ PropertySearchResult SearchProperties(
                 // Only the row's OWN class default is offered as the last-resort sample. A
                 // subclass CDO is another class's default, which would be a worse answer than
                 // the row's own and is not what the actions would touch either.
-                if (exact) cdoOnlyMap.emplace(base, obj);   // first CDO wins; live still preferred
+                if (exact) cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
                 continue;
             }
 
-            if (exact) instanceMap[base] = obj;
-            else       derivedMap.emplace(base, obj);
+            if (wantsExact) instanceMap[cls] = obj;
+            for (uintptr_t anc : ancestors) derivedMap.emplace(anc, obj);   // first live sample per class wins
         }
 
         // Fall back to the CDO where nothing live exists — a default value is still the only
@@ -5937,6 +6065,9 @@ PropertyXrefResult FindPropertyXrefs(uintptr_t propAddr, bool gameOnly,
         }
     });
 
+    // [W3-XREF-CAP] Asked BEFORE ConcatTruncate, which moves the elements out.
+    out.stats.capHit = MergedScanCapHit(scan.perThread, &ThreadResult::xrefs, maxResults);
+    out.stats.cap    = maxResults;
     out.xrefs = ConcatTruncate(scan.perThread, &ThreadResult::xrefs, maxResults);
     for (auto& tr : scan.perThread) {
         out.stats.functionsScanned    += tr.funcsScanned;
@@ -6001,9 +6132,14 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
         pType == "InterfaceProperty"  || pType == "LazyObjectProperty";
     if (!classBearing) return 0;
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
-    // FProperty subclass-extension slot; UE4 (<4.25) UProperty uses Offset+0x2C.
-    const int slot = DynOff::bUseFProperty ? DynOff::FSTRUCTPROP_STRUCT
-                                           : (DynOff::UPROPERTY_OFFSET + 0x2C);
+    // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the version's
+    // MEASURED delta from Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
+    // DynOff::UPropertySubclassStartFor WalkFunctions uses. A flat +0x2C here left this mirror
+    // unable to match any 4.11-4.17 param ([A2-UFUNC-TAIL-4X] review follow-up).
+    const int slot = DynOff::bUseFProperty
+        ? DynOff::FSTRUCTPROP_STRUCT
+        : DynOff::UPropertySubclassStartFor(DynOff::UPROPERTY_OFFSET, ::g_cachedUEVersion,
+                                            DynOff::bCasePreservingName);
     uintptr_t target = 0;
     Macht::ReadSafe(fieldAddr + slot, target);
     return target;
@@ -6125,6 +6261,9 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
         }
     });
 
+    // [W3-XREF-CAP] Asked BEFORE ConcatTruncate, which moves the elements out.
+    out.stats.capHit = MergedScanCapHit(scan.perThread, &ThreadResult::xrefs, maxResults);
+    out.stats.cap    = maxResults;
     out.xrefs = ConcatTruncate(scan.perThread, &ThreadResult::xrefs, maxResults);
     for (auto& tr : scan.perThread) {
         out.stats.functionsScanned    += tr.funcsScanned;
@@ -6370,10 +6509,16 @@ FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr) {
         return out;
     }
     out.scriptBytes = scriptNum;
-    out.method = "bytecode";
 
     std::vector<uint8_t> buf(static_cast<size_t>(scriptNum));
-    if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) return out;
+    if (!Macht::ReadBytesSafe(scriptData, buf.data(), static_cast<size_t>(scriptNum))) {
+        // [W3-BATCH-METHOD] review follow-up: the Script header looked plausible but its buffer did not
+        // read (a stale / freed allocation, or a mis-resolved USTRUCT_SCRIPT). Nothing was scanned, so this
+        // must not leave as "bytecode" with zero refs -- the batch renders that as a real "0".
+        out.method = "bytecode_unreadable";
+        return out;
+    }
+    out.method = "bytecode";
 
     // Opcode-anchored property-reference scan. Anchors are the value-access
     // opcodes whose immediate operand is an FProperty* (8B):
@@ -6742,6 +6887,9 @@ ValueScanResult ScanForValue(
         // offset+optionalFlagOffset; the per-instance read skips slots whose
         // flag is 0 (unset). -1 = ordinary leaf / container (no gate).
         int32_t       optionalFlagOffset = -1;
+        // [A2-TOPTIONAL-VALUESCAN] ...or, for an INTRUSIVE optional (no flag byte), the wrapped type's unset sentinel,
+        // tested on the value bytes before they are read as a value. None = no sentinel gate.
+        Ubel::OptionalUnsetSentinel optionalSentinel = Ubel::OptionalUnsetSentinel::None;
         std::string   elemTypeName;       // Inner/elem/key/value type name (e.g. "IntProperty")
         // Vector scans only: the REFLECTED width of the value this ScanField
         // reads — 12 (3xfloat) or 24 (3xdouble LWC). Sourced from the property
@@ -7124,8 +7272,17 @@ ValueScanResult ScanForValue(
                         ? f.Name : (namePrefix + "." + f.Name);
                     sf.typeName      = f.innerType;             // read as the inner leaf type
                     sf.boolFieldMask = 0xFF;                    // optionals never bitfield-pack
-                    sf.optionalFlagOffset =
-                        Radar::OptionalFlagOffset(f.Size, innerSize);
+                    // [A2-TOPTIONAL-VALUESCAN] The optional's RESOLVED layout, not "bigger than T means a trailing
+                    // flag" (the loose rule [A2-TOPTIONAL-INTRUSIVE] names unsafe). A trailing-flag optional gates on
+                    // the byte at sizeof(T); an intrusive FString / FName / FText on its type's unset sentinel;
+                    // anything else has an unreadable set state, so its bytes are not a value -- skip the field.
+                    const auto ol = Ubel::ResolveOptionalLayout(f.Address, f.Size, f.innerType);
+                    int32_t gateOffset = -1;
+                    Ubel::OptionalUnsetSentinel gateSentinel = Ubel::OptionalUnsetSentinel::None;
+                    if (!Ubel::V1cOptionalGate(ol.layout, f.innerType, ol.innerSize, gateOffset, gateSentinel))
+                        continue;
+                    sf.optionalFlagOffset = gateOffset;
+                    sf.optionalSentinel   = gateSentinel;
                     sf.vectorWidth   = optVecWidth;
                     out.push_back(std::move(sf));
                     continue;
@@ -7556,6 +7713,10 @@ ValueScanResult ScanForValue(
             // Vector scans only: the source width the refine path can no longer
             // re-derive (fieldType is the bare "StructProperty").
             d.vectorWidth   = sf.vectorWidth;
+            // [A2-TOPTIONAL-REFINE] The V1c optional gate, carried so the REFINE path can apply the SAME one:
+            // it re-reads by absolute address, and a reset optional's bytes are still its old value.
+            d.optionalFlagOffset = sf.optionalFlagOffset;
+            d.optionalSentinel   = static_cast<int8_t>(sf.optionalSentinel);
 
             DefKey dk{ cls, sf.offset };
             auto dit = definingNameCache.find(dk);
@@ -7892,6 +8053,21 @@ ValueScanResult ScanForValue(
                     || isSet == 0)
                     continue;
             }
+            // [A2-TOPTIONAL-VALUESCAN] An INTRUSIVE optional has no flag byte: "unset" is a special value of T itself,
+            // so test that sentinel before the bytes are read as a value. An unreadable slot is skipped too.
+            if (sf.optionalSentinel != Ubel::OptionalUnsetSentinel::None) {
+                // [A2-SENTINEL-OVERREAD] Read what the sentinel needs, never a flat 16: an intrusive optional is
+                // exactly sizeof(T), so 16 bytes ran past an 8-byte TOptional<FName>, and a read that crossed into
+                // an unmapped page failed -- indistinguishable from "unset", so a SET optional was dropped on some
+                // instances of a class and not others. sf.size is the field's own width (f.Size at emit time).
+                uint8_t v16[16] = {};
+                int32_t need = Ubel::SentinelBytesNeeded(sf.optionalSentinel);
+                if (sf.size > 0 && sf.size < need) need = sf.size;
+                if (need <= 0
+                    || !readBody(sf.offset, v16, static_cast<size_t>(need))
+                    || Ubel::IntrusiveOptionalIsUnset(sf.optionalSentinel, v16))
+                    continue;
+            }
 
             uintptr_t valueAddr = obj + sf.offset;
             // Sized for the widest value read through it: a 24-byte LWC vector.
@@ -8141,6 +8317,7 @@ ValueScanResult ScanForValue(
 
                 // Read the container header (mirror WalkContainerLeaves' guards).
                 uintptr_t fieldAddr = obj + cfe.offset;
+                if (!OptionalGateOpen(fieldAddr, cfe.setFlagOffset)) continue;   // [A2-TOPTIONAL-STRUCT-DESCENT]
                 uintptr_t bufData = 0; int32_t capacity = 0;
                 Macht::TSparseArrayView sa{};
                 const bool isSparse = (cfe.kind != ContainerKind::Array);
@@ -8395,6 +8572,26 @@ ValueScanStats RefineCandidates(
                     c.containerNum = hs.num;   // keep the stamp current for the NEXT refine
                     break;
             }
+        }
+        // [A2-TOPTIONAL-REFINE] The gate ScanForValue's V1c applies, applied again here -- a TOptional's bytes
+        // are only a value while it is SET, and UE's MarkUnset clears bIsSet while zeroing nothing. Without this
+        // an Unchanged (or Exact-the-stale-value) refine kept a reset optional forever. Every non-optional
+        // candidate has -1 / 0 here and falls straight through; V1c emits only Direct anchors, so c.addr IS the
+        // value address, and a group session leaves these at their defaults (audit #5 A12).
+        if (desc.optionalFlagOffset >= 0) {
+            uint8_t isSet = 0;
+            if (!Macht::ReadSafe(c.addr + static_cast<uintptr_t>(desc.optionalFlagOffset), isSet)
+                || isSet == 0)
+                continue;
+        }
+        if (desc.optionalSentinel != 0) {
+            const auto sen = static_cast<Ubel::OptionalUnsetSentinel>(desc.optionalSentinel);
+            const int32_t need = Ubel::SentinelBytesNeeded(sen);   // never a flat 16 [A2-SENTINEL-OVERREAD]
+            uint8_t sbuf[16] = {};
+            if (need <= 0
+                || !Macht::ReadBytesSafe(c.addr, sbuf, static_cast<size_t>(need))
+                || Ubel::IntrusiveOptionalIsUnset(sen, sbuf))
+                continue;
         }
         if (isMulti) {
             // Re-resolve this candidate's own width from its stored
@@ -8957,10 +9154,17 @@ bool GroupCandidateFeasible(const Radar::GroupCandidate& gc) {
 // Reuses EnumerateOutgoingObjectPtrs (the outgoing-pointer adapter) + IsOwnedBy
 // (the Outer-chain ownership gate) — the SAME pieces the P4 cross-object group
 // scan uses, here collecting OBJECTS instead of numeric leaves. Bounded + fast.
-std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults) {
+std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResults,
+                                             RelatedObjectsStats* stats, const RelatedObjectsLimits& limits) {
     std::vector<RelatedObject> out;
-    if (!target) return out;
     if (maxResults <= 0) maxResults = 128;
+    // [W4-RELATED-STOPS] Every stop records its OWN cause (P5), into a local published once at the end.
+    RelatedObjectsStats st;
+    st.maxResults   = maxResults;
+    st.maxOwnedSubs = limits.maxOwnedSubs;
+    st.maxVisited   = limits.maxVisited;
+    st.deadlineMs   = limits.deadlineMs;
+    if (!target) { if (stats) *stats = st; return out; }
 
     // Bound the owned walk: a wall-clock deadline + cooperative cancel + a hard
     // emit-iteration cap, so a target exposing a huge reflected object-pointer
@@ -8969,13 +9173,18 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
     // FindObjectGraphPath's abort pattern (rejected elements never advance the
     // add-caps, so without this the loop is unbounded).
     auto t0 = std::chrono::steady_clock::now();
-    constexpr int64_t kDeadlineMs = 8000;
-    constexpr int64_t kMaxVisited = 200000;
+    const int64_t kDeadlineMs = limits.deadlineMs;   // [W4-RELATED-STOPS] seam: the shipped 8000 by default
+    const int64_t kMaxVisited = limits.maxVisited;   // ...and the shipped 200000
     int64_t visited = 0;
     auto aborted = [&]() -> bool {
-        if (Tot::Requested()) return true;
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now() - t0).count() > kDeadlineMs;
+        // Two causes, two flags: a cancel is not a timeout, and the advice differs.
+        if (Tot::Requested()) { st.cancelled = true; return true; }
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0).count() > kDeadlineMs) {
+            st.deadlineHit = true;
+            return true;
+        }
+        return false;
     };
 
     // Dedup across the WHOLE result. Seeding `seen` from add() means a
@@ -8986,7 +9195,8 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
     std::unordered_set<uintptr_t> seen;
     auto add = [&](uintptr_t obj, const char* relation, const std::string& fieldName,
                    int32_t fieldOffset, int32_t depth, uintptr_t parent) {
-        if (!obj || out.size() >= static_cast<size_t>(maxResults)) return;
+        if (!obj) return;
+        if (out.size() >= static_cast<size_t>(maxResults)) { st.resultCapHit = true; return; }   // one refused
         RelatedObject r;
         r.addr        = obj;
         int32_t idx   = -1;
@@ -9042,7 +9252,7 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
         return "Owned Object";
     };
 
-    constexpr int kMaxOwnedSubs = 128;
+    const int kMaxOwnedSubs = limits.maxOwnedSubs;   // [W4-RELATED-STOPS] seam: the shipped 128 by default
     // Depth 3 so a GAS AttributeSet nested behind a stats/ability component is
     // reached when entering from the PAWN: pawn -> stats component -> ASC ->
     // AttributeSet (some games — e.g. TQ2 — don't hang the ASC directly off the
@@ -9060,7 +9270,9 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
         Frontier cur = frontier.back();
         frontier.pop_back();
         if (cur.depth >= kMaxOwnDepth) continue;
-        if (out.size() >= static_cast<size_t>(maxResults) || subCount >= kMaxOwnedSubs) break;
+        // [W4-RELATED-STOPS] A FULL list is not a reason to stop here: only an object actually refused makes it
+        // incomplete, and the enumerator below finds that out -- so a list that exactly fills its cap is whole.
+        if (st.resultCapHit || st.ownedCapHit || st.visitCapHit) break;
         if (aborted()) break;
         EnumerateOutgoingObjectPtrs(cur.obj,
             [&](uintptr_t child, int32_t ptrOff, const std::string& ptrName,
@@ -9068,13 +9280,16 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
                 int32_t elemIdx, int32_t /*elemStride*/, int32_t /*elemValueOffset*/) -> bool {
                 // Bound REJECTED iterations too (a huge non-owned container would
                 // otherwise spin without ever advancing the add-caps).
-                if (++visited > kMaxVisited || aborted()) return true;  // stop enumerating
-                if (out.size() >= static_cast<size_t>(maxResults) || subCount >= kMaxOwnedSubs)
-                    return true;  // stop enumerating
+                if (++visited > kMaxVisited) { st.visitCapHit = true; return true; }   // stop enumerating
+                if (aborted()) return true;                                            // (it records why)
                 if (!child || seen.count(child)) return false;
                 if (!IsOwnedBy(child, target, kMaxOwnDepth)) return false;
                 uintptr_t childCls = Ubel::GetClass(child);
                 if (!childCls) return false;
+                // [W4-RELATED-STOPS] The caps are asked only of an object that QUALIFIES, so each flag means one
+                // was actually refused -- never "the list happened to be full".
+                if (out.size() >= static_cast<size_t>(maxResults)) { st.resultCapHit = true; return true; }
+                if (subCount >= kMaxOwnedSubs)                      { st.ownedCapHit  = true; return true; }
                 seen.insert(child);
                 ++subCount;
                 std::string fname = ptrName;
@@ -9089,6 +9304,7 @@ std::vector<RelatedObject> GetRelatedObjects(uintptr_t target, int32_t maxResult
                 return false;  // keep enumerating this parent's other owned children
             });
     }
+    if (stats) *stats = st;
     return out;
 }
 
@@ -9606,15 +9822,22 @@ ValueScanStats RefineGroupCandidates(
 
                 uint8_t buf[8] = {};
                 if (!Macht::ReadBytesSafe(sm.leafAddr, buf, sz)) { ++dRead; continue; }
-                const uint8_t* cmp = usePrev ? sm.prevValue : slots[s].targets.Find(width);
-                if (!cmp) { ++dNoTarget; continue; }          // value can't fit this width
+                // [W2-ORDEN-FINDENTRY] Two shapes, as in the single-value refine: a prev-value
+                // refine compares against the stored bytes, a targeted one against a target
+                // ENTRY whose verdict may be "every value of this width matches" (audit #5 AB4).
+                // Find() hid that verdict, so `Bigger -5` pruned every unsigned leaf.
+                const Radar::NumericTargetSet::Entry* cmpEntry =
+                    usePrev ? nullptr : slots[s].targets.FindEntry(width);
+                if (!usePrev && !cmpEntry) { ++dNoTarget; continue; }   // no value of this width can satisfy it
                 const uint8_t* cmp2 = nullptr;
                 if (st == Radar::ScanType::Between) {
                     cmp2 = slots[s].targets2.Find(width);
                     if (!cmp2) { ++dNoTarget; continue; }    // upper bound can't fit this width
                 }
-                if (!Radar::ComparePredicate(width, st, buf, cmp, cmp2, slots[s].roundMode))
-                    { ++dPredicate; continue; }
+                const bool pass = usePrev
+                    ? Radar::ComparePredicate(width, st, buf, sm.prevValue, cmp2, slots[s].roundMode)
+                    : Radar::ComparePredicate(width, st, buf, cmpEntry, cmp2, slots[s].roundMode);
+                if (!pass) { ++dPredicate; continue; }
                 std::memcpy(sm.prevValue, buf, sz);
                 ++dKept;
                 keep.push_back(sm);
@@ -9915,10 +10138,14 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: cancelled (client gone / shutdown)");
     // A fault is NOT a cancellation, and saying "cancelled" for it would name a cause that
     // did not happen. Unlike the cancel case the C# side is still listening, so this chunk
-    // is about to be stored — with a hole in it.
-    if (scan.workerFaulted)
+    // is about to be stored — with a hole in it. It used to stop at this log line, and the
+    // snapshot was finalised as complete and usable; now the fact travels with the chunk
+    // (`worker_faulted`) and the UI finalises the snapshot UNUSABLE. [W1-SNAP-FAULT]
+    if (scan.workerFaulted) {
+        result.workerFaulted = true;
         Sein::Warn("PIPE:snapshot", "CaptureSnapshotChunk: a worker FAULTED — this chunk "
                                     "is missing an index range and the snapshot is partial");
+    }
 
     return result;
 }

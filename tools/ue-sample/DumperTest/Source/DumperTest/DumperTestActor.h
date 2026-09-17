@@ -673,6 +673,207 @@ public:
 	/// rather than needing a game. Deliberately distinct lengths.
 	UPROPERTY() TArray<FName> Arr_Name;
 
+	// ========================================================
+	// InvokeGate — hosts for the invoke paths' unwritable-param gate:
+	// [P3-INVOKE-Y11-CEFORM] and [P3-INVOKE-STRUCT-FSTRING], FIX PASS live check L10.
+	//
+	// Nothing on this fixture took a TArray, a delegate, an FText, or a struct with an FString
+	// member, so the gate had no host short of borrowing an engine library function -- whose
+	// effect cannot be read back. These RECORD what they received, two independent ways, so a
+	// check never has to infer a call from the absence of a crash:
+	//   * the reflected counters and last-seen values below, readable over the pipe; and
+	//   * one line per call appended to InvokeGate_LogPath with FFileHelper.
+	//     ⚠ Not UE_LOG: that compiles to nothing in Shipping (see the note at the end of BeginPlay).
+	//
+	// ⭐ An ABSENCE claim ("the refused FIRE sent nothing") needs a counter that DID move on an
+	// accepted FIRE in the same session. Every function bumps its counter FIRST, before it looks
+	// at any argument, so a call that misbehaves afterwards is still counted.
+	//
+	// ⚠ BY-VALUE and CONST-REF both exist for the array and the struct, and that is deliberate.
+	// Through ProcessEvent a by-value param is COPIED out of the params buffer (P_GET_TARRAY /
+	// P_GET_STRUCT), and copying a TArray or FString whose Num is 0 never reads Data -- so the
+	// callee sees a clean null even when the buffer held garbage. The const-ref variant
+	// (P_GET_*_REF) aliases the buffer itself, so ITS recorded Data pointer is what the dumper
+	// actually wrote. Check whether the running game flags the const-ref params as `out` before
+	// choosing one: UHT's CPF_OutParm on a const reference changes how the invoke dialog treats it.
+	//
+	// ⚠ InvokeGate_TakeText never reads its argument. A zeroed FText has no TextData and every
+	// accessor dereferences it, so the function only counts.
+	// ========================================================
+
+	/// Where the per-call lines go, as an absolute path. Filled in BeginPlay so a harness READS it
+	/// rather than guessing where a Shipping package puts Saved\.
+	UPROPERTY() FString InvokeGate_LogPath;
+
+	/// Every counter starts at 0 and every last-seen value at -1, so "never called" can never be
+	/// mistaken for "called with an empty argument" (Num 0, Data 0).
+	UPROPERTY() int32 InvokeGate_ArrayCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastArrayNum = -1;
+	UPROPERTY() int64 InvokeGate_LastArrayData = -1;
+
+	UPROPERTY() int32 InvokeGate_DelegateCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastDelegateBound = -1;
+
+	UPROPERTY() int32 InvokeGate_TextCalls = 0;
+
+	UPROPERTY() int32 InvokeGate_StructCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastHead = -1;
+	UPROPERTY() int32 InvokeGate_LastTail = -1;
+	UPROPERTY() int32 InvokeGate_LastLabelNum = -1;
+	UPROPERTY() int64 InvokeGate_LastLabelData = -1;
+
+	// ========================================================
+	// L12 / L29 / L44 hosts, added 2026-09-16. Three live checks had no subject here:
+	//
+	//  * `[A2-TOPTIONAL-INTRUSIVE]` (L12) needs a NON-INTRUSIVE optional whose state the walker has
+	//    to read from the trailing flag rather than from the value bytes. On 5.3/5.4 object AND
+	//    string optionals are non-intrusive (containers become intrusive only at 5.5), so the
+	//    object optional below is the 5.4 subject and `Opt_Str_Unset` closes the gap the row names
+	//    outright ("add Opt_Str_Unset if it is still missing").
+	//    ⭐ The discriminating states are the ones a WRONG walker gets wrong:
+	//    Reset() writes no bytes, so a value-derived reader still publishes the stale pointer; and a
+	//    set-to-null optional is "set", which a value-derived reader calls unset. Both are reachable
+	//    through the mutators below, never at construction only.
+	//  * `[W5-STRARRAY-ELEMENTS]` (L29) needs a `TArray<FString>`; there was none.
+	//  * `[P3-SDK-INNERS]` (L44) needs container inners of the four types the SDK header used to
+	//    declare as `uint8_t`. `Arr_LazyPtr` and `Arr_Delegates` already cover two; a soft CLASS
+	//    pointer and a field path did not exist here at all.
+	// ========================================================
+
+	/// L12 step 3, the 5.4 half. Deliberately LEFT UNSET: on 5.4 a string optional is non-intrusive,
+	/// so a reader that trusts the build-530 sentinel arms reads this as a SET empty string.
+	UPROPERTY() TOptional<FString> Opt_Str_Unset;
+
+	/// L12 step 1. Seeded in BeginPlay to the first `LazyAnchors` holder, and moved between the
+	/// three states by the mutators below. ⚠ An object optional is non-intrusive unless the property
+	/// is `CPF_NonNullable`, which this is not.
+	UPROPERTY() TOptional<TObjectPtr<AActor>> Opt_Obj;
+
+	// ⛔ NO CONTAINER OPTIONAL HERE, and not by choice: UE 5.4's UHT REFUSES one outright —
+	// `TOptional<TArray<int32>>` fails with *"The type 'TArray<int32>' can not be used as a value
+	// in a TOptional"* (measured 2026-09-16, DumperTestActor.h:754). So L12 step 2 is not merely
+	// behaviourally 5.5+, it is UNDECLARABLE on 5.4, and that host has to come from the 5.8 port.
+
+	/// L29. Three deliberately DIFFERENT texts, so an element read at the wrong stride cannot
+	/// pass by looking plausible, plus one empty element as the `""`-is-not-unset control.
+	UPROPERTY() TArray<FString> Arr_Str;
+
+	/// L28, the fourth entrance of `[W5-CEXML-FSTRING]`: a struct-ARRAY element with a string MEMBER,
+	/// which the broken exporter wrote as an empty placeholder folder. Two elements, so an element
+	/// read at the wrong stride shows the wrong text rather than the right one twice.
+	UPROPERTY() TArray<FDumperTestStrRow> Arr_StrRows;
+
+	/// L44 step 2. The two container inners the SDK header declared as `uint8_t` and that no other
+	/// field here supplies (`Arr_LazyPtr` and `Arr_Delegates` cover the other two).
+	UPROPERTY() TArray<TSoftClassPtr<AActor>> Arr_SoftClass;
+	UPROPERTY() TArray<TFieldPath<FProperty>> Arr_FieldPath;
+
+	// ========================================================
+	// L30 + L39 -- THE COOKED-WITNESS PROBE.
+	//
+	// Both rows need the same thing and neither could get it: a COOKED .uasset whose
+	// object carries a non-1-byte enum (L30) and a TArray<TEnumAsByte<E>> (L39). Every
+	// such property this fixture already had is unreachable from an asset -- ADumperTestActor
+	// is SPAWNED at runtime (DumperTestSubsystem.cpp), never placed, so nothing it owns is
+	// ever written into a package. These four exist to be overridden on the CDO of a
+	// Blueprint SUBCLASS, which IS cooked (Content/UsmapProbe/BP_UsmapProbe).
+	//
+	// ⛔ EditAnywhere is not decoration -- it is the whole mechanism. A specifier-less
+	//   UPROPERTY cannot be set on a Blueprint's Class Defaults, nor by Python's
+	//   set_editor_property, so the probe would cook with the native defaults and write
+	//   NOTHING. (And do not spell that empty macro out in a comment here: 
+	//   check_ue_sample_values.py's UPROPERTY regex is [^;]+ and swallowed the next 12
+	//   lines, reporting a field called 'rows' from the prose below.)
+	//
+	// ⛔⛔ THE DEFAULTS BELOW ARE THE BORING HALF ON PURPOSE. Unversioned property
+	//   serialization writes only what DIFFERS from the archetype, so a probe left at its
+	//   CDO value is ABSENT from the cooked stream entirely -- and two mappings then
+	//   "agree" on an empty stream, which is the false pass this whole exercise exists to
+	//   avoid. The asset must set all four to the loud values in README.md.
+	//
+	// ⛔ WideGrade / WideGuard are deliberately NOT reused. Their flags and values are
+	//   pinned by README.md and by Y15's live rows; a probe must not move a documented one.
+	// ========================================================
+
+	/// L30 -- the 4-byte enum a cooked asset can carry. `Wide_High` (0x007F0000) is the
+	/// loud value because BYTE 2 is set: a 1-byte misread AND a 2-byte one both lose it,
+	/// where Wide_Base/Wide_Target were designed to share a low byte and would not.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	EDumperTestWideGrade Probe_WideEnum = EDumperTestWideGrade::Wide_Zero;
+
+	/// L30's ALIGNMENT witness, and the reason the row is not vacuous. It is declared
+	/// IMMEDIATELY after the enum, so a consumer that reads the enum at the wrong width
+	/// starts this read at the wrong offset and cannot return 0x11223344.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterWideEnum = 0;
+
+	/// L39 -- the `TArray<TEnumAsByte<E>>` itself. Three elements, unsorted and distinct,
+	/// so a wrong-stride read cannot produce the right sequence by luck.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	TArray<TEnumAsByte<EDumperTestLane>> Probe_Lanes;
+
+	/// L39's ALIGNMENT witness, for Probe_AfterWideEnum's reason. A different constant
+	/// from that one on purpose: if a misread shifted one guard onto the other's bytes,
+	/// equal guards would hide it.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterLanes = 0;
+
+	/// ⭐ L39 step 3's CONTROL -- *"a plain TArray<uint8> stays a byte array"* -- and it
+	/// deliberately holds the SAME three byte values as Probe_Lanes. Identical bytes,
+	/// different declared inner type, one object: a consumer that renders one as
+	/// enumerator NAMES and the other as NUMBERS is reading the descriptor and nothing
+	/// else. Without the co-location, "the elements show names" is also what a consumer
+	/// that name-renders EVERY byte array would print.
+	///
+	/// ⚠ The two do not occupy the same number of bytes in a cooked package and must not
+	/// be expected to: `CanBulkSerialize()` is FALSE for a ByteProperty carrying an Enum,
+	/// so the lanes go through SerializeItem one FName at a time while these three are
+	/// bulk-written raw. That asymmetry IS the misalignment the row is about.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	TArray<uint8> Probe_RawBytes;
+
+	/// The control's own alignment witness, for Probe_AfterWideEnum's reason.
+	UPROPERTY(EditAnywhere, Category = "DumperTest|UsmapProbe")
+	int32 Probe_AfterRawBytes = 0;
+
+	/// L12 step 1 — set the object optional to `LazyAnchors[0]`, the state the row starts from.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_SetObject();
+
+	/// L12 step 1 — `Reset()`. ⭐ Writes NO bytes, so a walker that derives "set" from the value
+	/// still sees the old pointer; that is the defect this state exists to expose.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_ResetObject();
+
+	/// L12 step 1 — set-but-NULL, which must read `(set: null)` and not `(unset)`.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|Opt")
+	void Opt_SetObjectNull();
+
+	/// The TArray host, by value. @return the array call count after this call.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeIntArray(TArray<int32> Values);
+
+	/// The TArray host, by const reference -- records the buffer's own Data pointer.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeIntArrayRef(const TArray<int32>& Values);
+
+	/// The delegate host. Records IsBound() as 0/1 -- safe on a zeroed FScriptDelegate, whose
+	/// weak object pointer has serial 0 and resolves to null without a dereference.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeDelegate(FDumperTestUnicastSignature Callback);
+
+	/// The FText host. Counts, and never touches InText -- see the banner above.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeText(FText InText);
+
+	/// The struct-with-an-FString-member host, by value.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeStruct(FDumperTestInvokeProbe Probe);
+
+	/// The same, by const reference -- records Label's Data pointer as the buffer held it.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
+	int32 InvokeGate_TakeStructRef(const FDumperTestInvokeProbe& Probe);
+
 	/// Bumped on every spawn/destroy round so a harness can prove churn ACTUALLY
 	/// HAPPENED rather than assuming its invoke landed. A changed count with a flat
 	/// generation means something other than these functions moved the numbers.
@@ -791,6 +992,15 @@ private:
 
 	/// Build a UDataTable at runtime with `Rows` rows. No cooked asset involved.
 	UDataTable* BuildTable(const TCHAR* Name, int32 Rows);
+
+	/// InvokeGate's shared recorders, so the by-value and const-ref variants cannot drift apart.
+	/// Each takes the argument by reference: for the const-ref UFUNCTION that is the params buffer,
+	/// for the by-value one it is the thunk's copy.
+	int32 InvokeGateRecordArray(const TArray<int32>& Values, const TCHAR* Which);
+	int32 InvokeGateRecordStruct(const FDumperTestInvokeProbe& Probe, const TCHAR* Which);
+
+	/// Append one line to InvokeGate_LogPath. No-op until BeginPlay has set the path.
+	void InvokeGateLog(const FString& Line) const;
 
 private:
 	void OnSecondTick();

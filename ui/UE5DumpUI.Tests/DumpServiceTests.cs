@@ -787,6 +787,137 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task GetRelatedObjectsAsync_CarriesEachStopCause()
+    {
+        // [W4-RELATED-STOPS] One key per cause on the wire; each must reach the model on its own.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["related"] = new JsonArray(),
+            ["stops"] = new JsonObject
+            {
+                ["result_cap_hit"] = true, ["owned_cap_hit"] = false, ["visit_cap_hit"] = true,
+                ["deadline_hit"] = false, ["cancelled"] = true,
+                ["max_results"] = 128, ["max_owned"] = 64, ["max_visited"] = 200000L, ["deadline_ms"] = 8000L,
+            },
+        });
+
+        var result = await CreateService().GetRelatedObjectsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        var s = Assert.IsType<RelatedObjectsStops>(result.Stops);
+        Assert.True(s.ResultCapHit);
+        Assert.False(s.OwnedCapHit);
+        Assert.True(s.VisitCapHit);
+        Assert.False(s.DeadlineHit);
+        Assert.True(s.Cancelled);
+        Assert.Equal(128, s.MaxResults);
+        Assert.Equal(64, s.MaxOwned);
+        Assert.Equal(200000L, s.MaxVisited);
+        Assert.Equal(8000L, s.DeadlineMs);
+    }
+
+    [Fact]
+    public async Task GetRelatedObjectsAsync_AnOlderDllWithoutStops_LeavesThemNull()
+    {
+        // The control, green before and after: no "stops" key reads as "not said", never as "complete".
+        _pipe.SetHandler(req => new JsonObject { ["ok"] = true, ["related"] = new JsonArray() });
+
+        var result = await CreateService().GetRelatedObjectsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Stops);
+    }
+
+    [Fact]
+    public async Task TeleportGetMarkersAsync_CarriesTheParentRelativeFlag()
+    {
+        // [W2-MARKER-PARENTREL] Each marker, and the "last" sentinel, say whether they were saved from a
+        // parent-relative read; the key is absent on a healthy one.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["markers"] = new JsonArray
+            {
+                new JsonObject { ["slot"] = 0, ["valid"] = true, ["x"] = 1.0, ["map"] = "M", ["parent_relative"] = true },
+                new JsonObject { ["slot"] = 1, ["valid"] = true, ["x"] = 2.0, ["map"] = "M" },
+                new JsonObject { ["slot"] = -1, ["valid"] = true, ["x"] = 3.0, ["map"] = "M", ["parent_relative"] = true },
+            },
+        });
+
+        var list = await CreateService().TeleportGetMarkersAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(list[0].ParentRelative);
+        Assert.False(list[1].ParentRelative);
+        Assert.True(list[2].ParentRelative);
+    }
+
+    [Fact]
+    public async Task WalkClassAsync_CarriesEachContainerInnersEnum()
+    {
+        // [A4-USMAP-CONTAINER-ENUM] inner_enum / elem_enum / key_enum / value_enum are new, additive wire keys.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "Items", ["type"] = "ArrayProperty", ["inner_type"] = "ByteProperty", ["inner_enum"] = "EA" },
+                new JsonObject { ["name"] = "Tags", ["type"] = "SetProperty", ["elem_type"] = "EnumProperty", ["elem_enum"] = "EB" },
+                new JsonObject
+                {
+                    ["name"] = "Lookup", ["type"] = "MapProperty",
+                    ["key_type"] = "ByteProperty", ["key_enum"] = "EC",
+                    ["value_type"] = "EnumProperty", ["value_enum"] = "ED",
+                },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("EA", model.Fields[0].InnerEnumName);
+        Assert.Equal("EB", model.Fields[1].ElemEnumName);
+        Assert.Equal("EC", model.Fields[2].KeyEnumName);
+        Assert.Equal("ED", model.Fields[2].ValueEnumName);
+    }
+
+    [Fact]
+    public async Task ListEnumsDetailedAsync_CarriesTheFailedLatchAndTheTruncation()
+    {
+        // [P1-ENUMNAMES] list_enums answered ok with every UEnum's entries empty, and no exit said why.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["enums"] = new JsonArray
+            {
+                new JsonObject { ["addr"] = "0x1", ["name"] = "ENetRole", ["entries"] = new JsonArray() },
+            },
+            ["enum_names_failed"] = true,
+            ["truncated"] = true,
+        });
+
+        var r = await CreateService().ListEnumsDetailedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(r.Enums);
+        Assert.True(r.EnumNamesFailed);
+        Assert.True(r.Truncated);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ListEnumsDetailedAsync_ReadsEachFlagFromItsOwnKey(bool failed, bool truncated)
+    {
+        // Review 5 of 7e5a71fc: the test above sets both keys, so a swapped or duplicated key passed it.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true, ["enums"] = new JsonArray(), ["enum_names_failed"] = failed, ["truncated"] = truncated,
+        });
+
+        var r = await CreateService().ListEnumsDetailedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(failed, r.EnumNamesFailed);
+        Assert.Equal(truncated, r.Truncated);
+    }
+
+    [Fact]
     public async Task DetectCurrentTargetAsync_ParsesChainAndPreservesCandidateOrder()
     {
         _pipe.SetHandler(req =>
@@ -1163,6 +1294,114 @@ public class DumpServiceTests
         Assert.Equal("2", field.ArrayElements[1].Value);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TeleportSaveMarkerAsync_ReportsWhetherTheReplyCarriedTheFlag(bool carried)
+    {
+        // Review 5 of 7490c24e: the save reply never carries 'source', so the pose card needs to know whether it carried
+        // parent_relative at all -- false is an answer, absence (an older DLL) is not.
+        _pipe.SetHandler(_ =>
+        {
+            var o = new JsonObject
+            {
+                ["ok"] = true, ["code"] = 0, ["slot"] = 0, ["x"] = 1.0, ["y"] = 2.0, ["z"] = 3.0,
+                ["pitch"] = 0.0, ["yaw"] = 0.0, ["roll"] = 0.0, ["map"] = "M",
+            };
+            if (carried) o["parent_relative"] = false;
+            return o;
+        });
+
+        var p = await CreateService().TeleportSaveMarkerAsync(0, TestContext.Current.CancellationToken);
+
+        Assert.Equal(carried, p.ParentRelativeKnown);
+        Assert.False(p.ParentRelative);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task SeeThroughGetStateAsync_ParsesTheRestoreVerdict(bool pending, bool abandoned)
+    {
+        // [P1-SEETHRU-GIVEUP] Additive keys: absent from an older DLL, both false.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["active"] = false, ["hidden_count"] = 1,
+            ["restore_pending"] = pending, ["restore_abandoned"] = abandoned,
+        });
+
+        var st = await CreateService().SeeThroughGetStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(pending, st.RestorePending);
+        Assert.Equal(abandoned, st.RestoreAbandoned);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesTheDelegateArrayElementPad()
+    {
+        // [A4-DELEGATE-ARRAY-PAD] An additive key: absent from an older DLL (0), and never the field's own delegate_pad.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "Actor",
+            ["class_addr"] = "0x200",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Handlers", ["type"] = "ArrayProperty", ["offset"] = 0xA0, ["size"] = 16,
+                    ["count"] = 2, ["array_inner_type"] = "DelegateProperty", ["array_elem_size"] = 24,
+                    ["array_elem_delegate_pad"] = 8,
+                },
+            },
+        });
+
+        var result = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(8, result.Fields[0].ArrayElemDelegatePad);
+        Assert.Equal(0, result.Fields[0].DelegatePad);
+    }
+
+    [Fact]
+    public async Task FindReferencesToUObjectAsync_ParsesSparseUnlocated()
+    {
+        // [P1-SPARSEDELEGATE-REFS] An additive key (0 from an older DLL); a sweep that skipped any is not complete.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["query_addr"] = "0x100",
+            ["scan"] = new JsonObject
+            {
+                ["objects_scanned"] = 5, ["objects_total"] = 5, ["deadline_hit"] = false, ["sparse_unlocated"] = 3,
+            },
+            ["references"] = new JsonArray(),
+        });
+
+        var r = await CreateService().FindReferencesToUObjectAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, r.Scan!.SparseUnlocated);
+        Assert.False(r.Scan.IsComplete);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesUnreadable()
+    {
+        // [P1-WALK-UNREADABLE] An additive key, absent from an older DLL (false) -- and not the same verdict as stale.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["unreadable"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.IsUnreadable);
+        Assert.False(r.IsStale);
+    }
+
     [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
@@ -1299,6 +1538,79 @@ public class DumpServiceTests
         Assert.Equal(4, param.StructFields[0].Size);
         Assert.Equal("CurrentValue", param.StructFields[1].Name);
         Assert.Equal(4, param.StructFields[1].Offset);
+    }
+
+    // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,
+    // so FIRE and Copy AA Script can read-modify-write its bit instead of the whole byte.
+    [Fact]
+    public async Task WalkFunctionsAsync_ParsesAStructSubFieldsBoolMask()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "OnHit", ["full"] = "Function OnHit", ["addr"] = "0x100",
+                    ["flags"] = (uint)0, ["num_parms"] = (byte)1, ["parms_size"] = (ushort)8,
+                    ["ret_offset"] = (ushort)0xFFFF, ["ret"] = "",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["name"] = "Hit", ["type"] = "StructProperty", ["size"] = 8, ["offset"] = 0,
+                            ["out"] = false, ["ret"] = false, ["struct_type"] = "HitResult",
+                            ["struct_fields"] = new JsonArray
+                            {
+                                new JsonObject { ["name"] = "bBlockingHit", ["type"] = "BoolProperty", ["offset"] = 0, ["size"] = 1, ["bool_mask"] = 1 },
+                                new JsonObject { ["name"] = "bStartPenetrating", ["type"] = "BoolProperty", ["offset"] = 0, ["size"] = 1, ["bool_mask"] = 2 },
+                                new JsonObject { ["name"] = "Time", ["type"] = "FloatProperty", ["offset"] = 4, ["size"] = 4 },
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        var sf = funcs[0].Params[0].StructFields;
+        Assert.Equal(1, sf[0].BoolFieldMask);
+        Assert.Equal(2, sf[1].BoolFieldMask);
+        Assert.Equal(0, sf[2].BoolFieldMask);   // absent = 0: not a packed bool
+    }
+
+    // [A3-BOOL-NATIVE-NOWRITE] The DLL marks a native (whole-byte) bool with an additive key; the
+    // UI must parse it, or it cannot tell a native bool from an unresolved packed one.
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesBoolNative()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["name"] = "TestObj", ["class"] = "Actor",
+            ["class_addr"] = "0x200", ["outer"] = "0x0", ["outer_name"] = "", ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "bNative", ["type"] = "BoolProperty", ["offset"] = 16, ["size"] = 1,
+                                 ["hex"] = "01", ["value"] = "true", ["bool_native"] = true },
+                new JsonObject { ["name"] = "bPacked", ["type"] = "BoolProperty", ["offset"] = 17, ["size"] = 1,
+                                 ["hex"] = "04", ["value"] = "true", ["bool_bit"] = 2, ["bool_mask"] = 4, ["bool_byte_offset"] = 0 },
+                new JsonObject { ["name"] = "bUnresolved", ["type"] = "BoolProperty", ["offset"] = 18, ["size"] = 1,
+                                 ["hex"] = "01", ["value"] = "true" },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(result.Fields[0].BoolNative);
+        Assert.False(result.Fields[1].BoolNative);
+        Assert.Equal(4, result.Fields[1].BoolFieldMask);
+        Assert.False(result.Fields[2].BoolNative);   // no key: UNRESOLVED, not native
+        Assert.Equal(0, result.Fields[2].BoolFieldMask);
     }
 
     [Fact]
@@ -1852,6 +2164,56 @@ public class DumpServiceTests
         Assert.False(state.ItemPacked);
         Assert.Equal("classic", state.ItemLayoutMode);
         Assert.Equal(0, state.ItemObjOffset);
+    }
+
+    [Fact]
+    public async Task InitAsync_ParsesTheStrideVerdict()
+    {
+        // [W4-STRIDE-TENTATIVE] The verdict DetectItemSize used to spend on log lines, now on the wire.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 505 };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x7FF600A12340",
+                    ["object_count"] = 1024,
+                    ["item_detect"] = "tentative",
+                    ["item_detect_validated"] = 3,
+                    ["item_detect_probes"] = 200,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("tentative", state.ItemDetect);
+        Assert.Equal(3, state.ItemDetectValidated);
+        Assert.Equal(200, state.ItemDetectProbes);
+        Assert.True(state.ItemStrideUntrusted);
+    }
+
+    [Fact]
+    public async Task InitAsync_AnOlderDllWithoutTheStrideVerdict_IsNotUntrusted()
+    {
+        // The control, green before and after: absent evidence must not become a warning.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 505 };
+            if (cmd == "get_pointers")
+                return new JsonObject { ["ok"] = true, ["gobjects"] = "0x7FF600A12340", ["object_count"] = 1024 };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("", state.ItemDetect);
+        Assert.False(state.ItemStrideUntrusted);
     }
 
     [Fact]

@@ -132,6 +132,11 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         Genau::DetectUEnumNames();
     if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
         return "";  // Detection failed — show raw int values instead
+    // [P1-ENUMNAMES] review 5: a CANCELLED detection sets neither flag. The Names offset and format are then still the
+    // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this
+    // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.
+    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return "";
 
     // Fast path: already cached. Hold the lock only for the lookup; the
     // returned name is copied out so we read lock-free thereafter.
@@ -230,6 +235,14 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
     std::lock_guard<std::mutex> lk(s_enumCacheMutex);
     auto it = s_enumCache.find(enumAddr);
     if (it == s_enumCache.end()) {
+        // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes
+        // that. The line below claimed "retry pending" here, falsely, once per enum field per walk.
+        if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+            return {};
+        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call
+        // retries it. Not a truncated table either.
+        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+            return {};
         // ResolveEnumValue above ran and still published nothing, which since the
         // truncation fix means exactly one thing: a mid-table read failed, so there
         // is no trustworthy full list to hand CE. Say so — an empty DropDownList is
@@ -721,6 +734,22 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
 }
 
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
+// [A2-STRUCT-PREVIEW-BOOLMASK] [A3-BOOL-NATIVE-NOWRITE] Probe an FBoolProperty's layout bytes on
+// the UE5 FField walk. It never did: only WalkClassEx's enrichment read the mask, so everything that
+// walks a struct with plain WalkClass — the struct previews, the invoke dialog's sub-fields — saw
+// mask 0 and treated every packed bool as its whole byte.
+static void ProbeBoolLayout(uintptr_t prop, FieldInfo& fi) {
+    uint8_t boolBytes[4] = {};
+    int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+    for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
+        if (tryOff < 0) continue;
+        if (!Macht::ReadBytesSafe(prop + tryOff, boolBytes, 4)) continue;
+        auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+        if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; return; }
+        if (layout == BoolLayout::Native) { fi.boolNative = true; return; }
+    }
+}
+
 static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
     // UE5.3+: ChildProperties may come from an FFieldVariant read — strip tag bit defensively
     uintptr_t current = DynOff::StripFFieldTag(firstField);
@@ -782,6 +811,9 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
             Sein::Warn("WALK", "Misaligned field '%s' (%s, size=%d) at offset 0x%X — possible wrong FPROPERTY_OFFSET",
                 fi.Name.c_str(), fi.TypeName.c_str(), fi.Size, fi.Offset);
         }
+
+        if (fi.TypeName == "BoolProperty")
+            ProbeBoolLayout(current, fi);
 
         if (!fi.Name.empty()) {
             fields.push_back(fi);
@@ -852,12 +884,9 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
                                 DynOff::UBOOLPROP_FIELDSIZE - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Macht::ReadBytesSafe(current + tryOff, boolBytes, 4)) continue;
-                uint8_t fieldSize = boolBytes[0];
-                uint8_t fieldMask = boolBytes[3];
-                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
-                    fi.boolFieldMask = fieldMask;
-                    break;
-                }
+                auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+                if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; break; }
+                if (layout == BoolLayout::Native) { fi.boolNative = true; break; }   // [A3-BOOL-NATIVE-NOWRITE]
             }
         }
 
@@ -950,7 +979,34 @@ void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApprox
     }
 }
 
+// [A2-WALKCLASSEX-UNMAPPED] Once per address. An unreadable class is no longer memoized by WalkClassEx (that memo was
+// the defect), so every later caller re-walks it -- Aura's scans do so once per OBJECT of that class -- and a warning per
+// walk would flood walk-0.log. Bounded: past kMax distinct addresses it stays quiet, having said so once.
+static std::mutex                    s_unreadableClassWarnMutex;
+static std::unordered_set<uintptr_t> s_unreadableClassWarned;
+static bool FirstUnreadableClassWarn(uintptr_t addr) {
+    constexpr size_t kMax = 4096;
+    std::lock_guard<std::mutex> lk(s_unreadableClassWarnMutex);
+    if (s_unreadableClassWarned.size() >= kMax) return false;
+    const bool first = s_unreadableClassWarned.insert(addr).second;
+    if (first && s_unreadableClassWarned.size() == kMax)
+        Sein::Warn("WALK:safe", "WalkClass: %zu unreadable class addresses reported -- further ones are not logged",
+                   kMax);
+    return first;
+}
+
+static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk);
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
+    bool readOk = true;
+    return WalkClassImpl(uclassAddr, readOk);
+}
+
+// [A2-WALKCLASSEX-UNMAPPED] WalkClass, plus its read-fault VERDICT. Its fault exit returns {Address, PropertiesSize 0},
+// which ShouldPublishClassWalk's value test ACCEPTS -- so a memo that gates on the value alone pins a transient fault
+// forever. `readOk` is false exactly when that exit was taken; a cache hit was readable when it was cached.
+static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
+    readOk = true;
     ClassInfo info{};
     if (!uclassAddr) return info;
 
@@ -992,9 +1048,11 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
     // FField chain. Falls through to the same un-memoized exit as the value gate.
     if (!propsSizeReadOk) {
-        Sein::Warn("WALK:safe",
-            "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
-            (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
+        readOk = false;   // [A2-WALKCLASSEX-UNMAPPED] the verdict the memo gates need
+        if (FirstUnreadableClassWarn(uclassAddr))
+            Sein::Warn("WALK:safe",
+                "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
+                (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
         return info;
     }
 
@@ -1211,22 +1269,25 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         if (it != s_walkClassExCache.end()) return it->second;
     }
 
-    ClassInfo info = WalkClass(uclassAddr);
+    bool readOk = true;
+    ClassInfo info = WalkClassImpl(uclassAddr, readOk);
 
     // Same memoization gate WalkClass applies, for the same reason (audit #5 U4) —
     // this cache is the more widely consulted of the two (Property/Value Search,
     // snapshot capture, CE export, Solitar, Solide), so leaving it poisonable while
-    // fixing only WalkClass would close the smaller half. `propsSizeReadOk` is true
-    // by construction here: WalkClass returns early on a read fault, so an unmapped
-    // address arrives with PropertiesSize == 0 and no fields, and only the value test
-    // can fire. Refusing to memoize means refusing to RETURN too — the signature is a
+    // fixing only WalkClass would close the smaller half. [A2-WALKCLASSEX-UNMAPPED]
+    // This used to pass `true` for the read verdict, calling it "true by construction":
+    // but WalkClass's fault exit returns {Address, PropertiesSize 0}, which the value
+    // test ACCEPTS, so one transient fault was memoized forever and Aura's refusal gates
+    // (`Address != cls`) passed with it. The verdict is now WalkClassImpl's own.
+    // Refusing to memoize means refusing to RETURN too — the signature is a
     // reference into this map — so a rejected class reads as empty rather than as
     // garbage fields. That trade is bounded: WalkInstance already hard-fails on this
     // exact predicate, so an engine fork that mis-derives USTRUCT_PROPSSIZE is broken
     // before reaching here; this widens an existing failure rather than creating one.
     // Placed BEFORE CorrectSubclassOffsets so a garbage class cannot calibrate the
     // process-wide FSTRUCTPROP_STRUCT offset off its own bogus fields.
-    if (!ShouldPublishClassWalk(true, info.PropertiesSize)) {
+    if (!ShouldPublishClassWalk(readOk, info.PropertiesSize)) {
         // Logged, because this refusal is INVISIBLE otherwise and it is not a cache
         // miss: the signature returns a reference into the map, so a refused class
         // reads as a class with NO FIELDS to all ~26 external callers (Aura's
@@ -1235,10 +1296,15 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         // snapshot capture, CE export, Solitar and Solide. WalkClass has already
         // warned for this same address on this same path, so this adds one line per
         // refused class, not a flood. (SANEPROPS-2026-08-26)
-        Sein::Warn("WALK:safe",
-            "WalkClassEx: 0x%llx REFUSED (PropertiesSize=%d) — returning an EMPTY "
-            "ClassInfo, so every caller will see this class as having no fields",
-            (unsigned long long)uclassAddr, info.PropertiesSize);
+        // [A2-WALKCLASSEX-UNMAPPED] An UNREADABLE class is refused without this line: WalkClass has
+        // already said so, once per address, and this refusal is not memoized, so a line per call
+        // WOULD be the flood. The next call re-walks it, and a page that came back walks normally.
+        if (readOk) {
+            Sein::Warn("WALK:safe",
+                "WalkClassEx: 0x%llx REFUSED (PropertiesSize=%d) — returning an EMPTY "
+                "ClassInfo, so every caller will see this class as having no fields",
+                (unsigned long long)uclassAddr, info.PropertiesSize);
+        }
         return s_emptyClassInfo;
     }
 
@@ -1262,6 +1328,17 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         if (!fi.Address) continue;
 
         const auto& tn = fi.TypeName;
+
+        // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner carries it at FBYTEPROP_ENUM, an
+        // EnumProperty inner at FENUMPROP_ENUM. Read and validated exactly like the field's own enumName below.
+        auto innerEnumOf = [](uintptr_t prop, const std::string& ptn) -> std::string {
+            uintptr_t e = 0;
+            if (ptn == "ByteProperty")      Macht::ReadSafe(prop + DynOff::FBYTEPROP_ENUM, e);
+            else if (ptn == "EnumProperty") Macht::ReadSafe(prop + DynOff::FENUMPROP_ENUM, e);
+            if (!e) return std::string();
+            std::string n = GetName(e);
+            return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
+        };
 
         // StructProperty -> UScriptStruct name
         if (tn == "StructProperty") {
@@ -1287,6 +1364,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
@@ -1301,6 +1379,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
@@ -1326,6 +1405,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.valueType = valTn;
                 if (keyTn == "StructProperty")   fi.keyStructType = ReadSubclassTypeName(keyProp);
                 if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
+                fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
+                fi.valueEnumName = innerEnumOf(valueProp, valTn);
                 break;
             }
         }
@@ -1337,6 +1418,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
                     fi.elemStructType = ReadSubclassTypeName(elemProp);
+                fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
@@ -1367,12 +1449,9 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Macht::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
-                uint8_t fieldSize = boolBytes[0];
-                uint8_t fieldMask = boolBytes[3];
-                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
-                    fi.boolFieldMask = fieldMask;
-                    break;
-                }
+                auto layout = ClassifyBoolLayout(boolBytes[0], boolBytes[1], boolBytes[2], boolBytes[3]);
+                if (layout == BoolLayout::Packed) { fi.boolFieldMask = boolBytes[3]; break; }
+                if (layout == BoolLayout::Native) { fi.boolNative = true; break; }   // [A3-BOOL-NATIVE-NOWRITE]
             }
         }
     }
@@ -1465,13 +1544,17 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     }
     fi.functionFlags = funcFlags;
 
-    // NumParms/ParmsSize/ReturnValueOffset are at fixed offsets relative to
-    // FunctionFlags (stable across all UE versions):
-    //   +0x04 = NumParms (uint8)  +0x06 = ParmsSize (uint16)  +0x08 = ReturnValueOffset (uint16)
+    // NumParms/ParmsSize/ReturnValueOffset follow FunctionFlags at +0x04 (uint8) / +0x06
+    // (uint16) / +0x08 (uint16) -- EXCEPT on 4.11-4.17, where a uint16 RepOffset sits first and
+    // shifts all three by 2. This comment used to call the flat offsets "stable across all UE
+    // versions"; on 4.11-4.17 that read NumParms as ParmsSize and undersized every invoke buffer
+    // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
+    // on DynOff::FunctionTailShiftFor.
     if (funcFlagsOff >= 0) {
-        Macht::ReadSafe<uint8_t> (funcAddr + funcFlagsOff + 0x04, fi.numParms);
-        Macht::ReadSafe<uint16_t>(funcAddr + funcFlagsOff + 0x06, fi.parmsSize);
-        Macht::ReadSafe<uint16_t>(funcAddr + funcFlagsOff + 0x08, fi.returnValueOffset);
+        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion);
+        Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
+        Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
+        Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);
     }
 }
 
@@ -1571,7 +1654,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
                             // Stage 1: Object/Class/Soft/Weak/Lazy/Interface params
@@ -1602,6 +1685,11 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     uintptr_t paramChain = 0;
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
                         uintptr_t cur = paramChain;
+                        // [A2-UFUNC-TAIL-4X]'s lead: the first subclass field (Struct /
+                        // PropertyClass) sits at the version's MEASURED delta, not a flat +0x2C
+                        // (+0x28 on 4.11-4.17). See DynOff::UPropertySubclassStartFor.
+                        const int subclassStart = DynOff::UPropertySubclassStartFor(
+                            DynOff::UPROPERTY_OFFSET, g_cachedUEVersion, DynOff::bCasePreservingName);
                         int paramLimit = 256;
                         std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {
@@ -1629,14 +1717,14 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
                                 // UStructProperty::Struct is at UPROPERTY subclass extension offset
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, structPtr) && structPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && structPtr) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
                                     // Phase B: walk the UScriptStruct to discover sub-fields
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
                                 }
                             }
                             // Stage 1 (UE4 <4.25 path): same UProperty subclass
@@ -1648,7 +1736,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
                                 uintptr_t classPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, classPtr) && classPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && classPtr) {
                                     std::string cn = GetName(classPtr);
                                     if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
                                         param.objClassName = cn;
@@ -1743,6 +1831,13 @@ static int32_t InferScalarSize(const std::string& typeName) {
 /// resolved size. Keep at Debug for developer diagnosis without polluting
 /// user logs.
 static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeName) {
+    // [A2-LAZY-LATCH-GUESS] LazyObjectProperty ONLY: derive the size from the engine's RAW ElementSize. Its
+    // InferScalarSize entry is a version guess, and overriding the engine with it -- then feeding that into the
+    // envelope latch -- wrote a false "measured" line on a version mis-resolved across 5.2/5.3. LazyGuidOffset accepts
+    // only the two real envelopes (0x0C / 0x08) and otherwise falls back exactly as the guess did. The entry itself
+    // stays: without it the generic arm below would pass any garbage size from 1 to 65536.
+    if (typeName == "LazyObjectProperty")
+        return LazyGuidOffset(readSize) + 0x10;
     int32_t expected = InferScalarSize(typeName);
     if (expected > 0) {
         // For known types, we know the exact size — override if it doesn't match
@@ -1777,7 +1872,9 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
 // Returns 0 when undetermined.
 // ============================================================
 static int32_t ResolveInnerSize(uintptr_t innerProp, const std::string& innerTn) {
-    int32_t es = InferScalarSize(innerTn);
+    // [A2-LAZY-LATCH-GUESS] Not for a lazy inner: its "scalar size" is a version guess, and asking it first meant the
+    // engine's own ElementSize was never read. ValidateArrayElemSize below derives lazy from the raw value.
+    int32_t es = innerTn == "LazyObjectProperty" ? 0 : InferScalarSize(innerTn);
     if (es > 0) return es;
 
     int32_t rawElemSize = 0;
@@ -1870,6 +1967,39 @@ static int32_t ResolveElementAlignment(const std::string& typeName, int32_t size
     if (typeName == "StructProperty")
         return GetStructAlignment(structAddr);
     return Scharf::RequiredAlignment(typeName, size, DynOff::bCasePreservingName);
+}
+
+// [A2-TOPTIONAL-INTRUSIVE] See OptionalLayoutInfo (Ubel.h). The wrapped value property sits where
+// FArrayProperty::Inner does (both are FProperty + FProperty*); its alignment is the same answer
+// the TMap geometry uses -- UScriptStruct::MinAlignment for a struct, Scharf's rule otherwise --
+// and an unknown alignment leaves the layout Unknown, which the callers refuse.
+OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optionalSize,
+                                         const std::string& knownInnerType) {
+    OptionalLayoutInfo out;
+    if (!optionalProp) return out;
+    auto [innerProp, probedTn] = ProbeInnerProperty(optionalProp, DynOff::FARRAYPROP_INNER);
+    out.innerProp = innerProp;
+    out.innerType = !knownInnerType.empty() ? knownInnerType : probedTn;
+    if (!innerProp) return out;
+    out.innerSize = ResolveInnerSize(innerProp, out.innerType);
+
+    uintptr_t structAddr = 0;
+    if (out.innerType == "StructProperty") {
+        static const int kDeltas[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
+        for (int d : kDeltas) {
+            const int off = DynOff::FSTRUCTPROP_STRUCT + d;
+            if (off < 0) continue;
+            uintptr_t c = 0;
+            if (!Macht::ReadSafe(innerProp + off, c) || !Grimoire::IsUserspacePointer(c)) continue;
+            const std::string n = GetName(c);
+            if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
+            structAddr = c;
+            break;
+        }
+    }
+    out.innerAlign = ResolveElementAlignment(out.innerType, out.innerSize, structAddr);
+    out.layout = ClassifyOptionalLayout(optionalSize, out.innerSize, out.innerAlign);
+    return out;
 }
 
 // ============================================================
@@ -2012,7 +2142,7 @@ std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
         if (sf.Offset < 0 || sf.Offset + sfSize > size) continue;   // beyond the buffer
 
         const uint8_t* p = buf + sf.Offset;
-        std::string val = PreviewScalarValue(sf.TypeName, p, sfSize);
+        std::string val = PreviewScalarValue(sf.TypeName, p, sfSize, sf.boolFieldMask);
         if (val.empty()) {
             if (sf.TypeName == "NameProperty" && sfSize >= 4) {
                 val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
@@ -2179,6 +2309,208 @@ bool IsScalarArrayType(const std::string& innerTypeName) {
         || innerTypeName == "BoolProperty"
         || innerTypeName == "NameProperty"
         || innerTypeName == "EnumProperty";
+}
+
+// ============================================================
+// Phase L: FString-family arrays -- TArray<FString> / <FUtf8String> / <FAnsiString>.
+// [W5-STRARRAY-ELEMENTS] IsScalarArrayType admits no string type and no other phase read one, so the
+// walk sent such an array with its count and NO elements -- the Live Walker showed none, and CE XML's
+// per-element String leaves had nothing to iterate. Not by widening IsScalarArrayType: its reader
+// decodes RAW element bytes, and a string's bytes are a header, not its text.
+// ============================================================
+// The stride of every string-array element: the 16-byte FString / FUtf8String / FAnsiString header
+// { Data*, Num, Max }. Pinned -- never the inner's ELEMSIZE, which can read as garbage -- by the reader AND by
+// what the walk publishes, because the UI lays element rows out by the published size (Offset = i * size)
+// and hands it back to read_array_elements. Review 3 of 6b48e776: only the reader had it.
+constexpr int32_t kStringArrayStride = 16;
+
+bool IsStringArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "StrProperty"
+        || innerTypeName == "Utf8StrProperty"
+        || innerTypeName == "AnsiStrProperty";
+}
+
+ReadArrayResult ReadStringArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // Every member of the family is FString's { Data*, int32 Num, int32 Max } header: 16 bytes on x64.
+    // A different elemSize is a garbage FPROPERTY_ELEMSIZE read, so the stride is pinned -- as Phase D
+    // pins 8 for a pointer -- rather than trusted into an address walk.
+    (void)elemSize;
+    constexpr int32_t kHeader = kStringArrayStride;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;
+
+    const bool wide = (innerTypeName == "StrProperty");
+    result.elements.reserve(end - offset);
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+        const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * kHeader;
+
+        // An unreadable HEADER is unread, never "": the same rule D3/D5 settled for delegates and lazy
+        // pointers. (A readable header whose text does not read comes back "" from the shared decoders,
+        // exactly as a scalar FString field does.)
+        uint8_t hdr[kHeader];
+        if (!Macht::ReadBytesSafe(elemAddr, hdr, sizeof(hdr))) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        char hex[2 * kHeader + 1];
+        for (int b = 0; b < kHeader; ++b) snprintf(hex + 2 * b, 3, "%02X", hdr[b]);
+        elem.hex = hex;
+        elem.value = wide ? ReadFString(elemAddr, 0) : ReadFUtf8String(elemAddr, 0);
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
+// Phase M: TFieldPath arrays -- [WALK-FIELDPATH-ARRAY-NOELEMS]. See the header for the layout and
+// the 2026-09-16 measurement that produced it.
+// ============================================================
+bool IsFieldPathArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "FieldPathProperty";
+}
+
+ReadArrayResult ReadFieldPathArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset, int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // ⛔ REFUSE rather than walk a stride we cannot justify. The smallest legal FFieldPath is
+    // 8 (ResolvedField) + 8 (ResolvedOwner) + 16 (Path) = 32; anything under 24 could not even hold
+    // the trailing TArray, so it is a garbage FPROPERTY_ELEMSIZE read and stepping by it would land
+    // every element after [0] on an address that means nothing.
+    constexpr int32_t kPathTailBytes = 16;   // sizeof(TArray<FName>) on x64
+    if (elemSize < 24) {
+        result.error = "FieldPath ElementSize " + std::to_string(elemSize) + " is too small to hold a path";
+        Sein::Warn("WALK", "ReadFieldPathArrayElements: ElementSize=%d cannot hold FFieldPath's "
+                           "trailing TArray -- refusing rather than guessing a stride", elemSize);
+        return result;
+    }
+    const int32_t pathOffset = elemSize - kPathTailBytes;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;
+
+    const int32_t nameSize = DynOff::SizeofFName();
+    // A path is a field's chain to its outermost owner; more than a handful of hops is a garbage
+    // read, and printing hundreds would drown the row either way.
+    constexpr int32_t kMaxHops = 8;
+
+    result.elements.reserve(end - offset);
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+        const uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // The element itself unread is "???", never an affirmative "(unset)" -- the rule D3/D5
+        // settled for delegates and lazy pointers.
+        std::vector<uint8_t> raw(static_cast<size_t>(elemSize), 0);
+        if (!Macht::ReadBytesSafe(elemAddr, raw.data(), elemSize)) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        std::string hex;
+        hex.reserve(static_cast<size_t>(elemSize) * 2);
+        for (int32_t b = 0; b < elemSize; ++b) {
+            char two[3];
+            snprintf(two, sizeof(two), "%02X", raw[static_cast<size_t>(b)]);
+            hex += two;
+        }
+        elem.hex = hex;
+
+        Macht::TArrayView path;
+        if (!Macht::ReadTArray(elemAddr + pathOffset, path)) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+        if (path.Count <= 0 || !path.Data) {
+            // An EMPTY path is a genuine state: the field path was never set, or was reset.
+            elem.value = "(unset)";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // The path runs innermost FField first, outermost owner last (UE's own comment on
+        // FFieldPath::Path), so hop 0 is the property's own name -- what a reader wants first.
+        int32_t hops = path.Count < kMaxHops ? path.Count : kMaxHops;
+        std::string rendered;
+        bool anyUnread = false;
+        for (int32_t h = 0; h < hops; ++h) {
+            std::vector<uint8_t> nameBytes(static_cast<size_t>(nameSize), 0);
+            if (!Macht::ReadBytesSafe(path.Data + static_cast<int64_t>(h) * nameSize,
+                                      nameBytes.data(), nameSize)) {
+                anyUnread = true;
+                break;
+            }
+            if (!rendered.empty()) rendered += ".";
+            rendered += DecodeFNameBytes(nameBytes.data(), nameSize);
+        }
+        if (rendered.empty()) {
+            elem.value = "???";
+        } else {
+            if (anyUnread) rendered += ".???";
+            else if (path.Count > hops) rendered += " (+" + std::to_string(path.Count - hops) + " more)";
+            elem.value = rendered;
+        }
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
 }
 
 // ============================================================
@@ -2556,7 +2888,14 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
 
     // Walk the struct to get field layout (no lock held — WalkClass/GetName
     // take their own leaf locks).
-    ClassInfo ci = WalkClass(structAddr);
+    bool readOk = true;
+    ClassInfo ci = WalkClassImpl(structAddr, readOk);
+    // [A2-WALKCLASSEX-UNMAPPED] the twin: an UNREADABLE struct is served empty and NOT memoized. The publish below is
+    // permanent, so one transient fault used to pin "no fields" for the process. The next call re-walks it.
+    if (!readOk) {
+        static const std::vector<CachedStructField> s_emptyStructFields;
+        return s_emptyStructFields;
+    }
     std::vector<CachedStructField> cached;
     cached.reserve(ci.Fields.size());
 
@@ -3030,7 +3369,13 @@ ReadArrayResult ReadLazyObjectArrayElements(
     // as FAILED. Route through the same envelope the scalar path uses: LazyGuidOffset MEASURES
     // from a real ElementSize and latches it, and falls back to the version default on garbage,
     // which is what the old forced constant was really guarding against.
-    elemSize = LazyGuidOffset(elemSize) + 0x10;   // envelope + sizeof(FGuid)
+    //
+    // [A2-LAZY-LATCH-GUESS] ...but not by re-measuring HERE. Both callers hand in a size ValidateArrayElemSize already
+    // derived from the engine's RAW ElementSize, measuring and latching it when it was real. Re-measuring the handed
+    // size latched a FALLBACK as "measured" whenever the raw value was garbage. Same arithmetic, no latch.
+    const int lazyGuidOff = DynOff::PersistentPtrEnvelopeFor(elemSize, 0x10, 0x0C, DynOff::LAZYPTR_GUID,
+                                                             g_cachedUEVersion);
+    elemSize = lazyGuidOff + 0x10;   // envelope + sizeof(FGuid)
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -3066,7 +3411,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
         // FGuid inside the TLazyObjectPtr (4 x uint32). NOT +0x10 — FUniqueObjectGuid
         // is a bare FGuid at alignof 4, so it sits at +0x0C on UE ≤ 5.2 and +0x08
         // from 5.3. See DynOff::LAZYPTR_GUID.
-        const int guidOff = LazyGuidOffset(elemSize);
+        const int guidOff = lazyGuidOff;
         // ONE guarded read of the whole FGuid, not four unchecked ones. An all-zero FGuid
         // is the LEGITIMATE value of an unset TLazyObjectPtr, so "print zeros
         // differently" is not available -- a faulted read and a genuinely-unset pointer
@@ -3236,6 +3581,15 @@ ReadArrayResult ReadInterfaceArrayElements(
 // ============================================================
 bool IsDelegateArrayType(const std::string& innerTypeName) {
     return innerTypeName == "DelegateProperty";
+}
+
+int32_t DelegateArrayElemPad(int32_t elemSize) {
+    // The element is the STANDALONE unicast type, TScriptDelegate<FNotThreadSafeDelegateMode> -- padded on a checked
+    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same derivation
+    // as ReadDelegateArrayElements' stride, so the published pad and the reader's stride cannot disagree. A size that
+    // matches neither (-1) publishes 0: the reader refused those elements, and the field's value says so.
+    const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, 8 + DynOff::SizeofFName());
+    return pad < 0 ? 0 : pad;
 }
 
 // ============================================================
@@ -3981,6 +4335,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         Sein::Warn("WALK:safe",
             "WalkInstance: instance 0x%llx not readable (freed?), skipping",
             (unsigned long long)instanceAddr);
+        result.unreadable = true;   // [P1-WALK-UNREADABLE] say so on the wire, not only in the log
         return result;
     }
 
@@ -4526,6 +4881,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // [A4-DELEGATE-ARRAY-PAD] Publish the per-ELEMENT pad whether or not the elements are read (an empty
+                // array still gets fabricated rows in a CE export). Never into fv.delegatePad: see Ubel.h.
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
+                    fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
                 // Phase J: TArray<FScriptDelegate>
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
@@ -4561,6 +4920,40 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     } else if (!mcastResult.ok && !mcastResult.error.empty()) {
                         // Same silent-refusal defect as the unicast arm just above.
                         fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
+                    }
+                }
+
+                // Phase L: TArray<FString> / <FUtf8String> / <FAnsiString> [W5-STRARRAY-ELEMENTS]
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                if (innerFound && IsStringArrayType(fv.arrayInnerType))
+                    fv.arrayElemSize = kStringArrayStride;
+                if (innerFound && IsStringArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto strResult = ReadStringArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayInnerType, fv.arrayElemSize, 0, arrayLimit);
+                    if (strResult.ok && !strResult.elements.empty()) {
+                        fv.arrayElements = std::move(strResult.elements);
+                        Sein::Debug("WALK:ArrayP", "String elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase M: TArray<TFieldPath<...>> [WALK-FIELDPATH-ARRAY-NOELEMS]
+                // ⛔ The stride stays the ENGINE's ElementSize -- unlike Phase L, this one is not a
+                // fixed header: the same FFieldPath is 32 bytes in a game build and 48 in an editor
+                // build (WITH_EDITORONLY_DATA members), and the reader derives Path from it.
+                if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto fpResult = ReadFieldPathArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (fpResult.ok && !fpResult.elements.empty()) {
+                        fv.arrayElements = std::move(fpResult.elements);
+                        Sein::Debug("WALK:ArrayP", "FieldPath elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    } else if (!fpResult.ok && !fpResult.error.empty()) {
+                        // A refused stride is SAID, not silently dropped -- the arm the delegate
+                        // readers learned to add ([A4-DELEGATE-ARRAY-PAD]).
+                        fv.typedValue = "(field-path array — " + fpResult.error + ", not read)";
                     }
                 }
 
@@ -4693,6 +5086,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayElements = std::move(ifaceResult.elements);
                     }
                 }
+                // [A4-DELEGATE-ARRAY-PAD] as the FProperty path: the per-element pad, read or not
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType))
+                    fv.arrayElemDelegatePad = DelegateArrayElemPad(fv.arrayElemSize);
                 // Phase J: Delegate arrays (UProperty mode)
                 if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
                     && arr.Data && fv.arrayCount > 0) {
@@ -4700,6 +5096,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (delResult.ok && !delResult.elements.empty()) {
                         fv.arrayElements = std::move(delResult.elements);
+                    } else if (!delResult.ok && !delResult.error.empty()) {
+                        // [P1-UPROP-DELEGATE] The FProperty twin's fix (e16d2052), copied: a refused stride reached
+                        // the UI as NOTHING -- a bare header, indistinguishable from an empty array.
+                        fv.typedValue = "(delegate array — " + delResult.error + ", not read)";
                     }
                 }
                 // Phase K: Multicast delegate arrays (UProperty mode)
@@ -4709,6 +5109,33 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (mcastResult.ok && !mcastResult.elements.empty()) {
                         fv.arrayElements = std::move(mcastResult.elements);
+                    } else if (!mcastResult.ok && !mcastResult.error.empty()) {
+                        // [P1-UPROP-DELEGATE] Same silent-refusal defect as the unicast arm just above.
+                        fv.typedValue = "(multicast array — " + mcastResult.error + ", not read)";
+                    }
+                }
+                // Phase L: string arrays (UProperty mode) [W5-STRARRAY-ELEMENTS]
+                // Publish the stride the reader uses, not the raw inner ELEMSIZE (review 3 of 6b48e776).
+                if (innerFound && IsStringArrayType(fv.arrayInnerType))
+                    fv.arrayElemSize = kStringArrayStride;
+                if (innerFound && IsStringArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto strResult = ReadStringArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayInnerType, fv.arrayElemSize, 0, arrayLimit);
+                    if (strResult.ok && !strResult.elements.empty()) {
+                        fv.arrayElements = std::move(strResult.elements);
+                    }
+                }
+
+                // Phase M: TArray<TFieldPath<...>> (UProperty mode) [WALK-FIELDPATH-ARRAY-NOELEMS]
+                if (innerFound && IsFieldPathArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto fpResult = ReadFieldPathArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (fpResult.ok && !fpResult.elements.empty()) {
+                        fv.arrayElements = std::move(fpResult.elements);
+                    } else if (!fpResult.ok && !fpResult.error.empty()) {
+                        fv.typedValue = "(field-path array — " + fpResult.error + ", not read)";
                     }
                 }
 
@@ -5438,6 +5865,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     boolInfoRead = true;
                     break;
                 }
+                // [A3-BOOL-NATIVE-NOWRITE] The native layout (FieldMask 0xFF) used to fall out of
+                // this loop unrecorded, indistinguishable from a missed probe — so the UI saw mask 0
+                // and its write was a no-op. Say it explicitly; Fern publishes `bool_native`.
+                if (ClassifyBoolLayout(fieldSize, byteOff, byteMask, fieldMask) == BoolLayout::Native) {
+                    fv.boolNative = true;
+                    break;
+                }
             }
 
             // Read actual value using FieldMask
@@ -5704,22 +6138,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle OptionalProperty (UE 5.2+): TOptional<T>.
-        // Two storage layouts:
-        //   - Intrusive (UE 5.4+ for pointer types): T occupies the field
-        //     directly; "unset" is encoded as null/zero. Inner size == fi.Size.
-        //   - Non-intrusive (older + non-pointer T): { T value; uint8 bIsSet; }.
-        //     Trailing flag byte lives at field + sizeof(T).
-        // Scalar/struct inner types use the trailing-flag form. Object/Class/
-        // Interface and the FWeakObjectPtr-shaped types (Weak/Soft/Lazy) treat
-        // null/zero as the unset sentinel.
+        // Handle OptionalProperty (UE 5.3+): TOptional<T>. [A2-TOPTIONAL-INTRUSIVE]
+        // UE's own rule (UE 5.8 PropertyOptional.h, FOptionalPropertyLayout::CalcSize): when the
+        // value property has an intrusive unset state the optional IS sizeof(T); otherwise it is
+        // Align(sizeof(T) + 1, alignof(T)) with the bIsSet byte at +sizeof(T). WHICH types are
+        // intrusive varies by version and by flag (containers and FString/FName/FText from 5.5,
+        // objects only under CPF_NonNullable), so it is read from the SIZE -- see
+        // Ubel::ClassifyOptionalLayout -- and never assumed from the inner type's name. The
+        // name-based belief published a reset TOptional<AActor*>'s stale pointer, showed one set
+        // to null as (unset), and read a container optional's flag from the NEXT property's byte.
         if (fi.TypeName == "OptionalProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            // Probe inner ValueProperty (same offset as ArrayProperty::Inner —
-            // both subclasses are FProperty + FProperty*).
-            auto [innerProp, probedTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
-            std::string innerTn = !fi.innerType.empty() ? fi.innerType : probedTn;
-            int32_t innerSize = innerProp ? ResolveInnerSize(innerProp, innerTn) : 0;
+            // The wrapped value property, its size and alignment, and the layout they imply.
+            const OptionalLayoutInfo ol = ResolveOptionalLayout(fi.Address, fi.Size, fi.innerType);
+            const uintptr_t   innerProp = ol.innerProp;
+            const std::string innerTn   = ol.innerType;
+            const int32_t     innerSize = ol.innerSize;
 
             const bool isObjectLike = innerTn == "ObjectProperty"
                                    || innerTn == "ClassProperty"
@@ -5767,75 +6201,80 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // bare `isSet = (...)` its tiers score as no use at all.
             bool okProbe = true;
 
-            if (isObjectLike) {
-                uintptr_t ptr = 0;
-                okProbe = Macht::ReadSafe(fieldAddr, ptr);
-                if (ptr) {
-                    isSet = true;
-                    fv.ptrValue = ptr;
-                    fv.ptrName  = GetName(ptr);
-                    uintptr_t cls = GetClass(ptr);
-                    if (cls) {
-                        fv.ptrClassName = GetName(cls);
-                        fv.ptrClassAddr = cls;
-                    }
-                }
-            } else if (isWeakLike) {
-                // Embedded FWeakObjectPtr at field+0; unset sentinel is { 0, 0 }.
-                int32_t objIdx = 0, serial = 0;
-                const bool okIdx    = Macht::ReadSafe(fieldAddr,     objIdx);
-                const bool okSerial = Macht::ReadSafe(fieldAddr + 4, serial);
-                okProbe = okIdx && okSerial;
-                isSet = (objIdx != 0 || serial != 0);
-                uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
-                if (resolved) {
-                    fv.ptrValue = resolved;
-                    fv.ptrName  = GetName(resolved);
-                    uintptr_t cls = GetClass(resolved);
-                    if (cls) {
-                        fv.ptrClassName = GetName(cls);
-                        fv.ptrClassAddr = cls;
-                    }
-                }
-            } else if (isStrInner) {
+            // [A2-TOPTIONAL-INTRUSIVE] The discriminator is the LAYOUT's:
+            //   * TRAILING FLAG -- bIsSet at +sizeof(T). A reset optional keeps its old value bytes,
+            //     so the value is decoded below ONLY when the flag is set.
+            //   * INTRUSIVE -- T's own unset state: TArray / FString ArrayMax == -1 at +12, FName
+            //     ComparisonIndex == ~0u, FText TextData == null, a non-nullable object == null.
+            //     Any other intrusive type (TSet / TMap, whose unset state differs between UE 5.8's
+            //     sparse and compact sets; a struct; ...) is REFUSED, never guessed.
+            //   * a size that fits neither -- REFUSED.
+            std::string refusal;
+            if (ol.layout == OptionalLayout::Unknown) {
+                char why[112];
+                snprintf(why, sizeof(why), "(optional layout not recognised: size %d, value %d)",
+                         fi.Size, innerSize);
+                refusal = why;
+            } else if (ol.layout == OptionalLayout::TrailingFlag) {
+                uint8_t bIsSet = 0;
+                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
+                isSet = (bIsSet != 0);
+            } else if (isStrInner || innerTn == "ArrayProperty") {
                 int32_t arrayMax = 0;
-                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means
-                // SET. Without okProbe this arm published `""` — "set, but empty".
+                // ⚠ THE DANGEROUS DIRECTION: the sentinel is -1, so a faulted read's 0 means SET.
                 okProbe = Macht::ReadSafe(fieldAddr + 12, arrayMax);
                 isSet = (arrayMax != -1);
-                if (isSet) {
-                    std::string s = ReadFString(fieldAddr, 0);
-                    if (!s.empty()) fv.strValue = std::move(s);
-                }
             } else if (isNameInner) {
                 uint32_t compIdx = 0;
-                // ⚠ Same dangerous direction as isStrInner: sentinel 0xFFFFFFFF, so 0 = SET.
+                // ⚠ Same dangerous direction: the sentinel is 0xFFFFFFFF, so 0 = SET.
                 okProbe = Macht::ReadSafe(fieldAddr, compIdx);
                 isSet = (compIdx != 0xFFFFFFFFu);
-                if (isSet) {
-                    std::string n = ReadFName(fieldAddr);
-                    if (!n.empty()) fv.strValue = std::move(n);
-                }
             } else if (isTextInner) {
                 uintptr_t textData = 0;
                 okProbe = Macht::ReadSafe(fieldAddr, textData);
                 isSet = (textData != 0);
-                // FText display (audit #5 U11): decode via ReadFTextString, which follows
-                // the ITextData* at FText+0 and scans it for the display FString — the SAME
-                // decoder the plain TextProperty path uses. The old code read an inline
-                // FString at FText+0x10 -- the uint32 Flags on UE<=5.3, and past the END of the
-                // 16-byte FText on 5.4+ (the display string is NOT there either way), so it
-                // produced garbage or "" for a real value.
-                if (isSet) {
+            } else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty") {
+                // Intrusive only under CPF_NonNullable, where null IS the unset state.
+                uintptr_t ptr = 0;
+                okProbe = Macht::ReadSafe(fieldAddr, ptr);
+                isSet = (ptr != 0);
+            } else {
+                refusal = "(optional: the unset state of an intrusive " + innerTn + " is not decoded)";
+            }
+
+            // Decode the value only for a SET optional whose discriminator was read -- never a
+            // reset optional's leftover bytes.
+            if (refusal.empty() && okProbe && isSet) {
+                auto fillPtr = [&](uintptr_t p) {
+                    fv.ptrValue = p;
+                    fv.ptrName  = GetName(p);
+                    uintptr_t cls = GetClass(p);
+                    if (cls) {
+                        fv.ptrClassName = GetName(cls);
+                        fv.ptrClassAddr = cls;
+                    }
+                };
+                if (isObjectLike) {
+                    uintptr_t ptr = 0;
+                    if (Macht::ReadSafe(fieldAddr, ptr) && ptr) fillPtr(ptr);
+                } else if (isWeakLike) {
+                    // Embedded FWeakObjectPtr at field+0.
+                    int32_t objIdx = 0, serial = 0;
+                    if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
+                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) fillPtr(resolved);
+                    }
+                } else if (isStrInner) {
+                    std::string s = ReadFString(fieldAddr, 0);
+                    if (!s.empty()) fv.strValue = std::move(s);
+                } else if (isNameInner) {
+                    std::string n = ReadFName(fieldAddr);
+                    if (!n.empty()) fv.strValue = std::move(n);
+                } else if (isTextInner) {
+                    // FText display (audit #5 U11): ReadFTextString follows the ITextData* at
+                    // FText+0 -- the SAME decoder the plain TextProperty path uses.
                     std::string s = ReadFTextString(fieldAddr);
                     if (!s.empty()) fv.strValue = std::move(s);
                 }
-            } else if (innerSize > 0) {
-                // Scalar/struct (no intrusive specialization): trailing
-                // bIsSet at field + innerSize.
-                uint8_t bIsSet = 0;
-                okProbe = Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
-                isSet = (bIsSet != 0);
             }
 
             // Inner-struct surfacing: when the wrapped T is a StructProperty
@@ -5845,9 +6284,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // drill-down and CE XML / CSX export through the standard
             // struct path — no additional field on LiveFieldValue required.
             //
-            // Layout reminder: TOptional<T> for struct T is always
-            // non-intrusive — { T value; uint8 bIsSet; } — so the value
-            // lives at fieldAddr+0 (same as the bare struct case).
+            // Layout reminder: the value lives at fieldAddr+0 in BOTH layouts
+            // (same as the bare struct case). An intrusive struct optional is
+            // refused above, so only a set trailing-flag one reaches here.
             //
             // Address Finder + Find Refs descend through OptionalProperty
             // mirroring StructProperty (see Aura.cpp::CollectContainersRecursive
@@ -5900,59 +6339,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                                      readSize);
                     }
 
-                    std::string preview;
-                    int shown = 0;
-                    const int kMaxScanFields = 20;
-                    for (size_t idx = 0;
-                         idx < si.Fields.size()
-                         && static_cast<int>(idx) < kMaxScanFields; ++idx) {
-                        const auto& sf = si.Fields[idx];
-                        if (shown >= previewLimit) {
-                            preview += ", ...";
-                            break;
-                        }
-                        int32_t sfSize = sf.Size;
-                        int32_t expected = InferScalarSize(sf.TypeName);
-                        if (expected > 0 && sfSize != expected)
-                            sfSize = expected;
-                        if (!hasBuf || sf.Offset < 0
-                            || sf.Offset + sfSize > readSize) continue;
-                        const uint8_t* p = structBuf.data() + sf.Offset;
-                        std::string val;
-                        if (sf.TypeName == "FloatProperty" && sfSize == 4) {
-                            float v; memcpy(&v, p, 4);
-                            val = FormatPreviewNumber(v);
-                        } else if (sf.TypeName == "DoubleProperty"
-                                   && sfSize == 8) {
-                            double v; memcpy(&v, p, 8);
-                            val = FormatPreviewNumber(v);
-                        } else if (sf.TypeName == "IntProperty"
-                                   && sfSize == 4) {
-                            int32_t v; memcpy(&v, p, 4);
-                            val = std::to_string(v);
-                        } else if (sf.TypeName == "BoolProperty") {
-                            val = p[0] ? "true" : "false";
-                        } else if (sf.TypeName == "ByteProperty"
-                                   || sf.TypeName == "Int8Property") {
-                            val = std::to_string(p[0]);
-                        } else if (sf.TypeName == "NameProperty"
-                                   && sfSize >= 4) {
-                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
-                            if (val.empty()) val = "None";
-                        } else if ((sf.TypeName == "ObjectProperty"
-                                    || sf.TypeName == "ClassProperty")
-                                   && sfSize >= 8) {
-                            uintptr_t ptr; memcpy(&ptr, p, 8);
-                            val = ptr ? GetName(ptr) : "null";
-                        } else {
-                            continue;
-                        }
-                        if (!preview.empty()) preview += ", ";
-                        preview += sf.Name + "=" + val;
-                        ++shown;
-                    }
+                    // [A2-STRUCT-PREVIEW-BOOLMASK] THE shared decoder, not a hand copy. The copy
+                    // that stood here read a packed bool as its whole byte and knew fewer scalar
+                    // widths than InterpretStructByLayout — "now the ONLY one" was not true.
+                    std::string preview = hasBuf
+                        ? InterpretStructByLayout(structBuf.data(), readSize, si, previewLimit)
+                        : std::string();
                     if (!preview.empty()) {
-                        fv.typedValue = "{" + preview + "}";
+                        fv.typedValue = preview;   // already "{...}"
                         gotStructPreview = true;
                     }
                 }
@@ -5962,7 +6356,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // ⛔ THE REFUSAL COMES FIRST, BEFORE BOTH "(unset)" AND "(set)". Whichever way
             // the sentinel test happened to fall, a discriminator we could not read decides
             // nothing -- see the block comment on okProbe above.
-            if (!okProbe) {
+            if (!refusal.empty()) {
+                fv.typedValue = refusal;   // the set state could not be decided; say why
+            } else if (!okProbe) {
                 fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
             } else if (!isSet) {
                 fv.typedValue = "(unset)";
@@ -5974,7 +6370,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 } else if (isWeakLike) {
                     fv.typedValue = "(stale)";
                 } else {
-                    fv.typedValue = "(set)";
+                    // A TOptional<UObject*> can be SET to null; that is not "(unset)".
+                    fv.typedValue = fv.ptrValue ? "(set)" : "(set: null)";
                 }
             } else if (gotStructPreview) {
                 // Struct preview already populated fv.typedValue above.
@@ -6476,6 +6873,10 @@ void ResolvePropertyPreviews(
     const std::unordered_map<uintptr_t, uintptr_t>& instanceMap)
 {
     for (auto& m : matches) {
+        // [A4-CDOSCOPE-NESTED-PREVIEW] A nested (deep) row is NEVER previewed -- Aura.h's promise. It is keyed by its
+        // root field's defining class and its offset is informational only, so once a direct match put that class in
+        // the map, this read inst + the leaf offset: a UObject header word, sometimes with a source suffix.
+        if (m.isNested) continue;
         auto it = instanceMap.find(m.classAddr);
         if (it == instanceMap.end()) continue;
 

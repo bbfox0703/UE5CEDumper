@@ -17,6 +17,7 @@
 #include "Renge.h"
 #include "Grimoire.h"
 #include "Sein.h"
+#include "Utf8Helpers.h"   // [A2-CRC-PATH-LS] a wide string is logged as UTF-8, never through a wide format
 #include "Macht.h"
 #include "Genau.h"
 #include "Aura.h"
@@ -503,7 +504,8 @@ bool Fern::Start() {
     m_acceptThread = std::thread(&Fern::AcceptLoop, this);
     m_monitorThread = std::thread(&Fern::MonitorLoop, this);
 
-    LOG_INFO("PipeServer: Started on %ls (maxInstances=%lu)", Grimoire::PIPE_NAME, kMaxPipeInstances);
+    LOG_INFO("PipeServer: Started on %s (maxInstances=%lu)",
+             Utf8Helpers::EncodeUtf16(Grimoire::PIPE_NAME, wcslen(Grimoire::PIPE_NAME)).c_str(), kMaxPipeInstances);
     return true;
 }
 
@@ -1330,6 +1332,10 @@ static void FillPointerSnapshot(json& data) {
     data["item_size"]            = Aura::GetItemSize();
     data["item_layout_mode"]     = Aura::IsPacked() ? "packed57"
                                    : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+    // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+    data["item_detect"]           = Aura::GetItemDetect();
+    data["item_detect_validated"] = Aura::GetItemDetectValidated();
+    data["item_detect_probes"]    = Aura::GetItemDetectProbes();
     data["gobjects_method"]         = g_cachedGObjectsMethod;
     data["gnames_method"]           = g_cachedGNamesMethod;
     data["gworld_method"]           = g_cachedGWorldMethod;
@@ -1390,7 +1396,7 @@ static void FillPointerSnapshot(json& data) {
     data["pid"] = static_cast<uint32_t>(GetCurrentProcessId());
 
     // load_mode: how the dumper got into this process, from THIS module's own file
-    // name (g_hDllModule). "proxy:version.dll" | "proxy:dinput8.dll" | "proxy:dxgi.dll"
+    // name (g_hDllModule). "proxy:version.dll" | "proxy:dinput8.dll" | "proxy:dxgi.dll" | "proxy:winmm.dll"
     // (the OS-loaded proxy — the mutex winner, correct even when 2 proxies coexist) /
     // "injected" (UE5Dumper.dll via CreateRemoteThread or CE .CT) / "loaded:<name>" /
     // "unknown". The UI folds a proxy load into per-game "confirmed-working" LKG.
@@ -1405,7 +1411,10 @@ static void FillPointerSnapshot(json& data) {
                 selfName += (wc < 128) ? static_cast<char>(towlower(wc)) : '?';
         }
         std::string loadMode;
-        if (selfName == "version.dll" || selfName == "dinput8.dll" || selfName == "dxgi.dll")
+        // [W1-WINMM-LOADMODE] All four proxies we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
+        // symmetry). winmm was missing, so its loads read "loaded:winmm.dll" and never earned a confirmed-proxy record.
+        if (selfName == "version.dll" || selfName == "dinput8.dll" || selfName == "dxgi.dll"
+            || selfName == "winmm.dll")
             loadMode = "proxy:" + selfName;
         else if (selfName == "ue5dumper.dll")
             loadMode = "injected";
@@ -1479,6 +1488,11 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["bool_byte_offset"] = fv.boolByteOffset;
         }
     }
+    // [A3-BOOL-NATIVE-NOWRITE] A native (whole-byte) bool. ADDITIVE and pipe-only, like bool_bit:
+    // emitted only when true, so older UIs and CSX are unaffected and no contract bump applies.
+    // Without it the UI cannot tell a native bool (write 0x01 / 0x00) from an unresolved packed
+    // one (must refuse) — both used to arrive as "no mask".
+    if (fv.boolNative) fj["bool_native"] = true;
 
     // UE 5.3+ access-detector pad. Emitted only when NON-ZERO, so a Shipping title's wire is
     // unchanged and an older UI simply never sees the key. ⛔ An exporter that ignores it emits
@@ -1504,8 +1518,8 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     // DelegateProperty, which is precisely the "record pointing at address 0" above.
     // ⛔ Do NOT also set this for an ARRAY of delegates (or a sparse one): the pad is
     // per-ELEMENT, inside the array data, while a CE offset built from it is added to the FIELD
-    // offset (the TArray header). Array consumers derive it from `array_elem_size`, as the
-    // readers do; a sparse delegate's storage is not at the field offset at all.
+    // offset (the TArray header). Array consumers get the per-ELEMENT `array_elem_delegate_pad`
+    // below instead [A4-DELEGATE-ARRAY-PAD]; a sparse delegate's storage is not at the field offset at all.
     if (fv.delegatePad > 0)
         fj["delegate_pad"] = fv.delegatePad;
 
@@ -1518,6 +1532,10 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["array_inner_type"] = fv.arrayInnerType;
             if (fv.arrayElemSize > 0)
                 fj["array_elem_size"] = fv.arrayElemSize;
+            // [A4-DELEGATE-ARRAY-PAD] The per-ELEMENT detector pad of a TArray<FScriptDelegate>. Additive, and only
+            // when non-zero, so a Shipping title's wire is unchanged.
+            if (fv.arrayElemDelegatePad > 0)
+                fj["array_elem_delegate_pad"] = fv.arrayElemDelegatePad;
             if (!fv.arrayInnerStructType.empty())
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)
@@ -2036,6 +2054,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total"]        = chunk.total;
             data["scanned"]      = chunk.scanned;
             data["walk_ms"]      = chunk.walkMs;
+            // A scan worker faulted: this chunk is missing an index range even though
+            // `scanned` reports the full window. The UI finalises the snapshot UNUSABLE on
+            // it. Its own key, never `deadline_hit` wording -- a fault is not a timeout, and
+            // P5 records why one flag must not carry several causes. [W1-SNAP-FAULT]
+            data["worker_faulted"] = chunk.workerFaulted;
             data["serialize_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - serT0).count();
             data["objects"]      = std::move(objects);
@@ -2143,6 +2166,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["is_definition"] = true;
             if (result.isStale)
                 data["stale"] = true;
+            // [P1-WALK-UNREADABLE] In BOTH lean and full, like stale: it is the freed-object signal. Distinct from it --
+            // stale means a class pointer that read back implausible; this, a header that could not be read at all.
+            if (result.unreadable)
+                data["unreadable"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.
@@ -2213,6 +2240,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.elemType.empty())         fj["elem_type"]         = f.elemType;
                 if (!f.elemStructType.empty())   fj["elem_struct_type"]  = f.elemStructType;
                 if (!f.enumName.empty())         fj["enum_name"]         = f.enumName;
+                // [A4-USMAP-CONTAINER-ENUM] a container inner's own UEnum (additive keys)
+                if (!f.innerEnumName.empty())    fj["inner_enum"]        = f.innerEnumName;
+                if (!f.elemEnumName.empty())     fj["elem_enum"]         = f.elemEnumName;
+                if (!f.keyEnumName.empty())      fj["key_enum"]          = f.keyEnumName;
+                if (!f.valueEnumName.empty())    fj["value_enum"]        = f.valueEnumName;
                 if (f.boolFieldMask != 0)        fj["bool_mask"]         = f.boolFieldMask;
                 fields.push_back(fj);
             }
@@ -2318,6 +2350,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["enums"] = enums;
             data["count"] = static_cast<int>(enums.size());
             if (truncated) data["truncated"] = true;
+            // [P1-ENUMNAMES] UEnum::Names was never located on this build: every enum's entries above are empty, and
+            // this is the only exit that says why. Latched only by a search that ran to completion.
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -2364,6 +2399,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             sfj["type"]   = sf.typeName;
                             sfj["offset"] = sf.offset;
                             sfj["size"]   = sf.size;
+                            // [A3-FIRE-STRUCT-BOOLMASK] additive, only for a packed bool
+                            if (sf.boolFieldMask != 0) sfj["bool_mask"] = sf.boolFieldMask;
                             sfArr.push_back(sfj);
                         }
                         pj["struct_fields"] = sfArr;
@@ -2534,19 +2571,32 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int32_t offset = request.value("offset", 0);
             int32_t limit = request.value("limit", 64);
 
-            if (innerType.empty() || elemSize <= 0)
+            // [W5-STRARRAY-ELEMENTS] A string inner is a 16-byte header per element, not a scalar:
+            // ReadArrayElements would publish the header's bytes as the value. The Live Walker fetches
+            // the elements past the walked ones through here. Review 3 of 6b48e776: decided FIRST, because
+            // the elem_size checks below guard a SCALAR stride -- a string's is the fixed header, and a
+            // zeroed or garbage elem_size is exactly what that pinned stride exists to survive.
+            const bool stringInner = Ubel::IsStringArrayType(innerType);
+            // [WALK-FIELDPATH-ARRAY-NOELEMS] A TFieldPath element is a struct whose LAST member is the
+            // path; its reader needs the engine's ElementSize, so it keeps the elem_size requirement
+            // (unlike a string's pinned header) and only bypasses the scalar 256-byte ceiling.
+            const bool fieldPathInner = Ubel::IsFieldPathArrayType(innerType);
+            if (innerType.empty() || (!stringInner && elemSize <= 0))
                 return Renge::MakeError(id, "missing inner_type or invalid elem_size").dump();
 
             // Validate elemSize from UI — may have cached garbage from older sessions.
             // ReadArrayElements already caps at 256, but validate explicitly here too.
-            if (elemSize > 256) {
+            if (!stringInner && !fieldPathInner && elemSize > 256) {
                 Sein::Warn("PIPE:cmd", "read_array_elements: elemSize=%d too large for '%s', rejecting",
                     elemSize, innerType.c_str());
                 return Renge::MakeError(id, "elem_size too large (max 256)").dump();
             }
 
-            auto result = Ubel::ReadArrayElements(
-                addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
+            auto result = stringInner
+                ? Ubel::ReadStringArrayElements(addr, fieldOffset, innerType, elemSize, offset, limit)
+                : fieldPathInner
+                ? Ubel::ReadFieldPathArrayElements(addr, fieldOffset, elemSize, offset, limit)
+                : Ubel::ReadArrayElements(addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
 
             if (!result.ok)
                 return Renge::MakeError(id, result.error).dump();
@@ -3194,6 +3244,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (!Radar::BuildNumericTargets(dt, val2Str, multiTargets2, roundMode)) {
                         return Renge::MakeError(id, "Between requires a valid 'value2' for data_type " + dtStr).dump();
                     }
+                    // [A4-AB4-BETWEEN] first scan: both bounds JOINTLY, clamped per width (the checks above keep
+                    // their messages for a bound that parses as nothing).
+                    if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, multiTargets, multiTargets2, roundMode)) {
+                        return Renge::MakeError(id, "Between range '" + valStr + "'..'" + val2Str +
+                            "' covers no numeric width of " + dtStr).dump();
+                    }
                     multiPtr2 = &multiTargets2;
                 }
             } else {
@@ -3345,6 +3401,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             multiPtr = &multiTargets;
                             if (st == Radar::ScanType::Between) {
                                 if (!Radar::BuildNumericTargets(dt, val2Str, multiTargets2, roundMode)) {
+                                    parseFailed = true;
+                                    return;
+                                }
+                                // [A4-AB4-BETWEEN] refine: both bounds jointly
+                                if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, multiTargets,
+                                                                       multiTargets2, roundMode)) {
                                     parseFailed = true;
                                     return;
                                 }
@@ -3561,6 +3623,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (!Radar::BuildNumericTargets(dt, val2Str, sp.targets2, sp.roundMode)) {
                         return Renge::MakeError(id, "Invalid group Between upper value '" + val2Str + "' (fits no numeric width)").dump();
                     }
+                    // [A4-AB4-BETWEEN] group first scan: both bounds jointly
+                    if (!Radar::BuildNumericBetweenTargets(dt, valStr, val2Str, sp.targets, sp.targets2, sp.roundMode)) {
+                        return Renge::MakeError(id, "Group Between range '" + valStr + "'..'" + val2Str +
+                            "' covers no numeric width").dump();
+                    }
                     sp.value2 = val2Str;
                 }
                 sp.dt        = dt;
@@ -3696,6 +3763,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 std::string val2Str = valuesJson[s].value("value2", "");
                                 Radar::NumericTargetSet nt2;
                                 if (!Radar::BuildNumericTargets(sess.slots[s].dt, val2Str, nt2, sess.slots[s].roundMode)) {
+                                    parseFailed = true;
+                                    return;
+                                }
+                                // [A4-AB4-BETWEEN] group refine: both bounds jointly
+                                if (!Radar::BuildNumericBetweenTargets(sess.slots[s].dt, valStr, val2Str,
+                                                                       sess.slots[s].targets, nt2, sess.slots[s].roundMode)) {
                                     parseFailed = true;
                                     return;
                                 }
@@ -4464,6 +4537,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["classes_primed"]  = stats.classesPrimed;
             scanInfo["duration_ms"]     = stats.durationMs;
             scanInfo["deadline_hit"]    = stats.deadlineHit;
+            scanInfo["sparse_unlocated"] = stats.sparseUnlocated;   // [P1-SPARSEDELEGATE-REFS]
             data["scan"] = scanInfo;
 
             json arr = json::array();
@@ -4502,7 +4576,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Invalid addr").dump();
             int32_t maxResults = request.value("max_results", 128);
 
-            auto rels = Aura::GetRelatedObjects(target, maxResults);
+            Aura::RelatedObjectsStats stops;   // [W4-RELATED-STOPS]
+            auto rels = Aura::GetRelatedObjects(target, maxResults, &stops);
 
             json arr = json::array();
             for (const auto& r : rels) {
@@ -4521,6 +4596,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"] = addrStr;
             data["related"]    = arr;
+            // [W4-RELATED-STOPS] Why the list stopped short, one key per cause (additive: no contract bump).
+            json stopsJ;
+            stopsJ["result_cap_hit"] = stops.resultCapHit;
+            stopsJ["owned_cap_hit"]  = stops.ownedCapHit;
+            stopsJ["visit_cap_hit"]  = stops.visitCapHit;
+            stopsJ["deadline_hit"]   = stops.deadlineHit;
+            stopsJ["cancelled"]      = stops.cancelled;
+            stopsJ["max_results"]    = stops.maxResults;
+            stopsJ["max_owned"]      = stops.maxOwnedSubs;
+            stopsJ["max_visited"]    = stops.maxVisited;
+            stopsJ["deadline_ms"]    = stops.deadlineMs;
+            data["stops"] = stopsJ;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4766,6 +4853,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["objects_total"]         = res.stats.objectsTotal;
             scanInfo["duration_ms"]           = res.stats.durationMs;
             scanInfo["deadline_hit"]          = res.stats.deadlineHit;
+            // [W3-XREF-CAP] The cap, as its OWN field -- the begin_group_scan shape (deadline_hit /
+            // per_slot_cap_hit / per_slot_cap stay distinct): a capped page is a prefix, not a timeout.
+            scanInfo["cap_hit"]               = res.stats.capHit;
+            scanInfo["cap"]                   = res.stats.cap;
             data["scan"] = scanInfo;
 
             json arr = json::array();
@@ -4809,6 +4900,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["objects_total"]         = res.stats.objectsTotal;
             scanInfo["duration_ms"]           = res.stats.durationMs;
             scanInfo["deadline_hit"]          = res.stats.deadlineHit;
+            // [W3-XREF-CAP] The cap, as its OWN field -- the begin_group_scan shape (deadline_hit /
+            // per_slot_cap_hit / per_slot_cap stay distinct): a capped page is a prefix, not a timeout.
+            scanInfo["cap_hit"]               = res.stats.capHit;
+            scanInfo["cap"]                   = res.stats.cap;
             data["scan"] = scanInfo;
 
             json arr = json::array();
@@ -4853,7 +4948,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"]   = addrStr;
             data["script_bytes"] = res.scriptBytes;
-            // Path 2: "bytecode" (exact) / "disasm" (native x64, heuristic) / "none".
+            // "bytecode" (exact) / "disasm" (native x64, heuristic) / "none" / the two refusals
+            // "blueprint_no_script" and "bytecode_unreadable" -- Aura.h's FunctionPropRefResult says what each means.
             data["method"]       = res.method;
             data["unmapped"]     = res.unmappedAccesses;
             // Path 2 only: the disassembler hit its instruction budget, so `props`
@@ -5034,6 +5130,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["item_size"]        = Aura::GetItemSize();
             data["item_layout_mode"] = Aura::IsPacked() ? "packed57"
                                        : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+            // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+            data["item_detect"]           = Aura::GetItemDetect();
+            data["item_detect_validated"] = Aura::GetItemDetectValidated();
+            data["item_detect_probes"]    = Aura::GetItemDetectProbes();
             // Echo reconstructed samples so the operator can eyeball-calibrate live.
             json samples = json::array();
             int n = Aura::GetCount();
@@ -5070,6 +5170,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["item_size"]          = Aura::GetItemSize();
             data["item_layout_mode"]   = Aura::IsPacked() ? "packed57"
                                          : (Aura::GetItemObjOffset() != 0 ? "unpacked57" : "classic");
+            // [W4-STRIDE-TENTATIVE] The stride VERDICT, orthogonal to the layout mode above.
+            data["item_detect"]           = Aura::GetItemDetect();
+            data["item_detect_validated"] = Aura::GetItemDetectValidated();
+            data["item_detect_probes"]    = Aura::GetItemDetectProbes();
             if (DynOff::bUseFProperty) {
                 data["ffield_class"]       = DynOff::FFIELD_CLASS;
                 data["ffield_next"]        = DynOff::FFIELD_NEXT;
@@ -5644,7 +5748,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Sein::Info("PIPE:cmd", "set_debug_camera: enable=%d", enable ? 1 : 0);
             int32_t state = UE5_SetDebugCamera(enable ? 1 : 0);
             json data;
-            data["state"] = state;   // resulting state: 1=on, 0=off, -1=error
+            data["state"] = state;   // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED]
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -6068,6 +6172,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["hidden_actors"] = addrs;
             }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
+            // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
+            // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
+            data["restore_pending"]   = st.restorePending;
+            data["restore_abandoned"] = st.restoreAbandoned;
             return data;
         };
         if (cmd == Renge::CMD_SEE_THROUGH_SET) {
@@ -6100,8 +6208,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Wirbel::Pose p{};
             char map[Grimoire::TELEPORT_MAPNAME_CAP] = {};
             uint8_t source = 0;
+            bool parentRel = false;
             Wirbel::MovementState mv{};
-            int32_t code = Wirbel::GetPoseAndMovement(p, map, sizeof(map), &source, mv);
+            int32_t code = Wirbel::GetPoseAndMovement(p, map, sizeof(map), &source, mv,
+                                                      &parentRel);
             json data;
             data["code"] = code;
             if (code == 0) {
@@ -6109,6 +6219,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["pitch"] = p.Pitch; data["yaw"] = p.Yaw; data["roll"] = p.Roll;
                 data["map"] = map;
                 data["source"] = (source == 1) ? "invoke" : "raw";
+                // ⛔ "raw" alone cannot tell a HEALTHY unattached world-space read from a
+                // DEGRADED parent-relative one, and the UI's model documents "raw" as
+                // MEANING not-attached -- so those numbers were shown as world coords,
+                // saved into a marker that passes the map guard, and later driven back
+                // into the pawn as a world destination. teleport-spec.md:218-220 asked
+                // for this flag when the fallback was designed. [POSEATTACH-2026-09-10]
+                if (parentRel) data["parent_relative"] = true;
                 // Feature B: the resolved pawn — for the "Locate in GWorld" handoff
                 // (hex string, matching find_path's object_addr / get_current_target's
                 // player_pawn). "0x0" when unresolved.
@@ -6217,6 +6334,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     data["x"] = m.P.X;         data["y"] = m.P.Y;     data["z"] = m.P.Z;
                     data["pitch"] = m.P.Pitch; data["yaw"] = m.P.Yaw; data["roll"] = m.P.Roll;
                     data["map"] = m.MapName;
+                    // [W2-MARKER-PARENTREL] ALWAYS sent (review 5 of 7490c24e): this reply has no 'source' key, so only
+                    // a key present on a healthy save too lets the UI tell "healthy" from "an older DLL that never says".
+                    data["parent_relative"] = m.ParentRelative;
                 }
             }
             return Renge::MakeResponse(id, data).dump();
@@ -6293,6 +6413,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     jm["x"] = m.P.X;         jm["y"] = m.P.Y;     jm["z"] = m.P.Z;
                     jm["pitch"] = m.P.Pitch; jm["yaw"] = m.P.Yaw; jm["roll"] = m.P.Roll;
                     jm["map"] = m.MapName;
+                    if (m.ParentRelative) jm["parent_relative"] = true;      // [W2-MARKER-PARENTREL]
                 } else {
                     jm["valid"] = false;
                 }
@@ -6311,6 +6432,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     jl["x"] = last.P.X;         jl["y"] = last.P.Y;     jl["z"] = last.P.Z;
                     jl["pitch"] = last.P.Pitch; jl["yaw"] = last.P.Yaw; jl["roll"] = last.P.Roll;
                     jl["map"] = last.MapName;
+                    if (last.ParentRelative) jl["parent_relative"] = true;   // [W2-MARKER-PARENTREL]
                 } else {
                     jl["valid"] = false;
                 }
@@ -6383,15 +6505,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool horizontalOnly = request.value("horizontal", true);
             Wirbel::Pose p{};
             uint8_t tier = 0;
-            int32_t code = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier);
+            bool landingKnown = true;
+            int32_t code = Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier,
+                                                    &landingKnown);
             Sein::Info("PIPE:cmd", "teleport_relative: d=%.1f horiz=%d -> %d",
                        distance, horizontalOnly ? 1 : 0, code);
             json data;
             data["code"] = code;
             data["tier"] = tier;
-            if (code == 0) {
+            // Publish the landing ONLY when it was actually observed. A failed re-read
+            // used to arrive as (0,0,0) and overwrite the panel's live readout.
+            if (code == 0 && landingKnown) {
                 data["x"] = p.X;         data["y"] = p.Y;     data["z"] = p.Z;
                 data["pitch"] = p.Pitch; data["yaw"] = p.Yaw; data["roll"] = p.Roll;
+            } else if (code == 0) {
+                data["landing_unknown"] = true;   // [TPREL-ZEROPOSE-2026-09-10]
             }
             return Renge::MakeResponse(id, data).dump();
         }

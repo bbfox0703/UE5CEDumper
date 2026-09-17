@@ -320,6 +320,12 @@ public sealed class SnapshotStore : ISnapshotStore
         // otherwise. See Services.SnapshotConsistency.
         await AddColumnIfMissingAsync(conn, "snapshots", "is_usable", "INTEGER NOT NULL DEFAULT 1", ct);
 
+        // partial_reason [W1-PARTIAL-MARK] (additive, same as is_usable): why a KEPT capture is partial --
+        // Constants.SnapshotPartialCap / SnapshotPartialDiskLow; '' = complete. Its own column on purpose:
+        // marking a partial is_usable=0 would auto-delete it before the next capture
+        // (DeleteUnusableSnapshotsAsync), destroying exactly what the cap / low-disk stop keeps.
+        await AddColumnIfMissingAsync(conn, "snapshots", "partial_reason", "TEXT NOT NULL DEFAULT ''", ct);
+
         if (ver < SchemaVersion)
             await ExecAsync(conn, $"PRAGMA user_version={SchemaVersion};", ct);
     }
@@ -597,7 +603,8 @@ public sealed class SnapshotStore : ISnapshotStore
         }
 
         public async Task CompleteSnapshotAsync(long snapshotId, int objectCount, int fieldCount,
-                                                bool isUsable = true, CancellationToken ct = default)
+                                                bool isUsable = true, string partialReason = "",
+                                                CancellationToken ct = default)
         {
             // Flush the captured rows, then write totals + incremental pivot counts in a
             // fresh transaction (so a reader can't observe a half-written class_counts).
@@ -610,10 +617,11 @@ public sealed class SnapshotStore : ISnapshotStore
             await using (var u = _conn.CreateCommand())
             {
                 u.Transaction = tx;
-                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us WHERE id=$id;";
+                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us, partial_reason=$pr WHERE id=$id;";
                 u.Parameters.AddWithValue("$oc", objectCount);
                 u.Parameters.AddWithValue("$fc", fieldCount);
                 u.Parameters.AddWithValue("$us", isUsable ? 1 : 0);
+                u.Parameters.AddWithValue("$pr", partialReason ?? "");
                 u.Parameters.AddWithValue("$id", snapshotId);
                 await u.ExecuteNonQueryAsync(ct);
             }
@@ -718,7 +726,7 @@ public sealed class SnapshotStore : ISnapshotStore
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope, is_usable
+            SELECT id, label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope, is_usable, partial_reason
             FROM snapshots ORDER BY id DESC;
             """;
         var list = new List<SnapshotMeta>();
@@ -738,6 +746,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 Scope         = reader.IsDBNull(8) ? "" : reader.GetString(8),
                 // Defensive: treat NULL/missing as usable (older rows default to 1).
                 IsUsable      = reader.IsDBNull(9) || reader.GetInt32(9) != 0,
+                PartialReason = reader.IsDBNull(10) ? "" : reader.GetString(10),
             });
         }
 
@@ -1949,6 +1958,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 changed.Add(new DiscoveryInput
                 {
                     ClassName = cls, PropName = DiscoverDisplayProp(prop, arr, elem),
+                    ArrayField = arr, InnerProp = arr.Length > 0 ? prop : "",   // [W1-DISCOVER-ARRAY]
                     DeclaredType = type, NormPath = norm, ObjAddr = addr, Hex = hex, Num = num,
                 });
             }
@@ -2254,7 +2264,9 @@ public sealed class SnapshotStore : ISnapshotStore
                 $"Pivot: row fetch hit the {PivotFetchRowCap:N0} cap for class {query.ClassName} — results truncated");
 
         var result = PivotEngine.Build(rows, query);
-        if (capped) result.Truncated = true;
+        // [P5-PIVOT-FETCHCAP] Its OWN flag. Truncated keeps meaning the GROUP cap (a complete input); this pivot was
+        // built over a prefix. The status says both when both fire -- never one folded into the other.
+        if (capped) result.FetchCap = PivotFetchRowCap;
         return result;
     }
 
@@ -2290,8 +2302,12 @@ public sealed class SnapshotStore : ISnapshotStore
         var list = new List<PivotArrayFieldInfo>();
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // [W1-ARRAYCOUNT] One row is stored per inner prop per ELEMENT, so COUNT(*) grew with every
+        // inner numeric prop. Count distinct (owner, element) pairs -- the identity the array pivot
+        // itself keys on (gobjects_index, elem_index).
         cmd.CommandText = """
-            SELECT array_field, COALESCE(inner_key_name, ''), COUNT(*) AS elems
+            SELECT array_field, COALESCE(inner_key_name, ''),
+                   COUNT(DISTINCT COALESCE(gobjects_index, -1) || ':' || COALESCE(elem_index, -1)) AS elems
             FROM fields WHERE snapshot_id=$s AND class_fqn=$c AND array_field IS NOT NULL
             GROUP BY array_field, inner_key_name ORDER BY array_field;
             """;
@@ -2387,7 +2403,11 @@ public sealed class SnapshotStore : ISnapshotStore
                 rows.Add(new PivotInputRow
                 {
                     ObjectIndex  = sid,
-                    NormPath     = r.IsDBNull(3) ? "(no key)" : r.GetString(3),  // inner-key value = group key
+                    // Inner-key value = group key. A KEYLESS element (no FName / integer inner key, or a leaf
+                    // container) groups by its own index, which is what the status line and the picker already
+                    // said ("elem index"). The constant "(no key)" put every element of every owner into ONE
+                    // group. (Review of 4920cb89, [W1-DISCOVER-ARRAY].)
+                    NormPath     = r.IsDBNull(3) ? $"[{elem}]" : r.GetString(3),
                     ObjAddr      = r.IsDBNull(2) ? "" : r.GetString(2),
                     PropName     = r.IsDBNull(4) ? "" : r.GetString(4),
                     DeclaredType = r.IsDBNull(5) ? "" : r.GetString(5),
@@ -2406,7 +2426,7 @@ public sealed class SnapshotStore : ISnapshotStore
             MaxGroups   = query.MaxGroups,
         };
         var result = PivotEngine.Build(rows, pq);
-        if (capped) result.Truncated = true;
+        if (capped) result.FetchCap = PivotFetchRowCap;   // [P5-PIVOT-FETCHCAP] its own flag, as the class pivot above
         return result;
     }
 

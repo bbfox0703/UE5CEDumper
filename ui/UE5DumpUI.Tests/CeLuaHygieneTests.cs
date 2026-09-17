@@ -92,6 +92,58 @@ public class CeLuaHygieneTests
                                    CeMailboxLayout.MailboxIdleWaitMs * 1.1);
     }
 
+    // [A1-LUA-WAIT] EXACTLY one deadline governs. `tick and (elapsed >= Ms) or (iters >= N)` evaluates the iteration arm
+    // whenever the elapsed test is FALSE (Lua's `a and b or c` takes c when b is false), so both waits ran to
+    // min(real ms, N x sleep cost) -- up to ~15x short where sleep(1) is cheap. The two Lua helpers were fixed for exactly
+    // this (audit #5 AA29, e8893e5a); this emitter kept the idiom. There is no Lua runtime in this suite, so the pin is on
+    // the helpers' own SHAPE: the iteration count lives only in the `else` of the getTickCount branch.
+    [Fact]
+    public void Both_waits_have_one_deadline_the_iteration_count_only_without_getTickCount()
+    {
+        var idle = new StringBuilder();
+        CeLuaHygiene.AppendIdleWait(idle, "mb", "return nil, 'busy'");
+        var wait = new StringBuilder();
+        CeLuaHygiene.AppendMailboxWait(wait, "Tag", MailboxTimeout.ReturnReason);
+
+        foreach (var (name, s, tick, iters) in new[]
+                 {
+                     ("idle", idle.ToString(), "_idleTick", "_idleIters"),
+                     ("wait", wait.ToString(), "_tick", "_iters"),
+                 })
+        {
+            Assert.DoesNotMatch(tick + @" and \([^\n]*\) or \(" + iters + " >=", s);   // the `a and b or c` form
+            var lines = s.Split('\n');
+            int ifTick = -1;
+            for (int i = 0; i < lines.Length; i++)
+                if (System.Text.RegularExpressions.Regex.IsMatch(lines[i].Trim(), @"^(?:if|elseif) " + tick + " then "))
+                { ifTick = i; break; }
+            Assert.True(ifTick >= 0, $"{name}: no getTickCount branch");
+            string next = ifTick + 1 < lines.Length ? lines[ifTick + 1].Trim() : "";
+            Assert.True(next.StartsWith("else ", StringComparison.Ordinal) && next.Contains(iters + " >=", StringComparison.Ordinal),
+                $"{name}: the iteration fallback must be the `else` of the getTickCount branch, found \"{next}\"");
+        }
+    }
+
+    // [A1-SLOTSYM-FAILED] CE runs [DISABLE] on the deferred untick after EVERY failed ENABLE, and every ENABLE bail returns
+    // BEFORE the register step -- so a bare refcount let a failed second "Get GWorld" record drop a LIVE record's symbol
+    // (measured by the refuter under real Lua: "A is still ticked but UE_GWorld is GONE"). Ownership is per RECORD: the
+    // release decrements only for a record that registered; the count stays the fallback when there is no memrec.
+    [Fact]
+    public void SlotSymbol_release_only_releases_what_this_record_registered()
+    {
+        var reg = new StringBuilder();
+        CeLuaHygiene.AppendSlotSymbolRegister(reg, "UE_GWorld", "addr");
+        var rel = new StringBuilder();
+        CeLuaHygiene.AppendSlotSymbolRelease(rel, "UE_GWorld", "GWorld");
+        string r = reg.ToString(), d = rel.ToString();
+
+        Assert.Contains("UE5_slotSymHolders['UE_GWorld'][memrec.ID] = true", r);   // a successful register is recorded
+        int own = d.IndexOf("_hs[memrec.ID]", StringComparison.Ordinal);
+        int dec = d.IndexOf("local _rc =", StringComparison.Ordinal);
+        Assert.True(own >= 0 && dec > own, "the release must check this record's ownership BEFORE it decrements");
+        Assert.Contains("never registered by this record", d);
+    }
+
     /// <summary>The idle wait and the status wait land in the SAME Lua scope in three
     /// generators (Teleport, CoordLibrary, PointerQuery), so their locals must not
     /// collide — the second declaration would shadow the first's deadline.</summary>
@@ -454,6 +506,31 @@ public class CeLuaHygieneTests
         // The marker-on-another-map failure sets hadError (keeps window open).
         Assert.Contains("hadError = true", s);
         Assert.DoesNotContain("\r", s);
+    }
+
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Save)]
+    [InlineData(TeleportScriptGenerator.Action.GetPose)]
+    [InlineData(TeleportScriptGenerator.Action.BugIt)]
+    public void Teleport_pose_reading_actions_warn_on_a_parent_relative_pose(TeleportScriptGenerator.Action action)
+    {
+        // [W2-MARKER-PARENTREL] mailbox half: the pose block's flags byte (paramsData[178], contract 4) says the pose came
+        // from the raw parent-relative fallback. The pose card's "do not save these" never reached CE -- the record
+        // must say so, and keep its window open like every other genuine problem.
+        var s = TeleportScriptGenerator.Generate(action, 0);
+        var read = s.IndexOf("readBytes(mb + 0x3DA, 1, true)", StringComparison.Ordinal);
+        Assert.True(read >= 0, "the record must read paramsData[178]");
+        var warn = s.IndexOf("PARENT-RELATIVE", read, StringComparison.Ordinal);
+        Assert.True(warn > read, "and name the parent-relative read after it");
+        var flag = s.LastIndexOf("hadError = true", warn, StringComparison.Ordinal);
+        Assert.True(flag > read, "the warning must set hadError, or the window closes on it");
+    }
+
+    [Fact]
+    public void Teleport_recall_does_not_read_the_pose_flags()
+    {
+        // The control, green before and after: RECALL writes no pose block.
+        Assert.DoesNotContain("0x3DA", TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.Recall, 0));
     }
 
     [Fact]

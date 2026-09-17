@@ -200,4 +200,58 @@ public class WindowRestoreStateTests
 
         Assert.Equal(new PixelPoint(-9000, -9000), s.NormalPosition);
     }
+
+    // ── [W3-DIP-PIXELS] the guard is handed PHYSICAL pixels, as WindowPlacement requires ──────
+    // WindowPlacement's header: "All coordinates are PHYSICAL pixels". The position and the screens are; the stash's
+    // width/height are Avalonia Width/Height -- DIPs. MainWindow got the AF21 unit fix and this newer twin never did, so at
+    // 225% a 1,124-DIP dialog was judged by a 1,124 px rect instead of 2,529 px, and a legitimately placed position was
+    // discarded. The AF21 geometry, so this measures the same case: 3840 px wide at 225%, x = -1707.
+    private static readonly IReadOnlyList<(int, int, int, int)> Af21Screen = new[] { (0, 0, 3840, 2400) };
+
+    [Fact]
+    public void AtHiDpi_APositionReachableInPhysicalPixels_IsKept()
+    {
+        var s = new WindowRestoreState();
+        s.SetScreens(Af21Screen);
+        s.SetScale(2.25);
+        s.Seed(new PixelPoint(200, 146), 1124, 900);
+
+        s.NotePosition(new PixelPoint(-1707, 146));   // 822 physical px of it on screen
+        s.Commit(isNormalNow: true);
+
+        Assert.Equal(new PixelPoint(-1707, 146), s.NormalPosition);
+    }
+
+    [Fact]
+    public void AtHiDpi_AGenuinelyOffScreenPosition_IsStillRejected()
+    {
+        // The control: the scale widens the rect to its real size; it does not accept everything.
+        var s = new WindowRestoreState();
+        s.SetScreens(Af21Screen);
+        s.SetScale(2.25);
+        s.Seed(new PixelPoint(200, 146), 1124, 900);
+
+        s.NotePosition(new PixelPoint(-2809, 146));   // below the AF21 band: off-screen at either width
+        s.Commit(isNormalNow: true);
+
+        Assert.Equal(new PixelPoint(200, 146), s.NormalPosition);
+    }
+
+    [Fact]
+    public void ManagedDialogWindow_PushesItsScale_WithEveryScreenRefresh()
+    {
+        // The state machine only knows the scale it is given; the dialog is what has RenderScaling.
+        string? src = null;
+        var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null && src is null; i++, dir = dir.Parent)
+        {
+            var c = System.IO.Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Views", "ManagedDialogWindow.cs");
+            if (System.IO.File.Exists(c)) src = System.IO.File.ReadAllText(c);
+        }
+        Assert.NotNull(src);
+        int screens = System.Text.RegularExpressions.Regex.Matches(src!, @"_restore\.SetScreens\(").Count;
+        int scales  = System.Text.RegularExpressions.Regex.Matches(src!, @"_restore\.SetScale\(RenderScaling\)").Count;
+        Assert.True(screens >= 2, $"only {screens} SetScreens calls -- the pattern no longer matches");
+        Assert.Equal(screens, scales);
+    }
 }

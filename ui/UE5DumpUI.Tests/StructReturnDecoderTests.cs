@@ -150,6 +150,50 @@ public class StructReturnDecoderTests
         Assert.False(StructReturnDecoder.CanDecode(p, ueVersion: 505));
     }
 
+    [Fact]
+    public void Decode_DynamicFields_PackedBools_ReadTheirOwnBit()
+    {
+        // [A3-FIRE-STRUCT-BOOLMASK], the READ side (B05 review): the struct-return grid decoded a
+        // packed bool as its whole byte. Two bits share one byte; only bit 1 is set.
+        var p = new FunctionParamModel
+        {
+            Name = "ReturnValue", TypeName = "StructProperty", StructName = "Mystery",
+            Size = 1, Offset = 0,
+            StructFields = new List<DynamicStructField>
+            {
+                new("bA", "BoolProperty", 0, 1, 0x01),
+                new("bB", "BoolProperty", 0, 1, 0x02),
+                new("bU", "BoolProperty", 0, 1, 0),   // unresolved: the whole byte
+            },
+        };
+
+        var rows = StructReturnDecoder.Decode(new byte[] { 0x02 }, p, ueVersion: 505);
+
+        Assert.Equal(new[] { "false", "true", "true" }, rows.Select(r => r.Value).ToArray());
+    }
+
+    [Fact]
+    public void Decode_DynamicFields_PackedBools_AtANonZeroOffset()
+    {
+        // Review of d5e9148d: the packed-bool case sat at offset 0, so a decoder reading
+        // buf[sf.Offset] instead of the absolute offset survived. Here buf[1] and buf[5] differ.
+        var p = new FunctionParamModel
+        {
+            Name = "ReturnValue", TypeName = "StructProperty", StructName = "Mystery",
+            Size = 2, Offset = 4,
+            StructFields = new List<DynamicStructField>
+            {
+                new("bA", "BoolProperty", 1, 1, 0x01),
+                new("bB", "BoolProperty", 1, 1, 0x02),
+            },
+        };
+
+        var rows = StructReturnDecoder.Decode(new byte[] { 0x01, 0x03, 0x00, 0x00, 0x00, 0x02 }, p, ueVersion: 505);
+
+        Assert.Equal(new[] { "false", "true" }, rows.Select(r => r.Value).ToArray());
+        Assert.All(rows, r => Assert.Equal(5, r.Offset));
+    }
+
     // ------------------------------------------------------------------
     // FVector decode — the canonical "Geri PlayerCameraManager::
     // GetCameraLocation" verification target from todo.md pick #5.

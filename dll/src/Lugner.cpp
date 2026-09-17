@@ -28,6 +28,7 @@
 #define LOG_CAT "PROXY"
 #include "Sein.h"
 #include "Lugner.h"
+#include "Utf8Helpers.h"   // [A2-CRC-PATH-LS] a wide path is logged as UTF-8, never through a wide format
 
 // Real version.dll handle — loaded on first call
 static HMODULE g_realVersion = nullptr;
@@ -73,10 +74,11 @@ static HMODULE LoadRealVersion()
 
     g_realVersion = LoadLibraryW(realPath);
     if (!g_realVersion) {
-        LOG_ERROR("Failed to load real version.dll from %ls (err=%lu)",
-                  realPath, GetLastError());
+        const DWORD err = GetLastError();   // before the conversion below can touch it
+        LOG_ERROR("Failed to load real version.dll from %s (err=%lu)",
+                  Utf8Helpers::EncodeUtf16(realPath, wcslen(realPath)).c_str(), err);
     } else {
-        LOG_INFO("Loaded real version.dll: %ls", realPath);
+        LOG_INFO("Loaded real version.dll: %s", Utf8Helpers::EncodeUtf16(realPath, wcslen(realPath)).c_str());
     }
     return g_realVersion;
 }

@@ -127,8 +127,24 @@ static int32_t CallProcessEventSEH(uintptr_t instance, uintptr_t ufunc, uintptr_
     return 0;
 }
 
+/// [A3-ST1-SUPER-DRAIN] The same SEH isolation for an arbitrary resolved ProcessEvent address
+/// (a class's own override). Returns 0 on success, -3 on a null address, -4 on SEH exception.
+static int32_t CallAddressSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    if (!peAddr) return -3;
+    typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
+    __try {
+        reinterpret_cast<FnProcessEvent>(peAddr)(
+            reinterpret_cast<void*>(instance),
+            reinterpret_cast<void*>(ufunc),
+            reinterpret_cast<void*>(params));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -4;
+    }
+    return 0;
+}
+
 // True while THIS thread is executing inside Stark::CallOriginalSEH (audit #5
-// ST1). Deliberately NOT set inside CallProcessEventSEH: that is what the
+// ST1) or Stark::CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]). Deliberately NOT set inside CallProcessEventSEH: that is what the
 // legitimate game-thread drain calls, and a UFunction executing there routinely
 // dispatches further ProcessEvent calls through the vtable -- i.e. back through
 // our detour. Marking the thread there would make the game's own nested
@@ -467,6 +483,16 @@ int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     // frame with __try -- hence the separate SEH helper below it.
     OwnPeCallGuard guard;
     return CallProcessEventSEH(instance, ufunc, params);
+}
+
+// [A3-ST1-SUPER-DRAIN] A class's own ProcessEvent override, called under the same "inside our own PE
+// call" mark. The override is not the end of the call: AActor::ProcessEvent calls Super::ProcessEvent,
+// which IS the address MinHook patched, so an unmarked call re-entered our detour off the game thread
+// and its drain ran every queued request there.
+int32_t CallAddressAsOwnSEH(uintptr_t peAddr, uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    // The guard in THIS (outer) frame, the __try in CallAddressSEH's (MSVC C2712), as CallOriginalSEH.
+    OwnPeCallGuard guard;
+    return CallAddressSEH(peAddr, instance, ufunc, params);
 }
 
 uint64_t GetHookFireCount() {

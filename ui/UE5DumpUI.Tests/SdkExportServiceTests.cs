@@ -190,6 +190,41 @@ public class SdkExportServiceTests
         Assert.Equal("FScriptDelegate", SdkExportService.MapCppDecl(field).Type);
     }
 
+    // --- [P3-SDK-INNERS] a container inner gets the SAME spelling as the scalar path (it was uint8_t) ---
+
+    [Theory]
+    [InlineData("SoftClassProperty", "TArray<TSoftClassPtr<UObject>>")]
+    [InlineData("LazyObjectProperty", "TArray<TLazyObjectPtr<UObject>>")]
+    [InlineData("DelegateProperty", "TArray<FScriptDelegate>")]
+    [InlineData("FieldPathProperty", "TArray<FFieldPath>")]
+    public void MapCppDecl_ArrayOfTheFourScalarOnlyTypes_SpellsThemLikeTheScalarPath(string inner, string expected)
+    {
+        var field = new FieldInfoModel { TypeName = "ArrayProperty", InnerType = inner, Size = 16 };
+        Assert.Equal(expected, SdkExportService.MapCppDecl(field).Type);
+    }
+
+    [Fact]
+    public void MapCppDecl_ArrayOfSoftClass_CarriesItsClass()
+    {
+        var field = new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = "SoftClassProperty", InnerObjClass = "AActor", Size = 16,
+        };
+        Assert.Equal("TArray<TSoftClassPtr<class AActor>>", SdkExportService.MapCppDecl(field).Type);
+    }
+
+    [Fact]
+    public void MapCppDecl_MapAndSetInners_UseTheSameSpellings()
+    {
+        var map = new FieldInfoModel
+        {
+            TypeName = "MapProperty", KeyType = "NameProperty", ValueType = "LazyObjectProperty", Size = 80,
+        };
+        Assert.Equal("TMap<FName, TLazyObjectPtr<UObject>>", SdkExportService.MapCppDecl(map).Type);
+        var set = new FieldInfoModel { TypeName = "SetProperty", ElemType = "SoftClassProperty", Size = 80 };
+        Assert.Equal("TSet<TSoftClassPtr<UObject>>", SdkExportService.MapCppDecl(set).Type);
+    }
+
     // --- MapCppDecl (LiveFieldValue) ---
 
     [Fact]
@@ -260,6 +295,24 @@ public class SdkExportServiceTests
 
         Assert.Contains(": public AActor", header);
         Assert.Contains("float Speed;", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeader_SkipsLiveWalkersGuessedRows()
+    {
+        // [P3-SDK-GUESSED] CE XML and CSX skip Live Walker's "Guess?" rows (commit 860245b0: "excluded from all
+        // exports"). The SDK header declared them, and a "?0x..." name does not compile.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x28, Size = 4 },
+            new() { Name = "?0x002C", TypeName = "IntProperty", Offset = 0x2C, Size = 4, IsGuessed = true },
+        };
+
+        var header = SdkExportService.GenerateClassHeader("APawn", "AActor", 0x30, fields);
+
+        Assert.Contains("float Health;", header);
+        Assert.DoesNotContain("?0x", header);
+        Assert.Contains("Pad_002C", header);   // its bytes stay covered, as padding
     }
 
     [Fact]

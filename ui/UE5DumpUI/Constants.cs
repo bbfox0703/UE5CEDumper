@@ -86,6 +86,30 @@ public static class Constants
     // command line at 32,767 and these paths are long (a per-game folder is named after
     // the game EXE). Set well under the cap; overflowing fails a whole batch.
     public const int LogCompressBatchSize = 40;
+
+    // ── Invoke result codes ─────────────────────────────────────────────────
+    // invoke_function / UE5_CallProcessEvent result -5: the game-thread dispatch TIMED OUT and
+    // the request STAYS QUEUED -- it will still execute when the game thread next drains
+    // (dll/src/Stark.cpp, the future.wait_for timeout path; Fern leaks the FString buffers for
+    // exactly that reason). So never "resend on failure" for it: that runs the call twice.
+    // [W3-CONSOLE-REINVOKE]
+    public const int InvokeDispatchTimeoutResult = -5;
+
+    // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED -- the
+    // toggle WILL run. Neither ON nor OFF yet, and not a failure: say "queued, do not press again", because a second
+    // Force queues a second toggle and the two drain ON then OFF. Same number as the dispatch timeout it passes through
+    // (Stark::StatefulToggleFailure). [W3-DEBUGCAM-QUEUED]
+    public const int DebugCameraToggleQueuedResult = InvokeDispatchTimeoutResult;
+
+    // ── Movement result codes (Laufen) ──────────────────────────────────────
+    // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
+    // is what a pre-5.4 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT
+    // only that -- ResolveCtx returns it when the pawn / CMC class lookup fails, SetGravityDirection when
+    // the vector read fails -- so the UI states the pre-5.4 verdict only when a fresh read ALSO shows a
+    // live CMC without the field. -3 (no pawn), -5 (no CharacterMovement) and -1 (not initialised) are
+    // transient: a menu, a loading screen, a vehicle pawn. [W2-GRAVDIR-VERDICT]
+    public const int LaufenErrReflect = -4;
+
     public const int LogCompressMaxArgChars = 24000;
 
     // Leftover-proxy cleanup reports (Reports/leftover-proxies-<stamp>.txt).
@@ -251,6 +275,12 @@ public static class Constants
     // so a single number governs the cap everywhere.
     public const int DefaultMaxQueryRows = 50000;
 
+    // [W1-PARTIAL-MARK] snapshots.partial_reason tokens -- WHY a kept capture is partial; "" = complete.
+    // PERSISTED, so never rename one. A separate marker from is_usable on purpose: is_usable=0 would
+    // auto-delete the partial the cap / low-disk stop deliberately keeps (DeleteUnusableSnapshotsAsync).
+    public const string SnapshotPartialCap     = "cap";       // stopped at the max-dataset cap
+    public const string SnapshotPartialDiskLow = "disklow";   // stopped on low disk mid-capture
+
     // Live DLL value/group scan candidate cap (the DLL session's max returned rows).
     // Intentionally a SEPARATE constant from DefaultMaxQueryRows even though the value
     // matches — different subsystem (in-game scan session vs. snapshot-DB query).
@@ -304,6 +334,20 @@ public static class Constants
     // LiveWalker seed their per-panel CeStringLength with this; the toolbar "String Length"
     // exponent slider floors at 2^4 = 16. Applies to Copy CE XML / Copy CE Field only.
     public const int DefaultCeStringLength = 256;
+
+    // [PROXYDEPLOY-SCANDRIVES-CORPUS] Folder NAMES the Scan Drives walk prunes at, whatever
+    // their depth. That scan exists to find UE games Steam does not know about (Epic, GOG, a manual
+    // install) and recognises a game by FOLDER SHAPE alone -- so a tree full of unpacked game copies
+    // looks exactly like a drive full of games. This machine's AOB corpus is one: `UE_Analyze_data`
+    // holds `Varies Version builds\`, `Game archive\DropIn\` and `For Testing\`, and
+    // tools/ue-sample/repackage.py already REFUSES to write into it by name (FORBIDDEN_ARCHIVE),
+    // because inventory_builds.py / preflight.py assert its row counts.
+    // ⭐ Measured 2026-09-16 (live check L13): a D: scan returned 28 "games", most of them corpus
+    // folders, and one All + Deploy there would have put a proxy DLL in every one.
+    // ⚠ A NAME, not a path: the same corpus is reachable through any drive letter or junction.
+    // Extend it through ui-options.json (`proxyDeploy.scanExcludedFolderNames`). The assumption it
+    // rests on, stated so it can be argued with: nobody installs a game into UE_Analyze_data.
+    public static readonly string[] DefaultScanExcludedFolderNames = { "UE_Analyze_data" };
 
     // Default instance-search result cap (InstanceFinderUiOptions.InstanceSearchCap
     // and the InstanceFinder panel's own default).

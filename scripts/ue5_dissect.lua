@@ -511,6 +511,22 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
         return nil
     end
 
+    -- [W5-OFFSETS-UNMEASURED] Every row below sits at a DLL-derived offset. When detection could not MEASURE those
+    -- offsets, say so -- once per distinct reason, not once per structure. The build still runs (the version defaults
+    -- are often right), but the user has to know it may be misaligned. A DLL without the export stays silent.
+    local okV, verdict = pcall(withBuf, 128, function(buf)
+        local v = callDLL("UE5_GetOffsetsVerdict", buf, 128)
+        return { measured = (v == 1), reason = readString(buf, 128, false) or "" }
+    end)
+    if okV and verdict then
+        if verdict.measured then
+            ST.offsetsWarned = nil
+        elseif verdict.reason ~= ST.offsetsWarned then
+            ST.offsetsWarned = verdict.reason
+            warn("UE property offsets were NOT measured (%s): this structure uses version defaults and may be misaligned. Re-scan from the UI, then rebuild it.", verdict.reason)
+        end
+    end
+
     -- Auto-detect: if no fields on this address, treat it as an instance
     -- and resolve its UClass instead.
     local testCount = callDLL("UE5_WalkClassBegin", classAddr)

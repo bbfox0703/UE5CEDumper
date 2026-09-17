@@ -54,14 +54,25 @@ public static class ProtectionScriptGenerator
         Line(sb, "local mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, "  showMessage('[GodMode] g_invokeMailbox not found -- is " +
-                  "UE5Dumper.dll injected?')");
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, "  showMessage('[GodMode] g_invokeMailbox not found -- is " +
+                      "UE5Dumper.dll injected?')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [W2-CEGEN-MODAL] An untick never pops a modal over the game (MailboxTimeout.SilentReturn).
+            Line(sb, "  dbg('[GodMode] g_invokeMailbox not found -- nothing to turn off')");
+        }
         Line(sb, "  return");
         Line(sb, "end");
+        // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
+        // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
-        CeLuaHygiene.AppendContractCheck(sb, "GodMode", MailboxTimeout.UntickAndReturn);
+        CeLuaHygiene.AppendContractCheck(sb, "GodMode", bail);
         Line(sb);
 
         // Mailbox round-trip: write op + value, trigger CMD_PROTECT=9, poll status.
@@ -71,20 +82,27 @@ public static class ProtectionScriptGenerator
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "GodMode");
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "GodMode", bail);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {OpSetGodMode})    -- op: PROTECT_OP_SET_GODMODE");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {value})    -- value: {value} = {label}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdProtect})    -- CMD_PROTECT (write LAST)");
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
-        CeLuaHygiene.AppendMailboxWait(sb, "GodMode");
+        CeLuaHygiene.AppendMailboxWait(sb, "GodMode", bail);
         Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=immune, 0=can be damaged, <0=error");
         Line(sb, $"dbg('[GodMode] {label} -> state=' .. tostring(state))");
         Line(sb, "if state < 0 then");
-        Line(sb, $"  showMessage('[GodMode] {label} -- no pawn? (enter gameplay first)')");
-        // Nothing was applied on this branch, so the record must not stay ticked.
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[GodMode] {label} -- no pawn? (enter gameplay first)')");
+            // Nothing was applied on this branch, so the record must not stay ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            Line(sb, $"  dbg('[GodMode] {label} -- no pawn to restore right now')");   // [W2-CEGEN-MODAL]
+        }
         Line(sb, "elseif DEBUG == 0 then");
         Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
         Line(sb, "end");

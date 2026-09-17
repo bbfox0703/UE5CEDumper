@@ -209,6 +209,12 @@ public interface IDumpService
     // --- Enum Enumeration ---
     Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default);
 
+    /// <summary>[P1-ENUMNAMES] <see cref="ListEnumsAsync"/> plus what the list does not say by itself: the DLL could
+    /// not locate UEnum::Names on this build (every enum's entries are then empty), or the walk was cut short. The
+    /// default serves fakes with a list that claims neither.</summary>
+    async Task<EnumListResult> ListEnumsDetailedAsync(CancellationToken ct = default)
+        => new EnumListResult { Enums = await ListEnumsAsync(ct) };
+
     // --- Function Walking (for SDK export) ---
     Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
 
@@ -471,7 +477,8 @@ public interface IDumpService
     /// reads state, toggles only when needed, and on a disable that the game's
     /// stripped ToggleDebugCamera can't honour, switches the local player's
     /// controller back to the original PlayerController. Returns the resulting
-    /// state (1 = ON, 0 = OFF, -1 = error).
+    /// state (1 = ON, 0 = OFF, -1 = error), or <see cref="Constants.DebugCameraToggleQueuedResult"/>
+    /// when the toggle is QUEUED: it will still run, so never re-send it. [W3-DEBUGCAM-QUEUED]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 

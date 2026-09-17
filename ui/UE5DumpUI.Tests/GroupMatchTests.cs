@@ -49,6 +49,52 @@ public class GroupMatchTests
         new() { Predicate = p, Scope = sc };
 
     // ============================================================
+    // [W2-GROUPMATCH-ENUM] an enum leaf is a 1-byte UNSIGNED leaf, exactly as the live matcher
+    // treats it (Radar: EnumProperty -> UInt8, in kNumericAll, NOT in kNumericNoByte). WidthBytes
+    // had no EnumProperty case, so an enum state field (weapon type, quest stage) could never
+    // satisfy any slot. ⛔ Adding it to WidthBytes ALONE is the recorded harmful fix: IsOneByte keys
+    // on the same set, and without it NumericNoByte would admit enums the live scan excludes.
+    // ============================================================
+
+    // ⚠ Run() rejects fewer than two slots ("a group needs >= 2 values"), so a single-slot Run is
+    // false whatever the leaf is -- the first version of these tests was vacuous for exactly that
+    // reason. Each fact asks LeafSatisfiesSlot directly, with an anti-vacuity partner, and one runs
+    // a real two-slot group.
+
+    [Fact]
+    public void EnumLeaf_MatchesUnderNumericAll()
+    {
+        Assert.True(GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", 3),
+            Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericAll)));
+
+        // ...and inside a real group: an enum stage plus an int counter.
+        var leaves = new[] { L(0x20, "EnumProperty", 3), L(0x24, "IntProperty", 70) };
+        var slots = new[]
+        {
+            Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericAll),
+            Abs(GroupMatch.Predicate.Exact, 70, sc: GroupMatch.Scope.NumericAll),
+        };
+        Assert.True(GroupMatch.Run(leaves, slots, out _, out _));
+    }
+
+    [Fact]
+    public void EnumLeaf_StaysOutOfNumericNoByte_LikeTheLiveScan()
+    {
+        // The control that kills the WidthBytes-only fix.
+        var noByte = Abs(GroupMatch.Predicate.Exact, 3, sc: GroupMatch.Scope.NumericNoByte);
+        Assert.False(GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", 3), noByte));
+        Assert.True(GroupMatch.LeafSatisfiesSlot(L(0x20, "IntProperty", 3), noByte));   // anti-vacuity: the slot works
+    }
+
+    [Theory]
+    [InlineData(255, true)]     // the widest 1-byte unsigned value
+    [InlineData(256, false)]    // does not fit one byte
+    [InlineData(-1, false)]     // an enum is unsigned
+    public void EnumLeaf_TargetFitsOneUnsignedByte(double target, bool fits)
+        => Assert.Equal(fits, GroupMatch.LeafSatisfiesSlot(L(0x20, "EnumProperty", target),
+               Abs(GroupMatch.Predicate.Exact, target, sc: GroupMatch.Scope.NumericAll)));
+
+    // ============================================================
     // Mode A — single-snapshot absolute (the degenerate path)
     // ============================================================
 
@@ -125,6 +171,56 @@ public class GroupMatchTests
         Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
         Assert.Equal(new[] { 1 }, per[0]); // 3.5 -> Float leaf only
     }
+
+    // [W2-GROUPMATCH-WIDTH] the C# mirror of [W2-ORDEN-FINDENTRY]. The width gate is right for
+    // Exact and wrong for ordering: every Int16 is smaller than 70000 and every unsigned field is
+    // bigger than -5, yet neither target has an encoding at that width, so the leaf was skipped --
+    // and one lost width drops the whole group. The live matcher keeps the width through Radar's
+    // Fit::AlwaysTrue verdict (audit #5 AB4); the snapshot matcher must give the same answer.
+    [Theory]
+    [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Bigger,  -5,     true)]   // every unsigned > -5
+    [InlineData("UInt32Property", 0,     GroupMatch.Predicate.Bigger,  -5,     true)]
+    [InlineData("UInt64Property", 7,     GroupMatch.Predicate.Bigger,  -5,     true)]   // [A4-AB4-UINT64]'s twin
+    [InlineData("Int16Property",  32767, GroupMatch.Predicate.Smaller, 70000,  true)]   // the edge clamping drops
+    [InlineData("Int16Property",  -3,    GroupMatch.Predicate.Bigger,  -70000, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  70000,  false)]  // no int16 exceeds it
+    [InlineData("UInt16Property", 3,     GroupMatch.Predicate.Smaller, -5,     false)]  // no unsigned is below it
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Exact,   70000,  false)]  // Exact keeps the gate
+    // (review of aaf6a022) +/-Infinity lies beyond every integer range, as in Radar's verdict; NaN never.
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.PositiveInfinity, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Bigger,  double.NegativeInfinity, true)]
+    [InlineData("Int16Property",  5,     GroupMatch.Predicate.Smaller, double.NaN,              false)]
+    // ...and "-0" is an unsigned target of 0 on both sides (parity with the DLL fix beside it).
+    [InlineData("UInt16Property", 0,     GroupMatch.Predicate.Exact,   -0.0,   true)]
+    public void OrderedSlot_UnencodableTarget_KeepsTheWidthWhenEveryValueSatisfies(
+        string type, double value, GroupMatch.Predicate p, double target, bool satisfies)
+        => Assert.Equal(satisfies, GroupMatch.LeafSatisfiesSlot(L(0x10, type, value), Abs(p, target)));
+
+    [Fact]
+    public void OrderedSlot_UnencodableTarget_DoesNotDropTheGroup()
+    {
+        // What the user saw: slot 2 (Exact 24) can only take the int, and before the fix the
+        // Bigger(-5) slot could only take the int too -> "no objects matched".
+        var leaves = new[] { L(0x10, "UInt16Property", 3), L(0x14, "IntProperty", 24) };
+        var slots = new[] { Abs(GroupMatch.Predicate.Bigger, -5), Abs(GroupMatch.Predicate.Exact, 24) };
+        Assert.True(GroupMatch.Run(leaves, slots, out var per, out _));
+        Assert.Equal(new[] { 0, 1 }, per[0]);
+    }
+
+    // [A4-AB4-BETWEEN] the snapshot half, fixed with the live one: a Between bound with no encoding at an integer
+    // leaf's width no longer drops the width -- the range is clamped into it (Between is inclusive), and only a range
+    // that misses the width entirely excludes it. The same cases as dll_helpers_test's BETWEEN block.
+    [Theory]
+    [InlineData("UInt16Property", 7,     -5,    10,    true)]    // no unsigned -5: clamped to 0..10
+    [InlineData("UInt32Property", 0,     -5,    10,    true)]
+    [InlineData("Int16Property",  32767, 10,    70000, true)]    // no int16 70000: clamped to 10..32767
+    [InlineData("UInt16Property", 7,     10,    -5,    true)]    // reversed bounds
+    [InlineData("Int16Property",  9,     10,    70000, false)]   // below the range (control)
+    [InlineData("Int16Property",  5,     70000, 80000, false)]   // a range that misses int16 entirely (control)
+    [InlineData("IntProperty",    75000, 70000, 80000, true)]    // ...and still meets int32 (control)
+    public void BetweenSlot_UnencodableBound_ClampsIntoTheWidth(
+        string type, double value, double lo, double hi, bool satisfies)
+        => Assert.Equal(satisfies, GroupMatch.LeafSatisfiesSlot(L(0x10, type, value), Between(lo, hi)));
 
     [Fact]
     public void Scope_OneByteExcludedUnderNoByte_ButIncludedUnderAll()

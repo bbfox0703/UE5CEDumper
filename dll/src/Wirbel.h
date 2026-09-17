@@ -42,6 +42,9 @@ struct Marker {
     bool Valid = false;
     Pose P{};
     char MapName[Grimoire::TELEPORT_MAPNAME_CAP] = {};
+    // [W2-MARKER-PARENTREL] The pose was saved from the raw parent-relative fallback (an attached pawn whose
+    // world-space read failed): P is NOT world coordinates, and recalling it drives the pawn there as if it were.
+    bool ParentRelative = false;
 };
 
 // Camera point-of-view (read-only). The on-screen view is produced by
@@ -145,7 +148,15 @@ int32_t GetTrainerOffsets(TrainerOffsets& out);
 // attached (vehicle/platform), falls back to invoking K2_GetActorLocation
 // for world-space coordinates. outSource (optional): 0 = raw read,
 // 1 = invoke path.
-int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource);
+// outParentRelative (optional): TRUE when the pawn is ATTACHED (vehicle / mount /
+// moving platform) and the world-space invoke failed, so X/Y/Z are the raw
+// RelativeLocation -- parent-relative numbers, NOT world coordinates. Required by
+// docs/teleport-spec.md:218-220 ("return the raw values anyway ... and a warning
+// flag"); the fallback shipped in 2026-07 and the flag did not, so a degraded read
+// was indistinguishable from a healthy one and got saved into markers and driven
+// back as a world destination. [POSEATTACH-2026-09-10]
+int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                bool* outParentRelative = nullptr);
 
 // Read the pose AND the live movement state (pawn address + velocity /
 // acceleration off the CharacterMovement) in ONE resolution pass — used by the
@@ -153,7 +164,8 @@ int32_t GetPose(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource
 // GWorld". `move` is filled only when the pose read succeeds (TP_OK); its
 // HasMovement flag tells the caller whether velocity/acceleration are valid.
 int32_t GetPoseAndMovement(Pose& out, char* mapName, int32_t mapNameCap,
-                           uint8_t* outSource, MovementState& move);
+                           uint8_t* outSource, MovementState& move,
+                           bool* outParentRelative = nullptr);
 
 // Read the current camera POV (PlayerController.PlayerCameraManager): world
 // location, rotation, and FOV via the engine's BlueprintCallable getters
@@ -207,7 +219,9 @@ int32_t GetLast(Marker& out);
 // so the caller can also copy a "BugItGo X Y Z" string). User-triggered single
 // slot, distinct from the markers and the system "last" slot — it persists DLL
 // side so a later BugItGo can teleport back without the caller holding the pose.
-int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource);
+// outParentRelative (optional): the pose came from the raw parent-relative fallback. [W2-MARKER-PARENTREL]
+int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSource,
+                  bool* outParentRelative = nullptr);
 
 // BugItGo: teleport to the pose stored by the most recent BugItSave (restores
 // rotation, one-way like a marker recall). TP_ERR_EMPTY_MARKER (no-op) when no
@@ -223,8 +237,12 @@ int32_t BugItGo(uint8_t* tierOut);
 // ControlRotation. outNewPose receives the resulting pose (re-read after the
 // move) so the caller can display the landed X/Y/Z/Pitch/Yaw. The pre-jump pose
 // is auto-saved (RecallLast undoes it). tierOut: 1 invoke / 2 raw write.
+// outLandingKnown (optional): FALSE when the post-move pose re-read FAILED, so
+// outNewPose is untouched -- NOT a landing at the origin. The move itself still
+// succeeded (that is what the return code says); publish nothing for the landing
+// rather than zeros nobody measured. [TPREL-ZEROPOSE-2026-09-10]
 int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
-                         uint8_t* tierOut);
+                         uint8_t* tierOut, bool* outLandingKnown = nullptr);
 
 // Force the OS mouse cursor on (show=true) or off — writes the local
 // PlayerController's bShowMouseCursor bitfield (a BlueprintReadWrite UPROPERTY;

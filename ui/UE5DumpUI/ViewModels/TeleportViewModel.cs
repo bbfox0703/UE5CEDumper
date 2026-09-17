@@ -311,6 +311,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _poseMap = "";
     [ObservableProperty] private string _poseSource = "";
 
+    /// <summary>The pose on the card is PARENT-RELATIVE, not world coordinates: an attached pawn whose
+    /// world-space read failed. A state the card shows, not a status line a later message erases.
+    /// [W2-POSEATTACH-QUIETPOLL]</summary>
+    [ObservableProperty] private bool _poseParentRelative;
+
     /// <summary>Resolved pawn address shown on the Current Pose card ("" when
     /// unavailable) — this is the object the "Locate in GWorld" button targets.</summary>
     [ObservableProperty] private string _pawnAddrDisplay = "";
@@ -859,16 +864,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             StatusText = "Connected";
             _ = RefreshMarkersAsync();
-            // Reflect any dilation the DLL is already holding (prior session / CE
-            // record) — it survives a UI reconnect as long as the game lives.
-            _ = RefreshHeldTimeStateAsync();
-            // Same "state lives in the DLL" model for God Mode: `want` survives a UI
-            // reconnect, so the badge must reflect it without the user pressing ↻
-            // (audit #5 AD4 — nothing queried it on connect, and AutoTick polls only
-            // pose + markers). Deliberately NOT RefreshGodModeAsync: that one sets
-            // IsBusy, which flickers every CanOperate-bound button, and writes
+            // Reflect whatever the DLL is ALREADY holding — a dilation, a god-mode
+            // `want`, a Fly or Move Speed hold from a previous UI session or a CE
+            // record. All of it survives a UI reconnect as long as the game lives, so
+            // the badges must show it without the user pressing ↻ on each card.
+            //
+            // ⚠ This used to be two calls covering three badges, while the disconnect
+            // branch below reset TWELVE — so nine cards read "Unknown" over state the
+            // DLL could answer for. Measured live on Shipping, with the two primed
+            // cards as the control. [BADGEPRIME-2026-09-10]; the asymmetry is now held
+            // by tools/check_badge_prime_symmetry.py.
+            //
+            // Deliberately NOT the button-driven RefreshXxxAsync methods: those set
+            // IsBusy, which flickers every CanOperate-bound button, and write
             // StatusText, which would overwrite the "Connected" just set above.
-            _ = RefreshHeldProtectStateAsync();
+            ConnectPrime = PrimeHeldBadgesAsync();
         }
         else
         {
@@ -913,7 +923,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // class::field. (L13)
             _stealthCandidate = null;
             StealthFieldText = "—";
-            (StealthState, StealthBadgeColor) = ("Off", "#999999");
+            ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
     }
 
@@ -1005,7 +1015,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task RefreshPoseQuietAsync()
+    // internal: the test seam for the 0.5s poll, whose timer no test drives. [W2-POSEATTACH-QUIETPOLL]
+    internal async Task RefreshPoseQuietAsync()
     {
         try
         {
@@ -1052,7 +1063,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
-            StatusText = $"Pose read ({p.Source}).";
+            // ⚠ SAY WHEN THE NUMBERS ARE NOT WORLD COORDINATES. On an attached pawn
+            // (vehicle / mount / moving platform) whose world-space invoke failed, the
+            // DLL falls back to the raw RelativeLocation -- parent-relative values that
+            // look exactly like a healthy read. Saving them as a marker stores a
+            // destination that will teleport the pawn somewhere else entirely.
+            // [POSEATTACH-2026-09-10]
+            StatusText = p.ParentRelative
+                ? $"Pose read ({p.Source}) -- ⚠ PARENT-RELATIVE, not world coordinates: "
+                  + "this pawn is attached (vehicle / platform) and the world-space read "
+                  + "failed. Do not save these as a marker."
+                : $"Pose read ({p.Source}).";
         }
         catch (Exception ex)
         {
@@ -1332,7 +1353,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPose(p);
             UpdateMarkerRow(slot, p);
-            StatusText = $"Marker {slot + 1} saved.";
+            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens.
+            StatusText = p.ParentRelative
+                ? $"Marker {slot + 1} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, "
+                  + "and recalling it drives the pawn there as if they were."
+                : $"Marker {slot + 1} saved.";
         }
         catch (Exception ex)
         {
@@ -1390,6 +1415,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             await _dump.TeleportClearMarkerAsync(slot);
             var row = Markers[slot];
             row.Valid = false;
+            row.ParentRelative = false;
             row.Summary = "(empty)";
             StatusText = $"Marker {slot + 1} cleared.";
         }
@@ -1532,12 +1558,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Debug Camera (deterministic force on/off, shared with Console) ──
 
-    /// <summary>Map the DLL tri-state (1=on, 0=off, -1=unknown) onto the badge.</summary>
+    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge.</summary>
     private void ApplyDebugCameraState(int state)
         => (DebugCameraState, DebugCameraBadgeColor) = state switch
         {
             1  => ("ON",      "#4EC9B0"),   // green — active
             0  => ("OFF",     "#999999"),   // grey — inactive
+            // [W3-DEBUGCAM-QUEUED] Neither ON nor OFF yet, and not "unknown": the toggle WILL run.
+            Constants.DebugCameraToggleQueuedResult => ("Queued", "#D7BA7D"),   // amber — pending
             _  => ("Unknown", "#888888"),
         };
 
@@ -1595,6 +1623,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
+                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
+                Constants.DebugCameraToggleQueuedResult =>
+                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
+                      $"It will run when the game thread is free. Do not press Force {want} again: " +
+                      "a second toggle would undo the first.",
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };
@@ -1759,6 +1792,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// of truth for "a hold is live", so the experimental gate-off teardown knows to
     /// release it. (M9)</summary>
     private const string StealthHoldingState = "Holding @0";
+
+    /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
+    /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
+    /// with a tuple -- a claim nothing had checked, while Solide kept holding -- and the gate could not see it.</summary>
+    private void ApplyStealthState(int state)
+        => (StealthState, StealthBadgeColor) = state switch
+        {
+            1 => (StealthHoldingState, "#4EC9B0"),
+            0 => ("Off", "#999999"),
+            _ => ("Unknown", "#999999"),
+        };
 
     /// <summary>The auto-found candidate held at 0 (null until Detect finds one).</summary>
     private UE5DumpUI.Models.StealthCandidate? _stealthCandidate;
@@ -2151,7 +2195,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1   => string.Format(CultureInfo.InvariantCulture,
                          "✓ Walk speed held at {0:0}% ({1:0.#} cm/s). Drag + Apply to change; Reset to restore.",
                          mult * 100.0, mp.WalkSpeed.Current),
-                < 0 => "No pawn / no CharacterMovement — enter gameplay first; the override applies once a pawn exists.",
+                // [W2-MS-PROMISE] Laufen returned before storing anything, so nothing is queued to
+                // "apply once a pawn exists" -- worded like its Gravity and Super Jump siblings.
+                < 0 => "No pawn / no CharacterMovement — enter gameplay first.",
                 _   => "Walk speed override is off.",
             };
         }
@@ -2311,6 +2357,131 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Quiet read-back of EVERY badge the disconnect branch resets, run once on connect.
+    /// </summary>
+    /// <remarks>
+    /// <para>⛔ WHY THIS EXISTS. <see cref="SetConnected"/>'s disconnect branch walks twelve
+    /// badges back to Unknown; before 2026-09-10 its connect branch primed only three, so
+    /// nine cards sat at "Unknown" while the DLL held a definite answer for each. Measured
+    /// live on a Shipping fixture: Keep Foreground, Move Speed, Debug Camera, Gravity,
+    /// Super Jump and Fly all read "State: Unknown" against a pipe answering
+    /// <c>state: 0</c> / <c>has_cmc: true</c> — while God Mode and Time Dilation showed
+    /// real values, and those were exactly the two that were primed.
+    /// [BADGEPRIME-2026-09-10].</para>
+    ///
+    /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
+    /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, added for
+    /// audit #5 AD4). So after a UI restart a still-active Fly, Move Speed or Gravity hold
+    /// showed "Unknown" and the user had no sign the game was still modified.</para>
+    ///
+    /// <para>⚠ QUIET IS THE WHOLE CONTRACT. The button-driven <c>Refresh*Async</c> methods
+    /// set <c>IsBusy</c> — which flickers every <c>CanOperate</c>-bound control — and write
+    /// <c>StatusText</c>, which would stamp over the "Connected" that <see cref="SetConnected"/>
+    /// has just set. That is why they are not simply called here, and why each read below
+    /// applies its readout and logs on failure without touching either.</para>
+    ///
+    /// <para>Sequential on purpose: twelve badges need only eight pipe round-trips (four
+    /// cards share <c>GetMovementParamsAsync</c>), and firing them one after another keeps
+    /// a reconnect from bursting the pipe. One failure must not skip the rest, so every
+    /// read is guarded on its own.</para>
+    ///
+    /// <para>⛔ ADDING A CARD? Add its reset to <see cref="SetConnected"/> AND its prime
+    /// here. The two lists are kept honest by <c>tools/check_badge_prime_symmetry.py</c>,
+    /// which fails if a badge is reset on disconnect and primed by nothing on connect.</para>
+    /// </remarks>
+    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
+    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
+    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
+    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
+    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
+    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
+    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
+    /// honest fix. Production code never awaits this.</remarks>
+    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
+
+    private async Task PrimeHeldBadgesAsync()
+    {
+        // God Mode, and the two time lanes — the three that were already primed.
+        await PrimeOneAsync(RefreshHeldProtectStateAsync, "protect");
+        await PrimeOneAsync(RefreshHeldTimeStateAsync, "time");
+
+        // Four cards off ONE call: Move Speed, Gravity, Super Jump, Gravity Direction.
+        await PrimeOneAsync(async () =>
+        {
+            var mp = await _dump.GetMovementParamsAsync();
+            ApplyMoveSpeedReadout(mp);
+            ApplyGravityReadout(mp);
+            ApplySuperJumpReadout(mp);
+            ApplyGravDirReadout(mp);
+        }, "movement");
+
+        await PrimeOneAsync(async () =>
+            ApplyDebugCameraState(await _dump.GetDebugCameraStateAsync()), "debugcamera");
+        await PrimeOneAsync(async () =>
+            ApplyForegroundLockState(await _dump.GetForegroundLockAsync()), "foreground");
+        await PrimeOneAsync(async () =>
+            ApplyFlyReadout(await _dump.FlyGetStateAsync()), "fly");
+        await PrimeOneAsync(async () =>
+            ApplySeeThroughReadout(await _dump.SeeThroughGetStateAsync()), "seethrough");
+        await PrimeOneAsync(async () =>
+            ApplyMouseCursorState(await _dump.GetMouseCursorAsync()), "cursor");
+        // [A4-STEALTH-PRIME] The Stealth hold survives a UI reconnect like every other hold.
+        await PrimeOneAsync(RefreshHeldStealthStateAsync, "stealth");
+
+        // Not a badge, but the same omission: nothing read the POSE on connect, so PoseMap stayed ""
+        // until the user pressed Refresh -- and the library's map flags and "Add from fields" both
+        // work off it. RefreshCurrentMapAsync is already quiet (no IsBusy, no StatusText). [W2-TPREL-MAP]
+        await PrimeOneAsync(RefreshCurrentMapAsync, "pose");
+    }
+
+    /// <summary>One quiet prime: log-only on failure, and never abandons the rest.</summary>
+    /// <remarks>A prime that threw used to be indistinguishable from a badge that is
+    /// genuinely Unknown — and leaving the badge at Unknown IS the honest outcome for a
+    /// read that failed, so the catch deliberately does not force any other state.</remarks>
+    private async Task PrimeOneAsync(Func<Task> read, string what)
+    {
+        if (!IsConnected) return;
+        try
+        {
+            await read();
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Teleport prime '{what}' failed — its badge stays Unknown", ex);
+        }
+    }
+    /// <summary>[A4-STEALTH-PRIME] Quiet read-back of the Stealth hold (used on connect). The DLL has no "stealth"
+    /// record: the hold is a numeric force_field at 0, so it is recognised by intersecting the meter's candidates
+    /// (find_stealth_meter) with the DLL's live forced fields (get_forced_fields). ⛔ Never "any numeric job at 0": that
+    /// may be a Property Search Force, and the experimental gate-off would then release it. Nothing forced at all is a
+    /// definite Off; a forced field that is not a meter candidate leaves the honest Unknown.</summary>
+    private async Task RefreshHeldStealthStateAsync()
+    {
+        if (!IsConnected) return;
+        var forced = await _dump.GetForcedFieldsAsync();
+        if (forced.Count == 0) { ApplyStealthState(0); return; }
+        var cands = await _dump.FindStealthMeterAsync();
+        UE5DumpUI.Models.StealthCandidate? held = null;
+        foreach (var c in cands)
+        {
+            foreach (var f in forced)
+            {
+                if (f.Kind == "numeric" && f.Value == 0 && f.ClassName == c.ClassName && f.FieldName == c.FieldName)
+                {
+                    held = c;
+                    break;
+                }
+            }
+            if (held != null) break;
+        }
+        if (held == null) { ApplyStealthState(-1); return; }
+        _stealthCandidate = held;
+        StealthFieldText = $"{held.ClassName}::{held.FieldName} = 0 (held)";
+        ApplyStealthState(1);
+    }
+
     /// <summary>Quiet read-back of the God Mode hold (used on connect). The DLL's
     /// re-assert worker keeps driving <c>want</c> for as long as the game process
     /// lives, so a UI reconnect should show the badge that is actually in force
@@ -2351,9 +2522,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1   => string.Format(CultureInfo.InvariantCulture,
                          "✓ {0} time held at {1:0.###}× ({2:0}%). Drag + Apply to change; Reset to restore.",
                          scope, value, value * 100.0),
+                // [W2-MS-PROMISE] twin: Hemmung::SetDilation returns before storing anything when the
+                // owner does not resolve, so nothing is queued to "apply once" it exists either.
                 < 0 => lane == TimeLane.Pawn
-                         ? "No player pawn — enter gameplay first; the override applies once a pawn exists."
-                         : "No WorldSettings — enter a level first; the override applies once a world is loaded.",
+                         ? "No player pawn — enter gameplay first."
+                         : "No WorldSettings — enter a level first.",
                 _   => $"{scope} time override is off.",
             };
         }
@@ -2712,6 +2885,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// have had to run off the game thread.</summary>
     private const int SeeThroughNoHookCode = -5;
 
+    /// <summary>Schlacht::STR_ERR_REFLECTION — refused at enable: this build lacks LineTraceSingle or
+    /// SetActorHiddenInGame, so nothing could ever be hidden. [P1-SEETHRU-NOPRODUCER]</summary>
+    private const int SeeThroughReflectionCode = -3;
+
     private void ApplySeeThroughReadout(SeeThroughStatus st)
     {
         ApplySeeThroughState(st.Active ? 1 : 0);
@@ -2737,13 +2914,30 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // [P1-SEETHRU-NOPRODUCER] Refused at enable because the build cannot hide anything. Unlike the hook refusal
+        // above this is a property of the build, so it offers no retry.
+        if (!st.Active && st.Code == SeeThroughReflectionCode)
+        {
+            SeeThroughState = "Unavailable";
+            SeeThroughBadgeColor = "#C9A04E";
+            SeeThroughCurrentText =
+                "Not supported on this game build — LineTraceSingle or SetActorHiddenInGame is missing "
+                + "(cooked out), so See-through cannot hide anything.";
+            return;
+        }
+
         // Leftover-hidden: must be tested BEFORE the plain-off early-return below,
         // and kept on the card rather than only in the one-shot status line.
         if (!st.Active && st.HiddenCount > 0)
         {
-            SeeThroughCurrentText =
-                $"Off — {st.HiddenCount} actor(s) still hidden (the game thread was paused). "
-                + "Click back into the game and they reappear; Keep Foreground avoids this.";
+            // [P1-SEETHRU-GIVEUP] ...but "they reappear" only while the DLL is still waiting. After the restore window
+            // it gives up, and the card now carries the log's remedy instead of a promise nothing keeps.
+            SeeThroughCurrentText = st.RestoreAbandoned
+                ? $"Off — {st.HiddenCount} actor(s) still hidden: the game thread stayed paused past the restore "
+                  + "window, so the automatic restore gave up. Turn See-through on and off again with the game "
+                  + "running to restore them."
+                : $"Off — {st.HiddenCount} actor(s) still hidden (the game thread was paused). "
+                  + "Click back into the game and they reappear; Keep Foreground avoids this.";
             return;
         }
 
@@ -2774,7 +2968,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 : st.Code == SeeThroughNoHookCode
                     ? "See-through refused: the game-thread hook is not available. "
                       + "Press Apply again to retry — this failure is often transient."
-                    : "See-through could not be enabled.";
+                    : st.Code == SeeThroughReflectionCode
+                        ? "See-through refused: this game build cannot hide actors "
+                          + "(LineTraceSingle / SetActorHiddenInGame is missing)."
+                        : "See-through could not be enabled.";
         }
         catch (Exception ex) { ApplySeeThroughState(-1); SetError(ex); _log.Error("Teleport ApplySeeThrough failed", ex); }
         finally { IsBusy = false; }
@@ -3010,24 +3207,39 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
 
+    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.4).
+    // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
+    // which is what the connect/disconnect reset's own comment always said it did.
+    private const int GravDirUnavailable = -2;
+
     private void ApplyGravDirState(int state)
     {
         _gravDirActive = state == 1;
         (GravDirState, GravDirBadgeColor) = state switch
         {
-            1 => ("ON",          "#4EC9B0"),
-            0 => ("OFF",         "#999999"),
-            _ => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            1                  => ("ON",          "#4EC9B0"),
+            0                  => ("OFF",         "#999999"),
+            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            _                  => ("Unknown",     "#888888"),   // no pawn right now / reset / failed read
         };
     }
 
     private void ApplyGravDirReadout(MovementParams mp)
     {
         var g = mp.GravityDirection;
-        if (!mp.HasCmc || !g.Resolved)
+        // [W2-GRAVDIR-VERDICT] Two different answers, and only one is about the engine. No CMC at this
+        // instant (menu, loading, cutscene, spectator, vehicle pawn) is transient; a CMC WITHOUT a
+        // reflected GravityDirection is the pre-5.4 verdict.
+        if (!mp.HasCmc)
+        {
+            GravDirCurrentText = "Current: — (no pawn / no CharacterMovement right now; enter gameplay).";
+            ApplyGravDirState(-1);
+            return;
+        }
+        if (!g.Resolved)
         {
             GravDirCurrentText = "Current: unavailable (needs UE5.4+ with a reflected GravityDirection).";
-            ApplyGravDirState(-1);
+            ApplyGravDirState(GravDirUnavailable);
             return;
         }
         GravDirCurrentText = string.Format(CultureInfo.InvariantCulture,
@@ -3046,9 +3258,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             var mp = await _dump.GetMovementParamsAsync();
             ApplyGravDirReadout(mp);
-            StatusText = (mp.HasCmc && mp.GravityDirection.Resolved)
-                ? "Read gravity direction."
-                : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";
+            StatusText = !mp.HasCmc
+                ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
+                : mp.GravityDirection.Resolved
+                    ? "Read gravity direction."
+                    : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
         }
         catch (Exception ex)
         {
@@ -3078,7 +3292,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 1 => string.Format(CultureInfo.InvariantCulture,
                        "✓ Gravity direction held at ({0:0.00}, {1:0.00}, {2:0.00}).", g.X, g.Y, g.Z),
                 0 => "Gravity direction off (a zero vector = off).",
-                _ when !r.Resolved => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
+                // [W2-GRAVDIR-VERDICT] The verdict needs BOTH signals. `resolved` alone comes from a fresh
+                // read and is false with no pawn as well as on a pre-5.4 engine; -4 alone is also returned
+                // when the pawn / CMC class lookup or the vector read fails (Laufen.cpp ResolveCtx,
+                // SetGravityDirection). So: the set refused on reflection AND a live CMC lacks the field.
+                _ when r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved
+                    => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
                 _ => "Gravity direction: no pawn / no CharacterMovement (enter gameplay first).",
             };
         }
@@ -3129,7 +3348,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var g = mp.GravityDirection;
             if (!g.HasAddr)
             {
-                StatusText = "No GravityDirection field to locate (needs UE5.4+).";
+                // [W2-GRAVDIR-VERDICT] review follow-up: the readout's split, here too. No CMC right now
+                // is transient; only a CMC WITHOUT the reflected field is the pre-5.4 verdict.
+                StatusText = !mp.HasCmc
+                    ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
+                    : !g.Resolved
+                        ? "No GravityDirection field to locate (needs UE5.4+)."
+                        : "The GravityDirection field resolved without an address — press ↻ and try again.";
                 return;
             }
             StatusText = $"Locating {g.FieldName} {g.OwnerAddr}+0x{g.FieldOffset:X} in GWorld…";
@@ -3160,6 +3385,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (p.Code != TeleportCodes.Ok)
             {
                 StatusText = $"TP facing: {TeleportCodes.Describe(p.Code)}";
+                return;
+            }
+            // ⛔ DO NOT PAINT A LANDING NOBODY MEASURED. When the post-move re-read
+            // fails the DLL now says so instead of publishing (0,0,0); calling ApplyPose
+            // there would overwrite the live X/Y/Z with zeros the user can copy into the
+            // coords box or save as a marker. The move itself succeeded.
+            // [TPREL-ZEROPOSE-2026-09-10]
+            if (p.LandingUnknown)
+            {
+                StatusText = string.Format(CultureInfo.InvariantCulture,
+                    "Teleported {0:0.#} uu {1} — but the landing could not be read back, "
+                    + "so the coordinates below are unchanged. Press Refresh to re-read.",
+                    RelativeDistance, RelativeHorizontal ? "horizontally" : "in 3D");
                 return;
             }
             ApplyPose(p);
@@ -3319,7 +3557,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (row == null) return "";
             var e = row.Entry;
             var where = string.IsNullOrEmpty(e.Map) ? "(no map)" : e.Map;
-            if (!IsSameMap(e.Map, PoseMap))
+            if (!IsOnCurrentMap(e.Map))
                 return $"{e.Label} — {where} — ⚠ different map (you are on '{PoseMap}')";
             return row.HasDistance
                 ? $"{e.Label} — {where} — {row.Distance:N0} uu away"
@@ -3337,6 +3575,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// flag every imported row cross-map. See spec §3 D2.</summary>
     internal static bool IsSameMap(string? a, string? b) =>
         string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[W2-TPREL-MAP] An UNKNOWN current map ("" -- before the first pose read, with no pawn,
+    /// or disconnected) is not a different map. The filter and the teleport guard already treated it
+    /// so; the row flag and the summary did not, and flagged every row "you are on ''". One predicate
+    /// for all four, so they cannot drift apart again.</summary>
+    private bool IsOnCurrentMap(string? entryMap) =>
+        string.IsNullOrEmpty(PoseMap) || IsSameMap(entryMap, PoseMap);
 
     partial void OnCoordFilterTextChanged(string value)
     {
@@ -3402,13 +3647,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (_coordStore == null || _suppressCoordPersist) return;
         if (string.IsNullOrEmpty(_activeCoordKey)) return;
-        _coordStore.Save(_activeCoordKey, new CoordinateLibraryFile
-        {
-            Module = _activeCoordKey,
-            Entries = _coordAll.ToList(),
-            ZTolerance = CoordZTolerance,
-        });
+        _coordStore.Save(_activeCoordKey, CurrentCoordFile());
     }
+
+    /// <summary>The library the user is looking at, as a file. The one-shot backups are written
+    /// from this, not copied from disk: after a <c>.bak</c> recovery the file on disk is still the
+    /// corrupt one. [A1-COORD-BACKUP]</summary>
+    private CoordinateLibraryFile CurrentCoordFile() => new()
+    {
+        Module = _activeCoordKey,
+        Entries = _coordAll.ToList(),
+        ZTolerance = CoordZTolerance,
+    };
 
     /// <summary>All entries, newest-first insertion order preserved. Exposed for the
     /// export/import codecs (P2+) and for tests.</summary>
@@ -3450,8 +3700,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var matched = new List<CoordEntry>();
         foreach (var e in _coordAll)
         {
-            if (CoordCurrentMapOnly && !string.IsNullOrEmpty(PoseMap)
-                && !IsSameMap(e.Map, PoseMap))
+            if (CoordCurrentMapOnly && !IsOnCurrentMap(e.Map))
             {
                 continue;
             }
@@ -3465,7 +3714,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         matched.Sort(CompareForDisplay);
         foreach (var e in matched)
-            CoordResults.Add(new CoordRow(e, IsSameMap(e.Map, PoseMap)));
+            CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
 
         UpdateCoordDistances();
 
@@ -3633,8 +3882,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Add an entry from the "TP to coords" fields (manual entry).</summary>
     [RelayCommand]
-    private void AddCoordFromFields()
+    private async Task AddCoordFromFieldsAsync()
     {
+        // [W2-TPREL-MAP] Read the map AT ADD TIME -- the rule the teleport guard already follows.
+        // PoseMap is only as fresh as the last read, and was "" after a directional teleport or
+        // before the first Refresh; that "" went to disk and then matched no map ever again.
+        if (IsConnected) await RefreshCurrentMapAsync();
         var entry = new CoordEntry
         {
             Label = NextCoordLabel(PoseMap),
@@ -3647,7 +3900,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             Roll = CoordPrecision.Round(CoordRoll),
         };
         AddCoordEntry(entry);
-        CoordStatus = $"Added '{entry.Label}' from the coordinate fields.";
+        CoordStatus = string.IsNullOrEmpty(entry.Map)
+            ? $"Added '{entry.Label}' from the coordinate fields — with NO map: the current map is not "
+              + "known right now (connect, or enter gameplay and press Refresh first)."
+            : $"Added '{entry.Label}' from the coordinate fields.";
         CoordLibraryExpanded = true;
     }
 
@@ -3766,7 +4022,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         // Back up BEFORE anything is dropped, and only clear in-memory state once the
         // on-disk copy is safe to lose.
-        var bak = _coordStore?.SavePreClearBackup(_activeCoordKey) ?? "";
+        var bak = _coordStore?.SavePreClearBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
         _coordAll.Clear();
         SelectedCoord = null;
@@ -3830,7 +4086,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // The explicit-coordinate path does NO map check DLL-side (only slot recall
             // returns -7), so the guard has to live here. And the tool cannot LOAD a map:
             // an entry only becomes usable once the game itself is on that map.
-            if (!force && !string.IsNullOrEmpty(PoseMap) && !IsSameMap(e.Map, PoseMap))
+            if (!force && !IsOnCurrentMap(e.Map))
             {
                 CoordStatus = $"'{e.Label}' was saved on '{e.Map}' but you are on " +
                               $"'{PoseMap}'. Use Force to override — note this cannot " +
@@ -4003,7 +4259,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (_pendingImport == null || _pendingChanges == null) return;
 
-        var bak = _coordStore?.SavePreImportBackup(_activeCoordKey) ?? "";
+        var bak = _coordStore?.SavePreImportBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
         if (CoordImportReplace)
         {
@@ -4840,17 +5096,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 {
                     LastValid = m.Valid;
                     LastSummary = m.Valid
-                        ? string.Format(CultureInfo.InvariantCulture,
-                            "({0:0.0}, {1:0.0}, {2:0.0})  {3}", m.X, m.Y, m.Z, m.Map)
+                        ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
                         : "(saved automatically before each teleport)";
                     continue;
                 }
                 if (m.Slot < 0 || m.Slot >= Markers.Count) continue;
                 var row = Markers[m.Slot];
                 row.Valid = m.Valid;
+                row.ParentRelative = m.Valid && m.ParentRelative;
                 row.Summary = m.Valid
-                    ? string.Format(CultureInfo.InvariantCulture,
-                        "({0:0.0}, {1:0.0}, {2:0.0})  {3}", m.X, m.Y, m.Z, m.Map)
+                    ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
                     : "(empty)";
             }
         }
@@ -4872,9 +5127,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PosePitch = p.Pitch.ToString("0.00", CultureInfo.InvariantCulture);
         PoseYaw = p.Yaw.ToString("0.00", CultureInfo.InvariantCulture);
         PoseRoll = p.Roll.ToString("0.00", CultureInfo.InvariantCulture);
-        bool mapChanged = !IsSameMap(PoseMap, p.Map);
-        PoseMap = p.Map;
-        PoseSource = p.Source;
+        // [W2-TPREL-MAP] A reply with NO map key (teleport_relative; a save whose marker read-back
+        // failed) says nothing about the map, and a directional teleport cannot leave it. Writing its
+        // "" over PoseMap re-flagged every library row as another map's and let "Add from fields"
+        // persist map = "". The source label is the same shape: absent is not "raw".
+        bool mapChanged = !p.MapAbsent && !IsSameMap(PoseMap, p.Map);
+        if (!p.MapAbsent) PoseMap = p.Map;
+        if (!p.SourceAbsent) PoseSource = p.Source;
+        // [W2-POSEATTACH-QUIETPOLL] The degraded-read state, for EVERY pose path -- the 0.5s quiet
+        // poll included, which never said so. Kept, like the source label, when the reply carries no
+        // read metadata (teleport_relative).
+        // Review 5 of 7490c24e: ...and when the reply CARRIED the flag, as the save reply does with no source key.
+        if (!p.SourceAbsent || p.ParentRelativeKnown) PoseParentRelative = p.ParentRelative;
 
         // A map change re-filters the coordinate library (the "current map only"
         // default); otherwise just refresh the distances in place.
@@ -4926,6 +5190,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         PoseX = PoseY = PoseZ = "—";
         PosePitch = PoseYaw = PoseRoll = "—";
         PoseMap = PoseSource = "";
+        PoseParentRelative = false;   // [W2-POSEATTACH-QUIETPOLL]
         PawnAddrDisplay = "";
         MovementNote = "";
         VelX = VelY = VelZ = "—";
@@ -4966,9 +5231,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (slot < 0 || slot >= Markers.Count) return;
         var row = Markers[slot];
         row.Valid = true;
-        row.Summary = string.Format(CultureInfo.InvariantCulture,
-            "({0:0.0}, {1:0.0}, {2:0.0})  {3}", p.X, p.Y, p.Z, p.Map);
+        row.ParentRelative = p.ParentRelative;
+        row.Summary = MarkerSummary(p.X, p.Y, p.Z, p.Map, p.ParentRelative);
     }
+
+    /// <summary>A marker row's summary. [W2-MARKER-PARENTREL] A parent-relative save says so in the row: its
+    /// numbers are not world coordinates, and recalling it drives the pawn there as if they were.</summary>
+    internal static string MarkerSummary(double x, double y, double z, string map, bool parentRelative)
+        => string.Format(CultureInfo.InvariantCulture, "({0:0.0}, {1:0.0}, {2:0.0})  {3}", x, y, z, map)
+           + (parentRelative ? "  ⚠ parent-relative (not world)" : "");
 
     public void Dispose()
     {
@@ -5058,6 +5329,10 @@ public partial class TeleportMarkerRow : ObservableObject
     [ObservableProperty] private int _slot;
     [ObservableProperty] private bool _valid;
     [ObservableProperty] private string _summary = "(empty)";
+
+    /// <summary>[W2-MARKER-PARENTREL] Saved from a parent-relative read: its numbers are not world
+    /// coordinates.</summary>
+    [ObservableProperty] private bool _parentRelative;
 
     /// <summary>1-based label for the UI ("Marker 1").</summary>
     public string Label => $"Marker {Slot + 1}";

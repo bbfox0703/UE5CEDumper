@@ -20,8 +20,9 @@
     ok, err = invokeUFunction(className, funcName, parmsSize, params)
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
-    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err)
+    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued)
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
+    ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
   String INPUT params: a param descriptor with type 'fstring' (wide, UE FString)
   or 'fstringn' (narrow, FUtf8String/FAnsiString) takes value = a Lua string; the
@@ -41,6 +42,12 @@
     -- either way nothing was applied, so untick the record (a stateful toggle must not
     -- leave a ticked box claiming a cheat that is not on) and report. (audit #5 AA31)
     local ok, state = pcall(setDebugCamera, 1)
+    if ok and state == -5 then
+      -- QUEUED: the game thread did not answer in time, and the toggle WILL still run. Leave the record ticked and
+      -- do not tick again -- a second toggle would undo the first. [W3-DEBUGCAM-QUEUED]
+      showMessage('[Debug Camera] queued -- it will turn on when the game thread is free')
+      return
+    end
     if not ok or state ~= 1 then
       -- DEFERRED: an immediate memrec.Active = false inside [ENABLE] is a no-op, so the
       -- row would stay ticked over a camera that never turned on. Byte-identical to
@@ -117,6 +124,7 @@ local CMD_INVOKE_BY_NAME = 4
 local STATUS_DONE        = 1
 local STATUS_IDLE        = 0    -- untouched: the DLL never picked the command up
 local CMD_IDLE           = 0    -- the DLL clears cmd back to this when it finishes
+local CMD_OFFSETS_VERDICT = 16  -- [W5-OFFSETS-MAILBOX] were the DynOff offsets measured? (contract 5+)
 
 -- Default invoke timeout (ms). UE5DumpUI's per-game override only
 -- affects the DLL side; this Lua-side timeout guards against the
@@ -291,7 +299,18 @@ local function writeParams(base, regionSize, params)
     if w then bound(off, w, p.name) end
 
     if t == 'bool' then
-      writeBytes(base + off, { (v ~= 0 and v ~= false) and 1 or 0 })
+      local on = (v ~= 0 and v ~= false)
+      local m = p.mask
+      -- [A3-FIRE-STRUCT-BOOLMASK] A PACKED bool (a struct sub-field sharing its byte with sibling
+      -- bools, e.g. FHitResult's bBlockingHit / bStartPenetrating) carries its single-bit mask:
+      -- set or clear only that bit. A whole-byte write zeroed the sibling or landed on bit 0.
+      -- No mask (native / unresolved) keeps the whole-byte 0x01 / 0x00 write.
+      if type(m) == 'number' and m > 0 and m < 0xFF and (m & (m - 1)) == 0 then
+        local cur = readBytes(base + off, 1, true)[1] or 0
+        writeBytes(base + off, { on and (cur | m) or (cur & (0xFF ~ m)) })
+      else
+        writeBytes(base + off, { on and 1 or 0 })
+      end
     elseif t == 'byte' then
       writeBytes(base + off, { math.floor(v) % 256 })
     elseif t == 'int16' or t == 'uint16' then
@@ -762,6 +781,66 @@ if not freeInvokeStringBuffers then
   registerLuaFunctionHighlight('freeInvokeStringBuffers')
 end
 
+
+-- ============================================================
+-- One mailbox round trip, with the AA19 guard -- [A1-VERDICT-STALEMB]
+-- ============================================================
+-- Every wrapper that owns the mailbox for one command needs the SAME three things, and the two small
+-- ones (Debug Camera, offsets verdict) had none of them: an entry re-test, a latch when the wait times
+-- out, and a release that only fires when the mailbox is ours again. Without the latch the next
+-- invokeUFunction sails past its own guard and writes className / funcName / params on top of a command
+-- the DLL is still running -- exactly the overwrite invokeUFunction latches against (audit #5 AA19).
+-- Found by review 6 on getOffsetsVerdict, which is the likeliest to time out: it exists to be asked
+-- while the game thread is wedged.
+--
+-- `prepare(mb)` writes the command's operands before the trigger; the status clear and the CMD write
+-- (LAST, it is what triggers the DLL) are here so no wrapper can forget the order.
+--- @return number result  the mailbox's signed result code
+--- @return number mb      the mailbox address, so the caller can read paramsData
+local function simpleMailboxCall(cmd, prepare)
+  -- The latch clears itself once the DLL says it is done -- ask it, rather than holding a Lua-local
+  -- boolean for the rest of the session (the shape invokeUFunction uses).
+  if _ue5_invoke_busy and _ue5_invoke_stale_mb then
+    local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
+    local cmd_ = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
+    if st == STATUS_DONE and cmd_ == CMD_IDLE then
+      _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
+    end
+  end
+  if _ue5_invoke_busy then
+    if _ue5_invoke_stale_mb then
+      error('[ue5_invoke] the previous mailbox call timed out and the DLL is STILL holding the ' ..
+            'mailbox -- sending now would overwrite a command that is mid-flight. Wait for the game ' ..
+            'thread to come back (this clears itself once the DLL reports done), or re-inject.')
+    end
+    error('[ue5_invoke] busy -- another mailbox call is mid-flight')
+  end
+
+  _ue5_invoke_busy = true
+  local latched = false
+  local pok, res, mb_out = pcall(function()
+    local mb = findMailbox()
+    if prepare then prepare(mb) end
+    writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure (audit #5 AA18)
+    writeInteger(mb + OFF_STATUS, 0)      -- clear status
+    writeInteger(mb + OFF_CMD, cmd)       -- trigger (write LAST)
+    local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
+    if not ok_w then
+      -- The DLL may still own the mailbox. Latch BEFORE raising, so the release below leaves the guard
+      -- up and the next caller is refused instead of corrupting an in-flight command.
+      _ue5_invoke_stale_mb = mb
+      latched = true
+      error(err_w)
+    end
+    return readInteger(mb + OFF_RESULT, true), mb   -- signed: result codes are negative
+  end)
+  if not latched then
+    _ue5_invoke_busy = false
+  end
+  if not pok then error(tostring(res)) end
+  return res, mb_out
+end
+
 -- ============================================================
 -- Public API: Debug Camera robust force on/off
 -- ============================================================
@@ -770,35 +849,26 @@ end
 -- return the export's int result (observed: state=nil). The DLL handler
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
--- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown.
+-- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
+-- is QUEUED (it will run when the game thread is free -- never re-send it). [W3-DEBUGCAM-QUEUED]
 if not setDebugCamera then
 
   local CMD_SET_DEBUG_CAMERA = 7
 
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
-  -- Reuses the file-local mailbox helpers + reentrancy guard.
+  -- Reuses the file-local mailbox helpers + the shared AA19 guard.
   local function dbgCamMailbox(req)
-    if _ue5_invoke_busy then
-      error('[ue5_invoke] busy -- another mailbox call is mid-flight')
-    end
-    _ue5_invoke_busy = true
-    local pok, res = pcall(function()
-      local mb = findMailbox()
+    -- The state only: simpleMailboxCall also hands back the mailbox address, and this one's caller
+    -- (setDebugCamera) returns straight through to CE Lua, which expects a single number.
+    local state = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
       writeQword(mb + OFF_INSTANCE, req)   -- 0x010: request (0/1/2)
-      writeInteger(mb + OFF_STATUS, 0)     -- clear status
-      writeInteger(mb + OFF_CMD, CMD_SET_DEBUG_CAMERA)  -- trigger (write LAST)
-      local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
-      if not ok_w then error(err_w) end
-      return readInteger(mb + OFF_RESULT, true)  -- 0x008: resulting state (signed int32)
     end)
-    _ue5_invoke_busy = false
-    if not pok then error(tostring(res)) end
-    return res
+    return state
   end
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
   --- @param enable number|boolean
-  --- @return number state  1=ON, 0=OFF, -1=error
+  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (do not re-send)
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end
@@ -811,6 +881,34 @@ if not setDebugCamera then
     return ok and state or -1
   end
   registerLuaFunctionHighlight('getDebugCameraState')
+
+end
+
+-- ============================================================
+-- Offsets verdict (CMD_OFFSETS_VERDICT) -- [W5-OFFSETS-MAILBOX]
+-- ============================================================
+-- Every CE structure ue5_dissect.lua builds comes from the DLL's DynOff offsets, so a script that
+-- cannot ask whether those were MEASURED is building on fallbacks without knowing it.
+--- @return boolean measured, string reason  reason is '' when measured, else e.g. 'probe-not-run'
+--- A DLL older than contract 5 does not know the command and answers "Unknown command" (result -1):
+--- reported as false, 'dll-too-old' -- never as measured. That is why this file still bakes
+--- UE5_SCRIPT_CONTRACT = 1: refusing to load against an older DLL would be the worse trade.
+--- [A1-VERDICT-STALEMB] On such a DLL the command is not init-exempt either, so an UNINITIALISED one
+--- answers -10 ("DLL not initialized") first -- reported as 'dll-not-initialised', because telling the
+--- user to update a current DLL is the wrong instruction.
+if not getOffsetsVerdict then
+
+  function getOffsetsVerdict()
+    local code, mb = simpleMailboxCall(CMD_OFFSETS_VERDICT)
+    -- [A1-VERDICT-STALEMB] -1 and -10 are DIFFERENT answers and only one of them is about age:
+    -- -1 is "Unknown command" (a DLL older than contract 5), -10 is "DLL not initialized" (the right
+    -- DLL, no scan yet -- and on a pre-5 DLL this command is not init-exempt, so it is the answer that
+    -- arrives first). Reporting both as 'dll-too-old' told the user to update a DLL that is current.
+    if code == -10 then return false, 'dll-not-initialised' end
+    if code < 0 then return false, 'dll-too-old' end
+    return code == 1, readString(mb + OFF_PARAMS, 127, false) or ''
+  end
+  registerLuaFunctionHighlight('getOffsetsVerdict')
 
 end
 

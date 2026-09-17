@@ -424,6 +424,8 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
 
     std::lock_guard<std::mutex> wlk(s_workerMutex);   // outer (audit #8 discipline)
     int32_t held = 0;
+    int32_t refusal = 0;      // non-zero: resolved instances, refused on every one
+    bool    keepArmed = true; // false only when a NEW job is dropped again below
     {
         std::lock_guard<std::mutex> lk(s_mutex);
         auto it = FindJobLocked(className, fieldName);
@@ -450,13 +452,24 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         // ptr → GObjects[0] trap, or wrong numeric type) → a futile hold. Don't persist a
         // newly-added job or start the worker; surface the reason instead of a silent
         // held=0 (Fern maps a negative return to `code`). (L2)
-        if (held == 0 && it->lastRefusal != 0 && newlyAdded) {
-            int32_t refusal = it->lastRefusal;
-            s_jobs.erase(it);
-            return refusal;
+        // ⛔ REPORT THE REFUSAL ON A RE-ARM TOO. `newlyAdded` decides whether the job
+        // is DROPPED -- it must not also decide whether the caller is TOLD. Re-arming
+        // an already-armed class::field that resolves instances and is refused on
+        // every one returned plain held=0, and PropertySearch renders that as the
+        // positively false "no live instance of {Class} or any subclass exists right
+        // now ... will apply as soon as one spawns" -- when instances exist and the
+        // field was refused. [SOLIDE-REFUSAL-2026-09-10]
+        if (held == 0 && it->lastRefusal != 0) {
+            refusal = it->lastRefusal;
+            // A job that was never persisted is dropped, exactly as before; a
+            // PRE-EXISTING hold is left alone -- the caller asked to re-arm it, not
+            // to remove it, and erasing on a refusal would silently unarm it.
+            if (newlyAdded) { s_jobs.erase(it); keepArmed = false; }
         }
     }
-    StartWorkerLocked();   // s_workerMutex held, s_mutex released
+    // The worker still runs for a hold we kept; only a dropped new job skips it.
+    if (keepArmed) StartWorkerLocked();   // s_workerMutex held, s_mutex released
+    if (refusal != 0) return refusal;
     return held;           // >= 0 : live "N held" count (0 = matched nothing)
 }
 

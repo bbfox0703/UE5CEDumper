@@ -7,6 +7,11 @@ namespace UE5DumpUI.Models;
 public sealed class FieldInfoModel
 {
     public string Address { get; init; } = "";
+    /// <summary>[W4-HEXSORT] <see cref="Address"/> as a ulong, for the AOT-safe numeric column sort (0 when
+    /// empty or unparseable, so those rows sort first) -- the InstanceResult / RelatedObject.AddressValue idiom.</summary>
+    public ulong AddressValue =>
+        ulong.TryParse(Address.Replace("0x", "", System.StringComparison.OrdinalIgnoreCase),
+            System.Globalization.NumberStyles.HexNumber, null, out var v) ? v : 0UL;
     public string Name { get; init; } = "";
     public string TypeName { get; init; } = "";
     public int Offset { get; init; }
@@ -25,6 +30,11 @@ public sealed class FieldInfoModel
     public string ElemType { get; init; } = "";          // SetProperty -> element type
     public string ElemStructType { get; init; } = "";    // SetProperty element struct name
     public string EnumName { get; init; } = "";          // EnumProperty/ByteProperty -> UEnum name
+    // [A4-USMAP-CONTAINER-ENUM] a container inner's UEnum (a TEnumAsByte or an EnumProperty inner); "" when none
+    public string InnerEnumName { get; init; } = "";     // ArrayProperty / OptionalProperty inner
+    public string ElemEnumName { get; init; } = "";      // SetProperty element
+    public string KeyEnumName { get; init; } = "";       // MapProperty key
+    public string ValueEnumName { get; init; } = "";     // MapProperty value
     public int BoolFieldMask { get; init; }              // BoolProperty -> FieldMask byte
 
     // Reflection / layout metadata (feed the auto-detect scorer)

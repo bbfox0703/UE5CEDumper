@@ -2,7 +2,7 @@
 
 // ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: 59 C ABI exports for CE Lua bridge
+// ExportAPI: 63 C ABI exports for CE Lua bridge
 //
 // ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
 // export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
@@ -26,6 +26,12 @@ extern "C" {
 __declspec(dllexport) bool     UE5_Init();
 __declspec(dllexport) void     UE5_Shutdown();
 __declspec(dllexport) uint32_t UE5_GetVersion();
+
+// [W5-OFFSETS-UNMEASURED] Were the UE property offsets MEASURED? 1 = yes; 0 = no, and reasonBuf (nullable) says why --
+// "probe-not-run" before detection, else the give-up / unmeasured reason (the pipe's get_offsets fallback_reason).
+// Everything built from the offsets (a CE structure dissect first of all) trusts them only as far as this says.
+// int32_t, not bool: executeCodeEx reads the whole of RAX, and a bool return defines only AL.
+__declspec(dllexport) int32_t  UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen);
 
 // Combined init + pipe server start — called by CEPlugin's InjectDLL
 // so that a single entry point activates everything in the game process.
@@ -172,6 +178,8 @@ __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 // the local player's controller back to the original PlayerController by hand.
 // Returns the resulting state (1/0) or -1 on error. All offsets resolved live
 // from reflection (UE4/UE5 version-agnostic).
+// -5 = the toggle TIMED OUT on the game thread and stays QUEUED: it will still run, so
+// it must not be re-sent -- a second toggle drains after it and undoes it. [W3-DEBUGCAM-QUEUED]
 __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
 // === Teleport (Wirbel: marker save/recall + cursor teleport) ===
@@ -194,13 +202,24 @@ __declspec(dllexport) int32_t   UE5_TeleportClearMarker(int32_t slot);
 __declspec(dllexport) int32_t   UE5_TeleportRecallLast();
 __declspec(dllexport) int32_t   UE5_TeleportGetLast(double* outPose6,
                                     char* outMapName, int32_t mapNameCap);
+// [A2-CABI-TELEPORT-PARENTREL] The three pose getters above cannot say a pose is PARENT-RELATIVE: an attached pawn
+// (vehicle / mount / moving platform) whose world read failed returns rc 0 and RelativeLocation numbers that read
+// exactly like world coordinates. These are the same getters plus that flag -- *outParentRelative = 1 / 0, nullable.
+// NEW exports, never a changed signature: CE scripts call the originals by position.
+__declspec(dllexport) int32_t   UE5_TeleportGetPoseEx(double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
+__declspec(dllexport) int32_t   UE5_TeleportGetMarkerEx(int32_t slot, double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
+__declspec(dllexport) int32_t   UE5_TeleportGetLastEx(double* outPose6,
+                                    char* outMapName, int32_t mapNameCap, int32_t* outParentRelative);
 // Read the camera POV (read-only). outPov11 receives 11 doubles:
 //   [0..5] camera X,Y,Z,Pitch,Yaw,Roll  [6] FOV
 //   [7..9] pawn X,Y,Z (for the camera-vs-pawn delta)  [10] hasPawn (1/0)
 __declspec(dllexport) int32_t   UE5_TeleportGetPov(double* outPov11);
 // Teleport along the pawn's facing by `distance` uu (negative = backward).
 // horizontalOnly!=0 keeps Z (ground-plane move); 0 uses the full 3D forward.
-// outNewPose6 (nullable) receives the resulting X,Y,Z,Pitch,Yaw,Roll.
+// outNewPose6 (nullable) receives the resulting X,Y,Z,Pitch,Yaw,Roll -- all NaN when the move
+// succeeded but its landing could not be re-read (never zeros: a landing at the origin). [W2-TPREL-TRANSPORTS]
 __declspec(dllexport) int32_t   UE5_TeleportRelative(double distance,
                                     int32_t horizontalOnly, double* outNewPose6);
 // Teleport to explicit world coordinates (force — no map check). hasRot!=0 also

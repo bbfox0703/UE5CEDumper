@@ -75,6 +75,11 @@ public class TeleportViewModelTests
         public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
         { FindStealthCalls++; return Task.FromResult(NextStealthCandidates); }
 
+        // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
+        public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
+        public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
+            => NextForcedFields is { } f ? Task.FromResult(f) : throw new NotImplementedException();
+
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind, double value = 0, bool on = false, CancellationToken ct = default)
         { ForceFieldCalls++; LastForceClass = className; LastForceField = fieldName; LastForceKind = kind; LastForceValue = value; return Task.FromResult(NextForce); }
 
@@ -316,6 +321,105 @@ public class TeleportViewModelTests
         Assert.True(vm.Markers[0].Valid);
         Assert.Contains("Act1", vm.Markers[0].Summary);
         Assert.False(vm.Markers[1].Valid);
+    }
+
+    // ---- [W2-MARKER-PARENTREL] a marker saved from a parent-relative read says so ----
+
+    [Fact]
+    public async Task SaveMarker_FromAParentRelativeRead_SaysSo_InTheStatusAndTheRow()
+    {
+        // The pose card warns "do not save these as a marker" -- and the save path had no way to know. A save
+        // from the degraded read now carries the flag, and the row and the status name it.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", Source = "raw", ParentRelative = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.True(vm.Markers[0].ParentRelative);
+        Assert.Contains("parent-relative", vm.Markers[0].Summary);
+        Assert.Contains("PARENT-RELATIVE", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData(false, true)]    // a degraded save switches the chip ON
+    [InlineData(true, false)]    // a healthy save switches a stale chip OFF
+    public async Task SaveMarker_TheReplysFlagDrivesThePoseChip_ThoughItCarriesNoSource(bool chipBefore, bool parentRel)
+    {
+        // Review 5 of 7490c24e: the save reply carries parent_relative but never 'source', and ApplyPose kept the chip
+        // for a source-less reply -- so a degraded save showed parent-relative numbers under a chip that stayed off.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", SourceAbsent = true,
+                               ParentRelative = parentRel, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.PoseParentRelative = chipBefore;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal(parentRel, vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task SaveMarker_FromAnOlderDllThatSaysNothing_KeepsTheChip()
+    {
+        // The control: no key at all (an older DLL) says nothing, so the last state stands.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 12, Y = 34, Z = 5, Map = "Act1", SourceAbsent = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.PoseParentRelative = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public void RefreshMarkers_FlagsAParentRelativeMarker_AndTheLastSlot()
+    {
+        var fake = new FakeDumpService
+        {
+            NextMarkers = new()
+            {
+                new() { Slot = 0, Valid = true, X = 1, Y = 2, Z = 3, Map = "Act1", ParentRelative = true },
+                new() { Slot = 1, Valid = true, X = 4, Y = 5, Z = 6, Map = "Act1" },
+                new() { Slot = 2, Valid = false },
+                new() { Slot = -1, Valid = true, X = 7, Y = 8, Z = 9, Map = "Act1", ParentRelative = true },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        Assert.True(vm.Markers[0].ParentRelative);
+        Assert.Contains("parent-relative", vm.Markers[0].Summary);
+        Assert.False(vm.Markers[1].ParentRelative);                      // the control: a healthy marker
+        Assert.DoesNotContain("parent-relative", vm.Markers[1].Summary);
+        Assert.Contains("parent-relative", vm.LastSummary);
+    }
+
+    [Fact]
+    public async Task SaveMarker_FromAHealthyRead_KeepsItsPlainStatus()
+    {
+        // The control, green before and after.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, Map = "Act1", Source = "raw" },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal("Marker 1 saved.", vm.StatusText);
+        Assert.DoesNotContain("parent-relative", vm.Markers[0].Summary);
     }
 
     [Fact]
@@ -575,8 +679,64 @@ public class TeleportViewModelTests
 
         vm.SetConnected(false);
 
-        Assert.Equal("Off", vm.StealthState);
+        // [A4-STEALTH-PRIME] "Unknown", not "Off": the DLL's hold survives a PIPE drop for as long as the game lives, so
+        // "Off" was a claim nothing had checked. The connect prime settles it.
+        Assert.Equal("Unknown", vm.StealthState);
         Assert.Equal("—", vm.StealthFieldText);
+    }
+
+    // [A4-STEALTH-PRIME] BADGEPRIME's connect prime skipped the Stealth card, so after a reconnect it read "Off" while
+    // Solide kept holding the meter -- and the experimental gate-off, which keys on the badge, then released nothing.
+    [Fact]
+    public async Task Connect_primes_a_Stealth_hold_the_DLL_still_holds()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Holding @0", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
+    {
+        // A numeric 0-hold on a field the meter search does not name may be a Property Search Force -- and the
+        // experimental gate-off would release it if the card claimed it. Something IS held, so not "Off" either.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Enemy_C", FieldName = "Health", Kind = "numeric", Value = 0, Held = 4 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Unknown", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task Connect_with_nothing_forced_reads_the_Stealth_card_Off()
+    {
+        var fake = new FakeDumpService { NextForcedFields = new List<ForcedFieldInfo>() };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Off", vm.StealthState);
     }
 
     [Fact]
@@ -1093,6 +1253,21 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task ForceDebugCamera_reports_a_queued_toggle_as_queued()
+    {
+        // [W3-DEBUGCAM-QUEUED] The Teleport card's twin of the Console's Force: a queued toggle is not a failure.
+        var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Contains("QUEUED", vm.StatusText);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
     public async Task ForceGodModeOn_calls_dll_and_sets_badge()
     {
         var fake = new FakeDumpService { NextGodModeState = 1 };
@@ -1485,6 +1660,160 @@ public class TeleportViewModelTests
         Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.4 / not reflected
     }
 
+    // ---- [W2-GRAVDIR-VERDICT] a transient absence is not a verdict about the engine ----
+    //
+    // The card said "needs UE5.4+ (no reflected GravityDirection)" and painted an amber Unavailable badge
+    // whenever a pawn / CMC did not resolve AT THAT INSTANT -- main menu, loading, cutscene, spectator,
+    // vehicle pawn -- on engines that fully support it. The apply status checked `resolved` first, and
+    // that comes from a fresh read which is false with no pawn as well.
+
+    [Fact]
+    public async Task GravDir_readout_without_a_pawn_is_Unknown_not_a_version_verdict()
+    {
+        var fake = new FakeDumpService { NextMovementParams = new MovementParams { HasCmc = false } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGravDirCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.GravDirState);
+        Assert.DoesNotContain("UE5.4", vm.GravDirCurrentText);
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE54()
+    {
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = -3, Resolved = false },   // MR_ERR_NO_PAWN
+            NextMovementParams = new MovementParams { HasCmc = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.Contains("enter gameplay", vm.StatusText);
+        Assert.Equal("Unknown", vm.GravDirState);
+    }
+
+    [Fact]
+    public async Task ApplyGravDir_on_a_pre_UE54_engine_still_says_so()
+    {
+        // The control, green before and after: a CMC without a reflected GravityDirection.
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = -4, Resolved = false },   // MR_ERR_REFLECT
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = true, GravityDirection = new MovementVectorKnob { Resolved = false },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Equal("Unavailable", vm.GravDirState);
+    }
+
+    [Theory]
+    [InlineData(-4, false, false)]   // MR_ERR_REFLECT, but the fresh read finds no live CMC: ResolveCtx also
+                                     // returns -4 when the pawn / CMC class lookup fails
+    [InlineData(-4, true,  true)]    // MR_ERR_REFLECT from a failed vector read: the field IS reflected
+    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.4) pawn spawned before the read
+    public async Task ApplyGravDir_says_needs_UE54_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
+    {
+        // -4 alone is not the pre-5.4 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
+        // too), and the fresh read alone reports a later instant than the set. The verdict needs both.
+        var fake = new FakeDumpService
+        {
+            NextGravDir = new MovementVectorResult { State = state, Resolved = resolved },
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = hasCmc, GravityDirection = new MovementVectorKnob { Resolved = resolved },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyGravDirCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LocateGravDir_without_a_pawn_is_not_a_version_verdict()
+    {
+        // The review of B21 found a third entrance: Locate re-read the params, painted the right
+        // Unknown badge, then overwrote the status with "needs UE5.4+".
+        var fake = new FakeDumpService { NextMovementParams = new MovementParams { HasCmc = false } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.Contains("enter gameplay", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LocateGravDir_on_a_pre_UE54_engine_still_says_so()
+    {
+        // The control, green before and after: a CMC without a reflected GravityDirection.
+        var fake = new FakeDumpService
+        {
+            NextMovementParams = new MovementParams
+            {
+                HasCmc = true, GravityDirection = new MovementVectorKnob { Resolved = false },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
+
+        Assert.Contains("UE5.4", vm.StatusText);
+    }
+
+    // ---- [W2-MS-PROMISE] a refused apply must not promise a queued override ----
+
+    [Fact]
+    public async Task ApplyMoveSpeed_without_a_pawn_promises_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextMovementSet = new MovementSetResult { State = -3 },   // MR_ERR_NO_PAWN: Laufen stored nothing
+            NextMovementParams = new MovementParams { HasCmc = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ApplyMoveSpeedCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("applies once", vm.StatusText);
+        Assert.Contains("enter gameplay first", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData(true)]    // the pawn lane
+    [InlineData(false)]   // the world lane
+    public async Task ApplyTime_without_its_owner_promises_nothing(bool pawnLane)
+    {
+        // The twin found while fixing [W2-MS-PROMISE]: Hemmung::SetDilation also returns before storing
+        // anything when its owner does not resolve, so nothing is queued to "apply once" it exists.
+        var fake = new FakeDumpService { NextTimeSet = new TimeDilationSetResult { State = -3 } };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await (pawnLane ? vm.ApplyPawnTimeCommand : vm.ApplyWorldTimeCommand).ExecuteAsync(null);
+
+        Assert.DoesNotContain("applies once", vm.StatusText);
+    }
+
     [Fact]
     public async Task ForceDebugCamera_does_nothing_when_disconnected()
     {
@@ -1632,10 +1961,16 @@ public class TeleportViewModelTests
         var fake = new FakeDumpService { NextCursorState = 1 };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
+        // Connect now PRIMES every badge the disconnect branch resets, the cursor
+        // included ([BADGEPRIME-2026-09-10]), so wait for that and start the count from
+        // zero. Asserting ">= 1" instead would have hidden the duplicate-call regression
+        // this test exists to catch.
+        await vm.ConnectPrime;
+        int before = fake.GetCursorCalls;
 
         await vm.RefreshCursorCommand.ExecuteAsync(null);
 
-        Assert.Equal(1, fake.GetCursorCalls);
+        Assert.Equal(before + 1, fake.GetCursorCalls);
         Assert.Equal("ON", vm.MouseCursorState);
     }
 
@@ -1921,6 +2256,56 @@ public class TeleportViewModelTests
         Assert.Contains("automatically", vm.StatusText);
         Assert.Contains("Keep Foreground", vm.StatusText);
         Assert.Contains("Keep Foreground", vm.SeeThroughCurrentText);
+    }
+
+    // [P1-SEETHRU-NOPRODUCER] A build without LineTraceSingle or SetActorHiddenInGame can hide nothing, so the DLL
+    // refuses at enable (-3). The card must say so -- and, unlike the hook refusal, offer no retry: it is the build.
+    [Fact]
+    public async Task ApplySeeThrough_refused_for_missing_producers_says_the_build_cannot()
+    {
+        var fake = new FakeDumpService { NextSeeThroughStatus = new() { Active = false, Code = -3, State = -3 } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.ApplySeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unavailable", vm.SeeThroughState);
+        Assert.Contains("SetActorHiddenInGame", vm.SeeThroughCurrentText);
+        Assert.DoesNotContain("retry", vm.SeeThroughCurrentText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cannot hide", vm.StatusText);
+    }
+
+    // [P1-SEETHRU-GIVEUP] After the restore window the DLL gives up, and "click back and they reappear" is then false.
+    [Fact]
+    public async Task RefreshSeeThrough_after_the_restore_gave_up_names_the_real_remedy()
+    {
+        var fake = new FakeDumpService
+        {
+            NextSeeThroughStatus = new() { Active = false, HiddenCount = 1, RestoreAbandoned = true }
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshSeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Contains("gave up", vm.SeeThroughCurrentText);
+        Assert.Contains("on and off again", vm.SeeThroughCurrentText);
+        Assert.DoesNotContain("Click back into the game", vm.SeeThroughCurrentText);
+    }
+
+    [Fact]
+    public async Task RefreshSeeThrough_while_the_restore_still_waits_keeps_the_promise()
+    {
+        var fake = new FakeDumpService
+        {
+            NextSeeThroughStatus = new() { Active = false, HiddenCount = 1, RestorePending = true }
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshSeeThroughCommand.ExecuteAsync(null);
+
+        Assert.Contains("Click back into the game", vm.SeeThroughCurrentText);
     }
 
     [Fact]
@@ -2422,6 +2807,185 @@ public class TeleportViewModelTests
         Assert.False(vm.HasPendingCoordImport);
     }
 
+    // ---- [W2-TPREL-MAP] an absent map is not an empty map ----
+    //
+    // teleport_relative's reply carries no `map` key, ParsePose read that as "", and ApplyPose wrote ""
+    // over the known map: every library row re-flagged as another map's, the summary reading "you are
+    // on ''", and "Add from fields" persisting map = "" -- which then matches no map ever again.
+
+    [Fact]
+    public async Task ParsePose_reports_an_absent_map_as_absent_not_empty()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "teleport_relative")   // the DLL's reply: no map, no source
+                return new System.Text.Json.Nodes.JsonObject { ["ok"] = true, ["code"] = 0, ["x"] = 1.0 };
+            return new System.Text.Json.Nodes.JsonObject
+                { ["ok"] = true, ["code"] = 0, ["map"] = "", ["source"] = "raw" };
+        });
+        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService());
+
+        var rel = await svc.TeleportRelativeAsync(100, true, TestContext.Current.CancellationToken);
+        var pose = await svc.TeleportGetPoseAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(rel.MapAbsent);
+        Assert.True(rel.SourceAbsent);
+        Assert.False(pose.MapAbsent);      // "" IS a report -- of the empty name. The KEY decides.
+        Assert.False(pose.SourceAbsent);
+    }
+
+    [Fact]
+    public async Task TeleportRelative_keeps_the_known_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01", Source = "invoke" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+        Assert.Equal("Map01", vm.PoseMap);
+
+        // What teleport_relative's reply parses to: a landing, and no map / source keys.
+        fake.NextPose = new() { Code = 0, X = 10, MapAbsent = true, SourceAbsent = true };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal("10.000", vm.PoseX);        // the landing itself is applied
+        Assert.Equal("Map01", vm.PoseMap);
+        Assert.Equal("invoke", vm.PoseSource);   // the twin: an absent source is not "raw"
+    }
+
+    [Fact]
+    public async Task A_reply_that_reports_a_map_is_still_believed()
+    {
+        // The control, green before and after: MapAbsent is about the KEY, not the value.
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        fake.NextPose = new() { Code = 0, Map = "Map02" };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal("Map02", vm.PoseMap);
+    }
+
+    [Fact]
+    public void AddCoordFromFields_reads_the_map_at_add_time()
+    {
+        // The second entrance: nothing had read the pose yet (a fresh connect, or right after a
+        // directional teleport), so PoseMap was "" and the entry went to disk with map = "".
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        Assert.Equal("Map01", Assert.Single(vm.CoordEntries).Map);
+    }
+
+    [Fact]
+    public async Task Connect_primes_the_pose_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Map01", vm.PoseMap);
+    }
+
+    [Fact]
+    public async Task An_unknown_current_map_is_not_a_different_map()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        await vm.RefreshPoseCommand.ExecuteAsync(null);   // PoseMap = Map01, so the entry is Map01's
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        vm.SetConnected(false);                           // clears the pose, and with it the map
+        vm.SelectedCoord = vm.CoordResults[0];
+
+        Assert.Equal("", vm.PoseMap);
+        Assert.True(vm.CoordResults[0].OnCurrentMap);
+        Assert.DoesNotContain("different map", vm.SelectedCoordSummary);
+    }
+
+    // ---- [W2-POSEATTACH-QUIETPOLL] a parent-relative read is a state on the card ----
+    //
+    // Only the manual Refresh said so, in the status line, which any later message erases. The 0.5s
+    // auto-refresh -- the mode this tab is left in -- applied parent-relative numbers and said nothing.
+
+    [Fact]
+    public async Task QuietPoll_surfaces_a_parent_relative_read()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.RefreshPoseQuietAsync();
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task A_healthy_read_clears_the_parent_relative_state()
+    {
+        // The control, green before and after (nothing set the state before the fix).
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+
+        fake.NextPose = new() { Code = 0, Source = "invoke" };
+        await vm.RefreshPoseQuietAsync();
+
+        Assert.False(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task A_directional_teleport_keeps_the_parent_relative_state()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+
+        // teleport_relative's reply carries no read metadata at all -- see [W2-TPREL-MAP].
+        fake.NextPose = new() { Code = 0, X = 5, MapAbsent = true, SourceAbsent = true };
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.True(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public async Task Disconnect_clears_the_parent_relative_state()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "raw", ParentRelative = true } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        await vm.RefreshPoseQuietAsync();
+        Assert.True(vm.PoseParentRelative);   // precondition
+
+        vm.SetConnected(false);
+
+        Assert.False(vm.PoseParentRelative);
+    }
+
+    [Fact]
+    public void The_Current_Pose_card_shows_the_parent_relative_state()
+    {
+        // No test renders the panel, so pin the markup. Compiled bindings (x:DataType) already make a
+        // misspelt property a build error; this pins that the chip EXISTS and is bound to the state.
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/TeleportPanel.axaml"));
+        Assert.Contains("IsVisible=\"{Binding PoseParentRelative}\"", axaml);
+        Assert.Contains("{StaticResource str.TP.ParentRelative}", axaml);
+    }
+
     [Fact]
     public async Task CoordLibrary_noDll_export_refuses_without_AOBMaker()
     {
@@ -2452,4 +3016,135 @@ public class TeleportViewModelTests
         vm.LoadCoordLibraryForGame("Game.exe");
         Assert.Empty(vm.CoordEntries);
     }
+    /// <summary>
+    /// [BADGEPRIME-2026-09-10] — connect must PRIME every badge the disconnect branch
+    /// resets, not three of twelve.
+    /// </summary>
+    /// <remarks>
+    /// <para>Observed live on a Shipping fixture before the fix: Keep Foreground, Move
+    /// Speed, Debug Camera, Gravity, Super Jump and Fly all read "State: Unknown" while the
+    /// pipe answered <c>state: 0</c> / <c>has_cmc: true</c> for each — and God Mode and
+    /// Time Dilation showed real values, which were exactly the two that were primed. That
+    /// pairing is the control, and it is reproduced here: the assertion is that NO badge is
+    /// left Unknown, so a future card added to the reset list without a prime fails.</para>
+    ///
+    /// <para>It matters because a DLL hold survives a UI reconnect for as long as the game
+    /// lives, so a still-active Fly or Move Speed hold showed "Unknown" and the user had no
+    /// sign the game was still modified.</para>
+    /// </remarks>
+    [Fact]
+    public async Task Connect_primes_every_badge_that_disconnect_resets()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        // ⛔ ASSERT THAT CONNECT *ASKED*, NOT WHAT THE BADGE SAYS. A first version of this
+        // test compared badge text against "Unknown" and failed on DebugCamera, GodMode and
+        // ForegroundLock -- none of which was a product defect: those are FAKE defaults
+        // that legitimately mean unknown (GetForegroundLockAsync is not even overridden).
+        // Badge text conflates "the VM never asked" with "the fake had nothing to say",
+        // and only the first of those is the defect. The call counters separate them.
+        Assert.True(fake.GetProtectStateCalls >= 1, "connect did not read the God Mode hold");
+        Assert.True(fake.GetDebugCameraCalls >= 1, "connect did not read the Debug Camera state");
+        Assert.True(fake.GetCursorCalls >= 1, "connect did not read the mouse-cursor state");
+        Assert.True(fake.FlyGetStateCalls >= 1, "connect did not read the Fly state");
+    }
+
+    /// <summary>The other half of the symmetry: a badge the prime DID light up goes back to
+    /// Unknown on disconnect. Without this the test above could pass over a UI that lights
+    /// badges and never clears them, which is the B9/B17 defect in the other direction.</summary>
+    [Fact]
+    public async Task Disconnect_returns_a_primed_badge_to_Unknown()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        // The cursor is a badge the fake CAN answer for, so it is genuinely lit here --
+        // which is what makes the reset below a real observation rather than a no-op.
+        Assert.Equal("ON", vm.MouseCursorState);
+
+        vm.SetConnected(false);
+
+        // ⚠ THE BADGES DO NOT SHARE A WORD, and assuming they did is what this assertion
+        // caught: Apply*State(-1) renders "Unknown" for the cursor but "Unavailable" for
+        // Fly, See-through and Gravity. Pinning the literal per card is deliberate -- a
+        // helper that accepted either would stop noticing if one card's reset broke.
+        Assert.Equal("Unknown", vm.MouseCursorState);
+        Assert.Equal("Unavailable", vm.FlyState);
+        Assert.Equal("Unavailable", vm.SeeThroughState);
+        Assert.Equal("Unavailable", vm.GravityState);
+    }
+
+    /// <summary>The prime must never write StatusText — it would stamp over "Connected" —
+    /// and must not leave the UI busy.</summary>
+    [Fact]
+    public async Task Connect_prime_is_quiet()
+    {
+        var fake = new FakeDumpService { NextCursorState = 1 };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        Assert.Equal("Connected", vm.StatusText);
+        Assert.False(vm.IsBusy);
+    }
+
+    /// <summary>
+    /// [POSEATTACH-2026-09-10] — a parent-relative fallback must SAY it is not world space.
+    /// </summary>
+    /// <remarks>
+    /// docs/teleport-spec.md:218-220 required this flag when the fallback was designed:
+    /// "return the raw values anyway with `source = raw` <b>and a warning flag</b>". The
+    /// fallback shipped in 2026-07; the flag did not. So a degraded attached-pawn read and
+    /// a healthy unattached one both arrived as <c>source = "raw"</c> — and the UI model's
+    /// own XML documented "raw" as MEANING not-attached. Those numbers were shown as world
+    /// coordinates, saved into a marker that passes the map guard, and later driven back
+    /// into the pawn as a world-space destination.
+    /// </remarks>
+    [Fact]
+    public async Task Pose_read_that_degraded_to_parent_relative_warns_loudly()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new TeleportPose { Code = 0, Source = "raw", ParentRelative = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.Contains("PARENT-RELATIVE", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("not world coordinates", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        // ⭐ It must also tell the user what NOT to do — the damage is off-screen (a marker
+        // saved from these numbers teleports the pawn somewhere else entirely), so naming
+        // the consequence is the point rather than flagging a colour.
+        Assert.Contains("marker", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The anti-over-shout control: a HEALTHY raw read must stay quiet. Without
+    /// this, "warn on every raw pose" would pass the test above and cry wolf on the common
+    /// case — every unattached pawn reads raw.</summary>
+    [Fact]
+    public async Task Healthy_raw_pose_read_does_NOT_warn()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new TeleportPose { Code = 0, Source = "raw", ParentRelative = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("PARENT-RELATIVE", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Pose read (raw)", vm.StatusText, StringComparison.Ordinal);
+    }
+
 }

@@ -895,7 +895,8 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                         ? null
                         : ReadDword(Registry.CurrentUser,
                                     RecycleBinPolicy.BitBucketKey + @"\Volume\" + guid,
-                                    "NukeOnDelete")))
+                                    "NukeOnDelete"),
+                    volumeLookupFailed: guid.Length == 0))   // [A3-RECYCLE-GUID-FAILOPEN] not "absent"
             {
                 return false;
             }
@@ -928,9 +929,11 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
 
     /// <summary>
     /// One DWORD from the registry, or null when the key or value is absent or is not a
-    /// DWORD. Null is load-bearing — <see cref="RecycleBinPolicy.IsDisabled"/> treats
-    /// absent and 0 differently, and collapsing them here would silently re-introduce the
-    /// defect for the "never configured" machine.
+    /// DWORD. <see cref="RecycleBinPolicy.IsDisabled"/> reads absent and 0 alike (neither is 1),
+    /// which is Windows' own default. What null must NOT stand for is a lookup that FAILED --
+    /// that travels separately, as <c>volumeLookupFailed</c> [A3-RECYCLE-GUID-FAILOPEN]. (This
+    /// used to call null "load-bearing" because IsDisabled "treats absent and 0 differently";
+    /// it never did.)
     /// </summary>
     private static int? ReadDword(RegistryKey hive, string subKey, string valueName)
     {

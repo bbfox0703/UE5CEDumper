@@ -53,8 +53,36 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     public bool IsAvailable { get; private set; }
 
     public AobMakerBridgeService(ILoggingService? log = null)
+        : this(log, PipeName, ConnectTimeoutMs, PipeExists) { }
+
+    /// <summary>[W1-PIPEBUSY-LOG] Test seam: the pipe to reach, how long to wait, and how to tell a BUSY pipe from an
+    /// absent one. The public constructor passes the real ones.</summary>
+    internal AobMakerBridgeService(ILoggingService? log, string pipeName, int connectTimeoutMs,
+                                   Func<string, bool> pipeExists)
     {
         _log = log;
+        _pipeName = pipeName;
+        _connectTimeoutMs = connectTimeoutMs;
+        _pipeExists = pipeExists;
+    }
+
+    private readonly string _pipeName;
+    private readonly int _connectTimeoutMs;
+    private readonly Func<string, bool> _pipeExists;
+
+    /// <summary>[W1-PIPEBUSY-LOG] Does a server instance of this pipe exist at all -- busy or not? The pipe namespace
+    /// lists every pipe that has at least one instance. A refused enumeration answers "cannot tell" (false), which
+    /// keeps the old "not running" reading rather than inventing a busy one.</summary>
+    private static bool PipeExists(string name)
+    {
+        try
+        {
+            foreach (var p in System.IO.Directory.EnumerateFiles(@"\\.\pipe\"))
+                if (string.Equals(System.IO.Path.GetFileName(p), name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+        }
+        catch (Exception) { /* cannot tell */ }
+        return false;
     }
 
     public async Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
@@ -476,9 +504,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         try
         {
             CleanupPipe();
-            _pipe = new NamedPipeClientStream(".", PipeName,
+            _pipe = new NamedPipeClientStream(".", _pipeName,
                 PipeDirection.InOut, PipeOptions.Asynchronous);
-            await _pipe.ConnectAsync(ConnectTimeoutMs, ct);
+            await _pipe.ConnectAsync(_connectTimeoutMs, ct);
             return true;
         }
         catch (OperationCanceledException)
@@ -486,17 +514,24 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             // The caller withdrew (tab switch / window close). Not a fault, and NOT
             // rethrown: every call site is written against a bool.
             _log?.Debug(Constants.LogCatInit,
-                $"AOBMaker bridge: connect to '{PipeName}' cancelled by caller");
+                $"AOBMaker bridge: connect to '{_pipeName}' cancelled by caller");
             CleanupPipe();
             return false;
         }
         catch (TimeoutException)
         {
-            // ConnectAsync's own deadline: nothing is listening. Cheat Engine is not
-            // running, or it is but the AOBMaker plugin was never loaded.
-            _log?.Debug(Constants.LogCatInit,
-                $"AOBMaker bridge: no server on \\\\.\\pipe\\{PipeName} within {ConnectTimeoutMs} ms " +
-                "(Cheat Engine not running, or the AOBMaker plugin is not loaded)");
+            // ConnectAsync's own deadline. [W1-PIPEBUSY-LOG] That is NOT only "nothing is listening": .NET waits for a
+            // FREE instance until the deadline, and the AOBMaker server has one, so a pipe another client holds (a second
+            // Cheat Engine with the plugin -- measured 2026-09-10, its loser retry-spamming err=231 -- or another tool)
+            // times out exactly the same way. Ask whether the pipe exists before blaming Cheat Engine.
+            if (_pipeExists(_pipeName))
+                _log?.Warn(Constants.LogCatInit,
+                    $"AOBMaker bridge: \\\\.\\pipe\\{_pipeName} EXISTS but no instance was free within {_connectTimeoutMs} ms " +
+                    "— another client holds it (a second Cheat Engine with the AOBMaker plugin, or another tool)");
+            else
+                _log?.Debug(Constants.LogCatInit,
+                    $"AOBMaker bridge: no server on \\\\.\\pipe\\{_pipeName} within {_connectTimeoutMs} ms " +
+                    "(Cheat Engine not running, or the AOBMaker plugin is not loaded)");
             CleanupPipe();
             return false;
         }
@@ -506,7 +541,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             // pipe busy (all instances taken), access denied, broken pipe. Those need
             // a different remedy from "start CE", so they must read differently.
             _log?.Warn(Constants.LogCatInit,
-                $"AOBMaker bridge: connect to '{PipeName}' failed ({ex.GetType().Name}): {ex.Message}");
+                $"AOBMaker bridge: connect to '{_pipeName}' failed ({ex.GetType().Name}): {ex.Message}");
             CleanupPipe();
             return false;
         }
