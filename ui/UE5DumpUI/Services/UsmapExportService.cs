@@ -206,7 +206,7 @@ public static class UsmapExportService
         {
             nameTable.GetOrAdd(e.Name);
             foreach (var entry in e.Entries)
-                nameTable.GetOrAdd(entry.Name);
+                nameTable.GetOrAdd(EnumMemberName(e.Name, entry.Name));   // [USMAP-ENUM-NAME-QUALIFIED]
         }
 
         foreach (var ci in classInfos)
@@ -283,9 +283,36 @@ public static class UsmapExportService
             for (int i = 0; i < count; i++)
             {
                 w.Write(e.Entries[i].Value);                   // int64: explicit value
-                w.Write(nameTable.IndexOf(e.Entries[i].Name)); // int32: member name index
+                w.Write(nameTable.IndexOf(EnumMemberName(e.Name, e.Entries[i].Name)));  // int32
             }
         }
+    }
+
+    /// <summary>
+    /// [USMAP-ENUM-NAME-QUALIFIED] An enumerator as a consumer expects it: BARE, not
+    /// <c>EnumName::Member</c>.
+    ///
+    /// <para>UE stores an <c>enum class</c>'s entries fully qualified, and this writer passed them
+    /// through, so a consumer that qualifies them AGAIN printed the name twice —
+    /// <c>"EAngularDriveMode::EAngularDriveMode::TwistAndSwing"</c> where the canonical writer gives
+    /// <c>"EAngularDriveMode::TwistAndSwing"</c>. Same VALUE, but nobody string-matching an enum in
+    /// a CE script, a diff or a search would find it. Measured on the DumperTest 5.4 fixture
+    /// 2026-09-17: <b>7,399 of 9,294</b> members carried the prefix, against <b>0 of 9,294</b> in
+    /// Dumper-7's export of the same game, and it accounted for all 331 of the exports whose
+    /// readings still differed after <c>[USMAP-INHERITED-DUPES]</c> was fixed.</para>
+    ///
+    /// <para>⚠ The prefix is stripped ONLY when it is this enum's own name. A plain (unscoped)
+    /// <c>enum</c> already arrives bare — <c>EBlendMode</c>'s entries are <c>BLEND_Opaque</c> in
+    /// both writers — and must be left exactly as it is; and <c>EAngularDriveMode_MAX</c> keeps its
+    /// underscore tail, because only the <c>::</c> separator is removed.</para>
+    /// </summary>
+    internal static string EnumMemberName(string enumName, string memberName)
+    {
+        if (string.IsNullOrEmpty(enumName) || string.IsNullOrEmpty(memberName)) return memberName;
+        var prefix = enumName + "::";
+        return memberName.StartsWith(prefix, StringComparison.Ordinal)
+            ? memberName[prefix.Length..]
+            : memberName;
     }
 
     private static void WriteStructs(BinaryWriter w, IReadOnlyList<ClassInfoModel> classInfos, NameTable nameTable)

@@ -769,6 +769,83 @@ public class UsmapExportServiceTests
                      Assert.Single(f.Structs).Props.Select(p => p.Name));
     }
 
+    // ---- [USMAP-ENUM-NAME-QUALIFIED] --------------------------------------------
+    //
+    // UE stores an `enum class`'s entries FULLY QUALIFIED. Passing them through made a consumer
+    // that qualifies them again print the name twice. Measured on the fixture 2026-09-17: 7,399 of
+    // 9,294 members carried the prefix, against 0 of 9,294 in the canonical writer's export.
+
+    [Fact]
+    public void BuildUsmap_ScopedEnumMembers_AreWrittenBare()
+    {
+        var enums = new List<EnumDefinition>
+        {
+            new()
+            {
+                Name = "EAngularDriveMode",
+                Entries =
+                [
+                    new EnumEntryValue { Name = "EAngularDriveMode::SLERP", Value = 0 },
+                    new EnumEntryValue { Name = "EAngularDriveMode::TwistAndSwing", Value = 1 },
+                    new EnumEntryValue { Name = "EAngularDriveMode::EAngularDriveMode_MAX", Value = 2 },
+                ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(enums, []));
+
+        var e = Assert.Single(f.Enums);
+        Assert.Equal("EAngularDriveMode", e.Name);
+        // The underscore tail survives: only the "::" separator is removed.
+        Assert.Equal(new[] { "SLERP", "TwistAndSwing", "EAngularDriveMode_MAX" },
+                     e.Members.Select(m => m.Name));
+    }
+
+    /// <summary>⭐ The CONTROL. An unscoped `enum` already arrives bare and must be untouched --
+    /// EBlendMode's entries read BLEND_Opaque in both writers. A blanket "strip everything before
+    /// the last ::" would have passed the test above and broken nothing visible here, so this is
+    /// what stops the fix from being written that way.</summary>
+    [Fact]
+    public void BuildUsmap_UnscopedEnumMembers_AreLeftAlone()
+    {
+        var enums = new List<EnumDefinition>
+        {
+            new()
+            {
+                Name = "EBlendMode",
+                Entries =
+                [
+                    new EnumEntryValue { Name = "BLEND_Opaque", Value = 0 },
+                    new EnumEntryValue { Name = "BLEND_Masked", Value = 1 },
+                ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(enums, []));
+
+        Assert.Equal(new[] { "BLEND_Opaque", "BLEND_Masked" },
+                     Assert.Single(f.Enums).Members.Select(m => m.Name));
+    }
+
+    /// <summary>⭐ The other control: a member whose prefix is a DIFFERENT enum's name is not this
+    /// enum's qualification, so it stays. Only an exact `<ThisEnum>::` prefix is removed.</summary>
+    [Fact]
+    public void BuildUsmap_MemberPrefixedWithAnotherEnumName_IsLeftAlone()
+    {
+        var enums = new List<EnumDefinition>
+        {
+            new()
+            {
+                Name = "EOuter",
+                Entries = [ new EnumEntryValue { Name = "EInner::Value", Value = 0 } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(enums, []));
+
+        Assert.Equal("EInner::Value", Assert.Single(Assert.Single(f.Enums).Members).Name);
+    }
+
     /// <summary>A parent with two properties at 0 and 4, and a child adding one at 8.</summary>
     private static List<ClassInfoModel> InheritancePair() =>
     [

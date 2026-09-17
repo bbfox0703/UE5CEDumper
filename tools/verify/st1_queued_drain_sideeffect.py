@@ -152,8 +152,18 @@ def main():
         # `SetActorHiddenInGame` and the whole rig reports a false "the drain was suppressed".
         # That is exactly how that defect was found. `ChaosDebugDrawActor`'s class is
         # literally `Actor`, so it resolves.
+        # [ST1RIG-MAXRESULTS-IGNORED] The parameter is `limit`. `find_instances` reads
+        # `request.value("limit", 500)` (Fern.cpp, CMD_FIND_INSTANCES) and never looks at
+        # `max_results` -- so the 400 written here was silently dropped and the DEFAULT 500
+        # applied. ⚠ Two other commands DO spell it `max_results` (find_functions_by_class,
+        # find_property_xrefs), which is what makes this easy to get wrong; check the handler
+        # rather than copying a neighbouring call.
+        # Measured on a freshly booted Shipping fixture 2026-09-17: this query returns 250 rows
+        # whatever the cap is (400 / 500 / 2000 all give 250), so the cap has never been the
+        # binding constraint here and correcting the name changes nothing about what this rig
+        # sees. It matters anyway: a cap that is silently ignored is a bound nobody has.
         sm = [i for i in (c.request("find_instances", class_name="Actor",
-                                    max_results=400,
+                                    limit=400,
                                     exact_match=False).get("instances") or [])
               if i.get("class") == "Actor"
               and not str(i.get("name", "")).startswith("Default__")]
