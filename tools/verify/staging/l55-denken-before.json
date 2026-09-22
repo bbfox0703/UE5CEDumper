@@ -1,0 +1,12 @@
+{
+ "name": "l55-denken-before",
+ "why": "L55 A-run: 20448583's Denken.cpp hunk reversed -- the dead followed-impl guard restored, everything else HEAD",
+ "subs": [
+  {
+   "file": "dll/src/Denken.cpp",
+   "old": "            // [W5-DENKEN-DEADGUARD] A \"bail to save budget in a followed impl\" guard stood here --\n            // `if (tr.Empty() && ctx.callsFollowed == 0) { if (depth > 0) return; }` -- and it was DEAD\n            // in every reachable state: TryFollow counts the follow BEFORE it recurses, so callsFollowed\n            // is >= 1 whenever depth > 0. Removed, not \"repaired\": dropping the callsFollowed term would\n            // stop a followed impl the moment its this-alias dies and lose its later low-confidence\n            // accesses (dll_helpers_test's Test_Denken_FollowedImplOutlivesItsAlias). kInstrBudget and\n            // kBlockGuard bound the cost instead.\n\n",
+   "new": "            if (tr.Empty() && ctx.callsFollowed == 0) {\n                // No live this-alias and nothing followed yet: the rest of the\n                // block can't yield high-confidence field accesses. For depth-0\n                // thunks keep going a little (param unpack may restore RCX before\n                // the impl call); for followed impls, bail to save budget.\n                if (depth > 0) return;\n            }\n\n",
+   "count": 1
+  }
+ ]
+}

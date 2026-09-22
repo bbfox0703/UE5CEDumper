@@ -80,13 +80,21 @@ def main():
     try:
         for f in files:
             text = originals[f].decode("utf-8")
+            # ⚠ A tracked file can be CRLF in the WORK TREE while its blob is LF: `git ls-files --eol`
+            # listed 616 such files on 2026-09-22 (checked out before the eol=lf pin, never rewritten
+            # since), and `git status` calls them clean. Specs are written LF, so speak the file's own
+            # line ending rather than refusing -- the restore below is byte-exact either way.
+            crlf = "\r\n" in text
             for s in (x for x in subs if x["file"] == f):
-                n = text.count(s["old"])
+                old, new = s["old"], s["new"]
+                if crlf and "\r\n" not in old:
+                    old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+                n = text.count(old)
                 want = s.get("count", 1)
                 if n != want:
                     raise SystemExit("REFUSED: %s: anchor matched %d time(s), spec says %d:\n  %r"
                                      % (f, n, want, s["old"][:100]))
-                text = text.replace(s["old"], s["new"])
+                text = text.replace(old, new)
             data = text.encode("utf-8")
             if b"\x00" in data:
                 raise SystemExit("REFUSED: a NUL byte would be written into " + f)
