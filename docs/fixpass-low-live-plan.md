@@ -37,7 +37,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L89 | ⚠ C# half ✅ `b87915ea`; C++ half owed (`build_dll.py --targets dll_helpers_test`) |
+| 1 | L89 | ✅ CLOSED 2026-09-22: C# half `b87915ea`, C++ half `git log --grep 'verify(L89)'` (Pass 2752 / Fail 0) |
 | 2 | L55 (build the 'before' DLL: git apply -R of 20448583's Denken.cpp hunk) | ⬜ |
 | 3 | L40/L52 (build the FORCE_GOBJ+FORCE_GNAM DLL) | ⬜ |
 | 4 | L69/L85 (build the 'unmeasured:elemsize' DLL) | ⬜ |
@@ -2227,7 +2227,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L89 — `[A1-REVIEW6-PINS]`
 
-**Status:** ⚠ C# half ✅ `b87915ea`; C++ half owed (`build_dll.py --targets dll_helpers_test`) · **reachability:** `no-live-trigger` · **needs CE:** no · **needs UI:** no · **estimate:** 10 min
+**Status:** ✅ CLOSED 2026-09-22: C# half `b87915ea`, C++ half `git log --grep 'verify(L89)'` (Pass 2752 / Fail 0) · **reachability:** `no-live-trigger` · **needs CE:** no · **needs UI:** no · **estimate:** 10 min
 
 **Fix commit(s):** `943975f3 fix(records): the init-gate comments name both exemptions, and the %ls gate counts what it scanned [A1-REVIEW6-PINS] (batch L49; Mimic.cpp:327 comment, dll_helpers_test.cpp:1303-1311, InvokeScriptTests.cs:1997-2009 new pin + :2090-2137 guard-the-guard)`, `b87915ea verify(L89): CLOSED 2026-09-22 as N/A; C# pins re-run 216/216 (docs only)`
 
