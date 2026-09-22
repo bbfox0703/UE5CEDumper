@@ -38,10 +38,10 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L89 | ✅ CLOSED 2026-09-22: C# half `b87915ea`, C++ half `git log --grep 'verify(L89)'` (Pass 2752 / Fail 0) |
-| 2 | L55 (build the 'before' DLL: git apply -R of 20448583's Denken.cpp hunk) | ⬜ |
-| 3 | L40/L52 (build the FORCE_GOBJ+FORCE_GNAM DLL) | ⬜ |
-| 4 | L69/L85 (build the 'unmeasured:elemsize' DLL) | ⬜ |
-| 5 | L41 (build step-1 enum-renamed DLL and step-2 one-shot Sleep DLL) | ⬜ |
+| 2 | L55 (build the 'before' DLL: git apply -R of 20448583's Denken.cpp hunk) | 🔧 staged `out\staged\l55-denken-before` sha `b335f3a3` (spec in tools/verify/staging/) |
+| 3 | L40/L52 (build the FORCE_GOBJ+FORCE_GNAM DLL) | 🔧 staged `out\staged\l40-l52-force-fallbacks` sha `bc740950` |
+| 4 | L69/L85 (build the 'unmeasured:elemsize' DLL) | 🔧 staged `out\staged\l69-l85-unmeasured-elemsize` sha `f55d1745` |
+| 5 | L41 (build step-1 enum-renamed DLL and step-2 one-shot Sleep DLL) | 🔧 staged step 1 `l41-step1-enum-names-unlocated` sha `8d11fbd9`; step 2 `l41-step2-first-search-stall` sha `c61978d9` |
 
 ### S3
 
