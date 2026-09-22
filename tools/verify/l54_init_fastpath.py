@@ -85,9 +85,25 @@ def main():
     logd = os.path.expandvars(a.log_dir)
     initlog, pipelog, scanlog = (os.path.join(logd, n) for n in ("init-0.log", "pipe-0.log", "scan-0.log"))
 
+    t_start = time.time()
     pid = MP.pid_of(a.process)
     m = MP.Mem(pid)
-    base = MP.mailbox_addr(a.process)
+    if a.arm == "B":
+        # ⚠ ARMED BEFORE INJECTION: Python's own start-up is slower than the 190-445 ms window, so this arm is
+        # launched first and waits for the module, resolving the mailbox from base + export RVA (no subprocess).
+        import call_export as CX
+        rva = CX.export_rva(os.path.abspath(a.dll), "g_invokeMailbox")
+        base = None
+        while time.time() - t_start < 120 and base is None:
+            try:
+                base = CX.module_base(pid, "UE5Dumper.dll") + rva
+            except SystemExit:
+                time.sleep(0.01)
+        if base is None:
+            print("MISS: UE5Dumper.dll never loaded")
+            return 2
+    else:
+        base = MP.mailbox_addr(a.process)
     print("pid %d, mailbox 0x%X, initState %d, dll %s" % (pid, base, m.i32(base + MP.OFF_INITSTATE), a.dll))
     results = []
 
@@ -127,15 +143,19 @@ def main():
         if m.i32(base + MP.OFF_INITSTATE) == MP.INIT_READY:
             print("MISS: the process is already READY -- arm B needs a freshly injected process")
             return 2
-        s0 = 0
+        # Only a line stamped AFTER this rig started counts: until the new DLL's logger rotates it, scan-0.log is
+        # the PREVIOUS process's file, and it already contains "FindAll: Complete".
+        stamp0 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t_start))
         t0 = time.time()
         seen = None
-        while time.time() - t0 < 120:
-            txt = tail(scanlog, s0) if os.path.exists(scanlog) else ""
-            if "FindAll: Complete" in txt:
-                seen = time.time()
-                break
-            time.sleep(0.003)
+        while time.time() - t0 < 120 and not seen:
+            txt = tail(scanlog, 0) if os.path.exists(scanlog) else ""
+            for ln in txt.splitlines():
+                if "FindAll: Complete" in ln and ln[1:20] >= stamp0:
+                    seen = time.time()
+                    break
+            if not seen:
+                time.sleep(0.003)
         if not seen:
             print("MISS: 'FindAll: Complete' never appeared")
             return 2
