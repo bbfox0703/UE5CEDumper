@@ -57,7 +57,7 @@ def main():
             if m:
                 c.request("reset_all_fields")
                 fr = c.request("force_field", class_name="Pawn", field_name="BaseEyeHeight",
-                               kind="numeric", value=m.group(1))
+                               kind="numeric", value=float(m.group(1)))   # a JSON NUMBER: a string is refused (type_error.302)
                 print("   force_field Pawn.BaseEyeHeight = %s (the value it already holds) -> resolved=%s "
                       "held=%s truncated=%s" % (m.group(1), fr.get("resolved"), fr.get("held"), fr.get("truncated")))
                 if not fr.get("resolved") or not fr.get("held"):
