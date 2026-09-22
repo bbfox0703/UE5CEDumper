@@ -38,7 +38,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L89 | ✅ CLOSED 2026-09-22: C# half `b87915ea`, C++ half `git log --grep 'verify(L89)'` (Pass 2752 / Fail 0) |
-| 2 | L55 (build the 'before' DLL: git apply -R of 20448583's Denken.cpp hunk) | 🔧 staged `out\staged\l55-denken-before` sha `b335f3a3` (spec in tools/verify/staging/) |
+| 2 | L55 (build the 'before' DLL: git apply -R of 20448583's Denken.cpp hunk) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 | 3 | L40/L52 (build the FORCE_GOBJ+FORCE_GNAM DLL) | 🔧 staged `out\staged\l40-l52-force-fallbacks` sha `bc740950` |
 | 4 | L69/L85 (build the 'unmeasured:elemsize' DLL) | 🔧 staged `out\staged\l69-l85-unmeasured-elemsize` sha `f55d1745` |
 | 5 | L41 (build step-1 enum-renamed DLL and step-2 one-shot Sleep DLL) | 🔧 staged step 1 `l41-step1-enum-names-unlocated` sha `8d11fbd9`; step 2 `l41-step2-first-search-stall` sha `c61978d9` |
@@ -51,7 +51,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L55 (B-run: HEAD census on the fresh process) | ⬜ |
+| 1 | L55 (B-run: HEAD census on the fresh process) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 | 2 | L49 | ⬜ |
 | 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ⬜ |
 | 4 | L56 (pipe half: search_properties + force_field/reset) | ⬜ |
@@ -71,7 +71,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 2 | L85 (arm 3, same launch) | ⬜ |
 | 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ⬜ |
 | 4 | L85 (arm 4, out\oldcontract build 3262; back up %COMPUTERNAME%.json) | ⬜ |
-| 5 | L55 (A-run, 'before' DLL, pipe census; diff against S3's B-run) | ⬜ |
+| 5 | L55 (A-run, 'before' DLL, pipe census; diff against S3's B-run) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 
 ### S5
 
@@ -962,7 +962,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L55 — `[W5-DENKEN-DEADGUARD]`
 
-**Status:** ⬜ · **reachability:** `no-live-trigger` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) · **reachability:** `no-live-trigger` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `20448583`
 
