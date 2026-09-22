@@ -57,7 +57,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 4 | L56 (pipe half: search_properties + force_field/reset) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ✅ PASSED red→green 2026-09-22, both windows (`git log --grep 'verify(L54)'`) |
 | 6 | L54 (window B: fresh first-init poke) | ✅ PASSED red→green 2026-09-22, both windows (`git log --grep 'verify(L54)'`) |
-| 7 | L50 (persist:false override to 502, then UI half; kill the process after) | ⬜ |
+| 7 | L50 (persist:false override to 502, then UI half; kill the process after) | ✅ PASSED red→green 2026-09-22 via the in-process 502 override (`git log --grep 'verify(L50)'`) |
 
 ### S4
 
@@ -766,7 +766,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L50 — `[A2-LAZY-LATCH-GUESS]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
+**Status:** ✅ PASSED red→green 2026-09-22 via the in-process 502 override (`git log --grep 'verify(L50)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
 
 **Fix commit(s):** `8a22f413`
 
