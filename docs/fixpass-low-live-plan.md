@@ -53,7 +53,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 |---|---|---|
 | 1 | L55 (B-run: HEAD census on the fresh process) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 | 2 | L49 | ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L49)'`) |
-| 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ⬜ |
+| 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
 | 4 | L56 (pipe half: search_properties + force_field/reset) | ⬜ |
 | 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ⬜ |
 | 6 | L54 (window B: fresh first-init poke) | ⬜ |
@@ -85,7 +85,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 2 | L47 | ⬜ |
 | 3 | L56 (UI half) | ⬜ |
 | 4 | L71 | ⬜ |
-| 5 | L81 (UI half, optional) | ⬜ |
+| 5 | L81 (UI half, optional) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
 | 6 | L72 (optional re-run: already PASSED) | ✅ PASSED `0d182b15` |
 | 7 | L65 (capture 2 snapshots first) | ⬜ |
 | 8 | L70 (step 3: SPC on the new snapshot) | ✅ PASSED `38c7ac49` |
@@ -1991,7 +1991,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L81 — `[A4-AB4-BETWEEN]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `47226924`
 
