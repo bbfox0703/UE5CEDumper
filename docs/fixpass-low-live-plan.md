@@ -23,11 +23,11 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L74 | ✅ PASSED `4d0cde0c` |
-| 2 | L68 | ⛔ PASS retracted `5517e09e` — re-run owed (discriminating form) |
+| 2 | L68 | ✅ RE-VERIFIED red→green 2026-09-22 (`git log --grep 're-verify(L68)'`); first PASS `650d00d4` retracted in `5517e09e` |
 | 3 | L76 | ✅ PASSED `8b56eb32` |
 | 4 | L70 (steps 1-2, optional re-run: already PASSED) | ✅ PASSED `38c7ac49` |
 | 5 | L64 | ⬜ |
-| 6 | L68 (hard-kill arm, last) | ⛔ PASS retracted `5517e09e` — re-run owed (discriminating form) |
+| 6 | L68 (hard-kill arm, last) | ✅ RE-VERIFIED red→green 2026-09-22 (`git log --grep 're-verify(L68)'`); first PASS `650d00d4` retracted in `5517e09e` |
 
 ### S2
 
@@ -1471,7 +1471,7 @@ What the survey could not reach, and why. Each is a candidate for a fixture chan
 
 ### L68 — `[W3-CAP-NOSAVE]`
 
-**Status:** ⛔ PASS retracted `5517e09e` — re-run owed (discriminating form) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 15 min
+**Status:** ✅ RE-VERIFIED red→green 2026-09-22 (`git log --grep 're-verify(L68)'`); first PASS `650d00d4` retracted in `5517e09e` · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 15 min
 
 **Fix commit(s):** `2b386f26 fix(options): raising a Max cap alone is saved -- and a symmetry pin covers every option [W3-CAP-NOSAVE] (batch L30; adds PropertySearchCap to PropertySearchPersist at MainWindowViewModel.cs:2400 and ClassListCap to GameClassFilterPersist at :2435)`, `650d00d4 verify(L68): PASSED 2026-09-22 (docs only)`
 
