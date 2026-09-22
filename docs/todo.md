@@ -5508,6 +5508,8 @@ CeMailboxBailoutTests' old `local _over = _st == nil or` pin now names the new s
 
 #### Live-check backlog — run at the end of the pass
 
+⭐ **LOW rows (L40-L89): the session order, per-row status and per-row recipes are in [fixpass-low-live-plan.md](fixpass-low-live-plan.md)** (read-only survey, 2026-09-22). ⛔ After each verified row, update BOTH that file's status column and the row's record below, in ONE commit, then push. A row the survey found unreachable here gets a DumperTest / DumperTest56 / DumperTest58 change first, where one would make it reachable (that file's *Fixture changes*).
+
 ⚠ **The “CE: announce first” / “announce it first” prefixes below are STALE.** The maintainer cleared Cheat Engine for standing use on 2026-09-16 (*「除非我另外提示，否則CE接下來皆可使用」*), so read them as a LABEL meaning “this row needs CE”, not as a gate to stop at. The rules that travel with CE are unchanged: **one injected game at a time, and kill the game / CE / UI the moment a row is done.**
 
 | # | row | the check | needs |
