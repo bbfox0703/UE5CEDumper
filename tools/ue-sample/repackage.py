@@ -134,19 +134,38 @@ def run(argv, label, timeout):
     return r.returncode, dt
 
 
+def mirror_files(project):
+    """The files the in-repo mirror carries for `project`, or None when it has no mirror.
+
+    DumperTest: the hashed list above (package-identity.json covers exactly those).
+    DumperTest58: every file in its mirror directory. ⛔ Until 2026-09-22 this function knew only
+    DumperTest, so `--sync-mirror` on DumperTest58 printed "no in-repo mirror" and packaged the
+    LIVE project's source while the edit sat in the repo -- found when an L86 fixture change
+    compiled clean against the old header. The README has called that directory a mirror since
+    2026-09-16.
+    """
+    if project == "DumperTest":
+        return list(MIRROR_SOURCES)
+    d = os.path.join(HERE, project, "Source", project)
+    if project == "DumperTest58" and os.path.isdir(d):
+        return sorted(n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n)))
+    return None
+
+
 def mirror_state(project):
     """Is the in-repo mirror identical to the real project's source?
 
-    Only DumperTest has a mirror in this repo; anything else returns None rather than
+    None when the project has no mirror in this repo (see mirror_files), rather than
     pretending to have checked.
     """
-    if project != "DumperTest":
+    names = mirror_files(project)
+    if names is None:
         return None
     import hashlib
 
     def h(d):
         x = hashlib.sha256()
-        for n in MIRROR_SOURCES:
+        for n in names:
             p = os.path.join(d, n)
             if not os.path.exists(p):
                 return None
@@ -155,8 +174,8 @@ def mirror_state(project):
                 x.update(fh.read().replace(b"\r\n", b"\n"))
         return x.hexdigest()
 
-    a = h(os.path.join(HERE, "DumperTest", "Source", "DumperTest"))
-    b = h(os.path.join(PROJECTS_ROOT, "DumperTest", "Source", "DumperTest"))
+    a = h(os.path.join(HERE, project, "Source", project))
+    b = h(os.path.join(PROJECTS_ROOT, project, "Source", project))
     return (a, b, a is not None and a == b)
 
 
@@ -299,10 +318,11 @@ def main():
         print("         real %s   %s" % (real_h[:16] if real_h else "MISSING",
                                          "IN SYNC" if same else "*** DRIFT ***"))
         if args.sync_mirror and not same:
-            src = os.path.join(HERE, "DumperTest", "Source", "DumperTest")
-            dst = os.path.join(PROJECTS_ROOT, "DumperTest", "Source", "DumperTest")
+            src = os.path.join(HERE, args.project, "Source", args.project)
+            dst = os.path.join(PROJECTS_ROOT, args.project, "Source", args.project)
             import shutil
-            for n in MIRROR_SOURCES:
+            names = mirror_files(args.project)
+            for n in names:
                 d = os.path.join(dst, n)
                 shutil.copy2(os.path.join(src, n), d)
                 # ⛔ STAMP THE MTIME TO NOW. `copy2` deliberately PRESERVES the mirror
@@ -323,7 +343,7 @@ def main():
                 # succeeds and the fixture quietly answers for the old source.
                 os.utime(d, None)
             print("         copied %d files repo -> real project (mtimes stamped to now, "
-                  "so UHT cannot mistake them for old)" % len(MIRROR_SOURCES))
+                  "so UHT cannot mistake them for old)" % len(names))
         elif not same:
             print("         ⚠ packaging would build the REAL project's source, not the mirror's.\n"
                   "           Pass --sync-mirror if the repo copy is the one you edited.")
