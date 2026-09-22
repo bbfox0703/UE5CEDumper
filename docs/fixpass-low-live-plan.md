@@ -55,8 +55,8 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 2 | L49 | ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L49)'`) |
 | 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
 | 4 | L56 (pipe half: search_properties + force_field/reset) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
-| 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ⬜ |
-| 6 | L54 (window B: fresh first-init poke) | ⬜ |
+| 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ✅ PASSED red→green 2026-09-22, both windows (`git log --grep 'verify(L54)'`) |
+| 6 | L54 (window B: fresh first-init poke) | ✅ PASSED red→green 2026-09-22, both windows (`git log --grep 'verify(L54)'`) |
 | 7 | L50 (persist:false override to 502, then UI half; kill the process after) | ⬜ |
 
 ### S4
@@ -924,7 +924,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L54 — `[A3-MIMIC-INIT-FASTPATH]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 45 min
+**Status:** ✅ PASSED red→green 2026-09-22, both windows (`git log --grep 'verify(L54)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 45 min
 
 **Fix commit(s):** `420b1e53`
 
