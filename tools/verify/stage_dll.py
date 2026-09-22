@@ -64,8 +64,23 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     spec = json.load(open(a.spec, encoding="utf-8"))
-    name, subs = spec["name"], spec["subs"]
-    files = sorted({s["file"] for s in subs})
+    name, subs = spec["name"], spec.get("subs", [])
+    files = {s["file"] for s in subs}
+    # "reverse_commit": build the tree as it would be WITHOUT that commit's change to "paths" (default dll/src) --
+    # a whole fix reversed with `git apply -R`, for a red arm whose fix is too large for a one-line mutant.
+    rev_patch = None
+    if spec.get("reverse_commit"):
+        paths = spec.get("paths") or ["dll/src"]
+        # BYTES, never text: a text-mode pipe on Windows writes "\n" as "\r\n", and the LF hunks then fail to apply
+        # to every LF file -- measured 2026-09-22 (Radar.h / Fern.cpp refused while the CRLF files applied).
+        rev_patch = subprocess.run(["git", "-C", REPO, "show", spec["reverse_commit"], "--", *paths],
+                                   capture_output=True).stdout
+        touched = git("show", "--name-only", "--format=", spec["reverse_commit"], "--", *paths).stdout.split()
+        if not rev_patch.strip() or not touched:
+            print("REFUSED: %s changes nothing under %s" % (spec["reverse_commit"], paths))
+            return 2
+        files |= set(touched)
+    files = sorted(files)
 
     dirty = git("status", "--porcelain", "--", *files).stdout.strip()
     if dirty:
@@ -78,8 +93,18 @@ def main():
     rc = 1
     staged_sha = None
     try:
+        if rev_patch is not None:
+            r = subprocess.run(["git", "-C", REPO, "apply", "-R", "-"], input=rev_patch, capture_output=True)
+            if r.returncode != 0:
+                raise SystemExit("REFUSED: `git apply -R` of %s failed:\n%s"
+                                 % (spec["reverse_commit"], r.stderr.decode("utf-8", "replace")[-800:]))
+            print("reversed %s under %s" % (spec["reverse_commit"], spec.get("paths") or ["dll/src"]))
+            # the subs below then see the reversed text
+            originals_after_reverse = {f: open(os.path.join(REPO, f), "rb").read() for f in files}
+        else:
+            originals_after_reverse = originals
         for f in files:
-            text = originals[f].decode("utf-8")
+            text = originals_after_reverse[f].decode("utf-8")
             # ⚠ A tracked file can be CRLF in the WORK TREE while its blob is LF: `git ls-files --eol`
             # listed 616 such files on 2026-09-22 (checked out before the eol=lf pin, never rewritten
             # since), and `git status` calls them clean. Specs are written LF, so speak the file's own
