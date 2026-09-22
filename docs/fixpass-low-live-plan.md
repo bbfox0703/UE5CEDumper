@@ -52,7 +52,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L55 (B-run: HEAD census on the fresh process) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
-| 2 | L49 | ⬜ |
+| 2 | L49 | ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L49)'`) |
 | 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ⬜ |
 | 4 | L56 (pipe half: search_properties + force_field/reset) | ⬜ |
 | 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ⬜ |
@@ -725,7 +725,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L49 — `[A2-WALKCLASSEX-UNMAPPED]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
+**Status:** ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L49)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
 
 **Fix commit(s):** `84a8d8ca`
 
