@@ -57,8 +57,6 @@ def main():
     ap.add_argument("--log-dir", required=True)
     a = ap.parse_args()
     walklog = os.path.join(os.path.expandvars(a.log_dir), "walk-0.log")
-    if not assert_channel_carries(walklog, "[WALK", "a WalkClass line"):
-        return 2
     fails = []
     h = k.OpenProcess(ACCESS, False, a.pid)
     if not h:
@@ -80,6 +78,10 @@ def main():
             print("baseline: class %s at %s -> %d fields" % (base_name, C, len(base_fields)))
             if not base_fields:
                 print("FAIL: the baseline class walk is empty -- STEP B would be vacuous")
+                return 2
+            # AFTER the baseline walk: a fresh process's walk-0.log is empty until something walks.
+            time.sleep(0.5)
+            if not assert_channel_carries(walklog, "[WALK", "a WalkClass line"):
                 return 2
 
             P = k.VirtualAllocEx(h, None, 0x10000, MEM_RESERVE, PAGE_NOACCESS)
