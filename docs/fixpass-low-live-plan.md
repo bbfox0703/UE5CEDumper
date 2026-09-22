@@ -54,7 +54,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 1 | L55 (B-run: HEAD census on the fresh process) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 | 2 | L49 | ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L49)'`) |
 | 3 | L81 (pipe arms, write_mem U16/I16 then restore) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
-| 4 | L56 (pipe half: search_properties + force_field/reset) | ⬜ |
+| 4 | L56 (pipe half: search_properties + force_field/reset) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 5 | L54 (window A: Shutdown→AutoStart re-init poke; relaunch afterwards) | ⬜ |
 | 6 | L54 (window B: fresh first-init poke) | ⬜ |
 | 7 | L50 (persist:false override to 502, then UI half; kill the process after) | ⬜ |
@@ -83,7 +83,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 |---|---|---|
 | 1 | L73 | ⬜ |
 | 2 | L47 | ⬜ |
-| 3 | L56 (UI half) | ⬜ |
+| 3 | L56 (UI half) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 4 | L71 | ⬜ |
 | 5 | L81 (UI half, optional) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
 | 6 | L72 (optional re-run: already PASSED) | ✅ PASSED `0d182b15` |
@@ -145,7 +145,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 2 | L69 (step 1: C ABI verdict + dissect, no warn) | ⬜ |
 | 3 | L69 (step 3: untick/re-tick init; mid-scan cmd=16 mailbox observation from Python) | ⬜ |
 | 4 | L78 (manufactured attach, 200 ms invoke timeout persist:false + suspend-tid; restore) | ⬜ |
-| 5 | L56 (Freeze arm, UE5_DEBUG=1, UI + AOBMaker) | ⬜ |
+| 5 | L56 (Freeze arm, UE5_DEBUG=1, UI + AOBMaker) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 6 | L80 (UI pushes Get GWorld; sw3 arm/disarm freezes the game; last) | ⬜ |
 
 ### S10
@@ -1005,7 +1005,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L56 — `[A4-CDOSCOPE-ANCESTOR]` `[A4-CDOSCOPE-NESTED-PREVIEW]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 30 min
+**Status:** ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 30 min
 
 **Fix commit(s):** `07b04894`
 
