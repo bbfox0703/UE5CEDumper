@@ -70,6 +70,25 @@ def main():
                 if left:
                     fails.append("cleanup: fields still held")
 
+        # ⭐ THE ANCESTOR DISCRIMINATOR ON THIS FIXTURE (found 2026-09-22 with the pre-fix DLL). `EyeHeight` cannot
+        # fail here: a live SpectatorPawn derives from Pawn but not Character, so even the pre-fix walk credited Pawn.
+        # `Jump` matches Character (bPressedJump, JumpKeyHoldTime, ...) AND the template's nearer
+        # DumperTestCharacter.JumpAction, and the only live Character is the BP subclass of DumperTestCharacter --
+        # so pre-fix every Character row read "(CDO default)" (measured), and post-fix none may.
+        print("\n== ANCESTOR, discriminating: search_properties 'Jump' (game_only off) ==")
+        rs = rows_of(c.request("search_properties", query="Jump", game_only=False, limit=300))
+        chars = [x for x in rs if x.get("class_name") == "Character"]
+        nearer = [x for x in rs if x.get("class_name") == "DumperTestCharacter"]
+        for x in chars[:4] + nearer[:1]:
+            print("   %-20s %-26s preview=%r" % (x.get("class_name"), x.get("prop_name"), x.get("preview")))
+        if not chars or not nearer:
+            fails.append("ancestor (Jump): the Character or DumperTestCharacter rows are missing -- vacuous")
+        cdo = [x.get("prop_name") for x in chars if "(CDO default)" in str(x.get("preview") or "")]
+        sub = [x.get("prop_name") for x in chars if str(x.get("preview") or "").endswith(" (subclass instance)")]
+        print("   Character rows: %d, (subclass instance) %d, (CDO default) %d" % (len(chars), len(sub), len(cdo)))
+        if cdo:
+            fails.append("ancestor (Jump): %d Character row(s) read (CDO default): %s" % (len(cdo), cdo[:4]))
+
         print("\n== NESTED: search_properties 'Num' (game_only, deep) ==")
         rs = rows_of(c.request("search_properties", query="Num", game_only=True, deep=True, limit=200))
         mine = [x for x in rs if x.get("class_name") == "DumperTestActor"]
