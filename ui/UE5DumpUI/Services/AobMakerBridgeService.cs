@@ -52,6 +52,11 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     public bool IsAvailable { get; private set; }
 
+    /// <inheritdoc/>
+    /// <remarks>Written only by <see cref="ReconnectAsync"/> (and the defensive catch in
+    /// <see cref="CheckAvailabilityAsync"/>), always under <see cref="_opLock"/>.</remarks>
+    public AobMakerFailure LastFailure { get; private set; } = AobMakerFailure.Absent;
+
     public AobMakerBridgeService(ILoggingService? log = null)
         : this(log, PipeName, ConnectTimeoutMs, PipeExists) { }
 
@@ -103,6 +108,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             catch (Exception ex)
             {
                 _log?.Debug(Constants.LogCatInit, $"AOBMaker CE Plugin bridge check failed: {ex.Message}");
+                LastFailure = AobMakerFailure.Failed;
             }
 
             IsAvailable = false;
@@ -498,6 +504,10 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     /// Split by level on purpose: not-running is the overwhelmingly common case and a
     /// tab switch probes on every activation, so it stays at Debug; anything else is a
     /// real fault and gets a Warn that names the exception type.
+    ///
+    /// [W1-PIPEBUSY-STATUS] The log alone was not enough: the user-facing status still said
+    /// "open Cheat Engine" for a busy pipe (live, L64, 2026-09-22). Every branch therefore
+    /// also records <see cref="LastFailure"/>, which the status text reads to pick the remedy.
     /// </summary>
     private async Task<bool> ReconnectAsync(CancellationToken ct)
     {
@@ -507,6 +517,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             _pipe = new NamedPipeClientStream(".", _pipeName,
                 PipeDirection.InOut, PipeOptions.Asynchronous);
             await _pipe.ConnectAsync(_connectTimeoutMs, ct);
+            LastFailure = AobMakerFailure.None;
             return true;
         }
         catch (OperationCanceledException)
@@ -515,6 +526,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             // rethrown: every call site is written against a bool.
             _log?.Debug(Constants.LogCatInit,
                 $"AOBMaker bridge: connect to '{_pipeName}' cancelled by caller");
+            LastFailure = AobMakerFailure.Cancelled;
             CleanupPipe();
             return false;
         }
@@ -525,13 +537,19 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             // Cheat Engine with the plugin -- measured 2026-09-10, its loser retry-spamming err=231 -- or another tool)
             // times out exactly the same way. Ask whether the pipe exists before blaming Cheat Engine.
             if (_pipeExists(_pipeName))
+            {
                 _log?.Warn(Constants.LogCatInit,
                     $"AOBMaker bridge: \\\\.\\pipe\\{_pipeName} EXISTS but no instance was free within {_connectTimeoutMs} ms " +
                     "— another client holds it (a second Cheat Engine with the AOBMaker plugin, or another tool)");
+                LastFailure = AobMakerFailure.Busy;
+            }
             else
+            {
                 _log?.Debug(Constants.LogCatInit,
                     $"AOBMaker bridge: no server on \\\\.\\pipe\\{_pipeName} within {_connectTimeoutMs} ms " +
                     "(Cheat Engine not running, or the AOBMaker plugin is not loaded)");
+                LastFailure = AobMakerFailure.Absent;
+            }
             CleanupPipe();
             return false;
         }
@@ -542,6 +560,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             // a different remedy from "start CE", so they must read differently.
             _log?.Warn(Constants.LogCatInit,
                 $"AOBMaker bridge: connect to '{_pipeName}' failed ({ex.GetType().Name}): {ex.Message}");
+            LastFailure = ex is UnauthorizedAccessException ? AobMakerFailure.Denied : AobMakerFailure.Failed;
             CleanupPipe();
             return false;
         }

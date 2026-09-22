@@ -3109,9 +3109,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             IsAobMakerAvailable = ok;
             LiveWalker.IsAobMakerAvailable = ok;
             Pointers.IsAobMakerAvailable = ok;
+            // [W1-PIPEBUSY-STATUS] The remedy depends on WHY: a busy pipe is not "open Cheat Engine".
             StatusText = ok
                 ? "AOBMaker plugin connected"
-                : "AOBMaker plugin not detected — open Cheat Engine with the AOBMaker plugin loaded";
+                : Helpers.AobMakerUnavailable.Text(_aobMaker);
         }
         catch (Exception ex)
         {
@@ -3150,7 +3151,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await _aobMaker.CheckAvailabilityAsync();
             if (!_aobMaker.IsAvailable)
             {
-                StatusText = "Inject helper: AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded";
+                StatusText = $"Inject helper: {Helpers.AobMakerUnavailable.Text(_aobMaker)}";
                 return;
             }
 
@@ -3442,7 +3443,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await _aobMaker.CheckAvailabilityAsync();
             if (!_aobMaker.IsAvailable)
             {
-                StatusText = "Inject freeze helper: AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded";
+                StatusText = $"Inject freeze helper: {Helpers.AobMakerUnavailable.Text(_aobMaker)}";
                 return;
             }
 

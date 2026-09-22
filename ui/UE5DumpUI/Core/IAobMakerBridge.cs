@@ -1,6 +1,29 @@
 namespace UE5DumpUI.Core;
 
 /// <summary>
+/// [W1-PIPEBUSY-STATUS] WHY the last connect to <c>\\.\pipe\AOBMakerCEBridge</c> failed. Each value needs a
+/// different remedy from the user, which is the whole reason it exists: "open Cheat Engine" is right for
+/// <see cref="Absent"/> and actively wrong for <see cref="Busy"/>.
+/// </summary>
+public enum AobMakerFailure
+{
+    /// <summary>The last connect succeeded. A later request can still fail on a pipe that broke mid-call
+    /// (CE closed) — that is not a connect failure and is not recorded here.</summary>
+    None,
+    /// <summary>No server instance of the pipe exists: Cheat Engine not running, or the plugin not loaded.</summary>
+    Absent,
+    /// <summary>The pipe EXISTS, but its only instance stayed occupied by another client until the deadline.
+    /// The AOBMaker server is single-instance, so one connected client locks everyone else out.</summary>
+    Busy,
+    /// <summary>The pipe exists and refused this process (access denied).</summary>
+    Denied,
+    /// <summary>The caller withdrew (tab switch / window close) before the connect finished.</summary>
+    Cancelled,
+    /// <summary>Anything else (broken pipe, I/O error) — the UI init log names the exception.</summary>
+    Failed,
+}
+
+/// <summary>
 /// Bridge to AOBMaker CE Plugin for navigating CE Memory Viewer.
 /// Communicates via <c>\\.\pipe\AOBMakerCEBridge</c> named pipe.
 /// </summary>
@@ -10,7 +33,16 @@ public interface IAobMakerBridge
     bool IsAvailable { get; }
 
     /// <summary>
-    /// Test pipe connectivity and update <see cref="IsAvailable"/>.
+    /// [W1-PIPEBUSY-STATUS] Why the most recent connect attempt (by ANY method — every call reconnects) failed, or
+    /// <see cref="AobMakerFailure.None"/> after a success. Leaves the <c>bool</c> contracts untouched: callers that
+    /// only need "reachable?" keep reading <see cref="IsAvailable"/>; the status text reads this to pick the remedy.
+    /// The default serves doubles that model availability only — it is the pre-fix reading, where every failure
+    /// meant "not running".
+    /// </summary>
+    AobMakerFailure LastFailure => IsAvailable ? AobMakerFailure.None : AobMakerFailure.Absent;
+
+    /// <summary>
+    /// Test pipe connectivity and update <see cref="IsAvailable"/> and <see cref="LastFailure"/>.
     /// </summary>
     Task<bool> CheckAvailabilityAsync(CancellationToken ct = default);
 

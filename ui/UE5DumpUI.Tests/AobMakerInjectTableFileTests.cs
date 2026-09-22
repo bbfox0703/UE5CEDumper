@@ -1,4 +1,6 @@
+using System.IO.Pipes;
 using System.Text.Json;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -102,6 +104,8 @@ public class AobMakerInjectTableFileTests
         Assert.Contains(log.Messages, m => m.StartsWith("[WARN", StringComparison.Ordinal)
                                          && m.Contains("EXISTS but no instance was free", StringComparison.Ordinal));
         Assert.DoesNotContain(log.Messages, m => m.Contains("Cheat Engine not running", StringComparison.Ordinal));
+        // [W1-PIPEBUSY-STATUS] ...and the REASON reaches the caller, not only the log.
+        Assert.Equal(AobMakerFailure.Busy, bridge.LastFailure);
     }
 
     [Fact]
@@ -116,6 +120,90 @@ public class AobMakerInjectTableFileTests
         Assert.Contains(log.Messages, m => m.StartsWith("[DEBUG", StringComparison.Ordinal)
                                          && m.Contains("Cheat Engine not running", StringComparison.Ordinal));
         Assert.DoesNotContain(log.Messages, m => m.StartsWith("[WARN", StringComparison.Ordinal));
+        Assert.Equal(AobMakerFailure.Absent, bridge.LastFailure);
+    }
+
+    [Fact]
+    public async Task LastFailure_is_not_a_latch_a_later_successful_connect_clears_Busy()
+    {
+        // [W1-PIPEBUSY-STATUS] The status line reads LastFailure after every probe, so a stale Busy would keep telling
+        // the user another program holds a pipe that is now free. Busy first (nobody serves the name yet, the probe
+        // says it exists), then a real server on the same name: the next check connects and the reason resets.
+        var name = NobodysPipe();
+        var bridge = new AobMakerBridgeService(new MockLoggingService(), name, 150, _ => true);
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.False(await bridge.CheckAvailabilityAsync(ct));
+        Assert.Equal(AobMakerFailure.Busy, bridge.LastFailure);
+
+        using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1,
+                                                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        var accepted = server.WaitForConnectionAsync(ct);
+
+        Assert.True(await bridge.CheckAvailabilityAsync(ct));
+        Assert.Equal(AobMakerFailure.None, bridge.LastFailure);
+        await accepted;
+    }
+
+    // ---- [W1-PIPEBUSY-STATUS] the user-facing wording behind each reason ----
+
+    [Fact]
+    public void Every_unavailable_key_exists_in_en_axaml()
+    {
+        // Res.Get returns "" for a missing key (and always, headless -- the VM tests read the literal fallback), so a
+        // typo would silently downgrade every user's wording to the short core.
+        var text = ReadEnAxaml();
+        int seen = 0;
+        foreach (var f in Enum.GetValues<AobMakerFailure>())
+        {
+            Assert.Contains($"x:Key=\"{Helpers.AobMakerUnavailable.KeyFor(f)}\"", text, StringComparison.Ordinal);
+            seen++;
+        }
+        Assert.Equal(6, seen);   // guard the guard: an empty loop must not pass
+    }
+
+    [Fact]
+    public void The_busy_and_denied_wording_never_sends_the_user_to_open_Cheat_Engine()
+    {
+        // The defect this pins: a pipe that EXISTS already has its Cheat Engine. The toolbar shows ~50 characters,
+        // so the discriminating word must also sit near the front.
+        var text = ReadEnAxaml();
+        var busy = ValueOf(text, Helpers.AobMakerUnavailable.KeyBusy);
+        var denied = ValueOf(text, Helpers.AobMakerUnavailable.KeyDenied);
+        var absent = ValueOf(text, Helpers.AobMakerUnavailable.KeyAbsent);
+
+        foreach (var s in new[] { busy, denied })
+        {
+            Assert.DoesNotContain("open Cheat Engine", s, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("start Cheat Engine with", s, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.InRange(busy.IndexOf("busy", StringComparison.Ordinal), 0, 25);
+        Assert.InRange(denied.IndexOf("refused", StringComparison.Ordinal), 0, 25);
+        Assert.Contains("another program", busy, StringComparison.Ordinal);
+        Assert.Contains("open Cheat Engine", absent, StringComparison.Ordinal);   // the control keeps its remedy
+    }
+
+    private static string ReadEnAxaml()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 8 && dir != null; i++)
+        {
+            var candidate = Path.Combine(dir, "ui", "UE5DumpUI", "Resources", "Strings", "en.axaml");
+            if (File.Exists(candidate)) return File.ReadAllText(candidate);
+            dir = Path.GetDirectoryName(dir);
+        }
+        Assert.Fail("en.axaml not found above " + AppContext.BaseDirectory);
+        return "";
+    }
+
+    private static string ValueOf(string axaml, string key)
+    {
+        var open = $"x:Key=\"{key}\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{key} missing from en.axaml");
+        start += open.Length;
+        int end = axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal);
+        return axaml[start..end];
     }
 
     // Note: a "no-CE-plugin -> graceful false" test through the PUBLIC constructor is still

@@ -425,6 +425,12 @@
     <sys:String x:Key="str.Toolbar.AobMakerOffline">Offline</sys:String>
     <sys:String x:Key="str.Toolbar.AobMakerRefresh">&#x27F3;</sys:String>
     <sys:String x:Key="str.Tip.Toolbar.AobMakerRefresh">Re-check whether Cheat Engine is running with the AOBMaker plugin loaded. Navigation/record buttons also re-probe on use, so this is just for an at-a-glance status.</sys:String>
+    <!-- [W1-PIPEBUSY-STATUS] "AOBMaker not reachable" status, by WHY the connect failed (Helpers/AobMakerUnavailable.cs).
+         The toolbar shows ~50 characters, so the discriminating word comes first. No trailing period: callers append. -->
+    <sys:String x:Key="str.AobMaker.Unavailable.Absent">AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded</sys:String>
+    <sys:String x:Key="str.AobMaker.Unavailable.Busy">AOBMaker pipe busy — it exists, but another program holds its only connection. Close that program, then press &#x27F3; (starting another Cheat Engine will not help)</sys:String>
+    <sys:String x:Key="str.AobMaker.Unavailable.Denied">AOBMaker pipe refused this app (access denied) — the pipe exists, so starting Cheat Engine will not help; the UI init log names the error</sys:String>
+    <sys:String x:Key="str.AobMaker.Unavailable.Failed">AOBMaker not connected — the connection attempt failed; the UI init log names the error</sys:String>
     <sys:String x:Key="str.System.SelfTest.Button">Run Self-Test</sys:String>
     <sys:String x:Key="str.System.SelfTest.Hint">Auto-picks a KismetMathLibrary helper, invokes it via static-native fast path, and verifies the return value. Confirms the ProcessEvent hook is on the correct vtable slot.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Running">Probing KismetMathLibrary helpers...</sys:String>
