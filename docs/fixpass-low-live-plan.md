@@ -26,7 +26,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 2 | L68 | ✅ RE-VERIFIED red→green 2026-09-22 (`git log --grep 're-verify(L68)'`); first PASS `650d00d4` retracted in `5517e09e` |
 | 3 | L76 | ✅ PASSED `8b56eb32` |
 | 4 | L70 (steps 1-2, optional re-run: already PASSED) | ✅ PASSED `38c7ac49` |
-| 5 | L64 | ⬜ |
+| 5 | L64 | ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L64)'`) |
 | 6 | L68 (hard-kill arm, last) | ✅ RE-VERIFIED red→green 2026-09-22 (`git log --grep 're-verify(L68)'`); first PASS `650d00d4` retracted in `5517e09e` |
 
 ### S2
@@ -1318,7 +1318,7 @@ What the survey could not reach, and why. Each is a candidate for a fixture chan
 
 ### L64 — `[W1-PIPEBUSY-LOG]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 25 min
+**Status:** ✅ PASSED red→green 2026-09-22 (`git log --grep 'verify(L64)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 25 min
 
 **Fix commit(s):** `62f1596b`
 
