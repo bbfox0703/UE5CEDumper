@@ -286,7 +286,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 |---|---|---|---|
 | L58 step 1 | `UDumperTestStealthComponent` (`StealthDetection`, a float the game rewrites every frame) attached to the player pawn from `ADumperTestActor::Tick`, registered as an instance component so the pawn's related-object walk reaches it | DumperTest 5.4 | source ✅ `4bed746a`; packaged ✅ `18083014` (all three configs; names checked in the exes) |
 | L48 step 1 (listed half) | `UDumperTestSparseListener`: a rooted transient UObject bound to the actor's sparse `OnActorBeginOverlap`, referenced by nothing else. D4's `OnActorHit` self-binding is untouched | DumperTest 5.4 | source ✅ `4bed746a`; packaged ✅ `18083014` (all three configs; names checked in the exes) |
-| L86 | `UDumperTest58OptTail` (64 bytes; intrusive `TOptional<FName>` as the LAST 8) plus `ADumperTest58Actor::OptTail_Spawn(MaxObjects, WantEdges)`, which spawns until enough instances end at an unreadable page, MEASURED per instance with `VirtualQuery`. Zero edges after the cap = still unreachable on that run | DumperTest58 | source ✅; package ⬜ |
+| L86 | `UDumperTest58OptTail` (64 bytes; intrusive `TOptional<FName>` as the LAST 8) plus `ADumperTest58Actor::OptTail_Spawn(MaxObjects, WantEdges)`, which spawns until enough instances end at an unreadable page, MEASURED per instance with `VirtualQuery`. Zero edges after the cap = still unreachable on that run | DumperTest58 | source ✅ `4bed746a`; packaged ✅ (Development + Shipping, 2026-09-22; names checked in the exes). ⚠ `repackage.py` knew only DumperTest's mirror until `06261090` |
 
 **Considered and NOT changed:**
 
