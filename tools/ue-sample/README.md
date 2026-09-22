@@ -564,6 +564,18 @@ accessor dereferences it. It only counts.
 | `Arr_SoftClass` | `DumperTestHolder` · `DumperTestDerivedHolder` · default | **L44 step 2**, the `TSoftClassPtr` inner. The SDK header must spell the element type, not `uint8_t`. Element [2] is the `(none)` control |
 | `Arr_FieldPath` | paths to `TickCount` and `FrozenInt` | **L44 step 2**, the `TFieldPath` inner — two DIFFERENT properties, because one repeated name reads the same at a right and a wrong stride. `Arr_LazyPtr` and `Arr_Delegates` already cover the other two inner types the header declared as `uint8_t` |
 
+### L58 / L48 hosts (2026-09-22) — a stealth meter on the pawn, and a cross-object sparse binding
+
+Added because the 2026-09-22 LOW-row survey found both rows unreachable on this fixture
+(`docs/fixpass-low-live-plan.md`).
+
+| field | value | check |
+|---|---|---|
+| `StealthDetection` (on `UDumperTestStealthComponent`, attached to the player pawn) | climbs `0` → `1` over ten seconds, then wraps | ⭐ **L58 step 1** (`[A4-STEALTH-PRIME]`). Teleport → Stealth → **Detect** must now find it (the pawn's related objects; name scores on *stealth* and *detect*). Then Hold @0, restart the UI with the game running, reconnect: the card reads *Holding @0*, and Reset releases it. The game rewrites the meter every frame, so the hold is a real contest |
+| `StealthWrites` | counts the frames the game wrote the meter | The writer's liveness while a Hold runs — a frozen count would mean the hold wins only because nothing else writes |
+| `StealthComp` (on `ADumperTestActor`) | null until the first frame with a player pawn | A handle to the component above. The pawn's `InstanceComponents` is what keeps it alive and what the related-object walk follows |
+| *(no field)* `DumperTestSparseListener` | a rooted transient `UDumperTestSparseListener`, bound to `OnActorBeginOverlap` | ⭐ **L48 step 1's listed half** (`[P1-SPARSEDELEGATE-REFS]`). Find References on the listener must list `DumperTestActor_0`'s `OnActorBeginOverlap` binding. It is referenced by NOTHING else — not an actor (no level array holds it), not a UPROPERTY (rooted instead). D4's `OnActorHit` self-binding is untouched and still reads *(1 sparse binding)* |
+
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 
 ⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value
@@ -585,6 +597,11 @@ name, and two `DumperTestActor`s on two engines is how a run reports the wrong f
 | `Opt_Struct_Set` · `Opt_Struct_Unset` | `Tag` `58001` with the actor in `Obj` and in `Objs`, and never assigned | `[A2-TOPTIONAL-STRUCT-DESCENT]` — a reset struct optional must report neither the pointer nor the array |
 | `Opt_Obj` + `Anchor` | seeded to `ADumperTest58Anchor` (`AnchorIndex` `58000`) | **L12 steps 1 and 4** on 5.8. Non-intrusive on every version. `Opt_SetObject()` / `Opt_ResetObject()` / `Opt_SetObjectNull()` reach the three states; `Reset()` writes no value bytes, and set-to-null is still *set* |
 | `FrameCountReflected` | counts Ticks | Liveness, as on 5.4: a frozen count separates "the fixture never spawned" from "the engine is not ticking" |
+| `Opt_Tail` (on `UDumperTest58OptTail`) | `Opt58TailName`, on every instance `OptTail_Spawn` creates | ⭐ **L86** (`[A2-SENTINEL-OVERREAD]`, added 2026-09-22). An intrusive `TOptional<FName>` as the object's LAST eight bytes. Value Search → FName → Exact `Opt58TailName` must hit EVERY instance; pre-fix, the gate's 16-byte read ran past the object and missed exactly the instances that end at an unreadable page |
+| `Pad_A` · `Pad_B` | layout filler, never written | Put the optional at the end of a 64-byte object, a size that divides the allocator's blocks so the last slot of each block ends on the block edge |
+| `OptTails` · `OptTail_EdgeObjs` | every spawned instance · those at an unreadable page edge when spawned | Created ON DEMAND by `OptTail_Spawn(MaxObjects, WantEdges)`, never in BeginPlay. ⚠ Edge status is measured at spawn and can change as the process allocates, so the rig re-measures before it scans |
+| `OptTail_Total` · `OptTail_Edges` | counts | How many were made, and how many ended at an unreadable page. Zero edges after the cap means the row is still unreachable on this run — say so, do not close it |
+| `OptTail_ObjectSize` · `OptTail_FieldOffset` | the compiled layout, measured from the first instance | The host is valid only while `OptTail_FieldOffset` + 8 == `OptTail_ObjectSize` |
 
 ### Group Scan / Snapshot Mode B (temporal)
 

@@ -59,6 +59,34 @@ public:
 	UPROPERTY() int32 AnchorIndex = 0;
 };
 
+/// ⭐ L86's host (`[A2-SENTINEL-OVERREAD]`): an intrusive `TOptional<FName>` as the object's
+/// LAST eight bytes.
+///
+/// The defect: the intrusive-optional gate read 16 bytes from a field that is 8, so on an
+/// object whose optional is the last field the read ran PAST THE OBJECT -- out of the
+/// prefetched body, into `ReadBytesSafe` -- and faulted when the next page was unreadable.
+/// A SET optional was then not a hit on exactly those instances. `Opt_Name_Set` on the actor
+/// cannot show it: it is mid-object, and there is one actor.
+///
+/// ⚠ THE SIZE IS THE POINT. UObject's own fields are 40 bytes on this engine, the two pads make
+/// 56, and the optional ends the object at 64 -- a size that divides the allocator's 64 KB
+/// blocks, so the LAST slot of every block ends exactly on the block edge. Whether the page
+/// after it is unreadable is the OS's business, so `ADumperTest58Actor::OptTail_Spawn`
+/// MEASURES it for every instance instead of assuming, and reports the numbers.
+UCLASS()
+class DUMPERTEST58_API UDumperTest58OptTail : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	/// Layout filler: exists only to put the optional at the end of a 64-byte object.
+	UPROPERTY() int64 Pad_A = 0;
+	UPROPERTY() int64 Pad_B = 0;
+
+	/// ⛔ MUST STAY THE LAST FIELD. Set on every instance by OptTail_Spawn.
+	UPROPERTY() TOptional<FName> Opt_Tail;
+};
+
 UCLASS()
 class DUMPERTEST58_API ADumperTest58Actor : public AActor
 {
@@ -129,4 +157,30 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "DumperTest58|Opt")
 	void Opt_ResetArray();
+
+	// ---- L86: the page-edge optional ---------------------------------------------------------
+
+	/// Create `UDumperTest58OptTail` objects (Opt_Tail = `Opt58TailName`) until `WantEdges` of them
+	/// END at an unreadable page -- the pre-fix 16-byte read from `Opt_Tail` would cross into a page
+	/// that is not committed, or is no-access / guard -- or until `MaxObjects` exist. Additive:
+	/// call again for more. On demand, never from BeginPlay: thousands of objects would slow every
+	/// other 5.8 row's scans.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest58|OptTail")
+	void OptTail_Spawn(int32 MaxObjects = 200000, int32 WantEdges = 8);
+
+	/// Every spawned instance; this array is their GC root.
+	UPROPERTY() TArray<TObjectPtr<UDumperTest58OptTail>> OptTails;
+
+	/// The instances that were at an unreadable page edge WHEN SPAWNED. ⚠ Only a hint for the
+	/// rig: a later allocation can commit the page after one, so the rig re-measures right
+	/// before it scans.
+	UPROPERTY() TArray<TObjectPtr<UDumperTest58OptTail>> OptTail_EdgeObjs;
+
+	UPROPERTY() int32 OptTail_Total = 0;
+	UPROPERTY() int32 OptTail_Edges = 0;
+
+	/// The layout as COMPILED, measured from the first instance: sizeof the class and the byte
+	/// offset of Opt_Tail. The host is only valid while offset + 8 == size.
+	UPROPERTY() int32 OptTail_ObjectSize = 0;
+	UPROPERTY() int32 OptTail_FieldOffset = 0;
 };

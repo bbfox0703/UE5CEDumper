@@ -280,7 +280,27 @@ What the survey could not reach, and why. Each is a candidate for a fixture chan
 
 ## Fixture changes
 
-⬜ **Under evaluation (2026-09-22).** For each row above, whether a change to DumperTest / DumperTest56 / DumperTest58 would make it reachable, and what was changed. Filled in as each is decided.
+Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/ue-sample/README.md`. ⚠ Each change needs a **repackage** (`py tools/ue-sample/repackage.py --engine <v> --project <p> --sync-mirror --configs ...`) before it exists in the binary. A repackage changes the exe's PE hash, so per-game state keyed on it (snapshot DBs, hint records, bookmarks) starts empty for the new package.
+
+| row | change | fixture | status |
+|---|---|---|---|
+| L58 step 1 | `UDumperTestStealthComponent` (`StealthDetection`, a float the game rewrites every frame) attached to the player pawn from `ADumperTestActor::Tick`, registered as an instance component so the pawn's related-object walk reaches it | DumperTest 5.4 | source ✅; package ⬜ |
+| L48 step 1 (listed half) | `UDumperTestSparseListener`: a rooted transient UObject bound to the actor's sparse `OnActorBeginOverlap`, referenced by nothing else. D4's `OnActorHit` self-binding is untouched | DumperTest 5.4 | source ✅; package ⬜ |
+| L86 | `UDumperTest58OptTail` (64 bytes; intrusive `TOptional<FName>` as the LAST 8) plus `ADumperTest58Actor::OptTail_Spawn(MaxObjects, WantEdges)`, which spawns until enough instances end at an unreadable page, MEASURED per instance with `VirtualQuery`. Zero edges after the cap = still unreachable on that run | DumperTest58 | source ✅; package ⬜ |
+
+**Considered and NOT changed:**
+
+| row | why a DumperTest change does not help |
+|---|---|
+| L46 Phase J | Needs UE < 4.25 (UProperty mode); every DumperTest is 5.x. Its host would be the UE4 delegate fixture (`tools/ue-sample/ue4-delegate-fixture`), not in this scope |
+| L79 | The inverting pair (10- vs 11-hex-digit addresses) is a property of the OS's address layout, not of any fixture |
+| L59 step 4 | Needs a slow lazy pivot build; manufacturing one means deleting `pivot_index_built` rows from a snapshot DB — ask the maintainer, it is not a fixture change |
+| L45 step 3 | Needs `LineTraceSingle` / `SetActorHiddenInGame` cooked out of the engine |
+| L50 literal | Needs a UE 5.0-5.2 engine, not installed; the in-process 502 override on 5.4 is the reachable discriminator |
+| L55 | The removed guard was dead code: no fixture can trigger it |
+| L40 / L52 / L41 / L69 | Reached with STAGED DLLs (session S2), not fixture changes |
+| L60 | Already reachable: `UE5DUMP_ALLFUNCS_LIMIT` for step 1; `V1a_GrowContainers(5000)` grows `Arr_Churn` past 4,096 for step 3 |
+| L78 | A real vehicle adds nothing: the manufactured attachment (L27 / L37) already reaches the parent-relative condition |
 
 ## Corrections the survey made to its own scouts
 
