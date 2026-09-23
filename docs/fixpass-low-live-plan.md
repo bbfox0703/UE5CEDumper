@@ -131,7 +131,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L66 (steps 1-2: DB crosses 512 MB mid-capture; restart, reconnect, capture again) | ⬜ |
+| 1 | L66 (steps 1-2: DB crosses 512 MB mid-capture; restart, reconnect, capture again) | ✅ PASSED red→green 2026-09-23 with one deviation (SPC: `[PARTIAL-MARK-SPC]`); the cap tripped on the first non-empty chunk because the DB was already 1.3 GB (`git log --grep 'verify(L66)'`) |
 | 2 | L61 (step 2: ≥2,000,000-row fetch cap; count rows in sqlite BEFORE Run) | ✅ PASSED red→green 2026-09-23 on snapshot #8 (120,062 SceneComponents × 19 rows) (`git log --grep 'verify(L61)'`) |
 
 ### S9
@@ -1415,7 +1415,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L66 — `[W1-PARTIAL-MARK]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** 🟡 steps 1-2 ✅ red→green 2026-09-23 for the marker, with one deviation (SPC shows none: `[PARTIAL-MARK-SPC]`); step 2's survival half green-only; step 3 ⬜ (S17) (`git log --grep 'verify(L66)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `025dc031`
 
