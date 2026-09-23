@@ -112,6 +112,17 @@ def l82(a):
             % (len(rows) - len(opt)))
         say("READING l82 discriminator: %s" % ("UNSET OPTIONALS MATCHED \"\" (%d)" % len(bad) if bad
                                                  else "no unset optional matched \"\""))
+        # The "" scan above is refused by design (an empty needle returns before scanning, and the UI refuses it at
+        # First Scan), so the FString half cannot be driven. The FName half can: an UNSET intrusive TOptional<FName>
+        # holds ComparisonIndex ~0u, which an UNGATED read resolves to "None" -- an ordinary, non-empty needle.
+        d3, rows3 = scan_all(c, "FName", "None", False)
+        opt3 = [x for x in rows3 if (x.get("field_name") or "").startswith("Opt_")]
+        say("FName Exact \"None\" (game_only=false): %d row(s), %d on an Opt_* optional" % (len(rows3), len(opt3)))
+        for x in opt3:
+            say("   HIT %-16s on %s @ %s" % (x.get("field_name"), x.get("class_name"),
+                                          x.get("instance_addr") or x.get("addr")))
+        say("READING l82 FName discriminator: %s" % ("UNSET OPTIONALS MATCHED \"None\" (%d)" % len(opt3) if opt3
+                                                     else "no unset optional matched \"None\""))
         d2, rows2 = scan_all(c, "FString", "Opt58StringPresent", True)
         say("SET control FString Exact \"Opt58StringPresent\" (game_only=true): %d row(s)" % len(rows2))
         for x in rows2:
