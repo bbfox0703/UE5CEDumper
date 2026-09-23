@@ -147,7 +147,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 3 | L69 (step 3: untick/re-tick init; mid-scan cmd=16 mailbox observation from Python) | ✅ PASSED red→green 2026-09-23; only a record that INJECTED the DLL tears it down (`git log --grep 'verify(L69)'`) |
 | 4 | L78 (manufactured attach, 200 ms invoke timeout persist:false + suspend-tid; restore) | ✅ PASSED red→green 2026-09-23: steps 1-3, step 4 for GetPose/GetMarker (GetLast only on its empty path; the jump step not run) (`git log --grep 'verify(L78)'`) |
 | 5 | L56 (Freeze arm, UE5_DEBUG=1, UI + AOBMaker) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
-| 6 | L80 (UI pushes Get GWorld; sw3 arm/disarm freezes the game; last) | ⬜ |
+| 6 | L80 (UI pushes Get GWorld; sw3 arm/disarm freezes the game; last) | ✅ PASSED red→green 2026-09-23; step 3 through the idle wait only (`git log --grep 'verify(L80)'`) |
 
 ### S10
 
@@ -1949,7 +1949,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L80 — `[A1-SLOTSYM-FAILED]` `[A1-LUA-WAIT]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-3 red→green; step 3 through the idle wait (the status wait is shown by the emitted text only) (`git log --grep 'verify(L80)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `d4ee88d7`
 
