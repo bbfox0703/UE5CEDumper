@@ -3479,6 +3479,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (_engineState == null) return;
 
+        // [EXPORT-STATUS-LATE-PROGRESS] Once the service holds it, every status goes through it, the catch included:
+        // a bare StatusText assignment can be overtaken by a report still queued.
+        var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         try
         {
             ClearError();
@@ -3492,22 +3495,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             StatusText = "Collecting symbols...";
 
-            var progress = new Progress<string>(msg =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
-
             var symbols = await SymbolExportService.CollectSymbolsAsync(
                 _dump, moduleName, _engineState.ModuleBase, progress);
 
-            StatusText = "Writing file...";
+            progress.Report("Writing file...");
             var content = generator(symbols, moduleName);
             await File.WriteAllTextAsync(filePath, content);
 
-            StatusText = $"Exported {symbols.Count} symbols";
+            progress.Complete($"Exported {symbols.Count} symbols");
             _log.Info($"Symbols exported to {filePath} ({symbols.Count} entries)");
         }
         catch (Exception ex)
         {
-            StatusText = "Export failed";
+            progress.Complete("Export failed");
             SetError(ex);
             _log.Error("Symbol export failed", ex);
         }
@@ -3518,6 +3518,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (_engineState == null) return;
 
+        // [EXPORT-STATUS-LATE-PROGRESS] Every status after the service goes through it; see ExportSymbolsAsync.
+        var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         try
         {
             ClearError();
@@ -3530,8 +3532,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrEmpty(filePath)) return;
 
             StatusText = "Generating SDK...";
-            var progress = new Progress<string>(msg =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
 
             // Cancellation linked to the connection so a mid-export disconnect aborts
             // the service's per-class walk (its ct checks were dead code before) (X6).
@@ -3539,17 +3539,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var content = await SdkExportService.GenerateFullSdkAsync(_dump, progress, cts.Token);
             await File.WriteAllTextAsync(filePath, content, cts.Token);
 
-            StatusText = "SDK exported";
+            progress.Complete("SDK exported");
             _log.Info($"Full SDK exported to {filePath}");
         }
         catch (OperationCanceledException)
         {
-            StatusText = "SDK export cancelled (disconnected)";
+            progress.Complete("SDK export cancelled (disconnected)");
             _log.Info("Full SDK export cancelled");
         }
         catch (Exception ex)
         {
-            StatusText = "Export failed";
+            progress.Complete("Export failed");
             SetError(ex);
             _log.Error("Full SDK export failed", ex);
         }
@@ -3666,6 +3666,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         if (_engineState == null) return;
 
+        // [EXPORT-STATUS-LATE-PROGRESS] Every status after the service goes through it; see ExportSymbolsAsync.
+        // This is the export the race was observed on: the service's last report replaced the final status below.
+        var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         try
         {
             ClearError();
@@ -3678,8 +3681,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrEmpty(filePath)) return;
 
             StatusText = "Generating USMAP...";
-            var progress = new Progress<string>(msg =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
 
             // Cancellation linked to the connection so a mid-export disconnect aborts
             // the service's walk (its ct checks were dead code before) (X6).
@@ -3691,18 +3692,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // [P1-ENUMNAMES] review 5: the enum warning was a progress line, overwritten one round-trip later, so the
             // export ended on a bare "USMAP exported" over a file whose enums were all empty. Keep it on the final
             // status, and in the log.
-            StatusText = warnings.Count == 0 ? "USMAP exported" : "USMAP exported — " + string.Join(" — ", warnings);
+            progress.Complete(warnings.Count == 0 ? "USMAP exported" : "USMAP exported — " + string.Join(" — ", warnings));
             _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
             foreach (var w in warnings) _log.Warn($"USMAP export: {w}");
         }
         catch (OperationCanceledException)
         {
-            StatusText = "USMAP export cancelled (disconnected)";
+            progress.Complete("USMAP export cancelled (disconnected)");
             _log.Info("USMAP export cancelled");
         }
         catch (Exception ex)
         {
-            StatusText = "Export failed";
+            progress.Complete("Export failed");
             SetError(ex);
             _log.Error("USMAP export failed", ex);
         }

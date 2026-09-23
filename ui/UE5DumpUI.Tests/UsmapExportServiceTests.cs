@@ -1,5 +1,6 @@
 using System.Linq;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -452,6 +453,98 @@ public class UsmapExportServiceTests
             ct: TestContext.Current.CancellationToken, warnings: warnings);
 
         Assert.Empty(warnings);
+    }
+
+    // ---- [EXPORT-STATUS-LATE-PROGRESS]: a report still queued when the export finished replaced its final status ----
+    // Observed live 2026-09-23 (L41 step 1, red run): the USMAP export ended on "Generated USMAP (1412624 bytes, 7692
+    // structs, 1569 enums)", the service's LAST report, and its own final status never showed. The race needs no real
+    // UI thread to reproduce: hold the queue still, finish, then let the queued reports run.
+
+    /// <summary>A status line whose UI-thread queue is held still: a report runs only when the test drains it.</summary>
+    private static (StatusProgress Progress, List<Action> Queue, Func<string?> Status) HeldStatusLine()
+    {
+        var queue = new List<Action>();
+        string? status = null;
+        return (new StatusProgress(s => status = s, queue.Add), queue, () => status);
+    }
+
+    [Fact]
+    public async Task ExportStatus_AReportStillQueuedAtCompletion_DoesNotReplaceTheFinalStatus()
+    {
+        var (progress, queue, status) = HeldStatusLine();
+
+        // The real service, so the late report is the very one seen live: "Generated USMAP (...)".
+        await UsmapExportService.GenerateUsmapAsync(new EmptyObjectsStub(), progress, TestContext.Current.CancellationToken);
+        Assert.NotEmpty(queue);   // anti-vacuity: the export returned with its reports still queued, the live shape
+
+        progress.Complete("USMAP exported");
+        foreach (var run in queue) run();   // the UI thread gets round to them only now
+
+        Assert.Equal("USMAP exported", status());
+    }
+
+    [Fact]
+    public async Task ExportStatus_ReportsThatRunBeforeCompletion_StillReachTheStatusLine_InOrder()
+    {
+        // The control, green before and after: the gate must not swallow live progress.
+        var (progress, queue, status) = HeldStatusLine();
+        await UsmapExportService.GenerateUsmapAsync(new EmptyObjectsStub(), progress, TestContext.Current.CancellationToken);
+
+        var seen = new List<string?>();
+        foreach (var run in queue) { run(); seen.Add(status()); }
+
+        Assert.Equal("Collecting enums...", seen[0]);
+        Assert.StartsWith("Generated USMAP (", seen[^1]);   // and this is the line the first test finds late
+        progress.Complete("USMAP exported");
+        Assert.Equal("USMAP exported", status());
+    }
+
+    [Fact]
+    public void ExportStatus_AReportMadeAfterCompletion_IsDropped()
+    {
+        var (progress, queue, status) = HeldStatusLine();
+
+        progress.Complete("Export failed");
+        progress.Report("Walking classes... (50/7692)");
+        foreach (var run in queue) run();
+
+        Assert.Equal("Export failed", status());
+    }
+
+    /// <summary>
+    /// The three Export actions keep to the helper's rule: no <c>Progress&lt;string&gt;</c> double post, and once the
+    /// service holds the progress sink, no bare <c>StatusText =</c> (the catch blocks too, where a queued report can
+    /// replace "Export failed" just as well) — each exit sets its status through <c>progress.Complete</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("ExportSymbolsAsync", "SymbolExportService.CollectSymbolsAsync(")]
+    [InlineData("ExportFullSdkAsync", "SdkExportService.GenerateFullSdkAsync(")]
+    [InlineData("ExportUsmapAsync", "UsmapExportService.GenerateUsmapAsync(")]
+    public void ExportStatus_EachExportAction_SetsEveryStatusAfterItsServiceThroughTheHelper(string method, string serviceCall)
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))
+            .Replace("\r\n", "\n");
+        Assert.DoesNotContain("new Progress<string>", src);
+
+        int start = src.IndexOf($"private async Task {method}(", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{method} not found");
+        int end = src.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"end of {method} not found");
+        var body = src[start..end];
+
+        Assert.Contains("StatusProgress(", body);
+        int call = body.IndexOf(serviceCall, StringComparison.Ordinal);
+        Assert.True(call >= 0, $"{method} no longer calls {serviceCall}");
+        var afterService = body[call..];
+        Assert.DoesNotContain("StatusText =", afterService);
+        Assert.Equal(CountOf(afterService, "catch (") + 1, CountOf(afterService, "progress.Complete("));
+
+        static int CountOf(string s, string needle)
+        {
+            int n = 0;
+            for (int i = s.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = s.IndexOf(needle, i + 1, StringComparison.Ordinal)) n++;
+            return n;
+        }
     }
 
     [Fact]
