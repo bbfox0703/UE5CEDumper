@@ -142,9 +142,9 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L85 (arm 1: getOffsetsVerdict → true '') | ⬜ |
-| 2 | L69 (step 1: C ABI verdict + dissect, no warn) | ⬜ |
-| 3 | L69 (step 3: untick/re-tick init; mid-scan cmd=16 mailbox observation from Python) | ⬜ |
+| 1 | L85 (arm 1: getOffsetsVerdict → true '') | ✅ PASSED 2026-09-23, green (its red is arm 4's dll-too-old) (`git log --grep 'verify(L69)'`) |
+| 2 | L69 (step 1: C ABI verdict + dissect, no warn) | ✅ PASSED 2026-09-23, green: the no-false-alarm control (`git log --grep 'verify(L69)'`) |
+| 3 | L69 (step 3: untick/re-tick init; mid-scan cmd=16 mailbox observation from Python) | ✅ PASSED red→green 2026-09-23; only a record that INJECTED the DLL tears it down (`git log --grep 'verify(L69)'`) |
 | 4 | L78 (manufactured attach, 200 ms invoke timeout persist:false + suspend-tid; restore) | ⬜ |
 | 5 | L56 (Freeze arm, UE5_DEBUG=1, UI + AOBMaker) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 6 | L80 (UI pushes Get GWorld; sw3 arm/disarm freezes the game; last) | ⬜ |
@@ -1532,7 +1532,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L69 — `[W5-OFFSETS-UNMEASURED]`
 
-**Status:** 🟡 step 2 ✅ red→green 2026-09-23 (`git log --grep 'verify(L69)'`); steps 1, 3 ⬜ (S9) · **reachability:** `fixture-limited` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23: step 2 red→green (staged verdict), step 1 green (the control), step 3 red→green (`git log --grep 'verify(L69)'`) · **reachability:** `fixture-limited` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `3373056c`
 
@@ -1564,9 +1564,9 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 **Row text vs source:** (a) 'on a build whose scan log says validated=NO (the UE 5.8 fixture)' is STALE. DumperTest58 logs validated=yes on 2026-09-09 and 2026-09-16, and no retained game log has validated=NO. Grimoire.h:739-741's '(seen on UE 5.8)' describes the pre-fix FFieldClass era. (b) The 'validated=' summary is in init-0.log (SUMMARY), not the scan log. Its NO form is 'validated=NO (DEFAULTS) reason=<r>', printed even for a partial 'unmeasured:*' run where nothing was defaulted wholesale. (c) Step 2's 'names the same reason as get_offsets' fallback_reason' holds only when probe_ran && !validated && the reason is non-empty. Before any probe, the C ABI says 'probe-not-run' while fallback_reason is '' (Grimoire.h:774-777 vs Fern.cpp:5157). (d) Step 3's 'until the next Enable's scan finishes' is not observable from CE's own Lua while the Enable blocks; see the traps.
 
-**Rig:** No rig exists. CE part: Lua snippets typed into CE's Lua Engine (handover §6: capture via io.open to the scratchpad, never from a screenshot). Mid-scan part: about 30 lines of Python importing tools/verify/mailbox_poke.py (Mem, mailbox_addr, poke with cmd=16), decoding params as a C string. Note that poke() returns only 32 param bytes, which is enough for 'probe-not-run' and 'unmeasured:elemsize' but would truncate the longest reasons (up to 57 chars, Genau.cpp:4303). Staging: a one-line Genau.cpp edit + `build.ps1 -Target DLL -NoBumpBuildNumber`, restored byte-exact afterwards.
+**Rig:** Mid-scan part: `tools/verify/l69_verdict_watch.py` (added 2026-09-23 for step 3; the notes below predate it). CE part: Lua snippets typed into CE's Lua Engine (handover §6: capture via io.open to the scratchpad, never from a screenshot). Mid-scan part: about 30 lines of Python importing tools/verify/mailbox_poke.py (Mem, mailbox_addr, poke with cmd=16), decoding params as a C string. Note that poke() returns only 32 param bytes, which is enough for 'probe-not-run' and 'unmeasured:elemsize' but would truncate the longest reasons (up to 57 chars, Genau.cpp:4303). Staging: a one-line Genau.cpp edit + `build.ps1 -Target DLL -NoBumpBuildNumber`, restored byte-exact afterwards.
 
-**Traps:** The dissect dedup state is global and persists across dofile: a warm CE can hide step 2's single warning, and running step 1 first clears it (measured → offsetsWarned=nil). vt* constants must exist before dofile (working-lessons :1098). CE's [ENABLE] for the init record blocks the Lua and GUI thread until READY, so 'until the next Enable's scan finishes' can only be seen from outside CE, via the mailbox (the pipe is not up yet during an injected re-scan: AutoStartWork starts the pipe AFTER UE5_Init, Frieren.cpp:903-921). After a CE Disable the mailbox poller is JOINED (Mimic::StopThread): a mailbox verdict query between Disable and re-Enable times out and arms the helper's stale-mailbox latch (L88), so use the C ABI there. Re-front the Lua Engine after clicks (handover §6), and front windows with front_window.py. CE structures created by the dissect are global: run dissect.clearAll(). Staged-DLL hygiene as in L40.
+**Traps:** The dissect dedup state is global and persists across dofile: a warm CE can hide step 2's single warning, and running step 1 first clears it (measured → offsetsWarned=nil). vt* constants must exist before dofile (working-lessons :1098). CE's [ENABLE] for the init record blocks the Lua and GUI thread until READY, so 'until the next Enable's scan finishes' can only be seen from outside CE, via the mailbox (the pipe is not up yet during an injected re-scan: AutoStartWork starts the pipe AFTER UE5_Init, Frieren.cpp:903-921). After a CE Disable the mailbox poller is JOINED (Mimic::StopThread): a mailbox verdict query between Disable and re-Enable times out and arms the helper's stale-mailbox latch (L88), so use the C ABI there. ⚠ (measured 2026-09-23) Step 3 needs a record that INJECTED the DLL. On a DLL injected by inject.py (or a proxy), ticking finds it 'already loaded and serving', UE5_StartedByThisRecord stays false, and the untick is the B30 guard's no-op: no UE5_Shutdown, the verdict stays 1, and nothing is measured. So: fresh game, openProcess, tick `init` (the table script only; it un-hides the child), set DLL_PATH in the Lua Engine (it is a global set at table load), then tick the hidden child `Inject DLL + Start Pipe Server` and toggle THAT. Unticking `init` also deactivates the child (moDeactivateChildrenAsWell), but re-ticking `init` does not re-tick it. Rig: tools/verify/l69_verdict_watch.py (polls cmd=16 every 50 ms and prints changes; start it after READY). Re-front the Lua Engine after clicks (handover §6), and front windows with front_window.py. CE structures created by the dissect are global: run dissect.clearAll(). Staged-DLL hygiene as in L40.
 
 **Related rows:** L85, L54, L88, L40, L53, L42, L43
 
@@ -2155,7 +2155,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L85 — `[W5-OFFSETS-MAILBOX]`
 
-**Status:** 🟡 arms 3, 4 ✅ 2026-09-23 (`git log --grep 'verify(L85)'`); arms 1, 2 ⬜ (S9, S13) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
+**Status:** 🟡 arms 1, 3, 4 ✅ 2026-09-23 (`git log --grep 'verify(L85)'`; arm 1 in `git log --grep 'verify(L69)'`); arm 2 ⬜ (S13) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `389d76bb`, `943975f3`, `e009ec78`
 
