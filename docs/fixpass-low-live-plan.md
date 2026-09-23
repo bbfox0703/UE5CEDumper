@@ -84,7 +84,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 1 | L73 | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L73)'`) |
 | 2 | L47 | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L47)'`) |
 | 3 | L56 (UI half) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
-| 4 | L71 | ⬜ |
+| 4 | L71 | ✅ PASSED red→green 2026-09-23, real Cancel in both modes (`git log --grep 'verify(L71)'`) |
 | 5 | L81 (UI half, optional) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
 | 6 | L72 (optional re-run: already PASSED) | ✅ PASSED `0d182b15` |
 | 7 | L65 (capture 2 snapshots first) | ⬜ |
@@ -1604,7 +1604,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L71 — `[W2-DEADSCAN-LOADMORE]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
+**Status:** ✅ PASSED red→green 2026-09-23, real Cancel in both modes (`git log --grep 'verify(L71)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
 
 **Fix commit(s):** `79b0d3fb`
 
