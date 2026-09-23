@@ -72,7 +72,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ✅ PASSED red→green 2026-09-23 on the log WARN (`git log --grep 'verify(L41)'`) |
 | 4 | L85 (arm 4, out\oldcontract build 3262; back up %COMPUTERNAME%.json) | ✅ PASSED 2026-09-23: false [dll-too-old], never true; also arm 3's stand-in red (`git log --grep 'verify(L85)'`) |
 | 5 | L55 (A-run, 'before' DLL, pipe census; diff against S3's B-run) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
-| 6 | L90 (L41 step 1's staged DLL; USMAP ×5 on the pre-fix UI for the red RATE, ×5 on the fix built the same way (JIT), then ×5 + SDK Header + Symbols on the AOT UI; three launches, because dist_swap refuses while the game runs) | ⬜ |
+| 6 | L90 (L41 step 1's staged DLL; USMAP ×5 on the pre-fix UI for the red RATE, ×5 on the fix built the same way (JIT), then ×5 + SDK Header + Symbols on the AOT UI; three launches, because dist_swap refuses while the game runs; the 2026-09-23 run used four: one more for the red cold starts) | ✅ PASSED 2026-09-23: red rate 3/8 → green 0/8 (same JIT flavor); AOT binary 7/7 own finals, a no-regression check (`git log --grep 'verify(L90)'`) |
 
 ### S5
 
@@ -2262,9 +2262,9 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L90 — `[EXPORT-STATUS-LATE-PROGRESS]`
 
-**Status:** ⬜ (S4 #6) · **reachability:** `live` (it discriminates only if the pre-fix red rate is above 0, step 7) · **needs CE:** no · **needs UI:** yes · **estimate:** 75 min
+**Status:** ✅ PASSED 2026-09-23: red rate 3/8 → green 0/8 (same JIT flavor); AOT binary 7/7 own finals, a no-regression check (`git log --grep 'verify(L90)'`) · **reachability:** `live` (it discriminates only if the pre-fix red rate is above 0, step 7) · **needs CE:** no · **needs UI:** yes · **estimate:** 75 min
 
-⚠ **Not from the survey.** The row was filed on 2026-09-23 with its fix, a day after the survey. The fixing session wrote this recipe from source at `5b42921c`. No step has been live-run.
+⚠ **Not from the survey.** The row was filed on 2026-09-23 with its fix, a day after the survey. The fixing session wrote this recipe from source at `5b42921c`. It was live-run on 2026-09-23 (todo.md L90). That run added three cold starts per JIT build and so used four game launches, not three.
 
 **Fix commit(s):** `5b42921c fix(export): a progress report still queued cannot replace an export's final status [EXPORT-STATUS-LATE-PROGRESS]`
 
@@ -2299,6 +2299,6 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 **Rig:** No new rig. computer-use drives the UI; `tools/verify/dist_swap.py` swaps the JIT builds in; `tools/verify/front_window.py` fronts windows; `tools/verify/pipe_client.py list_enums` is the optional anti-vacuity check for the staged DLL (`enum_names_failed: true`, as in L41).
 
-**Traps:** `dist_swap.py` refuses while a DumperTest* or UE5DumpUI process exists, so every arm is its own game launch. Never publish into the main tree's `dist\` while another session's game or UI is running. Any build that reaches the publish step leaves a NON-trimmed `dist\UE5DumpUI.exe` (CLAUDE.md), so step 5 must run on the restored AOT build; check its size and sha. The toolbar truncates the status: read it from the tooltip, and only after the log line, or a still-running export reads as a red. The file dialog and the game steal focus. The UI is single-instance.
+**Traps:** `dist_swap.py` refuses while a DumperTest* or UE5DumpUI process exists, so every arm is its own game launch. Never publish into the main tree's `dist\` while another session's game or UI is running. Any build that reaches the publish step leaves a NON-trimmed `dist\UE5DumpUI.exe` (CLAUDE.md), so step 5 must run on the restored AOT build; check its size and sha. The toolbar truncates the status: read it from the tooltip, and only after the log line, or a still-running export reads as a red. The file dialog and the game steal focus. The UI is single-instance. ⚠ Measured 2026-09-23: every red hit was a session's FIRST export (3 of 4 first, 0 of 4 later), so five exports in one session give ONE discriminating trial. Use a fresh UI launch per export for the rate.
 
 **Related rows:** L41, L64, L81
