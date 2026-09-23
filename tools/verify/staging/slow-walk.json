@@ -1,0 +1,18 @@
+{
+ "name": "slow-walk",
+ "why": "L7 / L21 races: walk_instance and get_related_objects sleep 3 s while %TEMP%/ue5dump_slow_walk.flag exists, so a UI click lands inside the load window deterministically; delete the flag to walk at full speed again.",
+ "subs": [
+  {
+   "file": "dll/src/Fern.cpp",
+   "old": "        if (cmd == Renge::CMD_WALK_INSTANCE) {\n",
+   "new": "        if (cmd == Renge::CMD_WALK_INSTANCE) {\n            { wchar_t p_[MAX_PATH]; DWORD n_ = GetTempPathW(MAX_PATH, p_);   // STAGING (stage_dll.py slow-walk)\n              if (n_ && n_ < MAX_PATH - 32 && wcscat_s(p_, L\"ue5dump_slow_walk.flag\") == 0\n                  && GetFileAttributesW(p_) != INVALID_FILE_ATTRIBUTES) {\n                  Sein::Info(\"PIPE:cmd\", \"STAGING slow-walk: sleeping 3000 ms before %s\", cmd.c_str());\n                  Sleep(3000); } }\n",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Fern.cpp",
+   "old": "        if (cmd == Renge::CMD_GET_RELATED_OBJECTS) {\n",
+   "new": "        if (cmd == Renge::CMD_GET_RELATED_OBJECTS) {\n            { wchar_t p_[MAX_PATH]; DWORD n_ = GetTempPathW(MAX_PATH, p_);   // STAGING (stage_dll.py slow-walk)\n              if (n_ && n_ < MAX_PATH - 32 && wcscat_s(p_, L\"ue5dump_slow_walk.flag\") == 0\n                  && GetFileAttributesW(p_) != INVALID_FILE_ATTRIBUTES) {\n                  Sein::Info(\"PIPE:cmd\", \"STAGING slow-walk: sleeping 3000 ms before %s\", cmd.c_str());\n                  Sleep(3000); } }\n",
+   "count": 1
+  }
+ ]
+}
