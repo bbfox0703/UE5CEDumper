@@ -94,7 +94,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 10 | L48 (arm A Num poke, then arm B decryption; restore each) | ✅ PASSED red→green 2026-09-23, both halves + the listed half on DumperTest (`git log --grep 'verify(L48)'`) |
 | 11 | L45 (variant A: suspend-tid, ≥305 s) | ⛔ BLOCKED 2026-09-23 by [SEETHRU-PROBE-SUBSTRING] (HIGH regression from df09bbcb: See-through refuses on DumperTest) |
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L58)'`) |
-| 13 | L60 | ⬜ |
+| 13 | L60 | ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ⬜ |
 | 15 | L79 (predict inversions on the inflated holder set, then header clicks) | ⬜ |
 | 16 | L57 (step 1 kills and relaunches the game; step 2 Detect-kill in the new process) | ⬜ |
@@ -1178,7 +1178,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L60 — `[A4-GAMEONLY-ADVICE]` `[P5-GROUP-ADVICE]` `[A3-CONTAINER-4096-ADVICE]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `b660d34e`
 
