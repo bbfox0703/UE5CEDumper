@@ -145,7 +145,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 1 | L85 (arm 1: getOffsetsVerdict → true '') | ✅ PASSED 2026-09-23, green (its red is arm 4's dll-too-old) (`git log --grep 'verify(L69)'`) |
 | 2 | L69 (step 1: C ABI verdict + dissect, no warn) | ✅ PASSED 2026-09-23, green: the no-false-alarm control (`git log --grep 'verify(L69)'`) |
 | 3 | L69 (step 3: untick/re-tick init; mid-scan cmd=16 mailbox observation from Python) | ✅ PASSED red→green 2026-09-23; only a record that INJECTED the DLL tears it down (`git log --grep 'verify(L69)'`) |
-| 4 | L78 (manufactured attach, 200 ms invoke timeout persist:false + suspend-tid; restore) | ⬜ |
+| 4 | L78 (manufactured attach, 200 ms invoke timeout persist:false + suspend-tid; restore) | ✅ PASSED red→green 2026-09-23: steps 1-3, step 4 for GetPose/GetMarker (GetLast only on its empty path; the jump step not run) (`git log --grep 'verify(L78)'`) |
 | 5 | L56 (Freeze arm, UE5_DEBUG=1, UI + AOBMaker) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 6 | L80 (UI pushes Get GWorld; sw3 arm/disarm freezes the game; last) | ⬜ |
 
@@ -1875,7 +1875,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L78 — `[A2-CABI-TELEPORT-PARENTREL]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-3 red→green, step 4 for GetPose/GetMarker; GetLast/GetLastEx only on their empty path (`git log --grep 'verify(L78)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `46b0f7b7`
 
@@ -1908,7 +1908,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 **Row text vs source:** The row requires 'a game with a vehicle or mount'. DumperTest has none, but the parent-relative condition is fully manufacturable on it (Wirbel.cpp:425 attached test + :459 failed invoke), as L27 and L37 already did. 'Force the world read to fail if possible' = invoke timeout 200 ms + game-thread suspend. The row's step 4 names 'the three original getters', but its steps exercise only GetPoseEx/GetMarkerEx, so GetLastEx and GetLast need the optional jump step. Frieren.h:189-190 warns that executeCodeEx cannot retrieve these return values, so the rc half of 'fills the pose and sets the flag' must be judged from the buffers.
 
-**Rig:** NONE committed. The L37 driver `l37.py` (find / attach / pose / slowtimeout / detach / restore) is named in todo.md:5692 but is not in tools/verify. Existing parts: `tools/verify/pipe_client.py` (find_instances, invoke_function, set_invoke_timeout, teleport_get_pose, teleport_save_marker, get_diagnostics) and `tools/verify/suspend.py threads|suspend-tid|resume-tid`. `tools/verify/call_export.py` cannot be used: it CreateRemoteThread's a no-argument export, and these take 4-5 args. So CE's executeCodeEx is the route, as the row intends. Suggested new rig: tools/verify/l78_parentrel_arm.py (attach / degrade / heal / detach / restore verbs, from the L27/L37 recipe), plus a CE Lua snippet that writes all readbacks to a scratch file with io.open (handover §6).
+**Rig:** `tools/verify/l78_parentrel_arm.py` (find / attach / pose / degrade / heal / marker / detach / restore; added 2026-09-23) plus a CE Lua readback script. The notes below predate it. The L37 driver `l37.py` (find / attach / pose / slowtimeout / detach / restore) is named in todo.md:5692 but is not in tools/verify. Existing parts: `tools/verify/pipe_client.py` (find_instances, invoke_function, set_invoke_timeout, teleport_get_pose, teleport_save_marker, get_diagnostics) and `tools/verify/suspend.py threads|suspend-tid|resume-tid`. `tools/verify/call_export.py` cannot be used: it CreateRemoteThread's a no-argument export, and these take 4-5 args. So CE's executeCodeEx is the route, as the row intends. Suggested new rig: tools/verify/l78_parentrel_arm.py (attach / degrade / heal / detach / restore verbs, from the L27/L37 recipe), plus a CE Lua snippet that writes all readbacks to a scratch file with io.open (handover §6).
 
 **Traps:** Keep the UI closed, or disconnected, whenever pipe_client runs (handover §4.4). set_invoke_timeout PERSISTS by default (`persist` defaults to true, Fern.cpp:1864): pass persist:false and clear with 0 anyway. Never use the 100 ms floor. The fixture is capped at 15 FPS (~66 ms/frame), so a 100 ms timeout makes HEALTHY invokes fail and destroys control A. Suspend ONLY the game thread (the main thread by creation time, suspend.py docstring). A whole-process suspend also stops the pipe and mailbox. Attach to a StaticMeshActor, not DumperTestActor (no root, ReturnValue 00). DumperTest does not respawn its pawn, so never teleport to absolute coordinates. Queued K2_GetActorLocation invokes drain on resume (harmless reads). GetMarkerEx has a 5th, stack argument, so use executeCodeEx with a plain integer list. Pre-fill the flag with a sentinel so 'unchanged' and '0' can be told apart. The module is 'UE5Dumper' for a direct inject (a proxy would be version/dxgi/...). CE must attach to the Shipping child exe.
 
