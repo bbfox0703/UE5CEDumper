@@ -132,7 +132,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L66 (steps 1-2: DB crosses 512 MB mid-capture; restart, reconnect, capture again) | ⬜ |
-| 2 | L61 (step 2: ≥2,000,000-row fetch cap; count rows in sqlite BEFORE Run) | ⬜ |
+| 2 | L61 (step 2: ≥2,000,000-row fetch cap; count rows in sqlite BEFORE Run) | ✅ PASSED red→green 2026-09-23 on snapshot #8 (120,062 SceneComponents × 19 rows) (`git log --grep 'verify(L61)'`) |
 
 ### S9
 
@@ -1227,7 +1227,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L61 — `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 
-**Status:** 🟡 step 1 ✅ red→green 2026-09-23 (`git log --grep 'verify(L61)'`); step 2 (fetch cap) ⬜ (S8) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23: step 1 and step 2 (fetch cap) red→green (`git log --grep 'verify(L61)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `8157b31c`
 
