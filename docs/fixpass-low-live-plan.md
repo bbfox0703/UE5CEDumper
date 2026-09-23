@@ -67,7 +67,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L69 (step 2, 'unmeasured' DLL) | ⬜ |
+| 1 | L69 (step 2, 'unmeasured' DLL) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L69)'`) |
 | 2 | L85 (arm 3, same launch) | ⬜ |
 | 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ⬜ |
 | 4 | L85 (arm 4, out\oldcontract build 3262; back up %COMPUTERNAME%.json) | ⬜ |
@@ -1531,7 +1531,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L69 — `[W5-OFFSETS-UNMEASURED]`
 
-**Status:** ⬜ · **reachability:** `fixture-limited` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
+**Status:** 🟡 step 2 ✅ red→green 2026-09-23 (`git log --grep 'verify(L69)'`); steps 1, 3 ⬜ (S9) · **reachability:** `fixture-limited` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `3373056c`
 
