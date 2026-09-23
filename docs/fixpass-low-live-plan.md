@@ -231,10 +231,10 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L66 (step 3 pre-check: PRAGMA on snapshots.5EEB192C030CE000.db BEFORE the first Connect) | ⬜ |
+| 1 | L66 (step 3 pre-check: PRAGMA on snapshots.5EEB192C030CE000.db BEFORE the first Connect) | ✅ 2026-09-23: no partial_reason, user_version 4, 0 rows |
 | 2 | L62 | ⬜ |
 | 3 | L67 | ⬜ |
-| 4 | L66 (step 3 post-check after the UI closes) | ⬜ |
+| 4 | L66 (step 3 post-check after the UI closes) | ✅ 2026-09-23: partial_reason TEXT NOT NULL DEFAULT '' added, user_version 4; row closed (`git log --grep 'verify(L66)'`) |
 
 ### S18
 
@@ -1415,7 +1415,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L66 — `[W1-PARTIAL-MARK]`
 
-**Status:** 🟡 steps 1-2 ✅ red→green 2026-09-23 for the marker, with one deviation (SPC shows none: `[PARTIAL-MARK-SPC]`); step 2's survival half green-only; step 3 ⬜ (S17) (`git log --grep 'verify(L66)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** ✅ ROW CLOSED 2026-09-23: steps 1-2 red→green for the marker, with one deviation (SPC shows none: `[PARTIAL-MARK-SPC]`); step 2's survival half green-only; step 3 green-only on OCTOPATH's old DB (`git log --grep 'verify(L66)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `025dc031`
 
