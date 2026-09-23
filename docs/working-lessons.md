@@ -686,6 +686,50 @@ grep -n "^#\{4,6\} " docs/verification-register.md | sed -n '/<the heading you a
 
 ⚠ And the cost is asymmetric in the direction that hurts: §1.ab's stale HEADING makes you re-do closed work; a stale CAVEAT makes you re-do closed work **and** write a wrong “still open” line into the file the next session will read. Mine survived one commit before the retraction.
 
+### 1.ac A stateful TOGGLE read by PARITY counts the runs — and a queued call's drain needs its own witness
+
+L15's "once, not twice" (a timed-out Console command must not be re-sent) was recorded on 2026-09-12
+as "no valid instrument": the only spawn-style exec, `SpawnServerStatReplicator`, returned OK and
+changed nothing even with the game thread running. The instrument was there all along.
+`CheatManager::God` is a parameterless stock exec that **toggles** the pawn's `bCanBeDamaged`, and
+Teleport's God Mode ↻ reads that bit. So the parity of the final state counts the runs: one run
+flips it and two cancel out. Measured 2026-09-23: green flipped OFF → ON, and the red (the retry
+guard removed) stayed OFF with two enqueues in the DLL log.
+
+⚠ **"Unchanged" is also what "never ran" looks like.** An even count needs proof that the queue
+DRAINED. Nothing logs a drained entry (Stark's drain logs only SEH failures), so use one of two
+witnesses. (a) A reply with `game_thread_stalled:false` taken after the enqueue: a hook fire
+drains the WHOLE FIFO (`Stark.h` `ShouldDrainQueue`). (b) One more call that COMPLETES: FIFO order
+means everything queued before it has run. A state that CHANGED needs no witness.
+
+**When it applies:** any "did it run N times" question on a stock engine. Other toggles are
+`ToggleDebugCamera` (but see `[DEBUGCAM-QUEUED-OFF-NOESCALATE]`: on the original PC's CheatManager a
+second toggle is a no-op, so parity breaks there), `Fly`/`Walk` (idempotent: useless for parity),
+and `ChangeSize` (a parameter).
+
+### 1.ad Stdout is not evidence — tee every read at the time; the transcript can recover it, and the record must say so
+
+Three records on 2026-09-23 (L83, L46, L62) rested on readings printed by `pipe_client.py`,
+`suspend.py` or a swap rig and never saved. The verifier flagged each one as "unsupported",
+rightly: the DLL's `pipe-0.log` logs the REQUEST, not the reply, and the UI pipe log truncates RX
+lines. The fix is cheap: pipe every such read to a file under `out\<row>\` in the same command.
+When that was missed, the session transcript (`~\.claude\projects\<proj>\<session>.jsonl`) holds
+each tool result verbatim with its UTC timestamp. It can be copied into `out\` as
+`*_recovered.txt`, together with the command that produced it, and screenshots can be pulled from
+it the same way. The record must say "recovered from the session transcript", and a reply time is
+a second or two AFTER its request time.
+
+### 1.ae Another session may be working in the SAME tree — look before you launch, and re-hash `dist\`
+
+On 2026-09-23 a user-started peer session fixed `[SEETHRU-PROBE-SUBSTRING]`, committed to `dev` and
+re-published `dist\` from the same `D:\Github\UE5CEDumper`, while this session was swapping
+`dist\` for red arms. Nothing collided, by luck: this session's restore finished at 22:51 and the
+peer's publish ran at 22:59. The pipe name is machine-global, so two sessions' games or UIs would
+also fight over it. Three habits: (1) `ListAgents` and `git log -3` before any game session, and
+agree by `SendMessage` who owns games/UI/`dist\` until when. (2) Re-hash `dist\` at the start and
+end of every row and cite what the row actually ran, not what `dist\` holds now. (3) Stage only
+your own hunks (`git status` before every commit); never `git add -A` in a shared tree.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
