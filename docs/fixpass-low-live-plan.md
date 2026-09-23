@@ -82,7 +82,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L73 | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L73)'`) |
-| 2 | L47 | ⬜ |
+| 2 | L47 | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L47)'`) |
 | 3 | L56 (UI half) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 4 | L71 | ⬜ |
 | 5 | L81 (UI half, optional) | ✅ PASSED red→green 2026-09-22, DLL + C# (`git log --grep 'verify(L81)'`) |
@@ -630,7 +630,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L47 — `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
+**Status:** ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L47)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
 
 **Fix commit(s):** `4c094108`
 
