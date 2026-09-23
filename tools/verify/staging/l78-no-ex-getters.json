@@ -1,0 +1,8 @@
+{
+ "name": "l78-no-ex-getters",
+ "why": "L78 red: 46b0f7b7 reversed under dll/src -- the C ABI has no Ex pose getters, so a parent-relative pose reaches a loadLibrary / executeCodeEx caller through UE5_TeleportGetPose / GetMarker with rc 0 and nothing that marks it relative.",
+ "reverse_commit": "46b0f7b7",
+ "paths": [
+  "dll/src"
+ ]
+}
