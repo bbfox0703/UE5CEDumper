@@ -178,9 +178,9 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L42 | ⬜ |
-| 2 | L43 | ⬜ |
-| 3 | L77 (tick records, then relaunch un-injected and answer 'No' to CE's disable prompt) | ⬜ |
+| 1 | L42 | ✅ PASSED red→green 2026-09-23 with the Shipping control (`git log --grep 'verify(L42)'`) |
+| 2 | L43 | ✅ PASSED red→green 2026-09-23 with the Shipping control; raised `[FABRICATE-DEFAULT-UNSEEDED]` (`git log --grep 'verify(L42)'`) |
+| 3 | L77 (tick records, then relaunch un-injected and answer 'No' to CE's disable prompt) | ✅ PASSED red→green 2026-09-23 (the missing-mailbox bail only) (`git log --grep 'verify(L42)'`) |
 
 ### S13
 
@@ -443,7 +443,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L42 — `[A4-PUSHCE-UNPADDED]` `[W5-CSX-DELEGATEPAD]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green, Shipping control (`git log --grep 'verify(L42)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `6ffd827a`
 
@@ -490,7 +490,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L43 — `[A4-DELEGATE-ARRAY-PAD]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 40 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-3 red→green, Shipping control (`git log --grep 'verify(L42)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 40 min
 
 **Fix commit(s):** `403a6596`
 
@@ -1836,7 +1836,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L77 — `[W2-CEGEN-MODAL]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 45 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green, missing-mailbox bail only (`git log --grep 'verify(L42)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 45 min
 
 **Fix commit(s):** `1b69a23c`, `8a2b37e8`
 
