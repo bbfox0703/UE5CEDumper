@@ -92,7 +92,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 8 | L70 (step 3: SPC on the new snapshot) | ✅ PASSED `38c7ac49` |
 | 9 | L61 (step 1) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L61)'`) |
 | 10 | L48 (arm A Num poke, then arm B decryption; restore each) | ✅ PASSED red→green 2026-09-23, both halves + the listed half on DumperTest (`git log --grep 'verify(L48)'`) |
-| 11 | L45 (variant A: suspend-tid, ≥305 s) | ⬜ |
+| 11 | L45 (variant A: suspend-tid, ≥305 s) | ⛔ BLOCKED 2026-09-23 by [SEETHRU-PROBE-SUBSTRING] (HIGH regression from df09bbcb: See-through refuses on DumperTest) |
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ⬜ |
 | 13 | L60 | ⬜ |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ⬜ |
@@ -529,7 +529,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L45 — `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
+**Status:** ⛔ BLOCKED 2026-09-23 by [SEETHRU-PROBE-SUBSTRING] (HIGH regression from df09bbcb: See-through refuses on DumperTest) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
 
 **Fix commit(s):** `df09bbcb`
 
