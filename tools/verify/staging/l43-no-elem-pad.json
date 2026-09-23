@@ -1,0 +1,8 @@
+{
+ "name": "l43-no-elem-pad",
+ "why": "L43 red (DLL half): 403a6596 reversed under dll/src -- walk_instance carries no array_elem_delegate_pad for a TArray<FScriptDelegate> on a checked build, so the UI cannot pad its element leaves.",
+ "reverse_commit": "403a6596",
+ "paths": [
+  "dll/src"
+ ]
+}
