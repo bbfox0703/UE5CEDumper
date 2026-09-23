@@ -1,0 +1,8 @@
+{
+ "name": "l86-sentinel-overread-prefix",
+ "why": "L86 red: 96a6ad79 reversed under dll/src -- the intrusive-optional gate reads a flat 16 bytes, so an 8-byte TOptional<FName> that ends an object at an unreadable page fails the read and a SET optional is dropped.",
+ "reverse_commit": "96a6ad79",
+ "paths": [
+  "dll/src"
+ ]
+}
