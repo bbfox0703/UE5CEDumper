@@ -90,7 +90,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 6 | L72 (optional re-run: already PASSED) | ✅ PASSED `0d182b15` |
 | 7 | L65 (capture 2 snapshots first) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L65)'`) |
 | 8 | L70 (step 3: SPC on the new snapshot) | ✅ PASSED `38c7ac49` |
-| 9 | L61 (step 1) | ⬜ |
+| 9 | L61 (step 1) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L61)'`) |
 | 10 | L48 (arm A Num poke, then arm B decryption; restore each) | ⬜ |
 | 11 | L45 (variant A: suspend-tid, ≥305 s) | ⬜ |
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ⬜ |
@@ -1227,7 +1227,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L61 — `[W1-DT-TRUNC]` `[P5-PIVOT-FETCHCAP]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
+**Status:** 🟡 step 1 ✅ red→green 2026-09-23 (`git log --grep 'verify(L61)'`); step 2 (fetch cap) ⬜ (S8) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 60 min
 
 **Fix commit(s):** `8157b31c`
 
