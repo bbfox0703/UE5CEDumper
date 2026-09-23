@@ -1,0 +1,8 @@
+{
+ "name": "l53-methode-prefix",
+ "why": "L53 red: 953f2c3b reversed under dll/src -- the CE plugin's TRUE-but-absent injection reads 'Injection failed ... its result cannot be trusted' and never names CE's 'Always force load modules' setting.",
+ "reverse_commit": "953f2c3b",
+ "paths": [
+  "dll/src"
+ ]
+}
