@@ -3,13 +3,20 @@ r"""L47 `[P1-WALK-UNREADABLE]` `[A4-REROOT-STALE-WARNING]`: a MANUFACTURED freed
 
     py tools/verify/l47_clone_page.py make --process DumperTest-Win64-Shipping --state out\l47_page.json   (UI CLOSED)
     py tools/verify/l47_clone_page.py free --state out\l47_page.json                                      (UI may be open)
+    py tools/verify/l47_clone_page.py release --state out\l47_page.json                                   (teardown)
 
 WHY MANUFACTURE IT. The DLL reports `unreadable` only when the object's header fails Macht::IsAddrReadable:
 VirtualQuery state != MEM_COMMIT, or no read permission (Ubel.cpp WalkInstance, Macht.cpp). A UObject the game
 destroys stays in a binned page that remains COMMITTED, so it walks as a zombie, a recycled object or the stale
 text -- never "no longer readable". So the freed object is built: `make` copies a real small UObject (the
 DumperTestPayload that the live DumperTestActor's `Payload` points at, `props_size` bytes) into a fresh page the
-game never references, and `free` releases that page. dll_core_test's "reserved, uncommitted page" shape, live.
+game never references, and `free` DECOMMITS that page. dll_core_test's "reserved, uncommitted page" shape, live.
+
+⚠ DECOMMIT, NEVER RELEASE, until the check is done (measured 2026-09-23). A MEM_RELEASE hands the 64 KB region
+back, and a running game re-committed it within ~25 s: the next Refresh then walked a recycled ZERO page (header
+all zeros, ClassPrivate 0), which reads as a silent blank 'None' walk -- not the freed-object branch under test.
+MEM_DECOMMIT keeps the address RESERVED, so nothing else can be placed there, and the header reads MEM_RESERVE.
+`release` frees the reservation afterwards.
 
 `make` needs the pipe (find_instances + walk_instance + read_mem), so it runs BEFORE the UI connects: the UI
 holds 2 of the 3 pipe instances. `free` is out of process (VirtualFreeEx + VirtualQuery) and never opens the
@@ -25,7 +32,7 @@ from ctypes import wintypes
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-MEM_COMMIT, MEM_RESERVE, MEM_RELEASE = 0x1000, 0x2000, 0x8000
+MEM_COMMIT, MEM_RESERVE, MEM_DECOMMIT, MEM_RELEASE = 0x1000, 0x2000, 0x4000, 0x8000
 PAGE_RW = 0x04
 PROCESS_ACCESS = 0x0008 | 0x0020 | 0x0010 | 0x0400   # VM_OPERATION | VM_WRITE | VM_READ | QUERY_INFORMATION
 STATES = {0x1000: "MEM_COMMIT", 0x2000: "MEM_RESERVE", 0x10000: "MEM_FREE"}
@@ -122,26 +129,39 @@ def free(a):
     h = open_proc(pid)
     try:
         print("before: 0x%X %s" % (p, query(h, p)))
-        if not k.VirtualFreeEx(h, ctypes.c_void_p(p), 0, MEM_RELEASE):
-            raise SystemExit("FAIL: VirtualFreeEx err=%d" % ctypes.get_last_error())
+        if not k.VirtualFreeEx(h, ctypes.c_void_p(p), 0x1000, MEM_DECOMMIT):
+            raise SystemExit("FAIL: VirtualFreeEx(MEM_DECOMMIT) err=%d" % ctypes.get_last_error())
         after = query(h, p)
         print("after:  0x%X %s" % (p, after))
     finally:
         k.CloseHandle(h)
-    if "MEM_COMMIT" in after:
-        print("FAIL: the page is still committed")
+    if not after.startswith("MEM_RESERVE"):
+        print("FAIL: want MEM_RESERVE (decommitted, address still held)")
         return 1
-    print("FREED")
+    print("DECOMMITTED (reserved)")
+    return 0
+
+
+def release(a):
+    st = json.load(open(a.state))
+    pid, p = st["pid"], int(st["page"], 16)
+    h = open_proc(pid)
+    try:
+        if not k.VirtualFreeEx(h, ctypes.c_void_p(p), 0, MEM_RELEASE):
+            raise SystemExit("FAIL: VirtualFreeEx(MEM_RELEASE) err=%d" % ctypes.get_last_error())
+        print("released: 0x%X %s" % (p, query(h, p)))
+    finally:
+        k.CloseHandle(h)
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=("make", "free"))
+    ap.add_argument("phase", choices=("make", "free", "release"))
     ap.add_argument("--process", default="DumperTest-Win64-Shipping")
     ap.add_argument("--state", required=True, help="JSON file the two phases share (put it under out\\)")
     a = ap.parse_args()
-    return make(a) if a.phase == "make" else free(a)
+    return {"make": make, "free": free, "release": release}[a.phase](a)
 
 
 if __name__ == "__main__":
