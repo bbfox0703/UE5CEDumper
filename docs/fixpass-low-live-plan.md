@@ -97,7 +97,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 13 | L60 | ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ✅ PASSED 2026-09-23: step 1 red→green on an inflated DumperTest, step 2 green on the pristine actor (`git log --grep 'verify(L63)'`). Measured: baseline 573, near-miss 53,799, truncated 61,870 (uncapped 61,988); the Fixture paragraph's 677 baseline was the A9-inflated 2026-09-16 actor |
 | 15 | L79 (predict inversions on the inflated holder set, then header clicks) | 🟡 2026-09-23: step 1 red→green on LW [Ptr] + Functions Address (manufactured low-address copies, `tools/verify/l79_lowclone.py`), step 2 green; the other 6 address columns measured and cannot fail on this machine's data (`git log --grep 'verify(L79)'`) |
-| 16 | L57 (step 1 kills and relaunches the game; step 2 Detect-kill in the new process) | ⬜ |
+| 16 | L57 (step 1 kills and relaunches the game; step 2 Detect-kill in the new process) | ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L57)'`). The per-game DB was `snapshots.87824811081DA000.db`, not the Fixture paragraph's `09FF6E55081C9000`; it now carries two 491,817-field snapshots (#5, #6) |
 
 ### S6
 
@@ -1047,7 +1047,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L57 — `[A4-LW-DISCONNECT-PARENT]` `[A1-DETECT-REPUBLISH]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 40 min
+**Status:** ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L57)'`). The per-game DB was `snapshots.87824811081DA000.db`, not the Fixture paragraph's `09FF6E55081C9000`; it now carries two 491,817-field snapshots (#5, #6) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 40 min
 
 **Fix commit(s):** `e21bb297`
 
