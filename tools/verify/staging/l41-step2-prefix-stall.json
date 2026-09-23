@@ -1,9 +1,12 @@
 {
  "name": "l41-step2-prefix-stall",
- "why": "L41 step 2 red: the same one-shot 3 s stall as l41-step2-first-search-stall, on the pre-fix enum detection -- 7e5a71fc reversed under dll/src and defcb56e's two Ubel.cpp 'cancelled detection reads nothing' guards removed -- so a raw pipe close mid-search latches FAILED for the process.",
+ "why": "L41 step 2 red: the same one-shot 3 s stall as l41-step2-first-search-stall, on the pre-fix enum detection -- 7e5a71fc reversed in Aura/Fern/Genau, and in Ubel.cpp (where defcb56e edited the same hunk, so a reverse does not apply) both fixes' guards removed by subs -- so a raw pipe close mid-search latches FAILED for the process.",
  "reverse_commit": "7e5a71fc",
  "paths": [
-  "dll/src"
+  "dll/src/Aura.cpp",
+  "dll/src/Aura.h",
+  "dll/src/Fern.cpp",
+  "dll/src/Genau.cpp"
  ],
  "subs": [
   {
@@ -26,7 +29,7 @@
   },
   {
    "file": "dll/src/Ubel.cpp",
-   "old": "        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call\n        // retries it. Not a truncated table either.\n        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n            return {};\n",
+   "old": "        // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes\n        // that. The line below claimed \"retry pending\" here, falsely, once per enum field per walk.\n        if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))\n            return {};\n        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call\n        // retries it. Not a truncated table either.\n        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n            return {};\n",
    "new": "",
    "count": 1
   }
