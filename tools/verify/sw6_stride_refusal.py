@@ -257,18 +257,29 @@ def main() -> int:
                     help="probe the SCALAR arms. ⛔ EXPECTED TO FAIL: it reports that the class "
                          "cache was never refreshed, which is the measurement, not a defect in "
                          "the refusal. See the docstring for the numbers.")
+    # [P1-UPROP-DELEGATE] (L46) reuses the same poke on a UE4 < 4.25 host: UE423_Flying's summoned
+    # DelegatePadFixture, whose Arr_MulticastDelegates inner is a UProperty. get_offsets publishes that
+    # offset as `uproperty_elemsize`, and only when use_fproperty is false (Fern.cpp:5184-5188).
+    ap.add_argument("--class-name", default="DumperTestActor",
+                    help="the class whose first non-CDO instance is walked (L46: DelegatePadFixture)")
+    ap.add_argument("--elemsize-key", default="fproperty_elemsize",
+                    choices=["fproperty_elemsize", "uproperty_elemsize"],
+                    help="which get_offsets key locates ElementSize on the array's Inner "
+                         "(uproperty_elemsize on a UE4 < 4.25 host)")
+    ap.add_argument("--only", action="append", default=None,
+                    help="poke only this field (repeatable); default: every SUBJECT")
     a = ap.parse_args()
 
     proc = injected_process()
     off = call("get_offsets", {})
-    elemsize_off = off.get("fproperty_elemsize")
+    elemsize_off = off.get(a.elemsize_key)
     print("process    : %s" % proc)
-    print("offsets    : fproperty_elemsize=%r use_fproperty=%r"
-          % (elemsize_off, off.get("use_fproperty")))
+    print("offsets    : %s=%r use_fproperty=%r"
+          % (a.elemsize_key, elemsize_off, off.get("use_fproperty")))
     if not isinstance(elemsize_off, int) or elemsize_off <= 0:
-        raise SystemExit("get_offsets did not publish fproperty_elemsize -- refusing to guess")
+        raise SystemExit("get_offsets did not publish %s -- refusing to guess" % a.elemsize_key)
 
-    r = call("find_instances", {"class_name": "DumperTestActor", "limit": 8})
+    r = call("find_instances", {"class_name": a.class_name, "limit": 8})
     inst = next(i for i in r.get("instances", [])
                 if not (i.get("name") or "").startswith("Default__"))
     print("actor      : %s  %s" % (inst["name"], inst["addr"]))
@@ -281,6 +292,8 @@ def main() -> int:
     print("FName      : %d bytes" % fname)
 
     for name, reader, base_of in SUBJECTS:
+        if a.only and name not in a.only:
+            continue
         f = fields.get(name)
         if not f:
             raise SystemExit("fixture is STALE -- %s missing" % name)

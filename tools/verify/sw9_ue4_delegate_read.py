@@ -125,6 +125,8 @@ def main() -> int:
                     help="Development is REQUIRED for the CheatManager route")
     ap.add_argument("--wait", type=int, default=70, help="seconds to let the package load")
     ap.add_argument("--keep", action="store_true", help="leave the game running for the UI arm")
+    ap.add_argument("--dll", default=None,
+                    help="inject this build instead of dist\\UE5Dumper.dll (a staged red arm, e.g. L46)")
     a = ap.parse_args()
 
     proj, module = ENGINES[a.engine]
@@ -169,7 +171,8 @@ def main() -> int:
         raise SystemExit("the game exited during load")
 
     # ⭐ inject BY PID, not by name -- the pid we launched is the only one we may measure.
-    r = subprocess.run([sys.executable, str(HERE / "inject.py"), "--pid", str(proc.pid)],
+    r = subprocess.run([sys.executable, str(HERE / "inject.py"), "--pid", str(proc.pid)]
+                       + (["--dll", a.dll] if a.dll else []),
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        cwd=str(ROOT))
     print((r.stdout or "").strip().splitlines()[-1] if r.stdout else r.stderr)
