@@ -108,7 +108,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L82 | ✅ PASSED red→green 2026-09-23 on DumperTest58, via the FName half (FString "" is undrivable) (`git log --grep 'verify(L82)'`) |
-| 2 | L84 (flag byte 01→00→01, restored) | ⬜ |
+| 2 | L84 (flag byte 01→00→01, restored) | ✅ PASSED red→green 2026-09-23 on DumperTest58 in the cold order (lookups before any walk; the warm order shows a different, order-dependent face) (`git log --grep 'verify(L84)'`) |
 | 3 | L86 (regression only) | ⬜ |
 | 4 | L59 (pre-stage side B: UI connect, capture 3 snapshots) | ⬜ |
 | 5 | L41 (step 2: fresh launch with the staged Sleep DLL, no UI, raw-pipe disconnect then reconnect walk) | ⬜ |
@@ -2114,7 +2114,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L84 — `[A2-TOPTIONAL-STRUCT-DESCENT]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 40 min
+**Status:** ✅ PASSED red→green 2026-09-23 on DumperTest58 in the cold order (lookups before any walk; the warm order shows a different, order-dependent face) (`git log --grep 'verify(L84)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 40 min
 
 **Fix commit(s):** `c6db7cf5`
 
