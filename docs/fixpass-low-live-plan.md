@@ -92,7 +92,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 8 | L70 (step 3: SPC on the new snapshot) | ✅ PASSED `38c7ac49` |
 | 9 | L61 (step 1) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L61)'`) |
 | 10 | L48 (arm A Num poke, then arm B decryption; restore each) | ✅ PASSED red→green 2026-09-23, both halves + the listed half on DumperTest (`git log --grep 'verify(L48)'`) |
-| 11 | L45 (variant A: suspend-tid, ≥305 s) | 🔓 UNBLOCKED 2026-09-23: [SEETHRU-PROBE-SUBSTRING] fixed in source (`git log --grep SEETHRU-PROBE-SUBSTRING`); re-run on a DLL that contains it (was ⛔ BLOCKED the same day: See-through refused on DumperTest) |
+| 11 | L45 (variant A: suspend-tid, ≥305 s) | ✅ PASSED 2026-09-23 on the `39ccb2a4` DLL: step 1 red→green, 2a-2e green + a give-up mutant red, step 3 by pins (`git log --grep 'verify(L45)'`) |
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L58)'`) |
 | 13 | L60 | ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ✅ PASSED 2026-09-23: step 1 red→green on an inflated DumperTest, step 2 green on the pristine actor (`git log --grep 'verify(L63)'`). Measured: baseline 573, near-miss 53,799, truncated 61,870 (uncapped 61,988); the Fixture paragraph's 677 baseline was the A9-inflated 2026-09-16 actor |
@@ -529,7 +529,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L45 — `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 
-**Status:** 🔓 UNBLOCKED 2026-09-23: [SEETHRU-PROBE-SUBSTRING] fixed in source (`git log --grep SEETHRU-PROBE-SUBSTRING`); re-run on a DLL that contains it (was ⛔ BLOCKED the same day: See-through refused on DumperTest) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
+**Status:** ✅ PASSED 2026-09-23 on the `39ccb2a4` DLL: step 1 red→green (also `[SEETHRU-PROBE-SUBSTRING]`'s live check, riders green), steps 2a-2e green with a DLL-half give-up mutant red, step 3 by its pins (`git log --grep 'verify(L45)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
 
 **Fix commit(s):** `df09bbcb`
 
