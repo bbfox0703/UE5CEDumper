@@ -233,7 +233,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 |---|---|---|
 | 1 | L66 (step 3 pre-check: PRAGMA on snapshots.5EEB192C030CE000.db BEFORE the first Connect) | ✅ 2026-09-23: no partial_reason, user_version 4, 0 rows |
 | 2 | L62 | ✅ PASSED red→green 2026-09-23, both steps (staged winmm proxy vs dist's); record left at 3 (`git log --grep 'verify(L62)'`) |
-| 3 | L67 | ⬜ |
+| 3 | L67 | ✅ PASSED red→green 2026-09-23: `structural=-1`, score 3, hidden without Show All (red: 4, visible) (`git log --grep 'verify(L67)'`) |
 | 4 | L66 (step 3 post-check after the UI closes) | ✅ 2026-09-23: partial_reason TEXT NOT NULL DEFAULT '' added, user_version 4; row closed (`git log --grep 'verify(L66)'`) |
 
 ### S18
@@ -1458,7 +1458,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L67 — `[P3-SCORING-MCDELEGATE]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
+**Status:** ✅ PASSED red→green 2026-09-23 on OCTOPATH (UE 4.18): Actor.OnTakeAnyDamage scores 3 with `structural=-1` (red: HEAD UI with `0065a830` reversed, 4 and visible) (`git log --grep 'verify(L67)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 30 min
 
 **Fixture:** A UE4 ≤ 4.22 title from docs/test-games.md. Candidates: OctoPath Traveler UE4.18 (:14), FF7R 4.18 fork (:16), DQ XI S 4.18 (:58), Jedi Fallen Order 4.21 (:63), Everspace 4.20 (:74), Satisfactory 4.22 depot build (:82), Extinction 4.15 (:91), NEKOPALIVE 4.11 (:101). Log folders already exist on this machine for Octopath_Traveler-Win64-Shipping, 'DRAGON QUEST XI S' and Nekopara, and the Octopath install is present under D:\SteamLibrary. Best choice is Octopath: same session as L62, winmm proxy already deployed, full scan live-verified. The self-built 4.15 and 4.18 projects do NOT build ('⛔ Windows SDK', tools/ue-sample/ue4-projects/README.md table), and DumperTest is 5.4, so no self-built fixture reaches ≤4.22. On UE4 ≤4.22 (UProperty mode) the DLL reports the raw class name as prop_type (Aura.cpp:4928 match.propType = field.TypeName; the literal is compared at Genau.cpp:3618 and Ubel.cpp:6558), so multicast delegates arrive as 'MulticastDelegateProperty'. The likely stat-named hosts come from UE engine knowledge, so confirm them with the precondition query: AActor::OnTakeAnyDamage and OnTakePointDamage ('Damage' is a CombatKeyword, PropertyScoringTable.cs:102), and UPrimitiveComponent::OnComponentHit ('Hit', :109). These are ENGINE classes, so 'Game Only' must be unticked (Aura.cpp:4844 skips IsEnginePackage).
 
