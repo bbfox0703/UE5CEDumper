@@ -167,8 +167,8 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L40 | ⬜ |
-| 2 | L52 | ⬜ |
+| 1 | L40 | ✅ PASSED 2026-09-23: the live control green on a staged recovery scan, red by a hoisted-bail mutant (`git log --grep 'verify(L40)'`) |
+| 2 | L52 | ✅ PASSED 2026-09-23: steps 1-2 red→green (generalized: EOSSDK refusals on DumperTest dev), step 3 regression-only (`git log --grep 'verify(L52)'`) |
 
 ### S12
 
@@ -360,7 +360,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L40 — `[P1-GENAU-ABORT]` `[A2-GNAMES-PTRSCAN-ABORT]`
 
-**Status:** ⬜ · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** no · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23: the live control (staged, uninterrupted recovery scan latches, no abort line); red by a hoisted-bail mutant, since `785b1730^` passes it too (`git log --grep 'verify(L40)'`) · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `785b1730`, `89dc858c`
 
@@ -846,7 +846,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L52 — `[A2-HEAP-ANCHOR-TEXT]`
 
-**Status:** ⬜ · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** no · **estimate:** 30 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green in generalized form (EOSSDK, DumperTest dev), step 3 regression-only (`git log --grep 'verify(L52)'`) · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** no · **estimate:** 30 min
 
 **Fix commit(s):** `365326c6`
 
