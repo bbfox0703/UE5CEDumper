@@ -200,7 +200,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L83 | ⬜ |
+| 1 | L83 | ✅ PASSED red→green 2026-09-23 for ON (Console + CE record); a queued OFF leaves the camera ON on both arms, raised as `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` (`git log --grep 'verify(L83)'`) |
 
 ### S15
 
@@ -2070,7 +2070,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L83 — `[W3-DEBUGCAM-QUEUED]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED red→green 2026-09-23 for the ON direction (Console + CE record); steps 6 and 9 (queued OFF) fail at HEAD, raised as `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` (MED) (`git log --grep 'verify(L83)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `8a2b37e8`
 
