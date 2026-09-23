@@ -1,0 +1,12 @@
+{
+ "name": "l45-giveup-mutant",
+ "why": "L45 red for [P1-SEETHRU-GIVEUP] at HEAD (df09bbcb no longer reverses cleanly after 39ccb2a4): the give-up still logs, but no longer records restoreAbandoned, so seethrough_get_state reports restore_abandoned false and the card keeps promising 'click back into the game and they reappear'.",
+ "subs": [
+  {
+   "file": "dll/src/Schlacht.cpp",
+   "old": "                    { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }\n",
+   "new": "                    // L45 RED MUTANT: the give-up is no longer recorded\n",
+   "count": 1
+  }
+ ]
+}
