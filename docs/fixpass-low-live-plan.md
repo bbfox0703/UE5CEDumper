@@ -69,7 +69,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 |---|---|---|
 | 1 | L69 (step 2, 'unmeasured' DLL) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L69)'`) |
 | 2 | L85 (arm 3, same launch) | ✅ PASSED 2026-09-23, green only (red = arm 4) (`git log --grep 'verify(L85)'`) |
-| 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ⬜ |
+| 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ✅ PASSED red→green 2026-09-23 on the log WARN (`git log --grep 'verify(L41)'`) |
 | 4 | L85 (arm 4, out\oldcontract build 3262; back up %COMPUTERNAME%.json) | ✅ PASSED 2026-09-23: false [dll-too-old], never true; also arm 3's stand-in red (`git log --grep 'verify(L85)'`) |
 | 5 | L55 (A-run, 'before' DLL, pipe census; diff against S3's B-run) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
 
@@ -398,7 +398,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L41 — `[P1-ENUMNAMES]`
 
-**Status:** ⬜ · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** yes · **estimate:** 90 min
+**Status:** 🟡 step 1 ✅ red→green 2026-09-23 (`git log --grep 'verify(L41)'`); step 2 ⬜ (S6) · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** yes · **estimate:** 90 min
 
 **Fix commit(s):** `7e5a71fc`, `defcb56e`
 
