@@ -20,7 +20,10 @@ the actor itself; its bIsSet byte sits after the 32-byte inner. The phase record
 find_by_address on Objs' data buffer, then RESETS the optional by writing its flag byte 01 -> 00 (mutate_guard:
 captured, witnessed, restored in `finally`, re-read), repeats both lookups, and restores. A reset optional must
 lose both Opt_Struct_Set hits while every other hit stays. No destructor runs on a flag-only write, so writing 01
-back returns the exact original state.
+back returns the exact original state. ⚠ Find Refs SUPPRESSES owner == target, and the seeded Obj / Objs[0] are the
+actor itself, so Find Refs to the actor lists neither in any build; only the Address Finder half discriminates as
+seeded. `--retarget` points Obj at the live DumperTest58Anchor (a valid object; restored) and repeats set / reset /
+restore with Find Refs asked about the Anchor.
 
 l86: UDumperTest58OptTail is a 64-byte UObject whose LAST 8 bytes are an intrusive TOptional<FName> set to
 "Opt58TailName". `--spawn` calls ADumperTest58Actor::OptTail_Spawn(N, K), which keeps creating them until K end at
@@ -193,6 +196,29 @@ def l84(a):
             show_refs("RESET", *refs_and_container(c, live["addr"], "0x%X" % D))
         say("RESTORE: flag -> %s" % MG.read_bytes(c, flag, 1).hex())
         show_refs("RESTORED", *refs_and_container(c, live["addr"], "0x%X" % D))
+        if a.retarget:
+            # Find Refs suppresses owner == target, and the seeded Obj / Objs[0] ARE the actor, so Find Refs to the
+            # actor can never list them in either build. Point Obj at another LIVE object -- the level's
+            # DumperTest58Anchor, a valid UObject, so a GC pass in between only marks it referenced -- and ask Find
+            # Refs about THAT object across set / reset / restore. Obj is restored in `finally`.
+            r = c.request("find_instances", class_name="DumperTest58Anchor", exact_match=True, limit=10)
+            anc = next((i for i in (r.get("instances") or []) if not i["name"].startswith("Default__")), None)
+            if not anc:
+                raise SystemExit("FIXTURE: no live DumperTest58Anchor to retarget Obj at")
+            X = int(anc["addr"], 16)
+            say("RETARGET: Opt_Struct_Set.Obj (A+0x%X) -> %s @ 0x%X" % (O, anc["name"], X))
+            with MG.Mutation(c, "L84 Opt_Struct_Set.Obj", A + O, 8,
+                             expect_unchanged={"Objs header + Tag": (A + O + 8, 24)}) as mo:
+                if not mo.apply(X.to_bytes(8, "little")):
+                    raise SystemExit("FAIL: the Obj write was not witnessed")
+                mo.assert_others_unchanged()
+                show_refs("RETARGET SET", *refs_and_container(c, anc["addr"], "0x%X" % D))
+                with MG.Mutation(c, "L84 Opt_Struct_Set bIsSet", flag, 1) as m:
+                    if not m.apply(b"\x00"):
+                        raise SystemExit("FAIL: the flag write was not witnessed")
+                    show_refs("RETARGET RESET", *refs_and_container(c, anc["addr"], "0x%X" % D))
+                show_refs("RETARGET RESTORED", *refs_and_container(c, anc["addr"], "0x%X" % D))
+            say("Obj restored -> 0x%X" % int.from_bytes(MG.read_bytes(c, A + O, 8), "little"))
     return 0
 
 
@@ -277,6 +303,9 @@ def main():
     ap.add_argument("--process", default="DumperTest58-Win64-Shipping")
     ap.add_argument("--spawn", type=int, default=0, help="l86: OptTail_Spawn MaxObjects (0 = spawn nothing)")
     ap.add_argument("--edges", type=int, default=8, help="l86: OptTail_Spawn WantEdges")
+    ap.add_argument("--retarget", action="store_true",
+                    help="l84: also point Opt_Struct_Set.Obj at the live DumperTest58Anchor (restored) so Find Refs, "
+                         "which suppresses owner == target, can list it")
     a = ap.parse_args()
     return {"l82": l82, "l84": l84, "l86": l86}[a.phase](a)
 
