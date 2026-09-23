@@ -1,0 +1,6 @@
+{
+ "name": "l45-seethru-giveup-prefix",
+ "why": "L45 DLL-half red: df09bbcb reversed under dll/src -- the give-up is not recorded, so seethrough_get_state carries no restore_abandoned key and the card can only keep the 'click back and they reappear' promise.",
+ "reverse_commit": "df09bbcb",
+ "paths": ["dll/src"]
+}
