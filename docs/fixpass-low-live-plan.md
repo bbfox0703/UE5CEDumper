@@ -81,7 +81,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L73 | ⬜ |
+| 1 | L73 | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L73)'`) |
 | 2 | L47 | ⬜ |
 | 3 | L56 (UI half) | ✅ PASSED red→green 2026-09-22 incl. the CE Freeze count (`git log --grep 'verify(L56)'`) |
 | 4 | L71 | ⬜ |
@@ -1685,7 +1685,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L73 — `[P8-BOOKMARK-TIP]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 15 min
+**Status:** ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L73)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 15 min
 
 **Fixture:** Any connected game. The first choice is DumperTest Shipping (`py tools/verify/launch_dumpertest.py shipping` + `py tools/verify/inject.py --pid <out/host.pid>`). Any two distinct objects work. For example: A = the UWorld reached with 'Start from GWorld'; B = PersistentLevel (double-click its row), or the object reached with 'Start from GameEngine', or the live DumperTestActor through the address box + 'Go'.
 
