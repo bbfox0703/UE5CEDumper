@@ -55,12 +55,18 @@ def drop(key, apply):
     if not apply:
         print("\n(dry run -- pass --apply to actually drop it)")
         return 0
-    shutil.copy2(STORE, whole)
-    single.write_text(json.dumps(entry, indent=2, ensure_ascii=False), encoding="utf-8")
+    # KEEP the first backup. A red/green pair drops the same key twice, and the second drop would otherwise
+    # overwrite the ORIGINAL entry with the one the first run re-stamped, so `restore` could no longer put the
+    # original back -- measured 2026-09-23 (L51, ES2): the backup ended up holding the green run's record.
+    if single.exists():
+        print(f"\nkept the existing backup (the ORIGINAL entry) -> {single}; delete it to back up afresh")
+    else:
+        shutil.copy2(STORE, whole)
+        single.write_text(json.dumps(entry, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\nbacked up whole file -> {whole}")
+        print(f"backed up entry      -> {single}")
     del j["games"][key]
     save(j)
-    print(f"\nbacked up whole file -> {whole}")
-    print(f"backed up entry      -> {single}")
     print(f"DROPPED. remaining games = {len(j['games'])}")
     return 0
 

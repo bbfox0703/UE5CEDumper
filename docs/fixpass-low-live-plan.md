@@ -220,7 +220,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L51 | ⬜ |
+| 1 | L51 | ✅ PASSED red→green 2026-09-23 on EVERSPACE™ 2 (+ the 2026-09-09 pre-fix red kept); step 2 regression-only green (`git log --grep 'verify(L51)'`) |
 | 2 | L48 (step 1 listed half, only if DumperTest had no cross-object sparse triple) | ✅ PASSED red→green 2026-09-23, both halves + the listed half on DumperTest (`git log --grep 'verify(L48)'`) |
 
 ### S17
@@ -809,7 +809,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L51 — `[A2-CRC-PATH-LS]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 40 min
+**Status:** ✅ PASSED red→green 2026-09-23: step 1 on EVERSPACE™ 2 with a staged red (`9bc177d8` reversed) and the 2026-09-09 pre-fix log; step 2 regression-only green (`git log --grep 'verify(L51)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 40 min
 
 **Fix commit(s):** `9bc177d8`
 

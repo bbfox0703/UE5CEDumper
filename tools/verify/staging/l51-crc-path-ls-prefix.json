@@ -1,0 +1,8 @@
+{
+ "name": "l51-crc-path-ls-prefix",
+ "why": "L51 red: 9bc177d8 reversed under dll/src -- the CrashReportClient lines format the wide install path with %ls again, so a path with a character above 0xFF (EVERSPACE™ 2) empties the whole [SCAN:Ver] record.",
+ "reverse_commit": "9bc177d8",
+ "paths": [
+  "dll/src"
+ ]
+}
