@@ -63,7 +63,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 **Setup:** DumperTest 5.4 SHIPPING with staged DLLs. One FRESH launch per DLL; CE for arms that need it.
 
-**Why grouped:** The same fixture with non-dist DLLs. Each staged DLL needs a fresh process (per-process latches, one DLL per process). L69 step 2 and L85 arm 3 read the same staged verdict from one launch, one via dissect/C ABI and one via the mailbox helper. Confirm by SHA which DLL answered. Restore %COMPUTERNAME%.json after the old-DLL arm.
+**Why grouped:** The same fixture with non-dist DLLs. Each staged DLL needs a fresh process (per-process latches, one DLL per process). L69 step 2 and L85 arm 3 read the same staged verdict from one launch, one via dissect/C ABI and one via the mailbox helper. Confirm by SHA which DLL answered. Restore %COMPUTERNAME%.json after the old-DLL arm. L90 (added 2026-09-23, after the survey) uses L41 step 1's staged DLL for the same USMAP export. On that DLL the final status also carries L41's warning, so L90 re-checks L41's race-dependent half as well.
 
 | # | row (arm) | status |
 |---|---|---|
@@ -72,6 +72,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 3 | L41 (step 1, enum-renamed DLL + AOT UI USMAP export) | ✅ PASSED red→green 2026-09-23 on the log WARN (`git log --grep 'verify(L41)'`) |
 | 4 | L85 (arm 4, out\oldcontract build 3262; back up %COMPUTERNAME%.json) | ✅ PASSED 2026-09-23: false [dll-too-old], never true; also arm 3's stand-in red (`git log --grep 'verify(L85)'`) |
 | 5 | L55 (A-run, 'before' DLL, pipe census; diff against S3's B-run) | ✅ PASSED 2026-09-22 — A/B IDENTICAL over 2,978 functions (`git log --grep 'verify(L55)'`) |
+| 6 | L90 (L41 step 1's staged DLL; USMAP ×5 on the pre-fix UI for the red RATE, ×5 on the fix built the same way (JIT), then ×5 + SDK Header + Symbols on the AOT UI; three launches, because dist_swap refuses while the game runs) | ⬜ |
 
 ### S5
 
@@ -2259,3 +2260,45 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 **Related rows:** L85, L69, L88
 
+### L90 — `[EXPORT-STATUS-LATE-PROGRESS]`
+
+**Status:** ⬜ (S4 #6) · **reachability:** `live` (it discriminates only if the pre-fix red rate is above 0, step 7) · **needs CE:** no · **needs UI:** yes · **estimate:** 75 min
+
+⚠ **Not from the survey.** The row was filed on 2026-09-23 with its fix, a day after the survey. The fixing session wrote this recipe from source at `5b42921c`. No step has been live-run.
+
+**Fix commit(s):** `5b42921c fix(export): a progress report still queued cannot replace an export's final status [EXPORT-STATUS-LATE-PROGRESS]`
+
+**Fixture:** DumperTest Shipping 5.4 (`launch_dumpertest.py shipping`), as in L41 step 1, with L41's staged enum-renamed DLL `out\staged\l41-step1-enum-names-unlocated\UE5Dumper.dll` (sha `8d11fbd9`). On that DLL the USMAP final status carries L41's enum warning. `dist\UE5Dumper.dll` also works; the final status is then a bare "USMAP exported". The defect is in the UI, so any game with classes reaches it. The red was observed on this fixture: the export ended on "Generated USMAP (1412624 bytes, 7692 structs, 1569 enums)".
+
+**Preconditions:** Two JIT builds of the UI, made with the game and the UI closed: the pre-fix UI (`git archive 5b42921c^`, then `dotnet build ui/UE5DumpUI/UE5DumpUI.csproj -c Release`) and the fix built the same way (`git archive 5b42921c`). Each goes into its own folder under `out\`. The AOT `dist\UE5DumpUI.exe` must be built from `5b42921c` or later (`build.ps1 -Mode Publish -NoBumpBuildNumber`, about 55 MB), with no UE5DumpUI or DumperTest running. Commit before running a freshly built exe (Bitdefender). Back up `ui-options.json`: in L41, the pre-fix UI dropped `proxyDeploy.scanExcludedFolderNames`.
+
+**Steps:**
+
+1. `py tools/verify/dist_swap.py backup`, then `py tools/verify/dist_swap.py install <pre-fix bindir>`.
+2. `py tools/verify/launch_dumpertest.py shipping`, then `py tools/verify/inject.py --name DumperTest-Win64-Shipping --dll out\staged\l41-step1-enum-names-unlocated\UE5Dumper.dll`. Check the object count before trusting anything (handover §3: a dead engine answers with coherent zeros).
+3. **RED, the rate:** start `dist\UE5DumpUI.exe` and connect. Run Export (toolbar `str.Toolbar.Export`) → *USMAP (.usmap)* five times, saving each run to its own name in the scratchpad (a repeated name adds an overwrite prompt). After each run, wait for the view log's `USMAP exported to … (N bytes)` line. Only then read the FINAL status, from its tooltip (the toolbar truncates it). Record each run as *own* or *progress line*.
+4. Close the UI and the game (`dist_swap.py` refuses while either runs), then `py tools/verify/dist_swap.py install <fix JIT bindir>`. Relaunch, re-inject and repeat step 3. This is **GREEN on the same flavor**, so the red-vs-green comparison does not also compare JIT with AOT.
+5. Close the UI and the game, then run `py tools/verify/dist_swap.py restore`. It must print `mismatches: 0` and the AOT `UE5DumpUI.exe` sha. Relaunch and re-inject. On the AOT UI, run the same five USMAP exports, then one *SDK Header (.h)* and one *Symbols (x64dbg .dd64)*. This is **GREEN on the shipping binary**.
+6. Kill the game and the UI. Restore `ui-options.json`.
+7. **Verdict:** a PASS needs at least 1 of 5 progress-line finals in step 3, 0 of 5 in step 4, and only the action's own finals in step 5. If step 3 is 0 of 5, the check does not discriminate on this machine. Try ten runs before giving up. After that, record it as non-discriminating and claim no pass: `UsmapExportServiceTests`' `ExportStatus_*` tests already pin the ordering deterministically.
+
+**Expected strings:**
+
+| text | source | where it appears |
+|---|---|---|
+| USMAP exported — ⚠ enum member names are unavailable on this build (UEnum::Names was not located), so every enum in the .usmap is empty | ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3695 + ui/UE5DumpUI/Services/UsmapExportService.cs:102-103 | UI final status on the staged DLL (a bare "USMAP exported" on `dist\UE5Dumper.dll`) |
+| SDK exported | ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3542 | UI final status (step 5) |
+| Exported N symbols | ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3505 | UI final status (step 5) |
+| MUST NOT BE FINAL: Generated USMAP (N bytes, N structs, N enums) | ui/UE5DumpUI/Services/UsmapExportService.cs:189 | the service's last report, and the observed red |
+| MUST NOT BE FINAL: Generated SDK with N classes | ui/UE5DumpUI/Services/SdkExportService.cs:179 | the SDK service's last report |
+| MUST NOT BE FINAL: Collected N symbols | ui/UE5DumpUI/Services/SymbolExportService.cs:68 | the Symbols service's last report |
+| USMAP exported to … (N bytes) | ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3696 | Logs\UE5DumpUI\view-*.log. The export has finished; read the status only after it. |
+| Full SDK exported to … / Symbols exported to … (N entries) | ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3543 / :3506 | Logs\UE5DumpUI\view-*.log |
+
+**Row text vs source:** (a) The race is between a posted report and the continuation after `await File.Write…Async`. Its outcome is scheduling, so one run in either direction proves nothing: L41's red was 1 of 1 on a JIT build, and its green 1 of 1 on the AOT build. (b) That red and green also differed in build flavor, which is why step 4 exists. (c) Pre-fix, each report was posted twice; the fix posts once and drops a report that runs after `Complete`. Only the dropping matters to the verdict: a single-hop report queued before completion would still have landed late without the flag (the fix's mutant that reads the flag at REPORT time; only the queued-at-completion test kills it).
+
+**Rig:** No new rig. computer-use drives the UI; `tools/verify/dist_swap.py` swaps the JIT builds in; `tools/verify/front_window.py` fronts windows; `tools/verify/pipe_client.py list_enums` is the optional anti-vacuity check for the staged DLL (`enum_names_failed: true`, as in L41).
+
+**Traps:** `dist_swap.py` refuses while a DumperTest* or UE5DumpUI process exists, so every arm is its own game launch. Never publish into the main tree's `dist\` while another session's game or UI is running. Any build that reaches the publish step leaves a NON-trimmed `dist\UE5DumpUI.exe` (CLAUDE.md), so step 5 must run on the restored AOT build; check its size and sha. The toolbar truncates the status: read it from the tooltip, and only after the log line, or a still-running export reads as a red. The file dialog and the game steal focus. The UI is single-instance.
+
+**Related rows:** L41, L64, L81
