@@ -1,0 +1,8 @@
+{
+ "name": "l83-no-queued-state",
+ "why": "L83 red (DLL half): 8a2b37e8 reversed under dll/src -- a Debug Camera toggle that times out on a stalled game thread is reported as a failure, not as queued, so the UI and the CE record invite a second toggle that undoes the first.",
+ "reverse_commit": "8a2b37e8",
+ "paths": [
+  "dll/src"
+ ]
+}
