@@ -157,9 +157,58 @@ def show_refs(tag, refs, scan, cm, cs):
                                                   x.get("element_index")))
 
 
+def l84_cold(a):
+    """--cold: every lookup BEFORE any walk_instance. A walk calibrates DynOff::FARRAYPROP_INNER (0x70 -> 0x78 on 5.3+,
+    `Correcting FARRAYPROP_INNER` in walk-0.log), and the pre-c6db7cf5 collectors read an optional's value property at
+    that global and cache the class for the process. Cold, that read sits at 0x70, where FOptionalProperty keeps its
+    ValueProperty, so the pre-fix build DESCENDS -- ungated -- and a reset optional is still reported: the row's own
+    face. Offsets are the cooked constants measured by the warm run (Opt_Struct_Set at +0x300, flag at +0x320)."""
+    import mutate_guard as MG
+    from pipe_client import PipeClient
+    walk_log = os.path.join(os.environ["LOCALAPPDATA"], "UE5CEDumper", "Logs", a.process, "walk-0.log")
+    with PipeClient() as c:
+        say("build %s" % c.assert_build())
+        c.ensure_scanned()
+        live, _ = actor_and_cdo(c)
+        A, O = int(live["addr"], 16), a.offset
+        obj0 = int.from_bytes(MG.read_bytes(c, A + O, 8), "little")
+        hdr = MG.read_bytes(c, A + O + 8, 16)
+        D, num = int.from_bytes(hdr[0:8], "little"), int.from_bytes(hdr[8:12], "little")
+        flag = A + O + 32
+        say("COLD live %s @ 0x%X: Obj=0x%X Objs data=0x%X num=%d flag=%s" % (live["name"], A, obj0, D, num,
+                                                                        MG.read_bytes(c, flag, 1).hex()))
+        if obj0 != A or num != 1 or MG.read_bytes(c, flag, 1) != b"\x01":
+            raise SystemExit("FIXTURE: +0x%X is not the seeded Opt_Struct_Set" % O)
+        r = c.request("find_instances", class_name="DumperTest58Anchor", exact_match=True, limit=10)
+        anc = next((i for i in (r.get("instances") or []) if not i["name"].startswith("Default__")), None)
+        X = int(anc["addr"], 16)
+        with MG.Mutation(c, "L84 Opt_Struct_Set.Obj", A + O, 8) as mo:
+            if not mo.apply(X.to_bytes(8, "little")):
+                raise SystemExit("FAIL: the Obj write was not witnessed")
+            show_refs("COLD SET", *refs_and_container(c, anc["addr"], "0x%X" % D))
+            with MG.Mutation(c, "L84 Opt_Struct_Set bIsSet", flag, 1) as m:
+                if not m.apply(b"\x00"):
+                    raise SystemExit("FAIL: the flag write was not witnessed")
+                show_refs("COLD RESET", *refs_and_container(c, anc["addr"], "0x%X" % D))
+            show_refs("COLD RESTORED", *refs_and_container(c, anc["addr"], "0x%X" % D))
+    try:
+        lines = open(walk_log, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        lines = []
+    corr = [i for i, l in enumerate(lines) if "Correcting FARRAYPROP_INNER" in l]
+    scan = [i for i, l in enumerate(lines) if "FindReferencesToUObject: scanning" in l]
+    say("walk-0.log: 'Correcting FARRAYPROP_INNER' at line(s) %s; first 'FindReferencesToUObject: scanning' at %s"
+        % (corr[:3] or "none", scan[:1] or "none"))
+    say("COLD ORDER %s" % ("OK: no calibration before the first Find Refs" if not corr or (scan and corr[0] > scan[0])
+                           else "BROKEN: FARRAYPROP_INNER was calibrated first"))
+    return 0
+
+
 def l84(a):
     import mutate_guard as MG
     from pipe_client import PipeClient
+    if a.cold:
+        return l84_cold(a)
     with PipeClient() as c:
         say("build %s" % c.assert_build())
         c.ensure_scanned()
@@ -303,6 +352,10 @@ def main():
     ap.add_argument("--process", default="DumperTest58-Win64-Shipping")
     ap.add_argument("--spawn", type=int, default=0, help="l86: OptTail_Spawn MaxObjects (0 = spawn nothing)")
     ap.add_argument("--edges", type=int, default=8, help="l86: OptTail_Spawn WantEdges")
+    ap.add_argument("--cold", action="store_true",
+                    help="l84: run every lookup before any walk_instance (FARRAYPROP_INNER uncalibrated); retargets Obj")
+    ap.add_argument("--offset", type=lambda s: int(s, 0), default=0x300,
+                    help="l84 --cold: Opt_Struct_Set's cooked offset (measured 0x300 on DumperTest58 Shipping)")
     ap.add_argument("--retarget", action="store_true",
                     help="l84: also point Opt_Struct_Set.Obj at the live DumperTest58Anchor (restored) so Find Refs, "
                          "which suppresses owner == target, can list it")
