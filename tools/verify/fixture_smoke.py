@@ -66,10 +66,15 @@ def verdicts(path, cats=("[DYNO]", "[OARR]", "[FNAM]")):
     return out
 
 
+TRIED = re.compile(r"\d+ patterns tried, \d+ with hits, ")
+
+
 def winners(path):
+    """The AOB winner per target. A repackaged fixture has a NEW pe_hash, so its first scan has no
+    hint and tries more patterns: "(hint)" and the tried/hit counts are dropped, the winner kept."""
     if not os.path.exists(path):
         return []
-    return [norm(ln) for ln in open(path, encoding="utf-8", errors="replace")
+    return [TRIED.sub("", norm(ln)).replace(" (hint)", "") for ln in open(path, encoding="utf-8", errors="replace")
             if "winner:" in ln or "FindAll: Complete" in ln]
 
 
