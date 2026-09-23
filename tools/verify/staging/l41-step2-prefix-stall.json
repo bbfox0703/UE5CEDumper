@@ -1,0 +1,34 @@
+{
+ "name": "l41-step2-prefix-stall",
+ "why": "L41 step 2 red: the same one-shot 3 s stall as l41-step2-first-search-stall, on the pre-fix enum detection -- 7e5a71fc reversed under dll/src and defcb56e's two Ubel.cpp 'cancelled detection reads nothing' guards removed -- so a raw pipe close mid-search latches FAILED for the process.",
+ "reverse_commit": "7e5a71fc",
+ "paths": [
+  "dll/src"
+ ],
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "#include <atomic>     // FindSparseDelegateStorage cache\n",
+   "new": "#include <atomic>     // FindSparseDelegateStorage cache\n#include <thread>     // STAGING (stage_dll.py l41-step2)\n#include <chrono>     // STAGING (stage_dll.py l41-step2)\n",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    Sein::Info(\"DYNO:Enum\", \"DetectUEnumNames: Searching for known enums in GObjects...\");\n",
+   "new": "    Sein::Info(\"DYNO:Enum\", \"DetectUEnumNames: Searching for known enums in GObjects...\");\n    { static std::atomic<bool> s_l41Once{false};   // STAGING (stage_dll.py l41-step2)\n      if (!s_l41Once.exchange(true)) std::this_thread::sleep_for(std::chrono::seconds(3)); }\n",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": "    // [P1-ENUMNAMES] review 5: a CANCELLED detection sets neither flag. The Names offset and format are then still the\n    // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this\n    // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.\n    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n        return \"\";\n",
+   "new": "",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": "        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call\n        // retries it. Not a truncated table either.\n        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n            return {};\n",
+   "new": "",
+   "count": 1
+  }
+ ]
+}
