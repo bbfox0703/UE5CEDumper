@@ -190,7 +190,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L85 (arm 2: probe-not-run before any scan, then trigger_scan → true) | ⬜ |
+| 1 | L85 (arm 2: probe-not-run before any scan, then trigger_scan → true) | ✅ PASSED 2026-09-23, green (red: source + arm 4's auto-init poke); row closed (`git log --grep 'verify(L85)'`) |
 
 ### S14
 
@@ -2155,7 +2155,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L85 — `[W5-OFFSETS-MAILBOX]`
 
-**Status:** 🟡 arms 1, 3, 4 ✅ 2026-09-23 (`git log --grep 'verify(L85)'`; arm 1 in `git log --grep 'verify(L69)'`); arm 2 ⬜ (S13) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
+**Status:** ✅ PASSED 2026-09-23, all four arms, ROW CLOSED (`git log --grep 'verify(L85)'`; arm 1 in `git log --grep 'verify(L69)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 60 min
 
 **Fix commit(s):** `389d76bb`, `943975f3`, `e009ec78`
 
