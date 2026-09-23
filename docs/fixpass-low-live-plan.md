@@ -210,7 +210,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L46 | ⬜ |
+| 1 | L46 | ✅ PASSED 2026-09-23: step 1 green on 4.23 with the 4.27 comparison, step 2 red→green by a live ElementSize poke, wire on Shipping + Development, UI on Development; Phase K only (`git log --grep 'verify(L46)'`) |
 
 ### S16
 
@@ -587,7 +587,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L46 — `[P1-UPROP-DELEGATE]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
+**Status:** ✅ PASSED 2026-09-23: step 1 green (4.23 UProperty + the 4.27 comparison), step 2 red→green by a live ElementSize poke, the wire on Shipping AND Development, the UI on Development. ⚠ UE 4.23 Shipping DOES have a CheatManager (the Fixture paragraph's dev-only reason is UE5's gate). Phase J (unicast) has no live host (`git log --grep 'verify(L46)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
 
 **Fix commit(s):** `cb20b61d`
 
