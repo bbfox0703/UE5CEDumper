@@ -157,7 +157,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L53 | ⬜ |
+| 1 | L53 | ✅ PASSED 2026-09-23: step 1 red→green, step 2 green (its path is unchanged by the fix) (`git log --grep 'verify(L53)'`) |
 
 ### S11
 
@@ -883,7 +883,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L53 — `[A2-METHODE-MANUALMAP]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 40 min
+**Status:** ✅ PASSED 2026-09-23: step 1 red→green, step 2 green (`git log --grep 'verify(L53)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** no · **estimate:** 40 min
 
 **Fix commit(s):** `953f2c3b`
 
