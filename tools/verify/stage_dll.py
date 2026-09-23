@@ -38,6 +38,11 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 BUILT = os.path.join(REPO, "build", "dll", "UE5Dumper.dll")
+# "proxies": ["winmm", ...] in a spec also builds and stages those proxy DLLs (the same sources, linked as the
+# forwarder a game loads by name). A proxy-mode row's red arm needs the PROXY built from the staged tree, not
+# UE5Dumper.dll -- L62's load-mode classifier runs inside winmm.dll. Target names from dll/CMakeLists.txt.
+PROXY_TARGETS = {"version": "UE5Dumper_Proxy", "dinput8": "UE5Dumper_ProxyDinput8",
+                 "dxgi": "UE5Dumper_ProxyDxgi", "winmm": "UE5Dumper_ProxyWinmm"}
 
 
 def sha(p):
@@ -49,8 +54,9 @@ def git(*a):
                           encoding="utf-8", errors="replace")
 
 
-def build():
-    r = subprocess.run([sys.executable, os.path.join(HERE, "build_dll.py"), "--targets", "UE5Dumper"],
+def build(proxies=()):
+    targets = ["UE5Dumper"] + [PROXY_TARGETS[x] for x in proxies]
+    r = subprocess.run([sys.executable, os.path.join(HERE, "build_dll.py"), "--targets", *targets],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
     for ln in tail:
@@ -65,6 +71,11 @@ def main():
     a = ap.parse_args()
     spec = json.load(open(a.spec, encoding="utf-8"))
     name, subs = spec["name"], spec.get("subs", [])
+    proxies = spec.get("proxies", [])
+    unknown = [x for x in proxies if x not in PROXY_TARGETS]
+    if unknown:
+        print("REFUSED: unknown proxy name(s) %s -- known: %s" % (unknown, sorted(PROXY_TARGETS)))
+        return 2
     files = {s["file"] for s in subs}
     # "reverse_commit": build the tree as it would be WITHOUT that commit's change to "paths" (default dll/src) --
     # a whole fix reversed with `git apply -R`, for a red arm whose fix is too large for a one-line mutant.
@@ -130,7 +141,7 @@ def main():
             rc = 0
         else:
             print("building the STAGED DLL ...")
-            if build() != 0:
+            if build(proxies) != 0:
                 print("BUILD FAILED -- nothing staged")
             else:
                 out = os.path.join(REPO, "out", "staged", name)
@@ -138,9 +149,18 @@ def main():
                 dst = os.path.join(out, "UE5Dumper.dll")
                 shutil.copy2(BUILT, dst)
                 staged_sha = sha(dst)
+                proxy_lines = ""
+                for x in proxies:
+                    pdir = os.path.join(out, "proxy")
+                    os.makedirs(pdir, exist_ok=True)
+                    pdst = os.path.join(pdir, x + ".dll")
+                    shutil.copy2(os.path.join(REPO, "build", "dll", x + ".dll"), pdst)
+                    proxy_lines += "proxy %s.dll sha256: %s\n" % (x, sha(pdst))
+                    print("STAGED: %s  sha256 %s" % (pdst, sha(pdst)[:16]))
                 with open(os.path.join(out, "STAGED.txt"), "w", encoding="utf-8") as fh:
-                    fh.write("name: %s\nwhy: %s\nhead: %s\nspec: %s\nsha256: %s\n"
-                             % (name, spec.get("why", ""), head, os.path.relpath(a.spec, REPO), staged_sha))
+                    fh.write("name: %s\nwhy: %s\nhead: %s\nspec: %s\nsha256: %s\n%s"
+                             % (name, spec.get("why", ""), head, os.path.relpath(a.spec, REPO), staged_sha,
+                                proxy_lines))
                 print("STAGED: %s  sha256 %s" % (dst, staged_sha[:16]))
                 rc = 0
     finally:
@@ -152,7 +172,7 @@ def main():
             rc = 3
     if staged_sha and rc == 0:
         print("rebuilding build\\ from HEAD's sources ...")
-        if build() != 0:
+        if build(proxies) != 0:
             print("⚠ the post-stage rebuild FAILED -- build\\ may still hold the staged objects")
             rc = 4
         elif sha(BUILT) == staged_sha:
