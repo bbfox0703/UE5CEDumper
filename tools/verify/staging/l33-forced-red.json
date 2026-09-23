@@ -1,0 +1,21 @@
+{
+ "name": "l33-forced-red",
+ "why": "L33 step 2 red: l33-forced-stride plus the one line that publishes the forced verdict removed from Aura::InitWithExtendedLayout -- the content-verified stride then reports whatever verdict was left before the recovery (the static 'undetected' here, because the staging skipped the decoy's own detection), and the UI shows the 'stride is a guess' badge on a stride that is not a guess.",
+ "subs": [
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "    if (ptrs.GObjects) {\n        Aura::Init(ptrs.GObjects);\n    }\n",
+   "new": "    if (ptrs.GObjects) {\n        // STAGING (stage_dll.py l33-forced-red): the AOB winner is not initialized, so Count==0 and the recovery runs\n        LOG_WARN(\"UE5_Init: STAGING l33-forced-red: Aura::Init(0x%llX) skipped\", static_cast<unsigned long long>(ptrs.GObjects));\n    }\n",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Aura.cpp",
+   "old": "        s_itemDetect = \"forced\";   // [W4-STRIDE-TENTATIVE] the caller verified this stride by content\n",
+   "new": "        // STAGING (stage_dll.py l33-forced-red): the forced verdict is not published\n",
+   "count": 1
+  }
+ ],
+ "proxies": [
+  "dxgi"
+ ]
+}
