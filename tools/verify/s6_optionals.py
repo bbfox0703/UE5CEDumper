@@ -191,13 +191,14 @@ def l84_cold(a):
                     raise SystemExit("FAIL: the flag write was not witnessed")
                 show_refs("COLD RESET", *refs_and_container(c, anc["addr"], "0x%X" % D))
             show_refs("COLD RESTORED", *refs_and_container(c, anc["addr"], "0x%X" % D))
-    try:
-        lines = open(walk_log, encoding="utf-8", errors="replace").read().splitlines()
-    except OSError:
-        lines = []
-    corr = [i for i, l in enumerate(lines) if "Correcting FARRAYPROP_INNER" in l]
-    scan = [i for i, l in enumerate(lines) if "FindReferencesToUObject: scanning" in l]
-    say("walk-0.log: 'Correcting FARRAYPROP_INNER' at line(s) %s; first 'FindReferencesToUObject: scanning' at %s"
+    def stamped(path, needle):
+        try:
+            return [l[1:24] for l in open(path, encoding="utf-8", errors="replace") if needle in l]
+        except OSError:
+            return []
+    corr = stamped(walk_log, "Correcting FARRAYPROP_INNER")
+    scan = stamped(walk_log.replace("walk-0.log", "offsets-0.log"), "FindReferencesToUObject: scanning")
+    say("walk-0.log 'Correcting FARRAYPROP_INNER': %s; offsets-0.log first 'FindReferencesToUObject: scanning': %s"
         % (corr[:3] or "none", scan[:1] or "none"))
     say("COLD ORDER %s" % ("OK: no calibration before the first Find Refs" if not corr or (scan and corr[0] > scan[0])
                            else "BROKEN: FARRAYPROP_INNER was calibrated first"))
