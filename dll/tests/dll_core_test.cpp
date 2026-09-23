@@ -3351,6 +3351,175 @@ int main() {
         DynOff::g_offsetsFallbackReason = "";
     }
 
+    // -- SEETHRU-PROBE-SUBSTRING-2026-09-23 -- the probe asks a CLASS found by path; internal lookups gate on derivation --
+    //
+    // ⛔ POOL-FAKING, like OFFSETS: own object pool AND own name pool, last. [SEETHRU-PROBE-SUBSTRING] See-through's
+    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- a class-name SUBSTRING match that falls back to
+    // the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
+    // SetActorHiddenInGame, so See-through ON refused (-3) on a build that has it. Phase A is that pool: the first object
+    // whose class name contains "actor" is ActorChannel's CDO, and nothing live matches. The CheatManager rows are the same
+    // trap in the stock engine: UCheatManagerExtension (Engine) and GAS's UAbilitySystemCheatManagerExtension.
+    {
+        blk("PROBECLASS - the See-through probe finds AActor's function when \"actor\" first matches another CDO");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nChannel, nActorChannel, nActor, nCdoActorChannel,
+                         nCdoActor, nFunction, nSetHidden, nBPDoor, nBPDoor0, nActorChannel0, nCheatMgr, nCheatExt,
+                         nCdoCheatExt, nCdoCheatMgr, nAbilityExt, nAbilityExt0, nCheatMgr0, nCdoBPDoor, nNames };
+        const char* pcNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
+                                        "Actor", "Default__ActorChannel", "Default__Actor", "Function",
+                                        "SetActorHiddenInGame", "BP_Door_C", "BP_Door_C_0", "ActorChannel_0",
+                                        "CheatManager", "CheatManagerExtension", "Default__CheatManagerExtension",
+                                        "Default__CheatManager", "AbilitySystemCheatManagerExtension",
+                                        "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
+                                        "Default__BP_Door_C" };
+        static uint8_t pcEntry[nNames][0x40] = {};
+        static uintptr_t pcChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(pcEntry[i] + 0x10, pcNames[i], strlen(pcNames[i]) + 1);
+            pcChunk[i] = reinterpret_cast<uintptr_t>(pcEntry[i]);
+        }
+        static uintptr_t pcChunks[2] = { reinterpret_cast<uintptr_t>(pcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(pcChunks), 0x10);
+        check("PROBECLASS setup: the name pool resolves the longest name",
+              Serie::GetString(nAbilityExt0) == "AbilitySystemCheatManagerExtension_0",
+              Serie::GetString(nAbilityExt0).c_str());
+
+        const bool     svCpnP   = DynOff::bCasePreservingName;
+        const bool     svFPropP = DynOff::bUseFProperty;
+        const uint32_t svVerP   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 504;
+
+        // One zeroed 0x200-byte blob per UObject -- clear of every UStruct / UFunction offset the walks read.
+        enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bFunctionCls, bSetHidden, bCdoActorChannel,
+               bCdoActor, bBPDoor, bDoor0, bChan0, bCheatMgr, bCheatExt, bCdoCheatExt, bCdoCheatMgr, bAbilityExt,
+               bAbility0, bCheat0, bCdoBPDoor, kBlobs };
+        alignas(16) static uint8_t pcB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(pcB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(pcB[b], 0, sizeof(pcB[b]));
+            putP(pcB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(pcB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(pcB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        // A native UClass: its class IS the meta-class "Class", its outer the /Script/Engine package.
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(pcB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bChannel, nChannel, bObject);
+        klass(bActorChannel, nActorChannel, bChannel);
+        klass(bActor, nActor, bObject);
+        obj(bFunctionCls, bMeta, nFunction, -1);
+        obj(bSetHidden, bFunctionCls, nSetHidden, bActor);
+        putP(pcB[bActor], DynOff::USTRUCT_CHILDREN, A(bSetHidden));   // AActor declares SetActorHiddenInGame
+        obj(bCdoActorChannel, bActorChannel, nCdoActorChannel, bPkg);
+        obj(bCdoActor, bActor, nCdoActor, bPkg);
+        klass(bBPDoor, nBPDoor, bActor);                               // no "actor" in its name, yet an AActor
+        obj(bDoor0, bBPDoor, nBPDoor0, -1);
+        obj(bCdoBPDoor, bBPDoor, nCdoBPDoor, bPkg);                    // a SUBCLASS's CDO: derives from Actor
+        obj(bChan0, bActorChannel, nActorChannel0, -1);
+        klass(bCheatMgr, nCheatMgr, bObject);
+        klass(bCheatExt, nCheatExt, bObject);                          // UCheatManagerExtension : UObject
+        obj(bCdoCheatExt, bCheatExt, nCdoCheatExt, bPkg);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        klass(bAbilityExt, nAbilityExt, bCheatExt);
+        obj(bAbility0, bAbilityExt, nAbilityExt0, -1);
+        obj(bCheat0, bCheatMgr, nCheatMgr0, -1);
+
+        FakePool pcPool;
+        pcPool.Build(11);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(pcPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        // Phase A -- GObjects order as measured: ActorChannel's CDO first, and no live instance of anything. A
+        // subclass's CDO sits before Actor's own, so a fallback that took ANY derived CDO would be caught too.
+        slot(0, bCdoActorChannel);
+        slot(1, bActorChannel);
+        slot(2, bActor);
+        slot(3, bCdoBPDoor);
+        slot(4, bCdoActor);
+        slot(5, bCdoCheatExt);
+        slot(6, bCdoCheatMgr);
+        Aura::InitWithExtendedLayout(pcPool.Addr(), FakePool::kItemSize);
+
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto probeHas = [](uintptr_t cls, const char* fn) {   // Schlacht's FindFuncByName: the class, then its supers
+            FunctionInfo fi;
+            return Ubel::ResolveFunctionInChain(cls, fn,
+                [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+                [](uintptr_t c, uintptr_t& s) {
+                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), s);
+                }, fi);
+        };
+
+        const auto subA = Aura::FindInstancesByClass("Actor", false, 100);
+        check("PROBECLASS control: the fixture is the measured shape -- \"actor\" first matches Default__ActorChannel",
+              !subA.results.empty() && subA.results[0].addr == A(bCdoActorChannel),
+              subA.results.empty() ? "(none)" : subA.results[0].name.c_str());
+
+        const uintptr_t actorCls = Aura::FindClassByPath("/Script/Engine.Actor");
+        check("PROBECLASS ⭐: /Script/Engine.Actor resolves to the AActor UClass itself", actorCls == A(bActor),
+              nm(actorCls).c_str());
+        check("PROBECLASS ⭐: ...so the probe finds SetActorHiddenInGame and does not refuse",
+              probeHas(actorCls, "SetActorHiddenInGame"));
+        check("PROBECLASS control: the class the substring gate chose has no SetActorHiddenInGame -- the -3",
+              !probeHas(Ubel::GetClass(A(bCdoActorChannel)), "SetActorHiddenInGame"));
+        check("PROBECLASS ⭐: an object at the path that is not a class is refused",
+              Aura::FindClassByPath("/Script/Engine.Default__Actor") == 0);
+        check("PROBECLASS control: a path nothing lives at resolves to nothing",
+              Aura::FindClassByPath("/Script/Engine.Pawn") == 0);
+
+        const uintptr_t actorA = Aura::FindLiveOrDefaultOf("Actor");
+        check("PROBECLASS ⭐: with nothing live, the fallback is Actor's OWN CDO -- not ActorChannel's, nor a subclass's",
+              actorA == A(bCdoActor), nm(actorA).c_str());
+        const uintptr_t cheatA = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("PROBECLASS ⭐: ...and CheatManager's, not UCheatManagerExtension's, which the substring gate meets first",
+              cheatA == A(bCdoCheatMgr), nm(cheatA).c_str());
+
+        // Phase B -- live instances. Each one the substring gate would take (or miss) sits BEFORE the right one.
+        slot(7, bChan0);      // "ActorChannel_0": class name contains "actor", not an AActor
+        slot(8, bAbility0);   // GAS's cheat extension: class name contains "CheatManager", not a UCheatManager
+        slot(9, bDoor0);      // BP_Door_C_0: an AActor whose class name has no "actor" in it
+        slot(10, bCheat0);
+        Aura::InitWithExtendedLayout(pcPool.Addr(), FakePool::kItemSize);
+
+        const uintptr_t actorB = Aura::FindLiveOrDefaultOf("Actor");
+        check("PROBECLASS ⭐: a live instance DERIVED from Actor wins, whatever its class is called",
+              actorB == A(bDoor0), nm(actorB).c_str());
+        const uintptr_t cheatB = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("PROBECLASS ⭐: the live CheatManager wins over a live cheat EXTENSION at a lower index",
+              cheatB == A(bCheat0), nm(cheatB).c_str());
+        check("PROBECLASS control: the name is compared case-insensitively, like FindInstancesByClass",
+              Aura::FindLiveOrDefaultOf("cheatmanager") == A(bCheat0));
+
+        // A walk cut short must not hand back a CDO it met on the way: a live instance may sit past the cut.
+        Tot::g_perCommand.store(true);
+        const uintptr_t cut = Aura::FindLiveOrDefaultOf("Actor");
+        ResetCancel();
+        check("PROBECLASS control: a cancelled walk returns nothing", cut == 0, nm(cut).c_str());
+
+        // The refusal survives: a build whose AActor really lacks the function is still refused.
+        putP(pcB[bActor], DynOff::USTRUCT_CHILDREN, 0);
+        check("PROBECLASS ⭐: a class that really lacks SetActorHiddenInGame still refuses",
+              Aura::FindClassByPath("/Script/Engine.Actor") == A(bActor)
+                  && !probeHas(A(bActor), "SetActorHiddenInGame"));
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnP;
+        DynOff::bUseFProperty       = svFPropP;
+        g_cachedUEVersion           = svVerP;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -101,6 +101,28 @@ uintptr_t FindByFullName(const std::string& fullName);
 // FindByName directly, or path-shaped input silently resolves to nothing.
 uintptr_t FindByNameOrPath(const std::string& query);
 
+// The UClass at a full object path ("/Script/Engine.Actor"), or 0 when nothing lives there or the object
+// that does is not a class. For a caller that needs a CLASS -- to ask what UFunctions it has -- and must
+// not guess one from an instance. [SEETHRU-PROBE-SUBSTRING]
+uintptr_t FindClassByPath(const std::string& classPath);
+
+// The first LIVE instance of the class named `className` or of any class derived from it; failing that,
+// the class-default object of THAT class; else 0. Case-insensitive, like FindInstancesByClass.
+//
+// ⚠ This is what `UE5_FindInstanceOfClass` was assumed to be, and is not: that export (and the pipe's
+// `invoke_function class_name` and the mailbox's FIND_INSTANCE, which share its shape) gates on a class
+// name SUBSTRING and falls back to the FIRST matching CDO. On a UE 5.4 Shipping build "Actor" answered
+// Default__ActorChannel -- a UChannel -- and See-through refused a build that has SetActorHiddenInGame
+// [SEETHRU-PROBE-SUBSTRING]. The stock engine has the same trap for two more internal lookups:
+// UCheatManagerExtension / UAbilitySystemCheatManagerExtension contain "CheatManager", and
+// UDebugCameraControllerSettings contains "DebugCameraController". Internal callers use THIS.
+//
+// Derivation is the super-chain walk FindInstancesDerivedFrom uses. The CDO fallback is the named class's
+// OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
+// has no live instance, and its CDO is the object a static UFunction is invoked on. A cancelled walk
+// returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
+uintptr_t FindLiveOrDefaultOf(const std::string& className);
+
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 

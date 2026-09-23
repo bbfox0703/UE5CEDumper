@@ -1940,6 +1940,81 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     return rset;
 }
 
+uintptr_t FindLiveOrDefaultOf(const std::string& className) {
+    // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
+    // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
+    // to the end for one, and a second pass would double what the substring scan it replaces cost.
+    if (className.empty()) return 0;
+    std::string lowerQuery = className;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
+    uintptr_t cdo = 0;
+    const int32_t count = GetCount();
+    for (int32_t i = 0; i < count; ++i) {
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s': aborted at %d/%d -- returning nothing",
+                       className.c_str(), i, count);
+            return 0;
+        }
+        const uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        bool isDerived;
+        auto it = derivedCache.find(cls);
+        if (it != derivedCache.end()) {
+            isDerived = it->second;
+        } else {
+            isDerived = ClassChainMatchesLower(cls, lowerQuery);
+            derivedCache.emplace(cls, isDerived);
+        }
+        if (!isDerived) continue;
+
+        uint32_t nameIdx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
+        const std::string objName = Serie::GetString(nameIdx);
+        if (objName.empty()) continue;
+
+        if (objName.rfind("Default__", 0) == 0) {
+            // A subclass's CDO derives too; only the named class's own default object may stand in.
+            if (!cdo) {
+                std::string clsName = Ubel::GetName(cls);
+                for (auto& c : clsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (clsName == lowerQuery) cdo = obj;
+            }
+            continue;
+        }
+        Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
+                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
+        return obj;
+    }
+    if (cdo)
+        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> only its CDO: 0x%llX", className.c_str(),
+                   static_cast<unsigned long long>(cdo));
+    else
+        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> not found (scanned=%d)", className.c_str(), count);
+    return cdo;
+}
+
+uintptr_t FindClassByPath(const std::string& classPath) {
+    // [SEETHRU-PROBE-SUBSTRING] FindByFullName, not FindByNameOrPath: that one falls back to a bare-FName match,
+    // and a class the caller named by package must not be answered by whatever else shares its leaf name.
+    const uintptr_t obj = FindByFullName(classPath);
+    if (!obj) {
+        Sein::Warn("PIPE:find", "FindClassByPath '%s': nothing at that path", classPath.c_str());
+        return 0;
+    }
+    // The object there must itself be a class: its own class is UClass or a subclass (BlueprintGeneratedClass).
+    if (!ClassDerivesFromAny(Ubel::GetClass(obj), {"Class"})) {
+        Sein::Warn("PIPE:find", "FindClassByPath '%s': 0x%llX is a '%s', not a class", classPath.c_str(),
+                   static_cast<unsigned long long>(obj), Ubel::GetName(Ubel::GetClass(obj)).c_str());
+        return 0;
+    }
+    return obj;
+}
+
 SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut) {
     SearchResultSet rset;
     if (totalOut) *totalOut = 0;

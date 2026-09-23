@@ -936,6 +936,10 @@ constexpr double  SCHLACHT_TRACE_STEP    = 2.0;      // uu — advance the ray s
 constexpr int     SCHLACHT_PIERCE_DEFAULT = 1;       // hide this many nearest occluders by default
 constexpr int     SCHLACHT_PIERCE_MAX     = 10;      // UI/clamp ceiling for the pierce depth
 constexpr int     SCHLACHT_MAX_EXTRA_ITERS = 16;     // extra trace iterations beyond pierceN (skipped Pawns / dupes)
+// The producer probe asks these CLASSES, found by full path -- never a class guessed from an instance: a class-name
+// substring answered "Actor" with Default__ActorChannel on UE 5.4 Shipping. [SEETHRU-PROBE-SUBSTRING]
+constexpr const char* SCHLACHT_ACTOR_CLASS_PATH = "/Script/Engine.Actor";                // declares SetActorHiddenInGame
+constexpr const char* SCHLACHT_KSL_CLASS_PATH   = "/Script/Engine.KismetSystemLibrary";  // declares LineTraceSingle
 } // namespace Grimoire
 
 // ============================================================

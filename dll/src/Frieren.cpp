@@ -1048,6 +1048,11 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 
 // === UFunction Invocation ===
 
+// ⚠ A class-name SUBSTRING match (Aura::FindInstancesByClass, exactMatch=false) that falls back to the FIRST matching
+// CDO -- not "an instance of this class". Kept as-is because it is USER-facing: the C ABI, the pipe's
+// `invoke_function class_name`, and the mailbox's FIND_INSTANCE twin in Mimic.cpp. ⛔ Internal callers use
+// Aura::FindLiveOrDefaultOf (derivation-gated) or Aura::FindClassByPath: "Actor" through THIS answered
+// Default__ActorChannel on UE 5.4 Shipping and See-through refused a build that can hide. [SEETHRU-PROBE-SUBSTRING]
 uintptr_t UE5_FindInstanceOfClass(const char* className) {
     if (!className || !className[0]) return 0;
 
@@ -1180,7 +1185,13 @@ static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
 // Returns 1=ON, 0=OFF, -1=unknown. Outputs the CheatManager + DCC for reuse.
 static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     outCm = 0; outDcc = 0;
-    uintptr_t cm = UE5_FindInstanceOfClass("CheatManager");
+    // Derivation-gated, never the class-name substring UE5_FindInstanceOfClass matches: the stock engine has
+    // UCheatManagerExtension (4.27+) and GAS's UAbilitySystemCheatManagerExtension, which contain "CheatManager" and
+    // are no UCheatManager -- a live extension at a lower GObjects index, or the extension's CDO when no CheatManager
+    // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
+    // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
+    // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
+    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager");
     outCm = cm;   // may be 0 (some titles spawn it lazily)
 
     // Hop 1: CheatManager.DebugCameraControllerRef.
@@ -1196,7 +1207,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     // CheatManagers and FindInstanceOfClass picked the wrong one. Find the DCC by
     // instance scan; its OriginalControllerRef is the authoritative active flag.
     if (!dcc) {
-        dcc = UE5_FindInstanceOfClass("DebugCameraController");
+        dcc = Aura::FindLiveOrDefaultOf("DebugCameraController");
         if (dcc)
             LOG_INFO("DbgCam_ReadState: DCC 0x%llX via instance scan "
                      "(CheatManager ref empty)", (unsigned long long)dcc);

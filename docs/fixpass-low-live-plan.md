@@ -92,7 +92,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 8 | L70 (step 3: SPC on the new snapshot) | ✅ PASSED `38c7ac49` |
 | 9 | L61 (step 1) | ✅ PASSED red→green 2026-09-23 (`git log --grep 'verify(L61)'`) |
 | 10 | L48 (arm A Num poke, then arm B decryption; restore each) | ✅ PASSED red→green 2026-09-23, both halves + the listed half on DumperTest (`git log --grep 'verify(L48)'`) |
-| 11 | L45 (variant A: suspend-tid, ≥305 s) | ⛔ BLOCKED 2026-09-23 by [SEETHRU-PROBE-SUBSTRING] (HIGH regression from df09bbcb: See-through refuses on DumperTest) |
+| 11 | L45 (variant A: suspend-tid, ≥305 s) | 🔓 UNBLOCKED 2026-09-23: [SEETHRU-PROBE-SUBSTRING] fixed in source (`git log --grep SEETHRU-PROBE-SUBSTRING`); re-run on a DLL that contains it (was ⛔ BLOCKED the same day: See-through refused on DumperTest) |
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L58)'`) |
 | 13 | L60 | ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ✅ PASSED 2026-09-23: step 1 red→green on an inflated DumperTest, step 2 green on the pristine actor (`git log --grep 'verify(L63)'`). Measured: baseline 573, near-miss 53,799, truncated 61,870 (uncapped 61,988); the Fixture paragraph's 677 baseline was the A9-inflated 2026-09-16 actor |
@@ -529,13 +529,13 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L45 — `[P1-SEETHRU-NOPRODUCER]` `[P1-SEETHRU-GIVEUP]`
 
-**Status:** ⛔ BLOCKED 2026-09-23 by [SEETHRU-PROBE-SUBSTRING] (HIGH regression from df09bbcb: See-through refuses on DumperTest) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
+**Status:** 🔓 UNBLOCKED 2026-09-23: [SEETHRU-PROBE-SUBSTRING] fixed in source (`git log --grep SEETHRU-PROBE-SUBSTRING`); re-run on a DLL that contains it (was ⛔ BLOCKED the same day: See-through refused on DumperTest) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
 
 **Fix commit(s):** `df09bbcb`
 
 **Fixture:** DumperTest 5.4 Shipping (`py tools/verify/launch_dumpertest.py shipping`, exe present at D:\UE_Analyze_data\for testing\DumperTest\Shipping\...\DumperTest-Win64-Shipping.exe). The Third Person map gives a live pawn and camera; seethrough_restoreset.py:92-95 records that a fresh DumperTest hides an occluder within a second. ⚠ DumperTest does NOT pause when backgrounded unless launched with `--idle` (-DumperTestIdle; tools/ue-sample/README.md:240-246, launch_dumpertest.py:149-150). So for the 'pause' use EITHER (A, recommended) no --idle plus `tools/verify/suspend.py suspend-tid` on the game's main thread, OR (B, the row's literal wording) `launch_dumpertest.py shipping --idle`. Step 3 (-3 refusal) has no stock host: ProbeProducers (Schlacht.cpp:376-390) only fails when KismetSystemLibrary::LineTraceSingle(OutHit) or AActor::SetActorHiddenInGame is cooked out.
 
-**Preconditions:** AOT-trimmed dist\UE5DumpUI.exe (~54-55 MB, not the 107 MB untrimmed one). The injected DLL's `init` build_git must have df09bbcb as an ancestor (`git merge-base --is-ancestor df09bbcb <build_git>`); the build number alone does not tell you this (see L9). The See-through card is hidden unless Experimental is on (TeleportPanel.axaml:1240-1244 IsVisible=ExperimentalEnabled). %LOCALAPPDATA%\UE5CEDumper\experimental.json currently holds {"enabled": true, "snapshotQuotaMb": 0}, so it is on today; the toggle is the System-tab checkbox 'Enable advanced experimental features' (en.axaml:500). One game only. Kill leftovers first.
+**Preconditions:** AOT-trimmed dist\UE5DumpUI.exe (~54-55 MB, not the 107 MB untrimmed one). The injected DLL's `init` build_git must have df09bbcb as an ancestor (`git merge-base --is-ancestor df09bbcb <build_git>`), and the `[SEETHRU-PROBE-SUBSTRING]` fix too, or step 1 refuses with -3 on DumperTest; the build number alone does not tell you this (see L9). The See-through card is hidden unless Experimental is on (TeleportPanel.axaml:1240-1244 IsVisible=ExperimentalEnabled). %LOCALAPPDATA%\UE5CEDumper\experimental.json currently holds {"enabled": true, "snapshotQuotaMb": 0}, so it is on today; the toggle is the System-tab checkbox 'Enable advanced experimental features' (en.axaml:500). One game only. Kill leftovers first.
 
 **Steps:**
 
