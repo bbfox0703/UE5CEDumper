@@ -110,7 +110,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 1 | L82 | ✅ PASSED red→green 2026-09-23 on DumperTest58, via the FName half (FString "" is undrivable) (`git log --grep 'verify(L82)'`) |
 | 2 | L84 (flag byte 01→00→01, restored) | ✅ PASSED red→green 2026-09-23 on DumperTest58 in the cold order (lookups before any walk; the warm order shows a different, order-dependent face) (`git log --grep 'verify(L84)'`) |
 | 3 | L86 (regression only) | ✅ PASSED red→green 2026-09-23 on DumperTest58, the page-edge half via the OptTail fixture (`git log --grep 'verify(L86)'`) |
-| 4 | L59 (pre-stage side B: UI connect, capture 3 snapshots) | ⬜ |
+| 4 | L59 (pre-stage side B: UI connect, capture 3 snapshots) | ✅ staged 2026-09-23: 3 snapshots in snapshots.963C33F10A247000.db (the repackaged exe's hash, not 9651CFE40A244000) |
 | 5 | L41 (step 2: fresh launch with the staged Sleep DLL, no UI, raw-pipe disconnect then reconnect walk) | ✅ step 2 PASSED red→green 2026-09-23 (`git log --grep 'verify(L41)'`) |
 
 ### S7
@@ -121,7 +121,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L59 | ⬜ |
+| 1 | L59 | ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only, step 4 not on the fixed path (`git log --grep 'verify(L59)'`) |
 
 ### S8
 
@@ -1141,7 +1141,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L59 — `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only, step 4 not on the fixed path (`git log --grep 'verify(L59)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `8037bc94`
 
