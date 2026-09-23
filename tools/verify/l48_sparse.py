@@ -7,11 +7,13 @@ r"""L48 `[P1-SPARSEDELEGATE-REFS]`: Find Refs must not blame the game when a spa
     py tools/verify/l48_sparse.py arm     --state out\l48_state.json                 (arm B: decryption -> 0x1000)
     py tools/verify/l48_sparse.py disarm  --state out\l48_state.json
 
-`locate` walks FSparseDelegateStorage out of process, EXACTLY as Aura.cpp's Find Refs sparse pass does: the
+`locate` walks FSparseDelegateStorage out of process with Aura.cpp's Find Refs layout: the
 outer TMap (TSetElement stride 0x60: owner UObject* at +0, inner TMap at +0x08), the inner TMap (stride
 FNameSlotIn8Aligned + 0x18: the delegate FName at +0, the TSharedPtr to its FMulticastScriptDelegate at the FName
 SLOT), the invocation-list header probed at pad 0 and pad 8 (LocateInvocationList), and each binding
-(`8 + sizeof(FName)` apart: FWeakObjectPtr {index, serial} at +0, the function FName at +8). Names come from the
+(`8 + sizeof(FName)` apart: FWeakObjectPtr {index, serial} at +0, the function FName at +8). Its header test is
+WEAKER than LocateInvocationList's (no Num cap, no check that element 0's FName resolves), and a weak index is
+not serial-checked, so an unresolvable target prints `<none>` and is flagged cross-object. Names come from the
 FNamePool read out of process (stock UE5 layout: Blocks[] at GNames+0x10, stride 2, len = header >> 6), and a
 weak index is named through `get_object_list offset=<idx> limit=1`. It prints every (owner, delegate, target)
 triple and flags target != owner: only those can be LISTED by Find Refs (Aura.cpp suppresses owner == target).
