@@ -107,7 +107,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L82 | ⬜ |
+| 1 | L82 | ✅ PASSED red→green 2026-09-23 on DumperTest58, via the FName half (FString "" is undrivable) (`git log --grep 'verify(L82)'`) |
 | 2 | L84 (flag byte 01→00→01, restored) | ⬜ |
 | 3 | L86 (regression only) | ⬜ |
 | 4 | L59 (pre-stage side B: UI connect, capture 3 snapshots) | ⬜ |
@@ -2033,7 +2033,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L82 — `[A2-TOPTIONAL-VALUESCAN]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 30 min
+**Status:** ✅ PASSED red→green 2026-09-23 on DumperTest58, via the FName half (FString "" is undrivable) (`git log --grep 'verify(L82)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** no · **estimate:** 30 min
 
 **Fix commit(s):** `19c5d065`, `96a6ad79`
 
