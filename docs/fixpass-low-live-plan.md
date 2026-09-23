@@ -96,7 +96,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | 12 | L58 (step 2: force F32@0 on a non-candidate, UI restart, gate off/on, Clear all) | ✅ PASSED red→green 2026-09-23, both steps on DumperTest (`git log --grep 'verify(L58)'`) |
 | 13 | L60 | ✅ PASSED red→green 2026-09-23, all three steps on DumperTest (`git log --grep 'verify(L60)'`) |
 | 14 | L63 (inflate: V1a_GrowContainers(16384) + Spawn_Holders(4096)) | ✅ PASSED 2026-09-23: step 1 red→green on an inflated DumperTest, step 2 green on the pristine actor (`git log --grep 'verify(L63)'`). Measured: baseline 573, near-miss 53,799, truncated 61,870 (uncapped 61,988); the Fixture paragraph's 677 baseline was the A9-inflated 2026-09-16 actor |
-| 15 | L79 (predict inversions on the inflated holder set, then header clicks) | ⬜ |
+| 15 | L79 (predict inversions on the inflated holder set, then header clicks) | 🟡 2026-09-23: step 1 red→green on LW [Ptr] + Functions Address (manufactured low-address copies, `tools/verify/l79_lowclone.py`), step 2 green; the other 6 address columns measured and cannot fail on this machine's data (`git log --grep 'verify(L79)'`) |
 | 16 | L57 (step 1 kills and relaunches the game; step 2 Detect-kill in the new process) | ⬜ |
 
 ### S6
@@ -1916,7 +1916,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L79 — `[W4-HEXSORT]`
 
-**Status:** ⬜ · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
+**Status:** 🟡 2026-09-23: step 1 red→green on LW [Ptr] + Functions Address (manufactured low-address copies, `tools/verify/l79_lowclone.py`), step 2 green; the other 6 address columns measured and cannot fail on this machine's data (`git log --grep 'verify(L79)'`) · **reachability:** `fixture-limited` · **needs CE:** no · **needs UI:** yes · **estimate:** 45 min
 
 **Fixture:** DumperTest Shipping (+ Spawn_Holders(300), or reuse L63's 4096) is the vehicle. The DISCRIMINATING SHAPE, though, is a property of the run's address-space layout, not of the fixture. The check can fail only when one grid's result set holds an inverting pair: two addresses of different hex-digit counts where the SHORTER one has the larger leading digit, e.g. 0x2A12345678 (10 digits, 12 chars) next to 0x1D702BCFB30 (11 digits, 13 chars). That is exactly the row's '12- and 13-character' wording. The usual layout on this machine never inverts. Of the addresses recorded in docs/todo.md, 96 are 11-digit heap (0x1xx–0x2xx) and 7 are 12-digit module (0x7FF…). Heap vs module (13 vs 14 chars) always sorts the same as text and numerically. A pre-flight must therefore prove an inversion exists for each surface. Surfaces that can invert (scattered addresses): Instances 'Address' (find_instances), LW '[Ptr]' (pointer VALUES, e.g. the elements of PersistentLevel.Actors), Find Refs 'Owner Addr' (find_refs_to_uobject, max 32), LW Functions 'Address' (walk_functions), Class/Struct field 'Address' (walk_class FField addresses). Structurally vacuous: Instance Finder fields 'Address' and LW 'Address' (FieldAddress = instance base + offset, all the same length within one object), and 'Owner Addr' in container matches (find_by_address normally yields ≤ 1 row).
 
