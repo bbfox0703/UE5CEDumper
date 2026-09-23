@@ -232,7 +232,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 | # | row (arm) | status |
 |---|---|---|
 | 1 | L66 (step 3 pre-check: PRAGMA on snapshots.5EEB192C030CE000.db BEFORE the first Connect) | ✅ 2026-09-23: no partial_reason, user_version 4, 0 rows |
-| 2 | L62 | ⬜ |
+| 2 | L62 | ✅ PASSED red→green 2026-09-23, both steps (staged winmm proxy vs dist's); record left at 3 (`git log --grep 'verify(L62)'`) |
 | 3 | L67 | ⬜ |
 | 4 | L66 (step 3 post-check after the UI closes) | ✅ 2026-09-23: partial_reason TEXT NOT NULL DEFAULT '' added, user_version 4; row closed (`git log --grep 'verify(L66)'`) |
 
@@ -1267,7 +1267,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L62 — `[W1-WINMM-LOADMODE]`
 
-**Status:** ⬜ · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
+**Status:** ✅ PASSED red→green 2026-09-23 on OCTOPATH: `loaded:winmm.dll` + record stays 2 (red, `723cb8f1` reversed, built as the winmm proxy) vs `proxy:winmm.dll` + 2→3 (green); step 9 green (`git log --grep 'verify(L62)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 35 min
 
 **Fixture:** OCTOPATH TRAVELER, UE4.18. Source: docs/test-games.md:14, which says 'PROXY: use winmm.dll — LIVE-VERIFIED 2026-08-18'. Its winmm proxy is ALREADY DEPLOYED at D:\SteamLibrary\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\winmm.dll (2,988,544 B, FileVersion 1.0.0.3546, sha256 05a66930…, mtime 2026-09-16 12:42). That is after fix 723cb8f1 (2026-09-12), and no dll/src commit has landed since 2026-09-16. A heuristic agrees the fix is in it: the file holds 3 'winmm.dll\0' literals, the same as dist\proxy\winmm.dll, while the pre-fix 1.0.0.3263 backup holds 2. Launch with `steam.exe -applaunch 921570`; handover §3 says OCTOPATH relaunches itself otherwise. The log folder Logs\Octopath_Traveler-Win64-Shipping already exists. The alternative is DumperTest Shipping, which DOES statically import WINMM. I measured this with tools/pe/pe_imports_exports.py: timeBeginPeriod, waveOutGetNumDevs and timeEndPeriod. But no proxy is deployed there. Proxy Deploy's drive scan excludes 'UE_Analyze_data' by default (Constants.cs:350; the persisted proxyDeploy.scanExcludedFolderNames is the same), so the panel cannot reach it. winmm has also never been live-run on DumperTest. Prefer Octopath.
 
