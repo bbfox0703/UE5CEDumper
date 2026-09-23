@@ -20,6 +20,14 @@ pointer: an inverting pair. `predict` walks the copy the way the grid does and p
 column must show, numerically and as text, ascending and descending. Empty [Ptr] cells sort as 0 in both
 orders, so they lead ascending and trail descending; DESCENDING row 1 decides it at a glance. It also prints the
 Hex column's text order (row step 2), which the fix leaves as text on purpose. `release` frees the allocation.
+
+`make --funcs` does the same for Live Walker's Functions grid. Live Walker lists the functions of the walked
+object's CLASS (walk_functions on its ClassPrivate), and the DLL follows that class's UStruct::Children chain.
+So the rig also copies the actor's UClass (CLASS_BYTES) to clone+0x2000 and the head of its Children chain, a
+UFunction (FUNC_BYTES), to clone+0x3000. The class copy's Children then points at the function copy, whose
+copied UField::Next carries on into the real chain. The actor copy's ClassPrivate points at the class copy.
+The Functions grid then lists the same functions, one of them at a 10-digit address. ClassPrivate is checked
+against the pipe's class_addr before anything is written, and UStruct::Children comes from get_offsets.
 """
 import argparse
 import ctypes
@@ -37,6 +45,9 @@ PAGE_RW = 0x04
 PROCESS_ACCESS = 0x0008 | 0x0020 | 0x0010 | 0x0400   # VM_OPERATION | VM_WRITE | VM_READ | QUERY_INFORMATION
 CANDIDATES = (0x7A00000000, 0x7B00000000, 0x6A00000000, 0x5A00000000, 0x9A00000000, 0xAA00000000)
 REGION = 0x10000
+UOBJECT_CLASS = 0x10                  # UObjectBase::ClassPrivate; verified against class_addr before use
+CLASS_AT, CLASS_BYTES = 0x2000, 0x400 # a UClass is ~0x230 on 5.4; the copy only has to cover what the DLL reads
+FUNC_AT, FUNC_BYTES = 0x3000, 0x100   # a UFunction is ~0xE0 on 5.4
 
 k = ctypes.WinDLL("kernel32", use_last_error=True)
 k.OpenProcess.restype = wintypes.HANDLE
@@ -83,6 +94,8 @@ def make(a):
         w = c.request("walk_instance", addr=act["addr"], array_limit=0)
         size = int(w.get("props_size") or 0)
         f = next((x for x in (w.get("fields") or []) if x.get("name") == a.poke), None)
+        children_off = int(c.request("get_offsets").get("ustruct_children") or 0)
+        class_addr = int(w.get("class_addr") or act["class_addr"], 16)
     if not f or f.get("type") not in ("ObjectProperty", "ClassProperty"):
         raise SystemExit("FAIL: %s has no ObjectProperty %s" % (act["name"], a.poke))
     if not 0x30 <= size <= REGION:
@@ -105,12 +118,28 @@ def make(a):
         was = struct.unpack("<Q", read(h, p + off, 8))[0]
         write(h, p + off, struct.pack("<Q", p))
         now = struct.unpack("<Q", read(h, p + off, 8))[0]
+        funcs = None
+        if a.funcs:
+            cp = struct.unpack("<Q", body[UOBJECT_CLASS:UOBJECT_CLASS + 8])[0]
+            if cp != class_addr or not children_off:
+                raise SystemExit("FAIL: ClassPrivate@+0x%X = 0x%X, class_addr 0x%X, ustruct_children %d"
+                                 % (UOBJECT_CLASS, cp, class_addr, children_off))
+            head = struct.unpack("<Q", read(h, class_addr + children_off, 8))[0]
+            write(h, p + CLASS_AT, read(h, class_addr, CLASS_BYTES))
+            write(h, p + FUNC_AT, read(h, head, FUNC_BYTES))
+            write(h, p + CLASS_AT + children_off, struct.pack("<Q", p + FUNC_AT))
+            write(h, p + UOBJECT_CLASS, struct.pack("<Q", p + CLASS_AT))
+            funcs = {"class_copy": "0x%X" % (p + CLASS_AT), "func_copy": "0x%X" % (p + FUNC_AT),
+                     "class": "0x%X" % class_addr, "children_head": "0x%X" % head}
     finally:
         k.CloseHandle(h)
     print("CLONE = 0x%X  (%d bytes of %s %s)" % (p, size, act["name"], act["addr"]))
     print("poked clone.%s @ +0x%X: 0x%X -> 0x%X (the clone itself)" % (a.poke, off, was, now))
+    if funcs:
+        print("class copy %(class_copy)s of %(class)s; its Children -> function copy %(func_copy)s of %(children_head)s;"
+              " clone.ClassPrivate -> class copy" % funcs)
     json.dump({"pid": pid, "clone": "0x%X" % p, "source": act["addr"], "size": size, "poke": a.poke,
-               "poke_offset": off}, open(a.state, "w"), indent=1)
+               "poke_offset": off, "funcs": funcs}, open(a.state, "w"), indent=1)
     print("state -> %s" % a.state)
     return 0
 
@@ -125,6 +154,15 @@ def predict(a):
     with PipeClient() as c:
         c.assert_build()
         w = c.request("walk_instance", addr=st["clone"], array_limit=0)
+        fl = c.request("walk_functions", addr=w["class_addr"]).get("functions") if st.get("funcs") else None
+    if fl is not None:
+        rows = [(x.get("name"), x.get("addr") or "") for x in fl]
+        print("Functions of class_addr %s: %d rows, digits %s" % (w.get("class_addr"), len(rows),
+                                                                  sorted({len(r[1]) - 2 for r in rows})))
+        for label, key in (("NUMERIC (fixed)", lambda x: int(x[1], 16) if x[1] else 0),
+                           ("TEXT (pre-fix)", lambda x: x[1])):
+            print("%-16s Address desc rows 1-3: %s" % (label, ["%s %s" % x for x in order(rows, key, True)[:3]]))
+            print("%-16s Address asc  rows 1-3: %s" % ("", ["%s %s" % x for x in order(rows, key, False)[:3]]))
     fields = w.get("fields") or []
     print("walk %s: %s fields, name=%s class=%s" % (st["clone"], len(fields), w.get("name"), w.get("class_name")))
     ptr = [(f.get("name"), f.get("ptr") or "") for f in fields]
@@ -164,6 +202,7 @@ def main():
     ap.add_argument("--process", default="DumperTest-Win64-Shipping")
     ap.add_argument("--state", required=True, help="JSON file the phases share (put it under out\\)")
     ap.add_argument("--poke", default="Table_Small", help="ObjectProperty of the copy to point at the copy")
+    ap.add_argument("--funcs", action="store_true", help="also copy the class + its first UFunction (Functions grid)")
     a = ap.parse_args()
     return {"make": make, "predict": predict, "release": release}[a.phase](a)
 
