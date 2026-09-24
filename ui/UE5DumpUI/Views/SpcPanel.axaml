@@ -76,7 +76,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.Spc.Col.Label}"
-                            Binding="{Binding Label}" IsReadOnly="True" Width="260" MinWidth="160"/>
+                            Binding="{Binding LabelDisplay}" IsReadOnly="True" Width="260" MinWidth="160"/>
         <DataGridTextColumn Header="{StaticResource str.Spc.Col.Captured}"
                             Binding="{Binding CapturedAt}" IsReadOnly="True" Width="190"/>
         <DataGridTextColumn Header="{StaticResource str.Spc.Col.Session}"
@@ -362,7 +362,7 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTextColumn Header="{StaticResource str.Spc.Col.Label}"    Binding="{Binding Label}"       IsReadOnly="True" Width="260" MinWidth="160"/>
+          <DataGridTextColumn Header="{StaticResource str.Spc.Col.Label}"    Binding="{Binding LabelDisplay}" IsReadOnly="True" Width="260" MinWidth="160"/>
           <DataGridTextColumn Header="{StaticResource str.Spc.Col.Captured}" Binding="{Binding CapturedAt}"  IsReadOnly="True" Width="190"/>
           <DataGridTextColumn Header="{StaticResource str.Spc.Col.Session}"  Binding="{Binding SessionShort}" IsReadOnly="True" Width="120"/>
           <DataGridTemplateColumn Header="{StaticResource str.Spc.Col.Predicate}" Width="150">

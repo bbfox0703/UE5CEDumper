@@ -218,6 +218,30 @@ public class SnapshotStoreTests : IDisposable
         Assert.Contains("partial", both.LabelDisplay);
     }
 
+    /// <summary>[R7-D-01] [PARTIAL-MARK-SPC] SPC Query's snapshot rows carry the marker too: a partial is a PREFIX of the
+    /// game, and SPC joins across snapshots, so its missing objects silently drop out of the chain.</summary>
+    [Fact]
+    public void PartialMarker_ShowsInTheSpcPickerRow()
+    {
+        var capped = new SnapshotMeta { Label = "run", CapturedAt = "2026-09-12T10:00:00Z",
+                                        PartialReason = Constants.SnapshotPartialCap };
+        var row = new UE5DumpUI.ViewModels.SpcSnapshotPick(capped, new[] { "Any" });
+        Assert.Contains("partial: stopped at the size cap", row.LabelDisplay);
+        var whole = new UE5DumpUI.ViewModels.SpcSnapshotPick(new SnapshotMeta { Label = "run" }, new[] { "Any" });
+        Assert.Equal("run", whole.LabelDisplay);
+    }
+
+    /// <summary>[R7-D-01] Both SPC grids (single mode and group mode) bind that property in their label column.</summary>
+    [Fact]
+    public void SpcPanel_BothLabelColumns_BindTheMarkedLabel()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/SpcPanel.axaml"));
+        var headers = System.Text.RegularExpressions.Regex.Matches(
+            axaml, @"Header=""\{StaticResource str\.Spc\.Col\.Label\}""\s+Binding=""\{Binding (\w+)\}""");
+        Assert.Equal(2, headers.Count);
+        Assert.All(headers, m => Assert.Equal("LabelDisplay", m.Groups[1].Value));
+    }
+
     [Fact]
     public async Task DeleteSnapshot_Reclaim_ShrinksDbFileOnDisk()
     {

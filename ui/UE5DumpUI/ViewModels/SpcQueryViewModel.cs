@@ -215,6 +215,10 @@ public partial class SpcSnapshotPick : ObservableObject
 
     public long   Id         => Meta.Id;
     public string Label      => Meta.Label;
+    /// <summary>[R7-D-01] What SPC's label columns show: the label plus the partial-capture marker
+    /// (<see cref="SnapshotMeta.LabelDisplay"/>), as every other snapshot picker does. The SPC list holds only usable
+    /// snapshots, so the "⚠" of an unusable one never appears here.</summary>
+    public string LabelDisplay => Meta.LabelDisplay;
     public string CapturedAt => Meta.CapturedAt;
     /// <summary>Short tail of the game-session id so the user can see at a glance
     /// which snapshots come from different game launches (the cross-session case).</summary>
