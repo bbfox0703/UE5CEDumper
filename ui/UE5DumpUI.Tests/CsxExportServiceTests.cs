@@ -404,8 +404,9 @@ public class CsxExportServiceTests
         // Child structure with Unicode String
         Assert.Contains("Vartype=\"Unicode String\"", csx);
         // [CSX-STRCHILD-BYTESIZE] was the literal 18 -- 9 wide characters for every string in
-        // every export. The window is the export's String Len now, defaulted like the CE XML path.
-        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength}\"", csx);
+        // every export. The window is the export's String Len now, defaulted like the CE XML path;
+        // [R7-C-02] String Len is CHARACTERS, and a Unicode String's Bytesize is BYTES, so it is doubled.
+        Assert.Contains($"Bytesize=\"{Constants.DefaultCeStringLength * 2}\"", csx);
         Assert.DoesNotContain("Bytesize=\"18\"", csx);
     }
 
@@ -423,8 +424,26 @@ public class CsxExportServiceTests
         var csx = await CsxExportService.GenerateCsxAsync(
             _dump, "TestStruct", fields, ceStringLength: 128, ct: TestContext.Current.CancellationToken);
 
-        Assert.Contains("Bytesize=\"128\"", csx);
+        // [R7-C-02] String Len is CHARACTERS (CE XML's <Length>, which CE doubles for Unicode); CE's
+        // Structure Dissect reads a Unicode String element's Bytesize as BYTES. 128 characters = 256 bytes.
+        Assert.Contains("Bytesize=\"256\"", csx);
+        Assert.DoesNotContain("Bytesize=\"128\"", csx);
         Assert.DoesNotContain("Bytesize=\"18\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_StringChild_NarrowStringWindowIsTheCharacterCount()
+    {
+        // [R7-C-02] The control: a 1-byte "String" child (FUtf8String / FAnsiString) is one byte a character.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Utf8Name", TypeName = "Utf8StrProperty", Offset = 0x10, Size = 16 }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(
+            _dump, "TestStruct", fields, ceStringLength: 128, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Vartype=\"String\" Bytesize=\"128\"", csx);
     }
 
     [Fact]

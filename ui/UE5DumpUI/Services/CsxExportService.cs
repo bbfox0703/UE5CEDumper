@@ -406,13 +406,19 @@ public static class CsxExportService
     /// UTF-8 FUtf8String falls back to "String" — CE renders it byte-wise and cannot decode
     /// multibyte UTF-8 (a CSX format limitation; CE XML's CodePage flag has no CSX equivalent).
     /// </summary>
-    /// [CSX-STRCHILD-BYTESIZE] The string child's display window, in BYTES. Set once per export
-    /// from the caller's "String Len"; never read before GenerateCsxAsync assigns it.
+    /// [CSX-STRCHILD-BYTESIZE] The string child's display window, in CHARACTERS -- the toolbar "String Len",
+    /// the same unit as CE XML's &lt;Length&gt;. Set once per export; never read before GenerateCsxAsync assigns it.
+    /// [R7-C-02] The Element's Bytesize is BYTES (CE's StructuresFrm2 getBytesize), so BuildStrChildStructure
+    /// doubles it for the wide "Unicode String".
     private static int _csxStringLength = Constants.DefaultCeStringLength;
 
     private static string BuildStrChildStructure(string typeName, string? addr)
     {
         var vartype = typeName == "StrProperty" ? "Unicode String" : "String";
+        // [R7-C-02] Bytes, not characters: CE reads `Bytesize` bytes for a Unicode String (byteinterpreter),
+        // while CE XML's <Length> is characters and CE doubles it itself. Without this an FString showed half
+        // as many characters as the CE XML of the same field.
+        var byteSize = typeName == "StrProperty" ? _csxStringLength * 2 : _csxStringLength;
         var name = FormatStructName(addr);
         var sb = new StringBuilder();
         sb.Append("        <Structure Name=\"").Append(EscapeXml(name))
@@ -423,7 +429,7 @@ public static class CsxExportService
         // anything longer. Measured 2026-09-16 on the fixture's Arr_Str, whose elements are 12, 15
         // and 22 characters: all three rendered 9 characters wide. The window is now the export's
         // String Len, which is what the CE XML path has always used (EmitStringLeaf).
-        sb.AppendLine($"            <Element Offset=\"0\" Vartype=\"{vartype}\" Bytesize=\"{_csxStringLength}\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
+        sb.AppendLine($"            <Element Offset=\"0\" Vartype=\"{vartype}\" Bytesize=\"{byteSize}\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
         sb.AppendLine("          </Elements>");
         sb.AppendLine("        </Structure>");
         return sb.ToString();

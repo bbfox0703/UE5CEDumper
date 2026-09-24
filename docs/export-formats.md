@@ -294,8 +294,13 @@ flatten with `{StructType} / {FieldName}` naming.
 
 Emits as `Vartype="Pointer"` with a child structure containing a single string element:
 ```xml
-<Element Offset="0" Vartype="Unicode String" Bytesize="18" Description="Value"/>
+<Element Offset="0" Vartype="Unicode String" Bytesize="512" OffsetHex="00000000" DisplayMethod="unsigned integer"/>
 ```
+
+`Bytesize` is the toolbar **String Len** (characters, default 256; the same number CE XML writes as
+`<Length>`) converted to BYTES: doubled for the wide `Unicode String`, as-is for the 1-byte `String`.
+CE's Structure Dissect reads that many bytes, while CE XML's `<Length>` is characters that CE doubles
+itself. `[CSX-STRCHILD-BYTESIZE]` replaced the fixed 18; `[R7-C-02]` added the doubling.
 
 The child element's Vartype depends on the FString-family variant (all share the same
 TArray header, only the char width differs):
