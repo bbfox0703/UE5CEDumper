@@ -1,4 +1,4 @@
-﻿﻿// ============================================================
+﻿// ============================================================
 // DumperTestActor — the property zoo UE5CEDumper is verified against.
 //
 // WHY THIS EXISTS. Half of docs/verification-register.md is

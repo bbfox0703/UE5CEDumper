@@ -1,4 +1,4 @@
-﻿﻿// ============================================================
+﻿// ============================================================
 // DumperTestActor — populate the property zoo with KNOWN values.
 //
 // The numbers here are the acceptance criteria. tools/ue-sample/README.md holds
