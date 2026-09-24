@@ -2076,6 +2076,58 @@ static int32_t GetStructAlignment(uintptr_t scriptStruct) {
     return Macht::SanitizeAlign(minAlign);
 }
 
+// [VND583-03] alignof(FName), MEASURED once: UScriptStruct::MinAlignment of a stock struct whose
+// only member is one FName -- CollisionProfileName (Engine, every 4.x/5.x), PrimaryAssetType
+// (CoreUObject, 4.16+), GameplayTag -- first found in that order wins (DynOff::PickFNameAlign
+// checks its size and value). The CLASS check matters: in UProperty mode FBodyInstance's
+// NameProperty is ALSO an object called "CollisionProfileName". Needs validated offsets
+// (PropertiesSize must be measured, not a default); a cancelled walk latches nothing.
+static void ProbeFNameAlignment() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bFNameAlignProbed.load(std::memory_order_relaxed)) return;
+    static const char* kStructs[] = { "CollisionProfileName", "PrimaryAssetType", "GameplayTag" };
+    constexpr int kN = static_cast<int>(sizeof(kStructs) / sizeof(kStructs[0]));
+    const int fnameSize = DynOff::bCasePreservingName ? 12 : 8;
+    int found[kN] = {};       // the PickFNameAlign answer per name, 0 = none
+    bool seen[kN] = {};       // a ScriptStruct of that name was met (the first one decides)
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        const std::string name = ReadFName(obj + Grimoire::OFF_UOBJECT_NAME);
+        int k = 0;
+        while (k < kN && name != kStructs[k]) ++k;
+        if (k == kN || seen[k]) return true;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        int32_t propsSize = 0;
+        if (!Macht::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, propsSize)) return true;
+        seen[k] = true;
+        found[k] = DynOff::PickFNameAlign(GetStructAlignment(obj), propsSize, fnameSize);
+        return !(k == 0 && found[0]);   // the first-priority struct measured: nothing can beat it
+    });
+    if (!complete) return;   // cancelled: try again on the next ask
+    int picked = 0, from = -1;
+    for (int k = 0; k < kN && !picked; ++k)
+        if (found[k]) { picked = found[k]; from = k; }
+    const int rule = DynOff::FNameAlignFor(g_cachedUEVersion, DynOff::bCasePreservingName);
+    if (picked) {
+        LOG_INFO("DetectFNameAlign: alignof(FName) = %d, measured on ScriptStruct %s (version rule says %d)",
+                 picked, kStructs[from], rule);
+    } else {
+        LOG_WARN("DetectFNameAlign: no single-FName ScriptStruct measured -- the version rule answers %d", rule);
+    }
+    DynOff::FNAME_ALIGN_MEASURED.store(picked, std::memory_order_release);
+    DynOff::bFNameAlignProbed.store(true, std::memory_order_release);
+}
+
+static int FNameAlignment() {
+    if (!DynOff::bFNameAlignProbed.load(std::memory_order_acquire)
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeFNameAlignment();
+    const int measured = DynOff::FNAME_ALIGN_MEASURED.load(std::memory_order_acquire);
+    return measured ? measured : DynOff::FNameAlignFor(g_cachedUEVersion, DynOff::bCasePreservingName);
+}
+
 // ============================================================
 // ResolveElementAlignment — the real alignment of a TMap key/value or a
 // container element. Uses the per-type rule for everything Scharf can answer,
@@ -2086,6 +2138,8 @@ static int32_t ResolveElementAlignment(const std::string& typeName, int32_t size
                                        uintptr_t structAddr) {
     if (typeName == "StructProperty")
         return GetStructAlignment(structAddr);
+    if (typeName == "NameProperty")   // [VND583-03] measured; else 8 on non-CPN 4.11-4.21, 4 elsewhere
+        return FNameAlignment();
     return Scharf::RequiredAlignment(typeName, size, DynOff::bCasePreservingName);
 }
 

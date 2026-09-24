@@ -6169,6 +6169,35 @@ static void Test_UFieldNextFProperty() {
                DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x28); }
 }
 
+// [VND583-03] alignof(FName) is 8 on non-case-preserving UE 4.11-4.21 (a union with
+// uint64 CompositeComparisonValue, removed in 4.22), 4 everywhere else.
+static void Test_FNameAlign() {
+    for (unsigned v : { 411u, 414u, 417u, 418u, 421u })
+        EXPECT("VND583-03: non-CPN 4.11-4.21 -> alignof(FName) 8", DynOff::FNameAlignFor(v, false) == 8);
+    for (unsigned v : { 422u, 424u, 425u, 427u, 500u, 504u, 508u })
+        EXPECT("VND583-03: 4.22+ dropped the union -> 4", DynOff::FNameAlignFor(v, false) == 4);
+    EXPECT("VND583-03: a case-preserving 4.18 has no union -> 4", DynOff::FNameAlignFor(418, true) == 4);
+    EXPECT("VND583-03: an unknown version keeps the old 4", DynOff::FNameAlignFor(0, false) == 4);
+    EXPECT("VND583-03: below the 4.11 floor keeps 4", DynOff::FNameAlignFor(410, false) == 4);
+    // What it changes: TMap<FName, int32> on 4.18 strides 24 (pair 16, align 8), not 20.
+    const int a418 = DynOff::FNameAlignFor(418, false);
+    EXPECT("VND583-03: TMap<FName,int32> on 4.18 -- value still at +8",
+           Macht::ComputeMapValueOffset(8, 4, 4) == 8);
+    EXPECT("VND583-03: TMap<FName,int32> on 4.18 strides 24, not 20",
+           Macht::ComputeSetElementStride(12, a418 > 4 ? a418 : 4) == 24);
+    EXPECT("VND583-03 control: the same map on 4.22 strides 20",
+           Macht::ComputeSetElementStride(12, DynOff::FNameAlignFor(422, false)) == 20);
+    // The measurement's gate: a single-FName struct's MinAlignment, taken only when its size is
+    // FName's own and the value is 4 or 8.
+    EXPECT("VND583-03: measured 8 on an 8-byte struct -> 8",  DynOff::PickFNameAlign(8, 8, 8) == 8);
+    EXPECT("VND583-03: measured 4 on an 8-byte struct -> 4",  DynOff::PickFNameAlign(4, 8, 8) == 4);
+    EXPECT("VND583-03: case-preserving 12-byte struct, 4 -> 4", DynOff::PickFNameAlign(4, 12, 12) == 4);
+    EXPECT("VND583-03: a size that is not FName's is refused", DynOff::PickFNameAlign(8, 12, 8) == 0);
+    EXPECT("VND583-03: alignment 2 is refused",  DynOff::PickFNameAlign(2, 8, 8) == 0);
+    EXPECT("VND583-03: alignment 16 is refused", DynOff::PickFNameAlign(16, 8, 8) == 0);
+    EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
+}
+
 static void Test_ProcessEventVTableSlot() {
     // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
     // NOT a producible version -- versions are major*100+minor, capped at 509. So every
@@ -8649,6 +8678,7 @@ int main() {
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_UFieldNextFProperty);
+    RUN(Test_FNameAlign);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

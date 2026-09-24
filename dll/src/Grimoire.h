@@ -527,6 +527,33 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
 inline int UFUNCTION_FLAGS      = 0;
+inline int UFUNCTION_TAIL_EXTRA = 0;
+inline std::atomic<bool> bUFunctionFlagsDetected{false};
+
+// [VND583-03] alignof(FName), per engine version. On stock UE 4.x up to 4.21, in a NON
+// case-preserving build (every packaged game), FName sits in a union with
+// `uint64 CompositeComparisonValue` (NameTypes.h, removed in 4.22), so alignof(FName) == 8 and
+// the engine lays out a TMap<FName, int32> pair as 16 bytes, not 12. Source: the union is in
+// NameTypes.h on origin/4.11 through origin/4.21 and absent on 4.10 and 4.22 (vendor/UnrealEngine);
+// the RE-UE4SS PDB templates agree (4.11-4.17 put UProperty::RepNotifyFunc at 0x48 after a uint16
+// RepIndex at 0x40; 4.10 at 0x44). A case-preserving build has no such union (4), and 4.22+
+// dropped it (4). Below our 4.11 floor, or with an unknown version, the answer stays 4 -- the value
+// Scharf::RequiredAlignment has always given. Ubel::ResolveElementAlignment applies this for
+// NameProperty -- AFTER a measurement (below), which wins when it exists; Scharf stays
+// version-agnostic.
+constexpr int FNameAlignFor(unsigned ueVersion, bool casePreservingName) {
+    return (!casePreservingName && ueVersion >= 411 && ueVersion < 422) ? 8 : 4;
+}
+
+// [VND583-03] The measurement: UScriptStruct::MinAlignment of a stock struct whose ONLY member is
+// one FName. Accepted when that struct's PropertiesSize equals FName's own size (8, or 12 when
+// case-preserving) and the alignment is 4 or 8; 0 = no measurement, the version rule answers.
+// FNAME_ALIGN_MEASURED holds the answer; bFNameAlignProbed latches the one-shot search either way.
+constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
+    return (propsSize == fnameSize && (minAlign == 4 || minAlign == 8)) ? minAlign : 0;
+}
+inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
+inline std::atomic<bool> bFNameAlignProbed{false};
 
 // [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
 // DetectUPropertyMode returned before touching it and the FProperty arm probed only
@@ -541,8 +568,6 @@ inline int PickUFieldNextOffset(const int* offs, const int* hops, int n) {
         if (hops[i] >= 2) return offs[i];
     return -1;
 }
-inline int UFUNCTION_TAIL_EXTRA = 0;
-inline std::atomic<bool> bUFunctionFlagsDetected{false};
 
 // === UFunction's tail behind FunctionFlags: NumParms (u8) / ParmsSize (u16) / ReturnValueOffset ===
 //

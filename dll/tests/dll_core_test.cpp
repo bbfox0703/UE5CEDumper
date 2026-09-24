@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS and UFIELDNEXT below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT and FNAMEMEASURE below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS and UFIELDNEXT are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT and FNAMEMEASURE are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3610,6 +3610,112 @@ int main() {
         DynOff::UFIELD_NEXT         = svNextU;
         DynOff::USTRUCT_CHILDREN    = svChildU;
         g_cachedUEVersion           = svVerU;
+    }
+
+    // -- [VND583-03] a NameProperty's alignment follows the engine version -----------------
+    // ResolveElementAlignment is what every TMap / TSet / TOptional geometry asks. On non-CPN
+    // 4.11-4.21 FName is 8-aligned (a union with uint64), so a 4 there shortens the stride.
+    {
+        blk("FNAMEALIGN - ResolveElementAlignment gives FName its version's alignment");
+        const uint32_t svVerA = g_cachedUEVersion;
+        const bool     svCpnA = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+        DynOff::bFNameAlignProbed = true;     // "probed, nothing measured": the version rule answers
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        g_cachedUEVersion = 418;
+        const int a418 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEALIGN ⭐: non-CPN 4.18 -> 8", a418 == 8, std::to_string(a418).c_str());
+        g_cachedUEVersion = 427;
+        const int a427 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEALIGN control: 4.27 -> 4", a427 == 4, std::to_string(a427).c_str());
+        g_cachedUEVersion = 418; DynOff::bCasePreservingName = true;
+        const int a418c = Ubel::ResolveElementAlignment("NameProperty", 12, 0);
+        check("FNAMEALIGN control: case-preserving 4.18 -> 4", a418c == 4, std::to_string(a418c).c_str());
+        g_cachedUEVersion = svVerA;
+        DynOff::bCasePreservingName = svCpnA;
+    }
+
+    // -- [VND583-03] ... and a MEASURED alignment beats the version rule -------------------------
+    // A built ScriptStruct "CollisionProfileName" (8 bytes, one FName) carries the answer in its
+    // MinAlignment. A NameProperty-classed object of the SAME name sits before it in the pool,
+    // shaped to answer 8 -- the class check must skip it. Own pool and name pool, like UFIELDNEXT.
+    {
+        blk("FNAMEMEASURE - alignof(FName) is measured on a single-FName ScriptStruct");
+        enum : int32_t { nClass = 1, nScriptStruct, nNameProp, nCpn, nNames };
+        const char* fmNames[nNames] = { "", "Class", "ScriptStruct", "NameProperty", "CollisionProfileName" };
+        static uint8_t fmEntry[nNames][0x40] = {};
+        static uintptr_t fmChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fmEntry[i] + 0x10, fmNames[i], strlen(fmNames[i]) + 1);
+            fmChunk[i] = reinterpret_cast<uintptr_t>(fmEntry[i]);
+        }
+        static uintptr_t fmChunks[2] = { reinterpret_cast<uintptr_t>(fmChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fmChunks), 0x10);
+
+        const uint32_t svVerM   = g_cachedUEVersion;
+        const bool     svCpnM   = DynOff::bCasePreservingName;
+        const bool     svValidM = DynOff::bOffsetsValidated.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bOffsetsValidated   = true;
+
+        enum { bMeta, bSSCls, bNPCls, bDecoy, bStruct, kMB };
+        alignas(16) static uint8_t fmB[kMB][0x200] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(fmB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](bool withStruct, int32_t structSize, int32_t structAlign) {
+            for (auto& b : fmB) memset(b, 0, sizeof(b));
+            putP(fmB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));    put32(fmB[bMeta], Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(fmB[bSSCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(fmB[bSSCls], Grimoire::OFF_UOBJECT_NAME, nScriptStruct);
+            putP(fmB[bNPCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(fmB[bNPCls], Grimoire::OFF_UOBJECT_NAME, nNameProp);
+            // The decoy: FBodyInstance's NameProperty, same name, shaped like an 8-aligned FName.
+            putP(fmB[bDecoy], Grimoire::OFF_UOBJECT_CLASS, A(bNPCls));  put32(fmB[bDecoy], Grimoire::OFF_UOBJECT_NAME, nCpn);
+            put32(fmB[bDecoy], DynOff::USTRUCT_PROPSSIZE, 8);           put32(fmB[bDecoy], DynOff::USTRUCT_PROPSSIZE + 4, 8);
+            if (withStruct) {
+                putP(fmB[bStruct], Grimoire::OFF_UOBJECT_CLASS, A(bSSCls)); put32(fmB[bStruct], Grimoire::OFF_UOBJECT_NAME, nCpn);
+                put32(fmB[bStruct], DynOff::USTRUCT_PROPSSIZE, structSize);
+                put32(fmB[bStruct], DynOff::USTRUCT_PROPSSIZE + 4, structAlign);
+            }
+            DynOff::bFNameAlignProbed = false;
+            DynOff::FNAME_ALIGN_MEASURED = 0;
+        };
+
+        FakePool fmPool;
+        fmPool.Build(kMB);
+        for (int i = 0; i < kMB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(fmPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(fmPool.Addr(), FakePool::kItemSize);
+
+        build(true, 8, 8);
+        g_cachedUEVersion = 427;   // the rule would say 4
+        const int m8 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE ⭐: a measured 8 beats 4.27's rule of 4", m8 == 8, std::to_string(m8).c_str());
+
+        build(true, 8, 4);
+        g_cachedUEVersion = 418;   // the rule would say 8, and so would the decoy
+        const int m4 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE ⭐: a measured 4 beats 4.18's rule of 8, and the NameProperty decoy is skipped",
+              m4 == 4, std::to_string(m4).c_str());
+
+        build(true, 12, 8);        // not FName-sized: no measurement
+        g_cachedUEVersion = 427;
+        const int mSize = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE control: a struct that is not FName-sized measures nothing -> the rule (4)",
+              mSize == 4, std::to_string(mSize).c_str());
+
+        build(false, 0, 0);        // only the decoy
+        g_cachedUEVersion = 418;
+        const int mNone = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE control: no ScriptStruct -> 4.18's rule (8)", mNone == 8, std::to_string(mNone).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bFNameAlignProbed   = false;
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        DynOff::bOffsetsValidated   = svValidM;
+        DynOff::bCasePreservingName = svCpnM;
+        g_cachedUEVersion           = svVerM;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
