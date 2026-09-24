@@ -16,6 +16,15 @@
 >
 > The maintainer's installed UE 5.8 editor updated to 5.8.3 the same morning (CL 58210709).
 
+> ⛔ **MAINTAINER DECISION (2026-09-24): patternsleuth's AOB patterns are NOT re-scanned in a vendor
+> audit unless upstream has commits after `1d90b02c` (2026-09-01).** They were imported on 2026-02-20
+> (`f78ba7b7`, `GOBJ_PS1..PS7`); most are too short / not unique for us, and our AOB set, measured
+> over many games and UE samples, is far more complete — this was the third audit to redo the work.
+> Measured: upstream was quiet 2026-05-18 → 08-27, had one 16-commit burst 08-27 → 09-01 (read by
+> this audit: the PS-* rows), and has nothing after it. Check first:
+> `git -C vendor/RE-UE4SS/deps/first/patternsleuth log --oneline 1d90b02c..origin/master` — empty
+> means skip patternsleuth entirely.
+
 **Method, and its limits.** Ten recon areas, one agent each; every non-info finding went to its own
 adversarial verifier (default posture: refute), and the info rows of each area to one batch check.
 139 findings; **none refuted**; one info row (CGC-8, a per-game census) judged incomplete.
