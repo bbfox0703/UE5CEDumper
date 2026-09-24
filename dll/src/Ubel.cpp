@@ -4668,8 +4668,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // Handle WeakObjectProperty: FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
         if (fi.TypeName == "WeakObjectProperty") {
             int32_t objIdx = 0, serial = 0;
-            Macht::ReadSafe(instanceAddr + fi.Offset, objIdx);
-            Macht::ReadSafe(instanceAddr + fi.Offset + 4, serial);
+            // [VND583-05] Both reads are load-bearing, as in the InterfaceProperty reader below: a
+            // faulted read leaves 0, and {0, 0} would then be published -- and labelled -- as null.
+            const bool okIdx    = Macht::ReadSafe(instanceAddr + fi.Offset, objIdx);
+            const bool okSerial = Macht::ReadSafe(instanceAddr + fi.Offset + 4, serial);
+            if (!okIdx || !okSerial) {
+                fv.typedValue = DescribeUnreadableField("FWeakObjectPtr", fi.Offset);
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
             uintptr_t ptr = ResolveWeakObjectPtr(objIdx, serial);
             if (ptr) {
                 fv.ptrValue = ptr;
@@ -4679,6 +4686,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassName = GetName(cls);
                     fv.ptrClassAddr = cls;
                 }
+            } else {
+                // [VND583-05] The same words as the three sibling weak readers (struct member,
+                // array element, search preview): a live index whose serial no longer matches is a
+                // DEAD reference, not a null one. Unlabelled, the Value column showed the raw
+                // index+serial hex.
+                fv.typedValue = (objIdx > 0) ? "null (stale)" : "null";
             }
             char buf[20];
             snprintf(buf, sizeof(buf), "%08X%08X", objIdx, serial);

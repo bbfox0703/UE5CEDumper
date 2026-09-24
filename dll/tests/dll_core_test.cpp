@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE and ENUMU8 below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8 and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE and ENUMU8 are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8 and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,91 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-05] a top-level WeakObjectProperty says null / stale / unreadable ---------------
+    // Its three siblings (struct member, array element, search preview) label a pointer that does
+    // not resolve; the top-level reader published only the raw index+serial hex, which the Live
+    // Walker then showed as the value. It also ignored both reads, so an UNREADABLE pointer
+    // printed "0000000000000000" -- the same bytes as a genuinely null one. Built like IFACEREAD:
+    // two reserved pages, one committed, with the last case's FWeakObjectPtr across the edge.
+    {
+        blk("WEAKLABEL - a top-level FWeakObjectPtr is labelled null / null (stale) / unreadable");
+        static uint8_t wkTypeEntry[0x40] = {};
+        static uint8_t wkNameEntry[0x40] = {};
+        memcpy(wkTypeEntry + 0x10, "WeakObjectProperty", sizeof("WeakObjectProperty"));
+        memcpy(wkNameEntry + 0x10, "Wk", sizeof("Wk"));
+        static uintptr_t wkChunk[4] = {};
+        wkChunk[1] = reinterpret_cast<uintptr_t>(wkTypeEntry);
+        wkChunk[2] = reinterpret_cast<uintptr_t>(wkNameEntry);
+        static uintptr_t wkChunks[2] = { reinterpret_cast<uintptr_t>(wkChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(wkChunks), 0x10);
+        const bool svFPropW = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t wkFieldClass[0x20] = {};
+        *reinterpret_cast<int32_t*>(wkFieldClass + DynOff::FFIELDCLASS_NAME) = 1;
+        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("WEAKLABEL setup: reserved two pages", wpage != nullptr);
+        if (wpage) {
+            VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            const uintptr_t winst = reinterpret_cast<uintptr_t>(wpage);
+            // One class blob per case: s_walkClassCache is keyed by the class address.
+            static uint8_t wkProp[4][0x80] = {};
+            static uint8_t wkCls[4][0x100] = {};
+            auto makeClass = [&](int i, int32_t fieldOffset) {
+                *reinterpret_cast<uintptr_t*>(wkProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkFieldClass);
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_OFFSET)      = fieldOffset;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = 8;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<int32_t*>(wkCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkProp[i]);
+                return reinterpret_cast<uintptr_t>(wkCls[i]);
+            };
+            // Anti-vacuity: every case must produce its one field, or an empty walk passes for free.
+            auto weakField = [&](const char* who, const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+                check((std::string("WEAKLABEL control: ") + who + " -- the fake class produced exactly one field").c_str(),
+                      r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+                for (const auto& f : r.fields)
+                    if (f.typeName == "WeakObjectProperty") return f;
+                return Ubel::LiveFieldValue{};
+            };
+
+            // A null pointer {0, 0}.
+            *reinterpret_cast<int32_t*>(wpage + 0x100) = 0;
+            *reinterpret_cast<int32_t*>(wpage + 0x104) = 0;
+            const auto nullW = weakField("null", Ubel::WalkInstance(winst, makeClass(0, 0x100), 64, 2, false));
+            check("WEAKLABEL ⭐: {0, 0} says null", nullW.typedValue == "null", nullW.typedValue.c_str());
+            check("WEAKLABEL: ...and keeps its readable hex", nullW.hexValue == "0000000000000000", nullW.hexValue.c_str());
+
+            // A dead reference: a live index whose serial no longer matches.
+            *reinterpret_cast<int32_t*>(wpage + 0x200) = 1;
+            *reinterpret_cast<int32_t*>(wpage + 0x204) = 0x7777;
+            const auto staleW = weakField("stale", Ubel::WalkInstance(winst, makeClass(1, 0x200), 64, 2, false));
+            check("WEAKLABEL ⭐: {1, wrong serial} says null (stale)", staleW.typedValue == "null (stale)",
+                  staleW.typedValue.c_str());
+
+            // Across the page edge: ObjectIndex reads, SerialNumber faults.
+            *reinterpret_cast<int32_t*>(wpage + 0xFFC) = 0;
+            const auto deadW = weakField("half-unread", Ubel::WalkInstance(winst, makeClass(2, 0x0FFC), 64, 2, false));
+            check("WEAKLABEL ⭐: a half-readable FWeakObjectPtr publishes NO hex", deadW.hexValue.empty(),
+                  deadW.hexValue.c_str());
+            check("WEAKLABEL ⭐: ...and says unreadable at its own offset, not null",
+                  deadW.typedValue.find("unreadable at +0xFFC") != std::string::npos, deadW.typedValue.c_str());
+
+            // Control: a pointer that resolves carries its object and no label.
+            const uintptr_t o1 = Aura::GetByIndex(1);
+            if (o1) {
+                *reinterpret_cast<int32_t*>(wpage + 0x300) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x304) = Aura::GetSerialNumber(1);
+                const auto liveW = weakField("live", Ubel::WalkInstance(winst, makeClass(3, 0x300), 64, 2, false));
+                check("WEAKLABEL control: a resolving pointer publishes the object and no label",
+                      liveW.ptrValue == o1 && liveW.typedValue.empty(), liveW.typedValue.c_str());
+            }
+            VirtualFree(wpage, 0, MEM_RELEASE);
+        }
+        DynOff::bUseFProperty = svFPropW;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
