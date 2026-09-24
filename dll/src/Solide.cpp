@@ -21,6 +21,8 @@
 #include "Routine.h"   // Routine::ReassertLoop — shared sliced-sleep + guarded tick (R5/B14)
 #include "Ubel.h"
 
+extern uint32_t g_cachedUEVersion;   // [VND583-DOC D7-04] a weak null's ObjectIndex (WeakNullObjectIndexFor)
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -50,7 +52,7 @@ struct Job {
     // Pruned to the live pool each re-assert tick to bound it. (L4)
     std::unordered_map<uintptr_t, double> baseByOwner;
     // Set when the field resolved on >=1 instance but was type-refused everywhere
-    // (weak/soft/lazy ptr, or wrong numeric type -- see the K_OBJECT_NULL refusal for why). (L2)
+    // (a soft/lazy ptr, a remote-handle weak ptr, or a wrong numeric type -- see ObjectNullShapeFor). (L2)
     int32_t     lastRefusal = 0;
     // Last-tick stats (for the UI badge + Locate handoff).
     int32_t     held         = 0;
@@ -258,15 +260,27 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     uintptr_t addr = obj + static_cast<uintptr_t>(fi.Offset);
 
     if (job.kind == K_OBJECT_NULL) {
-        // Strong ObjectProperty only. [VND583-DOC D7-04] The reason recorded here was "8 zero bytes set
-        // ObjectIndex 0 = a VALID GObjects[0] slot (crash trap)" -- wrong in every version: {0, 0} has
-        // SerialNumber 0, which is UE's explicit null (FWeakObjectPtr::Internal_GetObjectItem). The refusal
-        // stands for Soft / Lazy on its own merits: their asset path / GUID lies past those 8 bytes and
-        // re-resolves the pointer, so a "null" hold would not hold. Weak is refused with them until someone
-        // needs it -- a behaviour change, not a doc fix.
-        if (fi.TypeName != "ObjectProperty") { refusal = FR_ERR_WEAK_PTR; return false; }   // L2
+        // A strong ObjectProperty, or -- [VND583-DOC D7-04] -- a WeakObjectProperty. The gate once refused
+        // weak pointers because "8 zero bytes set ObjectIndex 0 = a VALID GObjects[0] slot (crash trap)",
+        // which is wrong in every version: SerialNumber 0 is UE's explicit null. Soft / Lazy stay refused
+        // (Solide::ObjectNullShapeFor says why). L2
+        const ObjectNullShape shape = ObjectNullShapeFor(fi.TypeName, fi.Size);
+        if (shape == ObjectNullShape::Refused) { refusal = FR_ERR_WEAK_PTR; return false; }
         sampleOwner = obj; sampleOffset = fi.Offset;
         if (restore) return true;   // original ptr not saved (stale) — no restore
+        if (shape == ObjectNullShape::Weak) {
+            int32_t idx = 0, serial = 0;
+            if (!Macht::ReadSafe(addr, idx) || !Macht::ReadSafe(addr + 4, serial)) return false;
+            if (serial != 0) {   // not null yet: write the value FWeakObjectPtr::Reset() writes
+                const int32_t nul[2] = { WeakNullObjectIndexFor(g_cachedUEVersion), 0 };
+                if (!Macht::WriteBytes(addr, nul, sizeof(nul))) {   // [SOLIDEHELD-2026-08-21]
+                    refusal = FR_ERR_WRITE;
+                    return false;
+                }
+                if (drifted) *drifted = true;
+            }
+            return true;
+        }
         uintptr_t cur = 0;
         if (!Macht::ReadSafe(addr, cur)) return false;
         if (cur != 0) {
@@ -452,8 +466,8 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         bool drifted = false;
         ApplyJobLocked(*it, /*restore=*/false, &drifted);
         held = it->held;
-        // Field resolved on >=1 instance but was type-refused everywhere (weak/soft/lazy
-        // ptr, or wrong numeric type) → a futile hold. Don't persist a
+        // Field resolved on >=1 instance but was type-refused everywhere (a soft/lazy ptr,
+        // or a wrong numeric type) → a futile hold. Don't persist a
         // newly-added job or start the worker; surface the reason instead of a silent
         // held=0 (Fern maps a negative return to `code`). (L2)
         // ⛔ REPORT THE REFUSAL ON A RE-ARM TOO. `newlyAdded` decides whether the job

@@ -848,8 +848,8 @@
     <sys:String x:Key="str.PropertySearch.ForceValue">Force value…</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedHeader">Forced fields:</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedClearAll">Clear all</sys:String>
-    <sys:String x:Key="str.Tip.PropertySearch.ForcedClearAll">Release every forced-field hold (best-effort restore each field's captured base).</sys:String>
-    <sys:String x:Key="str.Tip.PropertySearch.ForcedRemove">Release this hold (restore the captured base) and stop re-asserting it.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.ForcedClearAll">Release every forced-field hold (best-effort restore each numeric field's captured base; a pointer forced to null is not put back).</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.ForcedRemove">Release this hold and stop re-asserting it (a numeric hold restores its captured base; a pointer forced to null is not put back).</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedCapped">⚠ capped</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
 

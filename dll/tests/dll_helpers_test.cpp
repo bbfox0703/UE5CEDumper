@@ -6269,6 +6269,25 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-DOC D7-04] Force-null: strong and weak pointers are held; soft / lazy stay refused.
+static void Test_ObjectNullShape() {
+    using Solide::ObjectNullShape;
+    EXPECT("D7-04: a strong ObjectProperty is held at 0", Solide::ObjectNullShapeFor("ObjectProperty", 8) == ObjectNullShape::Strong);
+    EXPECT("D7-04: an 8-byte WeakObjectProperty is held at UE's own null", Solide::ObjectNullShapeFor("WeakObjectProperty", 8) == ObjectNullShape::Weak);
+    EXPECT("D7-04: a 16-byte (remote-handle) WeakObjectProperty is refused -- serial 0 is not its null",
+           Solide::ObjectNullShapeFor("WeakObjectProperty", 16) == ObjectNullShape::Refused);
+    EXPECT("D7-04: an unread (0) ElementSize refuses a weak pointer", Solide::ObjectNullShapeFor("WeakObjectProperty", 0) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a SoftObjectProperty stays refused (its path re-resolves)", Solide::ObjectNullShapeFor("SoftObjectProperty", 0x28) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a SoftClassProperty stays refused", Solide::ObjectNullShapeFor("SoftClassProperty", 0x28) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a LazyObjectProperty stays refused (its GUID re-resolves)", Solide::ObjectNullShapeFor("LazyObjectProperty", 0x1C) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a numeric type is not a pointer", Solide::ObjectNullShapeFor("IntProperty", 4) == ObjectNullShape::Refused);
+    EXPECT("D7-04: UE4 resets a weak ObjectIndex to INDEX_NONE", Solide::WeakNullObjectIndexFor(427) == -1);
+    EXPECT("D7-04: so does 5.0",                                 Solide::WeakNullObjectIndexFor(500) == -1);
+    EXPECT("D7-04: 5.1+ resets it to 0 (ZEROINIT_FIX)",          Solide::WeakNullObjectIndexFor(501) == 0);
+    EXPECT("D7-04: 5.8 too",                                     Solide::WeakNullObjectIndexFor(508) == 0);
+    EXPECT("D7-04: an unknown version takes the modern 0",       Solide::WeakNullObjectIndexFor(0) == 0);
+}
+
 // [VND583-14] FSoftObjectPath's shape: the measurement wins; the version rule only when nothing was measured.
 static void Test_SoftPathShape() {
     EXPECT("VND583-14: measured AssetPathName on a title labelled 5.5 -> NOT top-level",
@@ -8853,6 +8872,7 @@ int main() {
     RUN(Test_RefineVersionFromLazyMarkers);
     RUN(Test_CompactSetGuard);
     RUN(Test_SoftPathShape);
+    RUN(Test_ObjectNullShape);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
