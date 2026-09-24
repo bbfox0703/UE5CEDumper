@@ -129,7 +129,7 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 //
 // UE4 differences:
 //   UE4 <4.25:   No FField/FProperty, properties are UProperty (UObject-derived) in Children chain
-//   UE4.25-4.27: FField/FProperty exists, layout similar to UE5.0-5.1 (FFieldVariant=0x10)
+//   UE4.25-4.27: FField/FProperty exists, layout similar to UE5.0-5.2 (FFieldVariant=0x10)
 //   UE4.27-CPN:  sizeof(FName)=0xC (DisplayIndex added; 0x10 is the UObject Name->Outer SLOT, not
 //                 the size). So FField::Flags moves +4 (0x30 -> 0x34) and FField stays 0x38;
 //                 FProperty's head (ArrayDim .. Offset_Internal) does NOT move, and only
@@ -170,14 +170,14 @@ inline int UFUNCTION_FUNC     = 0;
 // Latched once detection has run (success or failure), to avoid re-sampling.
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
-// === FField — defaults for UE5.0-5.1.0 (FFieldVariant=0x10) ===
+// === FField — defaults for UE5.0-5.2 (FFieldVariant=0x10) ===   [R7-A-03] was "5.1.0"; 5.1.1 / 5.2 use them too
 // UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
 inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
 inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
 inline int FFIELD_NAME        = 0x28;  // FName
 
-// === FProperty (inherits from FField) — defaults for UE5.0-5.1.0 AND UE4.25-4.27 ===
+// === FProperty (inherits from FField) — defaults for UE5.0-5.2 AND UE4.25-4.27 ===
 // (both have FFieldVariant = 0x10, so FField is 0x38 and FProperty's own fields follow it)
 // UE5.3+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
 //
