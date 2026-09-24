@@ -130,8 +130,12 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 // UE4 differences:
 //   UE4 <4.25:   No FField/FProperty, properties are UProperty (UObject-derived) in Children chain
 //   UE4.25-4.27: FField/FProperty exists, layout similar to UE5.0-5.1 (FFieldVariant=0x10)
-//   UE4.27-CPN:  FName=0x10 bytes, shifts FField::Flags+0x8, FFieldClass offsets+0x8,
-//                 and UObject::Outer from 0x20 to 0x28
+//   UE4.27-CPN:  sizeof(FName)=0xC (DisplayIndex added; 0x10 is the UObject Name->Outer SLOT, not
+//                 the size). So FField::Flags moves +4 (0x30 -> 0x34) and FField stays 0x38;
+//                 FProperty's head (ArrayDim .. Offset_Internal) does NOT move, and only
+//                 RepNotifyFunc's tail moves +8 (PropertyFamilyFor's +0x34); FFieldClass members
+//                 after Name +8; UObject::Outer 0x20 -> 0x28 (the slot). RE-UE4SS
+//                 4_27_CasePreserving vs 4_27 templates. [VND583-DOC UEP-D2]
 
 } // namespace Grimoire
 
@@ -141,14 +145,14 @@ namespace DynOff {
 // Most are stable, but Outer shifts when CasePreservingName enlarges FName.
 inline int UOBJECT_OUTER      = 0x20;  // OuterPrivate: 0x20 (standard), 0x28 (CPN)
 
-// === UStruct — stable across UE4.25+ and UE5.0-5.5 ===
+// === UStruct — 0x40/0x48/0x50/0x58 from UE4.25 through 5.8 (RE-UE4SS 4_25..5_08) [VND583-DOC UEP-D3] ===
 inline int USTRUCT_SUPER      = 0x40;
 inline int USTRUCT_CHILDREN   = 0x48;  // UField* chain (functions; in UE4 <4.25: all properties here)
 inline int USTRUCT_CHILDPROPS = 0x50;  // FField* chain (properties; absent in UE4 <4.25)
 inline int USTRUCT_PROPSSIZE  = 0x58;
 // UStruct::Script — TArray<uint8> Kismet bytecode. Always sits immediately
 // after PropertiesSize(int32) + MinAlignment(int32), so == PROPSSIZE + 0x08 for
-// every UE 4.18-5.7 layout and every shifted custom-game layout (verified vs
+// every RE-UE4SS template 4.07-5.8, CPN included, and every shifted custom-game layout (verified vs
 // RE-UE4SS MemberVariableLayout templates). Set in Genau from the calibrated
 // PROPSSIZE; default mirrors the UE4.25+/UE5 standard (0x58 + 8 = 0x60).
 inline int USTRUCT_SCRIPT     = 0x60;
@@ -209,7 +213,8 @@ inline constexpr int kFFieldClassNameProbes[] = { 0x00, 0x08 };
 // True iff `s` is a plausible FFieldClass type name. Every FFieldClass name in the
 // engine ends in "Property" (IntProperty, ObjectProperty, ...), so a SUFFIX test is
 // strictly stronger than a substring find and is what makes the new 0x08 candidate
-// safe — at +0x08 on a <=5.7 build sits EClassFlags, and a substring test on garbage
+// safe — at +0x08 on a <=5.7 build sits a uint64 Id (<=5.6) or EClassFlags (5.7 only
+// [VND583-DOC UEP-D3]), and a substring test on garbage
 // is far likelier to false-positive than a suffix test.
 inline bool LooksLikeFieldClassName(const std::string& s) {
     return s.size() > 8 && s.size() <= 64 &&
@@ -719,7 +724,8 @@ constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
 
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
-// UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).
+// UField::Next is at UObject_TotalSize: 0x28; 0x30 for CPN and on pre-4.25 STATS builds; 0x38
+// measured on DQ XI S. This is only the default -- it is probed. [VND583-DOC UEP-D3]
 inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize

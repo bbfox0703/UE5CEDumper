@@ -4284,6 +4284,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // Heuristic: ElementSize sits 0x10 bytes before Offset_Internal.
         // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.2 (0x3C vs 0x4C) and
         // UE5.3+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
+        // [VND583-DOC UEP-D3] Not on UE 4.11-4.17 (UProperty), where the delta is 0x1C: there the
+        // guess fails the read-back below, and the kept default of 0x34 is the right value.
         int guess = propOffsetOff - 0x10;
         if (guess >= probeStart) {
             int32_t val = 0;

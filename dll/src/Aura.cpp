@@ -383,7 +383,7 @@ static constexpr int32_t kMaxElementsCeiling = 0x2000000;  // 33,554,432
 
 // All known chunked layouts. Order: default first, then game-specific.
 static const LayoutPreset s_chunkedPresets[] = {
-    { "Default",     { 0x00, 0x10, 0x14, 0x18, 0x1C } },  // UE4.21+ and UE5 standard
+    { "Default",     { 0x00, 0x10, 0x14, 0x18, 0x1C } },  // UE4.20+ and UE5 standard (4.19 and earlier are flat -- RE-UE4SS 4_19 vs 4_20 TUObjectArray) [VND583-DOC UEP-D3]
     { "Back4Blood",  { 0x10, 0x00, 0x04, 0x08, 0x0C } },  // Objects at end
     { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
     { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
