@@ -5439,7 +5439,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
-                            // Map<Enum, Name> puts the value at +4. Wrong align => wrong
+                            // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
+                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
@@ -5625,7 +5626,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         } else if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
-                            // Map<Enum, Name> puts the value at +4. Wrong align => wrong
+                            // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
+                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
