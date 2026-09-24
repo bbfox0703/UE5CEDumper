@@ -58,17 +58,67 @@ def send(vk):
         raise SystemExit("SendInput sent %d of 2 events (error %d)" % (sent, ctypes.get_last_error()))
 
 
+def windows_of(proc):
+    """Visible, titled top-level windows owned by processes whose image name is `proc` (.exe optional)."""
+    want = proc.lower().removesuffix(".exe")
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(h, _):
+        if not user32.IsWindowVisible(h) or user32.GetWindowTextLengthW(h) == 0:
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        hp = k32.OpenProcess(0x1000, False, pid.value)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if hp:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wintypes.DWORD(1024)
+            if k32.QueryFullProcessImageNameW(hp, 0, buf, ctypes.byref(n)):
+                if os.path.basename(buf.value).lower().removesuffix(".exe") == want:
+                    t = ctypes.create_unicode_buffer(512)
+                    user32.GetWindowTextW(h, t, 512)
+                    found.append((h, t.value))
+            k32.CloseHandle(hp)
+        return True
+
+    user32.EnumWindows(cb, 0)
+    return found
+
+
+def post(hwnd, vk):
+    """WM_KEYDOWN + WM_KEYUP straight into the window's queue: no global input, no hooks, no focus change."""
+    scan = user32.MapVirtualKeyW(vk, 0)
+    down = 1 | (scan << 16)
+    up = down | (1 << 30) | (1 << 31)
+    ok1 = user32.PostMessageW(hwnd, 0x0100, vk, down)
+    ok2 = user32.PostMessageW(hwnd, 0x0101, vk, up)
+    if not (ok1 and ok2):
+        raise SystemExit("PostMessage failed (error %d)" % ctypes.get_last_error())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("key", choices=sorted(VK))
     ap.add_argument("--front", help="process name whose window to bring forward first (front_window.py)")
+    ap.add_argument("--post", metavar="PROC",
+                    help="instead of SendInput, PostMessage WM_KEYDOWN/UP to PROC's top-level window. "
+                         "Bypasses the global input queue, so another app's hook or overlay cannot take it "
+                         "(measured 2026-09-24: an SendInput Escape moved the foreground to 'NVIDIA GeForce Overlay')")
     a = ap.parse_args()
     if a.front:
         subprocess.run([sys.executable, os.path.join(HERE, "front_window.py"), "front", a.front], check=True,
                        capture_output=True)
         time.sleep(0.3)
     print("foreground before: %r" % foreground_title())
-    send(VK[a.key])
+    if a.post:
+        wins = windows_of(a.post)
+        if len(wins) != 1:
+            raise SystemExit("--post %s: expected ONE visible titled window, found %r" % (a.post, wins))
+        post(wins[0][0], VK[a.key])
+        print("posted %s to %r" % (a.key, wins[0][1]))
+    else:
+        send(VK[a.key])
     time.sleep(0.2)
     print("sent %s; foreground after: %r" % (a.key, foreground_title()))
     return 0
