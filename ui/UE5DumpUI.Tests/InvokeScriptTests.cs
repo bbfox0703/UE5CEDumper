@@ -2147,6 +2147,21 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void DelegateBindingLabels_AllGoThroughOneHelper()
+    {
+        // [R7-B-04] Five readers render a delegate binding; the [garbage] tag was appended by hand at four. The one
+        // label function adds it, so DescribeScriptDelegate must be called from that function alone.
+        var src = DllSource("Ubel.cpp");
+        int n = 0;
+        for (int i = src.IndexOf("DescribeScriptDelegate(", StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf("DescribeScriptDelegate(", i + 1, StringComparison.Ordinal))
+            n++;
+        Assert.Equal(1, n);
+        Assert.True(src.Split("DescribeDelegateBinding(").Length - 1 >= 6,   // the definition + the five readers
+                    "fewer than five readers go through DescribeDelegateBinding");
+    }
+
+    [Fact]
     public void FindRefsReply_CarriesSparseSkipped()
     {
         // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.

@@ -4448,6 +4448,45 @@ int main() {
                 check("WEAKLABEL control VND583-06: the same item bit on UE5 is not PendingKill -> no label",
                       c5.ptrValue == o1 && c5.typedValue.empty(), c5.typedValue.c_str());
 
+                // [R7-B-04] The three weak display sites that never showed the tag, on a UE5 Garbage target. The
+                // target gets a name ("Wk", pool index 2) so the readers that print a NAME print one.
+                int32_t svName1 = 0;
+                memcpy(&svName1, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), 4);
+                const int32_t wkNameIdx = 2;
+                memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), &wkNameIdx, 4);
+                uint32_t svObjF = 0, svItemF = 0;   // the UE4 PendingKill state the array case below relies on
+                memcpy(&svObjF, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), 4);
+                memcpy(&svItemF, item1 + 8, 4);
+                setFlags(0x40000000u, 0);
+                // (1) A SET TOptional<TWeakObjectPtr>: the tag it added was overwritten by the display builder.
+                *reinterpret_cast<int32_t*>(wpage + 0x660) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x664) = Aura::GetSerialNumber(1);
+                wpage[0x668] = 1;
+                const auto optG = optField("optional weak garbage", Ubel::WalkInstance(winst, makeOptClass(3, 0x660), 64, 2, false));
+                check("WEAKLABEL ⭐ R7-B-04: a SET TOptional<weak> to a Garbage target shows [garbage]",
+                      optG.ptrValue == o1 && optG.typedValue.find("[garbage]") != std::string::npos, optG.typedValue.c_str());
+                // (2) The delegate-binding label every reader uses (the sparse-binding loop did not add the tag).
+                const std::string dbG = Ubel::DescribeDelegateBinding(o1, "Obj", 1, Aura::GetSerialNumber(1), "OnHit");
+                check("WEAKLABEL ⭐ R7-B-04: a delegate binding to a Garbage target shows [garbage]",
+                      dbG == "Obj::OnHit [garbage]", dbG.c_str());
+                // (3) The Property Search soft preview's fallback: no asset path, a weak pointer that resolves.
+                std::vector<Aura::PropertyMatch> spRows(1);
+                spRows[0].classAddr  = 0xE100;
+                spRows[0].propType   = "SoftObjectProperty";
+                spRows[0].propOffset = 0x700;
+                spRows[0].propSize   = 0x28;
+                *reinterpret_cast<int32_t*>(wpage + 0x700) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x704) = Aura::GetSerialNumber(1);
+                std::unordered_map<uintptr_t, uintptr_t> spMap{ { 0xE100, winst } };
+                Ubel::ResolvePropertyPreviews(spRows, spMap);
+                check("WEAKLABEL ⭐ R7-B-04: the soft preview's resolved fallback shows [garbage]",
+                      spRows[0].preview.find("[garbage]") != std::string::npos, spRows[0].preview.c_str());
+                setFlags(0, 0);
+                const std::string dbLive = Ubel::DescribeDelegateBinding(o1, "Obj", 1, Aura::GetSerialNumber(1), "OnHit");
+                check("WEAKLABEL control R7-B-04: a live target's binding has no tag", dbLive == "Obj::OnHit", dbLive.c_str());
+                memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), &svName1, 4);
+                setFlags(svObjF, svItemF);
+
                 // The array reader, through the same tag: [{1, serial}, {0, 0}] on UE4 with PendingKill.
                 g_cachedUEVersion = 427;
                 *reinterpret_cast<uintptr_t*>(wpage + 0x400) = winst + 0x500;   // TArray Data*
