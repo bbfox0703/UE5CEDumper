@@ -2869,6 +2869,29 @@ values it did set were the two that most code exercises.
   (UE5.7 puts `EArrayPropertyFlags` before `Inner`, so `FARRAYPROP_INNER` is re-probed separately).
   An unexplained exception is indistinguishable from the bug.
 
+### 4.3h A case-preserving-FName host is one command away: an installed EDITOR running a project with `-game`
+
+Found 2026-09-24 (VND583-07). For months every CPN finding was filed "latent, no title measured, unit tests
+are the only vehicle", because WITH_CASE_PRESERVING_NAME = WITH_EDITORONLY_DATA and every packaged game
+is 0. But the editor binary running a project as a game IS such a build, and this PC has 4.18 to 5.8
+installed:
+
+    "C:\Program Files\Epic Games\UE_4.27\Engine\Binaries\Win64\UE4Editor.exe" "D:\Unreal Projects\UE427_3rdPerson\UE427_3rdPerson.uproject" -game -windowed
+    "C:\Program Files\Epic Games\UE_5.4\Engine\Binaries\Win64\UnrealEditor.exe" "D:\Unreal Projects\DumperTest\DumperTest.uproject" -game -windowed
+
+Inject by PID (`tools/verify/inject.py --pid`); the logs go to `Logs\UE4Editor\` / `Logs\UnrealEditor\`.
+What makes it a different host, each measured on these two:
+- **Two FName member orders.** UE4 / 5.0 put Number at +8 (after DisplayIndex); 5.1+ at +4. Use BOTH
+  editors -- the 5.1-5.8 editors cannot show the +8 order.
+- **Modular build.** GObjects comes from a DLL export, and GNames from the exported `FName::ToString`, whose
+  body reaches NamePoolData only through a call. `EOSSDK-Win64-Shipping.dll` embeds its OWN name pool, which
+  an AOB can take instead (0 of 10 names resolved until the call-follow).
+- **The editor FProperty head is 8 bytes wider**: ElementSize / Offset at +0x3C / +0x4C on the 5.4 editor
+  against +0x34 / +0x44 in 5.4 Shipping, and +0x44 / +0x54 on the 4.27 editor. Every probe that assumes the
+  Shipping head is exercised too.
+**How to apply:** before filing a CPN or editor-only row as "latent, unmeasurable", run it on these hosts.
+They boot in under a minute once the project has been opened in the editor once (shaders cached).
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 > ⚠ **NARROWED 2026-08-17 — it is not a version band.** **Lushfoil Photography Sim is UE 5.6 cooked

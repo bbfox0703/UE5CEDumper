@@ -2691,6 +2691,7 @@ Both claimed **HIGH**s died here, on evidence rather than opinion:
   `vendor/UnrealEngine/…/UObject/NameTypes.h:1257-1267` declares the members in the order
   `ComparisonIndex` → `Number` → `DisplayIndex`, so `Number` is at **+4 even under
   `WITH_CASE_PRESERVING_NAME`**, and the same header `static_assert`s it at `1247-1249`.
+  ⚠ **BOUNDED 2026-09-24 `[VND583-07]`: true from UE 5.1 only.** The vendored header is 5.8. A case-preserving UE4 or 5.0 build declares `ComparisonIndex` → `DisplayIndex` → `Number`, so `Number` is at **+8** there -- measured on the UE 4.27 editor running a project `-game`, where 3145 of 3145 names took the DisplayIndex as the number. `DynOff::FNAME_NUMBER` is now measured (`937c216c`).
 - **`Ubel.cpp:4503` — "`FSTRUCTPROP_STRUCT`/`FARRAYPROP_INNER` mutated at runtime with no reader
   synchronisation."** **REFUTED**: the probe list tries delta 0 **first** and the write sits inside
   `if (delta != 0)`, so a write only ever *repairs* an offset that already failed — the race is
@@ -3350,6 +3351,11 @@ games**. I raised this as a suspicion while fixing U8 — the tree derives the F
 vendored engine refutes it: `NameTypes.h:1258-1267` declares `ComparisonIndex`, then `Number`, then
 the case-preserving `DisplayIndex`. The 0x10 FName is wider at the **tail**, so both fields we read
 sit at fixed offsets.
+
+> ⚠ **BOUNDED 2026-09-24 `[VND583-07]`: "do not re-raise" holds from UE 5.1 only.** Case-preserving UE4 / 5.0
+> put the `DisplayIndex` SECOND and `Number` at +8 (4.25.4 / 5.0.3 `NameTypes.h`), measured on the UE 4.27
+> editor: 3145 of 3145 names were decoded with the DisplayIndex as the number. `DynOff::FNAME_NUMBER` is now
+> measured (`937c216c`). (FName is also 0xC, not 0x10: 0x10 is the NamePrivate→Outer slot.)
 
 ### ⚠ NEW UNVETTED LEAD, raised 2026-08-16 while FIXING U12–U15 — `TLazyObjectPtr` is not 0x20
 
