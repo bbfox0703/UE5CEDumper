@@ -36,9 +36,9 @@ OUT = REPO / "out" / "ce_lua53"
 
 def vc(cmd, cwd):
     """Run one command inside the MSVC environment; return (rc, output)."""
-    full = f'call "{find_vcvars()}" >nul && {cmd}'
-    r = subprocess.run(["cmd", "/d", "/s", "/c", full], cwd=cwd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    # shell=True, as build_dll.py does: the ["cmd", "/c", ...] list form re-quotes the vcvars path and cmd dies.
+    r = subprocess.run(f'chcp 65001 >nul && call "{find_vcvars()}" >nul 2>&1 && {cmd}', shell=True, cwd=cwd,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
