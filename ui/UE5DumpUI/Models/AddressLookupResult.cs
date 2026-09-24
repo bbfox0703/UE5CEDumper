@@ -129,9 +129,9 @@ public sealed class ContainerScanStats
     /// DLL.</summary>
     public int SparseUnlocated { get; init; }
 
-    /// <summary>[R7-A-01] Find References only: the sparse-delegate pass did not run, because this build uses compact
-    /// sets, whose storage map the DLL does not decode. Its bindings are missing from the result. false from an older
-    /// DLL.</summary>
+    /// <summary>[R7-A-01] [R7-S2] Find References only: the sparse-delegate pass did not run, because this build's
+    /// storage map is not decoded (compact sets, or a key that is not a raw pointer). Its bindings are missing from the
+    /// result. false from an older DLL.</summary>
     public bool SparseSkipped { get; init; }
 
     /// <summary>

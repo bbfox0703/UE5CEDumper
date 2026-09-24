@@ -3119,6 +3119,9 @@ int main() {
         }
         // The outer map: one 0x60 slot holding the owner, then the inner map's header at +0x08 (inline bits at +0x10).
         alignas(8) static uint8_t spOwner[0x40] = {};
+        // [R7-S2] The storage key probe asks for a UObject (8-aligned, a ClassPrivate pointer at +0x10): give the
+        // owner one, as every real key has.
+        spPutP(spOwner, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(spOwner));
         alignas(8) static uint8_t spOuterSlot[0x60] = {};
         spPutP(spOuterSlot, 0x00, reinterpret_cast<uintptr_t>(spOwner));
         spPutP(spOuterSlot, 0x08, reinterpret_cast<uintptr_t>(spInner));
@@ -3161,6 +3164,26 @@ int main() {
         Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stS);
         check("SPARSEREFS control: a sparse-set build reads the storage and skips nothing",
               !stS.sparseSkipped && stS.sparseUnlocated == 2);
+
+        // [R7-S2] Sparse delegates exist from UE 4.23, and 4.27 keys the storage by a raw pointer (the walker reads it):
+        // the pass must run there too, not skip silently behind a ">= 5.0" gate.
+        g_cachedUEVersion = 427;
+        Aura::ContainerScanStats st4;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &st4);
+        check("SPARSEREFS ⭐ R7-S2: on UE 4.27 the sparse pass runs (the two unreadable delegates are counted)",
+              st4.sparseUnlocated == 2 && !st4.sparseSkipped, std::to_string(st4.sparseUnlocated).c_str());
+        // ...and a key that is not a pointer (an FObjectKey-keyed 4.23-4.26 build) is refused and REPORTED, the way
+        // WalkSparseDelegateBindings refuses it -- not walked as if it were one.
+        uintptr_t svKeySp = 0;
+        memcpy(&svKeySp, spOuterSlot, 8);
+        const uintptr_t fobjectKey = 0x0000000500000003ull;   // { ObjectIndex 3, SerialNumber 5 }
+        memcpy(spOuterSlot, &fobjectKey, 8);
+        Aura::ContainerScanStats stK;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stK);
+        check("SPARSEREFS ⭐ R7-S2: a non-pointer outer key is refused and reported skipped, nothing read",
+              stK.sparseSkipped && stK.sparseUnlocated == 0, std::to_string(stK.sparseUnlocated).c_str());
+        memcpy(spOuterSlot, &svKeySp, 8);
+        g_cachedUEVersion = 505;
 
         Genau::s_sparseDelegatesCache.store(savedStoreSp);
         Genau::s_sparseDelegatesScanned.store(savedScannedSp);
