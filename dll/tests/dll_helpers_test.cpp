@@ -4830,6 +4830,77 @@ static void Test_Neu_Disambiguation() {
     EXPECT_EQ_U64("disambig count", L.count, 2);
 }
 
+// [VND583-04] UE 4.9-4.14: TArray<TPair<FName, uint8>> -- one value byte after the FName and
+// padding the engine never writes (filled with 0xCD here, as a debug heap would).
+static void NeuPutLegacyU8(NeuFakeMem& fm, uintptr_t region, uintptr_t dataAddr,
+                           const std::vector<std::pair<int32_t,int>>& es, int fnameSize, int stride) {
+    std::vector<uint8_t> data(es.size() * stride, 0xCD);
+    for (size_t i = 0; i < es.size(); ++i) {
+        std::memcpy(&data[i*stride], &es[i].first, 4);            // FName ComparisonIndex
+        std::memset(&data[i*stride + 4], 0, fnameSize - 4);        // the FName's Number (+ DisplayIndex)
+        data[i*stride + fnameSize] = static_cast<uint8_t>(es[i].second);   // the uint8 value
+    }
+    fm.Put(dataAddr, data.data(), data.size());
+    uint8_t hdr[0x20] = {};
+    uint64_t dataU = dataAddr;         std::memcpy(hdr + 0, &dataU, 8);
+    int32_t num = (int32_t)es.size();  std::memcpy(hdr + 8, &num, 4);
+    std::memcpy(hdr + 12, &num, 4);
+    fm.Put(region, hdr, sizeof(hdr));
+}
+
+static void Test_Neu_Legacy_Uint8Values() {
+    // Geometry: the value offset and the pair stride per width and alignof(FName).
+    EXPECT_EQ_U64("VND583-04: int64 pair, FName 8 -> stride 16",      Neu::LegacyStrideFor(8, 8, 8), 16);
+    EXPECT_EQ_U64("VND583-04: int64 pair, CPN FName 12 -> stride 24", Neu::LegacyStrideFor(12, 8, 4), 24);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, 8-aligned FName (4.11-4.14) -> 16", Neu::LegacyStrideFor(8, 1, 8), 16);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, 4-aligned FName (4.9/4.10) -> 12",  Neu::LegacyStrideFor(8, 1, 4), 12);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, CPN FName 12 -> 16, not 24",        Neu::LegacyStrideFor(12, 1, 4), 16);
+    EXPECT_EQ_U64("VND583-04: uint8 value sits right after the FName", Neu::LegacyValueOffset(12, 1), 12);
+    EXPECT_EQ_U64("VND583-04: int64 value sits at the next 8",         Neu::LegacyValueOffset(12, 8), 16);
+
+    // The width decision.
+    EXPECT("VND583-04: garbage above sequential low bytes proves uint8, whatever the version",
+           Neu::PickLegacyValueSize(false, true, 418) == 1);
+    EXPECT("VND583-04: zero padding (both agree) on 4.11 -> the source's uint8",
+           Neu::PickLegacyValueSize(true, true, 411) == 1);
+    EXPECT("VND583-04: no evidence on 4.14 -> uint8",  Neu::PickLegacyValueSize(false, false, 414) == 1);
+    EXPECT("VND583-04: no evidence on 4.09 -> uint8",  Neu::PickLegacyValueSize(false, false, 409) == 1);
+    EXPECT("VND583-04: 4.15 declared int64 -> 8",      Neu::PickLegacyValueSize(true, true, 415) == 8);
+    EXPECT("VND583-04: 4.27 -> 8",                     Neu::PickLegacyValueSize(true, true, 427) == 8);
+    EXPECT("VND583-04: an unknown version keeps 8",    Neu::PickLegacyValueSize(false, false, 0) == 8);
+
+    // The read: ENetRole-shaped (values 0..4), uint8 column, 0xCD padding, stride 16.
+    NeuFakeMem fm;
+    std::vector<std::pair<int32_t,int>> es = {{10,0},{20,1},{30,2},{40,3},{50,4}};
+    NeuPutLegacyU8(fm, 0x10000000, 0x20000000, es, 8, 16);
+    auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
+    Neu::EnumNamesLayout L;
+    EXPECT("VND583-04: the uint8 table still parses as legacy", Neu::DetectLayout(rd, 0x10000000, 8, 16384, L));
+    int32_t idx = 0; int64_t v = 0;
+    Neu::ReadEntry(rd, L, 2, idx, v);
+    EXPECT("VND583-04 the defect: an int64 read of a uint8 column carries the padding",
+           idx == 30 && v == static_cast<int64_t>(0xCDCDCDCDCDCDCD02ull));
+    EXPECT("VND583-04: ...so ENetRole's int64 column is NOT 0..n-1", !Neu::LegacyValuesSequential(rd, L, 8));
+    EXPECT("VND583-04: ...and its low bytes ARE", Neu::LegacyValuesSequential(rd, L, 1));
+    L.valueSize = 1;
+    L.legacyStride = static_cast<int>(Neu::LegacyStrideFor(8, 1, 8));
+    Neu::ReadEntry(rd, L, 2, idx, v);
+    EXPECT("VND583-04: read as one byte, entry 2 is (30, 2)", idx == 30 && v == 2);
+    Neu::ReadEntry(rd, L, 4, idx, v);
+    EXPECT("VND583-04: read as one byte, entry 4 is (50, 4)", idx == 50 && v == 4);
+
+    // 4.9/4.10 shape: 4-aligned FName, stride 12.
+    NeuFakeMem fm12;
+    NeuPutLegacyU8(fm12, 0x10000000, 0x20000000, es, 8, 12);
+    auto rd12 = [&](uintptr_t a, void* o, size_t n){ return fm12.Read(a, o, n); };
+    Neu::EnumNamesLayout L12;
+    Neu::DetectLayout(rd12, 0x10000000, 8, 16384, L12);
+    L12.valueSize = 1;
+    L12.legacyStride = static_cast<int>(Neu::LegacyStrideFor(8, 1, 4));
+    Neu::ReadEntry(rd12, L12, 3, idx, v);
+    EXPECT("VND583-04: a 12-byte pair reads entry 3 as (40, 3)", idx == 40 && v == 3);
+}
+
 static void Test_Neu_Edge() {
     Neu::EnumNamesLayout L;
     auto rd_none = [](uintptr_t, void*, size_t){ return false; };
@@ -8645,6 +8716,7 @@ int main() {
     RUN(Test_Neu_TagBitMasked);
     RUN(Test_Neu_Disambiguation);
     RUN(Test_Neu_Edge);
+    RUN(Test_Neu_Legacy_Uint8Values);
 
     // Orden — multi-value group scan SDR matcher (synthetic leaves, no game)
     RUN(Test_Orden_PerSlotCap);

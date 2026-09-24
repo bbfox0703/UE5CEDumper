@@ -723,7 +723,12 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 
 // === UEnum — lazy-detected by DetectUEnumNames() ===
 inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
-inline int UENUM_ENTRY_SIZE     = 0x10;  // legacy sizeof(TPair<FName,int64>) = 8+8 = 16 bytes
+// [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
+// (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).
+// Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer. (This
+// replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
+inline int UENUM_VALUE_SIZE     = 8;
+inline int UENUM_PAIR_STRIDE    = 0;
 // UE5.6+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
 // FNameData struct-of-arrays {tagged FName*, tagged int64*, int32 NumValues}. Set by
 // DetectUEnumNames (try-both); the enum reader (Ubel) branches on it. Written before the

@@ -29,6 +29,8 @@
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
 
+extern uint32_t g_cachedUEVersion;   // [VND583-04] DetectUEnumNames: the legacy value width's source rule
+
 namespace Genau {
 
 // ============================================================
@@ -5523,16 +5525,18 @@ bool DetectUEnumNames() {
             return Macht::ReadBytesSafe(a, o, n);
         };
         const int fnameSize = DynOff::SizeofFName();
+        // [VND583-04] The legacy pair's geometry. UE 4.9-4.14 declare TPair<FName, uint8>, 4.15+
+        // TPair<FName, int64>: the version's own width is tried first, then the other, and a
+        // width's stride follows alignof(FName) (measured when Ubel has measured it).
+        const unsigned ver = g_cachedUEVersion;
+        const int measuredAlign = DynOff::FNAME_ALIGN_MEASURED.load(std::memory_order_acquire);
+        const int fnameAlign = measuredAlign > 0 ? measuredAlign
+                                                 : DynOff::FNameAlignFor(ver, DynOff::bCasePreservingName);
+        const int ruleWidth = Neu::PickLegacyValueSize(false, false, ver);
+        const int widths[2] = { ruleWidth, ruleWidth == 1 ? 8 : 1 };
 
-        for (int off = 0x30; off <= 0x120; off += 8) {
-            Neu::EnumNamesLayout layout;
-            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
-                continue;
-
-            // Validate count range
-            if (layout.count < cand.minCount || layout.count > cand.maxCount) continue;
-
-            // Read first few members and check FNames resolve to expected substrings.
+        // Read the first few members and count the FNames that resolve to the expected substring.
+        auto verifyNames = [&](const Neu::EnumNamesLayout& layout) -> int {
             int verified = 0;
             const int32_t toCheck = (std::min)(layout.count, 5);
             for (int32_t i = 0; i < toCheck; ++i) {
@@ -5555,18 +5559,49 @@ bool DetectUEnumNames() {
                     ++verified;
                 }
             }
+            return verified;
+        };
+
+        for (int off = 0x30; off <= 0x120; off += 8) {
+            Neu::EnumNamesLayout layout;
+            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
+                continue;
+
+            // Validate count range
+            if (layout.count < cand.minCount || layout.count > cand.maxCount) continue;
+
+            const bool legacy = layout.format == Neu::EnumNamesFormat::Legacy;
+            int verified = 0;
+            for (int w = 0; w < (legacy ? 2 : 1) && verified < 2; ++w) {
+                if (legacy) {
+                    layout.valueSize    = widths[w];
+                    layout.legacyStride = static_cast<int>(Neu::LegacyStrideFor(fnameSize, widths[w], fnameAlign));
+                }
+                verified = verifyNames(layout);
+            }
 
             if (verified >= 2) {
+                // [VND583-04] ENetRole's values are 0..n-1, so its value column is MEASURED: garbage
+                // above sequential low bytes proves a uint8 column whatever the version says.
+                if (legacy && std::strcmp(cand.name, "ENetRole") == 0) {
+                    const bool seq8 = Neu::LegacyValuesSequential(readMem, layout, 8);
+                    const bool seq1 = Neu::LegacyValuesSequential(readMem, layout, 1);
+                    layout.valueSize = Neu::PickLegacyValueSize(seq8, seq1, ver);
+                    Sein::Info("DYNO:Enum", "  UEnum::Names value column: int64 reads %s, low bytes %s -> "
+                        "%d-byte values (UE %u)", seq8 ? "0..n-1" : "NOT 0..n-1",
+                        seq1 ? "0..n-1" : "NOT 0..n-1", layout.valueSize, ver);
+                }
                 DynOff::UENUM_NAMES = off;
-                DynOff::bEnumNamesNewContainer =
-                    (layout.format == Neu::EnumNamesFormat::FNameData57);
+                DynOff::bEnumNamesNewContainer = !legacy;
+                DynOff::UENUM_VALUE_SIZE  = legacy ? layout.valueSize : 8;
+                DynOff::UENUM_PAIR_STRIDE = legacy ? layout.legacyStride : 0;
                 DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
 
                 Sein::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "
-                    "(%s, verified with '%s', count=%d, %d name matches)",
+                    "(%s, verified with '%s', count=%d, %d name matches, value %d B, pair stride %d)",
                     off, DynOff::bEnumNamesNewContainer ? "UE5.6+ FNameData"
                                                         : "legacy TArray",
-                    cand.name, layout.count, verified);
+                    cand.name, layout.count, verified, DynOff::UENUM_VALUE_SIZE, DynOff::UENUM_PAIR_STRIDE);
                 return true;
             }
         }

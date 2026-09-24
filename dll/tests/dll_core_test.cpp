@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT and FNAMEMEASURE below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE and ENUMU8 below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT and FNAMEMEASURE are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE and ENUMU8 are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3716,6 +3716,128 @@ int main() {
         DynOff::bOffsetsValidated   = svValidM;
         DynOff::bCasePreservingName = svCpnM;
         g_cachedUEVersion           = svVerM;
+    }
+
+    // -- [VND583-04] UE 4.9-4.14 enums carry uint8 values: detected, measured, and read as one byte ----
+    // A built "ENetRole" UEnum whose Names is TArray<TPair<FName, uint8>> with 0xCD padding (what an
+    // unwritten pair tail looks like). DetectUEnumNames must find it, MEASURE the column's width on
+    // ENetRole's 0..n-1 values, and ResolveEnumValue must then name every value. Own pool + name
+    // pool, like UFIELDNEXT.
+    {
+        blk("ENUMU8 - UEnum::Names with uint8 values: the width is measured and the byte read alone");
+        ResetCancel();
+        enum : int32_t { eClass = 1, eEnum, eNetRole, eR0, eR1, eR2, eR3, eR4, eNames };
+        const char* euNames[eNames] = { "", "Class", "Enum", "ENetRole", "ROLE_None", "ROLE_SimulatedProxy",
+                                        "ROLE_AutonomousProxy", "ROLE_Authority", "ROLE_MAX" };
+        static uint8_t euEntry[eNames][0x40] = {};
+        static uintptr_t euChunk[eNames + 1] = {};
+        for (int i = 1; i < eNames; ++i) {
+            memcpy(euEntry[i] + 0x10, euNames[i], strlen(euNames[i]) + 1);
+            euChunk[i] = reinterpret_cast<uintptr_t>(euEntry[i]);
+        }
+        static uintptr_t euChunks[2] = { reinterpret_cast<uintptr_t>(euChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(euChunks), 0x10);
+
+        const uint32_t svVerE    = g_cachedUEVersion;
+        const bool     svCpnE    = DynOff::bCasePreservingName;
+        const int      svNamesE  = DynOff::UENUM_NAMES;
+        const bool     svNewE    = DynOff::bEnumNamesNewContainer;
+        const int      svWidthE  = DynOff::UENUM_VALUE_SIZE;
+        const int      svStrideE = DynOff::UENUM_PAIR_STRIDE;
+        const bool     svProbedE = DynOff::bFNameAlignProbed.load();
+        const int      svAlignE  = DynOff::FNAME_ALIGN_MEASURED.load();
+        DynOff::bCasePreservingName  = false;
+        DynOff::bFNameAlignProbed    = true;    // nothing measured: alignof(FName) comes from the version rule
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+
+        enum { bMeta, bEnumCls, bNetRole, kEB };
+        alignas(16) static uint8_t euB[kEB][0x200] = {};
+        alignas(16) static uint8_t euData[5 * 16] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(euB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        // width 1 = uint8 values + 0xCD padding; width 8 = int64 values. stride = pair size.
+        auto build = [&](int width, int stride) {
+            for (auto& b : euB) memset(b, 0, sizeof(b));
+            memset(euData, 0xCD, sizeof(euData));
+            putP(euB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));        put32(euB[bMeta], Grimoire::OFF_UOBJECT_NAME, eClass);
+            putP(euB[bEnumCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));     put32(euB[bEnumCls], Grimoire::OFF_UOBJECT_NAME, eEnum);
+            putP(euB[bNetRole], Grimoire::OFF_UOBJECT_CLASS, A(bEnumCls));  put32(euB[bNetRole], Grimoire::OFF_UOBJECT_NAME, eNetRole);
+            for (int i = 0; i < 5; ++i) {
+                uint8_t* e = euData + i * stride;
+                put32(e, 0, eR0 + i);
+                put32(e, 4, 0);
+                if (width == 1) e[8] = static_cast<uint8_t>(i);
+                else { const int64_t v = i; memcpy(e + 8, &v, sizeof(v)); }
+            }
+            putP(euB[bNetRole], 0x40, reinterpret_cast<uintptr_t>(euData));   // TArray: Data*, Num, Max
+            put32(euB[bNetRole], 0x48, 5);
+            put32(euB[bNetRole], 0x4C, 5);
+            DynOff::bUEnumNamesDetected.store(false);
+            DynOff::bUEnumNamesFailed.store(false);
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(A(bNetRole));
+        };
+
+        FakePool euPool;
+        euPool.Build(kEB);
+        for (int i = 0; i < kEB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(euPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(euPool.Addr(), FakePool::kItemSize);
+
+        // 4.11: uint8 values in a 16-byte pair (FName is 8-aligned there).
+        build(1, 16);
+        g_cachedUEVersion = 411;
+        const bool det411 = Genau::DetectUEnumNames();
+        check("ENUMU8 setup: ENetRole's Names is found at +0x40", det411 && DynOff::UENUM_NAMES == 0x40);
+        check("ENUMU8 ⭐: 4.11 -> 1-byte values", DynOff::UENUM_VALUE_SIZE == 1,
+              std::to_string(DynOff::UENUM_VALUE_SIZE).c_str());
+        const std::string r2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        const std::string r4 = Ubel::ResolveEnumValue(A(bNetRole), 4);
+        check("ENUMU8 ⭐: value 2 names ROLE_AutonomousProxy", r2 == "ROLE_AutonomousProxy", r2.c_str());
+        check("ENUMU8 ⭐: value 4 names ROLE_MAX", r4 == "ROLE_MAX", r4.c_str());
+
+        // The same memory on a version whose rule says int64: the MEASUREMENT still finds the byte.
+        build(1, 16);
+        g_cachedUEVersion = 427;
+        Genau::DetectUEnumNames();
+        const std::string m2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        check("ENUMU8 ⭐: garbage above sequential low bytes is measured as uint8 even where the rule says int64",
+              DynOff::UENUM_VALUE_SIZE == 1 && m2 == "ROLE_AutonomousProxy", m2.c_str());
+
+        // 4.10: FName is 4-aligned, so the uint8 pair strides 12.
+        build(1, 12);
+        g_cachedUEVersion = 410;
+        Genau::DetectUEnumNames();
+        const std::string t3 = Ubel::ResolveEnumValue(A(bNetRole), 3);
+        check("ENUMU8: a 12-byte pair (4.10) is found, strided and named", DynOff::UENUM_PAIR_STRIDE == 12
+              && t3 == "ROLE_Authority", (std::to_string(DynOff::UENUM_PAIR_STRIDE) + " " + t3).c_str());
+
+        // Control: 4.18's int64 column keeps 8 bytes and still names its values.
+        build(8, 16);
+        g_cachedUEVersion = 418;
+        Genau::DetectUEnumNames();
+        const std::string c2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        check("ENUMU8 control: 4.18's int64 values stay 8 bytes and resolve",
+              DynOff::UENUM_VALUE_SIZE == 8 && c2 == "ROLE_AutonomousProxy", c2.c_str());
+
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(A(bNetRole));
+        }
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        DynOff::UENUM_NAMES            = svNamesE;
+        DynOff::bEnumNamesNewContainer = svNewE;
+        DynOff::UENUM_VALUE_SIZE       = svWidthE;
+        DynOff::UENUM_PAIR_STRIDE      = svStrideE;
+        DynOff::bFNameAlignProbed      = svProbedE;
+        DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
+        DynOff::bCasePreservingName    = svCpnE;
+        g_cachedUEVersion              = svVerE;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

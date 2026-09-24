@@ -172,6 +172,10 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     // cached, or every lookup re-probes. A half-read table is the opposite case.
     bool tableComplete = true;
     if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
+        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
+            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
+            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
+        }
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
             int32_t nameIdx = 0;

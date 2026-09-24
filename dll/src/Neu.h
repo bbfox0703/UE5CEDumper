@@ -10,6 +10,9 @@
 //       +0x0C  int32 ArrayMax
 //     entry i @ Data + i*(Align(sizeof(FName),8)+8):  FName @ +0, int64 value @ +Align(sizeof(FName),8)
 //       (the int64 makes the TPair 8-aligned, so a 0xC CasePreserving FName is PADDED to 0x10 here)
+//     [VND583-04] UE 4.9-4.14 declare TArray<TPair<FName, uint8>> instead: ONE value byte right
+//       after the FName, and the pair padded to alignof(FName) -- 16 bytes on a non-CPN 4.11-4.14,
+//       whose FName is 8-aligned -- with padding bytes that the engine never writes.
 //
 //   FNameData57 (UE5.6+):     Names is a struct-of-arrays (UEnum::FNameData)
 //       +0x00  UPTRINT TaggedNames    (tagged FName*  — mask &~1)   names array
@@ -56,7 +59,36 @@ struct EnumNamesLayout {
     uintptr_t       valuesPtr   = 0;   // int64[] base (FNameData57 only; 0 for Legacy)
     int32_t         count       = 0;   // number of enum members
     int             fnameSize   = 8;   // sizeof(FName) for this game (8 normal / 0xC CasePreserving)
+    // [VND583-04] Legacy only: the value's width (8 = int64; 1 = uint8 on UE 4.9-4.14) and the
+    // pair's stride (0 = the int64 pair's own). DetectUEnumNames decides both, once per game.
+    int             valueSize    = 8;
+    int             legacyStride = 0;
 };
+
+// [VND583-04] Legacy pair geometry. The value follows the FName directly when it is one byte,
+// and at the next 8-byte boundary when it is an int64; the pair is padded to its own alignment,
+// max(alignof(FName), alignof(value)). alignof(FName) is 8 on non-CPN 4.11-4.21 and 4 elsewhere
+// (DynOff::FNameAlignFor), so a 4.11-4.14 uint8 pair strides 16 and a 4.10 one 12.
+constexpr uintptr_t LegacyValueOffset(int fnameSize, int valueSize) {
+    return valueSize >= 8 ? ((static_cast<uintptr_t>(fnameSize) + 7u) & ~static_cast<uintptr_t>(7u))
+                          : static_cast<uintptr_t>(fnameSize);
+}
+constexpr uintptr_t LegacyStrideFor(int fnameSize, int valueSize, int fnameAlign) {
+    const int fa = fnameAlign > 0 ? fnameAlign : 4;
+    const int a  = valueSize >= 8 ? (fa > 8 ? fa : 8) : fa;   // alignof(TPair) = max(alignof(FName), alignof(value))
+    const uintptr_t end = LegacyValueOffset(fnameSize, valueSize) + static_cast<uintptr_t>(valueSize >= 8 ? 8 : 1);
+    return (end + static_cast<uintptr_t>(a) - 1u) & ~(static_cast<uintptr_t>(a) - 1u);
+}
+
+// [VND583-04] The legacy value width, from an enum whose values are 0..n-1 (ENetRole). The uint8
+// era leaves the bytes after each value unwritten, so an int64 read there carries heap garbage:
+// low bytes sequential while the int64 is not PROVES a 1-byte value. Anything else defers to the
+// engine source -- 4.9-4.14 declare uint8, 4.15+ int64 -- and when the padding happens to be zero
+// both reads agree, so the source's width is right either way. An unknown version (0) keeps 8.
+constexpr int PickLegacyValueSize(bool int64Sequential, bool lowByteSequential, unsigned ueVersion) {
+    if (lowByteSequential && !int64Sequential) return 1;
+    return (ueVersion >= 409 && ueVersion < 415) ? 1 : 8;
+}
 
 // Tag bit on the FNameData pointers: 1 = dynamically allocated FName array (the
 // live/runtime state). 0 = still the compiled-in static UTF8 string table, which
@@ -160,11 +192,36 @@ inline bool ReadEntry(ReadFn&& read, const EnumNamesLayout& L, int32_t i,
     // 0xC CasePreserving FName is PADDED to 0x10 inside the pair -- the value sits at
     // Align(sizeof(FName),8) and the stride is that + 8. Do NOT use fnameSize raw here:
     // that is the whole reason this parameter used to be misnamed 'stride'.
-    const uintptr_t valueOffset = (static_cast<uintptr_t>(L.fnameSize) + 7u) & ~static_cast<uintptr_t>(7u);
-    const uintptr_t entryStride = valueOffset + 8u;
+    // [VND583-04] UE 4.9-4.14's TPair<FName, uint8> puts ONE byte right after the FName and
+    // leaves the rest of the pair unwritten; L.valueSize / L.legacyStride carry that shape
+    // (LegacyValueOffset / LegacyStrideFor), and the byte is read alone, never as an int64.
+    const uintptr_t valueOffset = LegacyValueOffset(L.fnameSize, L.valueSize);
+    const uintptr_t entryStride = L.legacyStride > 0 ? static_cast<uintptr_t>(L.legacyStride)
+                                                     : LegacyStrideFor(L.fnameSize, 8, 8);
     const uintptr_t entryAddr   = L.namesPtr + static_cast<uintptr_t>(i) * entryStride;
     if (!read(entryAddr, &nameIndex, sizeof(nameIndex))) return false;
+    if (L.valueSize == 1) {
+        uint8_t b = 0;
+        if (!read(entryAddr + valueOffset, &b, sizeof(b))) return false;
+        value = b;
+        return true;
+    }
     if (!read(entryAddr + valueOffset, &value, sizeof(value))) return false;
+    return true;
+}
+
+// [VND583-04] Does the legacy value column read 0..n-1 at `valueSize` bytes? Asked of ENetRole,
+// whose values ARE 0..n-1, to tell a uint8 column from an int64 one (PickLegacyValueSize).
+template <typename ReadFn>
+inline bool LegacyValuesSequential(ReadFn&& read, const EnumNamesLayout& L, int valueSize) noexcept {
+    if (L.format != EnumNamesFormat::Legacy || L.count <= 0) return false;
+    EnumNamesLayout M = L;
+    M.valueSize = valueSize;
+    for (int32_t i = 0; i < L.count; ++i) {
+        int32_t n = 0;
+        int64_t v = 0;
+        if (!ReadEntry(read, M, i, n, v) || v != i) return false;
+    }
     return true;
 }
 
