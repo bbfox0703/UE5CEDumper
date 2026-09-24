@@ -343,6 +343,11 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // is not (or no longer) a UFunction.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
+// [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
+// (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
+// has not run, or it could not measure) -- the caller then keeps its primary + sweep.
+int FunctionFlagsOffset();
+
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
 

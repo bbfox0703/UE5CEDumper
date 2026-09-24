@@ -6090,6 +6090,60 @@ static void Test_FunctionFlagsOffset() {
     EXPECT("A3: 0xB8 is not left until last", idxB8 < idxLast);
     EXPECT("A3: 0xB0 is tried first -- it covers 4.25 through 5.8",
            DynOff::FUNCTIONFLAGS_SWEEP[0] == 0xB0);
+    // --- [VND583-01] The version table above is only a FALLBACK. On a layout whose UObject is
+    //     shifted it lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, measured
+    //     PropertiesSize 0x50) has FunctionFlags at 0x98 where the table says 0x88, and FF7R's
+    //     fork has it at 0x90. FunctionFlags - PropertiesSize is 0x48 in UProperty mode
+    //     (4.08-4.24) and 0x58 in FProperty mode (4.25-5.08, case-preserving included) in all
+    //     31 UEPseudo tables and the RE-UE4SS MemberVarLayout templates:
+    //       4.18/4.21 0x40->0x88   4.22/4.24 0x50->0x98   4.25/4.27/5.01/5.08 0x58->0xB0
+    //       4.27 CPN 0x60->0xB8
+    EXPECT("VND583-01: 4.18 stock, PropertiesSize 0x40 -> 0x88",
+           DynOff::FunctionFlagsFromPropsSize(0x40, false) == 0x88);
+    EXPECT("VND583-01: 4.22-4.24, PropertiesSize 0x50 -> 0x98",
+           DynOff::FunctionFlagsFromPropsSize(0x50, false) == 0x98);
+    EXPECT("VND583-01: 4.25-5.8 FProperty, PropertiesSize 0x58 -> 0xB0",
+           DynOff::FunctionFlagsFromPropsSize(0x58, true) == 0xB0);
+    EXPECT("VND583-01: 4.27 case-preserving, PropertiesSize 0x60 -> 0xB8",
+           DynOff::FunctionFlagsFromPropsSize(0x60, true) == 0xB8);
+    // The relation reproduces the version table on every STOCK layout, so measuring can only
+    // change the answer where the layout is not stock.
+    for (unsigned v : { 411u, 418u, 421u })
+        EXPECT("VND583-01: stock 4.11-4.21 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x40, false) == DynOff::FunctionFlagsOffsetFor(v, false));
+    for (unsigned v : { 422u, 424u })
+        EXPECT("VND583-01: stock 4.22-4.24 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x50, false) == DynOff::FunctionFlagsOffsetFor(v, false));
+    for (unsigned v : { 425u, 427u, 501u, 508u })
+        EXPECT("VND583-01: stock 4.25-5.8 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x58, true) == DynOff::FunctionFlagsOffsetFor(v, false));
+    EXPECT("VND583-01: stock 4.27 CPN agrees with the table",
+           DynOff::FunctionFlagsFromPropsSize(0x60, true) == DynOff::FunctionFlagsOffsetFor(427, true));
+
+    // The primary: the MEASURED PropertiesSize when the offsets probe validated, else the table.
+    EXPECT("VND583-01: DQ XI S shape -- a measured 0x50 on 4.18 gives 0x98, not the table's 0x88",
+           DynOff::FunctionFlagsPrimaryFor(418, false, 0x50, true, false) == 0x98);
+    EXPECT("VND583-01: an UNMEASURED PropertiesSize keeps the version table",
+           DynOff::FunctionFlagsPrimaryFor(418, false, 0x50, false, false) == 0x88);
+    EXPECT("VND583-01: an unmeasured 4.27 CPN keeps the table's +8",
+           DynOff::FunctionFlagsPrimaryFor(427, true, 0x58, false, true) == 0xB8);
+    EXPECT("VND583-01: a nonsense PropertiesSize (0) is not trusted even if 'validated'",
+           DynOff::FunctionFlagsPrimaryFor(425, false, 0, true, true) == 0xB0);
+
+    // The vote's per-sample rule: at the right offset, NumParms equals the function's own
+    // CPF_Parm count and ParmsSize covers the last parameter (rounded up by at most 16).
+    EXPECT("VND583-01: exact NumParms and ParmsSize match",
+           DynOff::FunctionTailMatches(2, 8, 2, 8));
+    EXPECT("VND583-01: ParmsSize rounded up past the last param still matches",
+           DynOff::FunctionTailMatches(3, 16, 3, 12));
+    EXPECT("VND583-01: a wrong NumParms does not match",
+           !DynOff::FunctionTailMatches(2, 8, 3, 8));
+    EXPECT("VND583-01: a ParmsSize that does not reach the last param does not match",
+           !DynOff::FunctionTailMatches(2, 4, 2, 8));
+    EXPECT("VND583-01: a function with no parameters cannot vote",
+           !DynOff::FunctionTailMatches(0, 0, 0, 0));
+    EXPECT("VND583-01: an absurd ParmsSize (a pointer's low bytes) does not match",
+           !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
 }
 
 static void Test_ProcessEventVTableSlot() {

@@ -260,7 +260,7 @@ the usage window — re-derive before acting.
 
 | id | sev | effort | what | where |
 |---|---|---|---|---|
-| `[VND583-01]` | **breaking** | S–M | `UFunction::FunctionFlags` keyed on version only; FF7R is +0x90, DQ XI S 0x98 (table gives 0x88 = `ScriptObjectReferences.Data`). Derive from measured PropertiesSize (+0x48 / +0x58) and vote on NumParms | `Grimoire.h:466-480`, `Ubel.cpp:1530-1565`, `Aura.cpp:6428-6440` |
+| `[VND583-01]` | ✅ **FIXED** (was breaking) | S–M | **FIXED 2026-09-24**: a one-shot vote (`Ubel::EnsureFunctionFlagsOffset`) scores the measured `PropertiesSize` relation, the table and the six template values (tail +0/+4) against each sampled UFunction's own CPF_Parm chain; both readers use it, and a decided offset is never swept. Tests: `Test_FunctionFlagsOffset` +19 (red 19 fail → green). Live check: DQ XI S (expect `+0x98`) + a stock title (expect `+0xB0`). Was: `UFunction::FunctionFlags` keyed on version only; FF7R is +0x90, DQ XI S 0x98 (table gives 0x88 = `ScriptObjectReferences.Data`). Derive from measured PropertiesSize (+0x48 / +0x58) and vote on NumParms | `Grimoire.h:466-480`, `Ubel.cpp:1530-1565`, `Aura.cpp:6428-6440` |
 | `[VND583-02]` | gap | S | `UField::Next` never measured in FProperty mode — function lists wrong on 4.25+ titles with a 0x30 UObject (The Pathless) | `Genau.cpp:3378-3383`, `:3962-4086`; `Ubel.cpp:1762` |
 | `[VND583-03]` | gap | S | `alignof(FName)` is 8 on non-CPN 4.11–4.21; `Scharf.h:80` says 4 → TMap stride 4 short for some shapes | `Scharf.h:80`, `Ubel.cpp:1965-1970`, `:5460-5473` |
 | `[VND583-04]` | gap | S | `UEnum::Names` value is `uint8` on 4.9–4.14; `Neu::ReadEntry` reads int64 → garbage padding decides resolution (NEKOPALIVE) | `Neu.h:159-168`, `Ubel.cpp:147-148` |

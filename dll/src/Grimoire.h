@@ -482,6 +482,54 @@ constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName
 // old sweep tried and which matches no version of anything.
 inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
 
+// === [VND583-01] FunctionFlags is MEASURED, the version table above is only a fallback ===
+//
+// Before 4.25 FunctionFlags was the only UStruct/UFunction offset not taken from a probe, and
+// both readers accepted the first non-zero dword. On a layout whose UObject is shifted the
+// table lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, measured PropertiesSize
+// 0x50, a +0x10 shift) has FunctionFlags at 0x98 where the table says 0x88 -- the low dword of
+// ScriptObjectReferences.Data, non-zero for almost every Blueprint UFunction -- and FF7R's
+// 4.18 fork has it at 0x90 (RE-UE4SS FF7R MemberVariableLayout.ini, and every
+// `test [reg+0x90]` of FUNC_Native / FUNC_HasOutParms in ff7remake_.exe).
+//
+// FunctionFlags - PropertiesSize is CONSTANT per property mode in all 31 UEPseudo tables and
+// the RE-UE4SS MemberVarLayout templates: 0x48 in UProperty mode (4.08-4.24) and 0x58 in
+// FProperty mode (4.25-5.08, case-preserving included, because the CPN +8 already sits inside
+// the measured PropertiesSize). Measured from the templates 2026-09-24:
+//   4.18/4.21 0x40->0x88   4.22/4.24 0x50->0x98   4.25/4.27/5.01/5.08 0x58->0xB0   4.27 CPN 0x60->0xB8
+// so on every STOCK layout the relation reproduces the table, and it can only change the
+// answer where the layout is not stock -- which is exactly where the table is wrong.
+constexpr int FunctionFlagsFromPropsSize(int propsSizeOff, bool fproperty) {
+    return propsSizeOff + (fproperty ? 0x58 : 0x48);
+}
+
+// The primary a reader starts from before -- or without -- the vote in Ubel: the measured
+// relation when the offsets probe VALIDATED (PropertiesSize is ChildProperties + 8, measured)
+// and the value is plausible, else the version table. `measured` is DynOff::bOffsetsValidated.
+constexpr int FunctionFlagsPrimaryFor(unsigned ueVersion, bool casePreservingName, int propsSizeOff,
+                                      bool measured, bool fproperty) {
+    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= 0x80)
+        return FunctionFlagsFromPropsSize(propsSizeOff, fproperty);
+    return FunctionFlagsOffsetFor(ueVersion, casePreservingName);
+}
+
+// The vote's per-sample rule (Ubel::EnsureFunctionFlagsOffset). At the right offset, NumParms
+// equals the function's own CPF_Parm count and ParmsSize covers the end of its last parameter,
+// rounded up by at most 16. A function with no parameters cannot tell offsets apart, and a
+// ParmsSize this large is a pointer's low bytes, not a parameter block.
+constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, int paramsEnd) {
+    return paramCount > 0 && numParms == paramCount && parmsSize >= paramsEnd
+        && parmsSize <= paramsEnd + 16;
+}
+
+// Latched once by Ubel::EnsureFunctionFlagsOffset (a vote over sampled UFunctions, run after
+// the offsets probe). UFUNCTION_FLAGS 0 = undecided -> the readers keep the primary + sweep.
+// UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
+// FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
+inline int UFUNCTION_FLAGS      = 0;
+inline int UFUNCTION_TAIL_EXTRA = 0;
+inline std::atomic<bool> bUFunctionFlagsDetected{false};
+
 // === UFunction's tail behind FunctionFlags: NumParms (u8) / ParmsSize (u16) / ReturnValueOffset ===
 //
 // [A2-UFUNC-TAIL-4X] These three were read at a flat +4/+6/+8 under a comment calling that

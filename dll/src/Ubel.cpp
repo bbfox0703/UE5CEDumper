@@ -1517,20 +1517,139 @@ int32_t FindFieldOffset(uintptr_t classAddr, const char* exact,
         ? fi.Offset : -1;
 }
 
+// [VND583-01] The function's own parameter shape: how many CPF_Parm properties it has and
+// where the last one ends. This is what UFunction::NumParms / ParmsSize record, so it is the
+// ground truth the FunctionFlags vote scores candidate offsets against. Reads the same chain
+// WalkFunctions does (ChildProperties/FField::Next, or Children/UField::Next before 4.25).
+static bool ReadParamShape(uintptr_t func, int& count, int& end) {
+    constexpr uint64_t CPF_Parm = 0x0080;
+    count = 0; end = 0;
+    const bool fprop = DynOff::bUseFProperty;
+    uintptr_t cur = 0;
+    if (!Macht::ReadSafe(func + (fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN), cur))
+        return false;
+    if (fprop) cur = DynOff::StripFFieldTag(cur);
+    for (int limit = 256; cur != 0 && limit-- > 0; ) {
+        if (fprop && DynOff::IsFFieldVariantUObject(cur)) break;
+        uint64_t flags = 0;
+        int32_t off = 0, size = 0;
+        if (!Macht::ReadSafe<uint64_t>(cur + (fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS), flags)) break;
+        Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET), off);
+        Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE), size);
+        if (flags & CPF_Parm) {
+            if (off < 0 || size <= 0 || off > 0x10000 || size > 0x10000) return false;   // not a real chain
+            ++count;
+            end = std::max(end, off + size);
+        }
+        uintptr_t next = 0;
+        if (!Macht::ReadSafe(cur + (fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT), next)) break;
+        cur = fprop ? DynOff::StripFFieldTag(next) : next;
+    }
+    return count > 0;
+}
+
+// [VND583-01] Decide UFunction::FunctionFlags' offset ONCE, by measurement. Candidates: the
+// measured primary (PropertiesSize + 0x48/0x58), the version table, and the six template
+// values; each with the version's own tail shift and an extra 0 or +4 (Split Fiction). A
+// candidate scores a sample when NumParms / ParmsSize read at it match the sampled function's
+// own parameter chain (DynOff::FunctionTailMatches). The winner needs >= 60% of at least 8
+// samples; otherwise the measured primary is latched when there is one, and 0 (undecided)
+// when there is not. Runs only after the offsets probe, because it walks property chains.
+static void EnsureFunctionFlagsOffset() {
+    if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_acquire)) return;
+    if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_relaxed)) return;
+
+    const unsigned ver = g_cachedUEVersion;
+    const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
+    const int primary = DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
+                                                        DynOff::USTRUCT_PROPSSIZE, measured,
+                                                        DynOff::bUseFProperty);
+    const int table = DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName);
+    std::vector<int> cands{ primary };
+    auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
+    addCand(table);
+    for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
+
+    struct Sample { uintptr_t f; int count; int end; };
+    std::vector<Sample> samples;
+    constexpr int kWant = 64;
+    const int32_t total = Aura::GetCount();
+    for (int32_t i = 0; i < total && static_cast<int>(samples.size()) < kWant; ++i) {
+        uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "Function") continue;
+        Sample s{ obj, 0, 0 };
+        if (ReadParamShape(obj, s.count, s.end)) samples.push_back(s);
+    }
+
+    const int shift = DynOff::FunctionTailShiftFor(ver);
+    int bestOff = 0, bestExtra = 0, bestHits = -1;
+    for (int c : cands) {
+        for (int extra : { 0, 4 }) {
+            int hits = 0;
+            for (const Sample& s : samples) {
+                uint8_t numParms = 0;
+                uint16_t parmsSize = 0;
+                const uintptr_t tail = s.f + c + shift + extra;
+                if (Macht::ReadSafe<uint8_t>(tail + 0x04, numParms)
+                    && Macht::ReadSafe<uint16_t>(tail + 0x06, parmsSize)
+                    && DynOff::FunctionTailMatches(numParms, parmsSize, s.count, s.end))
+                    ++hits;
+            }
+            if (hits > bestHits) { bestHits = hits; bestOff = c; bestExtra = extra; }   // ties keep the earlier
+        }
+    }
+
+    const int n = static_cast<int>(samples.size());
+    const int need = std::max(6, (n * 6 + 9) / 10);
+    if (n >= 8 && bestHits >= need) {
+        DynOff::UFUNCTION_FLAGS = bestOff;
+        DynOff::UFUNCTION_TAIL_EXTRA = bestExtra;
+        LOG_INFO("DetectFunctionFlags: %d UFunction samples -> FunctionFlags=+0x%X tailExtra=+%d "
+                 "(%d/%d votes; measured primary +0x%X, version table +0x%X)",
+                 n, bestOff, bestExtra, bestHits, n, primary, table);
+    } else {
+        DynOff::UFUNCTION_FLAGS = measured ? primary : 0;
+        DynOff::UFUNCTION_TAIL_EXTRA = 0;
+        LOG_WARN("DetectFunctionFlags: inconclusive (%d samples, best +0x%X with %d votes, need %d) -- %s",
+                 n, bestOff, bestHits < 0 ? 0 : bestHits, need,
+                 measured ? "keeping the measured primary" : "undecided, readers keep the table + sweep");
+    }
+    DynOff::bUFunctionFlagsDetected.store(true, std::memory_order_release);
+}
+
+int FunctionFlagsOffset() {
+    EnsureFunctionFlagsOffset();
+    return DynOff::UFUNCTION_FLAGS;
+}
+
 // Read UFunction::FunctionFlags (+ the NumParms/ParmsSize/ReturnValueOffset that
-// sit at fixed offsets past it) into `fi`. Version-aware offset probe shared by
-// WalkFunctions and ResolveFunctionInfo. `funcAddr` must already be a validated
-// UFunction*; all reads are SEH-safe via Macht::ReadSafe.
+// sit at fixed offsets past it) into `fi`. Shared by WalkFunctions and
+// ResolveFunctionInfo. `funcAddr` must already be a validated UFunction*; all
+// reads are SEH-safe via Macht::ReadSafe.
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
-    // Version- AND case-preserving-aware. The table, the measurements behind it, and
-    // why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor
-    // (Grimoire.h) — in the header so the test target can pin every row.
+    // [VND583-01] The offset is DECIDED by the vote above when it can be; then a zero read is
+    // a zero, never a reason to sweep. Otherwise the primary (the measured PropertiesSize
+    // relation, else the version table) and the sweep, as before. The table, the measurements
+    // behind it, and why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
-    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
-                                                       DynOff::bCasePreservingName);
+    const int decided = FunctionFlagsOffset();
+    const int primary = decided > 0 ? decided
+        : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
+                                          DynOff::USTRUCT_PROPSSIZE,
+                                          DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                          DynOff::bUseFProperty);
 
-    if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
+    if (decided > 0) {
+        Macht::ReadSafe<uint32_t>(funcAddr + decided, funcFlags);
+        funcFlagsOff = decided;
+    } else if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
         funcFlagsOff = primary;
     } else {
         // Fallback: try all known offsets (skip primary, already tried).
@@ -1551,7 +1670,8 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
     // on DynOff::FunctionTailShiftFor.
     if (funcFlagsOff >= 0) {
-        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion);
+        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
+                       + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);   // [VND583-01]
         Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);

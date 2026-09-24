@@ -6429,9 +6429,18 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
     // Shares DynOff::FunctionFlagsOffsetFor with Ubel::ReadFuncFlagsAndParams — these two
     // drifting apart is how one of them kept a dead `>= 550 -> 0xC0` band while the other
     // was fixed. One table, one sweep, one place to correct.
-    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
-                                                       DynOff::bCasePreservingName);
+    // [VND583-01] The vote's decision first (a zero read then IS zero); otherwise the measured
+    // PropertiesSize relation, else the version table, and the sweep.
     uint32_t flags = 0;
+    const int decided = Ubel::FunctionFlagsOffset();
+    if (decided > 0) {
+        Macht::ReadSafe<uint32_t>(funcAddr + decided, flags);
+        return flags;
+    }
+    const int primary = DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
+                                                        DynOff::USTRUCT_PROPSSIZE,
+                                                        DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                                        DynOff::bUseFProperty);
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, flags) && flags != 0) return flags;
     for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
         if (tryOff == primary) continue;
