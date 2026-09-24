@@ -730,6 +730,23 @@ agree by `SendMessage` who owns games/UI/`dist\` until when. (2) Re-hash `dist\`
 end of every row and cite what the row actually ran, not what `dist\` holds now. (3) Stage only
 your own hunks (`git status` before every commit); never `git add -A` in a shared tree.
 
+### 1.af An injected Escape never reaches the app here — post it into the window, and MEASURE key routing before blaming the product
+
+L6 step 2 (edit, Escape, reopen, Enter) sat NOT RUN from 2026-09-12 to 09-24 as "synthetic Escape
+never reaches the cell editor". It was an environment fact, not a product one, and it took a logger
+to see which. A diagnostic UI (HEAD's `ui/` plus a `KeyDown` handler with `handledEventsToo: true` on
+the Window and the panel, Tunnel and Bubble, logging key / route / handled / source) showed Ctrl+A,
+F5 and Return reaching every stage, while an Escape from computer-use's `key` action or from
+SendInput reached **nothing**. Each time the foreground also jumped to another window (Windows 輸入體驗,
+the NVIDIA overlay, the Claude app). Something outside the app takes injected Escapes; a global hook
+is the likely owner. `py tools/verify/send_key.py esc --post UE5DumpUI` PostMessages
+`WM_KEYDOWN/UP` into the UI's own window, bypassing global input, and that Escape arrives and is
+handled. So: (1) for Escape (and any key that seems to vanish), use `--post`; (2) before recording
+"the product ignores key X", log the route with `handledEventsToo` — a key that never arrives and a
+key that the product swallows look identical on screen. Also measured the same day: in
+`cmd | tail -1 && next`, `&&` tests `tail`'s exit code, not `cmd`'s — a refused `dist_swap.py install`
+piped through `tail` let the chain launch the UI anyway. Test the file or redirect to a file first.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
