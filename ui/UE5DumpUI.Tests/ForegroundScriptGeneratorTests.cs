@@ -68,4 +68,38 @@ public class ForegroundScriptGeneratorTests
     {
         Assert.DoesNotContain("\r", ForegroundScriptGenerator.Generate());
     }
+
+    // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
+    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    [Fact]
+    public void Disable_block_never_pops_a_modal()
+    {
+        var s = ForegroundScriptGenerator.Generate();
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        Assert.DoesNotContain("showMessage", disable);
+        Assert.Contains("dbg('[KeepForeground", disable);   // a DEBUG session still sees why it gave up
+    }
+
+    // The control: ticking still announces and unticks its bails -- the fix is [DISABLE]-only.
+    [Fact]
+    public void Enable_block_still_announces_and_unticks_its_bails()
+    {
+        var s = ForegroundScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        Assert.Contains("g_invokeMailbox not found", enable);
+        Assert.Contains("showMessage", enable);
+        Assert.Contains("memrec.Active = false", enable);
+    }
+
+    // [R7-C-04] The same shape in ue5_invoke_helper.lua's Debug Camera example, which users copy into a table.
+    [Fact]
+    public void Invoke_helper_debug_camera_example_disable_is_quiet()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/ue5_invoke_helper.lua")).Replace("\r\n", "\n");
+        int at = src.IndexOf("pcall(setDebugCamera, 0)", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the Debug Camera example's [DISABLE] call is gone");
+        var tail = src.Substring(at, src.IndexOf("{$asm}", at, StringComparison.Ordinal) - at);
+        Assert.DoesNotContain("showMessage", tail);
+        Assert.Contains("(UE5_DEBUG or 0) ~= 0", tail);
+    }
 }

@@ -56,14 +56,24 @@ public static class ForegroundScriptGenerator
         Line(sb, "local mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, "  showMessage('[KeepForeground] g_invokeMailbox not found -- is " +
-                  "UE5Dumper.dll injected?')");
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, "  showMessage('[KeepForeground] g_invokeMailbox not found -- is " +
+                      "UE5Dumper.dll injected?')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [R7-C-04] An untick never pops a modal over the game -- GodMode's [W2-CEGEN-MODAL] shape.
+            Line(sb, "  dbg('[KeepForeground] g_invokeMailbox not found -- nothing to turn off')");
+        }
         Line(sb, "  return");
         Line(sb, "end");
+        // [R7-C-04] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE] dbg()s.
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
-        CeLuaHygiene.AppendContractCheck(sb, "KeepForeground", MailboxTimeout.UntickAndReturn);
+        CeLuaHygiene.AppendContractCheck(sb, "KeepForeground", bail);
         Line(sb);
 
         // Mailbox round-trip: write op + value, trigger CMD_FOREGROUND=12, poll status.
@@ -73,20 +83,27 @@ public static class ForegroundScriptGenerator
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "KeepForeground");
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "KeepForeground", bail);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {OpSet})    -- op: FG_OP_SET");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {value})    -- value: {value} = {label}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdForeground})    -- CMD_FOREGROUND (write LAST)");
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
-        CeLuaHygiene.AppendMailboxWait(sb, "KeepForeground");
+        CeLuaHygiene.AppendMailboxWait(sb, "KeepForeground", bail);
         Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=on, 0=off, <0=hook error");
         Line(sb, $"dbg('[KeepForeground] {label} -> state=' .. tostring(state))");
         Line(sb, "if state < 0 then");
-        Line(sb, $"  showMessage('[KeepForeground] {label} failed (hook error ' .. tostring(state) .. ')')");
-        // Nothing was applied on this branch, so the record must not stay ticked.
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[KeepForeground] {label} failed (hook error ' .. tostring(state) .. ')')");
+            // Nothing was applied on this branch, so the record must not stay ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            Line(sb, $"  dbg('[KeepForeground] {label} failed (hook error ' .. tostring(state) .. ')')");   // [R7-C-04]
+        }
         Line(sb, "elseif DEBUG == 0 then");
         Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
         Line(sb, "end");

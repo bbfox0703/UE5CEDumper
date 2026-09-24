@@ -63,9 +63,10 @@
     {$lua}
     if syntaxcheck then return end
     -- On disable the record is going inactive regardless; still guard the call so a
-    -- mailbox failure surfaces instead of raising out of the [DISABLE] block.
+    -- mailbox failure does not raise out of the [DISABLE] block. An untick never puts a
+    -- modal over the game: the reason goes to a DEBUG session only. [R7-C-04]
     local ok, err = pcall(setDebugCamera, 0)
-    if not ok then showMessage('[Debug Camera] disable error: ' .. tostring(err)) end
+    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(err)) end
     {$asm}
 
   Constants exposed:

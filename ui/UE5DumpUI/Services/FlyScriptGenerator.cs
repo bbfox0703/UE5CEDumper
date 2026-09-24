@@ -87,37 +87,50 @@ public static class FlyScriptGenerator
         Line(sb, "local mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, $"  showMessage('[{name}] g_invokeMailbox not found -- is " +
-                  "UE5Dumper.dll injected?')");
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[{name}] g_invokeMailbox not found -- is " +
+                      "UE5Dumper.dll injected?')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [R7-C-04] An untick never pops a modal over the game (MailboxTimeout.SilentReturn) -- GodMode's
+            // [W2-CEGEN-MODAL] shape. A failed tick's deferred untick runs this block too: no second dialog.
+            Line(sb, $"  dbg('[{name}] g_invokeMailbox not found -- nothing to turn off')");
+        }
         Line(sb, "  return");
         Line(sb, "end");
+        // [R7-C-04] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE] dbg()s.
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write (see AppendContractCheck).
-        CeLuaHygiene.AppendContractCheck(sb, name);
+        CeLuaHygiene.AppendContractCheck(sb, name, bail);
         Line(sb);
 
         // In [ENABLE] of a preset Fly, pick the key set first (poll-only round-trip).
         if (enable && hasPreset)
             EmitCall(sb, name, OpSetPreset, preset, readState: false,
-                     comment: $"op: FLY_OP_SET_PRESET ({PresetNames[preset]})");
+                     comment: $"op: FLY_OP_SET_PRESET ({PresetNames[preset]})", enable: enable);
         // Main round-trip: enable/disable (or noclip on/off) — reads the result.
         EmitCall(sb, name, (int)toggle, enable ? 1 : 0, readState: true,
-                 comment: $"op: FLY_OP_SET_{(toggle == FlyToggle.Noclip ? "NOCLIP" : "ENABLED")}");
+                 comment: $"op: FLY_OP_SET_{(toggle == FlyToggle.Noclip ? "NOCLIP" : "ENABLED")}", enable: enable);
         Line(sb, "{$asm}");
     }
 
     // One mailbox round-trip: write op+value, trigger CMD_FLY (last), poll status.
     // readState=true also reads the result, dbg's it, surfaces a failure, and
     // closes the Lua Engine on clean success (the terminal call in a block).
-    private static void EmitCall(StringBuilder sb, string name, int op, int value, bool readState, string comment)
+    private static void EmitCall(StringBuilder sb, string name, int op, int value, bool readState, string comment,
+                                 bool enable)
     {
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;   // [R7-C-04]
         // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
         // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
         // a toggle fired while another command was still in flight wrote straight
         // over it. Above the OPERAND writes, not merely above the status clear:
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Fly");
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Fly", bail);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {op})    -- {comment}");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {value})    -- value = {value}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");
@@ -126,15 +139,22 @@ public static class FlyScriptGenerator
         // that stops a timed-out row claiming to be active. Emitted once per call, and
         // a preset Fly emits TWO calls into one chunk — its locals are block-scoped, so
         // the second declaration simply shadows the first.
-        CeLuaHygiene.AppendMailboxWait(sb, name);
+        CeLuaHygiene.AppendMailboxWait(sb, name, bail);
         if (readState)
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error");
             Line(sb, $"dbg('[{name}] op={op} -> state=' .. tostring(state))");
             Line(sb, "if state < 0 then");
-            Line(sb, $"  showMessage('[{name}] -- no pawn / no CharacterMovement? (enter gameplay first)')");
-            // Applied nothing -> the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            if (enable)
+            {
+                Line(sb, $"  showMessage('[{name}] -- no pawn / no CharacterMovement? (enter gameplay first)')");
+                // Applied nothing -> the record must not stay ticked.
+                Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            }
+            else
+            {
+                Line(sb, $"  dbg('[{name}] -- no pawn / no CharacterMovement to turn off right now')");   // [R7-C-04]
+            }
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");

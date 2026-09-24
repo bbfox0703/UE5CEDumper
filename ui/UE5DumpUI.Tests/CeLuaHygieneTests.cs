@@ -663,4 +663,26 @@ public class CeLuaHygieneTests
         var lf = CeLuaHygiene.NormalizeTableFilePayload(crlf);
         Assert.Equal(crlf.Length - 1137, lf.Length);
     }
+
+    // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
+    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    [Fact]
+    public void SeeThrough_Disable_block_never_pops_a_modal()
+    {
+        var s = SeeThroughScriptGenerator.Generate();
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        Assert.DoesNotContain("showMessage", disable);
+        Assert.Contains("dbg('[SeeThrough", disable);   // a DEBUG session still sees why it gave up
+    }
+
+    // The control: ticking still announces and unticks its bails -- the fix is [DISABLE]-only.
+    [Fact]
+    public void SeeThrough_Enable_block_still_announces_and_unticks_its_bails()
+    {
+        var s = SeeThroughScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        Assert.Contains("g_invokeMailbox not found", enable);
+        Assert.Contains("showMessage", enable);
+        Assert.Contains("memrec.Active = false", enable);
+    }
 }

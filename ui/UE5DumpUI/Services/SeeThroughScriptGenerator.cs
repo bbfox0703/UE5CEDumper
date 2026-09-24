@@ -53,14 +53,24 @@ public static class SeeThroughScriptGenerator
         Line(sb, "local mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then mb = getAddressSafe('UE5Dumper.g_invokeMailbox') end");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, "  showMessage('[SeeThrough] g_invokeMailbox not found -- is " +
-                  "UE5Dumper.dll injected?')");
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, "  showMessage('[SeeThrough] g_invokeMailbox not found -- is " +
+                      "UE5Dumper.dll injected?')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            // [R7-C-04] An untick never pops a modal over the game -- GodMode's [W2-CEGEN-MODAL] shape.
+            Line(sb, "  dbg('[SeeThrough] g_invokeMailbox not found -- nothing to turn off')");
+        }
         Line(sb, "  return");
         Line(sb, "end");
+        // [R7-C-04] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE] dbg()s.
+        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
-        CeLuaHygiene.AppendContractCheck(sb, "SeeThrough", MailboxTimeout.UntickAndReturn);
+        CeLuaHygiene.AppendContractCheck(sb, "SeeThrough", bail);
         Line(sb);
 
         // Pierce depth: how many nearest objects to see through. EDIT `pierceCount`
@@ -84,8 +94,7 @@ public static class SeeThroughScriptGenerator
         // call and an `enable ? ... : ...` mode -- that is the shape, and this is now
         // it. Measured across all 14 generators: it was the only enable-guarded one.
         // [R3-SEETHRU-2026-09-10], held by tools/check_ce_idlewait_scope.py.
-        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "SeeThrough",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "SeeThrough", bail);
         if (enable)
         {
             Line(sb, "local pierceCount = 1   -- EDIT ME: how many nearest objects to see through (1 = nearest only)");
@@ -101,13 +110,20 @@ public static class SeeThroughScriptGenerator
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdSeeThrough})    -- CMD_SEETHROUGH (write LAST)");
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
-        CeLuaHygiene.AppendMailboxWait(sb, "SeeThrough");
+        CeLuaHygiene.AppendMailboxWait(sb, "SeeThrough", bail);
         Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=on, 0=off, <0=error");
         Line(sb, $"dbg('[SeeThrough] {label} -> state=' .. tostring(state))");
         Line(sb, "if state < 0 then");
-        Line(sb, $"  showMessage('[SeeThrough] {label} failed (error ' .. tostring(state) .. ')')");
-        // Nothing was applied on this branch, so the record must not stay ticked.
-        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[SeeThrough] {label} failed (error ' .. tostring(state) .. ')')");
+            // Nothing was applied on this branch, so the record must not stay ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            Line(sb, $"  dbg('[SeeThrough] {label} failed (error ' .. tostring(state) .. ')')");   // [R7-C-04]
+        }
         Line(sb, "elseif DEBUG == 0 then");
         Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
         Line(sb, "end");
