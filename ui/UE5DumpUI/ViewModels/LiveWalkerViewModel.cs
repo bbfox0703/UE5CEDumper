@@ -1238,7 +1238,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
             {
-                await NavigateToArrayContainerAsync(field);
+                await NavigateToArrayContainerAsync(field, inlineIsCurrent: reread);   // [R7-D-07]
             }
             else if (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType))
             {
@@ -1333,7 +1333,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return false;
     }
 
-    private async Task NavigateToArrayContainerAsync(LiveFieldValue field)
+    /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
+    /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
+    private async Task NavigateToArrayContainerAsync(LiveFieldValue field, bool inlineIsCurrent = true)
     {
         var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
             ? field.ArrayStructType : field.ArrayInnerType;
@@ -1363,7 +1365,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
             // read_array_elements is scalar-only and cannot resolve pointer names.
             elements = field.ArrayElements;
-            requested = Math.Min(ArrayLimit, field.ArrayCount);
+            // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
+            // walked lower, and then a short reply is the old slider value, not the DLL's cap.
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : elements.Count;
         }
         else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
@@ -1377,7 +1381,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         else
         {
             elements = field.ArrayElements ?? new();
-            requested = Math.Min(ArrayLimit, field.ArrayCount);
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : elements.Count;   // [R7-D-07]
         }
 
         // Only add breadcrumb after successful element retrieval — and only if the

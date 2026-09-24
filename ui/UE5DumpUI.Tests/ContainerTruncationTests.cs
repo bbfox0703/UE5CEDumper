@@ -251,6 +251,28 @@ public class ContainerTruncationTests
     }
 
     [Fact]
+    public async Task Drill_PointerArray_OnLastRefreshValues_DoesNotClaimTheDllCap()
+    {
+        // [R7-D-07] The inline preview is only known to be walked at the slider's CURRENT value when the drill's re-read
+        // succeeded. Here the re-read fails (nothing answers the parent walk) and the slider was raised to 1024 after
+        // the 128-element preview was walked: 128 < min(1024, 199) is the SLIDER's old value, not the DLL's cap, so the
+        // status must not say "capped at 128 per fetch" -- raising the slider (and refreshing) shows more.
+        var field = PtrArrayField(total: 199, loaded: 128);
+        var dump = new StubDumpService();   // no parent registered: the re-read cannot land
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            ArrayLimit = 1024,              // set before CurrentAddress, so it triggers no refresh
+        };
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Contains("Could not re-read", vm.StatusText);    // the precondition: last-refresh values
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.Contains("Array Limit", vm.StatusText);
+    }
+
+    [Fact]
     public async Task Drill_FullPointerArray_NoBadge()
     {
         var field = PtrArrayField(total: 4, loaded: 4);
