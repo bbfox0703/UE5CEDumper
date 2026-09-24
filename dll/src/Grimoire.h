@@ -555,6 +555,22 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
+// the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
+// which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors
+// EInternalObjectFlags::Garbage (1<<21) into UObject::ObjectFlags as RF_MirroredGarbage (0x40000000;
+// RF_Garbage in 5.0-5.3). UE4 keeps PendingKill (1<<29) ONLY in FUObjectItem::Flags (its RF_AllFlags is
+// 0x1FFFFFFF, so 0x40000000 means nothing there). Unreachable (1<<28) is refused in both. objectFlags is
+// UObject+0x08; itemFlags reads only on the classic item layout (itemFlagsOk). An unknown version (0)
+// trusts the object flag alone, since the item bits mean different things in UE4 and UE5.
+constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+    if ((ueVersion == 0 || ueVersion >= 500) && (objectFlags & 0x40000000u)) return true;
+    if (!itemFlagsOk || ueVersion == 0) return false;
+    const uint32_t refused = ueVersion >= 500 ? ((1u << 21) | (1u << 28))    // Garbage | Unreachable
+                                              : ((1u << 29) | (1u << 28));   // PendingKill | Unreachable
+    return (itemFlags & refused) != 0;
+}
+
 // [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
 // DetectUPropertyMode returned before touching it and the FProperty arm probed only
 // FField::Next, so on a title whose UObject carries an extra 8-byte tail (The Pathless, a

@@ -82,6 +82,11 @@ FUObjectItem* GetItem(int32_t index);
 // (audit #5 A1).
 int32_t GetSerialNumber(int32_t index);
 
+// [VND583-06] FUObjectItem::Flags (EInternalObjectFlags) of the item at `index`: an int32 at +0x08 on the
+// classic layout (UObject* at +0x00), which is also the low half of UE 5.5/5.6's int64 FlagsAndRefCount.
+// The UE5.7+ layouts, and a failed read, answer false.
+bool GetItemFlags(int32_t index, uint32_t& flags);
+
 // Iterate all valid objects
 // Callback: return false to stop iteration
 // Returns FALSE when a cancel (Tot::Requested) cut the walk short: the callback did NOT see every object, so a

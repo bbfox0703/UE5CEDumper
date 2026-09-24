@@ -6269,6 +6269,27 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
+static void Test_WeakTargetGarbage() {
+    EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
+           DynOff::IsWeakTargetGarbage(504, 0x40000000u, false, 0));
+    EXPECT("VND583-06: UE5.8, the flag among others -> garbage",
+           DynOff::IsWeakTargetGarbage(508, 0x40000001u, true, 0));
+    EXPECT("VND583-06: UE5 clean flags -> live", !DynOff::IsWeakTargetGarbage(504, 0x00000001u, true, 0));
+    EXPECT("VND583-06: UE5 item Garbage (1<<21) -> garbage", DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 21));
+    EXPECT("VND583-06: UE5 item Unreachable (1<<28) -> garbage", DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 28));
+    EXPECT("VND583-06: UE5 item bit 29 is NOT PendingKill there -> live",
+           !DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 29));
+    EXPECT("VND583-06: UE5 item flags unread (5.7+ layout) -> the object flag alone",
+           !DynOff::IsWeakTargetGarbage(504, 0, false, 1u << 21));
+    EXPECT("VND583-06: UE4 item PendingKill (1<<29) -> garbage", DynOff::IsWeakTargetGarbage(427, 0, true, 1u << 29));
+    EXPECT("VND583-06: UE4 item Unreachable (1<<28) -> garbage", DynOff::IsWeakTargetGarbage(418, 0, true, 1u << 28));
+    EXPECT("VND583-06: UE4 item bit 21 means nothing here -> live", !DynOff::IsWeakTargetGarbage(427, 0, true, 1u << 21));
+    EXPECT("VND583-06: UE4 never sets RF 0x40000000 -> ignored", !DynOff::IsWeakTargetGarbage(427, 0x40000000u, true, 0));
+    EXPECT("VND583-06: unknown version: the object flag only",
+           DynOff::IsWeakTargetGarbage(0, 0x40000000u, true, 0) && !DynOff::IsWeakTargetGarbage(0, 0, true, 1u << 29));
+}
+
 static void Test_ProcessEventVTableSlot() {
     // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
     // NOT a producible version -- versions are major*100+minor, capped at 509. So every
@@ -8751,6 +8772,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
+    RUN(Test_WeakTargetGarbage);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

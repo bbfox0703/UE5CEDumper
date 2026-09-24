@@ -1210,6 +1210,12 @@ ReadArrayResult ReadPointerArrayElements(
 // Returns the UObject* if valid (serial matches), or 0 if stale/invalid.
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber);
 
+// [VND583-06] " [garbage]" when UE's FWeakObjectPtr::Get() would refuse this RESOLVED target -- Garbage
+// (UE5) / PendingKill (UE4) or Unreachable, per DynOff::IsWeakTargetGarbage -- else "". Such an object
+// stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
+// is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
+const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
+
 // Phase E: check if inner type is a weak-pointer type
 bool IsWeakPointerArrayType(const std::string& innerTypeName);
 

@@ -2931,6 +2931,15 @@ uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
     return obj;
 }
 
+const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
+    if (!target) return "";
+    uint32_t objectFlags = 0;
+    Macht::ReadSafe(target + Grimoire::OFF_UOBJECT_FLAGS, objectFlags);
+    uint32_t itemFlags = 0;
+    const bool itemOk = Aura::GetItemFlags(objectIndex, itemFlags);
+    return DynOff::IsWeakTargetGarbage(g_cachedUEVersion, objectFlags, itemOk, itemFlags) ? " [garbage]" : "";
+}
+
 // ============================================================
 // IsWeakPointerArrayType — check if inner type is a weak-pointer type
 // (Phase E). Currently only WeakObjectProperty.
@@ -3020,6 +3029,7 @@ ReadArrayResult ReadWeakObjectArrayElements(
             } else {
                 elem.value = hexBuf;
             }
+            elem.value += WeakTargetGarbageTag(ptr, objIdx);   // [VND583-06]
         } else if (objIdx > 0) {
             elem.value = "null (stale)";
         } else {
@@ -3285,7 +3295,8 @@ ReadArrayResult ReadStructArrayElements(
                         sf.ptrClassName = GetName(cls);
                         sf.ptrClassAddr = cls;
                     }
-                    sf.value = !sf.ptrName.empty() ? sf.ptrName : "ptr";
+                    sf.value = (!sf.ptrName.empty() ? sf.ptrName : std::string("ptr"))
+                             + WeakTargetGarbageTag(ptr, objIdx);   // [VND583-06]
                 } else {
                     // Same wording as ReadWeakObjectArrayElements: a live index whose
                     // serial no longer matches is a DEAD reference, not a null one.
@@ -3504,6 +3515,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
                 ? (elem.ptrClassName.empty() ? elem.ptrName
                                               : elem.ptrName + " (" + elem.ptrClassName + ")")
                 : "(loaded)";
+            elem.value += WeakTargetGarbageTag(elem.ptrAddr, objIdx);   // [VND583-06]
         } else {
             elem.value = "(none)";
         }
@@ -3640,6 +3652,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
             elem.value = std::string(guidStr) + " " + elem.ptrName;
             if (!elem.ptrClassName.empty())
                 elem.value += " (" + elem.ptrClassName + ")";
+            elem.value += WeakTargetGarbageTag(elem.ptrAddr, objIdx);   // [VND583-06]
         } else {
             elem.value = guidStr;
         }
@@ -3886,7 +3899,8 @@ ReadArrayResult ReadDelegateArrayElements(
         // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
         // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
         // touched. The multicast element loop has an explicit unbound branch; this one did not.
-        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName);
+        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName)
+                   + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
 
         result.elements.push_back(std::move(elem));
     }
@@ -4056,6 +4070,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 std::string bdesc = DescribeScriptDelegate(
                     btarget != 0, btarget ? GetName(btarget) : std::string(),
                     bobjIdx, bserial, bfunc);
+                bdesc += WeakTargetGarbageTag(btarget, bobjIdx);   // [VND583-06]
                 if (IsNamedDelegateBinding(bdesc)) bindings.push_back(std::move(bdesc));
             }
 
@@ -4686,6 +4701,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassName = GetName(cls);
                     fv.ptrClassAddr = cls;
                 }
+                // [VND583-06] A Garbage / PendingKill target still resolves: say so in the Value
+                // column, which otherwise shows "Name (Class)" from ptrName.
+                if (const char* tag = WeakTargetGarbageTag(ptr, objIdx); *tag)
+                    fv.typedValue = fv.ptrName + (fv.ptrClassName.empty() ? std::string()
+                                                                         : " (" + fv.ptrClassName + ")") + tag;
             } else {
                 // [VND583-05] The same words as the three sibling weak readers (struct member,
                 // array element, search preview): a live index whose serial no longer matches is a
@@ -4757,6 +4777,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = fv.ptrClassName.empty()
                     ? fv.ptrName
                     : fv.ptrName + " (" + fv.ptrClassName + ")";
+                fv.typedValue += WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
             } else {
                 fv.typedValue = "(none)";
             }
@@ -4822,6 +4843,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = std::string(guidStr) + " " + fv.ptrName;
                 if (!fv.ptrClassName.empty())
                     fv.typedValue += " (" + fv.ptrClassName + ")";
+                fv.typedValue += WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
             } else {
                 fv.typedValue = guidStr;
             }
@@ -6316,7 +6338,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             }
             fv.typedValue = DescribeScriptDelegate(target != 0, targetName,
-                                                   objIdx, serial, funcName);
+                                                   objIdx, serial, funcName)
+                          + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
 
             // Hex: FWeakObjectPtr + FName raw bytes
             int delegateSize = 8 + fnameSize;
@@ -6454,7 +6477,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // Embedded FWeakObjectPtr at field+0.
                     int32_t objIdx = 0, serial = 0;
                     if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
-                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) fillPtr(resolved);
+                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) {
+                            fillPtr(resolved);
+                            if (const char* tag = WeakTargetGarbageTag(resolved, objIdx); *tag)   // [VND583-06]
+                                fv.typedValue = fv.ptrName + (fv.ptrClassName.empty() ? std::string()
+                                                                                     : " (" + fv.ptrClassName + ")") + tag;
+                        }
                     }
                 } else if (isStrInner) {
                     std::string s = ReadFString(fieldAddr, 0);
@@ -6854,7 +6882,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 elem.value = DescribeScriptDelegate(target != 0, elem.ptrName,
-                                                    objIdx, serial, funcName);
+                                                    objIdx, serial, funcName)
+                           + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
                 if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
                     previewNames.push_back(elem.value);
 
@@ -7170,7 +7199,8 @@ void ResolvePropertyPreviews(
             uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
             if (resolved) {
                 std::string name = GetName(resolved);
-                m.preview = name.empty() ? "(loaded)" : name;
+                m.preview = (name.empty() ? std::string("(loaded)") : name)
+                          + WeakTargetGarbageTag(resolved, objIdx);   // [VND583-06]
             } else if (t == "LazyObjectProperty") {
                 const int gOff = LazyGuidOffset(sz);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;

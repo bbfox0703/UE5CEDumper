@@ -1494,7 +1494,8 @@ FUObjectItem* GetItem(int32_t index) {
     return Macht::Ptr<FUObjectItem>(itemAddr);
 }
 
-int32_t GetSerialNumber(int32_t index) {
+// The address of the FUObjectItem at `index`, or 0. Shared by the per-item field readers below.
+static uintptr_t ItemAddrOf(int32_t index) {
     if (!s_arrayAddr || index < 0 || index >= GetCount()) return 0;
 
     uintptr_t arrayBase = 0;
@@ -1502,17 +1503,25 @@ int32_t GetSerialNumber(int32_t index) {
         return 0;
     arrayBase = DecryptObjectPtr(arrayBase);
 
-    uintptr_t itemAddr = 0;
-    if (s_isFlat) {
-        itemAddr = arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
-    } else {
-        int32_t chunkIndex  = index / Grimoire::OBJECTS_PER_CHUNK;
-        int32_t withinChunk = index % Grimoire::OBJECTS_PER_CHUNK;
-        uintptr_t chunk = 0;
-        if (!Macht::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk)
-            return 0;
-        itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
-    }
+    if (s_isFlat)
+        return arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
+    int32_t chunkIndex  = index / Grimoire::OBJECTS_PER_CHUNK;
+    int32_t withinChunk = index % Grimoire::OBJECTS_PER_CHUNK;
+    uintptr_t chunk = 0;
+    if (!Macht::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk)
+        return 0;
+    return chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
+}
+
+bool GetItemFlags(int32_t index, uint32_t& flags) {
+    if (s_layoutMode != Lineal::ItemLayoutMode::Classic || s_itemObjOffset != 0) return false;
+    const uintptr_t itemAddr = ItemAddrOf(index);
+    return itemAddr && Macht::ReadSafe(itemAddr + 0x08, flags);
+}
+
+int32_t GetSerialNumber(int32_t index) {
+    const uintptr_t itemAddr = ItemAddrOf(index);
+    if (!itemAddr) return 0;
 
     // The whole offset rule lives in Lineal so it can be unit-pinned — no target
     // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`

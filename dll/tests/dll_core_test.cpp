@@ -3868,8 +3868,8 @@ int main() {
             VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
             const uintptr_t winst = reinterpret_cast<uintptr_t>(wpage);
             // One class blob per case: s_walkClassCache is keyed by the class address.
-            static uint8_t wkProp[4][0x80] = {};
-            static uint8_t wkCls[4][0x100] = {};
+            static uint8_t wkProp[8][0x80] = {};
+            static uint8_t wkCls[8][0x100] = {};
             auto makeClass = [&](int i, int32_t fieldOffset) {
                 *reinterpret_cast<uintptr_t*>(wkProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkFieldClass);
                 *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FFIELD_NAME)           = 2;
@@ -3919,6 +3919,58 @@ int main() {
                 const auto liveW = weakField("live", Ubel::WalkInstance(winst, makeClass(3, 0x300), 64, 2, false));
                 check("WEAKLABEL control: a resolving pointer publishes the object and no label",
                       liveW.ptrValue == o1 && liveW.typedValue.empty(), liveW.typedValue.c_str());
+
+                // [VND583-06] ...unless UE's Get() would refuse it: still resolved, but LABELLED.
+                // UE5 marks Garbage in UObject::ObjectFlags (RF_MirroredGarbage); UE4 marks
+                // PendingKill only in the FUObjectItem.
+                uint8_t* item1 = pool.chunks[0].data() + static_cast<size_t>(1) * FakePool::kItemSize;
+                const uint32_t svVerG = g_cachedUEVersion;
+                uint32_t objFlags = 0, itemFlags = 0;
+                memcpy(&objFlags, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), 4);
+                memcpy(&itemFlags, item1 + 8, 4);
+                auto setFlags = [&](uint32_t objF, uint32_t itemF) {
+                    memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), &objF, 4);
+                    memcpy(item1 + 8, &itemF, 4);
+                };
+
+                g_cachedUEVersion = 504;
+                setFlags(0x40000000u, 0);
+                const auto g5 = weakField("garbage-ue5", Ubel::WalkInstance(winst, makeClass(4, 0x300), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-06: UE5 RF_MirroredGarbage -> still resolved, labelled [garbage]",
+                      g5.ptrValue == o1 && g5.typedValue.find("[garbage]") != std::string::npos, g5.typedValue.c_str());
+
+                g_cachedUEVersion = 427;
+                setFlags(0, 1u << 29);
+                const auto g4 = weakField("pendingkill-ue4", Ubel::WalkInstance(winst, makeClass(5, 0x300), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-06: UE4 PendingKill in the item -> labelled [garbage]",
+                      g4.ptrValue == o1 && g4.typedValue.find("[garbage]") != std::string::npos, g4.typedValue.c_str());
+
+                g_cachedUEVersion = 504;
+                const auto c5 = weakField("ue5-bit29", Ubel::WalkInstance(winst, makeClass(6, 0x300), 64, 2, false));
+                check("WEAKLABEL control VND583-06: the same item bit on UE5 is not PendingKill -> no label",
+                      c5.ptrValue == o1 && c5.typedValue.empty(), c5.typedValue.c_str());
+
+                // The array reader, through the same tag: [{1, serial}, {0, 0}] on UE4 with PendingKill.
+                g_cachedUEVersion = 427;
+                *reinterpret_cast<uintptr_t*>(wpage + 0x400) = winst + 0x500;   // TArray Data*
+                *reinterpret_cast<int32_t*>(wpage + 0x408) = 2;                 // Num
+                *reinterpret_cast<int32_t*>(wpage + 0x40C) = 2;                 // Max
+                *reinterpret_cast<int32_t*>(wpage + 0x500) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x504) = Aura::GetSerialNumber(1);
+                *reinterpret_cast<int32_t*>(wpage + 0x508) = 0;
+                *reinterpret_cast<int32_t*>(wpage + 0x50C) = 0;
+                const auto arr = Ubel::ReadWeakObjectArrayElements(winst, 0x400, 8, 0, 8);
+                check("WEAKLABEL VND583-06: the array reader read both elements", arr.elements.size() == 2,
+                      std::to_string(arr.elements.size()).c_str());
+                if (arr.elements.size() == 2) {
+                    check("WEAKLABEL ⭐ VND583-06: a PendingKill array element is labelled [garbage]",
+                          arr.elements[0].value.find("[garbage]") != std::string::npos, arr.elements[0].value.c_str());
+                    check("WEAKLABEL control VND583-06: the null element beside it still says null",
+                          arr.elements[1].value == "null", arr.elements[1].value.c_str());
+                }
+
+                setFlags(objFlags, itemFlags);
+                g_cachedUEVersion = svVerG;
             }
             VirtualFree(wpage, 0, MEM_RELEASE);
         }
