@@ -47,6 +47,9 @@ MAILBOX_ON_WRITE = nil
 local function resetWorld()
   MEM, BYTES, WRITES, PRINTS, SYMBOLS, TIMERS = {}, {}, {}, {}, {}, {}
   MAILBOX_ON_WRITE = nil
+  -- The mailbox guard is SHARED session state (with ue5_invoke_helper.lua): each case starts unlatched,
+  -- or one case's timeout would refuse every later case's rescan. [R7-C-01]
+  _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
   -- Non-zero default so a non-answering mailbox TIMES OUT via the tick arm rather
   -- than hanging the rig (AA29's fix makes the iteration fallback dormant when
   -- getTickCount is present). The AA29 case sets a sub-15ms step deliberately.
@@ -1244,6 +1247,56 @@ do
   local msg = PRINTS[#PRINTS]
   check(msg and msg:find('g_invokeMailbox', 1, true) ~= nil,
         'AA31 control: every failure identical -> that cause is what is reported', msg)
+end
+
+-- ============================================================
+-- R7-C-01 / R7-C-03: the busy flag is SHARED with ue5_invoke_helper.lua, which latches it (with
+-- _ue5_invoke_stale_mb) when its wait times out and releases it only when the DLL reports DONE + IDLE.
+-- ============================================================
+
+case('R7-C-03: a latch the DLL has since released does not block the freeze')
+do
+  resetWorld()
+  installMailbox{ pages = { { 0x1000, 0x2000 } } }
+  -- What an invoke-helper timeout leaves once the DLL has finished the command after all.
+  MEM[MB + OFF_STATUS], MEM[MB + OFF_CMD] = 1, 0
+  _ue5_invoke_busy, _ue5_invoke_stale_mb = true, MB
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  eq(#(h._cache or {}), 2, 'R7-C-03: the rescan ran and cached both instances')
+  eq(_ue5_invoke_busy, false, 'R7-C-03: the released latch was cleared')
+  eq(_ue5_invoke_stale_mb, nil, 'R7-C-03: ...and its mailbox forgotten')
+end
+
+case('R7-C-03 control: a latch the DLL still holds keeps refusing')
+do
+  resetWorld()
+  installMailbox{ pages = { { 0x1000 } } }
+  MEM[MB + OFF_STATUS], MEM[MB + OFF_CMD] = 2, 7      -- PROCESSING a different command
+  _ue5_invoke_busy, _ue5_invoke_stale_mb = true, MB
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  eq(#(h._cache or {}), 0, 'R7-C-03 control: nothing was fetched')
+  eq(MEM[MB + OFF_CMD], 7, 'R7-C-03 control: the in-flight command was not overwritten')
+  eq(_ue5_invoke_busy, true, 'R7-C-03 control: the latch holds')
+end
+
+case('R7-C-01: a fetch timeout LATCHES the shared flag, and the DLL finishing releases it')
+do
+  resetWorld()
+  local opts = { pages = { { 0x1000 } } }
+  installMailbox(opts)
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  eq(h.isAbandoned(), false, 'R7-C-01: healthy at the start')
+  opts.deadPage = 0                                   -- the next LIST_INSTANCES is never answered
+  rescanTimer().OnTimer()
+  eq(_ue5_invoke_busy, true, 'R7-C-01: the shared busy flag stays UP after the timeout')
+  eq(_ue5_invoke_stale_mb, MB, 'R7-C-01: ...latched on this mailbox, which the invoke helper re-tests')
+  -- The DLL finishes the command after all (SetDone: status DONE, cmd IDLE).
+  opts.deadPage = nil
+  MEM[MB + OFF_STATUS], MEM[MB + OFF_CMD] = 1, 0
+  rescanTimer().OnTimer()
+  eq(_ue5_invoke_busy, false, 'R7-C-01: released once the DLL reports done')
+  eq(#(h._cache or {}), 1, 'R7-C-01: and the freeze rescans again')
+  eq(h.isAbandoned(), false, 'R7-C-01: not abandoned')
 end
 
 -- ============================================================
