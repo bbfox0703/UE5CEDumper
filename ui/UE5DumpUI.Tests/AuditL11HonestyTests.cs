@@ -278,9 +278,11 @@ public class AuditL11HonestyTests
         return FinderWithFields(fields);
     }
 
-    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWithFields(List<LiveFieldValue> fields)
+    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWithFields(
+        List<LiveFieldValue> fields, Action<StubDumpService>? setup = null)
     {
         var dump = new StubDumpService();
+        setup?.Invoke(dump);
         dump.RegisterStruct("0x10000000", new InstanceWalkResult
         {
             Address = "0x10000000", Name = "Big_0", ClassName = "Big", Fields = fields,
@@ -335,6 +337,56 @@ public class AuditL11HonestyTests
         Assert.Contains("Big", vm.StatusText);                       // which container pays for it
         Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
         Assert.DoesNotContain("DropDown Limit", vm.StatusText);
+    }
+
+    // [R7-S11] A container inside a STRUCT field is resolved at the Array Limit too, and emitted through the resolved
+    // struct -- but the status looked at the top-level fields only, where the struct has no elements of its own.
+    private static List<LiveFieldValue> TuneStruct() => new()
+    {
+        new() { Name = "Tune", TypeName = "StructProperty", Offset = 0x28, Size = 0x10,
+                StructTypeName = "FTuneData", StructDataAddr = "0x5000", StructClassAddr = "0x6000" },
+        new() { Name = "Tail", TypeName = "IntProperty", Offset = 0x40, Size = 4 },
+    };
+
+    private static Action<StubDumpService> NestedArray(int total, int loaded) => dump =>
+    {
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < loaded; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        dump.RegisterStruct("0x5000", new InstanceWalkResult
+        {
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Tunes", TypeName = "ArrayProperty", Offset = 0, Size = 0x10, ArrayCount = total,
+                        ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+            },
+        });
+    };
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByAContainerInAStruct_NamesTheArrayLimit()
+    {
+        var (vm, platform) = FinderWithFields(TuneStruct(), NestedArray(total: 70_000, loaded: 61_000));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Array Limit", vm.StatusText);
+        Assert.Contains("Tunes", vm.StatusText);
+        Assert.DoesNotContain("no toolbar setting", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_CompleteButAStructsContainerClipped_DisclosesIt()
+    {
+        var (vm, platform) = FinderWithFields(TuneStruct(), NestedArray(total: 16_390, loaded: 64));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.DoesNotContain("TRUNCATED", vm.StatusText);
+        Assert.Contains("Tunes", vm.StatusText);
+        Assert.Contains("64 of 16,390", vm.StatusText);
     }
 
     [Fact]

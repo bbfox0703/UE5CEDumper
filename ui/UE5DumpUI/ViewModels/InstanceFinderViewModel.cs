@@ -820,12 +820,18 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             ClearError();
             IsLoadingFields = true;
 
+            // [R7-S11] ONE snapshot of the walk and the limit, taken before the first await: the Array Limit setter
+            // re-walks and clears Fields, so reading them again after an await could describe a different walk from
+            // the one exported.
+            var fields = new List<LiveFieldValue>(Fields);
+            int arrayLimit = ArrayLimit;
+
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
             // lean: this resolve feeds GenerateInstanceXml (a CE XML export), which
             // reads structure only — see the LEAN contract in Fern.cpp / §10.6.
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit, lean: true);
+                _dump, fields, arrayLimit: arrayLimit, lean: true);
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(
@@ -834,7 +840,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
-                new List<LiveFieldValue>(Fields), resolvedStructs,
+                fields, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength);
@@ -854,7 +860,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] ...naming a lever only when it changes the ENTRY COUNT. Collapse Pointer
             // Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the same entries; the Array
             // Limit shrinks the export only when a walked container is bound by it. Otherwise no toolbar setting helps.
-            StatusText = ExportStatus(truncated, new List<LiveFieldValue>(Fields), ArrayLimit);
+            // [R7-S11] ...over every field the export emitted: the top level AND the containers the resolved structs
+            // carry, which are walked at the same Array Limit.
+            StatusText = ExportStatus(truncated, fields.Concat(resolvedStructs.Values.SelectMany(v => v)).ToList(),
+                                      arrayLimit);
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
