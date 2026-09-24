@@ -555,6 +555,18 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-14] FSoftObjectPath's shape: UE 4.x / 5.0 hold `FName AssetPathName`; 5.1+ hold
+// `FTopLevelAssetPath AssetPath` (two FNames). It was decided by `ueVersion >= 501`, which a title
+// misdetected across 5.0/5.1 gets wrong -- and a fork that reports 505 over a 5.0 core is exactly that.
+// It is now MEASURED from the reflected ScriptStruct `SoftObjectPath` itself: a field called `AssetPath`
+// means 1 (top-level), `AssetPathName` 0. SOFTPATH_TOPLEVEL_MEASURED = -1 until measured, and then the
+// version rule answers.
+constexpr bool SoftPathIsTopLevelFor(int measured, unsigned ueVersion) {
+    return measured >= 0 ? measured == 1 : ueVersion >= 501;
+}
+inline std::atomic<int>  SOFTPATH_TOPLEVEL_MEASURED{-1};
+inline std::atomic<bool> bSoftPathProbed{false};
+
 // [VND583-13] Compact TSet / TMap. UE 5.7+ has an opt-in, UE_USE_COMPACT_SET_AS_DEFAULT (0 in the stock
 // engine, ContainerAllocationPolicies.h), that makes every reflected TSet / TMap a TCompactSet:
 // { Elements*, int32 NumElements, int32 MaxElements } = 16 bytes (CompactSetBase.h @5.8.3), not the sparse

@@ -344,12 +344,59 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 // UE4 / UE5.0: FSoftObjectPath = { FName AssetPathName; FString SubPathString; }
 // UE5.1+:      FSoftObjectPath = { FTopLevelAssetPath { FName PackageName; FName AssetName; }; FString SubPathString; }
 // ============================================================
+// [VND583-14] Measure FSoftObjectPath's shape once, from the reflected ScriptStruct `SoftObjectPath`:
+// its first field is `AssetPath` (a FTopLevelAssetPath, 5.1+) or `AssetPathName` (an FName, 4.x / 5.0).
+// FProperty mode only -- UProperty mode is UE4, where the answer is always AssetPathName and the version
+// rule gives it. Needs validated offsets; a cancelled walk latches nothing.
+static void ProbeSoftPathShape() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
+    int measured = -1;
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        uintptr_t field = 0;
+        Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
+        for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
+            const std::string name = ReadFName(field + DynOff::FFIELD_NAME);
+            if (name == "AssetPath")     { measured = 1; break; }
+            if (name == "AssetPathName") { measured = 0; break; }
+            uintptr_t next = 0;
+            if (!Macht::ReadSafe(field + DynOff::FFIELD_NEXT, next)) break;
+            field = DynOff::StripFFieldTag(next);
+        }
+        return false;   // the first ScriptStruct of that name decides
+    });
+    if (!complete) return;
+    if (measured >= 0) {
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s (measured on ScriptStruct SoftObjectPath; version rule says %s)",
+                 measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+    } else {
+        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+    }
+    DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(measured, std::memory_order_release);
+    DynOff::bSoftPathProbed.store(true, std::memory_order_release);
+}
+
+static bool SoftPathIsTopLevel() {
+    if (!DynOff::bSoftPathProbed.load(std::memory_order_acquire) && DynOff::bUseFProperty
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeSoftPathShape();
+    return DynOff::SoftPathIsTopLevelFor(DynOff::SOFTPATH_TOPLEVEL_MEASURED.load(std::memory_order_acquire),
+                                         g_cachedUEVersion);
+}
+
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
     int fnameSize = DynOff::SizeofFName();
 
-    bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
+    bool isTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14] measured; the version rule is the fallback
 
     if (isTopLevelAssetPath) {
         // UE5.1+: FTopLevelAssetPath = { FName PackageName, FName AssetName }
@@ -430,7 +477,7 @@ static int32_t SoftObjectPathPayloadSize() {
     // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
     // in the header so the test target can pin it.
     return static_cast<int32_t>(
-        DynOff::FSoftObjectPathSizeFor(fnameSize, g_cachedUEVersion >= 501));
+        DynOff::FSoftObjectPathSizeFor(fnameSize, SoftPathIsTopLevel()));   // [VND583-14]
 }
 
 // Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
@@ -5083,7 +5130,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // — the CE XML / CSX exporter needs it to lay out the
                     // per-element FName leaf(s) at pathOffset / pathOffset+fnameSize.
                     fv.softArrayFNameSize = DynOff::SizeofFName();
-                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayIsTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14]
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
 
                     if (arr.Data && fv.arrayCount > 0) {
@@ -5298,7 +5345,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Phase G: Soft object arrays (UProperty mode)
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     fv.softArrayFNameSize = DynOff::SizeofFName();
-                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayIsTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14]
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(

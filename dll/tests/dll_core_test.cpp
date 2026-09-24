@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,85 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-14] FSoftObjectPath's shape is MEASURED on the reflected SoftObjectPath struct ---------------------
+    // A built ScriptStruct "SoftObjectPath" whose first FField is AssetPathName (the 4.x / 5.0 shape), on a title
+    // LABELLED 5.5 -- a fork that reports 505 over a 5.0 core. The path must read as ONE FName, not as
+    // "Package.Asset" from two. Own pool and name pool, like FNAMEMEASURE.
+    {
+        blk("SOFTPATH - FSoftObjectPath's shape is read off the SoftObjectPath struct, not the version");
+        enum : int32_t { nClass = 1, nScriptStruct, nSoftObjectPath, nAssetPathName, nAssetPath, nNameProp,
+                         nPkg, nAsset, nNames };
+        const char* spNames[nNames] = { "", "Class", "ScriptStruct", "SoftObjectPath", "AssetPathName", "AssetPath",
+                                        "NameProperty", "/Game/Pkg", "Asset" };
+        static uint8_t spEntry[nNames][0x40] = {};
+        static uintptr_t spChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(spEntry[i] + 0x10, spNames[i], strlen(spNames[i]) + 1);
+            spChunk[i] = reinterpret_cast<uintptr_t>(spEntry[i]);
+        }
+        static uintptr_t spChunks[2] = { reinterpret_cast<uintptr_t>(spChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(spChunks), 0x10);
+
+        const uint32_t svVerS   = g_cachedUEVersion;
+        const bool     svFPropS = DynOff::bUseFProperty;
+        const bool     svValidS = DynOff::bOffsetsValidated.load();
+        DynOff::bUseFProperty     = true;
+        DynOff::bOffsetsValidated = true;
+        g_cachedUEVersion         = 505;
+
+        enum { bMeta, bSSCls, bStruct, kSB };
+        alignas(16) static uint8_t spB[kSB][0x200] = {};
+        static uint8_t spFieldClass[0x20] = {};
+        static uint8_t spField[0x100] = {};
+        auto A = [&](int b) { return reinterpret_cast<uintptr_t>(spB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](int32_t fieldName) {
+            for (auto& b : spB) memset(b, 0, sizeof(b));
+            memset(spField, 0, sizeof(spField));
+            putP(spB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(spB[bMeta], Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(spB[bSSCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(spB[bSSCls], Grimoire::OFF_UOBJECT_NAME, nScriptStruct);
+            putP(spB[bStruct], Grimoire::OFF_UOBJECT_CLASS, A(bSSCls)); put32(spB[bStruct], Grimoire::OFF_UOBJECT_NAME, nSoftObjectPath);
+            putP(spB[bStruct], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(spField));
+            put32(spFieldClass, DynOff::FFIELDCLASS_NAME, nNameProp);
+            putP(spField, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(spFieldClass));
+            put32(spField, DynOff::FFIELD_NAME, fieldName);
+            DynOff::bSoftPathProbed = false;
+            DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        };
+        FakePool spPool;
+        spPool.Build(kSB);
+        for (int i = 0; i < kSB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(spPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(spPool.Addr(), FakePool::kItemSize);
+
+        // The path's bytes: FName {/Game/Pkg} then FName {Asset}. Read as one FName: "/Game/Pkg".
+        // Read as a FTopLevelAssetPath: "/Game/Pkg.Asset".
+        static int32_t spPath[8] = { nPkg, 0, nAsset, 0, 0, 0, 0, 0 };
+        const uintptr_t pathAddr = reinterpret_cast<uintptr_t>(spPath);
+
+        build(nAssetPathName);
+        const std::string p50 = Ubel::ReadSoftObjectPath(pathAddr);
+        check("SOFTPATH ⭐ VND583-14: AssetPathName measured on a title labelled 5.5 -> one FName",
+              p50 == "/Game/Pkg", p50.c_str());
+        check("SOFTPATH: ...and the measurement is latched as 0", DynOff::SOFTPATH_TOPLEVEL_MEASURED.load() == 0);
+
+        build(nAssetPath);
+        g_cachedUEVersion = 500;
+        const std::string p51 = Ubel::ReadSoftObjectPath(pathAddr);
+        check("SOFTPATH ⭐ VND583-14: AssetPath measured on a title labelled 5.0 -> Package.Asset",
+              p51 == "/Game/Pkg.Asset", p51.c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bSoftPathProbed = false;
+        DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        DynOff::bUseFProperty     = svFPropS;
+        DynOff::bOffsetsValidated = svValidS;
+        g_cachedUEVersion         = svVerS;
     }
 
     // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --

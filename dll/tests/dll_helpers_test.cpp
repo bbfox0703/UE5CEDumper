@@ -6269,6 +6269,16 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-14] FSoftObjectPath's shape: the measurement wins; the version rule only when nothing was measured.
+static void Test_SoftPathShape() {
+    EXPECT("VND583-14: measured AssetPathName on a title labelled 5.5 -> NOT top-level",
+           !DynOff::SoftPathIsTopLevelFor(0, 505));
+    EXPECT("VND583-14: measured AssetPath on a title labelled 5.0 -> top-level", DynOff::SoftPathIsTopLevelFor(1, 500));
+    EXPECT("VND583-14: unmeasured 5.1 -> the rule, top-level", DynOff::SoftPathIsTopLevelFor(-1, 501));
+    EXPECT("VND583-14: unmeasured 5.0 -> the rule, FName", !DynOff::SoftPathIsTopLevelFor(-1, 500));
+    EXPECT("VND583-14: unmeasured 4.27 -> FName", !DynOff::SoftPathIsTopLevelFor(-1, 427));
+}
+
 // [VND583-13] A 16-byte Set/Map property on 5.7+ is a compact set; ReadTSparseArray refuses once latched.
 static void Test_CompactSetGuard() {
     EXPECT("VND583-13: 0x10 on 5.7 is compact", DynOff::IsCompactSetLayout(0x10, 507));
@@ -8842,6 +8852,7 @@ int main() {
     RUN(Test_FFieldVariantDefaults);
     RUN(Test_RefineVersionFromLazyMarkers);
     RUN(Test_CompactSetGuard);
+    RUN(Test_SoftPathShape);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
