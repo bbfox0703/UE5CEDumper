@@ -101,7 +101,9 @@ std::atomic<bool> g_initInProgress{false};
 // UE5_Init's already-initialised return waits on the mutex while the flag is up, so a mailbox command's
 // EnsureInitialized runs after the apply, not on a half-applied pool.
 namespace FrierenInit {
-void BeginApply() { s_initMutex.lock(); g_initInProgress.store(true, std::memory_order_release); }
+// [R7-S9] The fence: the flag must be visible BEFORE the GObjects publish that follows in Fern.cpp. A release store
+// orders what came before it, not what comes after, so a full fence keeps that publish from being hoisted above it.
+void BeginApply() { s_initMutex.lock(); g_initInProgress.store(true, std::memory_order_release); std::atomic_thread_fence(std::memory_order_seq_cst); }
 void EndApply()   { g_initInProgress.store(false, std::memory_order_release); s_initMutex.unlock(); }
 }
 static Fern  s_pipeServer;

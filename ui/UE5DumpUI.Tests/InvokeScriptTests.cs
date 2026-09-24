@@ -2058,7 +2058,8 @@ public class InvokeScriptTests
         Assert.True(lockAt >= 0 && scopeAt > lockAt && findAllAt > scopeAt,
                     "UE5_Init must raise g_initInProgress under s_initMutex, before FindAll publishes the globals");
         var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,", mimic, StringComparison.Ordinal);
+        // [R7-S9] ...through InitSettled, which reads the globals into locals first and the flag last.
+        Assert.Contains("Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress)", mimic, StringComparison.Ordinal);
         Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
     }
 
@@ -2180,6 +2181,40 @@ public class InvokeScriptTests
         int init = frieren.IndexOf("bool UE5_Init() {", StringComparison.Ordinal);
         int already = frieren.IndexOf("UE5_Init: Already initialized", init, StringComparison.Ordinal);
         Assert.Contains("std::lock_guard<std::mutex> wait(s_initMutex);", frieren[init..already]);
+    }
+
+    [Fact]
+    public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
+    {
+        // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as
+        // ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised it and
+        // GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0 it
+        // called UE5_Init, which returned at once (initialised, no fence up YET), then re-read the globals as the apply
+        // published them. Mimic.cpp reaches no test target, so the order is pinned in source.
+        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
+        int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
+        Assert.True(settled >= 0, "InitSettled not found");
+        int settledEnd = mimic.IndexOf("\n}\n", settled, StringComparison.Ordinal);
+        var body = mimic[settled..settledEnd];
+        int readGObjects = body.IndexOf("g_cachedGObjects", StringComparison.Ordinal);
+        int fence = body.IndexOf("std::atomic_thread_fence(std::memory_order_acquire)", StringComparison.Ordinal);
+        int readFlag = body.IndexOf("g_initInProgress.load", StringComparison.Ordinal);
+        Assert.True(readGObjects >= 0 && fence > readGObjects && readFlag > fence,
+                    "the globals must be read first, then an acquire fence, then the flag");
+
+        int ensure = mimic.IndexOf("static bool EnsureInitialized() {", StringComparison.Ordinal);
+        int ensureEnd = mimic.IndexOf("\n}\n", ensure, StringComparison.Ordinal);
+        var ensureBody = mimic[ensure..ensureEnd];
+        int call = ensureBody.IndexOf("UE5_Init();", StringComparison.Ordinal);
+        Assert.True(call >= 0 && ensureBody.IndexOf("InitSettled()", call, StringComparison.Ordinal) > call,
+                    "the result after UE5_Init must be the same settled check, not a bare re-read of the globals");
+        Assert.DoesNotContain("return (g_cachedGObjects != 0 && g_cachedGNames != 0);", ensureBody);
+
+        // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
+        Assert.Contains("std::atomic_thread_fence(std::memory_order_seq_cst)",
+                        frieren[begin..frieren.IndexOf('\n', begin)]);
     }
 
     [Fact]
