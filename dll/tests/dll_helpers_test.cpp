@@ -6592,6 +6592,16 @@ static void Test_PropertyFamilyIsCoherent() {
     DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
     EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
 
+    // [VND583-11] Case-preserving: RepNotifyFunc is a 12-byte FName, so the family starts 8 later.
+    // RE-UE4SS 4.27: Offset_Internal 0x4C -> Struct 0x78; the CasePreserving template: 0x80.
+    EXPECT("VND583-11: 4.27 non-CPN, Offset_Internal 0x4C -> Struct 0x78",
+           DynOff::PropertyFamilyFor(0x4C, false).structProp == 0x78);
+    EXPECT("VND583-11: 4.27 CPN, Offset_Internal 0x4C -> Struct 0x80",
+           DynOff::PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    EXPECT("VND583-11: 5.3+ CPN, Offset_Internal 0x44 -> Struct 0x78, EnumProperty 0x80",
+           DynOff::PropertyFamilyFor(0x44, true).structProp == 0x78 && DynOff::PropertyFamilyFor(0x44, true).enumEnum == 0x80);
+    EXPECT("VND583-11: the default argument is non-CPN", DynOff::PropertyFamilyFor(0x44).structProp == 0x70);
+
     // The base-taking overload must agree with the offset-taking one — Ubel's corrector has
     // the base in hand, Genau has Offset_Internal, and the two must not diverge.
     EXPECT("G12: the two spellings agree",

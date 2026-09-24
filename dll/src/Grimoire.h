@@ -736,9 +736,13 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 }
 
 // `propOffsetOff` is FProperty::Offset_Internal's offset; the subclass extension begins
-// 0x2C past it on every UE4.25-5.8 layout measured.
-inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff) {
-    return PropertyFamilyAtBase(propOffsetOff + 0x2C);
+// 0x2C past it on every UE4.25-5.8 layout measured -- in a NON case-preserving build.
+// [VND583-11] Offset_Internal is followed by `FName RepNotifyFunc`, which is 12 bytes under
+// WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
+// 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
+// 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
+inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
+    return PropertyFamilyAtBase(propOffsetOff + (casePreservingName ? 0x34 : 0x2C));
 }
 
 // Publish all five together. Never assign a member of this family directly.

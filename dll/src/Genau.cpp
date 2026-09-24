@@ -3587,7 +3587,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 // block used to set only STRUCT and BOOLSIZE, leaving FARRAYPROP_INNER /
                 // FBYTEPROP_ENUM at 0x78 and FENUMPROP_ENUM at 0x80 — a SPLIT family that
                 // any "keeping defaults" exit path then shipped for the whole session.
-                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET));
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET,
+                                                                      DynOff::bCasePreservingName));   // [VND583-11]
                 Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.3+ defaults (FFieldVariant=0x08)");
                 // UE5.3+ uses tagged FFieldVariant: LSB=1 means UObject, LSB=0 means FField
                 if (ueVersion >= 503) {
@@ -3852,7 +3853,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
                     // (G12) Third writer of the same family — coherent, but hand-rolled,
                     // which is precisely how it and Step 2.5 drifted apart. One expression now.
-                    DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe));
+                    DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe, DynOff::bCasePreservingName));   // [VND583-11]
                 } else if (bestProbe >= 0) {
                     Sein::Info("DYNO", "Phase B: Confirmed default FPROPERTY_OFFSET=0x%02X", DynOff::FPROPERTY_OFFSET);
                 } else {
@@ -4369,7 +4370,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // (G12) One expression for all five — see DynOff::PropertyFamilyFor. This site was
         // already coherent; routing it through the helper is what stops it and Step 2.5's
         // default block from drifting apart again.
-        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff));
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff, DynOff::bCasePreservingName));   // [VND583-11]
     } else if (propOffsetOff >= 0) {
         // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
         // in this function with zero writers -- it kept its 0x70 default on every UE4
