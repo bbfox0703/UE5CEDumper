@@ -792,6 +792,23 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
         // Read offset and size (FProperty fields, may not be valid for non-property FFields)
         Macht::ReadSafe<int32_t>(current + DynOff::FPROPERTY_OFFSET, fi.Offset);
         Macht::ReadSafe<int32_t>(current + DynOff::FPROPERTY_ELEMSIZE, fi.Size);
+
+        // [VND583-13] A Set / Map property's size says whether this build's TSet is sparse (0x50) or
+        // compact (0x10, UE_USE_COMPACT_SET_AS_DEFAULT). Compact latches DynOff::bCompactSets; any other
+        // size is only logged -- no engine is known to produce one.
+        if (fi.Size != DynOff::SPARSE_SET_ELEMENT_SIZE && (fi.TypeName == "SetProperty" || fi.TypeName == "MapProperty")) {
+            if (DynOff::IsCompactSetLayout(fi.Size, g_cachedUEVersion)) {
+                if (!DynOff::bCompactSets.exchange(true))
+                    Sein::Warn("WALK", "%s '%s' is 16 bytes: this build uses COMPACT sets (UE_USE_COMPACT_SET_AS_DEFAULT). "
+                               "TSet/TMap contents are not decoded; only their counts are shown", fi.TypeName.c_str(),
+                               fi.Name.c_str());
+            } else {
+                static std::atomic<bool> s_loggedOddSetSize{false};
+                if (!s_loggedOddSetSize.exchange(true))
+                    Sein::Warn("WALK", "%s '%s' has ElementSize 0x%X, not the sparse 0x50 -- its contents are still "
+                               "read as a TSparseArray", fi.TypeName.c_str(), fi.Name.c_str(), fi.Size);
+            }
+        }
         // ArrayDim sits immediately before ElementSize (adjacent int32s) on every
         // UE 4.18-5.7 layout (see Genau Step 9). Reading it lets a static C-array
         // UPROPERTY (Type Foo[N]) report its full Size*ArrayDim footprint so the
@@ -2934,6 +2951,13 @@ uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
     int32_t actualSerial = Aura::GetSerialNumber(objectIndex);
     if (actualSerial != serialNumber) return 0;  // stale reference
     return obj;
+}
+
+// [VND583-13] A TCompactSet's element count: { Elements*, int32 NumElements @ +0x08, int32 MaxElements }.
+static int32_t ReadCompactSetCount(uintptr_t addr) {
+    int32_t num = 0, maxE = 0;
+    if (!Macht::ReadSafe(addr + 0x08, num) || !Macht::ReadSafe(addr + 0x0C, maxE)) return 0;
+    return (num >= 0 && num <= maxE && num <= Grimoire::SANITY_MAX_CONTAINER_NUM) ? num : 0;
 }
 
 const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
@@ -5377,6 +5401,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
                     static_cast<unsigned long long>(sa.Data), sa.MaxIndex, sa.NumFreeIndices);
                 fv.hexValue = buf;
+            } else if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+                fv.mapCount = ReadCompactSetCount(instanceAddr + fi.Offset);   // [VND583-13] header only
+                fv.typedValue = "(compact TMap: " + std::to_string(fv.mapCount) + " pair(s), not decoded)";
             } else {
                 fv.mapCount = 0;
             }
@@ -5767,6 +5794,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
                     static_cast<unsigned long long>(sa.Data), sa.MaxIndex, sa.NumFreeIndices);
                 fv.hexValue = buf;
+            } else if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+                fv.setCount = ReadCompactSetCount(instanceAddr + fi.Offset);   // [VND583-13] header only
+                fv.typedValue = "(compact TSet: " + std::to_string(fv.setCount) + " element(s), not decoded)";
             } else {
                 fv.setCount = 0;
             }

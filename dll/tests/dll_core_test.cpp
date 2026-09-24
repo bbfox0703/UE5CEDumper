@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,73 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --
+    // Built like IFACEREAD: its own name pool (the two type names and two field names), one FFieldClass per type,
+    // one class blob per case. The sparse 0x50 control runs first, because the latch is process-wide.
+    {
+        blk("COMPACTSET - a 16-byte Set/Map on 5.7+ latches compact sets; the walk shows the count only");
+        const char* csNames[] = { "", "SetProperty", "MapProperty", "Cs", "Cm" };
+        static uint8_t csEntry[5][0x40] = {};
+        static uintptr_t csChunk[6] = {};
+        for (int i = 1; i < 5; ++i) {
+            memcpy(csEntry[i] + 0x10, csNames[i], strlen(csNames[i]) + 1);
+            csChunk[i] = reinterpret_cast<uintptr_t>(csEntry[i]);
+        }
+        static uintptr_t csChunks[2] = { reinterpret_cast<uintptr_t>(csChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(csChunks), 0x10);
+        const bool svFPropC = DynOff::bUseFProperty;
+        const uint32_t svVerC = g_cachedUEVersion;
+        DynOff::bUseFProperty = true;
+        g_cachedUEVersion = 508;
+        DynOff::bCompactSets = false;
+
+        static uint8_t csFieldClass[2][0x20] = {};
+        *reinterpret_cast<int32_t*>(csFieldClass[0] + DynOff::FFIELDCLASS_NAME) = 1;   // SetProperty
+        *reinterpret_cast<int32_t*>(csFieldClass[1] + DynOff::FFIELDCLASS_NAME) = 2;   // MapProperty
+        static uint8_t csProp[4][0x100] = {};
+        static uint8_t csCls[4][0x100] = {};
+        auto makeClass = [&](int i, bool map, int32_t elemSize) {
+            *reinterpret_cast<uintptr_t*>(csProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(csFieldClass[map ? 1 : 0]);
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FFIELD_NAME)           = map ? 4 : 3;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_OFFSET)      = 0x100;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = elemSize;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            *reinterpret_cast<int32_t*>(csCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x200;
+            *reinterpret_cast<uintptr_t*>(csCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(csProp[i]);
+            return reinterpret_cast<uintptr_t>(csCls[i]);
+        };
+        // The instance: a UObject header, then at +0x100 a compact set { Elements*, Num 3, Max 4 } followed by
+        // non-zero bytes -- what a TSparseArray read would run into.
+        alignas(16) static uint8_t csInst[0x200] = {};
+        static uint8_t csElems[0x40] = {};
+        const uintptr_t el = reinterpret_cast<uintptr_t>(csElems);
+        memcpy(csInst + 0x100, &el, 8);
+        *reinterpret_cast<int32_t*>(csInst + 0x108) = 3;
+        *reinterpret_cast<int32_t*>(csInst + 0x10C) = 4;
+        memset(csInst + 0x110, 0x7F, 0x40);
+        const uintptr_t inst = reinterpret_cast<uintptr_t>(csInst);
+
+        auto fieldOf = [&](const Ubel::InstanceWalkResult& r) {
+            return r.fields.empty() ? Ubel::LiveFieldValue{} : r.fields[0];
+        };
+        const auto sparseF = fieldOf(Ubel::WalkInstance(inst, makeClass(0, false, 0x50), 64, 2, false));
+        check("COMPACTSET control: a 0x50 SetProperty does not latch compact sets", !DynOff::bCompactSets.load()
+              && sparseF.name == "Cs", sparseF.name.c_str());
+
+        const auto setF = fieldOf(Ubel::WalkInstance(inst, makeClass(1, false, 0x10), 64, 2, false));
+        check("COMPACTSET ⭐ VND583-13: a 16-byte SetProperty on 5.8 latches compact sets", DynOff::bCompactSets.load());
+        check("COMPACTSET ⭐ VND583-13: ...and the set shows its count from the compact header, not decoded",
+              setF.setCount == 3 && setF.typedValue.find("compact TSet") != std::string::npos, setF.typedValue.c_str());
+        const auto mapF = fieldOf(Ubel::WalkInstance(inst, makeClass(2, true, 0x10), 64, 2, false));
+        check("COMPACTSET ⭐ VND583-13: a compact TMap shows its count, and reads no pairs",
+              mapF.mapCount == 3 && mapF.typedValue.find("compact TMap") != std::string::npos
+              && mapF.containerElements.empty(), mapF.typedValue.c_str());
+
+        DynOff::bCompactSets = false;
+        DynOff::bUseFProperty = svFPropC;
+        g_cachedUEVersion = svVerC;
     }
 
     // -- [VND583-10] the static-struct GObjects resolver scores both array geometries and both item shapes --

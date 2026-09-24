@@ -6269,6 +6269,24 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-13] A 16-byte Set/Map property on 5.7+ is a compact set; ReadTSparseArray refuses once latched.
+static void Test_CompactSetGuard() {
+    EXPECT("VND583-13: 0x10 on 5.7 is compact", DynOff::IsCompactSetLayout(0x10, 507));
+    EXPECT("VND583-13: 0x10 on 5.8 is compact", DynOff::IsCompactSetLayout(0x10, 508));
+    EXPECT("VND583-13: 0x10 on an unknown version is compact (no older engine has one)", DynOff::IsCompactSetLayout(0x10, 0));
+    EXPECT("VND583-13: 0x10 on 5.6 is not (the option does not exist there)", !DynOff::IsCompactSetLayout(0x10, 506));
+    EXPECT("VND583-13: the sparse 0x50 is never compact", !DynOff::IsCompactSetLayout(0x50, 508));
+    // The refusal: a header ReadTSparseArray accepts, until the latch is set.
+    struct { uintptr_t data; int32_t num, max; uint8_t rest[0x40]; } hdr{};
+    static int dummy[4];
+    hdr.data = reinterpret_cast<uintptr_t>(dummy); hdr.num = 2; hdr.max = 4;
+    Macht::TSparseArrayView sa;
+    EXPECT("VND583-13 control: a sparse header reads", Macht::ReadTSparseArray(reinterpret_cast<uintptr_t>(&hdr), sa));
+    DynOff::bCompactSets = true;
+    EXPECT("VND583-13: latched, ReadTSparseArray refuses", !Macht::ReadTSparseArray(reinterpret_cast<uintptr_t>(&hdr), sa));
+    DynOff::bCompactSets = false;
+}
+
 // [VND583-12] The lazy version refine: FNameData enums mean 5.7+, not 5.6+.
 static void Test_RefineVersionFromLazyMarkers() {
     EXPECT("VND583-12: FNameData enums raise 5.4 to 5.7", DynOff::RefineVersionFromLazyMarkers(504, false, true) == 507);
@@ -8823,6 +8841,7 @@ int main() {
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);
     RUN(Test_RefineVersionFromLazyMarkers);
+    RUN(Test_CompactSetGuard);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

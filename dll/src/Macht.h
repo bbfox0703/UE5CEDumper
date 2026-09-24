@@ -331,6 +331,8 @@ struct TSparseArrayView {
 inline bool ReadTSparseArray(uintptr_t addr, TSparseArrayView& out) {
     out = {};
     if (!addr) return false;
+    // [VND583-13] A compact-set build has no TSparseArray to read (see DynOff::IsCompactSetLayout).
+    if (DynOff::bCompactSets.load(std::memory_order_relaxed)) return false;
     // TArray header at +0x00
     if (!ReadSafe(addr + 0x00, out.Data)) return false;
     if (!ReadSafe(addr + 0x08, out.MaxIndex)) return false;

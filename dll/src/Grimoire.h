@@ -555,6 +555,20 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-13] Compact TSet / TMap. UE 5.7+ has an opt-in, UE_USE_COMPACT_SET_AS_DEFAULT (0 in the stock
+// engine, ContainerAllocationPolicies.h), that makes every reflected TSet / TMap a TCompactSet:
+// { Elements*, int32 NumElements, int32 MaxElements } = 16 bytes (CompactSetBase.h @5.8.3), not the sparse
+// 0x50 (TSparseArray 0x38 + the hash). Nothing here decodes one, and reading one as a TSparseArray runs
+// past its 16 bytes into the next property. The define is engine-wide, so ONE Set/Map property of
+// ElementSize 0x10 on 5.7+ (or an unknown version -- no earlier engine has a 16-byte set) latches
+// bCompactSets for the process: Macht::ReadTSparseArray then refuses, and the walker publishes the
+// header only (NumElements @ +0x08). GUARD, do not decode.
+constexpr int SPARSE_SET_ELEMENT_SIZE = 0x50;
+constexpr bool IsCompactSetLayout(int32_t elementSize, unsigned ueVersion) {
+    return elementSize == 0x10 && (ueVersion == 0 || ueVersion >= 507);
+}
+inline std::atomic<bool> bCompactSets{false};
+
 // [VND583-12] UE5_GetVersion's lazy refine, from two markers that surface only after init.
 // A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
 // The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
