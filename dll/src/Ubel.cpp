@@ -92,7 +92,7 @@ static std::string ReadFName(uintptr_t fnameAddr) {
     int32_t number = 0;
 
     if (!Macht::ReadSafe(fnameAddr, compIndex)) return "";
-    Macht::ReadSafe(fnameAddr + 4, number);
+    Macht::ReadSafe(fnameAddr + DynOff::FNAME_NUMBER, number);   // [VND583-07] +8 on CPN UE4 / 5.0
 
     return Serie::GetString(compIndex, number);
 }
@@ -104,17 +104,17 @@ static std::string ReadFName(uintptr_t fnameAddr) {
 // — while ReadFNameAt, reading the same 8 bytes through the function above, returned the
 // suffix. The panel and value search disagreed about one field. (audit #5 U8)
 //
-// Number sits at +4 in EVERY configuration: UE declares it immediately after
-// ComparisonIndex, and the case-preserving DisplayIndex is appended AFTER it (verified in
-// vendor/UnrealEngine .../UObject/NameTypes.h:1258-1267). That is why this takes a byte
-// count and not DynOff::bCasePreservingName — the 0x10 FName is wider at the TAIL, so the
-// two fields we read are at fixed offsets. `size` still gates the Number read, because a
-// caller holding only 4 bytes has no Number to decode and must keep the old behaviour.
+// Number sits at DynOff::FNAME_NUMBER: +4, except on a case-preserving UE4 / 5.0 build, whose
+// FName is {ComparisonIndex, DisplayIndex, Number} and puts it at +8. [VND583-07] This comment
+// said "+4 in EVERY configuration", which is true only from 5.1, where the DisplayIndex moved
+// to the tail (NameTypes.h: origin/4.27 and 5.0.3 vs 5.1.0 and 5.4.0). `size` still gates the
+// Number read, because a caller holding only 4 bytes has no Number to decode and must keep the
+// old behaviour.
 static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
     if (!bytes || size < 4) return "";
     int32_t compIndex = 0, number = 0;
     memcpy(&compIndex, bytes, 4);
-    if (size >= 8) memcpy(&number, bytes + 4, 4);
+    if (size >= DynOff::FNAME_NUMBER + 4) memcpy(&number, bytes + DynOff::FNAME_NUMBER, 4);
     return Serie::GetString(compIndex, number);
 }
 
@@ -647,7 +647,7 @@ std::string GetName(uintptr_t uobjectAddr) {
     const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
     NameWitness live{};
     if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
-    Macht::ReadSafe(fnameAddr + 4, live.number);
+    Macht::ReadSafe(fnameAddr + DynOff::FNAME_NUMBER, live.number);   // [VND583-07]
 
     // Check name cache first — avoids repeated FNamePool lookups. The key is an
     // address the engine recycles, so a hit is only served when the bytes it was

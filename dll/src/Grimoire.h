@@ -562,6 +562,20 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-07, A9 step 11] Where FName::Number sits. It is +4 on every non-case-preserving build and on
+// case-preserving UE 5.1+ ({ComparisonIndex, Number, DisplayIndex}). It is +8 on case-preserving UE4 and
+// 5.0 ({ComparisonIndex, DisplayIndex, Number}) -- NameTypes.h at origin/4.27 and 5.0.3-release vs
+// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated (A9's instruction): on a case-preserving
+// build DetectCasePreservingName votes on which of UObject::NamePrivate +4 / +8 repeats the
+// ComparisonIndex -- that one is the DisplayIndex, equal to it for every name whose case was never
+// re-spelled. Measured on the UE 5.4 editor running DumperTest -game: display at +8 on 745 of 745
+// objects, so Number at +4.
+inline int FNAME_NUMBER = 4;
+constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int displayAt8) {
+    if (!casePreserving) return 4;
+    return displayAt4 > displayAt8 ? 8 : 4;
+}
+
 // [VND583-14] FSoftObjectPath's shape: UE 4.x / 5.0 hold `FName AssetPathName`; 5.1+ hold
 // `FTopLevelAssetPath AssetPath` (two FNames). It was decided by `ueVersion >= 501`, which a title
 // misdetected across 5.0/5.1 gets wrong -- and a fork that reports 505 over a 5.0 core is exactly that.

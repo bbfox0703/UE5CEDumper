@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,70 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-07, A9 step 11] FName::Number's offset is measured from NamePrivate on a case-preserving build ----
+    // Built: 16 "Thing" objects with a 12-byte (CPN) NamePrivate and OuterPrivate at +0x28, in either member order.
+    // UE4 / 5.0: {ComparisonIndex, DisplayIndex, Number}; 5.1+: {ComparisonIndex, Number, DisplayIndex}. Number is
+    // 5 on every one, so the right read renders "Thing_4". Own pool and name pool, like FNAMEMEASURE.
+    {
+        blk("FNAMENUMBER - FName::Number is read where the build keeps it");
+        enum : int32_t { nClass = 1, nThing, nNames };
+        const char* fnNames[nNames] = { "", "Class", "Thing" };
+        static uint8_t fnEntry[nNames][0x40] = {};
+        static uintptr_t fnChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fnEntry[i] + 0x10, fnNames[i], strlen(fnNames[i]) + 1);
+            fnChunk[i] = reinterpret_cast<uintptr_t>(fnEntry[i]);
+        }
+        static uintptr_t fnChunks[2] = { reinterpret_cast<uintptr_t>(fnChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fnChunks), 0x10);
+        const bool svCpnN   = DynOff::bCasePreservingName;
+        const int  svOuterN = DynOff::UOBJECT_OUTER;
+        const int  svNumN   = DynOff::FNAME_NUMBER;
+
+        constexpr int kObjs = 17;   // [0] the metaclass, [1..16] Things
+        auto runCase = [&](bool ue4Order, uint8_t (&objs)[kObjs][0x40]) -> std::string {
+            for (auto& o : objs) memset(o, 0, sizeof(o));
+            const uintptr_t meta = reinterpret_cast<uintptr_t>(objs[0]);
+            memcpy(objs[0] + Grimoire::OFF_UOBJECT_CLASS, &meta, 8);
+            const int32_t cls = nClass;
+            memcpy(objs[0] + Grimoire::OFF_UOBJECT_NAME, &cls, 4);
+            for (int i = 1; i < kObjs; ++i) {
+                uint8_t* o = objs[i];
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &meta, 8);
+                const int32_t comp = nThing, number = 5;
+                memcpy(o + 0x18, &comp, 4);
+                memcpy(o + (ue4Order ? 0x1C : 0x20), &comp, 4);     // DisplayIndex
+                memcpy(o + (ue4Order ? 0x20 : 0x1C), &number, 4);   // Number
+                memcpy(o + 0x28, &meta, 8);                         // OuterPrivate (CPN slot)
+            }
+            FakePool fnPool;
+            fnPool.Build(kObjs);
+            for (int i = 0; i < kObjs; ++i) {
+                const uintptr_t a = reinterpret_cast<uintptr_t>(objs[i]);
+                memcpy(fnPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &a, 8);
+            }
+            Aura::InitWithExtendedLayout(fnPool.Addr(), FakePool::kItemSize);
+            Genau::DetectCasePreservingName();
+            const std::string name = Ubel::GetName(reinterpret_cast<uintptr_t>(objs[3]));
+            Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // before fnPool goes away
+            return name;
+        };
+        static uint8_t fnUe4[kObjs][0x40] = {};
+        const std::string n4 = runCase(true, fnUe4);
+        check("FNAMENUMBER setup: the UE4-order objects vote case-preserving", DynOff::bCasePreservingName);
+        check("FNAMENUMBER ⭐ A9-11: UE4 / 5.0 order -> FName::Number measured at +8", DynOff::FNAME_NUMBER == 8,
+              std::to_string(DynOff::FNAME_NUMBER).c_str());
+        check("FNAMENUMBER ⭐ A9-11: ...and the name renders with ITS number, Thing_4", n4 == "Thing_4", n4.c_str());
+        static uint8_t fnUe51[kObjs][0x40] = {};
+        const std::string n51 = runCase(false, fnUe51);
+        check("FNAMENUMBER control: 5.1+ order -> Number at +4 and Thing_4 too",
+              DynOff::FNAME_NUMBER == 4 && n51 == "Thing_4", n51.c_str());
+
+        DynOff::bCasePreservingName = svCpnN;
+        DynOff::UOBJECT_OUTER       = svOuterN;
+        DynOff::FNAME_NUMBER        = svNumN;
     }
 
     // -- [VND583-07] SymbolCallFollow looks ONE CALL deep for the global it follows ---------------------------------

@@ -6269,6 +6269,14 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-07, A9 step 11] FName::Number is +8 only where the DisplayIndex sits at +4 (CPN UE4 / 5.0).
+static void Test_FNameNumberOffset() {
+    EXPECT("A9-11: a standard FName keeps Number at +4", DynOff::PickFNameNumberOffset(false, 100, 0) == 4);
+    EXPECT("A9-11: CPN with the DisplayIndex at +4 (UE4 / 5.0) -> Number at +8", DynOff::PickFNameNumberOffset(true, 100, 0) == 8);
+    EXPECT("A9-11: CPN with the DisplayIndex at +8 (5.1+) -> Number at +4", DynOff::PickFNameNumberOffset(true, 0, 745) == 4);
+    EXPECT("A9-11: CPN with no evidence keeps +4", DynOff::PickFNameNumberOffset(true, 0, 0) == 4);
+}
+
 // [VND583-DOC D7-04] Force-null: strong and weak pointers are held; soft / lazy stay refused.
 static void Test_ObjectNullShape() {
     using Solide::ObjectNullShape;
@@ -8873,6 +8881,7 @@ int main() {
     RUN(Test_CompactSetGuard);
     RUN(Test_SoftPathShape);
     RUN(Test_ObjectNullShape);
+    RUN(Test_FNameNumberOffset);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

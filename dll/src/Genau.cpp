@@ -3440,8 +3440,9 @@ static int ProbeUFieldNextFProperty() {
 //   the Name->Outer SLOT is 0x10 (CasePreservingName), Outer=0x28. sizeof(FName) is 0xC;
 //   the extra 4 bytes are the 8-alignment padding in front of OuterPrivate, not part of FName.
 //
-// Also checks: if the two int32s at UObject::Name (+0x18 and +0x1C) are equal,
-// it's likely ComparisonIndex == DisplayIndex, confirming CPN.
+// Also checks: if the int32 at UObject::Name (+0x18) repeats at +0x1C (UE4 / 5.0) or at +0x20
+// (5.1+, where DisplayIndex follows Number), it's likely ComparisonIndex == DisplayIndex,
+// confirming CPN. The same repeat then says where FName::Number sits (DynOff::FNAME_NUMBER).
 // ─────────────────────────────────────────────────────────────────────────────
 static void DetectCasePreservingName() {
     Sein::Info("DYNO", "DetectCasePreservingName: Probing UObject layout...");
@@ -3490,10 +3491,13 @@ static void DetectCasePreservingName() {
             ++voteCPN;
         } else if (at20valid && at28valid) {
             // Ambiguous — check if CompIdx == DispIdx (CPN signature)
-            uint32_t compIdx = 0, dispIdx = 0;
+            // [VND583-07] The DisplayIndex is at +0x1C on UE4 / 5.0 but at +0x20 on 5.1+, where it
+            // follows Number; checking +0x1C alone voted a 5.1+ case-preserving object "standard".
+            uint32_t compIdx = 0, dispAt1C = 0, dispAt20 = 0;
             Macht::ReadSafe(obj + 0x18, compIdx);
-            Macht::ReadSafe(obj + 0x1C, dispIdx);
-            if (compIdx == dispIdx && compIdx > 0 && compIdx < 0x00FFFFFF) {
+            Macht::ReadSafe(obj + 0x1C, dispAt1C);
+            Macht::ReadSafe(obj + 0x20, dispAt20);
+            if ((compIdx == dispAt1C || compIdx == dispAt20) && compIdx > 0 && compIdx < 0x00FFFFFF) {
                 ++voteCPN;
             } else {
                 ++voteStandard;
@@ -3514,6 +3518,28 @@ static void DetectCasePreservingName() {
         DynOff::UOBJECT_OUTER = 0x20;
         Sein::Info("DYNO", "DetectCasePreservingName: Standard FName — UObject::Outer = +0x20");
     }
+
+    // [VND583-07, A9 step 11] Where FName::Number sits -- see DynOff::FNAME_NUMBER. Only a case-preserving
+    // build has a DisplayIndex to find; a standard one resets to +4 (a re-detection must not keep a stale +8).
+    int displayAt4 = 0, displayAt8 = 0;
+    if (DynOff::bCasePreservingName) {
+        for (int32_t i = 1, seen = 0; i < count && seen < 200; ++i) {
+            uintptr_t obj = Aura::GetByIndex(i);
+            if (!obj) continue;
+            uint32_t n0 = 0, n4 = 0, n8 = 0;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, n0) || n0 == 0) continue;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME + 4, n4)
+                || !Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME + 8, n8)) continue;
+            ++seen;
+            if (n4 == n0 && n8 != n0)      ++displayAt4;
+            else if (n8 == n0 && n4 != n0) ++displayAt8;
+        }
+    }
+    DynOff::FNAME_NUMBER = DynOff::PickFNameNumberOffset(DynOff::bCasePreservingName, displayAt4, displayAt8);
+    if (DynOff::bCasePreservingName)
+        Sein::Info("DYNO", "DetectCasePreservingName: DisplayIndex at NamePrivate+4 on %d object(s), +8 on %d "
+                   "-> FName::Number at +%d (%s)", displayAt4, displayAt8, DynOff::FNAME_NUMBER,
+                   DynOff::FNAME_NUMBER == 8 ? "UE4 / 5.0 order" : "UE 5.1+ order");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

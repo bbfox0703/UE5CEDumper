@@ -833,6 +833,10 @@ void UE5_WalkClassEnd() {
 bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
     int32_t compIndex = static_cast<int32_t>(fname & 0xFFFFFFFF);
     int32_t number    = static_cast<int32_t>((fname >> 32) & 0xFFFFFFFF);
+    // [VND583-07] The caller hands the FName's first 8 bytes. On a case-preserving UE4 / 5.0 build the
+    // high dword is the DisplayIndex (Number is at +8, which this signature cannot carry), so a
+    // suffix decoded from it would be a wrong one; the base name is the honest answer there.
+    if (DynOff::FNAME_NUMBER != 4) number = 0;
 
     std::string name = Serie::GetString(compIndex, number);
     return CopyToBuffer(name, buf, bufLen);
