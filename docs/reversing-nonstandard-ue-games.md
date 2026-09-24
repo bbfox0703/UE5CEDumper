@@ -126,7 +126,8 @@ handle **encrypted** games. **Decision: no — and there is nothing to gain on t
 encryption axis.** Both repos (and this project) only provide a *plug-in hook*; neither
 decrypts any title out of the box. Read in full 2026-06-28 against `vendor/Dumper-7@c891b17` and
 `vendor/RE-UE4SS@2352d15b`; re-checked 2026-09-05 at `Dumper-7@b88241b` and `RE-UE4SS@24b12662`,
-where neither delta (37 and 135 commits) adds a decrypt path — no `encrypt`/`decrypt`/`aes` in
+and 2026-09-24 at `Dumper-7@dd8fe34` and `RE-UE4SS@f58e8f84`
+(`docs/audit-2026-09-24-vendor-ue583.md`), where no delta (37 + 135, then 4 + 15 commits) adds a decrypt path — no `encrypt`/`decrypt`/`aes` in
 either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`include` still hold zero
 `decrypt` hits. These are local reference clones, **not** git submodules — see `.gitmodules`.
 

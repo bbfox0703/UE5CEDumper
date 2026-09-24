@@ -249,6 +249,37 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
+
+Full detail, both-side citations and fix shapes: [audit-2026-09-24-vendor-ue583.md](audit-2026-09-24-vendor-ue583.md).
+**UE 5.8.3 itself needs nothing** (layouts byte-identical; DumperTest58 repackaged with 5.8.3 and
+`tools/verify/fixture_smoke.py` found 57/57 verdict lines and every AOB winner unchanged). Every row
+below is **pre-existing**, exposed by upstream sources this repo had never read. Fix-pass rules apply:
+one row per commit, red before green where testable. ⚠ Rows tagged UNVERIFIED lost their verifier to
+the usage window — re-derive before acting.
+
+| id | sev | effort | what | where |
+|---|---|---|---|---|
+| `[VND583-01]` | **breaking** | S–M | `UFunction::FunctionFlags` keyed on version only; FF7R is +0x90, DQ XI S 0x98 (table gives 0x88 = `ScriptObjectReferences.Data`). Derive from measured PropertiesSize (+0x48 / +0x58) and vote on NumParms | `Grimoire.h:466-480`, `Ubel.cpp:1530-1565`, `Aura.cpp:6428-6440` |
+| `[VND583-02]` | gap | S | `UField::Next` never measured in FProperty mode — function lists wrong on 4.25+ titles with a 0x30 UObject (The Pathless) | `Genau.cpp:3378-3383`, `:3962-4086`; `Ubel.cpp:1762` |
+| `[VND583-03]` | gap | S | `alignof(FName)` is 8 on non-CPN 4.11–4.21; `Scharf.h:80` says 4 → TMap stride 4 short for some shapes | `Scharf.h:80`, `Ubel.cpp:1965-1970`, `:5460-5473` |
+| `[VND583-04]` | gap | S | `UEnum::Names` value is `uint8` on 4.9–4.14; `Neu::ReadEntry` reads int64 → garbage padding decides resolution (NEKOPALIVE) | `Neu.h:159-168`, `Ubel.cpp:147-148` |
+| `[VND583-05]` | gap | S | top-level `WeakObjectProperty` has no null/stale label (raw hex in Value) | `Ubel.cpp:4490-4508` |
+| `[VND583-06]` | gap | M | weak pointers to Garbage objects resolve for up to ~61 s; label `[garbage]` from `RF_Garbage` / PendingKill | `Ubel.cpp:2747-2754`, `Grimoire.h:113` |
+| `[VND583-07]` | gap | M | 09-05 A9 (CPN bundle) steps 1/7/11 never built, never filed; no CPN title measured yet | `Ubel.cpp:1800`, `:1833-1849`, `:1878-1879` |
+| `[VND583-08]` | latent | S | `ResolveWeakObjectPtr` lacks UE's `serial == 0 → null` | `Ubel.cpp:2747-2754`, `Aura.cpp:3856-3859` |
+| `[VND583-09]` | latent | S | UE 5.2 gets the 5.3 FField default (`>= 502` should be `>= 503`), then treated as proof | `Genau.cpp:3471`, `:4277` |
+| `[VND583-10]` | latent | M | static-struct GObjects recovery hardcodes the ≤5.7 array / ≤5.6 item layout (also 09-05 A5's unfiled half; PS-02 UNVERIFIED) | `Genau.cpp:684-700`, `Aura.cpp:1353-1360` |
+| `[VND583-11]` | latent | S | `PropertyFamilyFor` ignores CPN (+0x34, not +0x2C) | `Grimoire.h:621-622` + 3 Genau call sites |
+| `[VND583-12]` | latent | S | version labels off by one (FNameData 5.7+, legacy pairs 4.15–5.6, MinAlignment int16 since 5.6) | UEP-04 in the audit |
+| `[VND583-13]` | latent | S | 5.7+ compact TSet/TMap (`UE_USE_COMPACT_SET_AS_DEFAULT`) — guard, do not decode | UEP-05 |
+| `[VND583-14]` | latent | M | FSoftObjectPath shape gated on `>= 501`; resolve it from the `SoftObjectPath` struct | UEP-06 |
+| `[VND583-15]` | latent | — | `UE_WITH_REMOTE_OBJECT_HANDLE` grows FWeakObjectPtr to 16 bytes — add to the existing watch-item | D7-05 |
+| `[VND583-16]` | latent | S | `crc_authority_survey.py --oracle` overwrites instead of merging; running it now drops the 5.8.2 row | `tools/verify/crc_authority_survey.py:148-165`, `:213-214` |
+| `[VND583-17]` | latent | S | `tools/ghidra/find_gobjects.java` searches the GC-pool anchor as UTF-16 only; 5.8 made it narrow | `find_gobjects.java:44-49` |
+| `[VND583-18]` | — | — | minhook: **HOLD** (3 behind upstream on purpose); bump triggers in the audit's MINHOOK section | `vendor/minhook` |
+| `[VND583-DOC]` | doc | S | 20 stale doc/comment rows (2 fixed in the audit commit) — list in the audit's Documentation section | — |
+
 ## ⛔ THE BLANK SWEEP — `[BLANK-0601-PLAN-2026-09-10]` the 50,451 lines no audit ever scoped
 
 **Status: ✅ ALL FIVE WAVES SWEPT 2026-09-10 — 39 distinct defects confirmed (2 HIGH · 19 MED · 18 LOW), NONE repaired.** The whole-sweep table is at the end of `[BLANK-W5-2026-09-10]`. This section is the batching
