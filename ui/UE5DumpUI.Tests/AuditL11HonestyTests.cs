@@ -396,11 +396,15 @@ public class AuditL11HonestyTests
         public readonly TaskCompletionSource Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         /// <summary>The address whose walk parks on <see cref="Gate"/>: the struct resolve by default.</summary>
         public string GatedAddr = "0x5000";
+        /// <summary>A second, independent parking spot: a walk that must still be running when the first is released.</summary>
+        public readonly TaskCompletionSource Gate2 = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string GatedAddr2 = "";
         public override async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
         {
             if (addr == GatedAddr) await Gate.Task;
+            if (addr == GatedAddr2) await Gate2.Task;
             return await base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
         }
     }
@@ -440,6 +444,32 @@ public class AuditL11HonestyTests
         Assert.Contains("loaded", vm.StatusText);
         Assert.True(vm.IsLoadingFields);                               // B's walk still owns the loading flag
         dump.Gate.SetResult();
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_AWalkStartedDuringTheExport_KeepsItsLoadingFlag()
+    {
+        // [R7-S14] The export's finally cleared IsLoadingFields unconditionally, so a walk started DURING the export
+        // (the user picked B while the structs resolved) lost its progress bar while it was still running.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        vm.SelectedInstance = null;                                     // re-load A with a struct field
+        var alpha = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha", Fields = TuneStruct(),
+        });
+        vm.SelectedInstance = alpha;                                    // A with a struct: the resolve will park
+        dump.GatedAddr = "0x5000";
+        dump.GatedAddr2 = "0x20000000";
+
+        var export = vm.ExportCeXmlCommand.ExecuteAsync(null);         // parked in the struct resolve
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        dump.Gate.SetResult();                                          // the export finishes...
+        await export;
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.True(vm.IsLoadingFields);                                // ...while B's walk is still running
+        dump.Gate2.SetResult();
     }
 
     [Fact]

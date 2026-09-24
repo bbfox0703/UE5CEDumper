@@ -828,7 +828,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         // put A's layout under B's root, or resolve the structs at one limit and the top level at another.
         if (!ReferenceEquals(_fieldsInstance, SelectedInstance) || _fieldsArrayLimit != ArrayLimit)
         {
-            StatusText = "The fields shown are not this selection's yet — copy again once they have loaded.";
+            // A walk that FAILED leaves the previous rows too, with its error shown: then re-selecting is what helps.
+            StatusText = "The fields shown are not this selection's — copy again once they have loaded "
+                         + "(if loading failed, re-select the instance).";
             return;
         }
         // [R7-S14] A walk started DURING the export owns the loading flag: do not clear it under that walk.
