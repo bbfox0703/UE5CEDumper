@@ -1,4 +1,4 @@
-"""Which titles can produce a `DetectVersion: Tier 1 (ascii|utf16)` line -- decided offline.
+r"""Which titles can produce a `DetectVersion: Tier 1 (ascii|utf16)` line -- decided offline.
 
 Two independent facts per binary, because BOTH are required and either alone misleads:
   1. Does it fall THROUGH Tier 0? (replays Genau::DetectVersionFromPEResource's order)
@@ -43,11 +43,11 @@ def tier0(path):
     if fmaj == 5 and fmin <= 9:  return f"Tier0 -> {500 + fmin} (File)", prod
     if fmaj == 4 and fmin <= 27: return f"Tier0 -> {400 + fmin} (File)", prod
     q, m = ctypes.c_void_p(), wintypes.UINT()
-    if ver.VerQueryValueW(buf, "\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
+    if ver.VerQueryValueW(buf, r"\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
         a = ctypes.cast(q, ctypes.POINTER(wintypes.WORD))
         for key in ("ProductVersion", "FileVersion"):
             r2, n2 = ctypes.c_void_p(), wintypes.UINT()
-            if ver.VerQueryValueW(buf, "\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key),
+            if ver.VerQueryValueW(buf, r"\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key),
                                   ctypes.byref(r2), ctypes.byref(n2)) and n2.value:
                 s = ctypes.wstring_at(r2, n2.value).rstrip("\x00")
                 if "++UE5+Release-" in s or "++UE4+Release-" in s:

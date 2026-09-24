@@ -1,4 +1,4 @@
-"""Replay Genau's Tier-0 (PE VERSIONINFO) decision offline, over any set of UE binaries.
+r"""Replay Genau's Tier-0 (PE VERSIONINFO) decision offline, over any set of UE binaries.
 
 Why this exists: version-detection rows in the register keep prescribing candidate
 titles by ENGINE version, but which tier a title reaches is decided by its PE
@@ -52,11 +52,11 @@ def probe(path):
 
     strs = {}
     q, m = ctypes.c_void_p(), wintypes.UINT()
-    if ver.VerQueryValueW(buf, "\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
+    if ver.VerQueryValueW(buf, r"\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
         a = ctypes.cast(q, ctypes.POINTER(wintypes.WORD))
         for key in ("ProductVersion", "FileVersion"):
             r2, n2 = ctypes.c_void_p(), wintypes.UINT()
-            sub = "\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key)
+            sub = r"\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key)
             if ver.VerQueryValueW(buf, sub, ctypes.byref(r2), ctypes.byref(n2)) and n2.value:
                 strs[key] = ctypes.wstring_at(r2, n2.value).rstrip("\x00")
 
