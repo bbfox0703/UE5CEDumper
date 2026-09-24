@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 -----
 
 ## Build & Deploy
-- After making code changes, always do a full rebuild and verify the build output is actually updated before testing. Never assume a build succeeded without checking.
+- Before testing a change, confirm the binary under test was rebuilt from it (its timestamp or SHA): a failed build leaves the old DLL or `dist\` in place, and a stale binary passes silently.
 - **Hand over an AOT-TRIMMED build, not the plain one.** `build.ps1` with no `-Mode` produces a
   self-contained **non-trimmed** exe (~107 MB); `-Mode Publish` produces the Native-AOT **trimmed**
   binary that ships (~54 MB). They are not the same program: reflection-shaped code — JSON without a
@@ -21,11 +21,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   which reads like a broken toolchain rather than a missing environment).
   ⚠⚠ **ANY run that reaches the publish step overwrites `dist\UE5DumpUI.exe` with the
   non-trimmed exe** — `-Target UI`, `-Target Test` and a plain `build.ps1` alike; only
-  `-Mode Publish` leaves an AOT-trimmed `dist\`. Measured: `-Target Test` 54.7 MB sha `3ebf02e7`
-  → 106.8 MB sha `fa1e3f19` (2026-08-20); `-Target UI` ending `[OK] UE5DumpUI.exe (106.8 MB)`
-  (2026-08-22). The safest-looking command is the cheapest way to destroy the shippable binary.
-  **After ANY build that touches the UI, re-run `-Mode Publish -NoBumpBuildNumber` and check the
-  size/SHA before handing `dist\` over.**
+  `-Mode Publish` leaves an AOT-trimmed `dist\` (~54 MB against ~107 MB non-trimmed). The
+  safest-looking command is the cheapest way to destroy the shippable binary.
+  **After ANY build that touches the UI, re-run `-Mode Publish` and check the size/SHA before
+  handing `dist\` over.** Let it bump the build number: the build number is the release number.
 
 -----
 
@@ -65,9 +64,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Dev Commands
 
-### Unified Build Script (PREFERRED — always use this)
+### Unified Build Script
 
-The `build.ps1` script handles VS DevShell setup, CMake, dotnet, and test execution automatically. **Always use this for building** — bare `cmake` / `dotnet build` commands will fail without the VS DevShell environment.
+`build.ps1` handles VS DevShell setup, CMake configure, dotnet, and test execution, and it is the only builder that configures the tree or publishes `dist\`; bare `cmake` / `dotnet build` fail without the VS DevShell environment. For a verification-only DLL or C++ test build, use `py tools/verify/build_dll.py --targets <target...>`: it loads MSVC itself, never configures, and neither bumps `build_number.txt` nor touches `dist\`.
 
 ```bash
 # Build everything (DLL + UI + Tests) — Release
@@ -87,13 +86,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 #   grausam_window_test / sein_retention_test take one each. The other 21 — **Fern.cpp and
 #   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
 #   it clean. A green -Target Test after editing one of THOSE measures nothing about that
-#   file. Use -Target DLL (or no -Target) before claiming a C++ change builds. Learned the
-#   hard way 2026-08-04: "959 dll green" was reported over a Fern.cpp that had never been
-#   compiled and did not parse.
-# ⚠ This paragraph itself said "only the two test executables, which link HEADERS" until
-#   2026-09-08 — true at audit #5 (build 2804), false from the day dll_core_test landed, and
-#   it was quoted to a fix session as a reason not to write a test. Both counts are now
-#   pinned by `check_derived_counts`; do not hand-edit them.
+#   file. Build the DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before
+#   claiming a C++ change builds. Both counts are pinned by `check_derived_counts`; do not
+#   hand-edit them.
 # ⚠⚠ It is ALSO NOT READ-ONLY: the C++ narrowness above is about the C++ side ONLY —
 #   it republishes dist\ NON-TRIMMED too. See ## Build & Deploy.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
@@ -129,7 +124,7 @@ git submodule update --init --recursive
 
 -----
 
-## Rules (MUST follow)
+## Rules
 
 - **Language**: Code comments and UI strings in English
 - **Single Instance**: UI app uses Mutex to ensure only one instance runs
@@ -262,6 +257,6 @@ line, trim a row, do not grow.
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
 | [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 39 .h** DLL files, **195** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**63** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
-| [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here — read before an audit, a verification claim, or an Avalonia/CE/SQLite change.** Verification method, audit-agent calibration, traps in our stack, UE/CE facts, §6 settled decisions. Write new lessons here. |
+| [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here.** Long — read the section the task needs: §1 before a verification claim, §2 before an audit, §3 before an Avalonia / CE / SQLite / build change, §4 for UE and CE facts, §6 before proposing an architecture or UX change (settled decisions). Write new lessons here. |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |
 | [docs/README.md](docs/README.md) | **Everything else** — the full per-document index: specs, audits, evals, CE/Ghidra references, the archive. Open it whenever the answer is not in the rows above. |

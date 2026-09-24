@@ -3130,7 +3130,7 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   misleading about the rest. So the safest-looking command in the file silently destroys the only
   artifact the hand-over rule protects, and leaves a *runnable* exe behind, at the right build
   number, that merely happens to be the wrong one. **After any `-Target Test`, re-run
-  `-Mode Publish -NoBumpBuildNumber` and check the size before handing `dist/` over.**
+  `-Mode Publish` (letting it bump the build number) and check the size before handing `dist/` over.**
   Found by accident: a `-Target Test` run used only to confirm `build.ps1` still parsed after an
   edit, whose *summary listing* showed `UE5DumpUI.exe (106.8 MB)` where 54.7 MB was expected. The
   summary listing is worth reading for that reason alone.
