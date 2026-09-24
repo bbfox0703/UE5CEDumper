@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3902,6 +3902,97 @@ int main() {
         DynOff::bCasePreservingName = svCpnN;
         DynOff::UOBJECT_OUTER       = svOuterN;
         DynOff::FNAME_NUMBER        = svNumN;
+    }
+
+    // -- [VND583-07, A9 steps 1 + 7] sizeof(FName) is MEASURED; the rule no longer overrides the engine -----------
+    // Built: a UClass "Thing" whose ChildProperties chain holds `nName` NameProperty FFields of ElementSize `es`
+    // between two IntProperty FFields. The walk reads DynOff's own offsets, so nothing here is hardcoded.
+    {
+        blk("FNAMESIZE - sizeof(FName) is the engine's NameProperty ElementSize");
+        enum : int32_t { nClass = 1, nNameProp, nIntProp, nThing, nNames };
+        const char* fsNames[nNames] = { "", "Class", "NameProperty", "IntProperty", "Thing" };
+        static uint8_t fsEntry[nNames][0x40] = {};
+        static uintptr_t fsChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fsEntry[i] + 0x10, fsNames[i], strlen(fsNames[i]) + 1);
+            fsChunk[i] = reinterpret_cast<uintptr_t>(fsEntry[i]);
+        }
+        static uintptr_t fsChunks[2] = { reinterpret_cast<uintptr_t>(fsChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fsChunks), 0x10);
+        const bool svCpnS   = DynOff::bCasePreservingName;
+        const bool svValidS = DynOff::bOffsetsValidated.load();
+        const bool svFpropS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty     = true;
+        DynOff::bOffsetsValidated = true;
+
+        alignas(16) static uint8_t fsMeta[0x200] = {}, fsThing[0x200] = {};
+        alignas(16) static uint8_t fsFcName[0x40] = {}, fsFcInt[0x40] = {};
+        alignas(16) static uint8_t fsField[10][0x100] = {};
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        FakePool fsPool;
+        fsPool.Build(2);
+        const uintptr_t objs[2] = { reinterpret_cast<uintptr_t>(fsMeta), reinterpret_cast<uintptr_t>(fsThing) };
+        for (int i = 0; i < 2; ++i)
+            memcpy(fsPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &objs[i], 8);
+        auto build = [&](bool cpn, int nName, int32_t es) {
+            memset(fsMeta, 0, sizeof(fsMeta)); memset(fsThing, 0, sizeof(fsThing));
+            memset(fsFcName, 0, sizeof(fsFcName)); memset(fsFcInt, 0, sizeof(fsFcInt));
+            for (auto& f : fsField) memset(f, 0, sizeof(f));
+            putP(fsMeta, Grimoire::OFF_UOBJECT_CLASS, objs[0]);  put32(fsMeta, Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(fsThing, Grimoire::OFF_UOBJECT_CLASS, objs[0]); put32(fsThing, Grimoire::OFF_UOBJECT_NAME, nThing);
+            put32(fsFcName, DynOff::FFIELDCLASS_NAME, nNameProp);
+            put32(fsFcInt,  DynOff::FFIELDCLASS_NAME, nIntProp);
+            const int total = nName + 2;   // an IntProperty at each end
+            for (int i = 0; i < total; ++i) {
+                const bool isName = i > 0 && i < total - 1;
+                putP(fsField[i], DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(isName ? fsFcName : fsFcInt));
+                put32(fsField[i], DynOff::FPROPERTY_ELEMSIZE, isName ? es : 4);
+                if (i + 1 < total) putP(fsField[i], DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(fsField[i + 1]));
+            }
+            putP(fsThing, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(fsField[0]));
+            DynOff::bCasePreservingName = cpn;
+            DynOff::bFNameSizeProbed    = false;
+            DynOff::FNAME_SIZE_MEASURED = 0;
+        };
+        Aura::InitWithExtendedLayout(fsPool.Addr(), FakePool::kItemSize);
+
+        build(false, 6, 4);   // a standard build with UE_FNAME_OUTLINE_NUMBER: FName is 4 bytes
+        const int sOutline = Ubel::FNameSize();
+        check("FNAMESIZE ⭐ A9-1: six NameProperty fields of 4 -> sizeof(FName) measured 4, not the rule's 8",
+              sOutline == 4 && DynOff::SizeofFName() == 4, std::to_string(sOutline).c_str());
+        build(true, 6, 12);
+        const int sCpn = Ubel::FNameSize();
+        check("FNAMESIZE ⭐ A9-1: case-preserving, 12 -> MEASURED 12 (it agrees with the rule, but is measured)",
+              sCpn == 12 && DynOff::FNAME_SIZE_MEASURED.load() == 12, std::to_string(DynOff::FNAME_SIZE_MEASURED.load()).c_str());
+        build(false, 6, 12);
+        check("FNAMESIZE control: 12 on a standard build is not its family -> the rule's 8",
+              Ubel::FNameSize() == 8 && DynOff::FNAME_SIZE_MEASURED.load() == 0);
+        build(false, 3, 4);
+        check("FNAMESIZE control: three fields are too few -> the rule's 8", Ubel::FNameSize() == 8);
+
+        // A9 step 7. Unmeasured (the latch set, nothing found), validated: a plausible engine size is kept.
+        build(false, 0, 0);
+        DynOff::bFNameSizeProbed = true;
+        const int32_t v4 = Ubel::ValidateArrayElemSize(4, "NameProperty");
+        check("FNAMESIZE ⭐ A9-7: unmeasured, the engine's plausible 4 is kept (the rule overrode it with 8)",
+              v4 == 4, std::to_string(v4).c_str());
+        check("FNAMESIZE control: an implausible 0x30 is still overridden with the rule",
+              Ubel::ValidateArrayElemSize(0x30, "NameProperty") == 8);
+        DynOff::bOffsetsValidated = false;
+        check("FNAMESIZE control: unvalidated offsets -> the rule, not the read",
+              Ubel::ValidateArrayElemSize(4, "NameProperty") == 8);
+        DynOff::bOffsetsValidated = true;
+        DynOff::FNAME_SIZE_MEASURED = 8;
+        check("FNAMESIZE control: MEASURED 8 beats a single read of 4",
+              Ubel::ValidateArrayElemSize(4, "NameProperty") == 8);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bFNameSizeProbed    = false;
+        DynOff::FNAME_SIZE_MEASURED = 0;
+        DynOff::bCasePreservingName = svCpnS;
+        DynOff::bOffsetsValidated   = svValidS;
+        DynOff::bUseFProperty       = svFpropS;
     }
 
     // -- [VND583-07] SymbolCallFollow looks ONE CALL deep for the global it follows ---------------------------------

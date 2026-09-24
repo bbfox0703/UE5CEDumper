@@ -576,6 +576,24 @@ constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int dis
     return displayAt4 > displayAt8 ? 8 : 4;
 }
 
+// [VND583-07, A9 step 1] sizeof(FName), MEASURED: the modal ElementSize of the NameProperty fields a walk
+// meets (Ubel::ProbeFNameSize) -- UE sets ElementSize from sizeof(FName) itself. Only a size this build's
+// family can have is taken: 4 or 8 on a standard build, 8 or 12 on a case-preserving one (the smaller of
+// each pair is UE_FNAME_OUTLINE_NUMBER, which moves Number out of FName), and only when at least
+// kFNameSizeMinAgree samples agree on three quarters of them. 0 = no measurement, and SizeofFName() then
+// answers from bCasePreservingName. Measured 2026-09-24 on both case-preserving hosts: 12 on 331 of 331
+// NameProperty fields (UE 5.4 editor, DumperTest -game) and on 239 of 239 (UE 4.27 editor, UE427_3rdPerson).
+constexpr int kFNameSizeMinAgree = 5;
+constexpr bool IsFNameSizeFor(int size, bool casePreserving) {
+    return casePreserving ? (size == 8 || size == 12) : (size == 4 || size == 8);
+}
+constexpr int PickFNameSize(bool casePreserving, int modalSize, int modalCount, int sampled) {
+    return (IsFNameSizeFor(modalSize, casePreserving) && modalCount >= kFNameSizeMinAgree
+            && modalCount * 4 >= sampled * 3) ? modalSize : 0;
+}
+inline std::atomic<int>  FNAME_SIZE_MEASURED{0};
+inline std::atomic<bool> bFNameSizeProbed{false};
+
 // [VND583-14] FSoftObjectPath's shape: UE 4.x / 5.0 hold `FName AssetPathName`; 5.1+ hold
 // `FTopLevelAssetPath AssetPath` (two FNames). It was decided by `ueVersion >= 501`, which a title
 // misdetected across 5.0/5.1 gets wrong -- and a fork that reports 505 over a 5.0 core is exactly that.
@@ -860,6 +878,11 @@ inline bool bCasePreservingName  = false;
 // (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
 // and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
+    // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and
+    // only while it still fits this build's family -- a re-detection that flips bCasePreservingName
+    // must not keep a size measured under the other answer.
+    const int measured = FNAME_SIZE_MEASURED.load(std::memory_order_acquire);
+    if (measured && IsFNameSizeFor(measured, bCasePreservingName)) return measured;
     return bCasePreservingName      // FScriptDelegate, anything vs an engine ElementSize.
         ? 0x0C : 0x08;              // three int32, alignof 4, NO trailing pad.
 }

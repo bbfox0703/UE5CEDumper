@@ -1956,6 +1956,69 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     return funcs;
 }
 
+// [VND583-07, A9 step 1] sizeof(FName), MEASURED once -- see DynOff::PickFNameSize. The modal ElementSize
+// over the first 64 NameProperty fields met: FField mode walks each UClass / UScriptStruct's own
+// ChildProperties, UProperty mode (UE4 < 4.25) reads the NameProperty objects in GObjects. Needs validated
+// offsets (FNameSize asks); a cancelled walk latches nothing, so the next ask retries. Raw reads only --
+// never the walker, whose InferScalarSize asks FNameSize and would re-enter this lock.
+static void ProbeFNameSize() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bFNameSizeProbed.load(std::memory_order_relaxed)) return;
+    constexpr size_t kSamples = 64;
+    std::vector<int32_t> sizes;
+    sizes.reserve(kSamples);
+    const bool fprop = DynOff::bUseFProperty;
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        const std::string clsName = ReadFName(cls + Grimoire::OFF_UOBJECT_NAME);
+        if (!fprop) {
+            int32_t es = 0;
+            if (clsName == "NameProperty" && Macht::ReadSafe(obj + DynOff::UPROPERTY_ELEMSIZE, es))
+                sizes.push_back(es);
+            return sizes.size() < kSamples;
+        }
+        if (clsName != "Class" && clsName != "ScriptStruct") return true;
+        uintptr_t f = 0;
+        if (!Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, f)) return true;
+        f = DynOff::StripFFieldTag(f);
+        for (int n = 0; f && n < 512 && sizes.size() < kSamples; ++n) {
+            if (DynOff::IsFFieldVariantUObject(f)) break;
+            int32_t es = 0;
+            if (GetFieldTypeName(f) == "NameProperty" && Macht::ReadSafe(f + DynOff::FPROPERTY_ELEMSIZE, es))
+                sizes.push_back(es);
+            if (!Macht::ReadSafe(f + DynOff::FFIELD_NEXT, f)) break;
+        }
+        return sizes.size() < kSamples;
+    });
+    if (!complete) return;   // cancelled: try again on the next ask
+    int modal = 0, modalCount = 0;
+    for (const int32_t s : sizes) {
+        const int c = static_cast<int>(std::count(sizes.begin(), sizes.end(), s));
+        if (c > modalCount) { modal = s; modalCount = c; }
+    }
+    const int picked = DynOff::PickFNameSize(DynOff::bCasePreservingName, modal, modalCount,
+                                             static_cast<int>(sizes.size()));
+    const int rule = DynOff::bCasePreservingName ? 0x0C : 0x08;
+    if (picked) {
+        LOG_INFO("DetectFNameSize: sizeof(FName) = %d, the ElementSize of %d of %zu NameProperty field(s) "
+                 "(the case-preserving rule says %d)", picked, modalCount, sizes.size(), rule);
+    } else {
+        LOG_WARN("DetectFNameSize: no agreed NameProperty ElementSize (%zu sampled, modal %d on %d) -- "
+                 "the case-preserving rule answers %d", sizes.size(), modal, modalCount, rule);
+    }
+    DynOff::FNAME_SIZE_MEASURED.store(picked, std::memory_order_release);
+    DynOff::bFNameSizeProbed.store(true, std::memory_order_release);
+}
+
+static int FNameSize() {
+    if (!DynOff::bFNameSizeProbed.load(std::memory_order_acquire)
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeFNameSize();
+    return DynOff::SizeofFName();
+}
+
 // --- Live Instance Walking ---
 
 /// Infer the expected element size from a well-known property type name.
@@ -1979,13 +2042,14 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // WITH_CASE_PRESERVING_NAME (+ DisplayIndex(4), alignof 4, no trailing padding).
     // 0x10 is the UObject NamePrivate->Outer SLOT, which is a different question: that
     // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
-    // This MUST be dynamic: ValidateArrayElemSize treats InferScalarSize as authoritative
-    // and OVERRIDES the engine's reported ElementSize -- which for a NameProperty is
-    // ALREADY the correct 0xC, so a wrong value here is actively substituted for a right one.
+    // This MUST be dynamic, and it is MEASURED when it can be (FNameSize, [VND583-07] A9 step 1):
+    // ResolveInnerSize returns this before it asks the engine, so a wrong value here is
+    // actively substituted for a right one. ValidateArrayElemSize no longer lets it override a
+    // plausible engine ElementSize (A9 step 7).
     // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
     // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
     // the UNPADDED sizeof.
-    if (typeName == "NameProperty")   return DynOff::SizeofFName();
+    if (typeName == "NameProperty")   return FNameSize();
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
@@ -2026,6 +2090,27 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
     // stays: without it the generic arm below would pass any garbage size from 1 to 65536.
     if (typeName == "LazyObjectProperty")
         return LazyGuidOffset(readSize) + 0x10;
+    // [VND583-07, A9 step 7] NameProperty: our RULE no longer overrides the engine. sizeof(FName) is one
+    // number per process, so a MEASURED size (FNameSize) still beats a single read that disagrees with it --
+    // that read is the misread. Unmeasured, a size this build's family can have is the engine's and is kept,
+    // but only on validated offsets (a default FPROPERTY_ELEMSIZE can read anything). A plausible
+    // disagreement is a Warn: it is a layout question, not the recovery noise of the Debug line below.
+    if (typeName == "NameProperty") {
+        const int32_t sz = FNameSize();
+        if (readSize == sz) return readSize;
+        if (DynOff::IsFNameSizeFor(readSize, DynOff::bCasePreservingName)) {
+            const bool measured = DynOff::FNAME_SIZE_MEASURED.load(std::memory_order_acquire) != 0;
+            const int32_t use = (!measured && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+                ? readSize : sz;
+            static std::atomic<int> s_warned{0};
+            if (s_warned.fetch_add(1, std::memory_order_relaxed) < 3)
+                Sein::Warn("WALK:ArrayP", "NameProperty ElementSize %d disagrees with the %s sizeof(FName) %d -- using %d",
+                           readSize, measured ? "measured" : "unmeasured", sz, use);
+            return use;
+        }
+        Sein::Debug("WALK:ArrayP", "elemSize=%d is invalid for 'NameProperty' (expected=%d), overriding", readSize, sz);
+        return sz;
+    }
     int32_t expected = InferScalarSize(typeName);
     if (expected > 0) {
         // For known types, we know the exact size — override if it doesn't match

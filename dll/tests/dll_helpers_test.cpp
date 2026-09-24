@@ -6277,6 +6277,19 @@ static void Test_FNameNumberOffset() {
     EXPECT("A9-11: CPN with no evidence keeps +4", DynOff::PickFNameNumberOffset(true, 0, 0) == 4);
 }
 
+// [VND583-07, A9 step 1] sizeof(FName) is measured from the engine's NameProperty ElementSize, within the family.
+static void Test_FNameSizePick() {
+    EXPECT("A9-1: case-preserving 5.4 editor, 12 on 331 of 331 -> 12", DynOff::PickFNameSize(true, 12, 331, 331) == 12);
+    EXPECT("A9-1: standard, 8 on 64 of 64 -> 8", DynOff::PickFNameSize(false, 8, 64, 64) == 8);
+    EXPECT("A9-1: standard + UE_FNAME_OUTLINE_NUMBER, 4 -> 4", DynOff::PickFNameSize(false, 4, 20, 20) == 4);
+    EXPECT("A9-1: case-preserving + outline number, 8 -> 8", DynOff::PickFNameSize(true, 8, 20, 20) == 8);
+    EXPECT("A9-1: 12 on a standard build is not its family -> 0", DynOff::PickFNameSize(false, 12, 50, 50) == 0);
+    EXPECT("A9-1: the old 0x10 myth is no FName size -> 0", DynOff::PickFNameSize(true, 16, 50, 50) == 0);
+    EXPECT("A9-1: four samples are too few -> 0", DynOff::PickFNameSize(false, 8, 4, 4) == 0);
+    EXPECT("A9-1: 6 of 10 is not three quarters -> 0", DynOff::PickFNameSize(false, 8, 6, 10) == 0);
+    EXPECT("A9-1: 6 of 8 is three quarters -> 12", DynOff::PickFNameSize(true, 12, 6, 8) == 12);
+}
+
 // [VND583-DOC D7-04] Force-null: strong and weak pointers are held; soft / lazy stay refused.
 static void Test_ObjectNullShape() {
     using Solide::ObjectNullShape;
@@ -8882,6 +8895,7 @@ int main() {
     RUN(Test_SoftPathShape);
     RUN(Test_ObjectNullShape);
     RUN(Test_FNameNumberOffset);
+    RUN(Test_FNameSizePick);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
