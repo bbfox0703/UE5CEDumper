@@ -984,6 +984,54 @@ static uintptr_t ScanFunctionBodyForRipRef(
     return 0;
 }
 
+// [VND583-07] The body scan, then ONE call deeper. On a modular EDITOR build the exported FName::ToString
+// holds no NamePoolData reference of its own. Measured on UnrealEditor-Core.dll (UE 5.4, case-preserving
+// names): ToString+0x18 `call` -> a resolver whose +0x15 is `lea rdi,[rip+..]` = NamePoolData (after a
+// `cmp [bNamePoolInitialized],0`). So GNAM_EXP_* found nothing, and on that host the multi-module AOB
+// fallback took EOSSDK-Win64-Shipping.dll's own, NON-case-preserving name pool instead: 0 of 10 UObject
+// names resolved. Up to four calls in the exported body are followed; the validator decides, as before.
+// True when `addr` is in a committed, executable page (image OR private -- the unit test's code is
+// VirtualAlloc'd). A call target that is not is a false E8 decode inside some other instruction.
+static bool IsExecutablePage(uintptr_t addr) {
+    if (addr < 0x10000) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD)) return false;
+    return (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+static uintptr_t ScanFunctionAndCalleesForRipRef(uintptr_t funcAddr, const char* sigId, ValidatorFn validate) {
+    if (uintptr_t hit = ScanFunctionBodyForRipRef(funcAddr, sigId, validate)) return hit;
+
+    // The same bound as the body scan: the callee's own extent when .pdata has it, else 256 bytes.
+    int limit = 256;
+    uintptr_t fnBegin = 0, fnEnd = 0;
+    if (Macht::GetFunctionExtent(funcAddr, fnBegin, fnEnd) && fnEnd > funcAddr
+        && static_cast<uintptr_t>(limit) > (fnEnd - funcAddr))
+        limit = static_cast<int>(fnEnd - funcAddr);
+
+    int followed = 0;
+    for (int off = 0; off + 5 <= limit && followed < 4; ++off) {
+        uint8_t op = 0;
+        if (!Macht::ReadSafe(funcAddr + off, op)) break;
+        if (op != 0xE8) continue;
+        int32_t rel = 0;
+        if (!Macht::ReadSafe(funcAddr + off + 1, rel)) break;
+        const uintptr_t callee = funcAddr + off + 5 + static_cast<intptr_t>(rel);
+        if (!IsExecutablePage(callee)) continue;
+        // With .pdata a real call lands on a function START; a mid-instruction E8 does not.
+        uintptr_t cBegin = 0, cEnd = 0;
+        if (Macht::GetFunctionExtent(callee, cBegin, cEnd) && cBegin != callee) continue;
+        ++followed;
+        if (uintptr_t hit = ScanFunctionBodyForRipRef(callee, sigId, validate)) {
+            LOG_INFO("FuncBodyScan [%s]: ...reached through the call at func+0x%X (callee 0x%llX)",
+                     sigId, off, (unsigned long long)callee);
+            return hit;
+        }
+    }
+    return 0;
+}
+
 // Follow a CALL instruction at callOffset within the matched pattern,
 // then scan the called function's body for RIP-relative references.
 // Used for GNames V7_FNAME_CTOR pattern.
@@ -1013,7 +1061,7 @@ static uintptr_t ResolveSymbolCallFollow(const AobSignature& sig, ValidatorFn va
     LOG_DEBUG("SymbolCallFollow [%s]: Scanning function body at 0x%llX",
               sig.id, (unsigned long long)funcAddr);
 
-    return ScanFunctionBodyForRipRef(funcAddr, sig.id, validate);
+    return ScanFunctionAndCalleesForRipRef(funcAddr, sig.id, validate);   // [VND583-07]
 }
 
 // Try resolving a single match address according to the signature's resolve strategy.

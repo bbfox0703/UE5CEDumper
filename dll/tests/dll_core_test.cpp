@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,44 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-07] SymbolCallFollow looks ONE CALL deep for the global it follows ---------------------------------
+    // The shape measured on UnrealEditor-Core.dll 5.4: the exported function has no RIP reference of its own; its
+    // first call's target has `lea rdi,[rip+X]` = the pool. Built in one RWX allocation: funcA at +0, funcB at +0x400
+    // (past the body scan's 256-byte fallback, so only the call-follow can reach it), the "pool" at +0x800.
+    {
+        blk("CALLFOLLOW - the export's callee is scanned when the export itself has no reference");
+        uint8_t* code = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE,
+                                                           PAGE_EXECUTE_READWRITE));
+        check("CALLFOLLOW setup: an executable page", code != nullptr);
+        if (code) {
+            memset(code, 0xCC, 0x1000);
+            static uintptr_t s_cfPool = 0;
+            s_cfPool = reinterpret_cast<uintptr_t>(code + 0x800);
+            // funcA: sub rsp,28h / mov ecx,[rcx+8] / call funcB / add rsp,28h / ret
+            const uint8_t fa[] = { 0x48, 0x83, 0xEC, 0x28, 0x8B, 0x49, 0x08, 0xE8, 0, 0, 0, 0,
+                                   0x48, 0x83, 0xC4, 0x28, 0xC3 };
+            memcpy(code, fa, sizeof(fa));
+            const int32_t relB = 0x400 - (7 + 5);
+            memcpy(code + 8, &relB, 4);
+            // funcB: lea rdi,[rip+X] / mov rax,rdi / ret
+            const uint8_t fb[] = { 0x48, 0x8D, 0x3D, 0, 0, 0, 0, 0x48, 0x89, 0xF8, 0xC3 };
+            memcpy(code + 0x400, fb, sizeof(fb));
+            const int32_t relPool = 0x800 - (0x400 + 7);
+            memcpy(code + 0x403, &relPool, 4);
+            auto isPool = [](uintptr_t a) { return a == s_cfPool; };
+
+            const uintptr_t viaBody = Genau::ScanFunctionBodyForRipRef(reinterpret_cast<uintptr_t>(code), "CF", isPool);
+            check("CALLFOLLOW control: the export's own body holds no reference", viaBody == 0);
+            const uintptr_t got = Genau::ScanFunctionAndCalleesForRipRef(reinterpret_cast<uintptr_t>(code), "CF", isPool);
+            check("CALLFOLLOW ⭐ VND583-07: the pool is reached through funcA's call", got == s_cfPool);
+            // A validator that accepts nothing still gets nothing: the follow adds reach, not answers.
+            auto none = [](uintptr_t) { return false; };
+            check("CALLFOLLOW control: the validator still decides",
+                  Genau::ScanFunctionAndCalleesForRipRef(reinterpret_cast<uintptr_t>(code), "CF", none) == 0);
+            VirtualFree(code, 0, MEM_RELEASE);
+        }
     }
 
     // -- [VND583-14] FSoftObjectPath's shape is MEASURED on the reflected SoftObjectPath struct ---------------------
