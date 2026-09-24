@@ -3108,9 +3108,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             var ok = await _aobMaker.CheckAvailabilityAsync();
             IsAobMakerAvailable = ok;
-            LiveWalker.IsAobMakerAvailable = ok;
-            Pointers.ApplyAobMakerProbe(ok);                 // [R7-S7] repaints the reason even when the flag is unchanged
+            // [R7-S7] [R7-S12] Every panel that shows WHY it is unreachable repaints, even when its flag is unchanged.
+            LiveWalker.ApplyAobMakerProbe(ok);
+            Pointers.ApplyAobMakerProbe(ok);
             InterestingFunctions.ApplyAobMakerProbe(ok);
+            Teleport.ApplyAobMakerProbe(ok);
             // [W1-PIPEBUSY-STATUS] The remedy depends on WHY: a busy pipe is not "open Cheat Engine".
             StatusText = ok
                 ? "AOBMaker plugin connected"

@@ -392,6 +392,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(AobMakerNote));
 
+    /// <summary>[R7-S12] Publish a probe of the SHARED bridge -- this panel's own, the toolbar ⟳, or the state a send
+    /// left -- repainting the note even when the flag is unchanged: the reason may have moved (absent -> busy), and
+    /// the note is bound (LiveWalkerPanel.axaml).</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        OnPropertyChanged(nameof(AobMakerNote));
+    }
+
     // AOB Symbol toggle for CE XML export. The AOB anchor only makes sense when
     // the Live Walker root is GWorld (the AOB symbol resolves GWorld); from any
     // other root (e.g. "Start from GameEngine" / "Open in Live Walker") the
@@ -5139,7 +5148,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             if (!_aobMaker.IsAvailable && ok == 0)
             {
                 StatusText = AobMakerUnavailable.Text(_aobMaker);   // [W1-PIPEBUSY-STATUS] busy ≠ "open CE"
@@ -5199,7 +5208,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 if (!string.IsNullOrEmpty(script))
                     sentToCe = await _aobMaker.CreateAAScriptAsync(
                         $"\"{symbolName}\"", script, autoActivate: false);
-                IsAobMakerAvailable = _aobMaker.IsAvailable;
+                ApplyAobMakerProbe(_aobMaker.IsAvailable);
             }
 
             if (sentToCe)
@@ -5670,11 +5679,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (_aobMaker == null) return;
         _lastAobMakerCheck = DateTime.UtcNow;
+        bool ok;
         try
         {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
+            ok = await _aobMaker.CheckAvailabilityAsync();
         }
-        catch { IsAobMakerAvailable = false; }
+        catch { ok = false; }
+        ApplyAobMakerProbe(ok);   // [R7-S12]
     }
 
     /// <summary>
@@ -5893,7 +5904,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var ok = await _aobMaker!.CreateMemoryRecordAsync(
                 Services.PackedLayoutNotice.RecordNamePrefix + name,
                 StripHexPrefix(address), t.ValueType, t.IsSigned, t.ShowAsHex);
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = ok
                 ? $"Added to CE: {name}"
                 : (_aobMaker.IsAvailable
@@ -6693,7 +6704,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 {
                     _log.Info($"Invoke script sent to CE: {description}");
                     StatusText = $"Invoke script created in CE: {func.Name}";
-                    if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                    if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
                     return;
                 }
             }
@@ -6705,13 +6716,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
                     Services.CheatTableBuilder.WrapAaScriptXml(description, script)))
             {
-                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
                 SetError(Helpers.ClipboardDelivery.FailureText("the invoke script"));
                 _log.Warn($"Invoke script for {func.Name} could not be delivered - AOBMaker " +
                           "did not take it AND the clipboard refused the write");
                 return;
             }
-            if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+            if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = wasAvailable
                 ? $"⚠ AOBMaker pipe broke (CE closed?) — invoke script copied as CE XML (paste into CE's address list)"
                 : $"Invoke script copied as CE XML — paste into CE's address list ({func.Name})";
@@ -6821,7 +6832,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // Sync the VM-level flag from whatever the bridge ended up at,
                 // so the Notes column reflects post-send reality on the next
                 // repaint.
-                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
                 StatusText = sentToCe
                     ? $"AA Script created in CE: {func.Name}"

@@ -233,6 +233,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
     public void SetEngineState(Models.EngineState state) => _engineState = state;
 
+    /// <summary>[R7-S12] Publish a probe the toolbar ⟳ ran on the shared bridge: set the flag and repaint the note even
+    /// when the flag is unchanged -- the same repaint <see cref="CheckAobMakerAsync"/> does after its own probe.</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        OnPropertyChanged(nameof(AobMakerNote));
+    }
+
     /// <summary>Probe AOBMaker availability (the delivery channel for trainer export).</summary>
     public async Task CheckAobMakerAsync()
     {
