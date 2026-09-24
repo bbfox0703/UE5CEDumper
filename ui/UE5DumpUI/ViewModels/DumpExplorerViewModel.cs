@@ -176,6 +176,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
         var cts = new CancellationTokenSource();
         _opCts = cts;
         var ct = cts.Token;
+        // [R7-D-02] The parse reports through StatusProgress: Progress<int> + Dispatcher.Post queued each report twice,
+        // so a "Parsing dump… N rows" still queued when the parse returned could replace a status set after it.
+        // Completing the helper as soon as the parse returns drops every such report; the statuses after it are
+        // plain assignments.
+        var progress = new StatusProgress(msg => StatusText = msg);
         try
         {
             IsBusy = true;
@@ -188,10 +193,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
             Matched = new ObservableCollection<DumpEntry>();
             Unmatched = new ObservableCollection<DumpEntry>();
 
-            var progress = new Progress<int>(n =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = $"Parsing dump… {n:N0} rows"));
+            var parseProgress = progress.For<int>(n => $"Parsing dump… {n:N0} rows");
 
-            var model = await Task.Run(() => DumpJsonlReader.ReadAsync(path, progress, ct), ct);
+            var model = await Task.Run(() => DumpJsonlReader.ReadAsync(path, parseProgress, ct), ct);
+            progress.Complete($"Parsed {model.Entries.Count:N0} rows");
             ct.ThrowIfCancellationRequested();
 
             _all.AddRange(model.Entries);
@@ -222,11 +227,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            StatusText = "Load cancelled.";
+            progress.Complete("Load cancelled.");
         }
         catch (Exception ex)
         {
-            StatusText = $"Load failed: {ex.Message}";
+            progress.Complete($"Load failed: {ex.Message}");
             SetError(ex);
             _log.Error("DumpExplorer load failed", ex);
         }

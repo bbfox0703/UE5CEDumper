@@ -3571,6 +3571,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // the chosen name only after GenerateAsync returns (which happens only after
         // the trailing summary line is written), so an abort/disconnect/crash never
         // leaves a truncated .jsonl at the final name (X11).
+        var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         string? tempPath = null;
         try
         {
@@ -3585,13 +3586,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrEmpty(filePath)) return;
 
             StatusText = "Dumping classes...";
-            var progress = new Progress<DumpProgress>(p =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    StatusText = p.Total > 0
-                        ? $"{p.Phase} ({p.Done}/{p.Total})"
-                        : $"{p.Phase} ({p.Done})";
-                }));
+            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post queued every report
+            // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
+            var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
+                ? $"{p.Phase} ({p.Done}/{p.Total})"
+                : $"{p.Phase} ({p.Done})");
 
             var options = new DumpOptions(
                 GameOnly: false,                           // Capture engine too; analysis can filter
@@ -3610,7 +3609,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await using (var fs = new FileStream(
                 tempPath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
             {
-                result = await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, progress, ct);
+                result = await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, dumpProgress, ct);
             }   // fs flushed + closed here, so File.Move below can take the file
 
             File.Move(tempPath, filePath, overwrite: true);
@@ -3619,8 +3618,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var byteLength = new FileInfo(filePath).Length;
             // Report from what the dump ACTUALLY produced (class/error counts), not
             // from the file's byte length, and format the size in floating point (X4).
-            StatusText = Helpers.DumpCompletionFormatter.Format(
-                result, byteLength, Path.GetFileName(filePath));
+            progress.Complete(Helpers.DumpCompletionFormatter.Format(
+                result, byteLength, Path.GetFileName(filePath)));
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
                       $"{result.ClassesEmitted} classes, {result.Errors} errors)");
 
@@ -3630,13 +3629,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Dump cancelled (disconnected)";
+            progress.Complete("Dump cancelled (disconnected)");
             _log.Info("DumpAll export cancelled");
             TryDeletePartial(tempPath);
         }
         catch (Exception ex)
         {
-            StatusText = "Dump failed";
+            progress.Complete("Dump failed");
             SetError(ex);
             _log.Error("DumpAll export failed", ex);
             TryDeletePartial(tempPath);
