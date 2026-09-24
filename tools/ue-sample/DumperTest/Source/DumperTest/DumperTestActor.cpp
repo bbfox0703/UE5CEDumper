@@ -1,4 +1,4 @@
-﻿// ============================================================
+﻿﻿// ============================================================
 // DumperTestActor — populate the property zoo with KNOWN values.
 //
 // The numbers here are the acceptance criteria. tools/ue-sample/README.md holds
@@ -535,6 +535,29 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 	// row that used it was dividing by zero. Measured on 5.4 Shipping: TickCount advanced 97 -> 100
 	// over 3 s while FrameCountReflected stayed 0. Keep the mirror next to the increment above.
 	FrameCountReflected = FrameCount;
+
+	// [VND583-06] -DumperTestWeakGarbage: a fresh garbage target for WeakToGarbage every 5 s.
+	// OPT-IN, because it spawns and destroys an actor on a clock, which churns GObjects slots and
+	// serial numbers under the rows that measure exactly those (Spawn_RecycleChurn and friends).
+	// Parsed once, like -DumperTestNoHud: FParse::Param scans the whole command line.
+	static const bool bWeakGarbage = FParse::Param(FCommandLine::Get(), TEXT("DumperTestWeakGarbage"));
+	if (bWeakGarbage)
+	{
+		WeakToGarbageTimer -= DeltaSeconds;
+		if (WeakToGarbageTimer <= 0.f)
+		{
+			WeakToGarbageTimer = 5.f;
+			FActorSpawnParameters SP;
+			SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			UWorld* W = GetWorld();
+			if (AActor* Doomed = W ? W->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SP) : nullptr)
+			{
+				WeakToGarbage = Doomed;
+				++WeakToGarbageCount;
+				Doomed->Destroy();   // -> MarkAsGarbage: RF_MirroredGarbage + the item's Garbage bit, at once
+			}
+		}
+	}
 
 	// L58: attach the stealth meter the first frame a player pawn exists. One null test per
 	// frame afterwards. The fixture does not respawn its pawn, so this runs once per life.

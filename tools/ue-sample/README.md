@@ -576,6 +576,20 @@ Added because the 2026-09-22 LOW-row survey found both rows unreachable on this 
 | `StealthComp` (on `ADumperTestActor`) | null until the first frame with a player pawn | A handle to the component above. The pawn's `InstanceComponents` is what keeps it alive and what the related-object walk follows |
 | *(no field)* `DumperTestSparseListener` | a rooted transient `UDumperTestSparseListener`, bound to `OnActorBeginOverlap` | ⭐ **L48 step 1's listed half** (`[P1-SPARSEDELEGATE-REFS]`). Find References on the listener must list `DumperTestActor_0`'s `OnActorBeginOverlap` binding. It is referenced by NOTHING else — not an actor (no level array holds it), not a UPROPERTY (rooted instead). D4's `OnActorHit` self-binding is untouched and still reads *(1 sparse binding)* |
 
+### VND583-06 host (2026-09-24) — a weak pointer to a GARBAGE actor, opt-in
+
+Added because no title here holds a weak reference to a destroyed-but-not-yet-collected object
+long enough to walk it, and VND583-06 is exactly that state.
+
+| field | value | check |
+|---|---|---|
+| `WeakToGarbage` (TWeakObjectPtr<AActor>, on `ADumperTestActor`) | with **`-DumperTestWeakGarbage`**: every 5 s, a fresh `AActor` that Tick spawns and at once `Destroy()`s; null without the switch | ⭐ **VND583-06**. `UWorld::DestroyActor` → `MarkAsGarbage` sets `RF_MirroredGarbage` (0x40000000) in `UObject+0x08` and the item's Garbage bit at once, and the object stays until the next GC purge (~61 s). So it RESOLVES (index, slot and serial match) to an object UE's `Get()` refuses: `walk_instance` must show `Actor_N (Actor) [garbage]` (a build before the fix shows the plain `Actor_N (Actor)`). For up to 5 s per GC cycle it reads `null (stale)` instead |
+| `WeakToGarbageCount` | garbage targets given so far; 0 without the switch | the switch took, and the clock runs |
+
+⚠ **Opt-in on purpose.** A spawn + destroy every 5 s churns GObjects slots and serial numbers under
+the rows that measure exactly those (`Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`). Launch with
+`py tools/verify/launch_dumpertest.py shipping --idle --extra -DumperTestWeakGarbage`.
+
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 
 ⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value

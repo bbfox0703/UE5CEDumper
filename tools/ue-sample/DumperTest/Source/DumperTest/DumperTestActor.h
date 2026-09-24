@@ -1,4 +1,4 @@
-﻿// ============================================================
+﻿﻿// ============================================================
 // DumperTestActor — the property zoo UE5CEDumper is verified against.
 //
 // WHY THIS EXISTS. Half of docs/verification-register.md is
@@ -1092,6 +1092,22 @@ private:
 	/// what keeps it alive and what the dumper's related-object walk follows.
 	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Stealth")
 	TObjectPtr<UDumperTestStealthComponent> StealthComp;
+
+	/// [VND583-06] A weak pointer whose target is GARBAGE. With -DumperTestWeakGarbage, Tick spawns a
+	/// plain AActor every 5 s, points this at it and Destroy()s it. UWorld::DestroyActor marks it
+	/// garbage at once (UObjectBaseUtility::MarkAsGarbage: RF_MirroredGarbage in ObjectFlags plus the
+	/// item's Garbage bit), and it stays until the next GC purge (~61 s). So, but for up to 5 s per GC
+	/// cycle, this RESOLVES -- index, slot and serial all match -- to an object UE's Get() refuses,
+	/// and the dumper must show it "Name (Class) [garbage]". Without the switch it stays null.
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Weak")
+	TWeakObjectPtr<AActor> WeakToGarbage;
+
+	/// How many garbage targets WeakToGarbage has been given (0 without the switch).
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Weak")
+	int32 WeakToGarbageCount = 0;
+
+	/// Seconds until the next garbage target. Not a UPROPERTY: it must not become a scan target.
+	float WeakToGarbageTimer = 0.f;
 
 	/// L48: the cross-object sparse listener. ⛔ NOT a UPROPERTY, on purpose -- see
 	/// UDumperTestSparseListener. Rooted in BeginPlay, unrooted in EndPlay.

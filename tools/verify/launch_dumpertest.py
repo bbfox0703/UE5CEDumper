@@ -154,6 +154,9 @@ def main(argv=None):
                     help="add -DumperTestIdle (B8's deferred half; breaks the D2 heartbeat row)")
     ap.add_argument("--wait", type=int, default=25, help="seconds to let the sample come up")
     ap.add_argument("--no-wait", action="store_true")
+    ap.add_argument("--extra", action="append", default=[], metavar="SWITCH",
+                    help="one more switch for the sample, e.g. -DumperTestWeakGarbage (repeatable); "
+                         "DumperTest flavours only")
     ap.add_argument("--allow-second", action="store_true",
                     help="launch even though another fixture is running "
                          "(breaks the one-game-at-a-time rule -- see the refusal)")
@@ -192,7 +195,11 @@ def main(argv=None):
     else:
         house = HOUSE_ARGS
 
-    args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else [])
+    if a.extra and a.flavour in IS_58:
+        print("launch_dumpertest.py: FAILED -- --extra passes DumperTest-only switches; the stock "
+              "5.8 / 5.1 templates handle none of them", file=sys.stderr)
+        return 1
+    args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else []) + a.extra
     print("launching:", " ".join(args))
     if a.flavour in ("shipping58", "shipping51"):
         print("  note: Shipping discards -ExecCmds, and the 5.8 template has no self-cap "
