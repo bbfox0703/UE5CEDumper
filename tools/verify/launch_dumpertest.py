@@ -155,7 +155,7 @@ def main(argv=None):
     ap.add_argument("--wait", type=int, default=25, help="seconds to let the sample come up")
     ap.add_argument("--no-wait", action="store_true")
     ap.add_argument("--extra", action="append", default=[], metavar="SWITCH",
-                    help="one more switch for the sample, e.g. -DumperTestWeakGarbage (repeatable); "
+                    help="one more switch for the sample, e.g. --extra=-DumperTestWeakGarbage (the = is required: a value starting with - reads as an option); repeatable; "
                          "DumperTest flavours only")
     ap.add_argument("--allow-second", action="store_true",
                     help="launch even though another fixture is running "

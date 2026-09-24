@@ -588,7 +588,7 @@ long enough to walk it, and VND583-06 is exactly that state.
 
 ⚠ **Opt-in on purpose.** A spawn + destroy every 5 s churns GObjects slots and serial numbers under
 the rows that measure exactly those (`Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`). Launch with
-`py tools/verify/launch_dumpertest.py shipping --idle --extra -DumperTestWeakGarbage`.
+`py tools/verify/launch_dumpertest.py shipping --idle --extra=-DumperTestWeakGarbage`.
 
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 

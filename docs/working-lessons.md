@@ -753,6 +753,8 @@ Measured 2026-09-24: the Windows path `out\ue583\` written through the file-writ
 
 **The same collapse through a shell heredoc (measured 2026-09-24, VND583-03's todo row):** a Python patch script written with `cat > x.py <<'EOF'` held the evidence path `out\\vnd03\\`. The Bash tool delivered it as `out\vnd03\`, and Python then read `\v` as a vertical tab (0x0B). The committed-to-be row said `out` + VT + `nd03`, and only Python's `SyntaxWarning: invalid escape sequence` on the NEXT backslash gave it away. Every one-letter Python escape is a trap here (`\a \b \f \n \r \t \v \0`), not only `\u` and `\0`. **How to apply:** write patch scripts that carry a backslash with the file-writing tool and `chr(92)`, never through a heredoc, and scan the written file for control characters too: `[hex(ord(c)) for c in t if ord(c) < 32 and c not in '\r\n\t']`.
 
+**And a BOM survives a read, so do not add one on the write (measured 2026-09-24, VND583-06's fixture).** A patch helper read `DumperTestActor.h` as `utf-8`, which keeps U+FEFF as the first character of the text, then wrote it as `utf-8-sig` "to preserve the BOM", which adds a second one. UHT then failed on `Unable to find ... 'FDumperTestPingSignature'` at line 700, nowhere near the edit, and Build.bat exited 6. **How to apply:** read and write with the SAME codec: `utf-8` both ways keeps a BOM exactly as it was. Check with `head -c 6 <file> | od -An -tx1`: `ef bb bf ef bb bf` is the corruption.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
