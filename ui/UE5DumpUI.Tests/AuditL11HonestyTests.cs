@@ -272,10 +272,15 @@ public class AuditL11HonestyTests
 
     private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
     {
-        var dump = new StubDumpService();
         var fields = new List<LiveFieldValue>();
         for (int i = 0; i < fieldCount; i++)
             fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        return FinderWithFields(fields);
+    }
+
+    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWithFields(List<LiveFieldValue> fields)
+    {
+        var dump = new StubDumpService();
         dump.RegisterStruct("0x10000000", new InstanceWalkResult
         {
             Address = "0x10000000", Name = "Big_0", ClassName = "Big", Fields = fields,
@@ -287,7 +292,7 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
-    public async Task InstanceFinder_CeXmlExport_TruncatedAtTheEntryCap_SaysSo_WithThisPanelsLevers()
+    public async Task InstanceFinder_CeXmlExport_TruncatedByScalars_SaysSo_AndNamesNoToolbarLever()
     {
         var (vm, platform) = FinderWith(61_000);   // past the 60,000-entry cap: one entry per int field
         Assert.Equal(61_000, vm.Fields.Count);    // the walk landed
@@ -296,14 +301,62 @@ public class AuditL11HonestyTests
 
         Assert.NotNull(platform.LastClipboard);                     // it WAS copied...
         Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
-        // [R7-D-03] The one lever of THIS panel that changes the entry count: Array Limit bounds how many array
-        // elements the walk expands. Collapse Pointer Nodes only folds groups and the DropDown Limit only decides
-        // whether a dropdown is attached -- the same entries are emitted either way, so naming them sent the user
-        // round the same cap again.
-        Assert.Contains("Array Limit", vm.StatusText);
+        // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] No toolbar setting changes THIS export's entry count: there is no container
+        // for the Array Limit to clip, Collapse Pointer Nodes only folds groups and the DropDown Limit only decides
+        // whether a dropdown is attached. R7-D-03 named the Array Limit here -- the same wrong advice with another
+        // lever. What does work is exporting the part that is needed.
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
         Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
         Assert.DoesNotContain("DropDown Limit", vm.StatusText);
         Assert.DoesNotContain("Drill Depth", vm.StatusText);        // not Live Walker's
+        Assert.Contains("Copy CE Field", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByAClippedContainer_NamesTheArrayLimit_AndWhatItCosts()
+    {
+        // [INSTEXPORT-TRUNC-ADVICE] A container the walk clipped (61,000 of 70,000 elements back): lowering the Array
+        // Limit really shrinks the export, and the notice says what that trades away.
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < 61_000; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        var (vm, platform) = FinderWithFields(new List<LiveFieldValue>
+        {
+            new() { Name = "Big", TypeName = "ArrayProperty", Offset = 0x28, Size = 0x10,
+                    ArrayCount = 70_000, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+            // The cap is tested between fields, so the field after the one that crosses it is the one dropped.
+            new() { Name = "Tail", TypeName = "IntProperty", Offset = 0x38, Size = 4 },
+        });
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Array Limit", vm.StatusText);
+        Assert.Contains("Big", vm.StatusText);                       // which container pays for it
+        Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
+        Assert.DoesNotContain("DropDown Limit", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_CompleteButClipped_DisclosesTheClipping()
+    {
+        // [INSTEXPORT-TRUNC-ADVICE] Under the cap, but a container came back clipped (64 of 16,390): the copy is not the
+        // whole container, and the status said nothing. Disclosed the way Live Walker does, naming no lever -- the
+        // array half is also bound by the DLL's per-fetch cap, which no slider raises.
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < 64; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        var (vm, platform) = FinderWithFields(new List<LiveFieldValue>
+        {
+            new() { Name = "Churn", TypeName = "ArrayProperty", Offset = 0x28, Size = 0x10,
+                    ArrayCount = 16_390, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+        });
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.DoesNotContain("TRUNCATED", vm.StatusText);
+        Assert.Contains("Churn", vm.StatusText);
+        Assert.Contains("64 of 16,390", vm.StatusText);
     }
 
     [Fact]

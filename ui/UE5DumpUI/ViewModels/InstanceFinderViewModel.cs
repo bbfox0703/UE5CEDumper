@@ -850,15 +850,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                           $"refused the write for instance {SelectedInstance.Name}");
                 return;
             }
-            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms. Live
-            // Walker's text names its own levers (Drill Depth, Copy CE Field), which this panel does not have.
-            // [R7-D-03] ...and only a lever that changes the ENTRY COUNT: Array Limit bounds the array elements the walk
-            // expands. Collapse Pointer Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the
-            // same entries, so naming them sent the user round the same cap again.
-            StatusText = truncated
-                ? $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — the CE table "
-                  + "is incomplete; lower the Array Limit (it bounds how many array elements are expanded)"
-                : "";
+            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms.
+            // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] ...naming a lever only when it changes the ENTRY COUNT. Collapse Pointer
+            // Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the same entries; the Array
+            // Limit shrinks the export only when a walked container is bound by it. Otherwise no toolbar setting helps.
+            StatusText = ExportStatus(truncated, new List<LiveFieldValue>(Fields), ArrayLimit);
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
@@ -871,6 +867,50 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         finally
         {
             IsLoadingFields = false;
+        }
+    }
+
+    /// <summary>[INSTEXPORT-TRUNC-ADVICE] The status after a SUCCESSFUL copy. Truncated: the Array Limit is named only
+    /// when a container is bound by it (fewer elements back than it holds, or as many as the limit allows), with what
+    /// lowering it costs; otherwise no toolbar lever, and the way to export a part instead. Complete: empty, unless a
+    /// container came back clipped -- disclosed, naming no lever, because an array is also bound by the DLL's
+    /// per-fetch cap, which no slider raises.</summary>
+    internal static string ExportStatus(bool truncated, IReadOnlyList<LiveFieldValue> fields, int arrayLimit)
+    {
+        var bound = new List<(string Name, int Loaded, int Total)>();
+        foreach (var f in fields)
+        {
+            Add(f.Name, f.ArrayElements?.Count ?? 0, f.ArrayCount);
+            Add(f.Name, f.MapElements?.Count ?? 0, f.MapCount);
+            Add(f.Name, f.SetElements?.Count ?? 0, f.SetCount);
+        }
+
+        static string Names(IEnumerable<string> names)
+        {
+            var list = names.Distinct().ToList();
+            return list.Count <= 3 ? string.Join(", ", list) : string.Join(", ", list.Take(3)) + $" +{list.Count - 3} more";
+        }
+
+        if (truncated)
+        {
+            string head = $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — "
+                        + "the CE table is incomplete";
+            return bound.Count > 0
+                ? head + $"; lower the Array Limit to shrink it ({Names(bound.Select(b => b.Name))} then export only "
+                       + "their first elements)"
+                : head + ", and no toolbar setting shrinks this export; use Open in Live Walker → Copy CE Field for "
+                       + "the part you need";
+        }
+
+        var clipped = bound.Where(b => ContainerTruncation.IsTruncated(b.Loaded, b.Total)).ToList();
+        if (clipped.Count == 0) return "";
+        var shown = clipped.Take(3).Select(c => $"{c.Name} ({c.Loaded:N0} of {c.Total:N0})");
+        return "Copied; only part of these containers was exported: " + string.Join(", ", shown)
+               + (clipped.Count > 3 ? $" +{clipped.Count - 3} more" : "");
+
+        void Add(string name, int loaded, int total)
+        {
+            if (loaded > 0 && (loaded < total || loaded >= arrayLimit)) bound.Add((name, loaded, total));
         }
     }
 
