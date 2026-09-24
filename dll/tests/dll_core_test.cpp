@@ -3914,6 +3914,15 @@ int main() {
             // Control: a pointer that resolves carries its object and no label.
             const uintptr_t o1 = Aura::GetByIndex(1);
             if (o1) {
+                // [VND583-08] A real weak pointer carries a NON-zero serial (UE assigns one the first
+                // time a weak pointer is made), and serial 0 means null. The fake pool's items all read
+                // 0, so item 1 gets one for these cases and puts it back at the end.
+                uint8_t* item1s = pool.chunks[0].data() + static_cast<size_t>(1) * FakePool::kItemSize;
+                int32_t svSerial1 = 0;
+                memcpy(&svSerial1, item1s + 0x10, 4);
+                const int32_t serial1 = 0x55;
+                memcpy(item1s + 0x10, &serial1, 4);
+                check("WEAKLABEL setup: item 1 now carries serial 0x55", Aura::GetSerialNumber(1) == 0x55);
                 *reinterpret_cast<int32_t*>(wpage + 0x300) = 1;
                 *reinterpret_cast<int32_t*>(wpage + 0x304) = Aura::GetSerialNumber(1);
                 const auto liveW = weakField("live", Ubel::WalkInstance(winst, makeClass(3, 0x300), 64, 2, false));
@@ -3971,6 +3980,27 @@ int main() {
 
                 setFlags(objFlags, itemFlags);
                 g_cachedUEVersion = svVerG;
+
+                // [VND583-08] serial 0 is UE's explicit null: {1, 0} must not resolve to object 1 --
+                // it did, whenever object 1's own serial had never been assigned (most read 0).
+                memcpy(item1s + 0x10, &svSerial1, 4);   // item 1 back to serial 0, as unassigned
+                check("WEAKLABEL ⭐ VND583-08: {1, 0} does NOT resolve, even to an object whose serial is 0",
+                      Ubel::ResolveWeakObjectPtr(1, 0) == 0);
+                *reinterpret_cast<int32_t*>(wpage + 0x380) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x384) = 0;
+                const auto zeroW = weakField("{1,0}", Ubel::WalkInstance(winst, makeClass(7, 0x380), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-08: {1, 0} walks as null, not stale and not object 1",
+                      zeroW.ptrValue == 0 && zeroW.typedValue == "null", zeroW.typedValue.c_str());
+                // ...and index 0 is a real slot: {0, S} resolves when object 0's serial is S.
+                uint8_t* item0s = pool.chunks[0].data();
+                int32_t svSerial0 = 0;
+                memcpy(&svSerial0, item0s + 0x10, 4);
+                const int32_t serial0 = 0x66;
+                memcpy(item0s + 0x10, &serial0, 4);
+                const uintptr_t o0 = Aura::GetByIndex(0);
+                check("WEAKLABEL ⭐ VND583-08: {0, S} resolves to object 0, as UE's does",
+                      o0 != 0 && Ubel::ResolveWeakObjectPtr(0, 0x66) == o0);
+                memcpy(item0s + 0x10, &svSerial0, 4);
             }
             VirtualFree(wpage, 0, MEM_RELEASE);
         }

@@ -2923,7 +2923,11 @@ ReadArrayResult ReadPointerArrayElements(
 // Returns the UObject* or 0 if stale/invalid.
 // ============================================================
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
-    if (objectIndex <= 0) return 0;
+    // [VND583-08] UE's FWeakObjectPtr::Internal_GetObjectItem, in its order: SerialNumber == 0 is an
+    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair "resolved" to any
+    // object whose serial had never been assigned -- serials are handed out lazily, so most read 0
+    // -- and Find References listed it); a negative index is null; and index 0 is a real slot.
+    if (serialNumber == 0 || objectIndex < 0) return 0;
     uintptr_t obj = Aura::GetByIndex(objectIndex);
     if (!obj) return 0;
     int32_t actualSerial = Aura::GetSerialNumber(objectIndex);
@@ -3030,10 +3034,8 @@ ReadArrayResult ReadWeakObjectArrayElements(
                 elem.value = hexBuf;
             }
             elem.value += WeakTargetGarbageTag(ptr, objIdx);   // [VND583-06]
-        } else if (objIdx > 0) {
-            elem.value = "null (stale)";
         } else {
-            elem.value = "null";
+            elem.value = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
         }
 
         result.elements.push_back(std::move(elem));
@@ -3300,7 +3302,7 @@ ReadArrayResult ReadStructArrayElements(
                 } else {
                     // Same wording as ReadWeakObjectArrayElements: a live index whose
                     // serial no longer matches is a DEAD reference, not a null one.
-                    sf.value = (objIdx > 0) ? "null (stale)" : "null";
+                    sf.value = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
                 }
             } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
                     || cf.typeName == "InterfaceProperty") {
@@ -4711,7 +4713,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // array element, search preview): a live index whose serial no longer matches is a
                 // DEAD reference, not a null one. Unlabelled, the Value column showed the raw
                 // index+serial hex.
-                fv.typedValue = (objIdx > 0) ? "null (stale)" : "null";
+                fv.typedValue = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
             char buf[20];
             snprintf(buf, sizeof(buf), "%08X%08X", objIdx, serial);
@@ -7214,7 +7216,7 @@ void ResolvePropertyPreviews(
             } else {
                 // Same wording as ReadWeakObjectArrayElements: a live index whose
                 // serial no longer matches is a DEAD reference, not a null one.
-                m.preview = (objIdx > 0) ? "null (stale)" : "null";
+                m.preview = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
             continue;
         }

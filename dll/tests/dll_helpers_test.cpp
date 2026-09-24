@@ -6269,6 +6269,16 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-08] An unresolved weak pointer is stale only if it was SET: UE's null test is serial == 0.
+static void Test_UnresolvedWeakLabel() {
+    EXPECT("VND583-08: {0, 0} is null",                     std::string(Ubel::UnresolvedWeakLabel(0, 0)) == "null");
+    EXPECT("VND583-08: {N, 0} is null, not stale (serial 0 = explicitly null)",
+           std::string(Ubel::UnresolvedWeakLabel(5, 0)) == "null");
+    EXPECT("VND583-08: {N, S} that no longer resolves is stale", std::string(Ubel::UnresolvedWeakLabel(5, 77)) == "null (stale)");
+    EXPECT("VND583-08: {0, S} is a real slot, so it can be stale", std::string(Ubel::UnresolvedWeakLabel(0, 77)) == "null (stale)");
+    EXPECT("VND583-08: a negative index is null",           std::string(Ubel::UnresolvedWeakLabel(-1, 77)) == "null");
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
@@ -8773,6 +8783,7 @@ int main() {
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_WeakTargetGarbage);
+    RUN(Test_UnresolvedWeakLabel);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

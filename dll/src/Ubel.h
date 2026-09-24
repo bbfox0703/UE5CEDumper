@@ -1210,6 +1210,15 @@ ReadArrayResult ReadPointerArrayElements(
 // Returns the UObject* if valid (serial matches), or 0 if stale/invalid.
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber);
 
+// [VND583-08] The label for a weak pointer that did NOT resolve. UE calls a pointer explicitly null
+// when its SerialNumber is 0 (FWeakObjectPtr::Internal_GetObjectItem), whatever the index says, so only
+// a pointer that WAS set (serial != 0, index >= 0) and no longer resolves is "null (stale)" -- a dead
+// reference. It used to test objIdx > 0, which called {N, 0} stale and {0, S} null. Every weak reader
+// that labels uses this one rule.
+inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
+    return (serial != 0 && objIdx >= 0) ? "null (stale)" : "null";
+}
+
 // [VND583-06] " [garbage]" when UE's FWeakObjectPtr::Get() would refuse this RESOLVED target -- Garbage
 // (UE5) / PendingKill (UE4) or Unreachable, per DynOff::IsWeakTargetGarbage -- else "". Such an object
 // stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
