@@ -527,6 +527,20 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
 inline int UFUNCTION_FLAGS      = 0;
+
+// [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
+// DetectUPropertyMode returned before touching it and the FProperty arm probed only
+// FField::Next, so on a title whose UObject carries an extra 8-byte tail (The Pathless, a
+// 4.25-layout fork: UField Next 0x30, SuperStruct 0x48 -- RE-UE4SS config) every function list
+// stepped the wrong member while the run still said validated. Genau now walks a UClass's
+// Children chain at each candidate (the default first) and counts consecutive Function hops.
+// This picks the FIRST candidate with >= 2 hops: one hop can be a coincidental pointer, two in
+// a row cannot. -1 = nothing chained; the caller keeps the default and says so.
+inline int PickUFieldNextOffset(const int* offs, const int* hops, int n) {
+    for (int i = 0; i < n; ++i)
+        if (hops[i] >= 2) return offs[i];
+    return -1;
+}
 inline int UFUNCTION_TAIL_EXTRA = 0;
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
 

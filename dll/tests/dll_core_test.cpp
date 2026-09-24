@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS and UFIELDNEXT below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS and UFIELDNEXT are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3518,6 +3518,98 @@ int main() {
         DynOff::bCasePreservingName = svCpnP;
         DynOff::bUseFProperty       = svFPropP;
         g_cachedUEVersion           = svVerP;
+    }
+
+    // -- [VND583-02] UField::Next is MEASURED in FProperty mode -------------------------------
+    //
+    // Upstream's The Pathless config (a 4.25-layout licensee fork) puts UField::Next at 0x30: its
+    // UObject carries one more 8-byte member, so every UField / UStruct / UFunction key sits +8
+    // later. No title on this machine has that shape, so it is BUILT here: a native class
+    // "KismetSystemLibrary" whose three UFunctions are chained at +0x30, with a pointer that is NOT
+    // a Function (the fork's extra member) at +0x28. Installs its OWN pool and name pool, like
+    // PROBECLASS above, and puts the main fixture back.
+    {
+        blk("UFIELDNEXT - UField::Next is measured in FProperty mode, on a built Pathless-shaped chain");
+        ResetCancel();
+
+        enum : int32_t { uClass = 1, uFunction, uKsl, uFA, uFB, uFC, uNames };
+        const char* ufNames[uNames] = { "", "Class", "Function", "KismetSystemLibrary", "FuncA", "FuncB", "FuncC" };
+        static uint8_t ufEntry[uNames][0x40] = {};
+        static uintptr_t ufChunk[uNames + 1] = {};
+        for (int i = 1; i < uNames; ++i) {
+            memcpy(ufEntry[i] + 0x10, ufNames[i], strlen(ufNames[i]) + 1);
+            ufChunk[i] = reinterpret_cast<uintptr_t>(ufEntry[i]);
+        }
+        static uintptr_t ufChunks[2] = { reinterpret_cast<uintptr_t>(ufChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ufChunks), 0x10);
+        check("UFIELDNEXT setup: the name pool resolves KismetSystemLibrary",
+              Serie::GetString(uKsl) == "KismetSystemLibrary", Serie::GetString(uKsl).c_str());
+
+        const bool     svCpnU   = DynOff::bCasePreservingName;
+        const bool     svFPropU = DynOff::bUseFProperty;
+        const int      svNextU  = DynOff::UFIELD_NEXT;
+        const int      svChildU = DynOff::USTRUCT_CHILDREN;
+        const uint32_t svVerU   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 425;
+        DynOff::USTRUCT_CHILDREN    = 0x50;   // the fork's Children: +8, like every key after UObject
+
+        enum { bMeta, bFnCls, bKsl, bFA, bFB, bFC, kUB };
+        alignas(16) static uint8_t ufB[kUB][0x200] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(ufB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](int nextOff) {
+            for (auto& b : ufB) memset(b, 0, sizeof(b));
+            putP(ufB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(ufB[bMeta], Grimoire::OFF_UOBJECT_NAME, uClass);
+            putP(ufB[bFnCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(ufB[bFnCls], Grimoire::OFF_UOBJECT_NAME, uFunction);
+            putP(ufB[bKsl], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));    put32(ufB[bKsl], Grimoire::OFF_UOBJECT_NAME, uKsl);
+            putP(ufB[bKsl], DynOff::USTRUCT_CHILDREN, A(bFA));
+            const int fn[3] = { bFA, bFB, bFC };
+            for (int i = 0; i < 3; ++i) {
+                putP(ufB[fn[i]], Grimoire::OFF_UOBJECT_CLASS, A(bFnCls));
+                put32(ufB[fn[i]], Grimoire::OFF_UOBJECT_NAME, uFA + i);
+                if (nextOff != 0x28) putP(ufB[fn[i]], 0x28, A(bKsl));   // the fork's extra member: a pointer, not a Function
+                if (i < 2) putP(ufB[fn[i]], nextOff, A(fn[i + 1]));
+            }
+        };
+
+        FakePool ufPool;
+        ufPool.Build(kUB);
+        for (int i = 0; i < kUB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(ufPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(ufPool.Addr(), FakePool::kItemSize);
+
+        // The Pathless shape.
+        build(0x30);
+        DynOff::UFIELD_NEXT = 0x28;   // what FProperty mode used to leave in place
+        const size_t atDefault = Ubel::WalkFunctions(A(bKsl)).size();
+        check("UFIELDNEXT the defect: at the old default 0x28 the walk sees ONE function, not three",
+              atDefault == 1, std::to_string(atDefault).c_str());
+        const int probed = Genau::ProbeUFieldNextFProperty();
+        check("UFIELDNEXT ⭐: the probe measures 0x30 on the Pathless-shaped chain",
+              probed == 0x30, std::to_string(probed).c_str());
+        DynOff::UFIELD_NEXT = probed > 0 ? probed : 0x28;
+        const size_t atProbed = Ubel::WalkFunctions(A(bKsl)).size();
+        check("UFIELDNEXT ⭐: at the measured offset the walk sees all three functions",
+              atProbed == 3, std::to_string(atProbed).c_str());
+
+        // The stock shape keeps the default, and a class with no chain measures nothing.
+        build(0x28);
+        check("UFIELDNEXT control: a stock chain measures the default 0x28", Genau::ProbeUFieldNextFProperty() == 0x28);
+        putP(ufB[bKsl], DynOff::USTRUCT_CHILDREN, 0);
+        check("UFIELDNEXT control: no function chain gives -1 (the caller keeps the default and says so)",
+              Genau::ProbeUFieldNextFProperty() == -1);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnU;
+        DynOff::bUseFProperty       = svFPropU;
+        DynOff::UFIELD_NEXT         = svNextU;
+        DynOff::USTRUCT_CHILDREN    = svChildU;
+        g_cachedUEVersion           = svVerU;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

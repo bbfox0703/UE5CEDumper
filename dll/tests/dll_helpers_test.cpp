@@ -6146,6 +6146,29 @@ static void Test_FunctionFlagsOffset() {
            !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
 }
 
+// [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
+// returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
+// whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
+// WalkFunctions then stepped the wrong member. The probe walks a UClass's Children chain at
+// each candidate and takes the FIRST candidate (default first) that chains >= 2 Function hops.
+static void Test_UFieldNextFProperty() {
+    const int offs[] = { 0x28, 0x30, 0x20, 0x38, 0x40, 0x48 };
+    {   const int hops[] = { 3, 0, 0, 0, 0, 0 };
+        EXPECT("VND583-02: a stock chain keeps the default 0x28", DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x28); }
+    {   const int hops[] = { 0, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: The Pathless shape (Next at 0x30) is measured, not defaulted",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x30); }
+    {   const int hops[] = { 1, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: ONE hop is not a chain -- a single Function pointer can be a coincidence",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x30); }
+    {   const int hops[] = { 0, 0, 0, 0, 0, 0 };
+        EXPECT("VND583-02: nothing chains -> -1 (the caller keeps the default and says so)",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == -1); }
+    {   const int hops[] = { 2, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: two candidates chain -> the earlier (the default) wins",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x28); }
+}
+
 static void Test_ProcessEventVTableSlot() {
     // A2: the table this replaces read `>= 550 -> 0x228 / >= 500 -> 0x220`, and 550 is
     // NOT a producible version -- versions are major*100+minor, capped at 509. So every
@@ -8625,6 +8648,7 @@ int main() {
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
+    RUN(Test_UFieldNextFProperty);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

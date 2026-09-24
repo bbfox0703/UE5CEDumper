@@ -3274,6 +3274,62 @@ static uintptr_t FindStructByName(const char* structName) {
     return 0;
 }
 
+// [VND583-02] Measure UField::Next in FProperty mode, where it used to be left at its default.
+// Walks the UFunction chain (UStruct::Children, now derived from the measured ChildProperties)
+// of a stock engine class at each candidate offset, default first, and returns the first that
+// chains >= 2 consecutive Function objects (DynOff::PickUFieldNextOffset). -1 = no class had a
+// chain to measure on.
+static int ProbeUFieldNextFProperty() {
+    static const char* kClasses[] = { "KismetSystemLibrary", "KismetMathLibrary", "Actor", "Object" };
+    const int def = DynOff::bCasePreservingName ? 0x30 : 0x28;
+    int offs[8];
+    int n = 0;
+    for (int c : { def, 0x28, 0x30, 0x20, 0x38, 0x40, 0x48 }) {
+        bool dup = false;
+        for (int i = 0; i < n; ++i) dup = dup || offs[i] == c;
+        if (!dup) offs[n++] = c;
+    }
+    auto classNameOf = [](uintptr_t obj) -> std::string {
+        uintptr_t cls = 0;
+        uint32_t idx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return {};
+        if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, idx)) return {};
+        return Serie::GetString(idx);
+    };
+    const int32_t count = Aura::GetCount();
+    for (const char* want : kClasses) {
+        for (int32_t i = 0; i < count; ++i) {
+            uintptr_t obj = Aura::GetByIndex(i);
+            if (!obj || classNameOf(obj) != "Class") continue;
+            uint32_t nameIdx = 0;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) || Serie::GetString(nameIdx) != want) continue;
+            uintptr_t first = 0;
+            if (!Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDREN, first) || !first
+                || !Grimoire::IsUserspacePointer(first) || classNameOf(first) != "Function")
+                break;   // this class has no function chain here -- try the next name
+            int hops[8] = {};
+            for (int k = 0; k < n; ++k) {
+                uintptr_t cur = first;
+                for (int h = 0; h < 4; ++h) {
+                    uintptr_t nxt = 0;
+                    if (!Macht::ReadSafe(cur + offs[k], nxt) || !nxt || !Grimoire::IsUserspacePointer(nxt)) break;
+                    if (classNameOf(nxt) != "Function") break;
+                    ++hops[k];
+                    cur = nxt;
+                }
+            }
+            const int picked = DynOff::PickUFieldNextOffset(offs, hops, n);
+            if (picked > 0) {
+                Sein::Info("DYNO", "ValidateAndFixOffsets: UField::Next at +0x%02X (FProperty mode, probed on %s's "
+                           "function chain)", picked, want);
+                return picked;
+            }
+            break;
+        }
+    }
+    return -1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DetectCasePreservingName — Measure FName size from UObject layout.
 //
@@ -4238,6 +4294,16 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
+        // [VND583-02] UField::Next is only used by function walks here, and it was never
+        // measured in this mode. A failed probe keeps the default WITHOUT flipping validated:
+        // property walks do not use it, so the run's other offsets are still measured.
+        const int ufieldNext = ProbeUFieldNextFProperty();
+        if (ufieldNext > 0) {
+            DynOff::UFIELD_NEXT = ufieldNext;
+        } else {
+            Sein::Warn("DYNO", "ValidateAndFixOffsets: UField::Next could not be measured in FProperty mode -- keeping "
+                       "+0x%02X; function lists may be wrong on a shifted UObject", DynOff::UFIELD_NEXT);
+        }
     } else {
         // UE4 UProperty mode: Children is the chain itself
         DynOff::USTRUCT_SUPER     = childPropsOff - 8;
@@ -4362,6 +4428,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
         Sein::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
         Sein::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
+        Sein::Info("DYNO", "  UField::Next        = +0x%02X (function chains)", DynOff::UFIELD_NEXT);
     } else {
         Sein::Info("DYNO", "  UField::Next        = +0x%02X", DynOff::UFIELD_NEXT);
         Sein::Info("DYNO", "  UProperty::ElemSize = +0x%02X", DynOff::UPROPERTY_ELEMSIZE);
