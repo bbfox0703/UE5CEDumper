@@ -38,8 +38,12 @@ from pipe_client import PipeClient  # noqa: E402
 
 LOGS = os.path.join(os.environ.get("LOCALAPPDATA", ""), "UE5CEDumper", "Logs")
 PROC = {"shipping58": "DumperTest58-Win64-Shipping", "dev58": "DumperTest58",
+        "shipping51": "DumperTest51-Win64-Shipping", "dev51": "DumperTest51",
+        "debug51": "DumperTest51-Win64-DebugGame",
         "shipping": "DumperTest-Win64-Shipping", "dev": "DumperTest"}
 DEFAULT_CLASS = {"shipping58": "DumperTest58Actor", "dev58": "DumperTest58Actor",
+                 "shipping51": "BP_ThirdPersonCharacter_C", "dev51": "BP_ThirdPersonCharacter_C",
+                 "debug51": "BP_ThirdPersonCharacter_C",
                  "shipping": "DumperTestActor", "dev": "DumperTestActor"}
 
 TS = re.compile(r"^\[[^\]]+\]\s*")
