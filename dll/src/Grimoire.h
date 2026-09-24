@@ -555,6 +555,19 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-12] UE5_GetVersion's lazy refine, from two markers that surface only after init.
+// A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
+// The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
+// `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. It raised to 506,
+// one version early. Monotonic and UE5-only: it never lowers a version, and never touches a UE4 label.
+constexpr uint32_t RefineVersionFromLazyMarkers(uint32_t ver, bool sawUtf8OrAnsiStr, bool fnameDataEnums) {
+    if (ver < 500 || ver >= 507) return ver;
+    uint32_t floor = ver;
+    if (sawUtf8OrAnsiStr && floor < 505) floor = 505;
+    if (fnameDataEnums && floor < 507) floor = 507;
+    return floor;
+}
+
 // [VND583-09] The FField layout a version starts from BEFORE probing. FFieldVariant shrank from 16 bytes
 // (`union Container` + `bool bIsUObject`) to 8 (a pointer tagged by UObjectMask) in **5.3.0**, not 5.1.1:
 // Field.h at 5.1.1-release and 5.2.1-release still declares bIsUObject, 5.3.0-release declares
@@ -762,7 +775,7 @@ inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout r
 // replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
 inline int UENUM_VALUE_SIZE     = 8;
 inline int UENUM_PAIR_STRIDE    = 0;
-// UE5.6+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
+// UE5.7+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
 // FNameData struct-of-arrays {tagged FName*, tagged int64*, int32 NumValues}. Set by
 // DetectUEnumNames (try-both); the enum reader (Ubel) branches on it. Written before the
 // bUEnumNamesDetected release-store, so plain bool (same pattern as bCasePreservingName).

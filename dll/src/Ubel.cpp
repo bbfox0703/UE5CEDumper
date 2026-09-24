@@ -13,7 +13,7 @@
 #include "Genau.h"
 #include "Utf8Helpers.h"
 #include "Scharf.h"
-#include "Neu.h"     // UEnum::Names layout (legacy TArray vs UE5.6+ FNameData)
+#include "Neu.h"     // UEnum::Names layout (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // cooperative cancellation for the unbounded gap-fill loop
 
 #include <algorithm>
@@ -152,7 +152,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
 
     // Slow path: parse UEnum::Names WITHOUT the lock (game-memory reads are the
     // expensive part), then insert. The container is either the legacy
-    // TArray<TPair<FName,int64>> or the UE5.6+ FNameData struct-of-arrays; the
+    // TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the
     // format is a per-game constant established by DetectUEnumNames, so we build
     // the layout for that KNOWN format (Neu::BuildLayout — no per-enum guessing).
     auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
@@ -2058,8 +2058,9 @@ int32_t GetSetElementStride(uintptr_t fieldAddr) {
 //
 // UStruct lays out `int32 PropertiesSize;` immediately followed by MinAlignment,
 // so it sits at USTRUCT_PROPSSIZE + 4 (which is also why USTRUCT_SCRIPT is
-// PROPSSIZE + 8). MinAlignment is int16 in UE 5.8 — StructStateFlags takes the
-// other half of that word — and int32 in UE4 / early UE5. Reading the LOW 16 BITS
+// PROPSSIZE + 8). MinAlignment is int16 since UE 5.6 (Class.h: int32 at 5.5.0-release, int16 at
+// 5.6.0-release [VND583-12]) — StructStateFlags takes the other half of that word — and int32 in
+// UE4 / UE 5.0-5.5. Reading the LOW 16 BITS
 // is correct for BOTH on little-endian x64 because alignments are small; reading
 // it as int32 would pick up StructStateFlags on newer engines.
 //

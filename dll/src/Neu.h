@@ -4,7 +4,7 @@
 // occupy the SAME UEnum offset, and extract the (FName comparison-index, value)
 // pairs of an enum's members.
 //
-//   Legacy (UE4.x .. UE5.5):  Names is a TArray<TPair<FName,int64>>
+//   Legacy (UE4.15 .. UE5.6; UE4.9-4.14 hold uint8 values, below):  Names is a TArray<TPair<FName,int64>>
 //       +0x00  FName/int64 pairs Data*        (name + value INTERLEAVED)
 //       +0x08  int32 ArrayNum
 //       +0x0C  int32 ArrayMax
@@ -14,14 +14,14 @@
 //       after the FName, and the pair padded to alignof(FName) -- 16 bytes on a non-CPN 4.11-4.14,
 //       whose FName is 8-aligned -- with padding bytes that the engine never writes.
 //
-//   FNameData57 (UE5.6+):     Names is a struct-of-arrays (UEnum::FNameData)
+//   FNameData57 (UE5.7+):     Names is a struct-of-arrays (UEnum::FNameData)
 //       +0x00  UPTRINT TaggedNames    (tagged FName*  — mask &~1)   names array
 //       +0x08  UPTRINT TaggedValues   (tagged int64*  — mask &~1)   values array
 //       +0x10  int32   NumValues
 //     name i  @ (TaggedNames &~1) + i*sizeof(FName)   (FName @ +0)
 //     value i @ (TaggedValues&~1) + i*8
 //
-// The UE5.6+ container is "disguised" at the old offset: a single-format reader
+// The UE5.7+ container is "disguised" at the old offset: a single-format reader
 // mis-reads TaggedValues (a pointer) as ArrayNum (a count) and fails — this is
 // what broke stock UE5.7 enum name resolution (Solarpunk, ~46% names). The whole
 // job here is to disambiguate the two and read the right one.
@@ -48,8 +48,8 @@
 namespace Neu {
 
 enum class EnumNamesFormat : uint8_t {
-    Legacy,        // TArray<TPair<FName,int64>>  (UE4.x .. UE5.5)
-    FNameData57,   // UEnum::FNameData struct-of-arrays  (UE5.6+)
+    Legacy,        // TArray<TPair<FName,int64>>  (UE4.15 .. UE5.6; uint8 values on 4.9-4.14)
+    FNameData57,   // UEnum::FNameData struct-of-arrays  (UE5.7+; 5.6.0 still has the TArray)
 };
 
 // Parsed header of the UEnum::Names region (the words at enumAddr + namesOffset).

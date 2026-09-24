@@ -14,7 +14,7 @@
 #include "Himmel.h"
 #include "Aura.h"
 #include "Serie.h"
-#include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
+#include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded (B18)
 #include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby (audit #5 G2)
 
@@ -5570,7 +5570,7 @@ bool DetectUEnumNames() {
             cand.name, static_cast<unsigned long long>(enumAddr));
 
         // Probe offsets 0x30..0x120 (step 8). At each, try BOTH the legacy
-        // TArray<TPair<FName,int64>> layout AND the UE5.6+ FNameData
+        // TArray<TPair<FName,int64>> layout AND the UE5.7+ FNameData
         // struct-of-arrays (Neu disambiguates which one parses) — version-number
         // gating alone is unreliable on forked engines, so we validate by reading
         // the actual member FNames (same as before, format-agnostic now).
@@ -5652,7 +5652,7 @@ bool DetectUEnumNames() {
 
                 Sein::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "
                     "(%s, verified with '%s', count=%d, %d name matches, value %d B, pair stride %d)",
-                    off, DynOff::bEnumNamesNewContainer ? "UE5.6+ FNameData"
+                    off, DynOff::bEnumNamesNewContainer ? "UE5.7+ FNameData"
                                                         : "legacy TArray",
                     cand.name, layout.count, verified, DynOff::UENUM_VALUE_SIZE, DynOff::UENUM_PAIR_STRIDE);
                 return true;

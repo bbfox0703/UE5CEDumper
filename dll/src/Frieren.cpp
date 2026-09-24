@@ -700,23 +700,21 @@ void UE5_Shutdown() {
 }
 
 uint32_t UE5_GetVersion() {
-    // Lazy UE5.5 / 5.6 refines off markers discovered during walks / enum access (the
+    // Lazy UE5.5 / 5.7 refines off markers discovered during walks / enum access (the
     // structural item + property markers ran at init; these two only surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     the lazy DetectUEnumNames) ⇒ UE5.6+ (this is the layout whose enum bug the
-    //     UE5.6+ Neu reader fixed; e.g. Titan Quest II).
-    // Monotonic + UE5-only (never lowers, never touches a UE4 label). Cheap reads; the
-    // UI polls this for the badge, so the version self-corrects as the user browses.
-    if (g_cachedUEVersion >= 500 && g_cachedUEVersion < 506) {
-        uint32_t floor = g_cachedUEVersion;
-        if (Ubel::SawUtf8OrAnsiStr() && floor < 505)          floor = 505;
-        if (DynOff::bEnumNamesNewContainer && floor < 506)    floor = 506;
-        if (floor != g_cachedUEVersion) {
-            LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5/5.6 type/enum marker).",
-                     g_cachedUEVersion, floor);
-            g_cachedUEVersion = floor;
-        }
+    //     the lazy DetectUEnumNames) ⇒ UE5.7+ (this is the layout whose enum bug the
+    //     Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
+    //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
+    // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
+    // user browses.
+    const uint32_t refined = DynOff::RefineVersionFromLazyMarkers(
+        g_cachedUEVersion, Ubel::SawUtf8OrAnsiStr(), DynOff::bEnumNamesNewContainer);
+    if (refined != g_cachedUEVersion) {
+        LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5 string-property / UE5.7 enum marker).",
+                 g_cachedUEVersion, refined);
+        g_cachedUEVersion = refined;
     }
     return g_cachedUEVersion;
 }

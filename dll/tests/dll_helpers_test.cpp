@@ -6269,6 +6269,17 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-12] The lazy version refine: FNameData enums mean 5.7+, not 5.6+.
+static void Test_RefineVersionFromLazyMarkers() {
+    EXPECT("VND583-12: FNameData enums raise 5.4 to 5.7", DynOff::RefineVersionFromLazyMarkers(504, false, true) == 507);
+    EXPECT("VND583-12: ...and a 5.6 label to 5.7",        DynOff::RefineVersionFromLazyMarkers(506, false, true) == 507);
+    EXPECT("VND583-12: a Utf8Str property raises 5.3 to 5.5", DynOff::RefineVersionFromLazyMarkers(503, true, false) == 505);
+    EXPECT("VND583-12: both markers: the higher wins",     DynOff::RefineVersionFromLazyMarkers(503, true, true) == 507);
+    EXPECT("VND583-12: never lowers a 5.8",                DynOff::RefineVersionFromLazyMarkers(508, true, true) == 508);
+    EXPECT("VND583-12: never touches a UE4 label",         DynOff::RefineVersionFromLazyMarkers(427, true, true) == 427);
+    EXPECT("VND583-12: no marker, no change",              DynOff::RefineVersionFromLazyMarkers(504, false, false) == 504);
+}
+
 // [VND583-09] FFieldVariant shrank in 5.3.0, so 5.2 starts from the LARGE layout; and an unmeasured
 // FField::Next of 0x18 is not evidence of the tagged encoding.
 static void Test_FFieldVariantDefaults() {
@@ -8811,6 +8822,7 @@ int main() {
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);
+    RUN(Test_RefineVersionFromLazyMarkers);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
