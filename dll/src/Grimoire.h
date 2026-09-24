@@ -117,12 +117,14 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 
 // --- UStruct / FField / FProperty offsets (runtime-detected) ---
 // ValidateAndFixOffsets() dynamically detects all offsets below.
-// Defaults match UE5.0-5.1 layout (FFieldVariant=0x10 bytes).
-// UE5.1.1+ uses FFieldVariant=0x08 bytes, shifting FField::Next/Name/etc by -8.
+// Defaults match the UE 4.25-5.2 layout (FFieldVariant=0x10 bytes).
+// UE 5.3+ uses FFieldVariant=0x08 bytes, shifting FField::Next/Name/etc by -8. [VND583-DOC UEP-D1]
+// (This said 5.1.1 -- wrong against its own source: RE-UE4SS's 5_00/5_01/5_02 templates all put
+// Offset_Internal at 0x4C and 5_03 at 0x44, as Field.h does; DynOff::UsesSmallFFieldVariantDefault.)
 //
 // Version differences (from RE-UE4SS MemberVarLayoutTemplates):
-//   UE5.0-5.1.0: FFieldVariant=0x10 → Next=0x20, Name=0x28, Offset_Internal=0x4C
-//   UE5.1.1-5.5: FFieldVariant=0x08 → Next=0x18, Name=0x20, Offset_Internal=0x44
+//   UE5.0-5.2:   FFieldVariant=0x10 → Next=0x20, Name=0x28, Offset_Internal=0x4C
+//   UE5.3-5.8:   FFieldVariant=0x08 → Next=0x18, Name=0x20, Offset_Internal=0x44
 // UStruct offsets (Super, Children, ChildProperties) are stable: 0x40/0x48/0x50.
 //
 // UE4 differences:
@@ -165,7 +167,7 @@ inline int UFUNCTION_FUNC     = 0;
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
 // === FField — defaults for UE5.0-5.1.0 (FFieldVariant=0x10) ===
-// UE5.1.1+ shifts these: Next=0x18, Name=0x20
+// UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
 inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
 inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
@@ -173,7 +175,7 @@ inline int FFIELD_NAME        = 0x28;  // FName
 
 // === FProperty (inherits from FField) — defaults for UE5.0-5.1.0 AND UE4.25-4.27 ===
 // (both have FFieldVariant = 0x10, so FField is 0x38 and FProperty's own fields follow it)
-// UE5.1.1+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
+// UE5.3+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
 //
 // ElementSize is 0x3C, NOT 0x38 — 0x38 is ArrayDim. Verified against the DropIn 4.27.2 PDB:
 // ArrayDim@0x38, ElementSize@0x3C, PropertyFlags@0x40, Offset_Internal@0x4C. The old 0x38
@@ -231,7 +233,7 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
 
 // === FStructProperty (subclass of FProperty) ===
 // UScriptStruct* — first field after FProperty base layout.
-// Derived from FPROPERTY_OFFSET + 0x2C (UE5.0: 0x78, UE5.1.1+: 0x70).
+// Derived from FPROPERTY_OFFSET + 0x2C (UE 4.25-5.2: 0x78, UE 5.3+: 0x70; +0x34 under CPN -- PropertyFamilyFor).
 inline int FSTRUCTPROP_STRUCT = 0x78;
 
 // === FArrayProperty (subclass of FProperty) ===

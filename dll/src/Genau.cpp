@@ -4282,8 +4282,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     if (propElemSizeOff < 0 && propOffsetOff > 0) {
         // Heuristic: ElementSize sits 0x10 bytes before Offset_Internal.
-        // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.1.0 (0x3C vs 0x4C) and
-        // UE5.1.1+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
+        // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.2 (0x3C vs 0x4C) and
+        // UE5.3+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
         int guess = propOffsetOff - 0x10;
         if (guess >= probeStart) {
             int32_t val = 0;

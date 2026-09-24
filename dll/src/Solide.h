@@ -37,7 +37,7 @@ enum ForceResult : int32_t {
     FR_ERR_REFLECT   = -4,   // field not reflected on the class / wrong type
     FR_ERR_WRITE     = -10,  // raw write failed on every instance
     FR_ERR_BAD_KIND  = -11,  // unknown ForceKind
-    FR_ERR_WEAK_PTR  = -12,  // object-null asked on a weak/soft/lazy ptr (refused — GObjects[0] trap)
+    FR_ERR_WEAK_PTR  = -12,  // object-null asked on a weak/soft/lazy ptr (refused -- a soft/lazy path re-resolves; see Solide.cpp)
     FR_ERR_BAD_ARGS  = -13,  // null/empty className or fieldName
 };
 

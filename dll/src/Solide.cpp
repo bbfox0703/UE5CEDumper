@@ -50,7 +50,7 @@ struct Job {
     // Pruned to the live pool each re-assert tick to bound it. (L4)
     std::unordered_map<uintptr_t, double> baseByOwner;
     // Set when the field resolved on >=1 instance but was type-refused everywhere
-    // (weak/soft/lazy ptr → GObjects[0] trap, or wrong numeric type). (L2)
+    // (weak/soft/lazy ptr, or wrong numeric type -- see the K_OBJECT_NULL refusal for why). (L2)
     int32_t     lastRefusal = 0;
     // Last-tick stats (for the UI badge + Locate handoff).
     int32_t     held         = 0;
@@ -258,8 +258,12 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
     uintptr_t addr = obj + static_cast<uintptr_t>(fi.Offset);
 
     if (job.kind == K_OBJECT_NULL) {
-        // Strong ObjectProperty only: writing 8 zero bytes into a Weak/Soft/Lazy
-        // ptr sets ObjectIndex 0 = a VALID GObjects[0] slot, not null (crash trap).
+        // Strong ObjectProperty only. [VND583-DOC D7-04] The reason recorded here was "8 zero bytes set
+        // ObjectIndex 0 = a VALID GObjects[0] slot (crash trap)" -- wrong in every version: {0, 0} has
+        // SerialNumber 0, which is UE's explicit null (FWeakObjectPtr::Internal_GetObjectItem). The refusal
+        // stands for Soft / Lazy on its own merits: their asset path / GUID lies past those 8 bytes and
+        // re-resolves the pointer, so a "null" hold would not hold. Weak is refused with them until someone
+        // needs it -- a behaviour change, not a doc fix.
         if (fi.TypeName != "ObjectProperty") { refusal = FR_ERR_WEAK_PTR; return false; }   // L2
         sampleOwner = obj; sampleOffset = fi.Offset;
         if (restore) return true;   // original ptr not saved (stale) — no restore
@@ -449,7 +453,7 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         ApplyJobLocked(*it, /*restore=*/false, &drifted);
         held = it->held;
         // Field resolved on >=1 instance but was type-refused everywhere (weak/soft/lazy
-        // ptr → GObjects[0] trap, or wrong numeric type) → a futile hold. Don't persist a
+        // ptr, or wrong numeric type) → a futile hold. Don't persist a
         // newly-added job or start the worker; surface the reason instead of a silent
         // held=0 (Fern maps a negative return to `code`). (L2)
         // ⛔ REPORT THE REFUSAL ON A RE-ARM TOO. `newlyAdded` decides whether the job
