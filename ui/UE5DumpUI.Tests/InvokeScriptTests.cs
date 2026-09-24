@@ -2339,7 +2339,8 @@ public class InvokeScriptTests
         // [P1-GENAU-ABORT] UE5_Init's post-FindAll GObjects recovery runs two more cancellable sweeps. Their aborts must
         // reach ptrs.bScanCancelled, which the latch guard reads -- or a cancelled recovery latches a partial init.
         var frieren = DllSource("Frieren.cpp");
-        Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled)", frieren, StringComparison.Ordinal);
+        // [VND583-10] the call grew two out-params (item object offset, UE 5.8 array); the cancel is still the 2nd.
+        Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,", frieren, StringComparison.Ordinal);
         Assert.Contains("if (staticCancelled) ptrs.bScanCancelled = true;", frieren, StringComparison.Ordinal);
         Assert.Contains("Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled)", frieren,
             StringComparison.Ordinal);
