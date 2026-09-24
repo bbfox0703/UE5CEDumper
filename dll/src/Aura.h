@@ -365,6 +365,9 @@ struct ContainerScanStats {
     // [P1-SPARSEDELEGATE-REFS] Find References only: sparse delegates whose InvocationList could not be located. Their
     // bindings are MISSING from the result, not absent from the game, so a sweep with any is not a complete one.
     int32_t sparseUnlocated  = 0;
+    // [R7-A-01] Find References only: the sparse-delegate pass did not run because this build uses compact sets
+    // (DynOff::bCompactSets), whose global storage map nothing here decodes. A "none found" is then not a negative.
+    bool    sparseSkipped    = false;
 };
 
 // Scan all UObjects' container fields for `addr`. Returns matches where

@@ -2147,6 +2147,14 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void FindRefsReply_CarriesSparseSkipped()
+    {
+        // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.
+        Assert.Contains("scanInfo[\"sparse_skipped\"] = stats.sparseSkipped;", DllSource("Fern.cpp"),
+                        StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WalkInstanceReply_CarriesUnreadable_InLeanAndFull()
     {
         // [P1-WALK-UNREADABLE] Like `stale`, the freed-object signal must survive the LEAN contract: a batch export reads

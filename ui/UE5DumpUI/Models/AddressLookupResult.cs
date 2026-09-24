@@ -129,6 +129,11 @@ public sealed class ContainerScanStats
     /// DLL.</summary>
     public int SparseUnlocated { get; init; }
 
+    /// <summary>[R7-A-01] Find References only: the sparse-delegate pass did not run, because this build uses compact
+    /// sets, whose storage map the DLL does not decode. Its bindings are missing from the result. false from an older
+    /// DLL.</summary>
+    public bool SparseSkipped { get; init; }
+
     /// <summary>
     /// The recursive DEEP descent ran (the shallow pass found nothing and the caller
     /// opted in via <c>container_depth &gt; 1</c>). It matters to the reader because the
@@ -140,7 +145,7 @@ public sealed class ContainerScanStats
     /// </summary>
     public bool DeepScan { get; init; }
 
-    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal && SparseUnlocated == 0;
+    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal && SparseUnlocated == 0 && !SparseSkipped;
 }
 
 /// <summary>

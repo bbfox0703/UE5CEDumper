@@ -2875,6 +2875,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 if (result.Scan is { SparseUnlocated: > 0 } su)   // [P1-SPARSEDELEGATE-REFS] these may not be all
                     scanSuffix += $"  [{su.SparseUnlocated} sparse delegate(s) unreadable — their bindings are missing]";
+                if (result.Scan is { SparseSkipped: true })        // [R7-A-01]
+                    scanSuffix += "  [sparse-delegate bindings not read — this build uses compact sets]";
                 ReferencesHeader = $"References to {scanName} ({References.Count})" + scanSuffix;
                 StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
                 _log.Info($"FindReferences: {scanAddr} -> {References.Count} matches{scanSuffix}");
@@ -2909,6 +2911,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             gaps.Add("the scan did not finish");
         if (scan is { SparseUnlocated: > 0 } s)
             gaps.Add($"{s.SparseUnlocated} sparse delegate(s) could not be read, so their bindings are missing");
+        if (scan is { SparseSkipped: true })   // [R7-A-01]
+            gaps.Add("sparse-delegate bindings were not read (this build uses compact sets)");
         return gaps.Count == 0
             ? "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)"
             : "No references found in what was read — " + string.Join("; ", gaps)

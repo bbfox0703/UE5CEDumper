@@ -613,7 +613,9 @@ inline std::atomic<bool> bSoftPathProbed{false};
 // past its 16 bytes into the next property. The define is engine-wide, so ONE Set/Map property of
 // ElementSize 0x10 on 5.7+ (or an unknown version -- no earlier engine has a 16-byte set) latches
 // bCompactSets for the process: Macht::ReadTSparseArray then refuses, and the walker publishes the
-// header only (NumElements @ +0x08). GUARD, do not decode.
+// header only (NumElements @ +0x08). The global sparse-delegate storage is a TMap too, and its two readers
+// (Aura's Find References pass and WalkSparseDelegateBindings) do not go through ReadTSparseArray, so each
+// tests this flag itself [R7-A-01]. GUARD, do not decode.
 constexpr int SPARSE_SET_ELEMENT_SIZE = 0x50;
 constexpr bool IsCompactSetLayout(int32_t elementSize, unsigned ueVersion) {
     return elementSize == 0x10 && (ueVersion == 0 || ueVersion >= 507);

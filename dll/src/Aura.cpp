@@ -4084,6 +4084,9 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // [P1-SPARSEDELEGATE-REFS] Sparse delegates the pass below found but could not read. Reported, because a sweep that
     // skipped any is not complete, and the UI must not blame the game for what we missed.
     int32_t sparseUnlocated = 0;
+    // [R7-A-01] The sparse pass reads the global storage as a sparse TMap; on a compact-set build it is a 16-byte
+    // TCompactSet, so the pass does not run and the stats say so. A "none found" is then not a negative.
+    const bool sparseSkipped = ::g_cachedUEVersion >= 500 && DynOff::bCompactSets.load(std::memory_order_relaxed);
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -4099,7 +4102,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // FWeakObjectPtr against `target`. Skipped silently when AOB scan
     // failed or UE version is unsupported.
     if (static_cast<int>(matches.size()) < maxResults && !deadlineHit &&
-        ::g_cachedUEVersion >= 500)
+        ::g_cachedUEVersion >= 500 && !sparseSkipped)
     {
         uintptr_t storage = Genau::FindSparseDelegateStorage();
         if (storage) {
@@ -4220,7 +4223,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         stats->durationMs     = static_cast<int64_t>(dt);
         stats->deadlineHit    = deadlineHit;
         stats->sparseUnlocated = sparseUnlocated;
+        stats->sparseSkipped   = sparseSkipped;
     }
+    if (sparseSkipped)
+        LOG_WARN("FindReferencesToUObject: this build uses compact sets -- the sparse-delegate storage was NOT read, "
+                 "so bindings held there are MISSING from these results");
     if (sparseUnlocated > 0)
         LOG_WARN("FindReferencesToUObject: %d sparse delegate(s) had no readable InvocationList — "
                  "their bindings are MISSING from these results", sparseUnlocated);
@@ -6678,6 +6685,15 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
 {
     SparseDelegateResult result{};
     if (!ownerObj || fieldName.empty()) return result;
+
+    // [R7-A-01] On a compact-set build (DynOff::bCompactSets) the global storage TMap is a 16-byte TCompactSet too,
+    // and everything below reads it as a sparse set: NumFreeIndices at +0x34, the allocation bits, a 0x60 stride.
+    // Refuse the way Macht::ReadTSparseArray does -- resolved, not supported, nothing read.
+    if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+        result.resolved  = true;
+        result.supported = false;
+        return result;
+    }
 
     // Layout gate. This USED to be a version check (`UEVersion < 500 -> unsupported`) on the
     // premise that "UE 4.23-4.27 keys the outer TMap by FObjectKey, not a raw pointer".

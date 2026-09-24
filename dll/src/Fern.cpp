@@ -4538,6 +4538,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["duration_ms"]     = stats.durationMs;
             scanInfo["deadline_hit"]    = stats.deadlineHit;
             scanInfo["sparse_unlocated"] = stats.sparseUnlocated;   // [P1-SPARSEDELEGATE-REFS]
+            scanInfo["sparse_skipped"] = stats.sparseSkipped;       // [R7-A-01]
             data["scan"] = scanInfo;
 
             json arr = json::array();

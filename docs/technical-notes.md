@@ -570,7 +570,7 @@ multicast-sparse bindings whose target matches the search address —
 closing the v3 gap that previously left this category invisible.
 
 Fallback strings when the walker can't deliver:
-`(sparse, bound — UE < 5.0 unsupported)`,
+`(sparse, bound — storage layout not decoded on this build)` (an FObjectKey-keyed build, or compact sets),
 `(sparse, bound — FSparseDelegateStorage AOB not found)`,
 `(sparse, bound — owner not in storage)`,
 `(sparse, bound — function name not in storage)`. The bare

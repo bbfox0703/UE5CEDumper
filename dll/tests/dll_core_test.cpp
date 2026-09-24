@@ -3142,6 +3142,26 @@ int main() {
         check("SPARSEREFS ⭐: the sweep counts the two unreadable sparse delegates, not the readable one",
               st.sparseUnlocated == 2, std::to_string(st.sparseUnlocated).c_str());
 
+        // [R7-A-01] The same storage on a compact-set build: its global TMap is a 16-byte TCompactSet too, which the
+        // sparse readers would read past. The sweep must say the pass was skipped, and the Live Walker's reader must
+        // refuse instead of reporting "owner not in storage".
+        const bool savedCompactSp = DynOff::bCompactSets.load();
+        DynOff::bCompactSets.store(true);
+        Aura::ContainerScanStats stC;
+        const auto spRefsC = Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stC);
+        check("SPARSEREFS ⭐ R7-A-01: compact sets -> the sparse pass is reported SKIPPED, and nothing was read",
+              spRefsC.empty() && stC.sparseSkipped && stC.sparseUnlocated == 0,
+              std::to_string(stC.sparseUnlocated).c_str());
+        const Aura::SparseDelegateResult srC =
+            Aura::WalkSparseDelegateBindings(reinterpret_cast<uintptr_t>(spOwner), "OnHit", 8);
+        check("SPARSEREFS ⭐ R7-A-01: compact sets -> the Live Walker reader refuses (resolved, not supported)",
+              srC.resolved && !srC.supported && !srC.ownerFound && srC.bindings.empty());
+        DynOff::bCompactSets.store(savedCompactSp);
+        Aura::ContainerScanStats stS;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stS);
+        check("SPARSEREFS control: a sparse-set build reads the storage and skips nothing",
+              !stS.sparseSkipped && stS.sparseUnlocated == 2);
+
         Genau::s_sparseDelegatesCache.store(savedStoreSp);
         Genau::s_sparseDelegatesScanned.store(savedScannedSp);
         DynOff::bCasePreservingName = savedCpnSp;

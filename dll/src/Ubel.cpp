@@ -6863,7 +6863,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Couldn't resolve — surface the original bound-flag string so
                 // the user still knows the field is bound, just opaque.
                 if (!sr.supported) {
-                    fv.typedValue = "(sparse, bound — UE < 5.0 unsupported)";
+                    // A key shape we cannot read (an FObjectKey-keyed 4.23-4.26 build), or a compact-set
+                    // build [R7-A-01]: either way the storage is not decoded here.
+                    fv.typedValue = "(sparse, bound — storage layout not decoded on this build)";
                 } else if (!sr.resolved) {
                     fv.typedValue = "(sparse, bound — FSparseDelegateStorage AOB not found)";
                 } else if (!sr.ownerFound) {

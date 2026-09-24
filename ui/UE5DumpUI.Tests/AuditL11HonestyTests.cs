@@ -119,10 +119,37 @@ public class AuditL11HonestyTests
         return vm;
     }
 
-    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0) => new()
+    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0, bool skipped = false) => new()
     {
         ObjectsScanned = 10, ObjectsTotal = 10, DurationMs = 5, DeadlineHit = deadline, SparseUnlocated = unlocated,
+        SparseSkipped = skipped,
     };
+
+    [Fact]
+    public async Task FindRefs_None_WithTheSparsePassSkipped_DoesNotBlameTheGame()
+    {
+        // [R7-A-01] A compact-set build: the sparse pass never ran, so "none found" is not a negative.
+        var vm = RefsWalker(new FindReferencesResult { Scan = RefScan(skipped: true) });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("non-reflected", vm.StatusText);
+        Assert.Contains("sparse-delegate bindings were not read", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FindRefs_Found_WithTheSparsePassSkipped_SaysSomeMayBeMissing()
+    {
+        var vm = RefsWalker(new FindReferencesResult
+        {
+            References = new List<ReferenceMatch> { new() { OwnerAddress = "0x2000", OwnerName = "Owner", FieldName = "Target" } },
+            Scan = RefScan(skipped: true),
+        });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Contains("sparse-delegate bindings not read", vm.StatusText);
+    }
 
     [Theory]
     [InlineData(false, 0, true)]
