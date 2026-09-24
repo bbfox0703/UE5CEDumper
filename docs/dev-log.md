@@ -25,6 +25,39 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3550) — Review 7: the code since Review 6, fixed at every tier, published AOT
+
+**3550 = 3549 plus 32 product commits, up to `1c514220`.** Derive them: `git log --oneline c88ca562..1c514220
+-- dll/src ui/UE5DumpUI scripts`. Every row, test and piece of live evidence is in `docs/todo.md`
+`[REVIEW7-2026-09-24]`: 35 fixed rows, one per commit, red before green where testable.
+- **The review.** Four area finders and four skeptics over the code added since Review 6 raised 20 rows and
+  refuted one: 2 MED, 12 LOW, 4 INFO, all fixed. Among them: UE 5.0-5.3's default PendingKill state is tagged
+  `[garbage]` like 5.4's; the compact-set guard reaches the sparse-delegate readers; `apply_rescan` re-initialises
+  under the init fence; the Fly / KeepForeground / SeeThrough scripts no longer pop a modal on an untick; a CSX
+  FString child's byte size is in bytes.
+- **Seven skeptic rounds over the fixes themselves** added R7-S1..S14. The Lua freeze helper no longer wedges the
+  shared mailbox latch after a re-inject, and the mailbox init check reads the fence flag last. Instance Finder's
+  truncation notice is now derived from the walk; this closes `[INSTEXPORT-TRUNC-ADVICE]`, which R7-D-03 had first
+  fixed the wrong way. Its export also no longer pairs one walk's rows with another instance or limit. Every
+  AOBMaker "not reachable" line follows the latest probe's reason. The last round found the final fix correct;
+  its two small notes (an unexercised guard, a refusal's wording) were closed in a follow-up.
+- **The live regression found two more** (R7-X2, R7-X3). Find References now reports an unlocated sparse storage
+  as skipped. The storage validator accepts a vtable in any mapped module, not only the main exe. Live on the UE
+  4.27 editor `-game`: before the fix, `sparse_delegates` was 0x0 and the storage was rejected. After it, the storage
+  is located, the `CollisionCylinder` bindings decode as `[CharMoveComp::PhysicsVolumeChanged]` /
+  `[CharMoveComp::CapsuleTouched]`, and Find References on the live `CharMoveComp` returns both. DumperTest 5.4
+  Shipping `fixture_smoke` against 3549, on the Review 7 DLL before X2/X3: 0 differences.
+- **Not yet run on a game:** the Instance Finder advice (R7-S6 / S11 / S13 / S14; the L63 rig). The DumperTest
+  "±2 GB" comments wait for its next repackage.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3549 → 3550: `dist\UE5DumpUI.exe` AOT 55.1 MB
+(57,771,520 bytes, sha `133c75b34b1b`), `UE5Dumper.dll` sha `a32cb03df296`, stamp `1.0.0.3550 1c514220-dirty`.
+The suffix is the bumped `build_number.txt` and nothing else. Four proxies went to `dist\proxy\`
+(`check_proxy_exports --artifacts` OK). Tests: UI **5375/5375**, `dll_helpers_test` 2913/0, `utf8_helpers_test`
+265/0, `dll_core_test` 455 checks, and `grausam_window_test` / `sein_retention_test` passed. Gates 23/23.
+
+-----
+
 ## 2026-09-24 (build 3549) — weak Force-null, and the case-preserving-name bundle (VND583-07) measured on two editor hosts
 
 **3549 = 3548 plus four product commits, up to `c88ca562`.** Derive them: `git log --oneline 26993098..c88ca562
