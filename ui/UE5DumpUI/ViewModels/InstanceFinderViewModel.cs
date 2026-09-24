@@ -766,6 +766,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>[R7-S14] Which instance, at which Array Limit, the rows in <see cref="Fields"/> were walked for. Set with
+    /// the rows, never before: while a newer walk is in flight Fields still holds the previous one, and the export
+    /// must know that instead of pairing those rows with the new selection or limit.</summary>
+    private InstanceResult? _fieldsInstance;
+    private int _fieldsArrayLimit;
+
     private async Task LoadInstanceFieldsAsync(InstanceResult instance)
     {
         int id = ++_fieldLoadId;
@@ -775,7 +781,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             IsLoadingFields = true;
             ShowCeXml = false;
 
-            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            int limit = ArrayLimit;   // [R7-S14] the limit this walk is taken at
+            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: limit, previewLimit: PreviewLimit);
             if (id != _fieldLoadId) return;   // a newer selection / limit change superseded us
 
             // Compute base address for FieldAddress calculation
@@ -796,6 +803,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             }
 
             HasFields = Fields.Count > 0;
+            _fieldsInstance = instance;       // [R7-S14]
+            _fieldsArrayLimit = limit;
         }
         catch (Exception ex)
         {
@@ -814,6 +823,16 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
+        // [R7-S14] Fields holds the LAST walk that landed. While a newer one is in flight -- another instance picked, or
+        // the Array Limit changed -- those rows belong to the previous selection or limit, and exporting them would
+        // put A's layout under B's root, or resolve the structs at one limit and the top level at another.
+        if (!ReferenceEquals(_fieldsInstance, SelectedInstance) || _fieldsArrayLimit != ArrayLimit)
+        {
+            StatusText = "The fields shown are not this selection's yet — copy again once they have loaded.";
+            return;
+        }
+        // [R7-S14] A walk started DURING the export owns the loading flag: do not clear it under that walk.
+        int loadIdAtStart = _fieldLoadId;
 
         try
         {
@@ -824,10 +843,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // re-walks and clears Fields, so reading them again after an await could describe a different walk from
             // the one exported.
             var fields = new List<LiveFieldValue>(Fields);
-            int arrayLimit = ArrayLimit;
+            int arrayLimit = _fieldsArrayLimit;
             // [R7-S13] ...and the instance those fields belong to: the user can pick another one during the resolve,
             // and A's layout must not go out under B's root address and name.
-            var inst = SelectedInstance;
+            var inst = _fieldsInstance!;
 
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
@@ -878,7 +897,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsLoadingFields = false;
+            if (_fieldLoadId == loadIdAtStart) IsLoadingFields = false;   // [R7-S14]
         }
     }
 

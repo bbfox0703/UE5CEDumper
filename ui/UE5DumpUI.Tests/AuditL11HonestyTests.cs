@@ -394,13 +394,68 @@ public class AuditL11HonestyTests
     private sealed class GatedStructStub : StubDumpService
     {
         public readonly TaskCompletionSource Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>The address whose walk parks on <see cref="Gate"/>: the struct resolve by default.</summary>
+        public string GatedAddr = "0x5000";
         public override async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
         {
-            if (addr == "0x5000") await Gate.Task;   // the struct resolve waits here
+            if (addr == GatedAddr) await Gate.Task;
             return await base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
         }
+    }
+
+    private static (GatedStructStub dump, InstanceFinderViewModel vm, MockPlatformService platform) AlphaBetaFinder()
+    {
+        var dump = new GatedStructStub { GatedAddr = "" };
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha",
+            Fields = new List<LiveFieldValue> { new() { Name = "Mine", TypeName = "IntProperty", Offset = 0x28, Size = 4 } },
+        });
+        dump.RegisterStruct("0x20000000", new InstanceWalkResult
+        {
+            Address = "0x20000000", Name = "Beta_0", ClassName = "Beta",
+            Fields = new List<LiveFieldValue> { new() { Name = "Other", TypeName = "IntProperty", Offset = 0x30, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        return (dump, vm, platform);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_WhileANewSelectionsWalkIsInFlight_IsRefused()
+    {
+        // [R7-S14] The other ordering of R7-S13: B is picked FIRST and its walk is still running, so Fields still holds
+        // A's rows and the button is still live. The export must not send A's layout out under B.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        dump.GatedAddr = "0x20000000";
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        Assert.True(vm.IsLoadingFields);                               // B's walk is parked
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Contains("loaded", vm.StatusText);
+        Assert.True(vm.IsLoadingFields);                               // B's walk still owns the loading flag
+        dump.Gate.SetResult();
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_WhileTheArrayLimitsReWalkIsInFlight_IsRefused()
+    {
+        // [R7-S14] ...and for a new Array Limit: Fields is still the old limit's walk, so struct fields would be resolved
+        // at one limit and the top level exported at another, and the status would judge "bound" against the wrong one.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        dump.GatedAddr = "0x10000000";
+        vm.ArrayLimit = 64;                                            // re-walks A; parked
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Contains("loaded", vm.StatusText);
+        dump.Gate.SetResult();
     }
 
     [Fact]
