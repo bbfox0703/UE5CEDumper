@@ -148,7 +148,7 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
 | GObjects pointer-decrypt hook | ✅ `InitObjectArrayDecryption(lambda)`, default identity | ❌ none | ✅ `Aura::SetDecryptFunc` → `UE5_SetObjectDecryption` export, default nullptr |
 | Ships any per-game key/routine | ❌ zero (README `^ 0x8375` is a sample) | ❌ zero | ❌ zero (hook only) |
 | `TEncryptedObjectProperty` | ⚠️ opt-in `bEnableEncryptedObjectPropertySupport` (default off) | ❌ | ❌ |
-| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (34 titles) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
+| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (36 titles at RE-UE4SS@f58e8f84; 34 when first counted) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
 
 ### Findings
 
@@ -162,7 +162,7 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
   iframe). It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
   offset / engine-version / vtable *overrides*, not decryption. It assumes `GUObjectArray` /
   `FName` are directly readable, so it does not target pointer-encrypted / strong-anti-cheat
-  titles. Its 34 shipped profiles (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
+  titles. Its 36 shipped profiles (34 when first counted) (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
   Survivor, Lies of P, …) are forked-engine tuning, not encrypted-pointer cases.
 - **This project already has parity** with Dumper-7's pointer-decrypt hook: `Aura::SetDecryptFunc`
   / `Aura::DecryptObjectPtr` (`dll/src/Aura.cpp`), wired through the CE-Lua export

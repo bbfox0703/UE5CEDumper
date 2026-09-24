@@ -517,8 +517,11 @@ Ten fixtures added in one packaging cycle, each closing a register row that had 
   `DINPUT8.dll`. Expected in `init-0.log` once the proxy is deployed:
   `Loaded real dinput8.dll: …` — ⛔ **not** `lazily forwarded N/N exports`, which only the dxgi and
   winmm flavours print.
-* **`-DumperTestStarveVM`** reserves the ±2 GB window MinHook needs, so `MH_CreateHook` fails with
-  `MH_ERROR_MEMORY_ALLOC` — the intermittent failure four shipped behaviours depend on and none has
+* **`-DumperTestStarveVM`** reserves a ±2 GB window around the module. MinHook itself searches only
+  **±1 GB** for a trampoline (`MAX_MEMORY_RANGE 0x40000000`, `vendor/minhook/src/buffer.c:36`), so the
+  reservation over-covers it `[VND583-DOC MH-6]`, and `MH_CreateHook` fails with
+  `MH_ERROR_MEMORY_ALLOC`. (MinHook's other install-failure code is `MH_ERROR_UNSUPPORTED_FUNCTION`,
+  `hook.c:643`: a prologue its trampoline cannot relocate. Starving memory does not reach it.) This is the intermittent failure four shipped behaviours depend on and none has
   ever been observed. ⛔ It is a **switch, not a UFUNCTION**: an invoke is drained from inside the
   already-installed detour, so by the time a UFUNCTION could run the hook has already succeeded.
   `Hook_ReleaseTrampolineVM()` is the recovery half. ⚠ Call it within **~40 s** (8 attempts × 5 s

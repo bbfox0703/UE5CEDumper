@@ -70,8 +70,10 @@ function Write-Section($text) {
 #                                  header copy, not a submodule). It is on the
 #                                  include path at dll/CMakeLists.txt:171,547,656
 #                                  and is included by Fern.cpp / Flamme.cpp /
-#                                  Renge.h / Serie.cpp / Utf8Helpers.h. Delete it
-#                                  and the DLL and both test exes stop compiling.
+#                                  Renge.h (which the rest pull in; Serie.cpp and
+#                                  Utf8Helpers.h no longer include it directly --
+#                                  re-checked 2026-09-24). Delete it and the DLL
+#                                  and both test exes stop compiling.
 #       vendor/minhook             gitlink; real objects live in .git/modules/,
 #       vendor/zydis               which SURVIVES deleting vendor/. Restorable
 #                                  offline, on the pinned sha.
