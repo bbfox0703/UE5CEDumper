@@ -352,6 +352,9 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 //   4.26 0x218 (the FF7R note's "stock 4.26")   4.27 0x220 (DropIn PDB + 4 live games)
 //   5.4  0x268 (DragonSword)                    5.6  0x260 (Lushfoil, Stark.h)
 //   5.7  0x260 (Solarpunk)                      5.8  0x250 (audit PDB work)
+// and a seventh, measured LIVE 2026-09-24 on the first 5.0-5.2 sample (DumperTest51, stock UE 5.1.1,
+// Shipping): `DetectProcessEvent (pattern): match at vtable+0x260`, Add_IntInt(3,4) == 7, zero
+// fallback lines (tools/verify/a2_es2_pehook.py DumperTest51-Win64-Shipping) -- the 501 row.
 //
 // ⚠ The table is NOT monotonic — 4.20 0x208 then 4.21 0x200, and 5.5 0x278 then 5.6
 // 0x260 — so it must stay an exact lookup. A `>=` ladder invites a "simplification"

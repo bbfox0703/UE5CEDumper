@@ -603,6 +603,30 @@ name, and two `DumperTestActor`s on two engines is how a run reports the wrong f
 | `OptTail_Total` · `OptTail_Edges` | counts | How many were made, and how many ended at an unreadable page. Zero edges after the cap means the row is still unreachable on this run — say so, do not close it |
 | `OptTail_ObjectSize` · `OptTail_FieldOffset` | the compiled layout, measured from the first instance | The host is valid only while `OptTail_FieldOffset` + 8 == `OptTail_ObjectSize` |
 
+### DumperTest51 (2026-09-24) — the first UE 5.0-5.2 sample, stock template
+
+The maintainer's **stock UE 5.1.1 Third Person template** (`D:\Unreal Projects\DumperTest51`, packaged
+to `D:\UE_Analyze_data\For Testing\DumperTest51`: DebugGame, Development, Shipping). It carries no
+fixture actor yet — customize its source when a row needs a 5.1-specific field. ⚠ The UE 5.1 editor
+may be uninstalled later (SSD space): the packages are the durable part, a rebuild is not guaranteed.
+Launch with `py tools/verify/launch_dumpertest.py shipping51` (also `dev51`, `debug51`), smoke with
+`py tools/verify/fixture_smoke.py shipping51 --out <dir>`.
+
+Measured on the first run (DLL build 3547; `out\dt51\` on the verification PC):
+
+| | Shipping | Development |
+|---|---|---|
+| detected version | `501` | `501` |
+| objects | 19,144 | 19,707 |
+| FUObjectItem | 24 bytes, classic, detected | 32 bytes, classic, detected |
+| FField::Next / FFieldVariant | +0x20, untagged (5.1 keeps the 16-byte variant) | same |
+| `Offset_Internal` | +0x4C (the 5.00-5.02 value, `[A6]`) | same |
+| AOB winners | GOBJ_ES53_1, GNAM_V8, GWLD_TQ_1, SPARSE_ES2_1, GENG_X1 | GNames: GNAM_ES53_1 |
+| ProcessEvent | **vtable+0x260 by pattern**, Add_IntInt(3,4) == 7, 0 fallback lines | — |
+
+The ProcessEvent line is the table's 501 row (`Grimoire.h` `ProcessEventVTableSlotFor`) corroborated
+live for the first time (`tools/verify/a2_es2_pehook.py DumperTest51-Win64-Shipping`).
+
 ### Group Scan / Snapshot Mode B (temporal)
 
 A 1 Hz timer drives exactly the documented hard case — *groups need `Unchanged`*:
