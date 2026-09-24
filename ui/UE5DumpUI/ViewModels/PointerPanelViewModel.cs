@@ -126,6 +126,11 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     // --- AOBMaker CE Plugin bridge ---
     [ObservableProperty] private bool _isAobMakerAvailable;
+    /// <summary>[R7-D-04] The System tab's "not reachable" line, by WHY the last probe failed: the
+    /// <see cref="Helpers.AobMakerUnavailable"/> sentence the toolbar, the injects, Live Walker and Teleport already show.
+    /// It was a fixed "check CE plugin installation", which told a user whose pipe was merely BUSY (a second Cheat
+    /// Engine holds the single-instance server) to reinstall the plugin.</summary>
+    public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
 
     // --- Extra Scan state ---
     [ObservableProperty] private bool _isScanning;
@@ -648,7 +653,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
             NotifyAobMakerProperties();
         }
-        catch { IsAobMakerAvailable = false; }
+        catch { IsAobMakerAvailable = false; OnPropertyChanged(nameof(AobMakerOfflineText)); }
     }
 
     /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on
@@ -794,6 +799,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAsmGWorldScan));
         OnPropertyChanged(nameof(CanRegisterGWorldSymbol));
         OnPropertyChanged(nameof(CanRegisterGEngineSymbol));
+        OnPropertyChanged(nameof(AobMakerOfflineText));   // [R7-D-04] the reason moves with every probe
     }
 
     private bool _suppressOverrideSelectionEvent;

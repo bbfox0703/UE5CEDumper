@@ -145,6 +145,28 @@ public class AobMakerInjectTableFileTests
         await accepted;
     }
 
+    [Fact]
+    public async Task SystemTab_offline_line_says_busy_for_a_busy_pipe_not_reinstall_the_plugin()
+    {
+        // [R7-D-04] The System tab's AOBMaker line was a fixed StaticResource, the one surface W1-PIPEBUSY-STATUS missed.
+        var bridge = new AobMakerBridgeService(new MockLoggingService(), NobodysPipe(), 150, _ => true);
+        var vm = new UE5DumpUI.ViewModels.PointerPanelViewModel(new MockPlatformService(Path.GetTempPath()), aobMaker: bridge);
+
+        await vm.CheckAobMakerAsync();
+
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.Contains("busy", vm.AobMakerOfflineText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("plugin installation", vm.AobMakerOfflineText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SystemTab_offline_line_binds_the_reasoned_text()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PointerPanel.axaml"));
+        Assert.Contains("Text=\"{Binding AobMakerOfflineText}\"", axaml);
+        Assert.DoesNotContain("str.System.AobMakerOffline", axaml);
+    }
+
     // ---- [W1-PIPEBUSY-STATUS] the user-facing wording behind each reason ----
 
     [Fact]

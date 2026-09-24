@@ -418,7 +418,6 @@
     <sys:String x:Key="str.System.BuildUnknown">&#x26A0; DLL pre-dates build-number probe — assume stale</sys:String>
     <sys:String x:Key="str.System.AobMakerStatus">AOBMaker plugin</sys:String>
     <sys:String x:Key="str.System.AobMakerConnected">&#x25CF; Connected</sys:String>
-    <sys:String x:Key="str.System.AobMakerOffline">&#x25CB; Not reachable — check CE plugin installation</sys:String>
     <!-- Always-visible top-toolbar mirror of the System-tab AOBMaker indicator -->
     <sys:String x:Key="str.Toolbar.AobMakerLabel">AOBMaker</sys:String>
     <sys:String x:Key="str.Toolbar.AobMakerConnected">Connected</sys:String>
