@@ -5,11 +5,12 @@
     py tools/verify/ce_lua53_host.py --ce-dir "C:/Program Files/Cheat Engine" --ce-src "D:/Github/cheat-engine"
 
 WHY THIS EXISTS. scripts/tests/*.lua run under whatever `lua` is on the machine -- here a stock 5.4.6 -- while the
-scripts they test run inside CE's Lua 5.3 (lua53-64.dll, built with LUA_COMPAT_5_2). The two differ in ways that can
-make a test PASS on 5.4 and the script FAIL in CE: 5.4-only syntax (<const>, <close>), 5.4-only functions (warn,
-coroutine.close), and behaviours that changed (the integer for-loop, the math.random generator). The reverse
-direction -- 5.3-with-compat functions 5.4 dropped (bit32, math.pow, unpack, loadstring) -- fails LOUDLY on 5.4, so
-it cannot hide a defect. Running the same suites on CE's VM removes the question instead of arguing it.
+scripts they test run inside CE's Lua 5.3 (lua53-64.dll). The two differ in ways that can make a test PASS on 5.4
+and the script FAIL in CE: 5.4-only syntax (<const>, <close>), 5.4-only functions (warn, coroutine.close), and
+behaviours that changed. --probe measured one on 2026-09-25: string arithmetic yields a FLOAT on CE's VM ("10"+1 is
+11.0, on 5.4 it is 11). The shipped DLL has NO 5.1/5.2 compat functions (bit32, math.pow, unpack, loadstring are
+nil), although the source tree's Makefile says LUA_COMPAT_5_2. Running the same suites on CE's VM removes the
+question instead of arguing it.
 
 HOW. It builds a tiny host -- the stock lua.c from CE's own Lua source tree -- and links it against an import
 library generated from the INSTALLED lua53-64.dll's export table (dumpbin), then copies that DLL beside it. So the

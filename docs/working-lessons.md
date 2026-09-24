@@ -1401,6 +1401,16 @@ skips quietly is worse than one run on purpose). And a pure helper needs no UI a
 (b)'s size readout was closed by lifting `ue5_dllFileSize`/`ue5_dllSizeText` straight out of
 `dist/UE5CEDumper.CT` and running them against the two real DLLs.
 
+**Run them on CE's Lua VM, not only on the stock `lua` (measured 2026-09-25).** The `lua` on this PC is a stock
+**5.4.6**; the scripts run inside CE's **`lua53-64.dll`**. `py tools/verify/ce_lua53_host.py` builds CE's own `lua.c`
+against an import library generated from the INSTALLED DLL and runs every suite on that exact binary (all 10
+passed the day it was written). Its `--probe` measured what actually differs: `_VERSION` "Lua 5.3"; **none** of the
+5.1/5.2 compat functions (`bit32`, `math.pow`, `unpack`, `loadstring` are nil -- the source tree's Makefile says
+`LUA_COMPAT_5_2`, the shipped DLL was not built with it); no `warn` / `coroutine.close` / `<const>`; and
+**string arithmetic yields a FLOAT** -- `"10"+1` is `11.0` on CE's VM, `11` on 5.4 -- so `tostring` of such a value
+differs. A 5.4-only construct passes the stock run and fails in CE; that is the direction that hides a defect, so
+a change to a CE-side script is not tested until it has passed on the CE VM.
+
 ⛔ **Know what this does NOT cover, and say so on the row.** The stubs are not CE. Anything whose
 question *is* CE's own behaviour stays CE-only — `[FREEZESTUCK]` step 3 asks whether CE's real
 `TMemoryRecord.Active = false` behaves like the stand-in, and its row already says no offline test
