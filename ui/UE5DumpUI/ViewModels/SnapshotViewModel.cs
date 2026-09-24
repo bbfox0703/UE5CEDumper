@@ -1010,9 +1010,14 @@ public partial class SnapshotViewModel : ViewModelBase
             var cappedNote = wasCapped
                 ? $" — stopped at {SnapshotFormat.Bytes(cappedAtBytes)} cap (partial: first {_capOffset:N0} of {total:N0} objects)"
                 : "";
+            // [R7-S8] The guard can also trip on the LAST write, after every chunk was fetched: not a partial, but the
+            // drive is low and the next capture will be refused, so say so without the "kept partial" clause.
+            bool diskLowAfterAll = !cutShort && Volatile.Read(ref diskLowReached) != 0;
             var diskLowNote = wasDiskLow
                 ? $" — ⚠ low disk space at {SnapshotFormat.Bytes(diskLowAtBytes)}; kept partial (first {_capOffset:N0} of {total:N0} objects)"
-                : "";
+                : diskLowAfterAll
+                    ? $" — ⚠ low disk space at {SnapshotFormat.Bytes(diskLowAtBytes)}; the capture is complete, but free space before the next one"
+                    : "";
             // Phase-0 telemetry: one summary line with the full cost breakdown for
             // before/after comparison. parse+pipe is now split into pipe-read / RX-log /
             // json-parse / model-build; the leftover (other) ≈ the DLL .dump() + pipe transfer.
