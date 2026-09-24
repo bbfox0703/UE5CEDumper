@@ -852,9 +852,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             }
             // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms. Live
             // Walker's text names its own levers (Drill Depth, Copy CE Field), which this panel does not have.
+            // [R7-D-03] ...and only a lever that changes the ENTRY COUNT: Array Limit bounds the array elements the walk
+            // expands. Collapse Pointer Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the
+            // same entries, so naming them sent the user round the same cap again.
             StatusText = truncated
                 ? $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — the CE table "
-                  + "is incomplete; tick Collapse Pointer Nodes or lower the DropDown Limit"
+                  + "is incomplete; lower the Array Limit (it bounds how many array elements are expanded)"
                 : "";
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the entry cap" : ""));

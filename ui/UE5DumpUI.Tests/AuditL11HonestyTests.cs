@@ -296,7 +296,13 @@ public class AuditL11HonestyTests
 
         Assert.NotNull(platform.LastClipboard);                     // it WAS copied...
         Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
-        Assert.Contains("Collapse Pointer Nodes", vm.StatusText);   // a lever THIS panel has
+        // [R7-D-03] The one lever of THIS panel that changes the entry count: Array Limit bounds how many array
+        // elements the walk expands. Collapse Pointer Nodes only folds groups and the DropDown Limit only decides
+        // whether a dropdown is attached -- the same entries are emitted either way, so naming them sent the user
+        // round the same cap again.
+        Assert.Contains("Array Limit", vm.StatusText);
+        Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
+        Assert.DoesNotContain("DropDown Limit", vm.StatusText);
         Assert.DoesNotContain("Drill Depth", vm.StatusText);        // not Live Walker's
     }
 
