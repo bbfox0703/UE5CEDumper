@@ -4293,10 +4293,18 @@ int main() {
         memcpy(wkNameEntry + 0x10, "Wk", sizeof("Wk"));
         static uint8_t wkOptEntry[0x40] = {};
         memcpy(wkOptEntry + 0x10, "OptionalProperty", sizeof("OptionalProperty"));
-        static uintptr_t wkChunk[4] = {};
+        // [R7-S1] a soft pointer type and an asset path (package, asset) for the soft-optional case
+        static uint8_t wkSoftEntry[0x40] = {}, wkPkgEntry[0x40] = {}, wkAssetEntry[0x40] = {};
+        memcpy(wkSoftEntry + 0x10, "SoftObjectProperty", sizeof("SoftObjectProperty"));
+        memcpy(wkPkgEntry + 0x10, "/Game/T_Foo", sizeof("/Game/T_Foo"));
+        memcpy(wkAssetEntry + 0x10, "T_Foo", sizeof("T_Foo"));
+        static uintptr_t wkChunk[8] = {};
         wkChunk[1] = reinterpret_cast<uintptr_t>(wkTypeEntry);
         wkChunk[2] = reinterpret_cast<uintptr_t>(wkNameEntry);
         wkChunk[3] = reinterpret_cast<uintptr_t>(wkOptEntry);
+        wkChunk[4] = reinterpret_cast<uintptr_t>(wkSoftEntry);
+        wkChunk[5] = reinterpret_cast<uintptr_t>(wkPkgEntry);
+        wkChunk[6] = reinterpret_cast<uintptr_t>(wkAssetEntry);
         static uintptr_t wkChunks[2] = { reinterpret_cast<uintptr_t>(wkChunk), 0 };
         Serie::InitUE4(reinterpret_cast<uintptr_t>(wkChunks), 0x10);
         const bool svFPropW = DynOff::bUseFProperty;
@@ -4391,6 +4399,40 @@ int main() {
             const auto optUnset = optField("optional weak unset", Ubel::WalkInstance(winst, makeOptClass(2, 0x640), 64, 2, false));
             check("WEAKLABEL control R7-B-02: an unset TOptional<weak> is still (unset)",
                   optUnset.typedValue == "(unset)", optUnset.typedValue.c_str());
+
+            // [R7-S1] A SET TOptional<TSoftObjectPtr> whose asset is not loaded: its embedded weak pair is {0, 0}
+            // (TPersistentObjectPtr fills it only on Get()), and its value is the PATH -- not "null", which says
+            // the optional holds nothing. 0x28-byte soft pointer (5.3+), so the optional is 0x30 with bIsSet at +0x28.
+            {
+                const uint32_t svVerS = g_cachedUEVersion;
+                g_cachedUEVersion = 504;
+                static uint8_t wkSoftFC[0x20] = {};
+                *reinterpret_cast<int32_t*>(wkSoftFC + DynOff::FFIELDCLASS_NAME) = 4;
+                static uint8_t wkSoftInner[0x80] = {};
+                *reinterpret_cast<uintptr_t*>(wkSoftInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkSoftFC);
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FFIELD_NAME)         = 2;
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FPROPERTY_ELEMSIZE)  = 0x28;
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                static uint8_t wkSoftOptProp[0x80] = {};
+                static uint8_t wkSoftOptCls[0x100] = {};
+                *reinterpret_cast<uintptr_t*>(wkSoftOptProp + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkOptFC);
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_OFFSET)      = 0x680;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_ELEMSIZE)    = 0x30;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<uintptr_t*>(wkSoftOptProp + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(wkSoftInner);
+                *reinterpret_cast<int32_t*>(wkSoftOptCls + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkSoftOptCls + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkSoftOptProp);
+                memset(wpage + 0x680, 0, 0x30);
+                *reinterpret_cast<int32_t*>(wpage + 0x688) = 5;       // FSoftObjectPath: PackageName "/Game/T_Foo"
+                *reinterpret_cast<int32_t*>(wpage + 0x690) = 6;       //                  AssetName   "T_Foo"
+                wpage[0x680 + 0x28] = 1;                              // bIsSet
+                const auto optSoft = optField("optional soft set, not loaded",
+                    Ubel::WalkInstance(winst, reinterpret_cast<uintptr_t>(wkSoftOptCls), 64, 2, false));
+                check("WEAKLABEL ⭐ R7-S1: a SET TOptional<soft> not loaded shows its asset path, not null",
+                      optSoft.typedValue == "/Game/T_Foo.T_Foo", optSoft.typedValue.c_str());
+                g_cachedUEVersion = svVerS;
+            }
 
             // Across the page edge: ObjectIndex reads, SerialNumber faults.
             *reinterpret_cast<int32_t*>(wpage + 0xFFC) = 0;

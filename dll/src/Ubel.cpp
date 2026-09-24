@@ -6768,9 +6768,28 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 } else if (isWeakLike && fv.ptrValue) {
                     // [R7-B-04] Resolved, but the name did not read: set, and still tagged -- not "null".
                     fv.typedValue = std::string("(set)") + optWeakTag;
+                } else if (innerTn == "SoftObjectProperty" || innerTn == "SoftClassProperty") {
+                    // [R7-S1] A soft pointer's value is its PATH. The embedded weak pair is only a cache that
+                    // TPersistentObjectPtr fills on Get(), so {0, 0} means "not loaded", not "null" -- the same
+                    // path-first display the top-level soft reader uses.
+                    const std::string path = ReadSoftObjectPath(fieldAddr + SoftPathOffset(innerSize));
+                    fv.typedValue = path.empty() ? "(none)" : path;
+                } else if (innerTn == "LazyObjectProperty") {
+                    // [R7-S1] Likewise a lazy pointer's value is its GUID.
+                    const uintptr_t g = fieldAddr + LazyGuidOffset(innerSize);
+                    uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
+                    if (Macht::ReadSafe(g, ga) && Macht::ReadSafe(g + 4, gb) && Macht::ReadSafe(g + 8, gc)
+                        && Macht::ReadSafe(g + 12, gd)) {
+                        char gs[48];
+                        snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
+                        fv.typedValue = gs;
+                    } else {
+                        fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
+                    }
                 } else if (isWeakLike) {
-                    // [R7-B-02] The rule every other weak reader uses: serial 0 is null, a dead serial is
-                    // null (stale). It said "(stale)" for both -- including a pointer explicitly set to null.
+                    // [R7-B-02] A WEAK pointer (soft / lazy took their own arms above): the rule every weak
+                    // reader uses -- serial 0 is null, a dead serial is null (stale). It said "(stale)" for both,
+                    // including a pointer explicitly set to null.
                     fv.typedValue = optWeakRead ? UnresolvedWeakLabel(optWeakIdx, optWeakSerial)
                                                 : DescribeUnreadableField("optional", fi.Offset);
                 } else {

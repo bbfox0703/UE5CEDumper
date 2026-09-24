@@ -257,7 +257,7 @@ case-preserving-name bundle. Tests, rigs and docs were out of scope. **Method:**
 walker / scan / force, C ABI + mailbox + Lua + emitters, UI), run one at a time. Each got the area diff, the
 claims every commit wrote, the do-not-re-raise lists and working-lessons §6. Then one skeptic per area,
 defaulting to REFUTED (8 agents; run `wf_529ebf6e-d25`; digests and result in `out\review7\`).
-**Result:** 20 raised, 1 refuted, and R7-A-01 = R7-B-03. Of the rest, **2 MED**, 12 LOW and 4 INFO.
+**Result:** 20 raised, 1 refuted, and R7-A-01 = R7-B-03. Of the rest, **2 MED**, 12 LOW and 4 INFO. The group skeptics added `[R7-S1]` / `[R7-S2]` (below the Review rows).
 **Rule (maintainer, 2026-09-24):** fix every tier, MED → LOW → INFO, one row per commit, red before green where
 testable. After each group of fixes, one skeptic reviews that group's commits. No Review 8 round.
 
@@ -277,6 +277,8 @@ testable. After each group of fixes, one skeptic reviews that group's commits. N
 | `[R7-D-04]` | LOW | ⬜ | A busy AOBMaker pipe still shows the fixed System-tab text "Not reachable — check CE plugin installation". | `PointerPanel.axaml`, `en.axaml` `str.System.AobMakerOffline` |
 | `[R7-D-06]` | LOW | ⬜ | A complete capture can be stored as `partial_reason='cap'`: the size poll runs after every queued chunk, including the ones fetched before the cap. | `SnapshotViewModel.cs` capture consumer |
 | `[R7-D-08]` | LOW | ⬜ | After a reconnect or UI restart, Property Search hides the force-holds the DLL is still applying (only the Stealth card re-reads on connect). | `PropertySearchViewModel.cs`, `MainWindowViewModel` connect |
+| `[R7-S1]` | LOW | ✅ 2026-09-24 | **Raised by the DLL-group skeptic, on `aee085f9`.** The TOptional arm's `isWeakLike` includes soft / soft-class / lazy, so a SET `TOptional<TSoftObjectPtr>` whose asset is not loaded (embedded weak pair `{0,0}`) read `null` -- "holds nothing" -- where the plain soft reader shows the path. **Fixed:** soft / soft-class show `ReadSoftObjectPath` (or `(none)`), lazy shows its GUID; only a weak inner takes `UnresolvedWeakLabel`. Test: WEAKLABEL soft-optional case. | `Ubel.cpp` TOptional display builder |
+| `[R7-S2]` | LOW | ⬜ | **Raised by the DLL-group skeptic (pre-existing).** Find References gates its sparse-delegate pass on UE >= 5.0, but sparse delegates exist from 4.23 and `WalkSparseDelegateBindings` reads 4.27's storage (raw-pointer key, PDB-verified). On a UE4 title a "none found" still blames the game although the pass never ran, and `sparse_skipped` is false. | `Aura.cpp` FindReferencesToUObject sparse pass |
 | `[R7-A-03]` | INFO | ⬜ | Two FField / FProperty default headers in Grimoire.h still say "UE5.0-5.1.0", contradicting the corrected line under each. | `Grimoire.h` |
 | `[R7-C-05]` | INFO | ⬜ | `apply_rescan` publishes `g_cachedGObjects` before `Aura::Init` / `ValidateAndFixOffsets` without raising `g_initInProgress`, so the mailbox fast path could run on a half-initialised pool (a rare recovery flow). | `Fern.cpp` CMD_APPLY_RESCAN |
 | `[R7-D-05]` | INFO | ⬜ | The UI-options persist-symmetry test cannot see the main window's own options (`o.Main.X = X;`, `nameof(X)`), so a missing MainPersist entry would pass. | `ClassListCapTests.cs` |
