@@ -31,7 +31,7 @@
 > - **FProperty / FField**: layout SAME (the 157-line `UnrealType.h` diff is all AutoRTFM annotations, zero data members).
 > - **FName / FNamePool**: SAME (AutoRTFM annotation + a `DebugDumpBlock` tail-terminator fix only).
 >
-> ⚠️ **Watch-item (far future):** `UE_WITH_REMOTE_OBJECT_HANDLE` is an experimental multi-server/UEFN remote-object feature, OFF in normal shipping. If a UE6 game ships it **ON**, `ClassPrivate`/`NamePrivate`/`OuterPrivate` shift by `sizeof(FRemoteObjectId)` (breaking the hardcoded UObject offsets) **and** it forces FUObjectItem packing off. Version-string-map + AOB prep tracked in [todo.md](todo.md).
+> ⚠️ **Watch-item (far future):** `UE_WITH_REMOTE_OBJECT_HANDLE` is an experimental multi-server/UEFN remote-object feature, OFF in normal shipping. If a UE6 game ships it **ON**, `ClassPrivate`/`NamePrivate`/`OuterPrivate` shift by `sizeof(FRemoteObjectId)` (breaking the hardcoded UObject offsets) **and** it forces FUObjectItem packing off. It also grows **FWeakObjectPtr from 8 to 16 bytes** (UE 5.6+: `WeakObjectPtr.h` @5.8.3 adds `FRemoteObjectId ObjectRemoteId` after ObjectIndex / SerialNumber under the same define, which `CoreMiscDefines.h` defaults to 0). Every weak / soft / lazy / delegate reader here assumes the 8-byte `{int32 ObjectIndex, int32 SerialNumber}`, and the soft/lazy envelopes are derived from it `[VND583-15]`. Version-string-map + AOB prep tracked in [todo.md](todo.md).
 
 -----
 
