@@ -1768,7 +1768,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // Sync VM-level state so InterestingFunctions tab's Notes
                     // column reflects post-send reality.
                     if (_aobMaker != null)
-                        InterestingFunctions.IsAobMakerAvailable = _aobMaker.IsAvailable;
+                        InterestingFunctions.ApplyAobMakerProbe(_aobMaker.IsAvailable);   // [R7-S7]
                     StatusText = sentToCe
                         ? $"AA Script created in CE: {funcName}"
                         : wasAvailable
@@ -3109,7 +3109,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var ok = await _aobMaker.CheckAvailabilityAsync();
             IsAobMakerAvailable = ok;
             LiveWalker.IsAobMakerAvailable = ok;
-            Pointers.IsAobMakerAvailable = ok;
+            Pointers.ApplyAobMakerProbe(ok);                 // [R7-S7] repaints the reason even when the flag is unchanged
+            InterestingFunctions.ApplyAobMakerProbe(ok);
             // [W1-PIPEBUSY-STATUS] The remedy depends on WHY: a busy pipe is not "open Cheat Engine".
             StatusText = ok
                 ? "AOBMaker plugin connected"

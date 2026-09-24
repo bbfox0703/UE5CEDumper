@@ -387,7 +387,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string AobMakerNote => IsAobMakerAvailable
         ? ""
-        : "AOBMaker plugin not found — AA Script export will fall back to clipboard";
+        : AobMakerUnavailable.Text(_aobMaker) + " — AA Script export will fall back to clipboard";   // [R7-S7]
 
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(AobMakerNote));

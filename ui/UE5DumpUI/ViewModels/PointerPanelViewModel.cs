@@ -132,6 +132,18 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// Engine holds the single-instance server) to reinstall the plugin.</summary>
     public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
 
+    /// <summary>[R7-S7] Any setter of the flag -- the toolbar ⟳ sets it directly -- repaints the line and the buttons that
+    /// read it. A change hook alone misses false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
+    partial void OnIsAobMakerAvailableChanged(bool value) => NotifyAobMakerProperties();
+
+    /// <summary>[R7-S7] Publish a probe another panel ran on the SHARED bridge: set the flag AND repaint, even when the
+    /// flag is unchanged, because the reason behind "not reachable" may have moved (absent -> busy).</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        NotifyAobMakerProperties();
+    }
+
     // --- Extra Scan state ---
     [ObservableProperty] private bool _isScanning;
     [ObservableProperty] private string _scanStatusText = "";
