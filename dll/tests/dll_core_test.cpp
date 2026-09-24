@@ -3183,6 +3183,18 @@ int main() {
         check("SPARSEREFS ⭐ R7-S2: a non-pointer outer key is refused and reported skipped, nothing read",
               stK.sparseSkipped && stK.sparseUnlocated == 0, std::to_string(stK.sparseUnlocated).c_str());
         memcpy(spOuterSlot, &svKeySp, 8);
+
+        // [R7-S4] An implausible storage header (ArrayNum past SANITY_MAX_CONTAINER_NUM -- a mis-resolved storage)
+        // is refused by ReadTMapHeader, which still FILLS the header before saying no: the pass must not walk it.
+        int32_t svNumSp = 0;
+        memcpy(&svNumSp, spOuter + 0x08, 4);
+        const int32_t hugeNum = Grimoire::SANITY_MAX_CONTAINER_NUM + 1;
+        memcpy(spOuter + 0x08, &hugeNum, 4);
+        Aura::ContainerScanStats stH;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stH);
+        check("SPARSEREFS ⭐ R7-S4: an implausible storage header is not walked, and the pass is reported skipped",
+              stH.sparseUnlocated == 0 && stH.sparseSkipped, std::to_string(stH.sparseUnlocated).c_str());
+        memcpy(spOuter + 0x08, &svNumSp, 4);
         g_cachedUEVersion = 505;
 
         Genau::s_sparseDelegatesCache.store(savedStoreSp);

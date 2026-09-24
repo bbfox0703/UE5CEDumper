@@ -4131,8 +4131,17 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         uintptr_t storage = Genau::FindSparseDelegateStorage();
         if (storage) {
             TMapHeader outerHdr{};
-            if (ReadTMapHeader(storage, outerHdr) && outerHdr.arrayData &&
-                outerHdr.arrayNum > 0 && !SparseOuterKeysLookLikePointers(outerHdr, 0x60)) {
+            // [R7-S4] ReadTMapHeader fills the header BEFORE it can refuse it (an ArrayNum past the sanity cap, an
+            // unreadable +0x34), so every branch below keys on its verdict, never on the fields alone. A refused
+            // header is a storage we cannot read -- reported, like a refused key.
+            const bool hdrRead = ReadTMapHeader(storage, outerHdr);
+            if (!hdrRead) {
+                sparseSkipped = true;
+                LOG_WARN("FindReferencesToUObject: the sparse-delegate storage header at 0x%llX is unreadable or "
+                         "implausible -- not read, so bindings held there are MISSING",
+                         static_cast<unsigned long long>(storage));
+            } else if (outerHdr.arrayData && outerHdr.arrayNum > 0
+                       && !SparseOuterKeysLookLikePointers(outerHdr, 0x60)) {
                 sparseSkipped = true;   // [R7-S2]
                 LOG_WARN("FindReferencesToUObject: the sparse-delegate storage key does not look like a raw pointer "
                          "(UE=%u, possibly FObjectKey-keyed) -- not read, so bindings held there are MISSING",
