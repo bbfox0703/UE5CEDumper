@@ -121,7 +121,7 @@ One injected game at a time; kill the game, CE and the UI the moment a row is do
 
 | # | row (arm) | status |
 |---|---|---|
-| 1 | L59 | ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only, step 4 not on the fixed path (`git log --grep 'verify(L59)'`) |
+| 1 | L59 | ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only; **step 4 red→green 2026-09-24** through a UI seam (no DB change) — ROW CLOSED (`git log --grep 'verify(L59'`) |
 
 ### S8
 
@@ -295,7 +295,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 |---|---|
 | L46 Phase J | Needs UE < 4.25 (UProperty mode); every DumperTest is 5.x. Its host would be the UE4 delegate fixture (`tools/ue-sample/ue4-delegate-fixture`), not in this scope |
 | L79 | The inverting pair (10- vs 11-hex-digit addresses) is a property of the OS's address layout, not of any fixture |
-| L59 step 4 | Needs a slow lazy pivot build; manufacturing one means deleting `pivot_index_built` rows from a snapshot DB — ask the maintainer, it is not a fixture change |
+| L59 step 4 | Needs a slow lazy pivot build; manufacturing one means deleting `pivot_index_built` rows from a snapshot DB — ask the maintainer, it is not a fixture change. ✅ **Resolved 2026-09-24:** the maintainer cleared it, but this game's snapshots are too small for any lazy build to open a window, so a 3 s UI seam held the class load instead; the DB was not touched |
 | L45 step 3 | Needs `LineTraceSingle` / `SetActorHiddenInGame` cooked out of the engine |
 | L50 literal | Needs a UE 5.0-5.2 engine, not installed; the in-process 502 override on 5.4 is the reachable discriminator |
 | L55 | The removed guard was dead code: no fixture can trigger it |
@@ -1141,7 +1141,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L59 — `[A4-PIVOT-CROSSGAME-ID]` `[W1-PIVOT-LOADCTS]`
 
-**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only, step 4 not on the fixed path (`git log --grep 'verify(L59)'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED 2026-09-23: steps 1-2 red→green (incl. the PeHash class cache), step 3 green only; **step 4 red→green 2026-09-24** through a UI seam (no DB change) — ROW CLOSED (`git log --grep 'verify(L59'`) · **reachability:** `live` · **needs CE:** no · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `8037bc94`
 
