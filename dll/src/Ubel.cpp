@@ -6623,6 +6623,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 refusal = "(optional: the unset state of an intrusive " + innerTn + " is not decoded)";
             }
 
+            // [R7-B-02] The weak value's raw pair, kept for the null / null (stale) label below.
+            int32_t optWeakIdx = 0, optWeakSerial = 0;
+            bool optWeakRead = false;
+
             // Decode the value only for a SET optional whose discriminator was read -- never a
             // reset optional's leftover bytes.
             if (refusal.empty() && okProbe && isSet) {
@@ -6640,8 +6644,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (Macht::ReadSafe(fieldAddr, ptr) && ptr) fillPtr(ptr);
                 } else if (isWeakLike) {
                     // Embedded FWeakObjectPtr at field+0.
-                    int32_t objIdx = 0, serial = 0;
+                    int32_t& objIdx = optWeakIdx;
+                    int32_t& serial = optWeakSerial;
                     if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
+                        optWeakRead = true;
                         if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) {
                             fillPtr(resolved);
                             if (const char* tag = WeakTargetGarbageTag(resolved, objIdx); *tag)   // [VND583-06]
@@ -6754,7 +6760,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         ? fv.ptrName
                         : fv.ptrName + " (" + fv.ptrClassName + ")";
                 } else if (isWeakLike) {
-                    fv.typedValue = "(stale)";
+                    // [R7-B-02] The rule every other weak reader uses: serial 0 is null, a dead serial is
+                    // null (stale). It said "(stale)" for both -- including a pointer explicitly set to null.
+                    fv.typedValue = optWeakRead ? UnresolvedWeakLabel(optWeakIdx, optWeakSerial)
+                                                : DescribeUnreadableField("optional", fi.Offset);
                 } else {
                     // A TOptional<UObject*> can be SET to null; that is not "(unset)".
                     fv.typedValue = fv.ptrValue ? "(set)" : "(set: null)";

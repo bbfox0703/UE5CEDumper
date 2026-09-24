@@ -4291,9 +4291,12 @@ int main() {
         static uint8_t wkNameEntry[0x40] = {};
         memcpy(wkTypeEntry + 0x10, "WeakObjectProperty", sizeof("WeakObjectProperty"));
         memcpy(wkNameEntry + 0x10, "Wk", sizeof("Wk"));
+        static uint8_t wkOptEntry[0x40] = {};
+        memcpy(wkOptEntry + 0x10, "OptionalProperty", sizeof("OptionalProperty"));
         static uintptr_t wkChunk[4] = {};
         wkChunk[1] = reinterpret_cast<uintptr_t>(wkTypeEntry);
         wkChunk[2] = reinterpret_cast<uintptr_t>(wkNameEntry);
+        wkChunk[3] = reinterpret_cast<uintptr_t>(wkOptEntry);
         static uintptr_t wkChunks[2] = { reinterpret_cast<uintptr_t>(wkChunk), 0 };
         Serie::InitUE4(reinterpret_cast<uintptr_t>(wkChunks), 0x10);
         const bool svFPropW = DynOff::bUseFProperty;
@@ -4341,6 +4344,53 @@ int main() {
             const auto staleW = weakField("stale", Ubel::WalkInstance(winst, makeClass(1, 0x200), 64, 2, false));
             check("WEAKLABEL ⭐: {1, wrong serial} says null (stale)", staleW.typedValue == "null (stale)",
                   staleW.typedValue.c_str());
+
+            // [R7-B-02] A SET TOptional<TWeakObjectPtr> (12 bytes: the pointer, then bIsSet at +8) whose pointer does
+            // not resolve takes the same null / null (stale) rule as every other weak reader -- it said "(stale)"
+            // for both, including a pointer explicitly set to null.
+            static uint8_t wkOptFC[0x20] = {};
+            *reinterpret_cast<int32_t*>(wkOptFC + DynOff::FFIELDCLASS_NAME) = 3;
+            static uint8_t wkOptInner[0x80] = {};
+            *reinterpret_cast<uintptr_t*>(wkOptInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkFieldClass);
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FFIELD_NAME)         = 2;
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FPROPERTY_ELEMSIZE)  = 8;
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            static uint8_t wkOptProp[6][0x80] = {};
+            static uint8_t wkOptCls[6][0x100] = {};
+            auto makeOptClass = [&](int i, int32_t fieldOffset) {
+                *reinterpret_cast<uintptr_t*>(wkOptProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkOptFC);
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_OFFSET)      = fieldOffset;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = 12;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<uintptr_t*>(wkOptProp[i] + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(wkOptInner);
+                *reinterpret_cast<int32_t*>(wkOptCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkOptCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkOptProp[i]);
+                return reinterpret_cast<uintptr_t>(wkOptCls[i]);
+            };
+            auto optField = [&](const char* who, const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+                check((std::string("WEAKLABEL control: ") + who + " -- the fake class produced exactly one field").c_str(),
+                      r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+                for (const auto& f : r.fields)
+                    if (f.typeName == "OptionalProperty") return f;
+                return Ubel::LiveFieldValue{};
+            };
+            *reinterpret_cast<int32_t*>(wpage + 0x600) = 0;
+            *reinterpret_cast<int32_t*>(wpage + 0x604) = 0;
+            wpage[0x608] = 1;                                          // bIsSet
+            const auto optNull = optField("optional weak set-null", Ubel::WalkInstance(winst, makeOptClass(0, 0x600), 64, 2, false));
+            check("WEAKLABEL ⭐ R7-B-02: a SET TOptional<weak> holding {0, 0} says null, not (stale)",
+                  optNull.typedValue == "null", optNull.typedValue.c_str());
+            *reinterpret_cast<int32_t*>(wpage + 0x620) = 1;
+            *reinterpret_cast<int32_t*>(wpage + 0x624) = 0x7777;
+            wpage[0x628] = 1;
+            const auto optStale = optField("optional weak stale", Ubel::WalkInstance(winst, makeOptClass(1, 0x620), 64, 2, false));
+            check("WEAKLABEL ⭐ R7-B-02: a SET TOptional<weak> with a dead serial says null (stale)",
+                  optStale.typedValue == "null (stale)", optStale.typedValue.c_str());
+            wpage[0x648] = 0;                                          // bIsSet clear
+            const auto optUnset = optField("optional weak unset", Ubel::WalkInstance(winst, makeOptClass(2, 0x640), 64, 2, false));
+            check("WEAKLABEL control R7-B-02: an unset TOptional<weak> is still (unset)",
+                  optUnset.typedValue == "(unset)", optUnset.typedValue.c_str());
 
             // Across the page edge: ObjectIndex reads, SerialNumber faults.
             *reinterpret_cast<int32_t*>(wpage + 0xFFC) = 0;

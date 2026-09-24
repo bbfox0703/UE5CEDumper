@@ -7248,6 +7248,12 @@ static void Test_Ubel_DescribeScriptDelegate() {
            DescribeScriptDelegate(false, "", 0, 0, "None") == "(unbound)");
     EXPECT("stale: an empty FunctionName is the same case",
            DescribeScriptDelegate(false, "", 0, 0, "") == "(unbound)");
+    // [R7-B-02] UE4 / 5.0 FWeakObjectPtr::Reset() writes {INDEX_NONE, 0}, and TScriptDelegate() / Unbind() go
+    // through it: every never-bound C++ delegate on those engines holds {-1, 0} + NAME_None. Serial 0 is null.
+    EXPECT("R7-B-02: a UE4 / 5.0 reset delegate {INDEX_NONE, 0} is unbound",
+           DescribeScriptDelegate(false, "", -1, 0, "None") == "(unbound)");
+    EXPECT("R7-B-02: any index with serial 0 is null, so unbound",
+           DescribeScriptDelegate(false, "", 5, 0, "None") == "(unbound)");
 
     // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the repair is only an
     // improvement if it did not simply delete the state it was meant to narrow.
