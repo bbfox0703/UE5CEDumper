@@ -24,9 +24,10 @@ non-standard UE x64 title. Tools referenced here live in [`tools/`](../tools/REA
 
 ## 1. Is it standard at all? — patternsleuth CLI
 
-[patternsleuth](https://github.com/trumank/patternsleuth) is the resolver library RE-UE4SS uses.
-Run its CLI on the EXE offline (no game running) to (a) confirm the standard resolvers fail and
-(b) get string-anchored candidate functions:
+[patternsleuth](https://github.com/trumank/patternsleuth) is the resolver library RE-UE4SS uses. It is
+already on disk as RE-UE4SS's submodule, `vendor/RE-UE4SS/deps/first/patternsleuth`: run the CLI from
+there so its `rust-toolchain.toml` pin applies `[VND583-DOC PS-11]`. Run it on the EXE offline (no game
+running) to (a) confirm the standard resolvers fail and (b) get string-anchored candidate functions:
 
 ```sh
 # does the standard GObjects resolver work?  (Avowed: "expected at least one value" = NO)
@@ -158,8 +159,10 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
   setting is unrelated (it obfuscates Dumper-7's *own generated SDK strings*). The one piece
   worth borrowing *if* we ever hit it: `TEncryptedObjectProperty` support
   (`Dumper/Settings.h`), a real newer-UE feature for in-memory-encrypted object properties.
-- **RE-UE4SS** has **no AES / decrypt code at all** (the only `encrypt` hit is a YouTube
-  iframe). It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
+- **RE-UE4SS** has **no AES / decrypt code of its own** (the only `encrypt` hit is a YouTube
+  iframe). Its patternsleuth submodule does carry `resolvers/unreal/aes.rs` (PAK AES keys), but UE4SS's
+  binding does not collect it (`patternsleuth_bind/src/lib.rs`: the `UE4SSResolution` set has no AES
+  member) `[VND583-DOC PS-11]`, and a PAK key is not object-pointer decryption anyway. It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
   offset / engine-version / vtable *overrides*, not decryption. It assumes `GUObjectArray` /
   `FName` are directly readable, so it does not target pointer-encrypted / strong-anti-cheat
   titles. Its 36 shipped profiles (34 when first counted) (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi

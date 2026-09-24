@@ -55,6 +55,7 @@
 // all been removed, each documented at its old site with the byte string and the reason):
 //   V       : Original UE5CEDumper patterns (V1-V13, per target)
 //   PS      : patternsleuth (PS1-PS7)          github.com/trumank/patternsleuth
+//             (on disk since audit #7: vendor/RE-UE4SS/deps/first/patternsleuth [VND583-DOC PS-11])
 //   RE      : RE-UE4SS CustomGameConfigs (RE1-RE3)  github.com/UE4SS-RE/RE-UE4SS
 //   CT      : UE4 Dumper.CT (CT1/CT3/CT4)      vendor/UE4 Dumper.CT
 //   UD      : UEDumper (GOBJ_UD1, GNAM_UD2)    github.com/Spuckwaffel/UEDumper
