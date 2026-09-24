@@ -763,8 +763,11 @@ exact call text: `InvokeScriptTests` alone does it 37 times. A fix added two out
 stayed green, and the first `build.ps1 -Mode Publish` then failed on
 `InitRecovery_RecordsItsCancelForTheLatchGuard`, after it had already bumped the build number.
 **How to apply:** before calling a change to `dll/src` done, grep the UI tests for the text you changed
-(`grep -rn "<old call text>" ui/UE5DumpUI.Tests`). Otherwise run the UI suite too. A Publish that fails its
-tests after the bump is re-run with `-NoBumpBuildNumber`, so the release number does not skip.
+(`grep -rn "<old call text>" ui/UE5DumpUI.Tests`). Otherwise run the UI suite too. When a Publish fails its
+tests after the bump, fix the test and publish AGAIN WITHOUT `-NoBumpBuildNumber`: the maintainer's rule is
+that the build number is the release number and advances on every build, so a re-publish may bump again
+(memory: build number = release number). ⚠ This paragraph said the opposite until 2026-09-24, and build
+3548 was re-published under it; that was a breach of the rule, not a precedent.
 
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
