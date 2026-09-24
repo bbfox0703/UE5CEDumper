@@ -2790,6 +2790,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InstanceFinder.SetEngineState(state);
         ValueSearch.SetEngineState(state);
         Teleport.SetConnected(true);   // refresh markers once the DLL is scanned
+        PropertySearch.OnConnected();  // [R7-D-08] ...and the force-holds that survived the reconnect
         Teleport.SetEngineState(state);
         Teleport.LoadCoordLibraryForGame(state.ModuleName);
         Snapshot?.SetEngineState(state);

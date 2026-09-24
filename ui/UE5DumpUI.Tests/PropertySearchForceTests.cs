@@ -183,6 +183,42 @@ public class PropertySearchForceTests
     }
 
     [Fact]
+    public async Task Reconnect_rereads_the_holds_the_DLL_is_still_applying()
+    {
+        // [R7-D-08] A hold survives a pipe drop; the disconnect cleared the mirror, and the next scanned session must
+        // show it again -- with its Release / Clear all -- without the user having to Force something first.
+        var dump = new RecordingDump
+        {
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "Cls", FieldName = "Fld", Kind = "numeric", Held = 1 },
+            },
+        };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+        await vm.RefreshForcedFieldsAsync();
+        vm.ClearOnDisconnect();
+        Assert.False(vm.HasForcedFields);
+
+        vm.OnConnected();
+        await vm.ConnectPrime;
+
+        Assert.True(vm.HasForcedFields);
+        Assert.Single(vm.ForcedFields);
+    }
+
+    [Fact]
+    public void MainWindow_primes_Property_Search_when_the_DLL_is_scanned()
+    {
+        // [R7-D-08] ...and the main window calls it where Teleport primes its held badges.
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))
+            .Replace("\r\n", "\n");
+        int start = src.IndexOf("private void ApplyEngineState(EngineState state)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ApplyEngineState not found");
+        int end = src.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        Assert.Contains("PropertySearch.OnConnected();", src[start..end]);
+    }
+
+    [Fact]
     public async Task RefreshForcedFields_populates_list_and_flag()
     {
         var dump = new RecordingDump
