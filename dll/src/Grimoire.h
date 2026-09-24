@@ -555,6 +555,19 @@ constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
 inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
 inline std::atomic<bool> bFNameAlignProbed{false};
 
+// [VND583-09] The FField layout a version starts from BEFORE probing. FFieldVariant shrank from 16 bytes
+// (`union Container` + `bool bIsUObject`) to 8 (a pointer tagged by UObjectMask) in **5.3.0**, not 5.1.1:
+// Field.h at 5.1.1-release and 5.2.1-release still declares bIsUObject, 5.3.0-release declares
+// UObjectMask, and DumperTest51 (stock 5.1.1) measures Offset_Internal at 0x4C live. So 4.25-5.2 keep the
+// defaults above (Next 0x20, Name 0x28, Offset_Internal 0x4C), and only 5.3+ -- or an unknown version,
+// most of which are modern -- start from Next 0x18 / Name 0x20 / Offset_Internal 0x44. It was >= 502.
+// And the tag bit may be INFERRED from FField::Next == 0x18 only when that 0x18 was MEASURED; an
+// unmeasured 0x18 is the default this function just chose, not evidence.
+constexpr bool UsesSmallFFieldVariantDefault(unsigned ueVersion) { return ueVersion >= 503 || ueVersion == 0; }
+constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alreadyTagged, bool nextMeasured) {
+    return fproperty && ffieldNext == 0x18 && !alreadyTagged && nextMeasured;
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
 // the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
 // which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors

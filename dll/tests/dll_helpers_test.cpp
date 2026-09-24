@@ -6269,6 +6269,22 @@ static void Test_FNameAlign() {
     EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
 }
 
+// [VND583-09] FFieldVariant shrank in 5.3.0, so 5.2 starts from the LARGE layout; and an unmeasured
+// FField::Next of 0x18 is not evidence of the tagged encoding.
+static void Test_FFieldVariantDefaults() {
+    EXPECT("VND583-09: 5.2 keeps the 16-byte FFieldVariant defaults", !DynOff::UsesSmallFFieldVariantDefault(502));
+    EXPECT("VND583-09: 5.1 keeps them too",                          !DynOff::UsesSmallFFieldVariantDefault(501));
+    EXPECT("VND583-09: 4.27 keeps them",                             !DynOff::UsesSmallFFieldVariantDefault(427));
+    EXPECT("VND583-09: 5.3 starts from the 8-byte layout",            DynOff::UsesSmallFFieldVariantDefault(503));
+    EXPECT("VND583-09: 5.8 too",                                      DynOff::UsesSmallFFieldVariantDefault(508));
+    EXPECT("VND583-09: an unknown version starts small",              DynOff::UsesSmallFFieldVariantDefault(0));
+    EXPECT("VND583-09: a MEASURED Next 0x18 infers the tag",   DynOff::InferTaggedFFieldVariant(true, 0x18, false, true));
+    EXPECT("VND583-09: an UNMEASURED Next 0x18 is only the default -- no inference",
+           !DynOff::InferTaggedFFieldVariant(true, 0x18, false, false));
+    EXPECT("VND583-09: a measured 0x20 infers nothing",        !DynOff::InferTaggedFFieldVariant(true, 0x20, false, true));
+    EXPECT("VND583-09: UProperty mode infers nothing",         !DynOff::InferTaggedFFieldVariant(false, 0x18, false, true));
+}
+
 // [VND583-08] An unresolved weak pointer is stale only if it was SET: UE's null test is serial == 0.
 static void Test_UnresolvedWeakLabel() {
     EXPECT("VND583-08: {0, 0} is null",                     std::string(Ubel::UnresolvedWeakLabel(0, 0)) == "null");
@@ -8784,6 +8800,7 @@ int main() {
     RUN(Test_FNameAlign);
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
+    RUN(Test_FFieldVariantDefaults);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

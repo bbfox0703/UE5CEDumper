@@ -3522,12 +3522,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // These serve as the fallback if Guid/Vector structs can't be found.
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
-            // UE5.1.1+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44
-            // Also apply for unknown version since most modern UE5 games are 5.1+
-            // Note: UE5.0 and UE5.1.0 use FFieldVariant=0x10 (larger): Next=0x20, Name=0x28, Offset=0x4C
-            // We default to the more common 5.1.1+ layout; probing will correct if wrong.
-            if (ueVersion >= 502 || (ueVersion == 0)) {
-                // UE5.2+ almost certainly uses the smaller FFieldVariant
+            // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
+            // Also applied for an unknown version, since most modern UE5 games are 5.3+.
+            // UE 5.0-5.2 use FFieldVariant=0x10 (union + bool bIsUObject): Next=0x20, Name=0x28,
+            // Offset=0x4C -- Grimoire's defaults, so they are left alone. The shrink is 5.3.0, not
+            // 5.1.1 (DynOff::UsesSmallFFieldVariantDefault has the source citations); probing corrects either.
+            if (DynOff::UsesSmallFFieldVariantDefault(ueVersion)) {
                 DynOff::FFIELD_NEXT        = 0x18;
                 DynOff::FFIELD_NAME        = 0x20;
                 DynOff::FPROPERTY_ELEMSIZE = 0x34;
@@ -3538,14 +3538,14 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 // FBYTEPROP_ENUM at 0x78 and FENUMPROP_ENUM at 0x80 — a SPLIT family that
                 // any "keeping defaults" exit path then shipped for the whole session.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET));
-                Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)");
+                Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.3+ defaults (FFieldVariant=0x08)");
                 // UE5.3+ uses tagged FFieldVariant: LSB=1 means UObject, LSB=0 means FField
                 if (ueVersion >= 503) {
                     DynOff::bTaggedFFieldVariant = true;
                     Sein::Info("DYNO", "ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled");
                 }
             }
-            // UE5.1 is ambiguous (5.1.0 = larger, 5.1.1+ = smaller), leave as-is for probing
+            // UE 5.0-5.2 keep the larger layout's defaults; probing measures the real one.
         }
     }
 
@@ -4071,8 +4071,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         }
 
         // Step 6.5: Infer FFieldVariant size from detected Next offset.
-        // If UE5.1.1+ defaults were set (Next=0x18) but probing found Next=0x20,
-        // the game uses FFieldVariant=0x10 (UE5.0-5.1.0 layout) despite its version number.
+        // If UE5.3+ defaults were set (Next=0x18) but probing found Next=0x20,
+        // the game uses FFieldVariant=0x10 (the UE 5.0-5.2 layout) despite its version number.
         // Common in Square Enix forks (DQ HD-2D series reports UE505 but uses UE5.0 FField layout).
         // Fix: set Name = Next + 8, disable tagged FFieldVariant.
         // FProperty offsets will be re-probed correctly in Step 8 with fixed field names.
@@ -4339,10 +4339,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     }
 
     // Infer tagged FFieldVariant from probed offsets:
-    // FFieldVariant=0x08 (Next at 0x18) implies UE5.1.1+ layout.
-    // UE5.3+ uses the tag-bit encoding. If version is unknown but layout matches,
-    // enable tag-bit masking defensively — the StripFFieldTag is a no-op when bit is 0.
-    if (DynOff::bUseFProperty && DynOff::FFIELD_NEXT == 0x18 && !DynOff::bTaggedFFieldVariant) {
+    // FFieldVariant=0x08 (Next at 0x18) is the UE 5.3+ layout, which uses the tag-bit encoding.
+    // If the version is unknown but the layout matches, enable tag-bit masking -- the
+    // StripFFieldTag is a no-op when the bit is 0. [VND583-09] Only on a MEASURED Next: an
+    // unmeasured 0x18 is the version default chosen above, and it used to count as proof.
+    if (DynOff::InferTaggedFFieldVariant(DynOff::bUseFProperty, DynOff::FFIELD_NEXT, DynOff::bTaggedFFieldVariant,
+                                         (unmeasured & UNMEASURED_FFIELD_NEXT) == 0)) {
         DynOff::bTaggedFFieldVariant = true;
         Sein::Info("DYNO", "ValidateAndFixOffsets: Inferred tagged FFieldVariant from FField::Next=0x18");
     }
