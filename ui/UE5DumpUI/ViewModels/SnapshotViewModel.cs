@@ -754,6 +754,10 @@ public partial class SnapshotViewModel : ViewModelBase
         // db+WAL size crosses maxBytes; the producer then stops gracefully and the
         // PARTIAL snapshot is kept + finalised (NOT deleted like a user-cancel).
         int  capReached      = 0;
+        // [R7-D-06] Set by the producer when it reached the END of the object array (its natural break), i.e. every
+        // chunk was fetched. The consumer's size / free-disk poll still runs on the chunks already queued, so a cap
+        // that fires there must not label a COMPLETE capture partial.
+        int  fetchedAll      = 0;
         long cappedAtBytes   = 0;
         // Mid-capture low-disk stop shares the capReached graceful-stop path (KEEPS the
         // partial — deleting on a nearly-full disk is unsafe, VACUUM needs scratch space).
@@ -900,7 +904,11 @@ public partial class SnapshotViewModel : ViewModelBase
                                 driftDetected = true;
                                 break;   // world churned mid-capture — stop; finalize partial as unusable
                             }
-                            if (chunk.Scanned == 0 || offset >= chunk.Total) break;
+                            if (chunk.Scanned == 0 || offset >= chunk.Total)
+                            {
+                                Volatile.Write(ref fetchedAll, 1);   // [R7-D-06] nothing left to fetch
+                                break;
+                            }
                         }
                     }
                     // Swallow cancellation ONLY when OUR token actually cancelled it — a
@@ -975,8 +983,11 @@ public partial class SnapshotViewModel : ViewModelBase
                 // design: is_usable=0 would auto-delete it). Persist WHY it is partial, so the grid and
                 // every picker still say so once this capture's status line is gone. Low disk first: its
                 // stop also sets capReached.
+                // [R7-D-06] ...and only when the stop actually cut the capture short.
+                bool stoppedShort = Volatile.Read(ref fetchedAll) == 0;
                 string partialReason =
-                    Volatile.Read(ref diskLowReached) != 0 ? Constants.SnapshotPartialDiskLow
+                    !stoppedShort                          ? ""
+                    : Volatile.Read(ref diskLowReached) != 0 ? Constants.SnapshotPartialDiskLow
                     : Volatile.Read(ref capReached) != 0   ? Constants.SnapshotPartialCap
                     : "";
                 await session.CompleteSnapshotAsync(snapshotId, objectCount, fieldCount,
@@ -986,8 +997,10 @@ public partial class SnapshotViewModel : ViewModelBase
             // FIFO eviction: drop oldest snapshots of this game until the DB fits the
             // quota (the just-captured one is always kept). For an AUTO capture the loop
             // owns retention + quota-grow, so the inline eviction is skipped here.
-            bool wasDiskLow = Volatile.Read(ref diskLowReached) != 0;
-            bool wasCapped  = Volatile.Read(ref capReached) != 0 && !wasDiskLow;
+            // [R7-D-06] A stop that fired after the last chunk was fetched did not cut anything short.
+            bool cutShort   = Volatile.Read(ref fetchedAll) == 0;
+            bool wasDiskLow = cutShort && Volatile.Read(ref diskLowReached) != 0;
+            bool wasCapped  = cutShort && Volatile.Read(ref capReached) != 0 && !wasDiskLow;
             string evicted = "";
             if (!isAuto)
             {

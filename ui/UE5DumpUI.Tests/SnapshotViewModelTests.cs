@@ -588,6 +588,56 @@ public class SnapshotViewModelTests : IDisposable
         Assert.True(saved.IsUsable);
     }
 
+    // [R7-D-06] The consumer polls the size after EVERY write, including the chunks already fetched when the producer
+    // reached the end. A DB already past the Max Dataset (e.g. from earlier snapshots under an Unlimited quota) trips
+    // that poll on the one and only chunk of a small capture -- which is complete, and must not be stored as "cap".
+    [Fact]
+    public async Task Capture_ThatFetchedEveryChunk_IsNotMarkedPartial_EvenWhenTheSizePollFires()
+    {
+        var dump = new OneChunkStub();
+        var store = new CapDecoratorStore(_store, fakeBytes: 600L * 1024 * 1024);
+        var vm = new SnapshotViewModel(dump, store, new MockLoggingService())
+        {
+            SelectedMaxDataset = "512 MB",
+            Label = "whole",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        var saved = Assert.Single(await _store.ListSnapshotsAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(2, saved.ObjectCount);            // every object was captured
+        Assert.Equal("", saved.PartialReason);         // ...so it is not a partial
+        Assert.DoesNotContain("partial", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // One chunk that holds the whole (2-object) world: the producer's natural end on the first fetch.
+    private sealed class OneChunkStub : StubDumpService
+    {
+        public override Task<int> BeginSnapshotAsync(string dataType, CancellationToken ct = default)
+            => Task.FromResult(2);
+
+        public override Task<SnapshotChunkResult> SnapshotChunkAsync(
+            string dataType, bool gameOnly, int offset, int limit,
+            bool nativeC = false, bool autoSkipNoise = true,
+            string numericFamily = "Any", CancellationToken ct = default)
+        {
+            var r = new SnapshotChunkResult { Total = 2, Scanned = offset < 2 ? 2 : 0 };
+            for (int i = offset; i < 2; i++)
+            {
+                var o = new SnapshotCapturedObject
+                {
+                    Index = i, Addr = $"0x{i + 1:X}", Name = $"Obj_{i}",
+                    ClassName = "BP_Thing_C", OuterClassName = "World",
+                    Path = $"/Game/Map.Map:PersistentLevel.Obj_{i}",
+                };
+                o.Fields.Add(new SnapshotCapturedField { Name = "A", Type = "IntProperty", Hex = "01000000" });
+                r.Objects.Add(o);
+            }
+            return Task.FromResult(r);
+        }
+    }
+
     // Streams 1 object per chunk over a 20-object total (10 chunks of scanned=2) so a
     // working max-dataset cap stops it EARLY; a broken cap still terminates at chunk 10.
     private sealed class ManyChunkStub : StubDumpService
