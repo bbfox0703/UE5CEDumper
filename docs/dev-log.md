@@ -25,6 +25,34 @@ builds ≤696 in
 
 -----
 
+## 2026-09-24 (build 3549) — weak Force-null, and the case-preserving-name bundle (VND583-07) measured on two editor hosts
+
+**3549 = 3548 plus four product commits, up to `c88ca562`.** Derive them: `git log --oneline 26993098..c88ca562
+-- dll ui`. The row text, tests and live evidence are in `docs/todo.md` (`[VND583-DOC]` D7-04 and `[VND583-07]`).
+- **Force-null holds a weak pointer** (`c181d742`, D7-04). `{0, 0}` is UE's own null, not "GObjects[0]", so an
+  8-byte WeakObjectProperty is now held at UE's reset value: `{INDEX_NONE, 0}` up to 5.0, `{0, 0}` from 5.1.
+  Soft and lazy pointers, and the 16-byte remote-handle weak pointer, are still refused. The UI's Force-null
+  button covers the weak type. Live on DumperTest 5.4 Shipping with `-DumperTestWeakGarbage`: 3548 answers -12;
+  the new build holds `WeakToGarbage` at null while the fixture re-points it every 5 s.
+- **A case-preserving host that resolves** (`d936681f`). The UE 5.4 editor running DumperTest `-game`: the
+  exported `FName::ToString` reaches NamePoolData only through a call, so `SymbolCallFollow` now follows up to
+  four calls. Before this, EOSSDK's own name pool won the AOB fallback and 0 of 10 names resolved.
+- **FName::Number is measured** (`937c216c`, A9 step 11). A case-preserving UE4 / 5.0 build keeps Number at +8,
+  after the DisplayIndex. On the UE 4.27 editor running UE427_3rdPerson `-game`: the pre-fix decode (`d936681f`)
+  put the DisplayIndex in the number on 3145 of 3145 names; the fixed one is right on 3300 of 3300.
+- **sizeof(FName) is measured** (`c88ca562`, A9 steps 1 and 7). It is the modal NameProperty ElementSize. The
+  rule no longer overrides a plausible engine size. Live: 12 on the 4.27 editor, 8 on DumperTest 5.4 Shipping, both
+  64 of 64. `fixture_smoke shipping` against 3548 differs in 0 offset verdicts and 0 AOB winners.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3548 → 3549: `dist\UE5DumpUI.exe` AOT 55.0 MB
+(57,723,392 bytes, sha `79bb951b2de9`), `UE5Dumper.dll` sha `31126a429fed`, stamp `1.0.0.3549 9d4fdb69-dirty`.
+The suffix is the bumped `build_number.txt` and nothing else (see the correction in the build 3368 entry, 2026-09-03).
+Four proxies went to `dist\proxy\`. Tests: UI **5329/5329**, `dll_helpers_test` 2903/0,
+`utf8_helpers_test` 265/0, `dll_core_test` 430 checks, and `grausam_window_test` / `sein_retention_test` passed.
+Gates 23/23.
+
+-----
+
 ## 2026-09-24 (build 3548) — vendor audit #7 fixed: VND583-01..17 and the DOC bundle, published AOT
 
 **3548 = 3547 plus the `[VND583-*]` rows, up to `26993098`.** Derive the list, do not copy it:
