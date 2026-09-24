@@ -3073,6 +3073,40 @@ int main() {
         check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
     }
 
+    // -- SPARSEVALIDATE-2026-09-25 -- the sparse-storage validator accepts a vtable in ANY mapped module ---------------
+    //
+    // [R7-X3] ValidateSparseDelegates' content check accepted a key only when its vtable lay inside the MAIN module.
+    // On a modular build (the UE 4.27 editor, measured 2026-09-25) every UObject vtable lives in a UE4Editor-*.dll,
+    // so the real storage was refused ("1 live element(s) but none has a UObject-shaped key") and sparse delegates
+    // went unread. kernel32's image stands in for the engine DLL; a VirtualAlloc page stands in for heap garbage.
+    {
+        blk("SPARSEVALIDATE - the sparse-storage validator accepts a vtable in any mapped module, not heap");
+        const uintptr_t k32 = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"kernel32.dll"));
+        uint8_t* heapVt = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        alignas(8) static uint8_t svObj[0x40] = {};
+        alignas(8) static uint8_t svSlot[0x60] = {};
+        alignas(8) static uint8_t svMap[0x50] = {};
+        const uintptr_t objAddr = reinterpret_cast<uintptr_t>(svObj);
+        memcpy(svSlot, &objAddr, 8);
+        const uintptr_t slotAddr = reinterpret_cast<uintptr_t>(svSlot);
+        memcpy(svMap + 0x00, &slotAddr, 8);
+        const int32_t one = 1;
+        memcpy(svMap + 0x08, &one, 4);
+        memcpy(svMap + 0x0C, &one, 4);
+        const auto withVtable = [&](uintptr_t vt) {
+            memcpy(svObj, &vt, 8);
+            return Genau::ValidateSparseDelegates(reinterpret_cast<uintptr_t>(svMap));
+        };
+        check("SPARSEVALIDATE setup: kernel32 and a private page are both available", k32 != 0 && heapVt != nullptr);
+        check("SPARSEVALIDATE control: a vtable in the main module is accepted",
+              withVtable(reinterpret_cast<uintptr_t>(&Genau::FindSparseDelegateStorage)));
+        check("SPARSEVALIDATE ⭐ R7-X3: a vtable in ANOTHER mapped module (a modular build's engine DLL) is accepted",
+              withVtable(k32 + 0x1000));
+        check("SPARSEVALIDATE control: a vtable on a private (heap) page is still refused",
+              !withVtable(reinterpret_cast<uintptr_t>(heapVt)));
+        VirtualFree(heapVt, 0, MEM_RELEASE);
+    }
+
     // -- SPARSEREFS-2026-09-12 -- Find References counts the sparse delegates it could not read ----------------------
     //
     // ⛔ POOL-FAKING (own pool, last). [P1-SPARSEDELEGATE-REFS] A sparse delegate whose InvocationList cannot be located

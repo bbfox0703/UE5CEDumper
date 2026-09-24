@@ -105,6 +105,14 @@ bool LooksLikeCodePointer(uintptr_t addr) {
     return (mbi.Protect & execMask) != 0;
 }
 
+bool LooksLikeImagePointer(uintptr_t addr) {
+    if (addr < 0x10000) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE) return false;
+    return (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0;
+}
+
 bool GetFunctionExtent(uintptr_t addr, uintptr_t& begin, uintptr_t& end) {
     begin = end = 0;
     if (!addr) return false;

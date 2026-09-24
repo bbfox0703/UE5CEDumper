@@ -61,6 +61,10 @@ size_t GetModuleSize(const wchar_t* moduleName = nullptr);
 // .text, so the correct Func offset holds such a pointer for every native func.
 bool LooksLikeCodePointer(uintptr_t addr);
 
+// True when `addr` points into a committed page of ANY mapped module image (MEM_IMAGE), executable or not -- where a
+// C++ vtable lives (.rdata). [R7-X3] A modular build keeps its UObject vtables in the engine DLLs, not the main exe.
+bool LooksLikeImagePointer(uintptr_t addr);
+
 // Exact [begin, end) of the x64 function containing `addr`, from the PE exception
 // directory. Returns false for a genuine LEAF function (no unwind data) and for a
 // binary whose exception directory is absent or stripped — the two are not

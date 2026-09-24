@@ -2644,6 +2644,8 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
     // so the first 8 bytes of an occupied element are a real UObject pointer, and
     // *that* pointer's first qword is a vtable inside a loaded module. A TMap keyed
     // by FName/int/FString cannot satisfy both.
+    // [R7-X3] ANY loaded module, not the main one: a modular build (the UE 4.27 editor, measured) keeps every UObject
+    // vtable in a UE4Editor-*.dll, and the main-module test refused the real storage there.
     //
     // Deliberately NOT applied when the map is empty: FindAll can legitimately run
     // before anything binds a sparse delegate, and rejecting there would lose the
@@ -2666,10 +2668,8 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
         uintptr_t vt = 0;
         if (!Macht::ReadSafe(key, vt)) continue;
         if (!Grimoire::IsUserspacePointer(vt)) continue;
-        // A UObject's vtable lives in the module image; a heap/garbage value does not.
-        uintptr_t modBase = Macht::GetModuleBase(nullptr);
-        uintptr_t modSize = Macht::GetModuleSize(nullptr);
-        if (modBase && modSize && vt >= modBase && vt < modBase + modSize) {
+        // A UObject's vtable lives in a module image; a heap/garbage value does not.
+        if (Macht::LooksLikeImagePointer(vt)) {
             Sein::Info("SCAN:Sparse",
                        "ValidateSparseDelegates: 0x%llX num=%d — slot %d key=0x%llX has a "
                        "module vtable, accepted", (unsigned long long)addr, elemNum, i,
