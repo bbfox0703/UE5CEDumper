@@ -4428,6 +4428,7 @@ int main() {
             // the optional holds nothing. 0x28-byte soft pointer (5.3+), so the optional is 0x30 with bIsSet at +0x28.
             {
                 const uint32_t svVerS = g_cachedUEVersion;
+                const int svSoftLatch = DynOff::SOFTPTR_PATH;   // [R7-S5] SoftPathOffset latches its measurement
                 g_cachedUEVersion = 504;
                 static uint8_t wkSoftFC[0x20] = {};
                 *reinterpret_cast<int32_t*>(wkSoftFC + DynOff::FFIELDCLASS_NAME) = 4;
@@ -4455,6 +4456,7 @@ int main() {
                 check("WEAKLABEL ⭐ R7-S1: a SET TOptional<soft> not loaded shows its asset path, not null",
                       optSoft.typedValue == "/Game/T_Foo.T_Foo", optSoft.typedValue.c_str());
                 g_cachedUEVersion = svVerS;
+                DynOff::SOFTPTR_PATH = svSoftLatch;
             }
 
             // Across the page edge: ObjectIndex reads, SerialNumber faults.
