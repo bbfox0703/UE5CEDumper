@@ -25,6 +25,45 @@ builds ≤696 in
 
 -----
 
+## 2026-09-24 (build 3547) — the first bump since 3546: the whole fix pass, published AOT
+
+**Why an entry now.** Build 3546 was stamped at `567b9afc` (2026-09-12). Every product change of the
+fix pass since then shipped as "3546, no bump", so no build number could map a binary to its source.
+The maintainer asked on 2026-09-24 for the number to move again, so that this log can map builds to
+changes. **3547 = the fix pass up to `0f1be99f`.**
+
+**What 3547 contains that 3546 did not.** 139 commits touch `dll/` or `ui/` (395 in all), with 127
+distinct row tags. Derive the list, do not copy it:
+`git log --oneline 567b9afc..0f1be99f -- dll ui`. The per-row ledger is `docs/todo.md`
+`[FIXPASS-2026-09-10]`, and the live checks are `docs/fixpass-low-live-plan.md` plus the todo.md
+Live-check backlog. Two points matter to anyone holding an old binary or table:
+- the CE Lua ↔ DLL **mailbox contract is v5** (`[W5-OFFSETS-MAILBOX]`, min 1);
+- the See-through producer probe fix (`[SEETHRU-PROBE-SUBSTRING]`, `39ccb2a4`) and the export-status fix
+  (`[EXPORT-STATUS-LATE-PROGRESS]`) are the last product changes before the bump.
+
+**The build.** `build.ps1 -Mode Publish`: `dist\UE5DumpUI.exe` AOT 55.0 MB (sha `24b6ce92b330`),
+`UE5Dumper.dll` sha `7b1a26a20950`, stamp `1.0.0.3547 b9e6aff0` (the tree then differed from
+`0f1be99f` only in docs). Four proxies to `dist\proxy\`. Tests: UI **5327/5327**, `dll_helpers_test`
+2752/0, `utf8_helpers_test` 265/0, `dll_core_test` 356 checks, and `grausam_window_test` and
+`sein_retention_test` passed. Gates 22/22.
+
+**The same day, no product change:**
+- **Vendor sync + audit #7** (`docs/audit-2026-09-24-vendor-ue583.md`): UE 5.8.3, RE-UE4SS `f58e8f84`
+  with UEPseudo and patternsleuth initialised for the first time, Dumper-7 `dd8fe34`, and minhook HELD.
+  UE 5.8.3 changes nothing for us. Reading the new sources filed `[VND583-01..18]`, led by FunctionFlags
+  keyed on version (breaking on FF7R / DQ XI S).
+- **DumperTest58 repackaged with the UE 5.8.3 editor** (Shipping + Development). Its `pe_hash` changed,
+  which orphans its old per-game app-data folders. `tools/verify/fixture_smoke.py` found the DLL's 57
+  verdict lines and every AOB winner identical to the 5.8.2 runs.
+- **Live checks closed**:
+  - L6 step 2: an injected Escape never reaches the app on this rig, so `send_key.py --post` is used (lesson 1.af).
+  - L7 and L21: through the slow-walk staging.
+  - L13 steps 2-3: through a UI seam.
+  - L33 step 2: on Avowed through a staging, with a correction.
+- **New rigs**: `fixture_smoke.py`, `proxy_swap.py`, `send_key.py`, and `staging/slow-walk.json`.
+
+-----
+
 ## 2026-09-12 (build 3546, no bump) — the three HIGH live checks, run on a game
 
 No product change: three verification runs and their evidence. `[FIXPASS-2026-09-10]`'s ledger has
