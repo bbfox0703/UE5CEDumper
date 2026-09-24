@@ -213,7 +213,38 @@ public class UiOptionsPersistSymmetryTests
     public void EveryOptionBuildOptionsCopiesFromATrackedViewModel_IsInThatViewModelsPersistSet()
     {
         string src = File.ReadAllText(RepoFile(@"ui\UE5DumpUI\ViewModels\MainWindowViewModel.cs"));
+        var (missing, checkedCount) = FindUnpersistedOptions(src);
+        // A pattern that silently stops matching would pass this test vacuously; 76 lines matched when it was written,
+        // 85 once the main window's own nine were counted [R7-D-05].
+        Assert.True(checkedCount >= 50, $"only {checkedCount} tracked options checked -- the BuildOptions pattern no longer matches");
+        Assert.True(missing.Count == 0, "changing these alone schedules no save:\n  " + string.Join("\n  ", missing));
+    }
 
+    /// <summary>[R7-D-05] The checker must see the MAIN WINDOW's own options too: <c>Track(this, MainPersist)</c>, a
+    /// BuildOptions line with a bare right-hand side (<c>o.Main.X = X;</c>) and a set written as <c>nameof(X)</c>. It saw
+    /// none of the nine, so a new toolbar option missing from MainPersist -- the W3-CAP-NOSAVE shape -- passed.</summary>
+    [Fact]
+    public void TheChecker_SeesAMainWindowOptionMissingFromMainPersist()
+    {
+        const string synthetic = """
+            Track(this, MainPersist);
+            Track(A, APersist); Track(B, BPersist); Track(C, CPersist); Track(D, DPersist); Track(E, EPersist);
+            Track(F, FPersist); Track(G, GPersist); Track(H, HPersist); Track(I, IPersist);
+            private static readonly HashSet<string> MainPersist = new() { nameof(Kept), };
+                private UiOptionsSettings BuildOptions()
+                {
+                    o.Main.Kept = Kept;
+                    o.Main.Foo = Foo;
+                    return o;
+                }
+            """;
+        var (missing, _) = FindUnpersistedOptions(synthetic.Replace("\r\n", "\n") + "\n");
+        Assert.Equal(new[] { "this.Foo (not in MainPersist)" }, missing);
+    }
+
+    private static (List<string> Missing, int Checked) FindUnpersistedOptions(string src)
+    {
+        src = src.Replace("\r\n", "\n");
         var tracks = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (Match m in Regex.Matches(src, @"Track\((\w+),\s*(\w+)\);"))
             tracks[m.Groups[1].Value] = m.Groups[2].Value;
@@ -227,20 +258,23 @@ public class UiOptionsPersistSymmetryTests
 
         var missing = new List<string>();
         int checkedCount = 0;
-        foreach (Match m in Regex.Matches(body, @"^\s*o\.\w+\.\w+\s*=\s*(\w+)\.(\w+)\s*;", RegexOptions.Multiline))
+        // `o.X.Y = Vm.Prop;` for a tracked child view model, or -- [R7-D-05] -- `o.Main.Y = Prop;`, the main window's own
+        // property, which it tracks as `Track(this, MainPersist)`. The bare form is read on the Main section ONLY: a
+        // literal on another line (`= true;`) must not be mistaken for a property.
+        foreach (Match m in Regex.Matches(body, @"^\s*o\.(?:\w+\.\w+\s*=\s*(?<vm>\w+)\.(?<p>\w+)|Main\.\w+\s*=\s*(?<p>\w+))\s*;",
+                                          RegexOptions.Multiline))
         {
-            string vm = m.Groups[1].Value, prop = m.Groups[2].Value;
+            string vm = m.Groups["vm"].Success ? m.Groups["vm"].Value : "this", prop = m.Groups["p"].Value;
             if (!tracks.TryGetValue(vm, out var setName)) continue;
             if (Aliases.TryGetValue($"{vm}.{prop}", out var source)) prop = source;
             var setMatch = Regex.Match(src, @"HashSet<string>\s+" + setName + @"\s*=\s*new\(\)\s*\{(?<b>.*?)\};",
                                        RegexOptions.Singleline);
             Assert.True(setMatch.Success, $"persist set {setName} not found");
             checkedCount++;
-            if (!Regex.IsMatch(setMatch.Groups["b"].Value, @"\." + prop + @"\)"))
+            // `nameof(Vm.Prop)` or -- the main window's own set -- `nameof(Prop)`.
+            if (!Regex.IsMatch(setMatch.Groups["b"].Value, @"[.(]" + prop + @"\)"))
                 missing.Add($"{vm}.{prop} (not in {setName})");
         }
-        // A pattern that silently stops matching would pass this test vacuously; 76 lines matched when it was written.
-        Assert.True(checkedCount >= 50, $"only {checkedCount} tracked options checked -- the BuildOptions pattern no longer matches");
-        Assert.True(missing.Count == 0, "changing these alone schedules no save:\n  " + string.Join("\n  ", missing));
+        return (missing, checkedCount);
     }
 }
