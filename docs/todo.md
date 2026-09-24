@@ -249,6 +249,49 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
+
+**Scope:** product code in `8a22f413..29114cfb` (`dll/src`, `ui/UE5DumpUI`, `scripts`): about 3.6K added
+lines over 98 commits. That is the fix pass after Review 6, vendor audit #7's fixes, weak Force-null and the
+case-preserving-name bundle. Tests, rigs and docs were out of scope. **Method:** four area finders (detection,
+walker / scan / force, C ABI + mailbox + Lua + emitters, UI), run one at a time. Each got the area diff, the
+claims every commit wrote, the do-not-re-raise lists and working-lessons §6. Then one skeptic per area,
+defaulting to REFUTED (8 agents; run `wf_529ebf6e-d25`; digests and result in `out\review7\`).
+**Result:** 20 raised, 1 refuted, and R7-A-01 = R7-B-03. Of the rest, **2 MED**, 12 LOW and 4 INFO.
+**Rule (maintainer, 2026-09-24):** fix every tier, MED → LOW → INFO, one row per commit, red before green where
+testable. After each group of fixes, one skeptic reviews that group's commits. No Review 8 round.
+
+| id | sev | status | what | where |
+|---|---|---|---|---|
+| `[R7-B-01]` | MED | ✅ `1d0cfaba` | UE 5.0-5.3 default to `gc.PendingKillEnabled=True`, so MarkAsGarbage sets RF_PendingKill (0x20000000) + item PendingKill (1<<29), not the Garbage bits; `[garbage]` missed it on every stock 5.0-5.3 title. Gated to 500-503; both bits must agree when the item flags read. | `Grimoire.h` `IsWeakTargetGarbage` |
+| `[R7-D-02]` | MED | ✅ `80474680` | Dump All kept the double-posting `Progress<T>` sink, so its last report replaced the final status (error count, "wrote no classes") on every run. The Dump Explorer parse had the same shape. Both now go through `StatusProgress` (`For<T>` added). | `MainWindowViewModel.ExportDumpAllAsync`, `DumpExplorerViewModel.LoadFromPathAsync` |
+| `[R7-A-01]` | LOW | ⬜ | The compact-set guard (VND583-13) lives only in `Macht::ReadTSparseArray`, yet the commit and the VND583-13 row claim "sparse-delegate storage included". `Aura::ReadTMapHeader` (Find Refs' sparse pass, `WalkSparseDelegateBindings`) and `Genau::ValidateSparseDelegates` read the global map as sparse. Latent: needs a `UE_USE_COMPACT_SET_AS_DEFAULT` build. = R7-B-03. | `Aura.cpp` `ReadTMapHeader`, `Genau.cpp` `ValidateSparseDelegates` |
+| `[R7-B-02]` | LOW | ⬜ | `DescribeScriptDelegate` calls only `{0,0}` unbound; UE4 / 5.0 `Reset()` writes `{INDEX_NONE,0}`, so every unbound C++ delegate reads "(stale)" there. The TOptional weak arm labels a set-but-null optional "(stale)" too. | `Ubel.h` `DescribeScriptDelegate`, `Ubel.cpp` TOptional weak arm |
+| `[R7-B-04]` | LOW | ⬜ | The TOptional weak arm's `[garbage]` tag is overwritten by the display builder below it (dead). The sparse-binding element and the Property Search soft-preview fallback are the two display sites never tagged. | `Ubel.cpp` TOptional arm, sparse binding loop, soft preview |
+| `[R7-C-01]` | LOW | ⬜ | `ue5_freeze_helper.lua` `fetchInstancePage` shares `_ue5_invoke_busy` but clears it on a timeout without the AA19 stale-mailbox latch, so the next invoke-helper call can overwrite an in-flight LIST_INSTANCES (window: an init scan longer than 5 s). | `scripts/ue5_freeze_helper.lua` |
+| `[R7-C-03]` | LOW | ⬜ | The reverse: the freeze helper never re-tests `_ue5_invoke_stale_mb`, so after an invoke-helper timeout the DLL later completed, every rescan says "mailbox busy" and the freeze abandons itself after 3. Regression of `e009ec78` for the two small wrappers. Fix together with C-01. | `scripts/ue5_freeze_helper.lua` |
+| `[R7-C-02]` | LOW | ⬜ | The CSX string child's `Bytesize` is the toolbar String Len, which is CHARACTERS (CE XML `<Length>`), but for a Unicode String CE reads `Bytesize` BYTES: an FString shows half as many characters as CE XML. | `CsxExportService.cs` `BuildStrChildStructure` |
+| `[R7-C-04]` | LOW | ⬜ | Fly, KeepForeground and SeeThrough `[DISABLE]` bail-outs still pop modals (a double dialog after a failed tick; a modal over the game on an untick), the shape `[W2-CEGEN-MODAL]` fixed for GodMode / Debug Camera. The helper's Debug Camera example too. Pre-existing. | `FlyScriptGenerator.cs`, `ForegroundScriptGenerator.cs`, `SeeThroughScriptGenerator.cs`, `ue5_invoke_helper.lua` example |
+| `[R7-D-01]` | LOW | ⬜ | The SPC tab's two snapshot pickers bind the bare label, so a partial capture has no marker there. Same row as `[PARTIAL-MARK-SPC]`. | `SpcQueryViewModel.cs` `SpcSnapshotPick.Label`, `SpcPanel.axaml` |
+| `[R7-D-03]` | LOW | ⬜ | Instance Finder's truncation notice tells the user to tick Collapse Pointer Nodes or lower the DropDown Limit; neither changes the entry count. Array Limit does. | `InstanceFinderViewModel.cs` |
+| `[R7-D-04]` | LOW | ⬜ | A busy AOBMaker pipe still shows the fixed System-tab text "Not reachable — check CE plugin installation". | `PointerPanel.axaml`, `en.axaml` `str.System.AobMakerOffline` |
+| `[R7-D-06]` | LOW | ⬜ | A complete capture can be stored as `partial_reason='cap'`: the size poll runs after every queued chunk, including the ones fetched before the cap. | `SnapshotViewModel.cs` capture consumer |
+| `[R7-D-08]` | LOW | ⬜ | After a reconnect or UI restart, Property Search hides the force-holds the DLL is still applying (only the Stealth card re-reads on connect). | `PropertySearchViewModel.cs`, `MainWindowViewModel` connect |
+| `[R7-A-03]` | INFO | ⬜ | Two FField / FProperty default headers in Grimoire.h still say "UE5.0-5.1.0", contradicting the corrected line under each. | `Grimoire.h` |
+| `[R7-C-05]` | INFO | ⬜ | `apply_rescan` publishes `g_cachedGObjects` before `Aura::Init` / `ValidateAndFixOffsets` without raising `g_initInProgress`, so the mailbox fast path could run on a half-initialised pool (a rare recovery flow). | `Fern.cpp` CMD_APPLY_RESCAN |
+| `[R7-D-05]` | INFO | ⬜ | The UI-options persist-symmetry test cannot see the main window's own options (`o.Main.X = X;`, `nameof(X)`), so a missing MainPersist entry would pass. | `ClassListCapTests.cs` |
+| `[R7-D-07]` | INFO | ⬜ | The array drill can say "capped at N per fetch" when the slider's refresh and the drill's re-read both failed. | `LiveWalkerViewModel.cs` |
+
+#### ⛔ REFUTED — do not re-raise (review 7)
+- **R7-A-02** "`IsCompactSetLayout` gates on the version label, which is under-detected on stripped 5.7 titles": a stock
+  5.7+ title is raised to 507 at init by the reordered FUObjectItem (Frieren.cpp:466-476) and to 508 by the FFieldClass
+  marker, before any class walk can meet a Set/Map.
+- **Narrowed away**:
+  - **R7-D-04:** the Property Search Freeze tooltip sits on a disabled button, and Avalonia does not show tips on
+    disabled controls; the Teleport ExportTrainer line is gated by `CanExportTrainer`.
+  - **R7-C-01:** the CE Disable→Enable route cannot land an invoke during init; the enable block polls paint-only.
+  - **R7-D-07:** the slider's setter re-walks, so the premise "changing the slider does not re-walk" is false.
+
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
 Full detail, both-side citations and fix shapes: [audit-2026-09-24-vendor-ue583.md](audit-2026-09-24-vendor-ue583.md).
