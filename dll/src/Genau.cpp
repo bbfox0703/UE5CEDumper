@@ -675,51 +675,81 @@ static bool IsCleanAsciiName(const std::string& s) {
     return hasAlnum;
 }
 
-// Score `base` as a standard UE5 chunked FUObjectArray (ObjObjects.Objects @ +0x10,
-// NumElements @ +0x24): returns the count of clean-named objects among the first
-// slots, or 0 if `base` is not a valid, name-resolving object array. The FUObjectItem
-// stride is NOT fixed — Obsidian's UE5.3 packs it to 20 bytes (0x14) instead of the
-// standard 24 (0x18) — so we try several and report the one that decodes cleanly via
+// Score `base` as a chunked FUObjectArray: returns the count of clean-named objects among
+// the first slots, or 0 if `base` is not a valid, name-resolving object array. The
+// FUObjectItem stride is NOT fixed — Obsidian's UE5.3 packs it to 20 bytes (0x14) instead
+// of the standard 24 (0x18) — so we try several and report the one that decodes cleanly via
 // outStride (the winning stride, fed to Aura::InitWithExtendedLayout).
-static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride) {
-    uintptr_t chunkTable = 0;
-    if (!Macht::ReadSafe(base + 0x10, chunkTable)) return 0;     // ObjObjects.Objects
-    chunkTable = Aura::DecryptObjectPtr(chunkTable);
-    if (!LooksLikeDataPtr(chunkTable)) return 0;
-    int32_t num = 0;
-    if (!Macht::ReadSafe(base + 0x24, num)) return 0;           // NumElements
-    if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) return 0;
-    uintptr_t chunk0 = 0;
-    if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) return 0;
+//
+// [VND583-10] Nor are the array's geometry and the item's shape fixed, and both used to be.
+// UE 5.8 moved ObjObjects to the FRONT of FUObjectArray and reordered FChunkedFixedUObjectArray
+// (UObjectArray.h @5.8.3-release: Objects, NumElements, MaxElements, NumChunks, MaxChunks,
+// PreAllocatedObjects), so its Objects is at +0x00 and NumElements at +0x08, not +0x10 / +0x24.
+// And UE 5.7+ put FlagsAndRefCount first in the item, so the UObject* is at +0x08: read at +0x00,
+// a 24-byte item still "passed" at stride 16, whose every third read lands on an object -- and
+// the pool then vanished two in three (09-05 A5's failure, in this resolver). Every geometry x
+// object offset x stride is scored and the densest wins; outObjOff / outUE58 say which.
+struct StaticArrayGeometry { int objectsOff; int numOff; bool ue58; };
+static const StaticArrayGeometry kStaticGeometries[] = {
+    { 0x10, 0x24, false },   // UE 5.0-5.7: four GC int32s, then TUObjectArray {Objects, PreAllocated, Max, Num, ...}
+    { 0x00, 0x08, true  },   // UE 5.8: ObjObjects FIRST; FChunkedFixedUObjectArray {Objects, Num, Max, NumChunks, ...}
+};
+// 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
+// pair (09-05 A5, whose static-resolver half this is).
+static const int kStaticStrides[] = { 0x14, 0x18, 0x10, 0x20, 0x28 };
+// The UObject* inside the item: +0x00 classic, +0x08 on UE 5.7+'s reordered item (FlagsAndRefCount first).
+static const int kStaticObjOffs[]  = { 0x00, 0x08 };
 
-    // The first chunk is a contiguous FUObjectItem[]; the first entries are the
-    // permanent core objects (Class / Package / etc.), all named. Object ptr @ +0x00.
-    static const int kStrides[] = { 0x14, 0x18, 0x10, 0x20 };   // 20 (Obsidian-packed), 24 (std), 16, 32
+static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr) {
     const int kProbe = 64;
-    int bestClean = 0, bestStride = 0;
-    for (int stride : kStrides) {
-        int scanned = 0, clean = 0;
-        for (int i = 0; i < kProbe && i < num; ++i) {
-            uintptr_t obj = 0;
-            if (!Macht::ReadSafe(chunk0 + static_cast<uintptr_t>(i) * stride, obj)) continue;
-            if (!LooksLikeDataPtr(obj)) continue;
-            ++scanned;
-            uint32_t nameIdx = 0;
-            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
-            if (IsCleanAsciiName(Serie::GetString(nameIdx))) ++clean;
-        }
-        // Require a clear majority of clean names plus an absolute floor.
-        if (scanned >= 8 && clean >= 6 && clean * 2 >= scanned && clean > bestClean) {
-            bestClean = clean;
-            bestStride = stride;
+    int bestClean = 0, bestStride = 0, bestObjOff = 0;
+    bool bestUE58 = false;
+    for (const StaticArrayGeometry& g : kStaticGeometries) {
+        uintptr_t chunkTable = 0;
+        if (!Macht::ReadSafe(base + g.objectsOff, chunkTable)) continue;     // ObjObjects.Objects
+        chunkTable = Aura::DecryptObjectPtr(chunkTable);
+        if (!LooksLikeDataPtr(chunkTable)) continue;
+        int32_t num = 0;
+        if (!Macht::ReadSafe(base + g.numOff, num)) continue;               // NumElements
+        if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) continue;
+        uintptr_t chunk0 = 0;
+        if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) continue;
+
+        // The first chunk is a contiguous FUObjectItem[]; the first entries are the
+        // permanent core objects (Class / Package / etc.), all named.
+        for (int objOff : kStaticObjOffs) {
+            for (int stride : kStaticStrides) {
+                if (objOff + 8 > stride) continue;
+                int scanned = 0, clean = 0;
+                for (int i = 0; i < kProbe && i < num; ++i) {
+                    uintptr_t obj = 0;
+                    if (!Macht::ReadSafe(chunk0 + static_cast<uintptr_t>(i) * stride + objOff, obj)) continue;
+                    if (!LooksLikeDataPtr(obj)) continue;
+                    ++scanned;
+                    uint32_t nameIdx = 0;
+                    if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
+                    if (IsCleanAsciiName(Serie::GetString(nameIdx))) ++clean;
+                }
+                // Require a clear majority of clean names plus an absolute floor.
+                if (scanned >= 8 && clean >= 6 && clean * 2 >= scanned && clean > bestClean) {
+                    bestClean = clean;
+                    bestStride = stride;
+                    bestObjOff = objOff;
+                    bestUE58 = g.ue58;
+                }
+            }
         }
     }
     if (outStride) *outStride = bestStride;
+    if (outObjOff) *outObjOff = bestObjOff;
+    if (outUE58) *outUE58 = bestUE58;
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array) {
     if (outItemStride) *outItemStride = 0;
+    if (outItemObjOffset) *outItemObjOffset = 0;
+    if (outUE58Array) *outUE58Array = false;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
     uintptr_t modBase = Macht::GetModuleBase(nullptr);
@@ -777,28 +807,36 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
     // Probe a small window around each referenced slot — a code ref may point at any
     // member of the struct, so step back up to ObjAvailableList (+0x58) to find the base.
     uintptr_t bestBase = 0;
-    int bestScore = 0, bestStride = 0;
+    int bestScore = 0, bestStride = 0, bestObjOff = 0;
+    bool bestUE58 = false;
+    auto publish = [&]() {
+        if (outItemStride) *outItemStride = bestStride;
+        if (outItemObjOffset) *outItemObjOffset = bestObjOff;
+        if (outUE58Array) *outUE58Array = bestUE58;
+        Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d, "
+                   "item object @+0x%02X, %s array)", static_cast<unsigned long long>(bestBase), bestScore,
+                   bestStride, bestObjOff, bestUE58 ? "UE5.8" : "UE5.0-5.7");
+    };
     for (uintptr_t tgt : targets) {
         for (int off = -0x58; off <= 0x10; off += 8) {
-            int stride = 0;
-            int score = ScoreGObjectsStaticBase(tgt + off, &stride);
+            int stride = 0, objOff = 0;
+            bool ue58 = false;
+            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58);
             if (score > bestScore) {
                 bestScore = score;
                 bestBase = tgt + off;
                 bestStride = stride;
+                bestObjOff = objOff;
+                bestUE58 = ue58;
                 if (bestScore >= 32) {   // unambiguous: a dense run of clean core objects
-                    if (outItemStride) *outItemStride = bestStride;
-                    Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d)",
-                               static_cast<unsigned long long>(bestBase), bestScore, bestStride);
+                    publish();
                     return bestBase;
                 }
             }
         }
     }
     if (bestBase) {
-        if (outItemStride) *outItemStride = bestStride;
-        Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d)",
-                   static_cast<unsigned long long>(bestBase), bestScore, bestStride);
+        publish();
     } else {
         Sein::Warn("SCAN:GObj", "FindGObjectsStaticStruct: no static FUObjectArray found");
     }

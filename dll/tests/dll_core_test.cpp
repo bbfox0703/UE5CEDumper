@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8 and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8 and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3838,6 +3838,62 @@ int main() {
         DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
         DynOff::bCasePreservingName    = svCpnE;
         g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-10] the static-struct GObjects resolver scores both array geometries and both item shapes --
+    // Heap-built static FUObjectArrays (LooksLikeDataPtr rejects this exe's own .data): the <=5.7 geometry
+    // (Objects @+0x10, NumElements @+0x24) and 5.8's (ObjObjects first: Objects @+0x00, NumElements @+0x08);
+    // items with the UObject* at +0x00 (classic) or +0x08 (5.7+); strides 20 / 24 / 40.
+    {
+        blk("STATICGOBJ - the static FUObjectArray scorer reads 5.8's array and 5.7+'s item");
+        static uint8_t sgEntry[2][0x40] = {};
+        memcpy(sgEntry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t sgChunk[3] = { 0, reinterpret_cast<uintptr_t>(sgEntry[1]), 0 };
+        static uintptr_t sgChunks[2] = { reinterpret_cast<uintptr_t>(sgChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(sgChunks), 0x10);
+
+        constexpr int kItems = 128;
+        std::vector<uint8_t> sgObjects(static_cast<size_t>(kItems) * 0x40, 0);
+        for (int i = 0; i < kItems; ++i) {
+            const int32_t nameIdx = 1;
+            memcpy(sgObjects.data() + static_cast<size_t>(i) * 0x40 + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+        }
+        struct Built { std::vector<uint8_t> chunk0; std::vector<uintptr_t> table; std::vector<uint8_t> arr; };
+        auto build = [&](Built& b, bool ue58, int stride, int objOff) -> uintptr_t {
+            b.chunk0.assign(static_cast<size_t>(kItems) * stride + 0x100, 0);
+            for (int i = 0; i < kItems; ++i) {
+                const uintptr_t o = reinterpret_cast<uintptr_t>(sgObjects.data() + static_cast<size_t>(i) * 0x40);
+                memcpy(b.chunk0.data() + static_cast<size_t>(i) * stride + objOff, &o, sizeof(o));
+            }
+            b.table.assign(4, 0);
+            b.table[0] = reinterpret_cast<uintptr_t>(b.chunk0.data());
+            b.arr.assign(0x80, 0);
+            const uintptr_t tbl = reinterpret_cast<uintptr_t>(b.table.data());
+            const int32_t num = kItems;
+            memcpy(b.arr.data() + (ue58 ? 0x00 : 0x10), &tbl, sizeof(tbl));
+            memcpy(b.arr.data() + (ue58 ? 0x08 : 0x24), &num, 4);
+            return reinterpret_cast<uintptr_t>(b.arr.data());
+        };
+        struct Case { const char* what; bool ue58; int stride; int objOff; bool star; };
+        const Case cases[] = {
+            { "<=5.7 array, classic item, stride 24",        false, 0x18, 0x00, false },
+            { "Obsidian: <=5.7 array, classic 20-byte item", false, 0x14, 0x00, false },
+            { "<=5.7 array, 5.7+ item (UObject* @+0x08), 24", false, 0x18, 0x08, true  },
+            { "5.8 array (ObjObjects first), 5.7+ item, 24",  true,  0x18, 0x08, true  },
+            { "<=5.7 array, 40-byte Test item, UObject* @+0x08", false, 0x28, 0x08, true },
+        };
+        for (const Case& k : cases) {
+            Built b;
+            const uintptr_t base = build(b, k.ue58, k.stride, k.objOff);
+            int stride = 0, objOff = -1;
+            bool ue58 = !k.ue58;
+            const int score = Genau::ScoreGObjectsStaticBase(base, &stride, &objOff, &ue58);
+            const std::string got = "score " + std::to_string(score) + " stride " + std::to_string(stride)
+                                  + " objOff " + std::to_string(objOff) + (ue58 ? " ue58" : " <=5.7");
+            check((std::string(k.star ? "STATICGOBJ ⭐ VND583-10: " : "STATICGOBJ control: ") + k.what
+                   + " -> read with its own stride, object offset and geometry").c_str(),
+                  score >= 32 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58, got.c_str());
+        }
     }
 
     // -- [VND583-05] a top-level WeakObjectProperty says null / stale / unreadable ---------------
