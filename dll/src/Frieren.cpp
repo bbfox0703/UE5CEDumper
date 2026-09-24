@@ -95,6 +95,15 @@ static std::mutex  s_initMutex;
 // FindAll publishes g_cachedGObjects / GNames until UE5_Init returns. The CE mailbox's fast path reads it (Mimic.cpp):
 // the globals alone said "initialized" 190-445 ms early, before Serie / Aura init and ValidateAndFixOffsets.
 std::atomic<bool> g_initInProgress{false};
+
+// [R7-C-05] apply_rescan is a SECOND producer of the init globals: it publishes g_cachedGObjects, then runs Aura::Init
+// and (the first time) ValidateAndFixOffsets, exactly the tail A3 fenced inside UE5_Init. It holds this for that span;
+// UE5_Init's already-initialised return waits on the mutex while the flag is up, so a mailbox command's
+// EnsureInitialized runs after the apply, not on a half-applied pool.
+namespace FrierenInit {
+void BeginApply() { s_initMutex.lock(); g_initInProgress.store(true, std::memory_order_release); }
+void EndApply()   { g_initInProgress.store(false, std::memory_order_release); s_initMutex.unlock(); }
+}
 static Fern  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
@@ -129,6 +138,9 @@ extern "C" {
 
 bool UE5_Init() {
     if (s_initialized.load(std::memory_order_acquire)) {
+        // [R7-C-05] An apply_rescan is re-publishing GObjects and probing the offsets (FrierenInit::BeginApply): wait it
+        // out. The mailbox's EnsureInitialized lands here exactly when the flag failed its fast path.
+        if (g_initInProgress.load(std::memory_order_acquire)) { std::lock_guard<std::mutex> wait(s_initMutex); }
         LOG_WARN("UE5_Init: Already initialized");
         return true;
     }

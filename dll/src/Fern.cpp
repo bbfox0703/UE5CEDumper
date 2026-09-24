@@ -80,6 +80,9 @@ extern "C" bool      UE5_EnsureGameThreadHook();
 extern "C" bool      UE5_IsGameThreadHookActive();
 extern "C" int       UE5_GetProcessEventOffset();
 
+// [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
+namespace FrierenInit { void BeginApply(); void EndApply(); }
+
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
 // "0x..." into the right little-endian byte layout for DataType, and
@@ -5311,6 +5314,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Unsupported engine — nothing to apply; the scan was "
                                             "skipped by design").dump();
             }
+
+            // [R7-C-05] The init fence for the whole apply: GObjects is published below and Aura::Init /
+            // ValidateAndFixOffsets follow, and until they finish the mailbox must not take its fast path.
+            struct ApplyFence {
+                ApplyFence()  { FrierenInit::BeginApply(); }
+                ~ApplyFence() { FrierenInit::EndApply(); }
+            } applyFence;
 
             bool applied = false;
 

@@ -2162,6 +2162,27 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void ApplyRescan_ReinitialisesUnderTheInitFence_AndTheMailboxWaitsItOut()
+    {
+        // [R7-C-05] apply_rescan publishes g_cachedGObjects, then runs Aura::Init and (first time) ValidateAndFixOffsets.
+        // With no fence the mailbox fast path (GObjects && GNames && !g_initInProgress) ran a CE command on the
+        // half-applied pool -- the window [A3-MIMIC-INIT-FASTPATH] closed for UE5_Init. Fern.cpp / Frieren.cpp reach no
+        // test target, so the fence is pinned in source.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int apply = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN)", StringComparison.Ordinal);
+        Assert.True(apply >= 0, "CMD_APPLY_RESCAN not found");
+        int begin = fern.IndexOf("FrierenInit::BeginApply()", apply, StringComparison.Ordinal);
+        int publish = fern.IndexOf("g_cachedGObjects = m_rescan.foundGObjects", apply, StringComparison.Ordinal);
+        Assert.True(begin > apply && begin < publish, "the fence is not raised before GObjects is published");
+
+        // ...and a caller that finds the process already initialised waits for the fence instead of returning at once.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int init = frieren.IndexOf("bool UE5_Init() {", StringComparison.Ordinal);
+        int already = frieren.IndexOf("UE5_Init: Already initialized", init, StringComparison.Ordinal);
+        Assert.Contains("std::lock_guard<std::mutex> wait(s_initMutex);", frieren[init..already]);
+    }
+
+    [Fact]
     public void FindRefsReply_CarriesSparseSkipped()
     {
         // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.
