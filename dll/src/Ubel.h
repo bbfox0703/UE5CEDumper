@@ -1220,7 +1220,8 @@ inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
 }
 
 // [VND583-06] " [garbage]" when UE's FWeakObjectPtr::Get() would refuse this RESOLVED target -- Garbage
-// (UE5) / PendingKill (UE4) or Unreachable, per DynOff::IsWeakTargetGarbage -- else "". Such an object
+// (UE5; PendingKill on 5.0-5.3's default config) / PendingKill (UE4) or Unreachable, per
+// DynOff::IsWeakTargetGarbage -- else "". Such an object
 // stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
 // is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
 const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);

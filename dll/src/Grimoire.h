@@ -654,8 +654,16 @@ constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alr
 // 0x1FFFFFFF, so 0x40000000 means nothing there). Unreachable (1<<28) is refused in both. objectFlags is
 // UObject+0x08; itemFlags reads only on the classic item layout (itemFlagsOk). An unknown version (0)
 // trusts the object flag alone, since the item bits mean different things in UE4 and UE5.
+// [R7-B-01] UE 5.0-5.3 ship gc.PendingKillEnabled=True (BaseEngine.ini), so MarkAsGarbage takes
+// MarkPendingKillOnlyInternal: RF_PendingKill (0x20000000) in ObjectFlags plus item PendingKill (1<<29), and
+// NEITHER Garbage bit -- and FUObjectArray::IsValid refuses PendingKill. Both bits changed meaning in 5.4
+// (0x20000000 = RF_HasPlaceholderType, later RF_MigratingAsset; item bit 29 unused, RefCounted from 5.7),
+// so this is 500-503 only, and the two must agree when the item flags read: a 5.4+ title whose version
+// was under-detected would otherwise tag its placeholder or ref-counted objects.
 constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
     if ((ueVersion == 0 || ueVersion >= 500) && (objectFlags & 0x40000000u)) return true;
+    if (ueVersion >= 500 && ueVersion <= 503 && (objectFlags & 0x20000000u)
+        && (!itemFlagsOk || (itemFlags & (1u << 29)))) return true;
     if (!itemFlagsOk || ueVersion == 0) return false;
     const uint32_t refused = ueVersion >= 500 ? ((1u << 21) | (1u << 28))    // Garbage | Unreachable
                                               : ((1u << 29) | (1u << 28));   // PendingKill | Unreachable

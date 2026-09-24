@@ -6393,6 +6393,22 @@ static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE4 never sets RF 0x40000000 -> ignored", !DynOff::IsWeakTargetGarbage(427, 0x40000000u, true, 0));
     EXPECT("VND583-06: unknown version: the object flag only",
            DynOff::IsWeakTargetGarbage(0, 0x40000000u, true, 0) && !DynOff::IsWeakTargetGarbage(0, 0, true, 1u << 29));
+    // [R7-B-01] UE 5.0-5.3 ship gc.PendingKillEnabled=True, so MarkAsGarbage sets RF_PendingKill (0x20000000) and
+    // item PendingKill (1<<29) -- not the Garbage bits -- and Get() refuses the target.
+    EXPECT("R7-B-01: 5.1 default PendingKill (RF 0x20000000 + item 1<<29) -> garbage",
+           DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01: 5.3 default PendingKill -> garbage", DynOff::IsWeakTargetGarbage(503, 0x20000001u, true, 1u << 29));
+    EXPECT("R7-B-01: 5.2 RF_PendingKill with the item flags unread -> garbage",
+           DynOff::IsWeakTargetGarbage(502, 0x20000000u, false, 0));
+    EXPECT("R7-B-01 control: 5.4 0x20000000 is RF_HasPlaceholderType, bit 29 unused -> live",
+           !DynOff::IsWeakTargetGarbage(504, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.8 0x20000000 is RF_MigratingAsset, bit 29 RefCounted -> live",
+           !DynOff::IsWeakTargetGarbage(508, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.1 item bit 29 without RF_PendingKill -> live (both must agree)",
+           !DynOff::IsWeakTargetGarbage(501, 0, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.1 RF_PendingKill while the readable item says no -> live",
+           !DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 0));
+    EXPECT("R7-B-01 control: unknown version ignores 0x20000000", !DynOff::IsWeakTargetGarbage(0, 0x20000000u, true, 1u << 29));
 }
 
 static void Test_ProcessEventVTableSlot() {
