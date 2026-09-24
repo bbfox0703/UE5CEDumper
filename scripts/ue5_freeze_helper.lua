@@ -650,10 +650,13 @@ local function fetchInstancePage(className, pageIndex, derived)
   -- _ue5_invoke_stale_mb until the DLL reports done. Only that helper's own entry used to release it, so
   -- after an invoke timeout every rescan here refused and the freeze abandoned itself, although the DLL had
   -- long finished. Release it the same way here: the DLL says DONE and IDLE.
+  -- [R7-S3] Released on cmd 0 whatever the status: the DLL clears cmd only after SetDone / SetError, and a
+  -- re-inject or re-enable (UE5_Shutdown memsets the mailbox) also leaves it 0 -- with status 0, which a DONE-only
+  -- test never saw, so the latch then outlived the session. Also released when the latched mailbox has gone
+  -- (unreadable) or moved (a re-inject at a new base).
   if _ue5_invoke_busy and _ue5_invoke_stale_mb then
-    local st = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
-    local c  = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
-    if st == STATUS_DONE and c == 0 then
+    local c = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
+    if c == nil or c == 0 or _ue5_invoke_stale_mb ~= mb then
       _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
     end
   end

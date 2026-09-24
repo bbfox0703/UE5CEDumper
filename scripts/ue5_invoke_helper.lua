@@ -570,10 +570,12 @@ if not invokeUFunction then
     -- the command and not finished, so the mailbox was still its. Ask the DLL whether
     -- it has finished since, rather than latching this Lua-local boolean for the rest
     -- of the session -- it publishes status and cmd itself. (audit #5 AA19)
+    -- [R7-S3] Released on cmd IDLE whatever the status: the DLL clears cmd only after finishing, and a re-inject /
+    -- re-enable memsets the mailbox (status 0, cmd 0), which a DONE-only test never released. An unreadable
+    -- mailbox (gone) is released too.
     if _ue5_invoke_busy and _ue5_invoke_stale_mb then
-      local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
       local cmd = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
-      if st == STATUS_DONE and cmd == CMD_IDLE then
+      if cmd == nil or cmd == CMD_IDLE then
         _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
       end
     end
@@ -801,10 +803,11 @@ end
 local function simpleMailboxCall(cmd, prepare)
   -- The latch clears itself once the DLL says it is done -- ask it, rather than holding a Lua-local
   -- boolean for the rest of the session (the shape invokeUFunction uses).
+  -- [R7-S3] cmd IDLE releases it whatever the status (a re-inject's memset leaves status 0), and so does an
+  -- unreadable mailbox.
   if _ue5_invoke_busy and _ue5_invoke_stale_mb then
-    local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
     local cmd_ = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
-    if st == STATUS_DONE and cmd_ == CMD_IDLE then
+    if cmd_ == nil or cmd_ == CMD_IDLE then
       _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
     end
   end

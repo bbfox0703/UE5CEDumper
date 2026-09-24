@@ -58,6 +58,7 @@ local function resetWorld()
   -- The helper's own globals. The re-declaration guards mean the chunk cannot be
   -- reloaded, so these are reset by hand -- missing one leaks state between cases.
   _ue5_invoke_busy = false
+  _ue5_invoke_stale_mb = nil   -- [R7-S3] the latch is shared session state too: one case's timeout must not leak
   _ue5_invoke_str_bufs = {}
   -- A live DLL: takes the command and answers success immediately.
   DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end
@@ -438,6 +439,31 @@ do
   local ok2, e2 = invokeUFunction('C', 'G', 0, nil)
   eq(ok2, true, 'the next invoke runs')
   eq(e2, nil, 'with no error')
+end
+
+case('R7-S3: a latch on a RESET mailbox (re-inject memsets it: status 0, cmd 0) is released')
+do
+  -- The latch's own message says "re-inject if it never does". A re-inject memsets the mailbox, which then
+  -- reads status 0 -- never DONE -- so a DONE-only release test refused every later call for the session.
+  resetWorld()
+  DLL = function() I32[MB + OFF_STATUS] = 2 end
+  eq(invokeUFunction('C', 'F', 0, nil), false, 'first times out')
+  I32[MB + OFF_STATUS], I32[MB + OFF_CMD] = 0, 0            -- the re-inject's memset
+  DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end
+  local ok2, e2 = invokeUFunction('C', 'G', 0, nil)
+  eq(ok2, true, 'the next invoke runs')
+  eq(e2, nil, 'with no error')
+end
+
+case('R7-S3: simpleMailboxCall (setDebugCamera) releases a latch on a reset mailbox too')
+do
+  resetWorld()
+  DLL = function() I32[MB + OFF_STATUS] = 2 end
+  eq((pcall(setDebugCamera, 1)), false, 'the first call times out (raises)')
+  eq(_ue5_invoke_busy, true, 'latched')
+  I32[MB + OFF_STATUS], I32[MB + OFF_CMD] = 0, 0
+  DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end
+  eq((pcall(setDebugCamera, 1)), true, 'the next call runs')
 end
 
 case('AA19: a normal SUCCESS still leaves the helper ready for the next call')

@@ -1299,6 +1299,25 @@ do
   eq(h.isAbandoned(), false, 'R7-C-01: not abandoned')
 end
 
+case('R7-S3: a latch on a mailbox that was RESET (re-inject / re-init) is released, not held for the session')
+do
+  -- The timeout message tells the user to re-inject or re-enable the table. UE5_Shutdown memsets the mailbox,
+  -- so it then reads status 0 / cmd 0 -- never DONE -- and a DONE-only release test wedged every later rescan
+  -- and invoke. cmd 0 is the release condition: the DLL clears cmd only after finishing, and a reset clears it too.
+  resetWorld()
+  local opts = { pages = { { 0x1000 } } }
+  installMailbox(opts)
+  local h = newHandle{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  opts.deadPage = 0
+  rescanTimer().OnTimer()                                  -- times out: latched
+  eq(_ue5_invoke_busy, true, 'R7-S3: latched by the timeout')
+  opts.deadPage = nil
+  MEM[MB + OFF_STATUS], MEM[MB + OFF_CMD] = 0, 0            -- Mimic::StopThread's memset, then a fresh poller
+  rescanTimer().OnTimer()
+  eq(_ue5_invoke_busy, false, 'R7-S3: a reset mailbox releases the latch')
+  eq(#(h._cache or {}), 1, 'R7-S3: and the freeze rescans again')
+end
+
 -- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
