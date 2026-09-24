@@ -25,6 +25,40 @@ builds ≤696 in
 
 -----
 
+## 2026-09-24 (build 3548) — vendor audit #7 fixed: VND583-01..17 and the DOC bundle, published AOT
+
+**3548 = 3547 plus the `[VND583-*]` rows, up to `26993098`.** Derive the list, do not copy it:
+`git log --oneline b9e6aff0..26993098 -- dll ui` (20 commits, 14 row tags). Every row's commit, test and
+live evidence is in `docs/todo.md` `[VENDOR-UE583-2026-09-24]`; the source-side facts are in
+`docs/audit-2026-09-24-vendor-ue583.md`. In short:
+- **Measured instead of keyed on version**: UFunction::FunctionFlags by a vote over parameter chains (01);
+  UField::Next in FProperty mode (02); alignof(FName) on a single-FName ScriptStruct (03); the UEnum value
+  column on ENetRole (04, uint8 on 4.9–4.14); FSoftObjectPath's shape on the SoftObjectPath struct (14).
+- **Weak pointers**: a top-level weak says null / null (stale) / unreadable (05); a target UE's `Get()` would
+  refuse is labelled `[garbage]` (06); serial 0 is UE's explicit null (08).
+- **Layout and version**: UE 5.2 keeps the 16-byte FFieldVariant defaults (09); the static-struct GObjects
+  resolver reads 5.8's array and the 5.7+ item (10); the CPN property family starts at +0x34 (11); FNameData
+  enums mean 5.7+ (12); compact TSet/TMap builds are guarded (13).
+- **Tools**: the CRC oracle merges instead of overwriting, with a new gate (16); `find_gobjects.java` finds 5.8's
+  narrow anchor string (17). 07 (A9) and 15 are filed without code by the audit's own instruction; 18 (minhook)
+  stays on HOLD.
+
+**Live, red → green where a host exists**: DQ XI S (01, 03), NEKOPALIVE (04), DumperTest 5.4 (05, 06, 08),
+forced static recovery on DumperTest58 5.8 (10, whose live arm found a second defect, fixed in `de3d397a`), and
+Ghidra on StackOBot 5.8 (17). Regressions: DumperTest 5.1 / 5.4 / 5.8 and DQ I & II HD-2D (09, 11–14).
+**New hosts**: `-DumperTestWeakGarbage` (DumperTest repackaged: Development, Shipping and DebugGame; its
+`pe_hash` changed again), and the UE 5.4 editor running DumperTest `-game`, the first case-preserving host.
+CPN is detected there, but its name pool does not resolve yet (`[VND583-07]`).
+
+**The build.** `build.ps1 -Mode Publish` bumped 3547 → 3548 but failed its UI tests. A source-pinning test
+still expected the old `FindGObjectsStaticStruct` call; it was fixed in `26993098`. It then re-ran with
+`-NoBumpBuildNumber`: `dist\UE5DumpUI.exe` AOT 55.0 MB (sha `d2c240608c52`), `UE5Dumper.dll` sha
+`318682738eeb`, stamp `1.0.0.3548 26993098`, and four proxies to `dist\proxy\`. Tests: UI
+**5327/5327**, `dll_helpers_test` 2877/0, `utf8_helpers_test` 265/0, `dll_core_test` 414 checks, and
+`grausam_window_test` / `sein_retention_test` passed. Gates 23/23 (`crc_oracle_selftest` is new).
+
+-----
+
 ## 2026-09-24 (build 3547) — the first bump since 3546: the whole fix pass, published AOT
 
 **Why an entry now.** Build 3546 was stamped at `567b9afc` (2026-09-12). Every product change of the

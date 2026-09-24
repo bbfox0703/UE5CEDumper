@@ -755,6 +755,17 @@ Measured 2026-09-24: the Windows path `out\ue583\` written through the file-writ
 
 **And a BOM survives a read, so do not add one on the write (measured 2026-09-24, VND583-06's fixture).** A patch helper read `DumperTestActor.h` as `utf-8`, which keeps U+FEFF as the first character of the text, then wrote it as `utf-8-sig` "to preserve the BOM", which adds a second one. UHT then failed on `Unable to find ... 'FDumperTestPingSignature'` at line 700, nowhere near the edit, and Build.bat exited 6. **How to apply:** read and write with the SAME codec: `utf-8` both ways keeps a BOM exactly as it was. Check with `head -c 6 <file> | od -An -tx1`: `ef bb bf ef bb bf` is the corruption.
 
+### 1.ah A DLL-only change can break a UI test: the UI suite pins DLL SOURCE TEXT
+
+Measured 2026-09-24 (VND583-10). `ui/UE5DumpUI.Tests` reads `dll/src/*.cpp` through `DllSource(...)` and asserts
+exact call text: `InvokeScriptTests` alone does it 37 times. A fix added two out-params to
+`Genau::FindGObjectsStaticStruct`. `build_dll.py`, `dll_helpers_test`, `dll_core_test` and all 23 gates
+stayed green, and the first `build.ps1 -Mode Publish` then failed on
+`InitRecovery_RecordsItsCancelForTheLatchGuard`, after it had already bumped the build number.
+**How to apply:** before calling a change to `dll/src` done, grep the UI tests for the text you changed
+(`grep -rn "<old call text>" ui/UE5DumpUI.Tests`). Otherwise run the UI suite too. A Publish that fails its
+tests after the bump is re-run with `-NoBumpBuildNumber`, so the release number does not skip.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
