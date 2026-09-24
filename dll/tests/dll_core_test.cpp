@@ -3195,6 +3195,23 @@ int main() {
         check("SPARSEREFS ⭐ R7-S4: an implausible storage header is not walked, and the pass is reported skipped",
               stH.sparseUnlocated == 0 && stH.sparseSkipped, std::to_string(stH.sparseUnlocated).c_str());
         memcpy(spOuter + 0x08, &svNumSp, 4);
+
+        // [R7-X2] The storage was never located (the AOB scan failed, or -- measured on the 4.27 editor -- the
+        // validator refused it): the pass cannot run, and "none found" is then not a negative. Before the fix the
+        // sweep said nothing, so the UI blamed the game.
+        Genau::s_sparseDelegatesCache.store(0);
+        Genau::s_sparseDelegatesScanned.store(true);
+        Aura::ContainerScanStats stU;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stU);
+        check("SPARSEREFS ⭐ R7-X2: an unlocated sparse storage is reported skipped, nothing read",
+              stU.sparseSkipped && stU.sparseUnlocated == 0, std::to_string(stU.sparseUnlocated).c_str());
+        // ...but not before 4.23, where no sparse delegate exists to miss.
+        g_cachedUEVersion = 422;
+        Aura::ContainerScanStats stP;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stP);
+        check("SPARSEREFS R7-X2 control: pre-4.23 with no storage reports no gap",
+              !stP.sparseSkipped && stP.sparseUnlocated == 0);
+        Genau::s_sparseDelegatesCache.store(reinterpret_cast<uintptr_t>(spOuter));
         g_cachedUEVersion = 505;
 
         Genau::s_sparseDelegatesCache.store(savedStoreSp);

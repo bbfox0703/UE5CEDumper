@@ -4250,6 +4250,12 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                     }
                 }
             }
+        } else {
+            // [R7-X2] Never located: the AOB scan failed, or the validator refused what it found. The bindings held
+            // there are unread, exactly as for a refused header -- reported, so "none found" is not taken as a negative.
+            sparseSkipped = true;
+            LOG_WARN("FindReferencesToUObject: the sparse-delegate storage was not located (UE=%u) -- not read, so "
+                     "bindings held there are MISSING", ::g_cachedUEVersion);
         }
     }
 
