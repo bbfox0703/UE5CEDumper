@@ -1367,7 +1367,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             elements = field.ArrayElements;
             // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
             // walked lower, and then a short reply is the old slider value, not the DLL's cap.
-            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : elements.Count;
+            // [R7-S10] ...or it IS the DLL's cap (a large array at a high slider): unknown, marked -1, names no lever.
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;
         }
         else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
@@ -1381,7 +1382,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         else
         {
             elements = field.ArrayElements ?? new();
-            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : elements.Count;   // [R7-D-07]
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;   // [R7-D-07] [R7-S10]
         }
 
         // Only add breadcrumb after successful element retrieval — and only if the
@@ -1397,9 +1398,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
         // to the capped inline preview. Compare the elements actually shown against the true count.
         label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
-        var arrTruncStatus = elements.Count < requested
-            ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
-            : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        var arrTruncStatus = requested < 0
+            ? ContainerTruncation.UnknownBoundStatusLine(elements.Count, field.ArrayCount)           // [R7-S10]
+            : elements.Count < requested
+                ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
+                : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
 
         Breadcrumbs.Add(new BreadcrumbItem

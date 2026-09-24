@@ -269,7 +269,31 @@ public class ContainerTruncationTests
 
         Assert.Contains("Could not re-read", vm.StatusText);    // the precondition: last-refresh values
         Assert.DoesNotContain("per fetch", vm.StatusText);
-        Assert.Contains("Array Limit", vm.StatusText);
+        // [R7-S10] ...and not the slider either: which bound shortened a last-refresh preview is unknown (see below).
+        // A re-open re-reads at the current value, and then the reply says which.
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Contains("re-open", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Drill_PointerArray_OnLastRefreshValues_AtTheDllCap_DoesNotSendTheUserToTheSlider()
+    {
+        // [R7-S10] The mirror case R7-D-07 opened: 10,000 elements, the slider at 16384, the preview DLL-capped at 4,096,
+        // and the re-read failed (plausibly a timeout -- a walk at 16384 is slow). `requested = elements.Count` made the
+        // status say "raise the Array Limit slider", which cannot raise a per-fetch cap: [A3-CONTAINER-4096-ADVICE].
+        var field = PtrArrayField(total: 10_000, loaded: 4_096);
+        var dump = new StubDumpService();   // no parent registered: the re-read cannot land
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            ArrayLimit = 16384,
+        };
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Contains("Could not re-read", vm.StatusText);
+        Assert.Contains("4,096 of 10,000", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
     }
 
     [Fact]
