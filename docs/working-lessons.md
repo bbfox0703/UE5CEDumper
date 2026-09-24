@@ -747,6 +747,10 @@ key that the product swallows look identical on screen. Also measured the same d
 `cmd | tail -1 && next`, `&&` tests `tail`'s exit code, not `cmd`'s — a refused `dist_swap.py install`
 piped through `tail` let the chain launch the UI anyway. Test the file or redirect to a file first.
 
+### 1.ag A `\u` + four hex digits in written content becomes ONE character — scan for it
+
+Measured 2026-09-24: the Windows path `out\ue583\` written through the file-writing tool landed as `out` + U+E583 (a private-use character) + `\`, in a doc AND in a Python docstring, and was committed twice before anyone saw it. The tool-call layer decodes `\uXXXX` (four hex digits) as a Unicode escape, the way a shell heredoc collapses `\\` (CLAUDE.md's NUL-byte incidents). Paths are the usual victims: `\ue583`, `\uefa`, `\u0041`. **How to apply:** build a backslash as `chr(92)` in any generated text that holds such a path, and after writing, scan: `py -c "import sys; t=open(sys.argv[1],encoding='utf-8').read(); print([hex(ord(c)) for c in t if 0xE000<=ord(c)<=0xF8FF])" <file>` — a non-empty list is corruption. (Other decoded code points are not private-use and need a diff read to catch.)
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

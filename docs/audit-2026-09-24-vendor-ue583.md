@@ -32,7 +32,7 @@ adversarial verifier (default posture: refute), and the info rows of each area t
 -05, -09, -10), the info batch checks of `uepseudo-generated`, `uepseudo-layout` and
 `patternsleuth`, and the planned synthesis + completeness critic never ran. Those rows are marked
 **UNVERIFIED** below; the synthesis in this file was done by hand from the journal, not by an agent.
-The per-finding JSON (claims, both-side citations, verifier reasons) was kept under `out\`
+The per-finding JSON (claims, both-side citations, verifier reasons) was kept under `out\ue583\`
 (`audit_full.json`, `audit_digest.md`) on the verification PC — scratch, not durable.
 
 ## BOTTOM LINE

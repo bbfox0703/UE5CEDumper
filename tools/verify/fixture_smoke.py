@@ -1,7 +1,7 @@
 r"""Smoke-test the DLL against a DumperTest fixture, and diff its offset/scan verdicts against a baseline.
 
-    py tools/verify/fixture_smoke.py shipping58 --out out\smoke_shipping58 --baseline out\baseline_582\DumperTest58-Win64-Shipping
-    py tools/verify/fixture_smoke.py dev58 --class DumperTest58Actor --out out\smoke_dev58
+    py tools/verify/fixture_smoke.py shipping58 --out out\ue583\smoke_shipping58 --baseline out\ue583\baseline_582\DumperTest58-Win64-Shipping
+    py tools/verify/fixture_smoke.py dev58 --class DumperTest58Actor --out out\ue583\smoke_dev58
 
 WHY. A fixture that is REPACKAGED (an engine hotfix, a source change) is a new binary: its pe_hash,
 its addresses and potentially its layouts move. "Does the DLL still read it the same way" is then a
