@@ -689,10 +689,15 @@ static bool IsCleanAsciiName(const std::string& s) {
 // a 24-byte item still "passed" at stride 16, whose every third read lands on an object -- and
 // the pool then vanished two in three (09-05 A5's failure, in this resolver). Every geometry x
 // object offset x stride is scored and the densest wins; outObjOff / outUE58 say which.
-struct StaticArrayGeometry { int objectsOff; int numOff; bool ue58; };
+// ⭐ And a geometry must be SELF-CONSISTENT, not merely point at a real chunk table: DumperTest58
+// (5.8 Shipping) showed a probe 0x10 below its array, read through the 5.0-5.7 geometry, finding
+// the real Objects pointer at +0x10 and the 5.8 MaxChunks (33) at +0x24 as "NumElements" --
+// 33 clean names, and the pool then held 33 objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
+// and Num <= NumChunks * OBJECTS_PER_CHUNK, as a real array's counts always are.
+struct StaticArrayGeometry { int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; };
 static const StaticArrayGeometry kStaticGeometries[] = {
-    { 0x10, 0x24, false },   // UE 5.0-5.7: four GC int32s, then TUObjectArray {Objects, PreAllocated, Max, Num, ...}
-    { 0x00, 0x08, true  },   // UE 5.8: ObjObjects FIRST; FChunkedFixedUObjectArray {Objects, Num, Max, NumChunks, ...}
+    { 0x10, 0x24, 0x20, 0x2C, 0x28, false },   // UE 5.0-5.7: four GC int32s, then {Objects, PreAllocated, Max, Num, MaxChunks, NumChunks}
+    { 0x00, 0x08, 0x0C, 0x10, 0x14, true  },   // UE 5.8: ObjObjects FIRST; {Objects, Num, Max, NumChunks, MaxChunks, PreAllocated}
 };
 // 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
 // pair (09-05 A5, whose static-resolver half this is).
@@ -709,9 +714,13 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
         if (!Macht::ReadSafe(base + g.objectsOff, chunkTable)) continue;     // ObjObjects.Objects
         chunkTable = Aura::DecryptObjectPtr(chunkTable);
         if (!LooksLikeDataPtr(chunkTable)) continue;
-        int32_t num = 0;
+        int32_t num = 0, maxE = 0, numC = 0, maxC = 0;
         if (!Macht::ReadSafe(base + g.numOff, num)) continue;               // NumElements
         if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) continue;
+        if (!Macht::ReadSafe(base + g.maxOff, maxE) || !Macht::ReadSafe(base + g.numChunksOff, numC)
+            || !Macht::ReadSafe(base + g.maxChunksOff, maxC)) continue;
+        if (num > maxE || numC < 1 || numC > maxC
+            || static_cast<int64_t>(num) > static_cast<int64_t>(numC) * Grimoire::OBJECTS_PER_CHUNK) continue;
         uintptr_t chunk0 = 0;
         if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) continue;
 
@@ -828,11 +837,14 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* 
                 bestStride = stride;
                 bestObjOff = objOff;
                 bestUE58 = ue58;
-                if (bestScore >= 32) {   // unambiguous: a dense run of clean core objects
-                    publish();
-                    return bestBase;
-                }
             }
+        }
+        // [VND583-10] Unambiguous: a dense run of clean core objects -- but decided only once this
+        // target's WHOLE window is scored. Deciding inside it let a base 0x10 too low (33 clean, at
+        // the bar) return before the true one (64) was ever read, on DumperTest58.
+        if (bestScore >= 32) {
+            publish();
+            return bestBase;
         }
     }
     if (bestBase) {

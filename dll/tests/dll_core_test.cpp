@@ -3867,12 +3867,19 @@ int main() {
             }
             b.table.assign(4, 0);
             b.table[0] = reinterpret_cast<uintptr_t>(b.chunk0.data());
-            b.arr.assign(0x80, 0);
+            // The array sits 0x40 into its buffer, so a probe BELOW the real base reads this struct's own
+            // bytes -- which is how the live 5.8 decoy below was met. Every count field is set, as a real
+            // array's are: Max 2,162,688 (33 chunks of 64K), one chunk in use.
+            b.arr.assign(0xC0, 0);
+            uint8_t* a = b.arr.data() + 0x40;
             const uintptr_t tbl = reinterpret_cast<uintptr_t>(b.table.data());
-            const int32_t num = kItems;
-            memcpy(b.arr.data() + (ue58 ? 0x00 : 0x10), &tbl, sizeof(tbl));
-            memcpy(b.arr.data() + (ue58 ? 0x08 : 0x24), &num, 4);
-            return reinterpret_cast<uintptr_t>(b.arr.data());
+            const int32_t num = kItems, maxE = 33 * 65536, numC = 1, maxC = 33;
+            memcpy(a + (ue58 ? 0x00 : 0x10), &tbl, sizeof(tbl));
+            memcpy(a + (ue58 ? 0x08 : 0x24), &num, 4);
+            memcpy(a + (ue58 ? 0x0C : 0x20), &maxE, 4);
+            memcpy(a + (ue58 ? 0x10 : 0x2C), &numC, 4);
+            memcpy(a + (ue58 ? 0x14 : 0x28), &maxC, 4);
+            return reinterpret_cast<uintptr_t>(a);
         };
         struct Case { const char* what; bool ue58; int stride; int objOff; bool star; };
         const Case cases[] = {
@@ -3893,6 +3900,23 @@ int main() {
             check((std::string(k.star ? "STATICGOBJ ⭐ VND583-10: " : "STATICGOBJ control: ") + k.what
                    + " -> read with its own stride, object offset and geometry").c_str(),
                   score >= 32 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58, got.c_str());
+        }
+
+        // ⭐ The decoy DumperTest58 (5.8 Shipping) handed the first cut of this fix, live: probed 0x10 BELOW
+        // a real 5.8 array, the 5.0-5.7 geometry finds the real Objects pointer at +0x10, and reads the
+        // 5.8 array's MaxChunks (33) at +0x24 as NumElements. 33 clean names cleared the early-exit bar
+        // of 32, so the true base, 0x10 higher, was never scored, and the pool held 33 objects. A 5.8
+        // struct read through the 5.0-5.7 geometry is self-inconsistent -- "MaxElements" (+0x20 = the
+        // 5.8 NumChunks, 1) is below "NumElements" (33) -- and must score 0.
+        {
+            Built b;
+            const uintptr_t base58 = build(b, true, 0x18, 0x08);
+            int stride = 0, objOff = -1;
+            bool ue58 = false;
+            const int decoy = Genau::ScoreGObjectsStaticBase(base58 - 0x10, &stride, &objOff, &ue58);
+            check("STATICGOBJ ⭐ VND583-10: 0x10 below a 5.8 array, the 5.0-5.7 geometry reads MaxChunks as "
+                  "NumElements -- that self-inconsistent struct scores 0",
+                  decoy == 0, ("score " + std::to_string(decoy) + " stride " + std::to_string(stride)).c_str());
         }
     }
 

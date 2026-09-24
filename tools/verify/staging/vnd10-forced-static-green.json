@@ -1,6 +1,6 @@
 {
  "name": "vnd10-forced-static-green",
- "why": "VND583-10 live check: skip the AOB winner's Aura::Init so Count==0 -- the recovery's own trigger -- and Genau::FindGObjectsStaticStruct runs on DumperTest's real static FUObjectArray (5.4: the 5.0-5.7 geometry; 5.8: ObjObjects first). GREEN: HEAD (70190f76).",
+ "why": "VND583-10 live check: skip the AOB winner's Aura::Init so Count==0 -- the recovery's own trigger -- and Genau::FindGObjectsStaticStruct runs on DumperTest's real static FUObjectArray (5.4: the 5.0-5.7 geometry; 5.8: ObjObjects first). GREEN: HEAD -- 70190f76 plus its live-found follow-up (a self-consistency check and a whole-window decision).",
  "subs": [
   {
    "file": "dll/src/Frieren.cpp",
