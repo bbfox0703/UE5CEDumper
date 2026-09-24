@@ -825,6 +825,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // the one exported.
             var fields = new List<LiveFieldValue>(Fields);
             int arrayLimit = ArrayLimit;
+            // [R7-S13] ...and the instance those fields belong to: the user can pick another one during the resolve,
+            // and A's layout must not go out under B's root address and name.
+            var inst = SelectedInstance;
 
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
@@ -835,11 +838,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(
-                SelectedInstance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                inst.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateInstanceXml(
-                rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
+                rootAddress, inst.Name, inst.ClassName,
                 fields, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
@@ -853,7 +856,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 StatusText = "";
                 SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
                 _log.Warn($"CE XML export produced {xml.Length} chars but the clipboard " +
-                          $"refused the write for instance {SelectedInstance.Name}");
+                          $"refused the write for instance {inst.Name}");
                 return;
             }
             // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms.
@@ -864,7 +867,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // carry, which are walked at the same Array Limit.
             StatusText = ExportStatus(truncated, fields.Concat(resolvedStructs.Values.SelectMany(v => v)).ToList(),
                                       arrayLimit);
-            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
+            _log.Info($"CE XML copied to clipboard for instance {inst.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
         catch (Exception ex)

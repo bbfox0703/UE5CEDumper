@@ -389,6 +389,49 @@ public class AuditL11HonestyTests
         Assert.Contains("64 of 16,390", vm.StatusText);
     }
 
+    // [R7-S13] The struct resolve is awaited, and nothing stops the user picking another instance meanwhile. R7-S11
+    // snapshotted the fields but not the instance, so A's layout went out under B's root address and name.
+    private sealed class GatedStructStub : StubDumpService
+    {
+        public readonly TaskCompletionSource Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+        {
+            if (addr == "0x5000") await Gate.Task;   // the struct resolve waits here
+            return await base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+        }
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_ASelectionChangeDuringTheResolve_ExportsTheInstanceClicked()
+    {
+        var dump = new GatedStructStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha", Fields = TuneStruct(),
+        });
+        dump.RegisterStruct("0x20000000", new InstanceWalkResult
+        {
+            Address = "0x20000000", Name = "Beta_0", ClassName = "Beta",
+            Fields = new List<LiveFieldValue> { new() { Name = "Other", TypeName = "IntProperty", Offset = 0x30, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        Assert.Equal(2, vm.Fields.Count);
+
+        var export = vm.ExportCeXmlCommand.ExecuteAsync(null);          // parked in the struct resolve
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        dump.Gate.SetResult();
+        await export;
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Alpha_0", platform.LastClipboard);             // the instance whose layout this is
+        Assert.DoesNotContain("Beta_0", platform.LastClipboard);
+        Assert.DoesNotContain("20000000", platform.LastClipboard);      // ...on its own root, not B's
+    }
+
     [Fact]
     public async Task InstanceFinder_CeXmlExport_CompleteButClipped_DisclosesTheClipping()
     {
